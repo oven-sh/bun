@@ -1587,6 +1587,419 @@ describe("fs.promises.watch", () => {
     expect(() => String(event)).toThrow(TypeError);
     expect(Object.keys(event!).sort()).toEqual(["eventType", "filename"]);
   });
+
+  // Unless a test says that Bun differs, the expected values are what Node v26.3.0 gives for the same script.
+  describe.concurrent("maxQueue and overflow", () => {
+    // A fixture that waits for something that does not come must end by itself.
+    const hangGuard = `setTimeout(() => { console.log("hung"); process.exit(1); }, 4000).unref();`;
+
+    // `source` is an ES module. It runs beside an empty directory named "watched".
+    async function runFixture(source: string) {
+      using dir = tempDir("fsp-watch-maxqueue", {
+        "fixture.mjs": hangGuard + source,
+        "watched/.keep": "",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // For fixtures that must know how many events came while nothing reads them: the `ignore` function sees every
+    // event. `until()` makes directories until the condition holds.
+    const countEvents = `
+      import { watch } from "node:fs/promises";
+      import { mkdirSync } from "node:fs";
+
+      let seen = 0;
+      const ignore = () => {
+        seen++;
+        return false;
+      };
+      let made = 0;
+      async function until(condition) {
+        while (!condition()) {
+          if (made > 30000) throw new Error("no progress: " + made + " directories, " + seen + " events");
+          for (let i = 0; i < 64; i++) mkdirSync("watched/d" + made++);
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      }
+      // Takes one event with next(). After it, nothing reads.
+      async function firstEvent(it) {
+        let settled = false;
+        const first = it.next().finally(() => (settled = true));
+        await until(() => settled);
+        return first;
+      }
+    `;
+
+    // Bun differs for recursive: true off macOS and Windows. Node reads neither option there and delivers the event.
+    test.each([false, true])(
+      "overflow: 'error' rejects next() with ERR_FS_WATCH_QUEUE_OVERFLOW and closes the watcher (recursive: %p)",
+      async recursive => {
+        // With maxQueue 0 the first event is already too many.
+        const { stdout, stderr, exitCode } = await runFixture(`
+          import { watch } from "node:fs/promises";
+          import { mkdirSync } from "node:fs";
+
+          const options = { maxQueue: 0, overflow: "error", recursive: ${recursive} };
+          const it = watch("watched", options)[Symbol.asyncIterator]();
+          const first = it.next();
+          let n = 0;
+          const interval = setInterval(() => mkdirSync("watched/d" + n++), 20);
+          let outcome;
+          try {
+            outcome = { resolved: (await first).value };
+          } catch (error) {
+            outcome = { name: error.name, code: error.code, message: error.message };
+          }
+          clearInterval(interval);
+          console.log(JSON.stringify(outcome));
+          if (outcome.resolved) process.exit(1);
+          console.log(JSON.stringify(await it.next()));
+          // An open watcher keeps the process alive.
+        `);
+        expect({ stdout, stderr }).toEqual({
+          stdout:
+            JSON.stringify({
+              name: "Error",
+              code: "ERR_FS_WATCH_QUEUE_OVERFLOW",
+              message: "fs.watch() queued more than 0 events",
+            }) + '\n{"done":true}\n',
+          stderr: "",
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test("maxQueue alone drops the event and emits a warning", async () => {
+      const { stdout, stderr, exitCode } = await runFixture(`
+        import { watch } from "node:fs/promises";
+        import { mkdirSync } from "node:fs";
+
+        const warnings = [];
+        process.on("warning", warning => warnings.push(warning.name + ": " + warning.message));
+        const ac = new AbortController();
+        const it = watch("watched", { maxQueue: 0, signal: ac.signal })[Symbol.asyncIterator]();
+        let state = "pending";
+        const first = it.next().then(
+          () => (state = "resolved"),
+          error => (state = error.name),
+        );
+        let n = 0;
+        const interval = setInterval(() => {
+          if (warnings.length === 0 && state === "pending") return mkdirSync("watched/d" + n++);
+          clearInterval(interval);
+          const atFirstWarning = state;
+          ac.abort();
+          first.then(() => console.log(JSON.stringify({ warning: warnings[0], atFirstWarning, afterAbort: state })));
+        }, 20);
+      `);
+      expect(stdout).toBe(
+        JSON.stringify({
+          warning: "Warning: fs.watch maxQueue exceeded",
+          atFirstWarning: "pending",
+          afterAbort: "AbortError",
+        }) + "\n",
+      );
+      expect(stderr).toContain("Warning: fs.watch maxQueue exceeded");
+      expect(exitCode).toBe(0);
+    });
+
+    test("overflow alone bounds the queue at 2048 events", async () => {
+      const { stdout, stderr, exitCode } = await runFixture(`
+        ${countEvents}
+        const it = watch("watched", { overflow: "error", ignore })[Symbol.asyncIterator]();
+        await firstEvent(it);
+        // The queue takes 2048 events. The one after them is too many.
+        await until(() => seen >= 1 + 2048 + 1);
+        const outcome = await it.next().then(
+          () => "resolved",
+          error => error.code + ": " + error.message,
+        );
+        console.log(outcome);
+        console.log(JSON.stringify(await it.next()));
+      `);
+      expect({ stdout, stderr }).toEqual({
+        stdout: 'ERR_FS_WATCH_QUEUE_OVERFLOW: fs.watch() queued more than 2048 events\n{"done":true}\n',
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // Bun differs: Node keeps 2048 of these events and drops the others with a warning.
+    test("with neither option every event is kept", async () => {
+      const { stdout, stderr, exitCode } = await runFixture(`
+        ${countEvents}
+        let warnings = 0;
+        process.on("warning", () => warnings++);
+        const ac = new AbortController();
+        const it = watch("watched", { signal: ac.signal, ignore })[Symbol.asyncIterator]();
+        await firstEvent(it);
+        await until(() => seen >= 2100);
+        let read = 1;
+        while (warnings === 0 && read < 2100) {
+          await it.next();
+          read++;
+        }
+        ac.abort();
+        console.log(JSON.stringify({ read, warnings }));
+      `);
+      expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify({ read: 2100, warnings: 0 }) + "\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    test("overflow: 'error' discards the events that were in the queue", async () => {
+      const { stdout, stderr, exitCode } = await runFixture(`
+        ${countEvents}
+        const it = watch("watched", { maxQueue: 16, overflow: "error", ignore })[Symbol.asyncIterator]();
+        const first = await firstEvent(it);
+        await until(() => seen >= 1 + 16 + 1);
+        const second = await it.next().then(
+          () => "resolved",
+          error => error.code + ": " + error.message,
+        );
+        console.log(JSON.stringify({ first: first.done, second, third: await it.next() }));
+      `);
+      expect({ stdout, stderr }).toEqual({
+        stdout:
+          JSON.stringify({
+            first: false,
+            second: "ERR_FS_WATCH_QUEUE_OVERFLOW: fs.watch() queued more than 16 events",
+            third: { done: true },
+          }) + "\n",
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("an ignored event does not count against maxQueue", async () => {
+      const { stdout, stderr, exitCode } = await runFixture(`
+        import { watch } from "node:fs/promises";
+        import { mkdirSync, writeFileSync } from "node:fs";
+
+        let ignored = 0;
+        const it = watch("watched", {
+          maxQueue: 0,
+          overflow: "error",
+          ignore: name => {
+            if (!name.endsWith(".log")) return false;
+            ignored++;
+            return true;
+          },
+        })[Symbol.asyncIterator]();
+        let state = "pending";
+        it.next().then(
+          () => (state = "resolved"),
+          error => (state = error.code),
+        );
+        let n = 0;
+        let beforeKept;
+        const interval = setInterval(() => {
+          // Ignored names only, until the ignore function has seen three of them.
+          if (ignored < 3 && state === "pending") return writeFileSync("watched/" + n++ + ".log", "");
+          beforeKept ??= state;
+          // With maxQueue 0 the first event that is not ignored is already too many.
+          if (state === "pending") return mkdirSync("watched/d" + n++);
+          clearInterval(interval);
+          console.log(JSON.stringify({ beforeKept, afterKept: state }));
+        }, 20);
+      `);
+      expect({ stdout, stderr }).toEqual({
+        stdout: JSON.stringify({ beforeKept: "pending", afterKept: "ERR_FS_WATCH_QUEUE_OVERFLOW" }) + "\n",
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // Exactly one event for each mkdir is checked on Linux only.
+    test.skipIf(!isLinux)(
+      "the queue keeps the first maxQueue unread events and warns once for each later one",
+      async () => {
+        const { stdout, exitCode } = await runFixture(`
+          import { watch } from "node:fs/promises";
+          import { mkdirSync } from "node:fs";
+
+          const ac = new AbortController();
+          const it = watch("watched", { maxQueue: 8, signal: ac.signal })[Symbol.asyncIterator]();
+          let warnings = 0;
+          const allWarned = new Promise(resolve => process.on("warning", () => ++warnings === 31 && resolve()));
+          // The first next() takes d0. Nothing reads after it: the queue keeps d1 to d8, and d9 to d39 are dropped.
+          const names = [];
+          const first = it.next().then(result => names.push(result.value.filename));
+          for (let i = 0; i < 40; i++) mkdirSync("watched/d" + i);
+          await allWarned;
+          await first;
+          for (let i = 0; i < 8; i++) names.push((await it.next()).value.filename);
+          mkdirSync("watched/d40");
+          names.push((await it.next()).value.filename);
+          ac.abort();
+          console.log(JSON.stringify({ names, warnings }));
+        `);
+        expect(stdout).toBe(
+          JSON.stringify({ names: ["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d40"], warnings: 31 }) + "\n",
+        );
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // Bun only: Node's recursive watcher on Linux reports no error here. inotify cannot watch a directory that
+    // denies read, so Bun's recursive watcher reports EACCES for it and stays open.
+    describe.skipIf(!isLinux)("an error from the watcher", () => {
+      async function runUnprivileged(files: Record<string, string>, script: string, prepare?: (root: string) => void) {
+        using dir = tempDir("fsp-watch-maxqueue-error", files);
+        const root = fs.realpathSync(String(dir));
+        prepare?.(root);
+        try {
+          using unprivileged = unprivilegedSpawnOptions(root);
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", script],
+            env: { ...bunEnv, WATCH_ROOT: root },
+            cwd: "/",
+            ...unprivileged,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { root, stdout, stderr, exitCode };
+        } finally {
+          for (const name of ["locked", "open/late"]) {
+            if (fs.existsSync(path.join(root, name))) fs.chmodSync(path.join(root, name), 0o755);
+          }
+        }
+      }
+
+      test.each([undefined, "error"])("is not counted against maxQueue (overflow: %p)", async overflow => {
+        const { root, stdout, stderr, exitCode } = await runUnprivileged(
+          { "open/.keep": "", "locked/.keep": "" },
+          `
+            const fs = require("fs");
+            const options = { recursive: true, maxQueue: 0, overflow: ${JSON.stringify(overflow)} };
+            (async () => {
+              let caught = null;
+              try {
+                for await (const e of fs.promises.watch(process.env.WATCH_ROOT, options)) break;
+              } catch (e) {
+                caught = { code: e.code, syscall: e.syscall, path: e.path };
+              }
+              console.log(JSON.stringify(caught));
+            })();
+            setTimeout(() => { console.log("hung"); process.exit(1); }, 4000).unref();
+          `,
+          root => fs.chmodSync(path.join(root, "locked"), 0o000),
+        );
+        expect({ stdout, stderr }).toEqual({
+          stdout: JSON.stringify({ code: "EACCES", syscall: "watch", path: path.join(root, "locked") }) + "\n",
+          stderr: "",
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      test("closes the watcher when nothing reads", async () => {
+        const { stdout, stderr, exitCode } = await runUnprivileged(
+          { "open/.keep": "" },
+          `
+            const fs = require("fs");
+            const path = require("path");
+            const open = path.join(process.env.WATCH_ROOT, "open");
+            (async () => {
+              const options = { recursive: true, maxQueue: 1024 };
+              const it = fs.promises.watch(process.env.WATCH_ROOT, options)[Symbol.asyncIterator]();
+              const first = it.next();
+              let n = 0;
+              const interval = setInterval(() => fs.writeFileSync(path.join(open, "f" + n++), ""), 20);
+              await first;
+              clearInterval(interval);
+              // Nothing reads now. The watcher cannot read this directory and reports an error for it.
+              fs.mkdirSync(path.join(open, "late"), { mode: 0 });
+              console.log("the first event is read");
+              // An open watcher keeps the process alive.
+            })();
+            setTimeout(() => { console.log("hung"); process.exit(1); }, 4000).unref();
+          `,
+        );
+        expect({ stdout, stderr }).toEqual({ stdout: "the first event is read\n", stderr: "" });
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    test("a bad maxQueue or overflow rejects the first next(), before the signal is read", async () => {
+      // The signal is already aborted: when the options are valid, next() rejects with AbortError and no watcher starts.
+      function firstNext(options: object) {
+        const it = fs.promises.watch(testDir, { ...options, signal: AbortSignal.abort() } as any);
+        return it[Symbol.asyncIterator]()
+          .next()
+          .then(
+            () => "resolved",
+            error => `${error.code}: ${error.message}`,
+          );
+      }
+      const notANumber = (received: string) =>
+        `ERR_INVALID_ARG_TYPE: The "options.maxQueue" property must be of type number. Received ${received}`;
+      const outOfRange = (range: string, received: string) =>
+        `ERR_OUT_OF_RANGE: The value of "options.maxQueue" is out of range. It must be ${range}. Received ${received}`;
+      const notOneOf = (received: string) =>
+        `ERR_INVALID_ARG_VALUE: The property 'options.overflow' must be one of: 'ignore', 'error'. Received ${received}`;
+      const aborted = "ABORT_ERR: The operation was aborted";
+      expect({
+        "maxQueue '1'": await firstNext({ maxQueue: "1" }),
+        "maxQueue 1.5": await firstNext({ maxQueue: 1.5 }),
+        "maxQueue NaN": await firstNext({ maxQueue: NaN }),
+        "maxQueue Infinity": await firstNext({ maxQueue: Infinity }),
+        "maxQueue 2 ** 53": await firstNext({ maxQueue: 2 ** 53 }),
+        "maxQueue null": await firstNext({ maxQueue: null }),
+        "maxQueue Number.MAX_SAFE_INTEGER": await firstNext({ maxQueue: Number.MAX_SAFE_INTEGER }),
+        "maxQueue -1": await firstNext({ maxQueue: -1 }),
+        "maxQueue 0": await firstNext({ maxQueue: 0 }),
+        "maxQueue undefined": await firstNext({ maxQueue: undefined }),
+        "overflow 'throw'": await firstNext({ overflow: "throw" }),
+        "overflow 1": await firstNext({ overflow: 1 }),
+        "overflow null": await firstNext({ overflow: null }),
+        "overflow 'error'": await firstNext({ overflow: "error" }),
+        "overflow 'ignore'": await firstNext({ overflow: "ignore" }),
+        "overflow undefined": await firstNext({ overflow: undefined }),
+        "maxQueue '1' and overflow 'throw'": await firstNext({ maxQueue: "1", overflow: "throw" }),
+        // Bun differs for the next two off macOS and Windows. Node reads neither option for a recursive watch there.
+        "recursive and maxQueue '1'": await firstNext({ recursive: true, maxQueue: "1" }),
+        "recursive and overflow 'throw'": await firstNext({ recursive: true, overflow: "throw" }),
+      }).toEqual({
+        "maxQueue '1'": notANumber("type string ('1')"),
+        "maxQueue 1.5": outOfRange("an integer", "1.5"),
+        "maxQueue NaN": outOfRange("an integer", "NaN"),
+        "maxQueue Infinity": outOfRange("an integer", "Infinity"),
+        "maxQueue 2 ** 53": outOfRange(">= -9007199254740991 && <= 9007199254740991", "9_007_199_254_740_992"),
+        "maxQueue null": notANumber("null"),
+        "maxQueue Number.MAX_SAFE_INTEGER": aborted,
+        "maxQueue -1": aborted,
+        "maxQueue 0": aborted,
+        "maxQueue undefined": aborted,
+        "overflow 'throw'": notOneOf("'throw'"),
+        "overflow 1": notOneOf("1"),
+        "overflow null": notOneOf("null"),
+        "overflow 'error'": aborted,
+        "overflow 'ignore'": aborted,
+        "overflow undefined": aborted,
+        "maxQueue '1' and overflow 'throw'": notANumber("type string ('1')"),
+        "recursive and maxQueue '1'": notANumber("type string ('1')"),
+        "recursive and overflow 'throw'": notOneOf("'throw'"),
+      });
+    });
+
+    // Fails today: the native watcher checks `persistent` and `recursive` after `maxQueue` and `overflow`, so
+    // `options.maxQueue` is reported. Node checks `persistent` first.
+    test.todo("a bad persistent is reported before a bad maxQueue", async () => {
+      const it = fs.promises.watch(testDir, { persistent: "x", maxQueue: "y", signal: AbortSignal.abort() } as any);
+      await expect(it[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "options.persistent" property must be of type boolean. Received type string ('x')`,
+      });
+    });
+  });
 });
 
 describe("immediately closing", () => {

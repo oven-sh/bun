@@ -7120,8 +7120,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     IdentifierOpts::new()
                         .with_assign_target(assign_target)
                         .with_is_delete_target(is_delete_target)
-                        .with_is_call_target(Self::is_same_node(self.call_target, replaced.data))
-                        .with_is_template_tag(Self::is_same_node(self.template_tag, replaced.data))
+                        .with_is_call_target(is_same_node(self.call_target, replaced.data))
+                        .with_is_template_tag(is_same_node(self.template_tag, replaced.data))
                         .with_was_originally_identifier(true),
                 );
             }
@@ -7139,18 +7139,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
         Expr { data: value, loc }
-    }
-
-    /// Is `expr` the node `target` (`call_target`, `template_tag`) holds? `this` and `import.meta` have no identity.
-    fn is_same_node(target: js_ast::ExprData, expr: js_ast::ExprData) -> bool {
-        use js_ast::ExprData as D;
-        match (target, expr) {
-            (D::EDot(a), D::EDot(b)) => core::ptr::eq(&raw const *a, &raw const *b),
-            (D::EIndex(a), D::EIndex(b)) => core::ptr::eq(&raw const *a, &raw const *b),
-            (D::EIdentifier(a), D::EIdentifier(b)) => a.ref_.eql(b.ref_),
-            (D::EThis(_), D::EThis(_)) | (D::EImportMeta(_), D::EImportMeta(_)) => true,
-            _ => false,
-        }
     }
 
     /// esbuild's `instantiateDefineExpr`: resolves the first part of `name`, then builds property accesses.
@@ -7305,6 +7293,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
         false
+    }
+}
+
+/// Is `expr` the node `target` (`call_target`, `template_tag`) holds? `this` and `import.meta` have no identity.
+fn is_same_node(target: js_ast::ExprData, expr: js_ast::ExprData) -> bool {
+    use js_ast::ExprData as D;
+    match (target, expr) {
+        (D::EDot(a), D::EDot(b)) => core::ptr::eq(&raw const *a, &raw const *b),
+        (D::EIndex(a), D::EIndex(b)) => core::ptr::eq(&raw const *a, &raw const *b),
+        (D::EIdentifier(a), D::EIdentifier(b)) => a.ref_.eql(b.ref_),
+        (D::EThis(_), D::EThis(_)) | (D::EImportMeta(_), D::EImportMeta(_)) => true,
+        _ => false,
     }
 }
 

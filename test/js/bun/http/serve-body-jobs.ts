@@ -26,20 +26,29 @@ function lines(stream: ReadableStream<Uint8Array>) {
   };
 }
 
-type Lines = ReturnType<typeof lines>;
+type Fixture = {
+  // The next line that the fixture prints. Undefined once it has exited.
+  next(): Promise<string | undefined>;
+  // Writes a line to the stdin of the fixture.
+  say(line: string): void;
+  // Ends the stdin of the fixture: it stops its server and exits.
+  finish(): Promise<void>;
+};
 type Outcome = { order: string[] | undefined; response: "complete" | "cut off" };
 
 // What the fixture prints after its port: "backpressured", then what the probe recorded.
-async function probeOrder(stdout: Lines, release: () => void) {
+// A fixture that waits for the rest of the request body prints "waiting" before that.
+async function probeOrder(fixture: Fixture, release: () => void, sendRest?: () => Promise<void>) {
   for (;;) {
-    const line = await stdout.next();
-    if (line !== "backpressured") return line === undefined ? undefined : (JSON.parse(line) as string[]);
-    release();
+    const line = await fixture.next();
+    if (line === "waiting") await sendRest?.();
+    else if (line === "backpressured") release();
+    else return line === undefined ? undefined : (JSON.parse(line) as string[]);
   }
 }
 
 // Over HTTP/1.1 the client reads nothing until the server has filled the socket.
-async function overHttp1(port: number, stdout: Lines): Promise<Outcome> {
+async function overHttp1(port: number, fixture: Fixture, requestBody?: [string, string]): Promise<Outcome> {
   const socket = createConnection(port, "127.0.0.1");
   socket.pause();
   // A response that the server cuts off can end in a reset.
@@ -60,10 +69,25 @@ async function overHttp1(port: number, stdout: Lines): Promise<Outcome> {
     length += bytes.length;
     tail = Buffer.concat([tail, bytes.subarray(-5)]).subarray(-5);
   }
+  let reading = false;
+  function read() {
+    if (reading) return;
+    reading = true;
+    socket.on("data", received).resume();
+  }
   try {
     await once(socket, "connect");
-    socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-    const order = await probeOrder(stdout, () => socket.on("data", received).resume());
+    const [first, rest] = requestBody ?? ["", ""];
+    const request = requestBody ? `POST / HTTP/1.1\r\nContent-Length: ${first.length + rest.length}` : "GET / HTTP/1.1";
+    socket.write(`${request}\r\nHost: localhost\r\nConnection: close\r\n\r\n${first}`);
+    // If the response ends and the probe has not run, the fixture has nothing more to print.
+    closed.then(fixture.finish);
+    const order = await probeOrder(fixture, read, async () => {
+      // The rest of the body reaches the server before "sent" reaches the fixture.
+      await new Promise(written => socket.write(rest, written));
+      fixture.say("sent");
+    });
+    read();
     await closed;
     // A body with a declared length has that length. A chunked body ends with the last chunk.
     const declared = /^content-length: (\d+)$/im.exec(head ?? "");
@@ -76,21 +100,23 @@ async function overHttp1(port: number, stdout: Lines): Promise<Outcome> {
 
 // Over HTTP/2 the client opens no more than the initial flow-control window until the
 // dispatch of the request has returned.
-async function overHttp2(port: number, stdout: Lines): Promise<Outcome> {
+async function overHttp2(port: number, fixture: Fixture): Promise<Outcome> {
   const client = await RawH2.connect(port, false);
   try {
     client.headers(1, baseHeaders("/"));
-    const order = await probeOrder(stdout, () => {
+    const ended = client.body(1).then(
+      () => true,
+      () => false,
+    );
+    // If the response ends and the probe has not run, the fixture has nothing more to print.
+    ended.then(fixture.finish);
+    const order = await probeOrder(fixture, () => {
       const increment = Buffer.alloc(4);
       increment.writeUInt32BE(0x7fff0000);
       client.write(frame(T.WINDOW_UPDATE, 0, 0, increment));
       client.write(frame(T.WINDOW_UPDATE, 0, 1, increment));
     });
-    const ended = await client.body(1).then(
-      () => true,
-      () => false,
-    );
-    return { order, response: ended ? "complete" : "cut off" };
+    return { order, response: (await ended) ? "complete" : "cut off" };
   } finally {
     client.close();
   }
@@ -104,15 +130,21 @@ async function overHttp2(port: number, stdout: Lines): Promise<Outcome> {
  * transport takes, so that what the server writes later, it writes from the writable
  * callback. The client then reads the response to its end, and the fixture exits.
  *
- * `order` is what the probe recorded: the order in which its callbacks ran.
+ * `requestBody` is the body of the request, in the two parts that the client sends it in:
+ * the second part follows when the fixture waits for it.
+ *
+ * `order` is what the probe recorded: the order in which its callbacks ran. It is undefined
+ * if the probe did not run: the transport took the whole response, and nothing waited for
+ * the writable callback.
  */
 export async function serveBodyJobs(options: {
   body: string;
   probe: "statement" | "timer" | "store" | "turn";
   page?: string;
   http2?: boolean;
+  requestBody?: [string, string];
 }) {
-  const { body, probe, page = "", http2 = false } = options;
+  const { body, probe, page = "", http2 = false, requestBody } = options;
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "serve-body-jobs-fixture.ts"), body, probe, page, http2 ? "h2" : ""],
     env: bunEnv,
@@ -122,15 +154,27 @@ export async function serveBodyJobs(options: {
   });
   const stderr = proc.stderr.text();
   const stdout = lines(proc.stdout);
+  let finished: Promise<void> | undefined;
+  const fixture: Fixture = {
+    next: stdout.next,
+    say(line) {
+      proc.stdin.write(line + "\n");
+      proc.stdin.flush();
+    },
+    finish: () =>
+      (finished ??= (async () => {
+        try {
+          await proc.stdin.end();
+        } catch {
+          // The fixture is gone already.
+        }
+      })()),
+  };
   const port = Number(await stdout.next());
   // A fixture that printed no port has failed: the caller's assertion shows its stderr.
   const outcome: Outcome = port
-    ? await (http2 ? overHttp2 : overHttp1)(port, stdout)
+    ? await (http2 ? overHttp2(port, fixture) : overHttp1(port, fixture, requestBody))
     : { order: undefined, response: "cut off" };
-  try {
-    await proc.stdin.end();
-  } catch {
-    // The fixture is gone already.
-  }
+  await fixture.finish();
   return { ...outcome, stderr: await stderr, exitCode: await proc.exited };
 }

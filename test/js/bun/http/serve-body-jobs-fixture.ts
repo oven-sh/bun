@@ -9,6 +9,9 @@
 // has then returned, with the socket full, so every later write comes from the writable
 // callback.
 //
+// A request with a body is dispatched before its body. This prints "waiting" when the
+// socket is full, and "backpressured" when the client says that it has sent the rest.
+//
 // The server is a process of its own, so that the callbacks of the probe are the only ones
 // on its loop. Any other callback that the loop enters runs the checkpoint that the
 // writable callback did not run.
@@ -19,7 +22,8 @@ const [body, probe, page, transport] = process.argv.slice(2);
 
 const store = new AsyncLocalStorage<string>();
 const order: string[] = [];
-let dispatched = false;
+// The socket is full, and the callback that filled it has returned.
+let backpressured = false;
 let probed = false;
 let ws: ServerWebSocket<unknown> | undefined;
 // For the "turn" probe: the turn of the loop that arm() last armed a timer in, and the
@@ -80,9 +84,15 @@ function record(entry: string) {
 }
 
 function script() {
-  if (!dispatched || probed) return;
+  if (!backpressured || probed) return;
   probed = true;
   run();
+}
+
+function release() {
+  backpressured = true;
+  console.log("backpressured");
+  if (probe === "turn") arm();
 }
 
 function arm() {
@@ -101,7 +111,7 @@ const block = Buffer.from("<p>" + Buffer.alloc(256 * 1024 - 15, "a").toString() 
 // More than a socket takes from a server whose client reads nothing.
 const large = 16 * 1024 * 1024;
 
-const bodies: Record<string, () => Response> = {
+const bodies: Record<string, (request: Request) => Response> = {
   // The content handlers are the script. `page` has one <b> in each chunk that the file is
   // read in. Its size is `large`.
   rewriter: () => new HTMLRewriter().on("b", { element: script }).transform(new Response(Bun.file(page))),
@@ -122,12 +132,31 @@ const bodies: Record<string, () => Response> = {
     new HTMLRewriter()
       .on("b", {
         element() {
-          if (!dispatched || probed) return;
+          if (!backpressured || probed) return;
           script();
           throw new Error("thrown by the content handler");
         },
       })
       .transform(new Response(Bun.file(page))),
+  // The content handlers are the script, and the input is the body of the request. The
+  // first <b> answers with one write of more than the socket takes: the rewriter waits for
+  // the socket, and the rest of the body, with the second <b>, waits in the server for the
+  // rewriter. The handler of the second <b> then runs when the socket has drained. If the
+  // socket took the write whole, that handler runs when the rest arrives, before "sent".
+  "rewriter over the request body": request => {
+    let elements = 0;
+    return new HTMLRewriter()
+      .on("b", {
+        element(element) {
+          if (++elements === 1) {
+            element.after(Buffer.alloc(large, "a").toString(), { html: true });
+            console.log("waiting");
+          } else if (backpressured) script();
+          else console.log(JSON.stringify(["the socket did not fill"]));
+        },
+      })
+      .transform(new Response(request.body));
+  },
   // The content handlers are the script, and no file is read: the input is a direct stream.
   "rewriter over a direct stream": () =>
     new HTMLRewriter().on("b", { element: script }).transform(
@@ -196,7 +225,7 @@ const bodies: Record<string, () => Response> = {
     new Response(
       new ReadableStream({
         pull(controller) {
-          if (dispatched && !probed) {
+          if (backpressured && !probed) {
             script();
             throw new Error("thrown by pull()");
           }
@@ -276,12 +305,9 @@ const server = Bun.serve({
       return server.upgrade(request) ? undefined : new Response(null, { status: 400 });
     }
     // Runs after the dispatch of this request, so after the render stopped at a full socket.
-    setImmediate(() => {
-      dispatched = true;
-      console.log("backpressured");
-      if (probe === "turn") arm();
-    });
-    return bodies[body]();
+    // A request with a body fills the socket after its dispatch: see "waiting".
+    if (request.method === "GET") setImmediate(release);
+    return bodies[body](request);
   },
 });
 
@@ -294,5 +320,7 @@ if (probe === "statement") {
 }
 console.log(server.port);
 
-// The test closes stdin when it has read the response.
-Bun.stdin.text().then(() => server.stop(true));
+// The test writes "sent" when it has sent the rest of a request body. It closes stdin when
+// the response has ended.
+for await (const line of console) if (line === "sent") release();
+server.stop(true);

@@ -2386,7 +2386,8 @@ describe("jobs of the script that the socket's writable callback runs for a rewr
   const completed = order => ({ order, response: "complete", stderr: "", exitCode: 0 });
   const afterTheScript = ["script", "close", "rest of script", "nextTick", "microtask"];
 
-  // These read no file and use no timer, so they run on every platform.
+  // These read no file and use no timer, so they run on every platform. Their input comes
+  // in blocks until the socket is full, so it does not matter how much one write takes.
   it.concurrent("do not run inside a call that a handler makes", async () => {
     expect(await serveBodyJobs({ body: "rewriter over a direct stream", probe: "statement" })).toEqual(
       completed(afterTheScript),
@@ -2398,6 +2399,21 @@ describe("jobs of the script that the socket's writable callback runs for a rewr
       completed(afterTheScript),
     );
   });
+
+  // The first handler fills the socket with one write. Winsock takes a write of any size
+  // whole, so one write does not fill a socket on Windows.
+  it.concurrent.skipIf(isWindows)(
+    "do not run inside a call that a handler makes when the input is the request body",
+    async () => {
+      expect(
+        await serveBodyJobs({
+          body: "rewriter over the request body",
+          probe: "statement",
+          requestBody: ["<b></b>", "<b></b>"],
+        }),
+      ).toEqual(completed(afterTheScript));
+    },
+  );
 
   // On Windows, libuv runs the timers of a turn before it polls: a timer that comes due in
   // a callback is not the next callback of the loop there.

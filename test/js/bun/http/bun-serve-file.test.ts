@@ -1,8 +1,9 @@
-import type { Server } from "bun";
+import type { BunFile, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles, tls } from "harness";
 import { mkfifo } from "mkfifo";
 import {
+  appendFileSync,
   closeSync,
   constants,
   openSync,
@@ -167,6 +168,7 @@ describe("Bun.file in serve routes", () => {
         void f.size;
         return new Response(f);
       },
+      "/range-whole-slice": () => new Response(Bun.file(join(tempDir, "partial.txt")).slice(0, 16)),
       "/slice-escape": () => new Response(Bun.file(join(tempDir, "bytes256.bin")).slice(0, 100)),
       "/range-custom-headers": () =>
         new Response(Bun.file(join(tempDir, "partial.txt")), {
@@ -1348,9 +1350,16 @@ describe("Bun.file in serve routes", () => {
 
   describe.concurrent("Range via fetch handler edge cases", () => {
     it("Range works after JS reads file.size before constructing Response", async () => {
-      // Reading .size resolves the Blob.max_size sentinel; the Range guard must
-      // also accept original_size == stat_size for this case.
+      // Reading .size leaves the Blob.max_size sentinel in the handle: it is still the whole file.
       const res = await fetch(new URL("/range-after-size", server.url), { headers: { Range: "bytes=4-7" } });
+      expect(res.status).toBe(206);
+      expect(res.headers.get("content-range")).toBe("bytes 4-7/16");
+      expect(await res.text()).toBe("4567");
+    });
+
+    it("Range works for a slice(0, size) that spans the file", async () => {
+      // The window has offset 0 and the size of the file, so the Range guard accepts original_size == stat_size.
+      const res = await fetch(new URL("/range-whole-slice", server.url), { headers: { Range: "bytes=4-7" } });
       expect(res.status).toBe(206);
       expect(res.headers.get("content-range")).toBe("bytes 4-7/16");
       expect(await res.text()).toBe("4567");
@@ -1904,6 +1913,84 @@ test.skipIf(!isLinux)("Response(Bun.file(fifo)) ends the body when the EOF arriv
   closeSync(writer);
   const last = await reader.read();
   expect({ first: Buffer.from(first.value!).toString(), done: last.done }).toEqual({ first: "hello", done: true });
+});
+
+// `.size` and exists() ask the file system for the size. The answer is not the length of a later response.
+describe.concurrent("a Bun.file() that was asked for its size before its file changed", () => {
+  const get = async (server: Server<undefined>, init?: RequestInit, pathname = "/") => {
+    const response = await fetch(new URL(pathname, server.url), init);
+    return {
+      status: response.status,
+      contentLength: response.headers.get("content-length"),
+      contentRange: response.headers.get("content-range"),
+      body: await response.text(),
+    };
+  };
+
+  describe.each([
+    [".size", (handle: BunFile) => handle.size],
+    ["await exists()", (handle: BunFile) => handle.exists()],
+  ] as const)("%s", (_ask, ask) => {
+    // The range of "grows" starts past the size that the handle was asked at.
+    it.each([
+      ["grows", "1234", (path: string) => appendFileSync(path, "5678"), "12345678", [4, 7]],
+      ["shrinks", "12345678", (path: string) => writeFileSync(path, "12"), "12", [0, 1]],
+    ] as const)("the file %s", async (_change, before, change, after, [first, last]) => {
+      using dir = tempDir("serve-asked-handle", { "file.txt": before });
+      const path = join(String(dir), "file.txt");
+      const handle = Bun.file(path);
+      await ask(handle);
+      change(path);
+      await using server = Bun.serve({
+        port: 0,
+        routes: { "/route": handle, "/route-response": new Response(handle) },
+        fetch: () => new Response(handle),
+      });
+
+      const expected = {
+        whole: { status: 200, contentLength: String(after.length), contentRange: null, body: after },
+        head: { status: 200, contentLength: String(after.length), contentRange: null, body: "" },
+        range: {
+          status: 206,
+          contentLength: String(last - first + 1),
+          contentRange: `bytes ${first}-${last}/${after.length}`,
+          body: after.slice(first, last + 1),
+        },
+      };
+      const got: Record<string, typeof expected> = {};
+      for (const pathname of ["/handler", "/route", "/route-response"]) {
+        got[pathname] = {
+          whole: await get(server, undefined, pathname),
+          head: await get(server, { method: "HEAD" }, pathname),
+          range: await get(server, { headers: { Range: `bytes=${first}-${last}` } }, pathname),
+        };
+      }
+      expect(got).toEqual({ "/handler": expected, "/route": expected, "/route-response": expected });
+    });
+
+    it("the file behind a Bun.file(fd) grows", async () => {
+      const before = Buffer.alloc(100_000, "a").toString();
+      const appended = Buffer.alloc(100_000, "b").toString();
+      using dir = tempDir("serve-asked-fd", { "log.txt": before });
+      const path = join(String(dir), "log.txt");
+      const fd = openSync(path, "r");
+      try {
+        const handle = Bun.file(fd);
+        await ask(handle);
+        appendFileSync(path, appended);
+        await using server = Bun.serve({ port: 0, fetch: () => new Response(handle) });
+
+        const { status, contentLength, body } = await get(server);
+        expect({ status, contentLength, same: body === before + appended }).toEqual({
+          status: 200,
+          contentLength: "200000",
+          same: true,
+        });
+      } finally {
+        closeSync(fd);
+      }
+    });
+  });
 });
 
 describe.concurrent("Bun.file() body that ends short of its Content-Length", () => {

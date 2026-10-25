@@ -835,6 +835,44 @@ describe("Bun.build", () => {
     }
   });
 
+  // `artifact.size` asks the file system. The answer is not the byte budget of what the artifact reads or receives.
+  test("a BuildArtifact that was asked for its size reads, takes a copy and is served as its file is now", async () => {
+    using dir = tempDir("build-artifact-asked", { "in.js": "console.log('hello from the entry point');\n" });
+    const build = async (name: string) =>
+      (await Bun.build({ entrypoints: [join(String(dir), "in.js")], outdir: join(String(dir), name) })).outputs[0];
+
+    const read = await build("read");
+    const built = readFileSync(read.path, "utf8");
+    expect(read.size).toBe(built.length);
+    const longer = `/* ${Buffer.alloc(80, "L").toString()} */\n${built}`;
+    writeFileSync(read.path, longer);
+
+    const copied = await build("copy");
+    expect(copied.size).toBe(built.length);
+    writeFileSync(join(String(dir), "longer.js"), longer);
+    const written = await Bun.write(copied, Bun.file(join(String(dir), "longer.js")));
+
+    await using server = Bun.serve({ port: 0, fetch: () => new Response(read) });
+    const response = await fetch(server.url);
+    expect({
+      text: await read.text(),
+      stream: await new Response(read.stream()).text(),
+      written,
+      onDisk: readFileSync(copied.path, "utf8"),
+      status: response.status,
+      contentLength: response.headers.get("content-length"),
+      served: await response.text(),
+    }).toEqual({
+      text: longer,
+      stream: longer,
+      written: longer.length,
+      onDisk: longer,
+      status: 200,
+      contentLength: String(longer.length),
+      served: longer,
+    });
+  });
+
   test("BuildArtifact properties + entry.naming", async () => {
     Bun.gc(true);
     const outdir = tempDirWithFiles("build-artifact-properties-entry-naming", {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tmpdirSync } from "harness";
+import { isLinux, tmpdirSync } from "harness";
 
 import { ok } from "node:assert/strict";
 
@@ -212,6 +212,12 @@ describe("WebAssembly.compileStreaming", () => {
   test("doesn't compile a response that isn't valid WebAssembly", async () => {
     const response = await fetch("data:application/wasm,This is not actually Wasm");
     expect(WebAssembly.compileStreaming(response)).rejects.toBeInstanceOf(WebAssembly.CompileError);
+  });
+
+  // /proc/version has an st_size of 0 and is not Wasm. This error shows that its bytes reached the compiler.
+  test.skipIf(!isLinux)("reads a procfs Bun.file() response to EOF", async () => {
+    const response = new Response(Bun.file("/proc/version"), { headers: { "Content-Type": "application/wasm" } });
+    expect(WebAssembly.compileStreaming(response)).rejects.toThrow("module doesn't start with '\\0asm'");
   });
 });
 

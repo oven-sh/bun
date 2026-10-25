@@ -12,7 +12,7 @@ import {
   withoutAggressiveGC,
 } from "harness";
 import { once } from "node:events";
-import { closeSync, existsSync, openSync, readFileSync, truncateSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, truncateSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { createServer as createTlsServer } from "node:tls";
 import { tmpdir } from "os";
@@ -346,6 +346,54 @@ test("fetch() releases the descriptor it duplicates for a Bun.file(fd) body", as
     expect(lowestFreeFd() - before).toBeLessThan(16);
   } finally {
     closeSync(fd);
+  }
+});
+
+// exists(), `.size` and structuredClone() of a file that is missing find no size. That is not a body of 0 bytes once the file exists.
+describe("a Bun.file() that was asked before its file existed uploads the file", () => {
+  const asks: Record<string, (file: ReturnType<typeof Bun.file>) => unknown> = {
+    "exists()": file => file.exists(),
+    ".size": file => file.size,
+    "structuredClone()": file => structuredClone(file),
+  };
+  // Plain http sends a file of 32 KiB or more with sendfile where it can. Every other route reads it into memory, in two steps from 256 KiB on.
+  const routes: [string, number][] = [
+    ["http", 1000],
+    ["http", 64 * 1024],
+    ["https", 64 * 1024],
+    ["https", 300 * 1024],
+  ];
+  for (const [scheme, fileSize] of routes) {
+    test.concurrent.each(Object.keys(asks))(`%s, then a file of ${fileSize} bytes over ${scheme}`, async asker => {
+      using dir = tempDir("fetch-file-asked-upload", {});
+      const p = join(String(dir), "f.txt");
+      const seen: { contentLength: string | null; received: number }[] = [];
+      await using server = Bun.serve({
+        port: 0,
+        development: false,
+        tls: scheme === "https" ? tls : undefined,
+        async fetch(req) {
+          seen.push({
+            contentLength: req.headers.get("content-length"),
+            received: (await req.arrayBuffer()).byteLength,
+          });
+          return new Response("ok");
+        },
+      });
+      const init = { tls: { ca: tls.cert } };
+
+      const asked = Bun.file(p);
+      await asks[asker](asked);
+      writeFileSync(p, Buffer.alloc(fileSize, "a"));
+
+      expect(await (await fetch(server.url, { ...init, method: "POST", body: asked })).text()).toBe("ok");
+      expect(seen).toEqual([{ contentLength: String(fileSize), received: fileSize }]);
+
+      // A handle with a file behind it is a body, so GET refuses it. The asked handle passed as "no body".
+      expect(async () => {
+        await fetch(server.url, { ...init, method: "GET", body: asked });
+      }).toThrow("fetch() request with GET/HEAD method cannot have body.");
+    });
   }
 });
 

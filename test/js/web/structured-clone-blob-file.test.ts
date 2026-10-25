@@ -847,4 +847,56 @@ describe("structuredClone with Blob and File", () => {
       expect(deltaMiB).toBeLessThan(isASAN ? 128 : 32);
     }, 30_000);
   });
+
+  // A failed stat is not a size: the record of a handle that was asked while its file was missing carries no window.
+  test.each([
+    ["structuredClone()", (file: Blob) => structuredClone(file)],
+    ["bun:jsc deserialize(serialize())", (file: Blob) => deserialize(serialize(file)) as Blob],
+    ["node:v8 deserialize(serialize())", (file: Blob) => v8.deserialize(Buffer.from(serialize(file))) as Blob],
+  ])("%s of a Bun.file() that was asked while its file was missing reads the file once it exists", async (_, clone) => {
+    using dir = tempDir("blob-clone-asked-missing", {});
+    const path = join(String(dir), "later.txt");
+    const file = Bun.file(path);
+    expect([file.size, await file.exists()]).toEqual([0, false]);
+    const cloned = clone(file);
+    await Bun.write(path, "hello world");
+    expect({ text: await cloned.text(), size: cloned.size, head: await cloned.slice(0, 5).text() }).toEqual({
+      text: "hello world",
+      size: 11,
+      head: "hello",
+    });
+  });
+
+  // The offset of a file record is the sender's. One past the end of the file is an empty view, also where `.size` answers from the length that a stat found.
+  test("a file-backed Blob whose offset is past the end of its file is empty", async () => {
+    using dir = tempDir("blob-deser-offset", { "probe.txt": "0123456789abcdefghij" });
+    const path = join(String(dir), "probe.txt");
+    // Plant a distinctive offset and window end so both u64 fields can be located, then overwrite them.
+    const start = 0x0badf00d1234n;
+    const end = 0x0badf00d9876n;
+    const good = Buffer.from(serialize(Bun.file(path).slice(Number(start), Number(end))));
+    const u64 = (value: bigint) => {
+      const bytes = Buffer.alloc(8);
+      bytes.writeBigUInt64LE(value);
+      return bytes;
+    };
+    const offsetAt = good.indexOf(u64(start));
+    const sizeAt = good.indexOf(u64(end - start));
+    expect(offsetAt).toBeGreaterThan(0);
+    expect(sizeAt).toBeGreaterThan(offsetAt);
+    // An offset of 1000 in a file of 20 bytes, and a size that is not known.
+    const crafted = Buffer.from(good);
+    crafted.writeBigUInt64LE(1000n, offsetAt);
+    crafted.writeBigUInt64LE(1n << 63n, sizeAt);
+
+    for (const de of [deserialize, (bytes: Buffer) => v8.deserialize(bytes)]) {
+      const blob = de(crafted);
+      expect({
+        size: [blob.size, blob.size],
+        text: await blob.text(),
+        slice: await blob.slice(0, 4).text(),
+        tail: await blob.slice(-4).text(),
+      }).toEqual({ size: [0, 0], text: "", slice: "", tail: "" });
+    }
+  });
 });

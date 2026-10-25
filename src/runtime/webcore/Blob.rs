@@ -117,6 +117,35 @@ pub(crate) use bun_jsc::webcore_types::{
 ///    keeps its window's end across structuredClone/postMessage
 const SERIALIZATION_VERSION: u8 = 4;
 
+/// Where a read of a file view stops.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReadLimit {
+    /// At EOF: a view that nothing asked for its size.
+    ToEof,
+    /// At the size that the reader's own `fstat` finds for a regular file, so no `read()` looks for EOF: a view with `BlobFlags::SIZE_ASKED`.
+    SizeAtOpen,
+    /// After this many bytes: a `slice()`.
+    Window(SizeType),
+}
+
+impl ReadLimit {
+    pub(crate) fn of(blob: &Blob) -> ReadLimit {
+        match blob.size.get() {
+            MAX_SIZE if blob.size_asked() => ReadLimit::SizeAtOpen,
+            MAX_SIZE => ReadLimit::ToEof,
+            size => ReadLimit::Window(size),
+        }
+    }
+
+    /// The byte budget that is known before the file is open. `MAX_SIZE` when there is none.
+    pub(crate) fn window(self) -> SizeType {
+        match self {
+            ReadLimit::Window(size) => size,
+            ReadLimit::ToEof | ReadLimit::SizeAtOpen => MAX_SIZE,
+        }
+    }
+}
+
 pub(crate) use crate::generated_bindgen::blob::js_Blob as js;
 use crate::generated_bindgen::blob::{
     BlobOrBuildArtifact, BlobType, BunFileOptions, BunWriteOptions,
@@ -437,7 +466,7 @@ impl BlobExt for Blob {
                 cx.context(),
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
-                self.size.get(),
+                ReadLimit::of(self),
                 handler,
             );
             return promise_value;
@@ -448,7 +477,7 @@ impl BlobExt for Blob {
             let file_read = read_file::ReadFile::create(
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
-                self.size.get(),
+                ReadLimit::of(self),
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
             // Create the Promise only after the store has been ref()'d.
@@ -671,7 +700,7 @@ impl BlobExt for Blob {
                 cx.context(),
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
-                self.size.get(),
+                ReadLimit::of(self),
                 NewInternalReadFileHandler::<C, F>::completion(ctx),
             );
         }
@@ -680,7 +709,7 @@ impl BlobExt for Blob {
             let file_read = read_file::ReadFile::create(
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
-                self.size.get(),
+                ReadLimit::of(self),
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
             read_file::ReadFile::schedule(

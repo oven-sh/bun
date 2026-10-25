@@ -43,8 +43,8 @@ pub struct FileReader {
     pub(crate) fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub(crate) start_offset: Option<usize>,
-    /// Length of the slice window at `start_offset`; the reader is limited to it when it is started and ends the stream there. Read-only after init.
-    pub(crate) max_size: Option<usize>,
+    /// Where the stream ends, counted from `start_offset`: the reader is limited to it when it is started. `to_any_blob` gives the Blob its `size` and its flag back from it. Read-only after init.
+    pub(crate) limit: blob::ReadLimit,
     pub(crate) started: Cell<bool>,
     pub(crate) waiting_for_on_reader_done: Cell<bool>,
     pub(crate) event_loop: Cell<EventLoopHandle>,
@@ -71,7 +71,7 @@ impl Default for FileReader {
             pending_value: JsCell::new(Strong::empty()),
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
-            max_size: None,
+            limit: blob::ReadLimit::ToEof,
             started: Cell::new(false),
             waiting_for_on_reader_done: Cell::new(false),
             // Sentinel only; never dispatched (callers must overwrite before use).
@@ -100,6 +100,8 @@ pub(crate) struct OpenedFileBlob {
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
+    /// The size of a regular file at this open, for `ReadLimit::SizeAtOpen`.
+    pub(crate) file_size: Option<usize>,
 }
 
 impl Default for OpenedFileBlob {
@@ -110,6 +112,7 @@ impl Default for OpenedFileBlob {
             nonblocking: true,
             #[cfg(not(windows))]
             file_type: FileType::File,
+            file_size: None,
         }
     }
 }
@@ -120,7 +123,10 @@ unsafe extern "C" {
 }
 
 impl Lazy {
-    pub(crate) fn open_file_blob(file: &mut blob::store::File) -> sys::Result<OpenedFileBlob> {
+    pub(crate) fn open_file_blob(
+        file: &mut blob::store::File,
+        limit: blob::ReadLimit,
+    ) -> sys::Result<OpenedFileBlob> {
         let mut this = OpenedFileBlob {
             fd: Fd::INVALID,
             ..Default::default()
@@ -211,6 +217,9 @@ impl Lazy {
 
             if sys::S::ISREG(mode) {
                 is_nonblocking = false;
+                if limit == blob::ReadLimit::SizeAtOpen && stat.st_size > 0 {
+                    this.file_size = usize::try_from(stat.st_size).ok();
+                }
             }
 
             // pollable: `S.ISFIFO(mode) or S.ISSOCK(mode)`
@@ -237,6 +246,14 @@ impl Lazy {
 
             if this.nonblocking && this.file_type == FileType::Pipe {
                 this.file_type = FileType::NonblockingPipe;
+            }
+        }
+
+        // Windows runs no `fstat` at open: one size query, only for a file that the earlier `stat` found regular.
+        #[cfg(windows)]
+        if limit == blob::ReadLimit::SizeAtOpen && file.seekable == Some(true) {
+            if let Ok(size @ 1..) = sys::get_file_size(fd) {
+                this.file_size = usize::try_from(size).ok();
             }
         }
 
@@ -305,6 +322,7 @@ impl FileReader {
         let mut pollable = false;
         #[cfg(unix)]
         let mut file_type = FileType::File;
+        let mut file_size: Option<usize> = None;
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
         // on every path through the original `if let` body) so the `RefPtr<Store>`
         // is owned locally and the cell borrow is released immediately.
@@ -315,7 +333,7 @@ impl FileReader {
                     panic!("Invalid state in FileReader: expected file ")
                 }
                 blob::store::Data::File(file) => {
-                    let open_result = Lazy::open_file_blob(file);
+                    let open_result = Lazy::open_file_blob(file, self.limit);
                     // drop the RefPtr<Store>; `lazy` was already cleared above
                     drop(store);
                     match open_result {
@@ -327,6 +345,7 @@ impl FileReader {
                             debug_assert!(opened.fd.is_valid());
                             self.fd.set(opened.fd);
                             pollable = opened.pollable;
+                            file_size = opened.file_size;
                             #[cfg(unix)]
                             {
                                 file_type = opened.file_type;
@@ -388,7 +407,11 @@ impl FileReader {
                 self.parent_const().increment_count();
                 self.waiting_for_on_reader_done.set(true);
             }
-            self.reader().set_limit(self.max_size);
+            self.reader().set_limit(match self.limit {
+                blob::ReadLimit::Window(size) => Some(size as usize),
+                blob::ReadLimit::SizeAtOpen => file_size,
+                blob::ReadLimit::ToEof => None,
+            });
             let start_result = if let Some(offset) = self.start_offset {
                 self.reader()
                     .start_file_offset(self.fd.get(), pollable, offset)

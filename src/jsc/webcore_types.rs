@@ -119,7 +119,7 @@ bitflags::bitflags! {
     pub struct BlobFlags: u8 {
         /// It was created via the `File` constructor.
         const IS_JSDOM_FILE = 1 << 0;
-        /// A `stat` answered this unsliced `Bun.file()` view when `.size`, `exists()`, a structured clone or a body stream asked for its size. The answer is the length that the store caches. `size` stays `MAX_SIZE`, so the answer is not the byte budget of a read or a copy. It places `slice()` and a structured clone. It is read only while `size` is `MAX_SIZE`.
+        /// A `stat` answered this unsliced `Bun.file()` view when `.size`, `exists()`, a structured clone or a body stream asked for its size. The answer is the length that the store caches. `size` stays `MAX_SIZE`, so the answer is not the byte budget of a read or a copy. It places `slice()` and a structured clone, and a `FileReader` holds it as `ReadLimit::SizeAtOpen`. It is read only while `size` is `MAX_SIZE`.
         const SIZE_ASKED = 1 << 1;
     }
 }

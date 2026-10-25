@@ -13,7 +13,7 @@ use crate::webcore::blob::ClosingState;
 #[cfg(windows)]
 use crate::webcore::blob::store::Bytes as ByteStore;
 use crate::webcore::blob::store::{Data, File as FileStore};
-use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Store};
+use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, ReadLimit, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
@@ -281,8 +281,9 @@ pub(crate) struct ReadFile {
     pub(crate) store: Option<RefPtr<Store>>,
     #[cfg(not(windows))]
     pub offset: SizeType,
+    /// `SizeAtOpen` becomes a `Window` of the size that this read's `fstat` finds.
     #[cfg(not(windows))]
-    pub(crate) max_length: SizeType,
+    pub(crate) limit: ReadLimit,
     #[cfg(not(windows))]
     pub(crate) total_size: SizeType,
     pub(crate) opened_fd: Fd,
@@ -369,14 +370,14 @@ impl ReadFile {
     pub(crate) fn create(
         store: RefPtr<Store>,
         off: SizeType,
-        max_len: SizeType,
+        limit: ReadLimit,
     ) -> Result<ReadFile, Error> {
         let file_store = store.data.as_file().clone();
         let read_file = ReadFile {
             file_store,
             store: Some(store),
             offset: off,
-            max_length: max_len,
+            limit,
             total_size: MAX_SIZE,
             opened_fd: Fd::INVALID,
             read_off: 0,
@@ -738,11 +739,14 @@ impl ReadFile {
             SizeType::try_from((stat.st_size as i64).max(0).min(MAX_SIZE as i64)).unwrap();
 
         if stat.st_size > 0 && !self.could_block {
-            self.size = self.total_size.min(self.max_length);
+            if self.limit == ReadLimit::SizeAtOpen {
+                self.limit = ReadLimit::Window(self.total_size);
+            }
+            self.size = self.total_size.min(self.limit.window());
             // read up to 4k at a time if
             // they didn't explicitly set a size and we're reading from something that's not a regular file
         } else if stat.st_size == 0 && self.could_block {
-            self.size = self.max_length.min(4096);
+            self.size = self.limit.window().min(4096);
         }
 
         if self.offset > 0 {
@@ -836,8 +840,12 @@ impl ReadFile {
         // held as a safe `&mut [u8]` across the `&mut self` call.
         let mut buffer = core::mem::take(&mut self.buffer);
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-            let (use_stack, buf) =
-                Self::remaining_buffer(&mut buffer, stack_buffer, self.max_length, self.read_off);
+            let (use_stack, buf) = Self::remaining_buffer(
+                &mut buffer,
+                stack_buffer,
+                self.limit.window(),
+                self.read_off,
+            );
 
             if !buf.is_empty() && self.errno.is_none() && !self.read_eof {
                 let mut read_amount: usize = 0;
@@ -862,13 +870,12 @@ impl ReadFile {
                     // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
                     unsafe { bun_core::vec::commit_spare(&mut buffer, read_amount) };
                 }
-                // - If they DID set a max length, we should stop
-                //   reading after that.
+                // - A `Window` stops after its length, and so does a
+                //   `SizeAtOpen` that found the size of a regular file.
                 //
-                // - If they DID NOT set a max_length, then it will
-                //   be Blob.max_size which is an impossibly large
-                //   amount to read.
-                if !self.read_eof && buffer.len() >= self.max_length as usize {
+                // - `ToEof` has Blob.max_size, which is an impossibly
+                //   large amount to read: it ends at EOF.
+                if !self.read_eof && buffer.len() >= self.limit.window() as usize {
                     break;
                 }
 
@@ -944,7 +951,8 @@ pub(crate) struct ReadFileUV<'a> {
     pub(crate) byte_store: ByteStore,
     pub(crate) store: RefPtr<Store>,
     pub offset: SizeType,
-    pub(crate) max_length: SizeType,
+    /// As `ReadFile::limit`.
+    pub(crate) limit: ReadLimit,
     pub(crate) total_size: SizeType,
     pub(crate) opened_fd: Fd,
     pub(crate) read_len: SizeType,
@@ -1044,7 +1052,7 @@ impl<'a> ReadFileUV<'a> {
         context: &bun_jsc::ScriptExecutionContext,
         store: RefPtr<Store>,
         off: SizeType,
-        max_len: SizeType,
+        limit: ReadLimit,
         handler: *mut C,
     ) {
         Self::start_with_ctx(
@@ -1052,7 +1060,7 @@ impl<'a> ReadFileUV<'a> {
             context,
             store,
             off,
-            max_len,
+            limit,
             ReadFileCompletionFns::of(handler),
         )
     }
@@ -1064,7 +1072,7 @@ impl<'a> ReadFileUV<'a> {
         context: &bun_jsc::ScriptExecutionContext,
         store: RefPtr<Store>,
         off: SizeType,
-        max_len: SizeType,
+        limit: ReadLimit,
         completion: ReadFileCompletionFns,
     ) {
         log!("ReadFileUV.start");
@@ -1082,7 +1090,7 @@ impl<'a> ReadFileUV<'a> {
             byte_store: ByteStore::default(),
             store, // store.ref() — Arc clone owned here
             offset: off,
-            max_length: max_len,
+            limit,
             total_size: MAX_SIZE,
             opened_fd: Fd::INVALID,
             read_len: 0,
@@ -1256,11 +1264,14 @@ impl<'a> ReadFileUV<'a> {
         log!("is_regular_file: {}", this.is_regular_file);
 
         if stat.size() > 0 && this.is_regular_file {
-            this.size = this.total_size.min(this.max_length);
+            if this.limit == ReadLimit::SizeAtOpen {
+                this.limit = ReadLimit::Window(this.total_size);
+            }
+            this.size = this.total_size.min(this.limit.window());
         } else if stat.size() == 0 && !this.is_regular_file {
             // read up to 4k at a time if they didn't explicitly set a size and
             // we're reading from something that's not a regular file.
-            this.size = this.max_length.min(4096);
+            this.size = this.limit.window().min(4096);
         }
 
         if this.offset > 0 {
@@ -1316,7 +1327,7 @@ impl<'a> ReadFileUV<'a> {
         // libuv writes into spare capacity before any read; callers only need
         // ptr/len, so expose the spare slice directly instead of materialising
         // a `&mut [u8]` over uninitialized bytes.
-        let limit = (self.max_length.saturating_sub(self.read_off)) as usize;
+        let limit = (self.limit.window().saturating_sub(self.read_off)) as usize;
         let spare = self.buffer.spare_capacity_mut();
         let take = spare.len().min(limit);
         &mut spare[..take]

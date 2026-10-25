@@ -221,8 +221,10 @@ impl ReadableStream {
                 if let Some(offset) = blobby.start_offset {
                     blob.offset.set(offset as webcore::blob::SizeType);
                 }
-                if let Some(size) = blobby.max_size {
-                    blob.size.set(size as webcore::blob::SizeType);
+                match blobby.limit {
+                    webcore::blob::ReadLimit::Window(size) => blob.size.set(size),
+                    webcore::blob::ReadLimit::SizeAtOpen => blob.set_size_asked(),
+                    webcore::blob::ReadLimit::ToEof => {}
                 }
                 // it should be lazy, file shouldn't have opened yet.
                 debug_assert!(!blobby.started.get());
@@ -552,11 +554,7 @@ impl ReadableStream {
                             cx.vm().as_mut().event_loop().cast(),
                         )),
                         start_offset: Some(blob.offset.get() as usize),
-                        max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
-                            Some(blob.size.get() as usize)
-                        } else {
-                            None
-                        },
+                        limit: webcore::blob::ReadLimit::of(blob),
                         lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
                     },

@@ -2884,32 +2884,28 @@ describe.concurrent("a .npmrc of many credential lines is read in time in propor
             `//other${i}.example.com/:_authToken=token${i}\n`,
         ),
     ],
-  ])(
-    "%s",
-    async (_, npmrc) => {
-      using dir = tempDir("npmrc-many-credentials", {
-        ".npmrc": npmrc(),
-        "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
-        "home/.gitkeep": "",
-      });
-      const home = join(String(dir), "home");
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "pm", "bin"],
-        cwd: String(dir),
-        env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
-        stdout: "pipe",
-        stderr: "pipe",
-        stdin: "ignore",
-        timeout: 30_000,
-        killSignal: "SIGKILL",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
-      // CPU time, in seconds. Wall-clock time means little on a busy machine.
-      expect(Number(proc.resourceUsage()!.cpuTime.total) / 1e6).toBeLessThan(isDebug || isASAN ? 4 : 1);
-      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    },
-    60_000,
-  );
+  ])("%s", async (_, npmrc) => {
+    using dir = tempDir("npmrc-many-credentials", {
+      ".npmrc": npmrc(),
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "home/.gitkeep": "",
+    });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "bin"],
+      cwd: String(dir),
+      env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    // CPU time, in seconds. Wall-clock time means little on a busy machine.
+    expect(Number(proc.resourceUsage()!.cpuTime.total) / 1e6).toBeLessThan(isDebug || isASAN ? 4 : 1);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
 });
 
 describe("--registry override", () => {

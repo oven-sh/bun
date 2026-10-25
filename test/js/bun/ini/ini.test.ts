@@ -854,39 +854,35 @@ describe.concurrent("a large .npmrc is read in time in proportion to its lines",
         numbered(lines / 2, i => `key${i} = value\n`),
     ],
     ["two sections that take turns", () => numbered(lines / 2, i => `[a]\nkey${i} = value\n[b]\nkey${i} = value\n`)],
-  ])(
-    "%s",
-    async (_, npmrc) => {
-      using dir = tempDir("ini-large-npmrc", {
-        ".npmrc": npmrc(),
-        "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
-        "home/.gitkeep": "",
-      });
-      const home = join(String(dir), "home");
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "pm", "bin"],
-        cwd: String(dir),
-        // `bun pm bin` reads the `.npmrc` of the project, and no other: `home` has none.
-        env: {
-          ...bunEnv,
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: home,
-          NPM_CONFIG_USERCONFIG: undefined,
-          npm_config_userconfig: undefined,
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 30_000,
-        killSignal: "SIGKILL",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
-      // CPU time, in seconds. Wall-clock time means little on a busy machine.
-      expect(Number(proc.resourceUsage()!.cpuTime.total) / 1e6).toBeLessThan(isDebug || isASAN ? 4 : 1);
-      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    },
-    60_000,
-  );
+  ])("%s", async (_, npmrc) => {
+    using dir = tempDir("ini-large-npmrc", {
+      ".npmrc": npmrc(),
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "home/.gitkeep": "",
+    });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "bin"],
+      cwd: String(dir),
+      // `bun pm bin` reads the `.npmrc` of the project, and no other: `home` has none.
+      env: {
+        ...bunEnv,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: home,
+        NPM_CONFIG_USERCONFIG: undefined,
+        npm_config_userconfig: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    // CPU time, in seconds. Wall-clock time means little on a busy machine.
+    expect(Number(proc.resourceUsage()!.cpuTime.total) / 1e6).toBeLessThan(isDebug || isASAN ? 4 : 1);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
 });
 
 const wtf = {

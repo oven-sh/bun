@@ -4,7 +4,7 @@ import { createSocketPair, setSocketOptions, socketFaultInjection, sweepSocketTi
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
 import { generateKeyPairSync, randomFillSync } from "crypto";
-import { closeSync, fstatSync, readFileSync, readSync, writeFileSync, writeSync } from "fs";
+import { closeSync, existsSync, fstatSync, readFileSync, readSync, writeFileSync, writeSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -2323,9 +2323,10 @@ it.each(["in the same turn of the loop", "some turns later"])(
 it.each(["shutdown", "end"] as const)(
   "a TLS %s() behind a write that fell short delivers what the kernel took when the listener's stop(true) follows",
   async how => {
+    const room = 256 * 1024;
     const reader = /* js */ `
       const { setSocketOptions } = require("bun:internal-for-testing");
-      const { existsSync } = require("node:fs");
+      const { existsSync, writeFileSync } = require("node:fs");
       let received = 0, held = false;
       const heard = [];
       const socket = await Bun.connect({
@@ -2348,7 +2349,10 @@ it.each(["shutdown", "end"] as const)(
           data(socket, chunk) {
             received += chunk.length;
             // Room for what the sender still holds, and no more until the listener has stopped.
-            if (!held && received >= 256 * 1024) (held = true), socket.pause();
+            if (held || received < ${room}) return;
+            held = true;
+            socket.pause();
+            writeFileSync(process.argv[3], "");
           },
           end: () => void heard.push("end"),
           error: (_socket, error) => void heard.push("error: " + error.code),
@@ -2363,6 +2367,7 @@ it.each(["shutdown", "end"] as const)(
     `;
     using dir = tempDir("tls-stop-behind-short-write", {});
     const fellShort = join(String(dir), "fell-short");
+    const madeRoom = join(String(dir), "made-room");
     const stopped = Promise.withResolvers<number>();
     const listener = Bun.listen({
       hostname: "127.0.0.1",
@@ -2376,6 +2381,8 @@ it.each(["shutdown", "end"] as const)(
           const deadline = Date.now() + 20_000;
           while (socket.write("r") <= 0 && Date.now() < deadline);
           sent++;
+          // The end of the stream fits into the kernel once the reader has made room, and the reader holds still from then on.
+          while (sent >= room && !existsSync(madeRoom) && Date.now() < deadline);
           socket[how]();
           listener.stop(true);
           stopped.resolve(sent);
@@ -2384,7 +2391,7 @@ it.each(["shutdown", "end"] as const)(
     });
     try {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", reader, String(listener.port), fellShort],
+        cmd: [bunExe(), "-e", reader, String(listener.port), fellShort, madeRoom],
         env: bunEnv,
         stdin: "pipe",
         stdout: "pipe",

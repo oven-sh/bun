@@ -396,6 +396,20 @@ await renderFirstScreen();
 Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
 ```
 
+`jitPolicy` is a scale for the startup phase, and the program ends it with `setJITPolicy(1)`. Two JavaScriptCore options change only the top tier (FTL), for the whole life of one process, with no code change. A CLI or a serverless invocation that exits after a few thousand calls to its hot functions can spend more CPU time in that tier than it repays. Both options work for compiled executables and for `bun run` alike:
+
+```sh
+# Keep the lower tiers, skip the top tier.
+BUN_JSC_useFTLJIT=0 ./myapp
+
+# Keep the top tier, but make it wait 4x as long before it compiles a function.
+BUN_JSC_thresholdForFTLOptimizeAfterWarmUp=256000 ./myapp
+```
+
+The threshold is an execution counter, not a call count: each return adds 15 and each loop iteration adds 1. The default is 64000, about 4,000 calls of a function without loops. `bun test --isolate` already raises it to 1000000, and the variable replaces that value too.
+
+Measure before you ship either one: a process that runs long enough gains from the top tier. `BUN_JSC_reportFTLCompileTimes=1` logs each function the top tier compiles, with the time it took. Bun reads `BUN_JSC_` variables from the process environment before it loads `.env` files. The option names belong to JavaScriptCore and can change between Bun versions, and an unknown name is a startup error.
+
 ---
 
 ## Embedding runtime arguments

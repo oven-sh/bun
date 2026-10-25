@@ -421,7 +421,7 @@ test("confirm (no) windows newline", async () => {
 
 /**
  * Runs `script` on a pseudo-terminal. Each step waits for its text to show, then types its keys or calls
- * them with the terminal. Returns what the terminal showed, without escape sequences and CR.
+ * them with the terminal and the process. Returns what the terminal showed, without escape sequences and CR.
  */
 async function typeOnTerminal(script, steps) {
   let output = "";
@@ -431,9 +431,13 @@ async function typeOnTerminal(script, steps) {
   const shown = () => Bun.stripANSI(output).replaceAll("\r", "");
   const check = () => {
     if (!waiting) return;
-    const at = shown().indexOf(waiting.text, from);
-    if (at === -1) return;
-    from = at + waiting.text.length;
+    const rest = shown().slice(from);
+    const match =
+      typeof waiting.text === "string"
+        ? { index: rest.indexOf(waiting.text), 0: waiting.text }
+        : waiting.text.exec(rest);
+    if (!match || match.index === -1) return;
+    from += match.index + match[0].length;
     waiting.resolve();
     waiting = undefined;
   };
@@ -450,14 +454,14 @@ async function typeOnTerminal(script, steps) {
     },
   });
   const exited = proc.exited.then(exitCode => {
-    waiting?.reject(new Error(`exited with code ${exitCode} before ${JSON.stringify(waiting.text)}:\n${output}`));
+    waiting?.reject(new Error(`exited with code ${exitCode} before ${waiting.text}:\n${output}`));
   });
   for (const [text, keys] of steps) {
     waiting = { text, ...Promise.withResolvers() };
     const shows = waiting.promise;
     check();
     await shows;
-    if (typeof keys === "function") keys(proc.terminal);
+    if (typeof keys === "function") keys(proc.terminal, proc);
     else proc.terminal.write(keys);
   }
   await exited;
@@ -467,6 +471,25 @@ async function typeOnTerminal(script, steps) {
 // The script waits for one more line after its result, so the terminal is open while the result is read.
 const resultThenLine = object => `console.log("RESULT:" + JSON.stringify(${object}) + "DONE"); alert("");`;
 const resultOf = shown => JSON.parse(shown.match(/RESULT:(.*?)DONE/)[1]);
+
+// Local flags of the termios of a pseudo-terminal. A ConPTY has none.
+const ICANON = isLinux ? 0x2 : 0x100;
+const ECHO = 0x8;
+const ISIG = isLinux ? 0x1 : 0x80;
+const lineFlags = terminal =>
+  Object.entries({ ICANON, ECHO, ISIG })
+    .filter(([, bit]) => terminal.localFlags & bit)
+    .map(([name]) => name)
+    .join(" ");
+/** A step action that records the line flags under `flags[at]`, then types `keys`. */
+const sampleThenType = (flags, at, keys) => terminal => {
+  flags[at] = lineFlags(terminal);
+  terminal.write(keys);
+};
+const lineMode = "ICANON ECHO ISIG";
+const rawMode = "";
+
+const blobWorker = source => `new Worker(URL.createObjectURL(new Blob([${JSON.stringify(source)}])))`;
 
 // Raw mode gives Enter as a lone CR, does not echo, and does not make Ctrl+C a signal.
 test.concurrent("prompt(), confirm() and alert() take a typed line on a terminal in raw mode", async () => {
@@ -497,19 +520,7 @@ test.concurrent("prompt(), confirm() and alert() take a typed line on a terminal
 test.concurrent.skipIf(isWindows)(
   "a dialog in a readline callback puts the terminal in line mode, then back in raw mode",
   async () => {
-    const ICANON = isLinux ? 0x2 : 0x100;
-    const ECHO = 0x8;
-    const ISIG = isLinux ? 0x1 : 0x80;
-    const lineFlags = terminal =>
-      Object.entries({ ICANON, ECHO, ISIG })
-        .filter(([, bit]) => terminal.localFlags & bit)
-        .map(([name]) => name)
-        .join(" ");
     const flags = {};
-    const type = (at, keys) => terminal => {
-      flags[at] = lineFlags(terminal);
-      terminal.write(keys);
-    };
     const { shown, exitCode } = await typeOnTerminal(
       `const rl = require("node:readline").createInterface({ input: process.stdin, output: process.stdout });
        const ask = question => new Promise(resolve => rl.question(question, resolve));
@@ -521,22 +532,16 @@ test.concurrent.skipIf(isWindows)(
        rl.close();
        ${resultThenLine(`{ first, name, yes, second }`)}`,
       [
-        ["first?", type("readline", "one\r")],
-        ["name?", type("prompt", "Alice\r")],
-        ["yes?", type("confirm", "y\r")],
-        ["alert!", type("alert", "\r")],
-        ["second?", type("readlineAgain", "two\r")],
+        ["first?", sampleThenType(flags, "readline", "one\r")],
+        ["name?", sampleThenType(flags, "prompt", "Alice\r")],
+        ["yes?", sampleThenType(flags, "confirm", "y\r")],
+        ["alert!", sampleThenType(flags, "alert", "\r")],
+        ["second?", sampleThenType(flags, "readlineAgain", "two\r")],
         ["DONE", "\r"],
       ],
     );
     expect({ flags, result: resultOf(shown), exitCode }).toEqual({
-      flags: {
-        readline: "",
-        prompt: "ICANON ECHO ISIG",
-        confirm: "ICANON ECHO ISIG",
-        alert: "ICANON ECHO ISIG",
-        readlineAgain: "",
-      },
+      flags: { readline: rawMode, prompt: lineMode, confirm: lineMode, alert: lineMode, readlineAgain: rawMode },
       result: { first: "one", name: "Alice", yes: true, second: "two" },
       exitCode: 0,
     });
@@ -553,6 +558,129 @@ test.concurrent.skipIf(isWindows)("Ctrl+C ends a process that waits in a dialog 
     [["name?", "\x03"]],
   );
   expect(signalCode).toBe("SIGINT");
+});
+
+// Enter ends a read of these terminals, so a dialog leaves them as they are. Hidden input stays hidden.
+test.concurrent.skipIf(isWindows).each([
+  ["line mode without echo", ECHO, "ICANON ISIG"],
+  ["cbreak mode without echo", ICANON | ECHO, "ISIG"],
+])("a dialog does not change a terminal in %s", async (_, off, expected) => {
+  const flags = {};
+  const { shown, exitCode } = await typeOnTerminal(
+    `alert("setup"); const secret = prompt("secret?"); ${resultThenLine(`{ secret }`)}`,
+    [
+      [
+        "setup",
+        terminal => {
+          terminal.localFlags &= ~off;
+          terminal.write("\r");
+        },
+      ],
+      ["secret?", sampleThenType(flags, "prompt", "hunter2\r")],
+      ["DONE", "\r"],
+    ],
+  );
+  expect({ flags, result: resultOf(shown), exitCode }).toEqual({
+    flags: { prompt: expected },
+    result: { secret: "hunter2" },
+    exitCode: 0,
+  });
+  expect(shown).not.toContain("secret? hunter2");
+});
+
+// `toString` of the default value runs script. It must not run between the mode change and the read.
+test.concurrent("prompt() converts its default value before it writes the question", async () => {
+  const { shown, exitCode } = await typeOnTerminal(
+    `process.stdin.setRawMode(true);
+     let threw;
+     try {
+       prompt("bad?", { toString() { throw new Error("no default"); } });
+     } catch (error) {
+       threw = error.message;
+     }
+     const next = prompt("next?");
+     ${resultThenLine(`{ threw, next }`)}`,
+    [
+      ["next?", "x\r"],
+      ["DONE", "\r"],
+    ],
+  );
+  expect({ result: resultOf(shown), exitCode }).toEqual({
+    result: { threw: "no default", next: "x" },
+    exitCode: 0,
+  });
+  expect(shown).not.toContain("bad?");
+});
+
+// Line mode belongs to the terminal, not to a thread: the last dialog that ends puts raw mode back.
+test.concurrent.skipIf(isWindows)("dialogs in a Worker and on the main thread share line mode", async () => {
+  const flags = {};
+  const { shown, exitCode } = await typeOnTerminal(
+    `process.stdin.setRawMode(true);
+     const worker = ${blobWorker(`postMessage("ready"); const answer = prompt("worker?"); console.log("answered in the worker"); postMessage(answer);`)};
+     let message = Promise.withResolvers();
+     worker.onmessage = event => message.resolve(event.data);
+     worker.onerror = event => message.reject(event);
+     await message.promise;
+     message = Promise.withResolvers();
+     const main = confirm("main?");
+     console.log("answered on the main thread");
+     const fromWorker = await message.promise;
+     worker.terminate();
+     console.log("key?");
+     require("node:fs").readSync(0, Buffer.alloc(1));
+     ${resultThenLine(`{ main, fromWorker }`)}`,
+    [
+      [/worker\?[^]*main\?|main\?[^]*worker\?/, sampleThenType(flags, "bothWait", "y\r")],
+      ["answered", sampleThenType(flags, "oneWaits", "y\r")],
+      ["key?", sampleThenType(flags, "noneWaits", "k")],
+      ["DONE", "\r"],
+    ],
+  );
+  expect({ flags, result: resultOf(shown), exitCode }).toEqual({
+    flags: { bothWait: lineMode, oneWaits: lineMode, noneWaits: rawMode },
+    result: { main: true, fromWorker: "y" },
+    exitCode: 0,
+  });
+});
+
+// The owner of raw mode leaves it while a dialog of another thread holds line mode. The dialog keeps
+// line mode, and the terminal is not put back in raw mode when the dialog ends.
+test.concurrent.skipIf(isWindows)("setRawMode(false) during a dialog of a Worker is not undone", async () => {
+  const flags = {};
+  const { shown, exitCode } = await typeOnTerminal(
+    `process.on("SIGUSR2", () => {
+       process.stdin.setRawMode(false);
+       console.log("left raw mode");
+     });
+     process.stdin.setRawMode(true);
+     const worker = ${blobWorker(`postMessage(prompt("worker?"));`)};
+     const { promise, resolve, reject } = Promise.withResolvers();
+     worker.onmessage = event => resolve(event.data);
+     worker.onerror = reject;
+     const fromWorker = await promise;
+     worker.terminate();
+     console.log("line?");
+     require("node:fs").readSync(0, Buffer.alloc(16));
+     ${resultThenLine(`{ fromWorker, isRaw: process.stdin.isRaw }`)}`,
+    [
+      [
+        "worker?",
+        (terminal, proc) => {
+          flags.dialog = lineFlags(terminal);
+          proc.kill("SIGUSR2");
+        },
+      ],
+      ["left raw mode", sampleThenType(flags, "dialogAfterOwnerLeft", "w\r")],
+      ["line?", sampleThenType(flags, "afterDialog", "k\r")],
+      ["DONE", "\r"],
+    ],
+  );
+  expect({ flags, result: resultOf(shown), exitCode }).toEqual({
+    flags: { dialog: lineMode, dialogAfterOwnerLeft: lineMode, afterDialog: lineMode },
+    result: { fromWorker: "w", isRaw: false },
+    exitCode: 0,
+  });
 });
 
 // Only the CRLF terminator's `\r` is stripped. An earlier `\r` is part of the answer.

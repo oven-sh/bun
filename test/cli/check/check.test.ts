@@ -9143,6 +9143,51 @@ export function g() { return f(); }
 
     // m3.ts is checked first. Its errors are deferred to the end of its check because their messages print a type, and
     // printing is the first to check what the functions in m0.ts return. The errors found there are deferred too.
+    // y.ts is checked first. Its declaration file prints the type of `o`, which infers the return type of `f` and analyzes
+    // the loop. The check of y.ts is over by then, so the deferred error for `x?.v` isn't kept, and the check of x.ts has
+    // to create it.
+    test("with declaration files, a missing property in a loop that an earlier file's declarations analyze first is reported", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "declaration": true, "emitDeclarationOnly": true, "outDir": "out", "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true }, "files": ["x.ts"] }
+`,
+        "x.ts": `import "./y";
+function f() {
+  let x: string | number | undefined = 0;
+  for (const e of [1]) { x = x?.v; }
+  return x;
+}
+export function get() { return { k: f }; }
+`,
+        "y.ts": `import { get } from "./x";
+export const o = get();
+`,
+      });
+      for (const threads of ["1", "8"]) {
+        const { stdout, exitCode } = await check(dir, ["--threads", threads]);
+        expect(stdout).toBe("x.ts(4,33): error TS2339: Property 'v' does not exist on type 'number'.");
+        expect(exitCode).toBe(1);
+      }
+    });
+
+    // The same without a loop: the callback is checked while the type arguments of `map` are inferred.
+    test("with declaration files, a missing property in a callback that an earlier file's declarations check first is reported", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "declaration": true, "emitDeclarationOnly": true, "outDir": "out", "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true }, "files": ["x.ts"] }
+`,
+        "x.ts": `import "./y";
+export function c<T>(x: T) { return () => [1].map(x => x.a); }
+`,
+        "y.ts": `import { c } from "./x";
+export const o = c(1);
+`,
+      });
+      for (const threads of ["1", "8"]) {
+        const { stdout, exitCode } = await check(dir, ["--threads", threads]);
+        expect(stdout).toBe("x.ts(2,58): error TS2339: Property 'a' does not exist on type 'number'.");
+        expect(exitCode).toBe(1);
+      }
+    });
+
     test("an error that's deferred while the deferred messages of another file are printed isn't lost", async () => {
       using dir = project({
         "m0.ts": `import "./m3";

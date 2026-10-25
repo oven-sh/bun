@@ -635,7 +635,7 @@ impl Checker<'_, '_> {
             return self.discarded.insert(diagnostic);
         }
         if self.is_reported_too_late(None, (diagnostic.file, diagnostic.start)) {
-            self.mark_tainted_from(0);
+            self.store_nothing_in_progress();
             return self.discarded.insert(diagnostic);
         }
         self.reported.push(diagnostic);
@@ -780,8 +780,14 @@ impl Checker<'_, '_> {
         {
             // `Emit` runs after every file's check. Here it runs after that of the task's file, and the check of
             // `callback.file` may still come. Nothing is stored, so it evaluates this itself and calls the callback.
-            self.mark_tainted_from(0);
+            self.store_nothing_in_progress();
         }
+    }
+
+    /// Nothing that's in progress is stored, and no loop that's being analyzed gets into `flowLoopCache`.
+    pub(super) fn store_nothing_in_progress(&mut self) {
+        self.mark_tainted_from(0);
+        self.rejected_at = self.work;
     }
 
     /// Takes the diagnostics reported from index `from` on, for a caller that stores or rewrites
@@ -913,7 +919,7 @@ impl Checker<'_, '_> {
         if self.is_type_checked && diagnostic.file == NOWHERE.0
             || self.is_reported_too_late(owner, (diagnostic.file, diagnostic.start))
         {
-            return self.mark_tainted_from(0);
+            return self.store_nothing_in_progress();
         }
         if diagnostic.file != NOWHERE.0 && self.defers_to_earlier_file(owner, diagnostic.file) {
             // Not every error goes through `add_diagnostic`.

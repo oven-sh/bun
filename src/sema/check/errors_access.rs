@@ -898,7 +898,7 @@ impl<'p> Checker<'p, '_> {
         }
         self.note_error_in(at.0);
         if self.is_reported_too_late(None, (at.0, at.1)) {
-            return self.mark_tainted_from(0);
+            return self.store_nothing_in_progress();
         }
         let reported = self.reported.len();
         let mut callback = Reported::bare(self.span_of_token(at.0, at.1), 2339);
@@ -906,9 +906,10 @@ impl<'p> Checker<'p, '_> {
         self.add_deferred_diagnostic(callback);
         // The first callback for a node reports. If it was added while analyzing a loop, it has the types collected so
         // far, and the walk's callback with the final type reports nothing. Likewise if it was added while the type
-        // arguments of a call were inferred.
-        if self.is_in_flow_loop()
-            || self.is_rechecking() && self.inference_contexts.len() != self.context_free_level
+        // arguments of a call were inferred. A callback that wasn't kept reports nothing, so the next one does.
+        if self.reported.len() > reported
+            && (self.is_in_flow_loop()
+                || self.is_rechecking() && self.inference_contexts.len() != self.context_free_level)
         {
             self.log_reported_in_flow_loop(reported, at.0, missing.access);
             self.non_existent_properties.insert(node, false);

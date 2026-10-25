@@ -17,7 +17,8 @@ function runStructsInNewContext(source: string, sandbox: Record<string, unknown>
     }
     return "";
   });
-  return vm.runInNewContext(code, { ...helpers, ...sandbox });
+  // The helpers go onto `sandbox` itself, so the caller sees what the script assigns to the global.
+  return vm.runInNewContext(code, Object.assign(sandbox, helpers));
 }
 
 describe("structs in node:vm contexts", () => {

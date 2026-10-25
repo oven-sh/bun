@@ -129,8 +129,5 @@ export default b.declarations(
     ],
   }),
   ["CryptoKey", "URLPattern"].flatMap(path => constructorOnly(path)),
-  ["Bun.Cookie", "Bun.CookieMap"].flatMap(path => [
-    ...constructorOnly(path),
-    ...b.inherits(path, "Object.prototype"),
-  ]),
+  ["Bun.Cookie", "Bun.CookieMap"].flatMap(path => [...constructorOnly(path), ...b.inherits(path, "Object.prototype")]),
 );

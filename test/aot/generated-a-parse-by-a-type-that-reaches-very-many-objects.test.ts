@@ -101,8 +101,7 @@ const annotated: Order = await new Response(${good}).json();
 use(annotated);
 use((await Response.json(JSON.parse(${good})).json()) as Order);
 `,
-  "a chain of types":
-    count => `${show}${many(count, at => `interface N${at} { v: number; next?: N${at + 1} }`)}
+  "a chain of types": count => `${show}${many(count, at => `interface N${at} { v: number; next?: N${at + 1} }`)}
 interface N${count} { v: number }
 const head = JSON.parse('{"v":0,"next":{"v":1,"next":{"v":2,"next":{"v":3}}}}') as N0;
 console.log(head.v + head.next!.v + head.next!.next!.v + head.next!.next!.next!.v, head.next!.next!.next!.next);
@@ -163,8 +162,7 @@ ${many(count, at => `sum += (JSON.parse('{"a${at}":1,"inner":{"b${at}":1}}') as 
 console.log(sum === ${count});
 `,
   // The objects that the small type's parser makes are known one by one. Those of the same type that come out of the large one's are changed here in every way.
-  "an object type that a small type reaches too":
-    count => `interface Inner { x: number; y: number }
+  "an object type that a small type reaches too": count => `interface Inner { x: number; y: number }
 interface Small { inner: Inner }
 interface Large {
   inner: Inner;
@@ -193,8 +191,7 @@ function first<T>(list: T[]): T { return list[0]; }
 const orders = JSON.parse('[' + ${good} + ']') as Order[];
 console.log(first(orders).lines[1].count, first<Order>(orders).p0!.a0, orders.length);
 `,
-  "a parse in a worker":
-    count => `import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+  "a parse in a worker": count => `import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 ${order(count)}
 function sumOf(text: string): number {
   const order = JSON.parse(text) as Order;

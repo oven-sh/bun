@@ -384,44 +384,6 @@ unsafe impl<U> Atom for *mut U {
     }
 }
 
-// SAFETY: same as `*mut U`; the cast goes through `*mut U`.
-unsafe impl<U> Atom for *const U {
-    #[inline]
-    unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is `AtomicCell<*const U>::inner.get()`, 8-aligned via
-        // `_align`; `*const U` and `AtomicPtr<U>` have identical layout.
-        unsafe { (*(p as *const AtomicPtr<U>)).load(ord).cast_const() }
-    }
-    #[inline]
-    unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
-        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
-        // have identical layout (see `_atomic_load`).
-        unsafe { (*(p as *const AtomicPtr<U>)).store(v.cast_mut(), ord) }
-    }
-    #[inline]
-    unsafe fn _atomic_cas(
-        p: *mut Self,
-        cur: Self,
-        new: Self,
-        s: Ordering,
-        f: Ordering,
-    ) -> Result<Self, Self> {
-        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
-        // have identical layout (see `_atomic_load`).
-        unsafe {
-            match (*(p as *const AtomicPtr<U>)).compare_exchange(
-                cur.cast_mut(),
-                new.cast_mut(),
-                s,
-                f,
-            ) {
-                Ok(x) => Ok(x.cast_const()),
-                Err(x) => Err(x.cast_const()),
-            }
-        }
-    }
-}
-
 #[inline(always)]
 fn nn_to_raw<U>(v: Option<NonNull<U>>) -> *mut U {
     v.map_or(core::ptr::null_mut(), |n| n.as_ptr())

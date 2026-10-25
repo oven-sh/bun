@@ -29,7 +29,6 @@ namespace WebCore {
 class JSPerformanceMark : public JSPerformanceEntry {
 public:
     using Base = JSPerformanceEntry;
-    using DOMWrapped = PerformanceMark;
     static JSPerformanceMark* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceMark>&& impl)
     {
         JSPerformanceMark* ptr = new (NotNull, JSC::allocateCell<JSPerformanceMark>(globalObject->vm())) JSPerformanceMark(structure, *globalObject, WTF::move(impl));
@@ -44,7 +43,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);

@@ -136,7 +136,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
     // names the mapped file — but only when an inner extension exists.
     if extname == b"map" && path.len() > b".map".len() {
         let stripped = &path[0..path.len() - b".map".len()];
-        if stripped.contains(&b'.') {
+        if strings::contains_char(stripped, b'.') {
             path = stripped;
         }
     }

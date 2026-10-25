@@ -6,34 +6,16 @@
 //! | brotli `brotli_alloc/free_func`  | `(opaque, size: usize)`                  | `(opaque, ptr)`            |
 //! | JSC `JSTypedArrayBytesDeallocator` | —                                      | `(bytes, ctx)`             |
 //!
-//! The plain (non-zone-tagged) variants are free functions below; the
-//! zone-tagged variants are minted per-label by [`c_thunks_for_zone!`].
+//! The zone-tagged zlib and brotli variants are minted per-label by
+//! [`c_thunks_for_zone!`].
 
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_void;
 
 use crate::default_alloc as raw;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plain default-allocator thunks (no heap-breakdown tagging)
 // ──────────────────────────────────────────────────────────────────────────
-
-/// zlib `alloc_func` → default allocator `malloc(items * size)` (non-zeroing).
-pub extern "C" fn mi_malloc_items(_: *mut c_void, items: c_uint, size: c_uint) -> *mut c_void {
-    let p = raw::malloc((items * size) as usize);
-    if p.is_null() {
-        unreachable!();
-    }
-    p
-}
-
-/// `(opaque, ptr)` → default allocator `free(ptr)`; opaque cookie ignored.
-pub unsafe extern "C" fn mi_free_opaque(_: *mut c_void, ptr: *mut c_void) {
-    // SAFETY: ptr was allocated by the default allocator (or is null).
-    unsafe { raw::free(ptr) };
-}
-
-/// JSC `JSTypedArrayBytesDeallocator` → default allocator `free(ctx)`; `bytes` ignored.
-pub use mi_free_opaque as mi_free_ctx;
 
 /// JSC `JSTypedArrayBytesDeallocator` → default allocator `free(bytes)`; `ctx` ignored.
 pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
@@ -52,8 +34,7 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
 /// Generated items:
 /// - `malloc_size(_, len: usize) -> *mut c_void` — brotli-shape, non-zeroing.
 ///   Safe `extern "C" fn` (opaque cookie ignored; body is all-safe).
-/// - `calloc_items(_, items: c_uint, len: c_uint) -> *mut c_void` — zlib-shape,
-///   zeroing. Safe `extern "C" fn` (same rationale).
+/// - `malloc_items(_, items: c_uint, len: c_uint) -> *mut c_void` — zlib-shape, non-zeroing. Both return null on failure, which zlib and brotli report as their own OOM errors.
 /// - `free(_, ptr: *mut c_void)` — paired with either alloc. `unsafe`
 ///   (precondition: `ptr` was allocated by this zone / the default allocator).
 ///
@@ -62,48 +43,37 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
 #[macro_export]
 macro_rules! c_thunks_for_zone {
     ($name:literal) => {
+        // One zone for the alloc and free thunks. `get_zone!` expands to its
+        // own `static` per use, so it must appear once.
+        fn zone() -> &'static $crate::heap_breakdown::Zone {
+            $crate::get_zone!($name)
+        }
+
         pub extern "C" fn malloc_size(
             _: *mut ::core::ffi::c_void,
             len: usize,
         ) -> *mut ::core::ffi::c_void {
             if $crate::heap_breakdown::ENABLED {
-                return match $crate::get_zone!($name).malloc_zone_malloc(len) {
-                    Some(p) => p,
-                    None => $crate::out_of_memory(),
-                };
+                return zone()
+                    .malloc_zone_malloc(len)
+                    .unwrap_or(::core::ptr::null_mut());
             }
-            let p = $crate::default_alloc::malloc(len);
-            if p.is_null() {
-                $crate::out_of_memory();
-            }
-            p
+            $crate::default_alloc::malloc(len)
         }
 
-        pub extern "C" fn calloc_items(
+        pub extern "C" fn malloc_items(
             _: *mut ::core::ffi::c_void,
             items: ::core::ffi::c_uint,
             len: ::core::ffi::c_uint,
         ) -> *mut ::core::ffi::c_void {
-            if $crate::heap_breakdown::ENABLED {
-                return match $crate::get_zone!($name)
-                    .malloc_zone_calloc(items as usize, len as usize)
-                {
-                    Some(p) => p,
-                    None => $crate::out_of_memory(),
-                };
-            }
-            let p = $crate::default_alloc::calloc(items as usize, len as usize);
-            if p.is_null() {
-                $crate::out_of_memory();
-            }
-            p
+            malloc_size(::core::ptr::null_mut(), items as usize * len as usize)
         }
 
         pub unsafe extern "C" fn free(_: *mut ::core::ffi::c_void, data: *mut ::core::ffi::c_void) {
             if $crate::heap_breakdown::ENABLED {
                 // SAFETY: `data` was allocated by this zone in one of the
                 // alloc thunks above.
-                unsafe { $crate::get_zone!($name).malloc_zone_free(data) };
+                unsafe { zone().malloc_zone_free(data) };
                 return;
             }
             // SAFETY: data was allocated by the default allocator (or is null).

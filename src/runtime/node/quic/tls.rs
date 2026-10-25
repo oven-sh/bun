@@ -28,7 +28,7 @@ fn value_to_bytes(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Ve
     }
     if value.is_string() {
         return Ok(Some(
-            bun_core::String::from_js(value, global)?.to_utf8_bytes(),
+            bun_core::String::from_js(value, global)?.to_owned_slice(),
         ));
     }
     if let Some(buf) = value.as_array_buffer(global) {
@@ -65,7 +65,7 @@ fn tls13_policy_for_ciphers(ciphers: &[u8]) -> Option<c_int> {
     let mut has_128 = false;
     let mut has_256 = false;
     let mut has_chacha = false;
-    for name in ciphers.split(|&b| b == b':') {
+    for name in bun_core::strings::split(ciphers, b":") {
         if name == TLS13_AES_128_GCM_SHA256 {
             has_128 = true;
         } else if name == TLS13_AES_256_GCM_SHA384 {
@@ -114,7 +114,12 @@ impl TlsConfig {
             }
         }
         if let Some(v) = tls.get(global, "servername")?.filter(|v| v.is_string()) {
-            let mut bytes = bun_core::String::from_js(v, global)?.to_utf8_bytes();
+            let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
+            if bun_core::strings::contains_char(&bytes, 0) {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "servername must not contain null bytes"
+                )));
+            }
             bytes.push(0);
             config.servername = Some(bytes);
         }
@@ -146,10 +151,10 @@ impl TlsConfig {
             config.enable_early_data = v.to_boolean();
         }
         if let Some(v) = tls.get(global, "ciphers")?.filter(|v| v.is_string()) {
-            config.ciphers = Some(bun_core::String::from_js(v, global)?.to_utf8_bytes());
+            config.ciphers = Some(bun_core::String::from_js(v, global)?.to_owned_slice());
         }
         if let Some(v) = tls.get(global, "groups")?.filter(|v| v.is_string()) {
-            let mut bytes = bun_core::String::from_js(v, global)?.to_utf8_bytes();
+            let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
             bytes.push(0);
             config.groups = Some(bytes);
         }
@@ -188,9 +193,9 @@ pub(super) fn early_data_info(ssl_ptr: *mut ssl::SSL) -> (bool, bool) {
     (attempted, accepted)
 }
 
-/// lsquic borrows the raw pointer; this struct owns it and frees it on Drop.
+/// lsquic borrows the raw pointer; this struct owns it.
 pub(super) struct TlsContext {
-    ctx: *mut ssl::SSL_CTX,
+    ctx: ssl::OwnedSslCtx,
     /// Keep the wire-format ALPN alive at a stable heap address: BoringSSL
     /// stores the `arg` pointer we pass to `SSL_CTX_set_alpn_select_cb` and
     /// the callback dereferences it on every ClientHello.
@@ -199,15 +204,6 @@ pub(super) struct TlsContext {
         reason = "BoringSSL keeps the `arg` pointer (this Vec's header address) across ClientHellos, so the Vec must not move; the Box pins it"
     )]
     _alpn: Option<Box<Vec<u8>>>,
-}
-
-impl Drop for TlsContext {
-    fn drop(&mut self) {
-        if !self.ctx.is_null() {
-            // SAFETY: `ctx` was created by `SSL_CTX_new` and not freed before.
-            unsafe { ssl::SSL_CTX_free(self.ctx) };
-        }
-    }
 }
 
 unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_char) {
@@ -349,6 +345,9 @@ fn load_private_key(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static s
 const X509_V_FLAG_CRL_CHECK: core::ffi::c_ulong = 0x4;
 /// `X509_V_FLAG_CRL_CHECK_ALL` — also check intermediate CAs (Node sets both).
 const X509_V_FLAG_CRL_CHECK_ALL: core::ffi::c_ulong = 0x8;
+/// `X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS` (oven-sh/boringssl) — as every other Bun SSL_CTX: an expired CA in the
+/// trust set does not shadow the valid certificate for the same issuer that the peer sends.
+const X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: core::ffi::c_ulong = 0x2000000;
 
 fn load_crl_store(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
     // SAFETY: as above.
@@ -420,11 +419,15 @@ impl TlsContext {
         // SAFETY: each SSL_CTX call below is paired with the matching free on
         // failure via Drop (the half-built `this` is dropped on early return).
         unsafe {
-            let ctx = ssl::SSL_CTX_new(ssl::TLS_method());
-            if ctx.is_null() {
+            let Some(owned) = ssl::OwnedSslCtx::from_raw(ssl::SSL_CTX_new(ssl::TLS_method()))
+            else {
                 return Err("failed to allocate SSL_CTX");
-            }
-            let mut this = TlsContext { ctx, _alpn: None };
+            };
+            let ctx = owned.as_ptr();
+            let mut this = TlsContext {
+                ctx: owned,
+                _alpn: None,
+            };
 
             if let Some(policy) = config.ciphers.as_deref().and_then(tls13_policy_for_ciphers) {
                 if ssl::SSL_CTX_set_compliance_policy(ctx, policy) != 1 {
@@ -436,6 +439,14 @@ impl TlsContext {
             {
                 return Err("failed to pin TLS 1.3");
             }
+            ssl::X509_VERIFY_PARAM_set_flags(
+                ssl::SSL_CTX_get0_param(ctx),
+                X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS,
+            );
+            if us_ssl_ctx_set_verify_signature_algorithms(ctx) != 1 {
+                return Err("failed to set the signature algorithms");
+            }
+            us_ssl_ctx_reject_blocked_keys(ctx);
             if let Some(groups) = &config.groups {
                 if ssl::SSL_CTX_set1_groups_list(ctx, groups.as_ptr().cast()) != 1 {
                     return Err("invalid TLS groups list");
@@ -524,7 +535,7 @@ impl TlsContext {
     }
 
     pub(super) fn raw(&self) -> *mut ssl::SSL_CTX {
-        self.ctx
+        self.ctx.as_ptr()
     }
 
     pub(super) fn alpn_cstr(config: &TlsConfig) -> Vec<u8> {
@@ -563,6 +574,10 @@ pub(super) fn negotiated_alpn(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
 unsafe extern "C" {
     /// `X509_V_ERR_*` -> node's code name; see ncrypto.cpp.
     fn Bun__X509__validationErrorCode(err: i32) -> *const core::ffi::c_char;
+    /// openssl.c: the signature algorithms every other TLS context of Bun accepts from a peer.
+    fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
+    /// openssl.c: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
+    fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
 }
 
 /// node's `X509_V_ERR_UNSPECIFIED`, reported when a peer sent no certificate
@@ -642,8 +657,10 @@ pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     if ssl.is_null() {
         return None;
     }
-    // SAFETY: returns a borrowed X509 owned by the SSL.
-    let cert = unsafe { ssl::SSL_get_certificate(ssl) };
+    // `load_cert_chain` only installs certificates on the context. The context parses its
+    // leaf once, but `SSL_get_certificate` parses a copy for each SSL.
+    // SAFETY: returns a borrowed X509 owned by `ssl`'s context.
+    let cert = unsafe { ssl::SSL_CTX_get0_certificate(ssl::SSL_get_SSL_CTX(ssl)) };
     if cert.is_null() {
         return None;
     }

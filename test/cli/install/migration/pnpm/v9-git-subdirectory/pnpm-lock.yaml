@@ -1,0 +1,23 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      pkg:
+        specifier: git+ssh://git@example.com/org/monorepo.git#main&path:packages/pkg
+        version: git+ssh://git@example.com/org/monorepo.git#cba04669e621b85fbdb33371604de1a2898e68e9&path:packages/pkg
+
+packages:
+
+  pkg@git+ssh://git@example.com/org/monorepo.git#cba04669e621b85fbdb33371604de1a2898e68e9&path:packages/pkg:
+    resolution: {commit: cba04669e621b85fbdb33371604de1a2898e68e9, path: packages/pkg, repo: git@example.com:org/monorepo.git, type: git}
+    version: 1.0.0
+
+snapshots:
+
+  pkg@git+ssh://git@example.com/org/monorepo.git#cba04669e621b85fbdb33371604de1a2898e68e9&path:packages/pkg: {}

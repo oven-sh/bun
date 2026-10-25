@@ -13,49 +13,62 @@
 //!
 //! Analogous to TS `HIR/MergeConsecutiveBlocks.ts`.
 
-use std::collections::HashSet;
-
-use crate::collections::IdMap;
+use crate::collections::{IdBitSet, IdMap};
+use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::cfg_utils::mark_predecessors;
 use crate::hir::visitors;
 use crate::hir::{
-    AliasingEffect, BlockId, BlockKind, Effect, GENERATED_SOURCE, HirFunction, Instruction,
-    InstructionId, InstructionValue, Place, Terminal,
+    AliasingEffect, BasicBlock, BlockId, BlockKind, Effect, FunctionId, GENERATED_SOURCE,
+    HirFunction, Instruction, InstructionId, InstructionValue, Place, Terminal,
 };
 use crate::hir_vec;
-use crate::ssa::enter_ssa::placeholder_function;
 
 /// Merge consecutive blocks in the function's CFG, including inner functions.
-pub(crate) fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [HirFunction]) {
-    // Collect inner function IDs for recursive processing
-    let inner_func_ids: Vec<usize> = func
-        .body
-        .blocks
-        .values()
-        .flat_map(|block| block.instructions.iter())
-        .filter_map(|instr_id| {
-            let instr = &func.instructions[instr_id.0 as usize];
-            match &instr.value {
-                InstructionValue::FunctionExpression { lowered_func, .. }
-                | InstructionValue::ObjectMethod { lowered_func, .. } => {
-                    Some(lowered_func.func.0 as usize)
-                }
-                _ => None,
-            }
-        })
-        .collect();
-
-    // Recursively merge consecutive blocks in inner functions
-    for func_id in inner_func_ids {
-        // Use std::mem::replace to temporarily take the inner function out,
-        // process it, then put it back (standard borrow checker workaround)
-        let mut inner_func = std::mem::replace(&mut functions[func_id], placeholder_function());
-        merge_consecutive_blocks(&mut inner_func, functions);
-        functions[func_id] = inner_func;
+pub(crate) fn merge_consecutive_blocks(
+    func: &mut HirFunction,
+    functions: &mut [HirFunction],
+) -> Result<(), CompilerDiagnostic> {
+    let mut inner_functions = Vec::new();
+    let has_stack = collect_inner_functions(func, functions, &mut inner_functions);
+    for func_id in inner_functions {
+        merge_blocks(&mut functions[func_id.0 as usize])?;
     }
+    if !has_stack {
+        return Err(crate::lowering::nested_too_deeply());
+    }
+    merge_blocks(func)
+}
 
+/// The functions inside `func`, each after those inside it: the order in which their blocks are merged.
+/// Stops, and returns false, where there is not the stack to go deeper: nothing is merged from there on.
+fn collect_inner_functions(
+    func: &HirFunction,
+    functions: &[HirFunction],
+    inner_functions: &mut Vec<FunctionId>,
+) -> bool {
+    if !crate::lowering::thread_has_stack() {
+        return false;
+    }
+    for block in func.body.blocks.values() {
+        for instr_id in &block.instructions {
+            if let InstructionValue::FunctionExpression { lowered_func, .. }
+            | InstructionValue::ObjectMethod { lowered_func, .. } =
+                &func.instructions[instr_id.0 as usize].value
+            {
+                let inner = &functions[lowered_func.func.0 as usize];
+                if !collect_inner_functions(inner, functions, inner_functions) {
+                    return false;
+                }
+                inner_functions.push(lowered_func.func);
+            }
+        }
+    }
+    true
+}
+
+fn merge_blocks(func: &mut HirFunction) -> Result<(), CompilerDiagnostic> {
     // Build fallthrough set
-    let mut fallthrough_blocks: HashSet<BlockId> = HashSet::new();
+    let mut fallthrough_blocks: IdBitSet<BlockId> = IdBitSet::default();
     for block in func.body.blocks.values() {
         if let Some(ft) = visitors::terminal_fallthrough(&block.terminal) {
             fallthrough_blocks.insert(ft);
@@ -64,55 +77,46 @@ pub(crate) fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [
 
     let mut merged = MergedBlocks::new();
 
+    // The first merge is of a block that can be merged as things are.
+    if !(func.body.blocks.iter()).any(|(block_id, block)| {
+        mergeable_pred(func, *block_id, block, &fallthrough_blocks, &merged).is_some()
+    }) {
+        mark_predecessors(&mut func.body);
+        return Ok(());
+    }
+
     // Collect block IDs for iteration (since we modify during iteration)
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
 
     for block_id in &block_ids {
-        let block = match func.body.blocks.get(block_id) {
-            Some(b) => b,
-            None => continue, // already removed
+        let block = &func.body.blocks[block_id];
+
+        let Some(pred_id) = mergeable_pred(func, *block_id, block, &fallthrough_blocks, &merged)
+        else {
+            continue;
         };
-
-        if block.preds.len() != 1
-            || block.kind != BlockKind::Block
-            || fallthrough_blocks.contains(block_id)
-        {
-            continue;
-        }
-
-        let original_pred_id = *block.preds.iter().next().unwrap();
-        let pred_id = merged.get(original_pred_id);
-
-        // Check predecessor exists and ends in goto with block kind
-        let pred_is_mergeable = func
-            .body
-            .blocks
-            .get(&pred_id)
-            .map(|p| matches!(p.terminal, Terminal::Goto { .. }) && p.kind == BlockKind::Block)
-            .unwrap_or(false);
-
-        if !pred_is_mergeable {
-            continue;
-        }
 
         // Get evaluation order from predecessor's terminal (for phi instructions)
         let eval_order = func.body.blocks[&pred_id].terminal.evaluation_order();
 
         // Collect phi data from the block being merged
-        let phis: Vec<_> = block
-            .phis
-            .iter()
-            .map(|phi| {
-                assert_eq!(
-                    phi.operands.len(),
-                    1,
-                    "Found a block with a single predecessor but where a phi has multiple ({}) operands",
-                    phi.operands.len()
-                );
-                let operand = phi.operands.values().next().unwrap().clone();
-                (phi.place.identifier, operand)
-            })
-            .collect();
+        let mut phis = Vec::with_capacity(block.phis.len());
+        for phi in &block.phis {
+            let mut operands = phi.operands.values();
+            let (Some(operand), None) = (operands.next(), operands.next()) else {
+                return Err(cold_invariant(
+                    "Found a block with a single predecessor but where a phi has multiple operands",
+                    Some(format!(
+                        "{} operands in bb{}",
+                        phi.operands.len(),
+                        block_id.0
+                    )),
+                    None,
+                )
+                .into());
+            };
+            phis.push((phi.place.identifier, operand.clone()));
+        }
         let block_instr_ids = block.instructions.clone();
         let block_terminal = block.terminal.clone();
 
@@ -149,10 +153,11 @@ pub(crate) fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [
         pred.instructions.extend(block_instr_ids);
         pred.terminal = block_terminal;
 
-        // Record merge and remove block
         merged.merge(*block_id, pred_id);
-        func.body.blocks.shift_remove(block_id);
     }
+    func.body
+        .blocks
+        .retain(|block_id, _| !merged.map.contains_key(*block_id));
 
     // Update phi operands for merged blocks
     for block in func.body.blocks.values_mut() {
@@ -184,6 +189,31 @@ pub(crate) fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [
             merged.get(block_id)
         });
     }
+    Ok(())
+}
+
+/// The block that `block` can be merged into.
+fn mergeable_pred(
+    func: &HirFunction,
+    block_id: BlockId,
+    block: &BasicBlock,
+    fallthrough_blocks: &IdBitSet<BlockId>,
+    merged: &MergedBlocks,
+) -> Option<BlockId> {
+    if block.preds.len() != 1
+        || block.kind != BlockKind::Block
+        || fallthrough_blocks.contains(block_id)
+    {
+        return None;
+    }
+
+    let original_pred_id = *block.preds.iter().next().unwrap();
+    let pred_id = merged.get(original_pred_id);
+
+    // Check predecessor exists and ends in goto with block kind
+    (func.body.blocks.get(&pred_id))
+        .is_some_and(|p| matches!(p.terminal, Terminal::Goto { .. }) && p.kind == BlockKind::Block)
+        .then_some(pred_id)
 }
 
 /// Tracks which blocks have been merged and into which target.

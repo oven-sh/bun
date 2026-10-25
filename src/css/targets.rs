@@ -371,9 +371,7 @@ impl Browsers {
 
                     let (major, minor) = 'major_minor: {
                         let version_str = &entry[idx..];
-                        let dot_index = version_str
-                            .iter()
-                            .position(|&b| b == b'.')
+                        let dot_index = strings::index_of_char_usize(version_str, b'.')
                             .unwrap_or(version_str.len());
                         let Some(major) =
                             strings::parse_int::<u16>(&version_str[0..dot_index], 10).ok()

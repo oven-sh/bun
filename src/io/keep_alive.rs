@@ -51,15 +51,6 @@ impl KeepAlive {
         event_loop_ctx.loop_sub_active(1);
     }
 
-    /// From another thread, Prevent a poll from keeping the process alive.
-    pub fn unref_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Inactive;
-        vm.unref_concurrently();
-    }
-
     /// Prevent a poll from keeping the process alive on the next tick.
     pub fn unref_on_next_tick(&mut self, event_loop_ctx: EventLoopCtx) {
         if self.status != Status::Active {
@@ -89,22 +80,5 @@ impl KeepAlive {
     #[inline]
     pub fn r#ref(&mut self, event_loop_ctx: EventLoopCtx) {
         self.ref_(event_loop_ctx)
-    }
-
-    /// Allow a poll to keep the process alive.
-    pub fn ref_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != Status::Inactive {
-            return;
-        }
-        self.status = Status::Active;
-        vm.ref_concurrently();
-    }
-
-    pub fn ref_concurrently_from_event_loop(&mut self, loop_: EventLoopCtx) {
-        self.ref_concurrently(loop_);
-    }
-
-    pub fn unref_concurrently_from_event_loop(&mut self, loop_: EventLoopCtx) {
-        self.unref_concurrently(loop_);
     }
 }

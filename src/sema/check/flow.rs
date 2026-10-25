@@ -234,6 +234,8 @@ pub(super) struct FlowMemo {
     /// `c.flowTypeCache` outside of every `checkExpressionCached` and every back edge, which lives as long as the
     /// checker. Only what a second check could compute differently is in it.
     flow_types_outside_resolutions: FxHashMap<(FileId, ExprId), TypeId>,
+    /// How many walks have ended with an incomplete type.
+    incomplete_walks: u64,
 }
 
 /// Not in tsgo. The rows of a file's flow graph. A row is a chain of assignments, declarations,
@@ -5847,6 +5849,7 @@ impl<'p, 's> Checker<'p, 's> {
         // different type. Results derived from this walk's type stay in `flowTypeCache`, or are
         // stored for the check in progress only.
         let depth = self.flow_type_cache.depth;
+        self.flow_memo.incomplete_walks += u64::from(evolved.incomplete);
         if evolved.incomplete && (depth == usize::MAX || !self.is_flow_loop_visible(depth)) {
             for at in (0..self.stack.len()).rev() {
                 match self.stack[at] {
@@ -7349,6 +7352,7 @@ impl<'p, 's> Checker<'p, 's> {
         let outer = std::mem::replace(&mut self.flow_type_cache, cache);
         let loops = std::mem::take(&mut self.flow_loops);
         let start = self.flow_invocation_count;
+        let incomplete_walks = self.flow_memo.incomplete_walks;
         let ty = self.type_of_declaration_initializer_ex(file, e, Some(CheckMode::TYPE_ONLY));
         self.flow_loops = loops;
         let mut types = std::mem::replace(&mut self.flow_type_cache, outer).types;
@@ -7361,7 +7365,10 @@ impl<'p, 's> Checker<'p, 's> {
         if !types.is_empty() {
             cold_path();
             if self.is_outside_resolutions_and_loops() {
-                (self.flow_memo.flow_types_outside_resolutions).extend(types);
+                // What a cycle left without a type is checked again, and that check reports its errors.
+                if self.flow_memo.incomplete_walks != incomplete_walks {
+                    (self.flow_memo.flow_types_outside_resolutions).extend(types);
+                }
             } else if let Some(owner) = self.innermost_resolution() {
                 self.drop_flow_type_caches_from(owner.at);
                 let cache = FlowTypeCacheOfResolution { owner, types };

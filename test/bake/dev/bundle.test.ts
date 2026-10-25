@@ -1027,6 +1027,159 @@ devTest("importing html file with text loader (#18154)", {
     await c.expectMessage("<div>hello world</div>");
   },
 });
+devTest("editing an html file imported with the text loader (#22533, #24893)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: "<p>root document</p>",
+    }),
+    "index.ts": `
+      import html from "./app.html" with { type: "text" };
+      console.log(html);
+    `,
+    "app.html": "<div>first</div>",
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("<div>first</div>");
+
+    // A save used to bundle app.html with the html loader of its extension.
+    await c.expectReload(async () => {
+      await dev.write("app.html", "<div>second</div>");
+    });
+    await c.expectMessage("<div>second</div>");
+    await dev.fetch("/").expect.toInclude("<p>root document</p>");
+
+    await c.expectReload(async () => {
+      await dev.write("app.html", "<div>third</div>");
+    });
+    await c.expectMessage("<div>third</div>");
+    await dev.fetch("/").expect.toInclude("<p>root document</p>");
+  },
+});
+devTest("editing files imported with a loader other than their extension's keeps that loader (#24893, #23299)", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import template from "./template.mustache" with { type: "text" };
+      import data from "./data.json" with { type: "text" };
+      import snippet from "./snippet.ts" with { type: "text" };
+      import shader from "./shader.wgsl" with { type: "text" };
+      import styles from "./styles.css" with { type: "text" };
+      import config from "./config.txt" with { type: "json" };
+      import { snippet as sameSnippet } from "./second-importer.ts";
+      console.log(template);
+      console.log(typeof data + ":" + data);
+      console.log(snippet);
+      console.log(shader);
+      console.log(styles);
+      console.log(typeof config + ":" + config.version);
+      console.log("second importer:" + (sameSnippet === snippet));
+      import("./lazy.ts", { with: { type: "text" } }).then(lazy => console.log("lazy:" + lazy.default));
+    `,
+    "second-importer.ts": `
+      import snippet from "./snippet.ts" with { type: "text" };
+      export { snippet };
+    `,
+    "template.mustache": "{{first}}",
+    "data.json": `{"version":1}`,
+    "snippet.ts": `console.log("snippet ran");`,
+    "shader.wgsl": "fn first() {}",
+    "styles.css": "body{color:red}",
+    "config.txt": `{"version":1}`,
+    "lazy.ts": `console.log("lazy ran");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    // What index.ts logs for each file, in the order of its imports.
+    const logged = {
+      "template.mustache": "{{first}}",
+      "data.json": 'string:{"version":1}',
+      "snippet.ts": 'console.log("snippet ran");',
+      "shader.wgsl": "fn first() {}",
+      "styles.css": "body{color:red}",
+      "config.txt": "object:1",
+      "second-importer.ts": "second importer:true",
+      "lazy.ts": 'lazy:console.log("lazy ran");',
+    };
+    await c.expectMessage(...Object.values(logged));
+
+    // A save used to use the extension's loader: an asset URL, an object, a module that runs, an asset URL, a stylesheet, a string.
+    for (const [file, contents, message] of [
+      ["template.mustache", "{{second}}", "{{second}}"],
+      ["data.json", `{"version":2}`, 'string:{"version":2}'],
+      ["snippet.ts", `console.log("snippet ran again");`, 'console.log("snippet ran again");'],
+      ["shader.wgsl", "fn second() {}", "fn second() {}"],
+      ["styles.css", "body{color:blue}", "body{color:blue}"],
+      ["config.txt", `{"version":2}`, "object:2"],
+      ["lazy.ts", `console.log("lazy ran again");`, 'lazy:console.log("lazy ran again");'],
+    ] as const) {
+      await c.expectReload(async () => {
+        await dev.write(file, contents);
+      });
+      logged[file] = message;
+      await c.expectMessage(...Object.values(logged));
+    }
+  },
+});
+devTest("a file that the browser imports as text and the server as a module keeps both loaders on a save", {
+  framework: {
+    fileSystemRouterTypes: [
+      { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" },
+    ],
+  },
+  files: {
+    "shared.ts": `export const x = 1;`,
+    "client.ts": `
+      import text from "./shared.ts" with { type: "text" };
+      console.log(text);
+    `,
+    "server.ts": `
+      export function render(req, meta) {
+        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+        const body = "<p>" + meta.pageModule.default() + "</p>" + scripts;
+        return new Response("<!DOCTYPE html><html><body>" + body + "</body></html>", {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+    `,
+    "routes/index.ts": `
+      import { x } from "../shared.ts";
+      export default () => "x:" + x;
+    `,
+    "routes/second.ts": `
+      import { x } from "../shared.ts";
+      export default () => "x:" + x;
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<p>x:1</p>");
+    await dev.write("shared.ts", `export const x = 2;`);
+    // The browser bundle of a route is built on its first request, so /second shows the browser graph after the save.
+    await dev.fetch("/second").expect.toInclude("<p>x:2</p>");
+    await using c = await dev.client("/second");
+    await c.expectMessage("export const x = 2;");
+  },
+});
+devTest("an html route that client code also imports as text is still bundled as the route", {
+  files: {
+    "main.html": emptyHtmlFile({ scripts: ["main.ts"] }),
+    "main.ts": `
+      import about from "./about.html" with { type: "text" };
+      console.log(typeof about);
+    `,
+    "about.html": emptyHtmlFile({ body: "<p>about, first</p>" }),
+  },
+  async test(dev) {
+    // /main bundles about.html as a text module before the route of about.html is requested.
+    await dev.fetch("/main").expect.toInclude("<script");
+    await dev.fetch("/about").expect.toInclude("<p>about, first</p>");
+
+    await dev.write("about.html", emptyHtmlFile({ body: "<p>about, second</p>" }));
+    await dev.fetch("/about").expect.toInclude("<p>about, second</p>");
+  },
+});
 devTest("importing bun on the client", {
   files: {
     "index.html": emptyHtmlFile({

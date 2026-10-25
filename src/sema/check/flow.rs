@@ -8096,7 +8096,16 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(cached) = (self.p.resolved_effects_signatures).get(&self.task, &(file, call)) {
             return cached;
         }
+        let (reported, interruptions) = (self.reported.len(), self.interruptions());
         let resolved = self.resolved_signature(file, call);
+        // The call isn't resolved from these types of the loop again. What's still here wasn't stored with the
+        // signature, and a frame in progress that's checked again would drop it.
+        if self.reported.len() != reported
+            && self.is_in_flow_loop()
+            && interruptions == self.interruptions()
+        {
+            self.log_reported_in_flow_loop(reported, file, call);
+        }
         // `UNRESOLVED` means the query hit the depth or stack limit.
         if resolved.ret != TypeId::UNRESOLVED {
             let (key, stored) = ((file, call), Stored::new());

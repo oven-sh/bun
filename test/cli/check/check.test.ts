@@ -11539,6 +11539,33 @@ try {
       expect(exitCode).toBe(1);
     });
 
+    // The return type asks whether the end is reachable, which resolves `defined(val)`. The walk for `val` asks for the
+    // type of the assigned literal, and the walk for the `val` in there resolves `defined(pend)` while the loop has only
+    // `never[]` for `pend`. The statement's check of the literal finds the loop complete.
+    test("what the resolution of an assertion call reports while a loop is analyzed stays reported", async () => {
+      using dir = project({
+        "a.ts": `declare function defined<T>(x: T): asserts x is NonNullable<T>;
+declare const req: { user?: { role: string } };
+export const f = () => {
+  let val: string | number | undefined = undefined;
+  let pend = [];
+  while (req.user?.role === "admin") {
+    defined(pend);
+    pend[1] = 1;
+  }
+  ({ name: val } = { name: val ?? 0 });
+  defined(val);
+};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        `a.ts(5,7): error TS7034: Variable 'pend' implicitly has type 'any[]' in some locations where its type cannot be determined.
+a.ts(7,13): error TS7005: Variable 'pend' implicitly has an 'any[]' type.`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("a shared flow node in a `finally` block has the type of its first visit", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

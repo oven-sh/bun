@@ -1,8 +1,8 @@
 // LD_PRELOAD shim for the "gives up on a running lookup" test in
 // dns-prefetch.test.ts: the first getaddrinfo(3) of the name in HOLD_DNS_NAME
 // creates the file named by HOLD_DNS_SIGNAL_FILE as its hold begins, then
-// blocks for HOLD_DNS_MS milliseconds; every call for that name answers as
-// 127.0.0.1. Other names pass through to libc.
+// blocks until the file named by HOLD_DNS_RELEASE_FILE exists; every call for
+// that name answers as 127.0.0.1. Other names pass through to libc.
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -26,10 +26,9 @@ int getaddrinfo(const char *node, const char *service, const struct addrinfo *hi
     if (__sync_fetch_and_add(&calls, 1) == 0) {
       const char *signal = getenv("HOLD_DNS_SIGNAL_FILE");
       if (signal) close(open(signal, O_WRONLY | O_CREAT, 0644));
-      long ms = atol(getenv("HOLD_DNS_MS") ? getenv("HOLD_DNS_MS") : "0");
-      struct timespec left = {.tv_sec = ms / 1000, .tv_nsec = (ms % 1000) * 1000000L};
-      while (nanosleep(&left, &left) != 0) {
-      }
+      const char *release = getenv("HOLD_DNS_RELEASE_FILE");
+      struct timespec tick = {.tv_sec = 0, .tv_nsec = 10000000L};
+      while (release && access(release, F_OK) != 0) nanosleep(&tick, NULL);
     }
     node = "127.0.0.1";
   }

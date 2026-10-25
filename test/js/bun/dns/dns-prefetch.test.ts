@@ -53,25 +53,28 @@ test.skipIf(!isLinux || !cc)(
   async () => {
     const shim = compileFixture(join(import.meta.dir, "hold-getaddrinfo-fixture.c"), { flags: ["-ldl", "-lpthread"] });
     using dir = tempDir("hold-dns", {});
-    // The shim creates this file as it begins holding the first lookup.
+    // The shim creates the signal file as it begins holding the first lookup, and
+    // holds it until the release file exists.
     const signalFile = join(String(dir), "holding");
-    const holdMs = 500;
+    const releaseFile = join(String(dir), "release");
     const script = `
     using server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") });
     const url = "http://held.test:" + server.port + "/";
-    // Abort the first fetch once the shim reports that it holds its lookup.
+    // Abort the first fetch once the shim reports that it holds its lookup; the
+    // lookup stays held until the release file exists, so the abort can never
+    // land after getaddrinfo has returned.
     const controller = new AbortController();
     const first = fetch(url, { signal: controller.signal }).then(r => r.status, e => e.name);
-    const { existsSync } = require("node:fs");
+    const { existsSync, writeFileSync } = require("node:fs");
     const deadline = Date.now() + 5_000;
     while (!existsSync(process.env.HOLD_DNS_SIGNAL_FILE) && Date.now() < deadline) await Bun.sleep(1);
     controller.abort();
     await first;
-    const started = performance.now();
     const second = await fetch(url).then(r => r.status, e => e.name);
-    const secondMs = performance.now() - started;
+    // The second fetch completed while the first lookup was still held: release it.
+    writeFileSync(process.env.HOLD_DNS_RELEASE_FILE, "");
     const { size, ...stats } = Bun.dns.getCacheStats();
-    console.log(JSON.stringify({ first: await first, second, secondMs, ...stats }));
+    console.log(JSON.stringify({ first: await first, second, ...stats }));
   `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
@@ -79,14 +82,14 @@ test.skipIf(!isLinux || !cc)(
         ...bunEnv,
         LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,
         HOLD_DNS_NAME: "held.test",
-        HOLD_DNS_MS: String(holdMs),
         HOLD_DNS_SIGNAL_FILE: signalFile,
+        HOLD_DNS_RELEASE_FILE: releaseFile,
       },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const { secondMs, ...result } = JSON.parse(stdout.trim() || "{}");
+    const result = JSON.parse(stdout.trim() || "{}");
     // The second connection is a fresh lookup (a second cache miss), not an
     // inflight hit on the held one.
     expect({ result, stderr, exitCode }).toEqual({
@@ -102,8 +105,6 @@ test.skipIf(!isLinux || !cc)(
       stderr: "",
       exitCode: 0,
     });
-    // Before the fix, the second fetch waited out the rest of the hold.
-    expect(secondMs).toBeLessThan(holdMs / 2);
   },
 );
 

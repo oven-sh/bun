@@ -2860,8 +2860,27 @@ impl<'p, 's> Checker<'p, 's> {
             };
             self.quick_initializers.pop();
             let _ = self.leave(Query::Expr(file, e));
+            let checked_inside = (self.initializers_checked_inside.iter())
+                .position(|it| it.quick_type_frame == at)
+                .map(|it| self.initializers_checked_inside.swap_remove(it));
             if let Some(quick) = quick {
                 return quick;
+            }
+            if let Some(checked_inside) = checked_inside
+                && check_mode.is_none()
+                && self.enter(Query::Expr(file, e))
+            {
+                self.reported.extend(checked_inside.reported);
+                match self.leave(Query::Expr(file, e)) {
+                    Ok(stored) => {
+                        (self.p.expr_types).rewrite(&self.task, (file, e), TypeId::ANY, stored);
+                    }
+                    Err(open) => {
+                        let any = u64::from(TypeId::ANY.0);
+                        self.cache_provisionally(Query::Expr(file, e), any, open);
+                    }
+                }
+                return TypeId::ANY;
             }
         }
         let Some(check_mode) = check_mode else {

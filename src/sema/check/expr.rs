@@ -582,6 +582,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         };
         let since = |at: u64| at >= returned.serial;
+        let is_initializer = matches!(self.stack[self.stack.len() - 2], Query::Pat(..));
         if !resolution.circular
             || returned.incomplete_flow
             || since(self.limit_at)
@@ -594,11 +595,30 @@ impl<'p, 's> Checker<'p, 's> {
                 Query::Return(..) => true,
                 // `getTypeOfAccessors` calls `getReturnTypeFromBody` itself.
                 Query::LiteralProp(of, p) => self.hir(of)[p].kind == PropKind::Getter,
+                Query::Pat(..) => ty == TypeId::ANY,
                 _ => false,
             }
             || !self.is_checked_by_check_expression_cached(file, e)
             || (self.types().object_flags(ty)).contains(ObjectFlags::HAS_UNRESOLVED)
         {
+            return;
+        }
+        // `checkDeclarationInitializer`: an outer resolution of the variable that's still in `getQuickTypeOfExpression`
+        // finds this type if it gets to `checkExpressionCached`.
+        if is_initializer {
+            let from = returned.reported_from as usize;
+            let outer = &self.stack[..self.stack.len() - 1];
+            if let Some(at) = outer.iter().rposition(|&q| q == Query::Expr(file, e))
+                && self.frames[at].is_quick_type
+                && !(self.initializers_checked_inside.iter()).any(|it| it.quick_type_frame == at)
+            {
+                let reported = self.take_reported_from(from);
+                self.initializers_checked_inside
+                    .push(super::InitializerCheckedInside {
+                        quick_type_frame: at,
+                        reported,
+                    });
+            }
             return;
         }
         // tsc caches a `return` statement's expression without its parentheses, so the walk checks it again. The errors

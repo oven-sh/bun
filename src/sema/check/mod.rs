@@ -175,6 +175,11 @@ struct Provisional {
     hidden_under: u64,
 }
 
+struct InitializerCheckedInside {
+    quick_type_frame: usize,
+    reported: Vec<Reported>,
+}
+
 /// Calls `$each!` with the names of the `Buffered` fields of `Program`. A table whose entries
 /// contain handles into another table comes after that table, so `shapes` is before `members`. This
 /// is the only list, so a new `Buffered` field must be added here.
@@ -886,6 +891,7 @@ impl<'s> Program<'s> {
             declared_parameters: Default::default(),
             listed_in_unions: Default::default(),
             quick_initializers: Vec::new(),
+            initializers_checked_inside: Vec::new(),
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
             rechecks_at: usize::MAX,
@@ -2114,6 +2120,10 @@ pub struct Checker<'p, 's> {
     /// `getQuickTypeOfExpression` is evaluating, and those of a `...rest`. See
     /// `is_flow_loop_visible`.
     quick_initializers: Vec<(usize, usize)>,
+    /// The initializers that a circular resolution of their variable was the first to check with `checkExpressionCached`,
+    /// to `any`, while an outer resolution was in `getQuickTypeOfExpression`, with the index of that frame and what the
+    /// check reported. See `type_of_declaration_initializer_ex`.
+    initializers_checked_inside: Vec<InitializerCheckedInside>,
     /// `NodeCheckFlagsInCheckIdentifier`: the patterns for which `getNarrowedTypeOfSymbol` is in
     /// progress.
     in_check_identifier: Vec<(FileId, crate::hir::PatId)>,

@@ -8958,6 +8958,48 @@ export const c21 = c00.arr();
       expect(exitCode).toBe(1);
     });
 
+    // The first resolution of `x30` begins with `getQuickTypeOfExpression`, which only checks the callee. That leads to
+    // `x30` again, and the inner resolution, which ends in the cycle, is the first to check the initializer: `x20` is
+    // `any` there. `checkExpressionCached` keeps that type, so the first resolution finds `any` too, and so does `x`.
+    test("the first resolution of a variable finds the type its initializer got inside the cycle", async () => {
+      using dir = project({
+        "lib.ts": `export class Box<S> {
+  constructor(public shape: S) {}
+  extend<E>(e: E) { return new Box({ ...this.shape, ...e }); }
+}
+export declare function box<S>(s: S): Box<S>;
+`,
+        "m1.ts": `import { seed } from "./m4";
+import { x30 } from "./m3";
+export class Svc { constructor(other = seed()) {} held = x30; }
+`,
+        "m2.ts": `import { box } from "./lib";
+import { Svc } from "./m1";
+export const x20 = box({ id: new Svc().held });
+`,
+        "m3.ts": `import { x20 } from "./m2";
+export const x30 = x20.extend({ id: "" });
+`,
+        "m4.ts": `import { Svc } from "./m1";
+export function seed() { return x50(null!); }
+export const x50 = (x: Svc["held"]) => [x];
+seed.nope5;
+`,
+      });
+      const circular =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          `m1.ts(3,51): error TS7022: 'held' implicitly has type 'any' ${circular}`,
+          `m2.ts(3,14): error TS7022: 'x20' implicitly has type 'any' ${circular}`,
+          `m3.ts(2,14): error TS7022: 'x30' implicitly has type 'any' ${circular}`,
+          "m4.ts(4,6): error TS2339: Property 'nope5' does not exist on type '() => any[]'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // The argument of `router` in m1.ts is first checked in the mode that skips generic functions. The callee of
     // `keys()` leads to `c11` again, and that resolution of `keys()` finds `p` to be `any` and assigns its signature.
     test("a call keeps the signature that a resolution inside the check of its callee assigned", async () => {

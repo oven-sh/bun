@@ -4,6 +4,17 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "ha
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
+import {
+  applyEdits,
+  Client,
+  format,
+  initialize,
+  open,
+  uriOf,
+  type Message,
+  type Position,
+  type TextEdit,
+} from "../lsp-client";
 
 afterAll(endChildren);
 
@@ -16,195 +27,12 @@ const lints = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bun
 // plugin runs in a VM, which takes seconds more to start.
 const timeout = isDebug || isASAN ? 120_000 : 10_000;
 
-type Message = {
-  jsonrpc: "2.0";
-  id?: number | string | null;
-  method?: string;
-  params?: any;
-  result?: any;
-  error?: { code: number; message: string };
-};
-
-type Position = { line: number; character: number };
-type TextEdit = { range: { start: Position; end: Position }; newText: string };
-
-/** Splits what the server writes into messages: `Content-Length: <bytes>`, an empty line, the JSON. */
-class Framer {
-  private buffered = Buffer.alloc(0);
-  /** What is no frame: text before a header, a header without a length, a body that is not JSON. */
-  readonly garbage: string[] = [];
-
-  constructor(private onMessage: (message: Message) => void) {}
-
-  push(chunk: Uint8Array) {
-    this.buffered = this.buffered.length ? Buffer.concat([this.buffered, chunk]) : Buffer.from(chunk);
-    for (;;) {
-      const end = this.buffered.indexOf("\r\n\r\n");
-      if (end < 0) return;
-      const header = this.buffered.toString("utf8", 0, end);
-      const length = /(^|\r\n)Content-Length: (\d+)$/.exec(header);
-      if (!length) {
-        this.garbage.push(header);
-        this.buffered = this.buffered.subarray(end + 4);
-        continue;
-      }
-      if (length.index > 0) this.garbage.push(header.slice(0, length.index));
-      const size = Number(length[2]);
-      if (this.buffered.length < end + 4 + size) return;
-      const body = this.buffered.toString("utf8", end + 4, end + 4 + size);
-      this.buffered = this.buffered.subarray(end + 4 + size);
-      try {
-        this.onMessage(JSON.parse(body));
-      } catch {
-        this.garbage.push(body);
-      }
-    }
-  }
-
-  /** What follows the last frame. */
-  get rest() {
-    return this.buffered.toString();
-  }
-}
-
-/** A client of the server: sends requests and notifications, awaits answers and notifications. */
-class Client {
-  readonly proc;
-  private readonly framer: Framer;
-  private next = 0;
-  private readonly waiting = new Map<number, { resolve: (message: Message) => void; reject: (why: Error) => void }>();
-  /** Notifications and requests of the server that nothing has awaited yet. */
-  private readonly unclaimed: Message[] = [];
-  private readonly watchers: { test: (message: Message) => boolean; resolve: (message: Message) => void }[] = [];
-  /** Everything the server has sent, in order. */
-  readonly received: Message[] = [];
-  private readonly stderr: Promise<string>;
-  /** Resolves when the server has closed its standard output. */
-  private readonly done: Promise<void>;
-
-  constructor(cwd: string) {
-    this.proc = spawn({ cmd: command, env: bunEnv, cwd, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-    this.framer = new Framer(message => this.take(message));
-    this.stderr = this.proc.stderr.text();
-    this.done = this.read();
-  }
-
-  private async read() {
-    for await (const chunk of this.proc.stdout) this.framer.push(chunk);
-    for (const { reject } of this.waiting.values()) reject(new Error("The server ended before it answered"));
-    this.waiting.clear();
-  }
-
-  private take(message: Message) {
-    this.received.push(message);
-    if (message.method === undefined && typeof message.id === "number") {
-      const waiting = this.waiting.get(message.id);
-      this.waiting.delete(message.id);
-      waiting?.resolve(message);
-      return;
-    }
-    const at = this.watchers.findIndex(it => it.test(message));
-    if (at < 0) return void this.unclaimed.push(message);
-    const [watcher] = this.watchers.splice(at, 1);
-    watcher.resolve(message);
-  }
-
-  /** What `send` has not written yet, while `together` runs. */
-  private held: string[] | undefined;
-
-  private send(message: object) {
-    const body = JSON.stringify({ jsonrpc: "2.0", ...message });
-    const frame = `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
-    if (this.held) return void this.held.push(frame);
-    this.proc.stdin.write(frame);
-    this.proc.stdin.flush();
-  }
-
-  /** Sends what `send` is called with in `run` as one write. */
-  together(run: () => void) {
-    this.held = [];
-    run();
-    const frames = this.held.join("");
-    this.held = undefined;
-    this.proc.stdin.write(frames);
-    this.proc.stdin.flush();
-  }
-
-  /** The id of the last request sent. */
-  get lastId() {
-    return this.next;
-  }
-
-  request(method: string, params: unknown = {}): Promise<Message> {
-    const id = ++this.next;
-    return new Promise((resolve, reject) => {
-      this.waiting.set(id, { resolve, reject });
-      this.send({ id, method, params });
-    });
-  }
-
-  notify(method: string, params: unknown = {}) {
-    this.send({ method, params });
-  }
-
-  /** The next message of the server that `test` accepts, among those that came already or the ones to come. */
-  notification(test: (message: Message) => boolean): Promise<Message> {
-    const at = this.unclaimed.findIndex(test);
-    if (at >= 0) return Promise.resolve(this.unclaimed.splice(at, 1)[0]);
-    return new Promise(resolve => this.watchers.push({ test, resolve }));
-  }
-
-  /** Closes the client's side and waits for the server to end. */
-  async end() {
-    this.proc.stdin.end();
-    const [exitCode, stderr] = await Promise.all([this.proc.exited, this.stderr]);
-    await this.done;
-    return { exitCode, stderr, garbage: this.framer.garbage, rest: this.framer.rest };
-  }
-
-  [Symbol.asyncDispose]() {
-    this.proc.kill("SIGKILL");
-    return this.done;
-  }
-}
-
-const uriOf = (...parts: string[]) => Bun.pathToFileURL(join(...parts)).href;
-
-const initialize = (client: Client, folders: string[], more: object = {}) =>
-  client.request("initialize", {
-    processId: process.pid,
-    capabilities: {},
-    workspaceFolders: folders.map(it => ({ uri: uriOf(it), name: it })),
-    ...more,
-  });
-
-const open = (client: Client, path: string, text: string, languageId = "javascript") =>
-  client.notify("textDocument/didOpen", { textDocument: { uri: uriOf(path), languageId, version: 1, text } });
-
-const format = (client: Client, path: string) =>
-  client.request("textDocument/formatting", {
-    textDocument: { uri: uriOf(path) },
-    options: { tabSize: 2, insertSpaces: true },
-  });
-
-/** `text` with the `TextEdit`s applied. Positions count UTF-16 code units, which are bytes in these tests. */
-function applyEdits(text: string, edits: TextEdit[]) {
-  const starts = [0];
-  for (let at = 0; at < text.length; at++) if (text[at] === "\n") starts.push(at + 1);
-  const offset = ({ line, character }: Position) => (line < starts.length ? starts[line] + character : text.length);
-  const ordered = [...edits].sort((a, b) => offset(b.range.start) - offset(a.range.start));
-  for (const edit of ordered) {
-    text = text.slice(0, offset(edit.range.start)) + edit.newText + text.slice(offset(edit.range.end));
-  }
-  return text;
-}
-
 describe.concurrent("bun fmt --lsp", () => {
   test(
     "answers initialize with the capabilities of a formatter, and of a linter where the build has bun lint",
     async () => {
       using dir = tempDir("bun-fmt-lsp", { "a.js": "a;\n" });
-      await using client = new Client(String(dir));
+      await using client = new Client(command, String(dir));
       const { result, error } = await initialize(client, [String(dir)], {
         capabilities: { general: { positionEncodings: ["utf-8", "utf-16"] } },
       });
@@ -242,7 +70,7 @@ describe.concurrent("bun fmt --lsp", () => {
     "turns formatting off with the initialization options, and defaults to UTF-16 positions",
     async () => {
       using dir = tempDir("bun-fmt-lsp", { "a.js": "a;\n" });
-      await using client = new Client(String(dir));
+      await using client = new Client(command, String(dir));
       const { result } = await initialize(client, [String(dir)], {
         initializationOptions: { format: { enable: false } },
       });
@@ -262,6 +90,38 @@ describe.concurrent("bun fmt --lsp", () => {
   );
 
   test(
+    "turns linting off with the initialization options, whatever the build has",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", { "a.js": "a;\n" });
+      await using client = new Client(command, String(dir));
+      const { result } = await initialize(client, [String(dir)], {
+        initializationOptions: { lint: { enable: false } },
+      });
+      expect(result.capabilities.codeActionProvider).toBe(false);
+      expect(result.capabilities.documentFormattingProvider).toBe(true);
+      client.notify("initialized");
+      const path = join(String(dir), "a.js");
+      open(client, path, "debugger;\n");
+      // The thread of the folder answers this after whatever it was asked before.
+      expect((await format(client, path)).result).toEqual([]);
+      const actions = await client.request("textDocument/codeAction", {
+        textDocument: { uri: uriOf(path) },
+        range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } },
+        context: { diagnostics: [] },
+      });
+      expect(actions.result).toEqual([]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      const diagnostics = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
+      expect(diagnostics.filter(it => it.params.diagnostics.length > 0)).toEqual([]);
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
     "formats each document with the bunfig.toml of its workspace folder, or of a directory above it",
     async () => {
       using dir = tempDir("bun-fmt-lsp", {
@@ -272,7 +132,7 @@ describe.concurrent("bun fmt --lsp", () => {
       });
       const a = join(String(dir), "a");
       const c = join(String(dir), "c");
-      await using client = new Client(String(dir));
+      await using client = new Client(command, String(dir));
       expect((await initialize(client, [a, c])).error).toBeUndefined();
       client.notify("initialized");
       const ugly = 'const  value  =  "text"\n';
@@ -327,7 +187,7 @@ describe.concurrent("bun fmt --lsp", () => {
       expect(cliExitCode).toBe(0);
       expect(expected).not.toBe(text);
 
-      await using client = new Client(String(dir));
+      await using client = new Client(command, String(dir));
       await initialize(client, [String(dir)]);
       client.notify("initialized");
       open(client, join(String(dir), "a.js"), text);
@@ -367,7 +227,7 @@ exports.format = async (text, options) => {
         ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n',
         "a.astro": "",
       });
-      await using client = new Client(String(dir));
+      await using client = new Client(command, String(dir));
       expect((await initialize(client, [String(dir)])).error).toBeUndefined();
       client.notify("initialized");
       const text = "<p   >a</p>\n";
@@ -397,7 +257,7 @@ exports.format = async (text, options) => {
         "a.js": "",
         "notes.zzz": "",
       });
-      await using client = new Client(String(dir));
+      await using client = new Client(command, String(dir));
       expect((await initialize(client, [String(dir)])).error).toBeUndefined();
       client.notify("initialized");
       open(client, join(String(dir), "a.js"), "const x  =  ;\n");
@@ -412,6 +272,39 @@ exports.format = async (text, options) => {
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // The same redaction as `bun install` prints for a bunfig.toml that does not parse.
+  test(
+    "shows a syntax error of bunfig.toml without repeating its text, which may be a secret",
+    async () => {
+      const token = "npm_abcdefghijklmnopqrstuvwxyz0123456789";
+      using dir = tempDir("bun-fmt-lsp", {
+        "bunfig.toml": `[install]\ntoken = ${token}\n`,
+        "a.js": "",
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      open(client, join(String(dir), "a.js"), "a  ;\n");
+      const shown = client.notification(it => it.method === "window/showMessage");
+      const formatted = await format(client, join(String(dir), "a.js"));
+      expect(formatted.error).toBeUndefined();
+      expect(formatted.result).toBeNull();
+      const { params } = await shown;
+      expect(params.type).toBe(1);
+      expect(params.message).toMatch(/Cannot use bunfig\.toml:2:\d+: Strings must be quoted$/);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, stderr, garbage, rest } = await client.end();
+      const messages = client.received.filter(it => it.method === "window/showMessage").map(it => it.params.message);
+      expect(messages.length).toBeGreaterThan(0);
+      for (const message of messages) expect(message).not.toContain(token);
+      expect(stderr).not.toContain(token);
       expect([garbage, rest]).toEqual([[], ""]);
       expect(exitCode).toBe(0);
     },
@@ -449,46 +342,13 @@ exports.format = async (text, options) => {
     timeout,
   );
 
-  // The same redaction as `bun install` prints for a bunfig.toml that does not parse.
-  test(
-    "shows a syntax error of bunfig.toml without repeating its text, which may be a secret",
-    async () => {
-      const token = "npm_abcdefghijklmnopqrstuvwxyz0123456789";
-      using dir = tempDir("bun-fmt-lsp", {
-        "bunfig.toml": `[install]\ntoken = ${token}\n`,
-        "a.js": "",
-      });
-      await using client = new Client(String(dir));
-      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
-      client.notify("initialized");
-      open(client, join(String(dir), "a.js"), "a  ;\n");
-      const shown = client.notification(it => it.method === "window/showMessage");
-      const formatted = await format(client, join(String(dir), "a.js"));
-      expect(formatted.error).toBeUndefined();
-      expect(formatted.result).toBeNull();
-      const { params } = await shown;
-      expect(params.type).toBe(1);
-      expect(params.message).toMatch(/Cannot use bunfig\.toml:2:\d+: Strings must be quoted$/);
-      expect((await client.request("shutdown")).result).toBeNull();
-      client.notify("exit");
-      const { exitCode, stderr, garbage, rest } = await client.end();
-      const messages = client.received.filter(it => it.method === "window/showMessage").map(it => it.params.message);
-      expect(messages.length).toBeGreaterThan(0);
-      for (const message of messages) expect(message).not.toContain(token);
-      expect(stderr).not.toContain(token);
-      expect([garbage, rest]).toEqual([[], ""]);
-      expect(exitCode).toBe(0);
-    },
-    timeout,
-  );
-
   // A failure of the setup is the same for every request, so the user sees it once. A syntax error is about the one
   // text and is logged each time.
   test(
     "shows a configuration file that cannot be loaded once, however many requests fail on it",
     async () => {
       using dir = tempDir("bun-fmt-lsp", { ".prettierrc": '{ "semi": \n', "a.js": "" });
-      await using client = new Client(String(dir));
+      await using client = new Client(command, String(dir));
       expect((await initialize(client, [String(dir)])).error).toBeUndefined();
       client.notify("initialized");
       open(client, join(String(dir), "a.js"), "a  ;\n");
@@ -524,7 +384,7 @@ exports.format = async (text, options) => {
     "refuses a second initialize, and answers a cancelled request with RequestCancelled",
     async () => {
       using dir = tempDir("bun-fmt-lsp", { "a.js": "" });
-      await using client = new Client(String(dir));
+      await using client = new Client(command, String(dir));
       expect((await initialize(client, [String(dir)])).error).toBeUndefined();
       expect((await initialize(client, [String(dir)])).error).toEqual({ code: -32600, message: expect.any(String) });
       client.notify("initialized");
@@ -538,6 +398,47 @@ exports.format = async (text, options) => {
       });
       expect((await first).error).toBeUndefined();
       expect((await second).error).toEqual({ code: -32800, message: expect.any(String) });
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
+    "cancels the requests of a workspace folder that is removed, and formats its files with the defaults afterwards",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", {
+        "a/bunfig.toml": "[fmt]\nsemi = false\n",
+        "a/x.js": "",
+        "c/y.js": "",
+      });
+      const a = join(String(dir), "a");
+      const c = join(String(dir), "c");
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [a, c])).error).toBeUndefined();
+      client.notify("initialized");
+      const ugly = 'const  value  =  "text"\n';
+      open(client, join(a, "x.js"), ugly);
+      // The folder's thread may be on the first request when the reader takes the second and the removal of the folder.
+      let first!: Promise<Message>, second!: Promise<Message>;
+      client.together(() => {
+        first = format(client, join(a, "x.js"));
+        second = format(client, join(a, "x.js"));
+        client.notify("workspace/didChangeWorkspaceFolders", {
+          event: { added: [], removed: [{ uri: uriOf(a), name: a }] },
+        });
+      });
+      const before = await first;
+      expect([undefined, -32800]).toContain(before.error?.code);
+      if (before.error === undefined) expect(applyEdits(ugly, before.result)).toBe('const value = "text"\n');
+      expect((await second).error).toEqual({ code: -32800, message: expect.any(String) });
+      // Out of every folder, the file is formatted without a/bunfig.toml.
+      const after = await format(client, join(a, "x.js"));
+      expect(after.error).toBeUndefined();
+      expect(applyEdits(ugly, after.result)).toBe('const value = "text";\n');
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();
@@ -562,7 +463,7 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
         "bunfig.toml": "[fmt]\nprintWidth = 80\n",
         "a.astro": "",
       });
-      await using client = new Client(String(dir));
+      await using client = new Client(command, String(dir));
       expect((await initialize(client, [String(dir)])).error).toBeUndefined();
       client.notify("initialized");
       const text = "<p   >a</p>\n";
@@ -613,7 +514,7 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
         ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n',
         "a.astro": "",
       });
-      await using client = new Client(String(dir));
+      await using client = new Client(command, String(dir));
       expect((await initialize(client, [String(dir)])).error).toBeUndefined();
       client.notify("initialized");
       const text = "<p   >a</p>\n";
@@ -692,7 +593,7 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
     "exits with 1 when the client goes away after initialize, and refuses a request before it",
     async () => {
       using dir = tempDir("bun-fmt-lsp", {});
-      await using early = new Client(String(dir));
+      await using early = new Client(command, String(dir));
       const refused = await early.request("shutdown");
       expect(refused.error).toEqual({ code: -32002, message: expect.any(String) });
       expect((await initialize(early, [String(dir)])).error).toBeUndefined();
@@ -700,10 +601,227 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
       expect([gone.garbage, gone.rest]).toEqual([[], ""]);
       expect(gone.exitCode).toBe(1);
 
-      await using without = new Client(String(dir));
+      await using without = new Client(command, String(dir));
       await initialize(without, [String(dir)]);
       without.notify("exit");
       expect((await without.end()).exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // Editors pass these to every language server; without `--lsp` they are unknown flags.
+  test(
+    "accepts --stdio and --clientProcessId with --lsp, and only there",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", {});
+      await using client = new Client([...command, "--stdio", "--clientProcessId=1"], String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+
+      await using refused = spawn({
+        cmd: [bunExe(), "fmt", "--no-script", "--stdio", "--clientProcessId=1"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdin: "ignore",
+        stderr: "pipe",
+      });
+      const [out, err, code] = await Promise.all([refused.stdout.text(), refused.stderr.text(), refused.exited]);
+      expect(out).toBe("");
+      expect(err).toContain("Invalid option '--stdio'");
+      expect(code).toBe(2);
+    },
+    timeout,
+  );
+
+  // After an emoji on its line, a `character` differs between the encodings: the emoji is two code units and four
+  // bytes. Three of them put a range counted in the wrong encoding on the statement before or after the right one.
+  test.each([
+    ["utf-8", { general: { positionEncodings: ["utf-8"] } }],
+    ["utf-16", {}],
+  ] as const)(
+    "counts the positions of a range and of a change in %s, as negotiated",
+    async (encoding, capabilities) => {
+      using dir = tempDir("bun-fmt-lsp", { "a.js": "" });
+      const line = '"😀😀😀"; a  ; b  ; c  ;';
+      const text = `x  ;\n${line}\n`;
+      // `bun fmt` counts `--range-start` in UTF-16 code units, as Prettier does, whatever the client counts.
+      const cli = async (text: string, statement?: string) => {
+        const range = statement
+          ? [`--range-start=${text.indexOf(statement)}`, `--range-end=${text.indexOf(statement) + statement.length}`]
+          : [];
+        await using proc = spawn({
+          cmd: [bunExe(), "fmt", "--no-script", ...range, "--stdin-filepath", "a.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdin: Buffer.from(text),
+          stderr: "pipe",
+        });
+        const [formatted, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(exitCode).toBe(0);
+        expect(formatted).not.toBe(text);
+        return formatted;
+      };
+      const rangeOf = (statement: string) => {
+        const character = (at: number) => (encoding === "utf-8" ? Buffer.byteLength(line.slice(0, at)) : at);
+        const start = line.indexOf(statement);
+        return {
+          start: { line: 1, character: character(start) },
+          end: { line: 1, character: character(start + statement.length) },
+        };
+      };
+      const apply = encoding === "utf-8" ? applyByteEdits : applyEdits;
+
+      const expected = await cli(text, "b  ;");
+      expect(expected).toContain("a  ; b; c  ;");
+      await using client = new Client(command, String(dir));
+      const { result } = await initialize(client, [String(dir)], { capabilities });
+      expect(result.capabilities.positionEncoding).toBe(encoding);
+      client.notify("initialized");
+      open(client, join(String(dir), "a.js"), text);
+      const ranged = await client.request("textDocument/rangeFormatting", {
+        textDocument: { uri: uriOf(String(dir), "a.js") },
+        range: rangeOf("b  ;"),
+        options: { tabSize: 2, insertSpaces: true },
+      });
+      expect(ranged.error).toBeUndefined();
+      expect(apply(text, ranged.result)).toBe(expected);
+
+      // An incremental change of the same statement, then the document is formatted as the changed text is.
+      const changed = text.replace("b  ;", "bb  ;");
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(String(dir), "a.js"), version: 2 },
+        contentChanges: [{ range: rangeOf("b  ;"), text: "bb  ;" }],
+      });
+      const expectedChanged = await cli(changed);
+      expect(expectedChanged).toContain("a;\nbb;\nc;\n");
+      const formatted = await format(client, join(String(dir), "a.js"));
+      expect(formatted.error).toBeUndefined();
+      expect(apply(changed, formatted.result)).toBe(expectedChanged);
+
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+});
+
+/** `applyEdits` for positions that count bytes. */
+function applyByteEdits(text: string, edits: TextEdit[]) {
+  let bytes = Buffer.from(text);
+  const starts = [0];
+  for (let at = 0; at < bytes.length; at++) if (bytes[at] === 0x0a) starts.push(at + 1);
+  const offset = ({ line, character }: Position) => (line < starts.length ? starts[line] + character : bytes.length);
+  const ordered = [...edits].sort((a, b) => offset(b.range.start) - offset(a.range.start));
+  for (const edit of ordered) {
+    const [start, end] = [offset(edit.range.start), offset(edit.range.end)];
+    bytes = Buffer.concat([bytes.subarray(0, start), Buffer.from(edit.newText), bytes.subarray(end)]);
+  }
+  return bytes.toString();
+}
+
+// How the command line gets to the server: `bun lint --no-script --lsp` is a server in a build that has `bun lint`,
+// `bun fmt --no-script --lsp` in every build, and without `--no-script` either goes to a script of the project.
+describe.concurrent("bun fmt --lsp dispatch", () => {
+  // Its stdin is closed here, which ends the server before `initialize` with nothing on stdout: as a release build's
+  // `bun lint` ends without a script.
+  test(
+    "elsewhere bun lint --lsp is refused like bun lint",
+    async () => {
+      using dir = tempDir("bun-lint-lsp-canary-only", { "package.json": "{}" });
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "--lsp"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      if (!lints) expect(stderr).toBe('error: Script not found "lint"\n');
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // `--lsp` is not a flag that asks the command about itself, so without `--no-script` it goes to the script.
+  test.each([
+    ["lint", `{ "scripts": { "lint": "echo the script" } }`],
+    ["fmt", `{ "scripts": { "fmt": "echo the script" } }`],
+  ])(
+    "everywhere bun %s --lsp runs a script of the project",
+    async (command, packageJson) => {
+      using dir = tempDir("bun-lsp-of-the-project", { "package.json": packageJson });
+      await using proc = spawn({
+        cmd: [bunExe(), command, "--lsp"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe("the script --lsp");
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
+    "everywhere bun fmt --no-script --lsp formats, and lints where the build has bun lint",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp-everywhere", {
+        "bunfig.toml": `[lint.rules]\n"no-var" = "error"\n`,
+        "a.js": "",
+      });
+      await using client = new Client(command, String(dir));
+      // The older form of `initialize`: a root instead of workspace folders.
+      const initialized = await client.request("initialize", {
+        processId: null,
+        rootUri: uriOf(String(dir)),
+        capabilities: {},
+      });
+      expect(initialized.error).toBeUndefined();
+      expect(initialized.result.serverInfo.name).toBe("bun");
+      // Formatting is on in every build. `bun lint` is compiled into debug and canary builds only.
+      expect(initialized.result.capabilities).toMatchObject({
+        documentFormattingProvider: true,
+        documentRangeFormattingProvider: true,
+        codeActionProvider: lints ? { codeActionKinds: ["quickfix", "source.fixAll.bun"] } : false,
+      });
+      client.notify("initialized");
+      // One line of ASCII, so a character is a code unit in either encoding.
+      const text = "var a=1";
+      open(client, join(String(dir), "a.js"), text);
+      const formatted = await format(client, join(String(dir), "a.js"));
+      expect(formatted.error).toBeUndefined();
+      expect(applyEdits(text, formatted.result)).toBe("var a = 1;\n");
+      // `bunfig.toml` turns `no-var` on: a fix to offer where the server lints, none where it does not.
+      const actions = await client.request("textDocument/codeAction", {
+        textDocument: { uri: uriOf(String(dir), "a.js") },
+        range: { start: { line: 0, character: 0 }, end: { line: 0, character: text.length } },
+        context: { diagnostics: [] },
+      });
+      expect(actions.error).toBeUndefined();
+      if (lints)
+        expect(actions.result).toContainEqual(expect.objectContaining({ kind: "quickfix", title: "Fix no-var" }));
+      else expect(actions.result).toEqual([]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      const published = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
+      const codes = published.flatMap(it => it.params.diagnostics.map((each: any) => each.code));
+      if (lints) expect(codes).toContain("no-var");
+      else expect(codes).toEqual([]);
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
     },
     timeout,
   );

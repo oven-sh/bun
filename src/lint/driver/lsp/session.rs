@@ -9,7 +9,6 @@ use crate::results::FileResult;
 use crate::run::{Environment, Fatal, Linted, NotBuiltIn, Pool, Run, Sinks, Timing};
 use crate::{Linter, discover, paths};
 use bun_lint::js_plugin::Host;
-use bun_lint::linter::Registry;
 use bun_threading::Guarded;
 
 /// How a text is linted.
@@ -48,17 +47,7 @@ pub(crate) fn with_session<R>(
 ) -> R {
     // The thread of a root is a plain one: the stack bounds of the recursion guard are set here.
     bun_core::Output::Source::configure_thread();
-    let registry = Registry::new(&[
-        bun_lint_eslint::RULES,
-        bun_lint_typescript::RULES,
-        bun_lint_plugins::RULES,
-        bun_lint_unicorn::RULES,
-        bun_lint_react::RULES,
-        bun_lint_jest::RULES,
-        bun_lint_json::RULES,
-        bun_lint_markdown::RULES,
-    ])
-    .with_languages(crate::rules::LANGUAGES);
+    let registry = crate::rules::registry();
     let linter = Linter::new(registry.with_native_plugins(options.native_plugin_rules.clone()));
     bun_sema_driver::use_dedicated_pool("Bun Lint");
     let pool = Pool::new(options.threads);

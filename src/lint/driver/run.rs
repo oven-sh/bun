@@ -18,7 +18,7 @@ use bun_lint::formats::Reason;
 use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route, Work};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
-    FileConfig, LintMessage, Registry, ResolvedConfig, RuleId, formatting_rule, is_parse_error,
+    FileConfig, LintMessage, ResolvedConfig, RuleId, formatting_rule, is_parse_error,
 };
 use bun_sema::resolve::ScriptKind;
 use bun_sema::util::FxHashSet;
@@ -937,17 +937,7 @@ impl Run<'_> {
         if let Some(only) = options.only.as_ref().filter(|_| options.stdin) {
             return self.reject_flag(&only.stdin_conflict_error("--stdin"));
         }
-        let registry = Registry::new(&[
-            bun_lint_eslint::RULES,
-            bun_lint_typescript::RULES,
-            bun_lint_plugins::RULES,
-            bun_lint_unicorn::RULES,
-            bun_lint_react::RULES,
-            bun_lint_jest::RULES,
-            bun_lint_json::RULES,
-            bun_lint_markdown::RULES,
-        ])
-        .with_languages(crate::rules::LANGUAGES);
+        let registry = crate::rules::registry();
         if let Some(rule) = &options.explain {
             match explain::explain(&registry, rule, environment, options.color) {
                 Ok(page) => self.out.stdout = page,

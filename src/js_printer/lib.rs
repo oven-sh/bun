@@ -67,15 +67,6 @@ use renamer as rename;
 // revisit if profiling shows allocation pressure during link.
 pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 
-/// The namespace the printed specifier of `record` starts with (`namespace:path`), if any.
-fn printed_namespace(record: &ImportRecord) -> Option<&'static [u8]> {
-    (record
-        .flags
-        .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
-        && !record.path.is_file())
-    .then_some(record.path.namespace)
-}
-
 /// js_printer is the sole producer of ModuleInfo records; the bundler/runtime
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
@@ -709,16 +700,6 @@ pub mod analyze_transpiled_module {
             StringID(idx)
         }
 
-        /// Interns the specifier `print_import_record_path` prints for `record`, so the
-        /// module record requests the same module as the printed source.
-        pub(crate) fn str_for_import_record(&mut self, record: &super::ImportRecord) -> StringID {
-            let path = record.path.text;
-            match super::printed_namespace(record) {
-                Some(namespace) => self.str(&[namespace, b":".as_slice(), path].concat()),
-                None => self.str(path),
-            }
-        }
-
         pub(crate) fn request_module(
             &mut self,
             import_record_path: StringID,
@@ -1300,6 +1281,17 @@ pub trait OnSourceMapChunk {
     ) -> crate::Result<()>;
 }
 
+impl OnSourceMapChunk for Option<SourceMap::Chunk> {
+    fn on_source_map_chunk(
+        &mut self,
+        chunk: SourceMap::Chunk,
+        _: &bun_ast::Source,
+    ) -> crate::Result<()> {
+        *self = Some(chunk);
+        Ok(())
+    }
+}
+
 impl<'a> SourceMapHandler<'a> {
     pub(crate) fn on_source_map_chunk(
         &self,
@@ -1365,6 +1357,8 @@ pub struct Options<'a> {
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
     pub print_dce_annotations: bool,
+    /// Marks the braces of object literals in the source map, see `mark_object_brace`.
+    pub code_coverage: bool,
 
     pub inline_require_and_import_errors: bool,
     /// A bundler renamer named every symbol. Those renamers reserve `NaN`,
@@ -1444,6 +1438,7 @@ impl<'a> Default for Options<'a> {
             minify_identifiers: false,
             minify_syntax: false,
             print_dce_annotations: true,
+            code_coverage: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
@@ -2386,6 +2381,7 @@ pub(crate) mod __gated_printer {
                                     temp_bindings.as_mut_slice(),
                                 ),
                                 is_single_line: true,
+                                close_brace_loc: bun_ast::Loc::EMPTY,
                             };
                             // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
                             // pointee is a stack local but `print_binding` only reads it and
@@ -2451,6 +2447,14 @@ pub(crate) mod __gated_printer {
             }
             self.source_map_builder
                 .add_source_mapping(location, self.writer.slice());
+        }
+
+        #[inline]
+        pub(crate) fn mark_object_brace(&mut self) {
+            if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
+                return;
+            }
+            self.source_map_builder.mark_object_brace();
         }
 
         #[inline]
@@ -2634,7 +2638,7 @@ pub(crate) mod __gated_printer {
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                false,
+                IS_JSON,
             );
         }
 
@@ -2647,7 +2651,7 @@ pub(crate) mod __gated_printer {
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                false,
+                IS_JSON,
             );
         }
 
@@ -2941,7 +2945,7 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.print_symbol(self.options.hmr_ref);
                     if record.tag == ImportRecordTag::Builtin {
-                        self.print(b".builtin(");
+                        self.print(b".requireBuiltin(");
                     } else {
                         self.print(b".require(");
                     }
@@ -2999,8 +3003,6 @@ pub(crate) mod __gated_printer {
             }
 
             // External import()
-            self.add_source_mapping(record.range.loc);
-
             self.print_space_before_identifier();
 
             let preload = record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK)
@@ -3597,6 +3599,7 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::ERequireString(e) => {
+                    self.add_source_mapping(expr.loc);
                     self.print_require_or_import_expr(
                         e.import_record_index,
                         e.unwrapped_id.is_some(),
@@ -3613,6 +3616,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print_space_before_identifier();
+                    self.add_source_mapping(expr.loc);
 
                     if let Some(require_ref) = self.options.require_ref {
                         self.print_symbol(require_ref);
@@ -3665,6 +3669,7 @@ pub(crate) mod __gated_printer {
                             self.print(b")");
                         }
                     } else {
+                        self.add_source_mapping(expr.loc);
                         self.print_require_or_import_expr(
                             e.import_record_index,
                             false,
@@ -3961,6 +3966,7 @@ pub(crate) mod __gated_printer {
                         self.print(b"(");
                     }
                     self.add_source_mapping(expr.loc);
+                    self.mark_object_brace();
                     self.print(b"{");
                     let props = e.properties.slice();
                     if !props.is_empty() {
@@ -3999,6 +4005,7 @@ pub(crate) mod __gated_printer {
                     }
                     if e.close_brace_loc.start > expr.loc.start {
                         self.add_source_mapping(e.close_brace_loc);
+                        self.mark_object_brace();
                     }
                     self.print(b"}");
                     if wrap {
@@ -4747,6 +4754,17 @@ pub(crate) mod __gated_printer {
                     && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
         }
 
+        /// Returns true if `key` must be printed as `[key]`. YAML and JSON5 keys can be any value.
+        /// A bare array or object key is a syntax error, and `minify_syntax` prints a boolean as `!0`.
+        pub(crate) fn property_key_must_be_computed(&self, key: &Expr) -> bool {
+            match &key.data {
+                ExprData::ENumber(e) => self.number_property_key_must_be_computed(e.value()),
+                ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => self.options.minify_syntax,
+                ExprData::EArray(_) | ExprData::EObject(_) => true,
+                _ => false,
+            }
+        }
+
         /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
         pub(crate) fn print_object_json(&mut self, e: &E::ObjectJSON) {
             if !self.stack_check.is_safe_to_recurse() {
@@ -4962,13 +4980,14 @@ pub(crate) mod __gated_printer {
 
             let key = item.key.expect("infallible: prop has key");
 
-            // Automatically print numbers that would cause a syntax error as computed properties
+            // Automatically print keys that would cause a syntax error as computed properties
             if !IS_JSON
                 && !item.flags.contains(js_ast::flags::Property::IsComputed)
-                && matches!(&key.data, ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value()))
+                && self.property_key_must_be_computed(&key)
             {
                 // "{ -1: 0 }" must be printed as "{ [-1]: 0 }"
                 // "{ 1/0: 0 }" must be printed as "{ [1/0]: 0 }"
+                // "{ {x: 1}: 0 }" must be printed as "{ [{x: 1}]: 0 }"
                 set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, true);
             }
 
@@ -5005,9 +5024,9 @@ pub(crate) mod __gated_printer {
                 }
                 ExprData::EString(key_str) => {
                     let key_str = key_str.flattened(self.bump);
-                    self.add_source_mapping(key.loc);
                     if key_str.is_utf8() {
                         self.print_space_before_identifier();
+                        self.add_source_mapping(key.loc);
                         let mut allow_shorthand = true;
                         if !IS_JSON && lexer::is_identifier(key_str.slice8()) {
                             self.print_identifier(key_str.slice8());
@@ -5052,6 +5071,7 @@ pub(crate) mod __gated_printer {
                         }
                     } else if !IS_JSON && self.can_print_identifier_utf16(key_str.slice16()) {
                         self.print_space_before_identifier();
+                        self.add_source_mapping(key.loc);
                         self.print_identifier_utf16(key_str.slice16())
                             .expect("unreachable");
 
@@ -5091,7 +5111,8 @@ pub(crate) mod __gated_printer {
                             }
                         }
                     } else {
-                        let c = best_quote_char_for_string(key_str.slice16(), false);
+                        self.add_source_mapping(key.loc);
+                        let c = Self::best_quote_char_for_e_string(&key_str, false);
                         self.print(c);
                         self.print_string_characters_utf16(key_str.slice16(), c);
                         self.print(c);
@@ -5413,7 +5434,6 @@ pub(crate) mod __gated_printer {
                 StmtData::SFunction(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
                     let name = s.func.name.as_ref().unwrap_or_else(|| {
                         Output::panic(format_args!(
                             "Internal error: expected func to have a name ref"
@@ -5421,9 +5441,11 @@ pub(crate) mod __gated_printer {
                     });
                     let name_ref = name.ref_;
 
+                    // `stmt.loc` is what follows `export`.
                     if s.func.flags.contains(G::FnFlags::IsExport) {
                         self.print(b"export ");
                     }
+                    self.add_source_mapping(stmt.loc);
                     if s.func.flags.contains(G::FnFlags::IsAsync) {
                         self.print(b"async ");
                     }
@@ -5457,12 +5479,12 @@ pub(crate) mod __gated_printer {
 
                     self.print_indent();
                     self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
                     let name_ref = s.class.class_name.as_ref().unwrap().ref_;
                     if s.is_export {
                         self.print(b"export ");
                     }
 
+                    self.add_source_mapping(stmt.loc);
                     self.print(b"class ");
                     self.add_source_mapping(s.class.class_name.as_ref().unwrap().loc);
                     let name_str = self.name_for_symbol(name_ref);
@@ -5491,7 +5513,9 @@ pub(crate) mod __gated_printer {
                 StmtData::SExportDefault(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
+                    if let js_ast::StmtOrExpr::Expr(_) = s.value {
+                        self.add_source_mapping(stmt.loc);
+                    }
                     self.print(b"export default ");
 
                     match s.value {
@@ -5514,6 +5538,7 @@ pub(crate) mod __gated_printer {
                             return Ok(());
                         }
                         js_ast::StmtOrExpr::Stmt(s2) => {
+                            self.add_source_mapping(s2.loc);
                             match &s2.data {
                                 StmtData::SFunction(func) => {
                                     self.print_space_before_identifier();
@@ -5623,7 +5648,7 @@ pub(crate) mod __gated_printer {
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
-                            let irp_id = mi.str_for_import_record(import_record);
+                            let irp_id = mi.str(import_record.path.text);
                             mi.request_module(
                                 irp_id,
                                 analyze_transpiled_module::FetchParameters::None,
@@ -5807,7 +5832,7 @@ pub(crate) mod __gated_printer {
                         // `name_for_symbol` (which needs `&mut self`) can run between uses.
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let id = mi.str_for_import_record(import_record);
+                            let id = mi.str(import_record.path.text);
                             mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
                             id
                         };
@@ -5982,9 +6007,10 @@ pub(crate) mod __gated_printer {
 
                     if let Some(finally) = &s.finally {
                         self.print_space();
+                        self.add_source_mapping(finally.loc);
                         self.print(b"finally");
                         self.print_space();
-                        self.print_block(finally.loc, slice_of(finally.stmts), None);
+                        self.print_block(finally.body_loc, slice_of(finally.stmts), None);
                     }
 
                     self.print_newline();
@@ -6034,6 +6060,7 @@ pub(crate) mod __gated_printer {
                     for c in slice_of(s.cases).iter() {
                         self.print_semicolon_if_needed();
                         self.print_indent();
+                        self.add_source_mapping(c.loc);
 
                         if let Some(val) = &c.value {
                             self.print(b"case");
@@ -6334,7 +6361,7 @@ pub(crate) mod __gated_printer {
                         use analyze_transpiled_module::FetchParameters as FP;
                         let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let irp_id = mi.str_for_import_record(record);
+                            let irp_id = mi.str(record.path.text);
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
                                 if let Some(loader) = record.loader {
                                     use bun_ast::Loader;
@@ -6517,10 +6544,6 @@ pub(crate) mod __gated_printer {
 
             let quote = best_quote_char_for_string(import_record.path.text, false);
             self.print(quote);
-            if let Some(namespace) = printed_namespace(import_record) {
-                self.print_string_characters_utf8(namespace, quote);
-                self.print(b":");
-            }
             self.print_string_characters_utf8(import_record.path.text, quote);
             self.print(quote);
         }
@@ -6619,7 +6642,7 @@ pub(crate) mod __gated_printer {
             if let Some(no_block) = &s.no {
                 self.print_semicolon_if_needed();
                 self.print_space_before_identifier();
-                self.add_source_mapping(no_block.loc);
+                self.add_source_mapping(s.else_loc.to_nullable().unwrap_or(no_block.loc));
                 self.print(b"else");
 
                 match &no_block.data {
@@ -6688,8 +6711,7 @@ pub(crate) mod __gated_printer {
             self.print_semicolon_if_needed();
             self.print_indent();
             self.print_space_before_identifier();
-            self.add_source_mapping(loc);
-            self.print_decl_stmt(is_export, kind, decls);
+            self.print_decl_stmt(loc, is_export, kind, decls);
         }
 
         /// The initializer of such a declarator, as a statement. Its value is
@@ -6811,6 +6833,7 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_decl_stmt(
             &mut self,
+            loc: bun_ast::Loc,
             is_export: bool,
             kind: S::Kind,
             decls: &[G::Decl],
@@ -6818,6 +6841,7 @@ pub(crate) mod __gated_printer {
             if is_export {
                 self.print(b"export ");
             }
+            self.add_source_mapping(loc);
             let tlm: TopLevelAndIsExport = if Self::MAY_HAVE_MODULE_INFO {
                 TopLevelAndIsExport { is_export }
             } else {
@@ -6918,7 +6942,11 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_number(&mut self, value: f64, level: Level) {
             let abs_value = value.abs();
-            if value.is_nan() {
+            if IS_JSON && !value.is_finite() {
+                // JSON has no token for these. As JSON.stringify.
+                self.print_space_before_identifier();
+                self.print(b"null");
+            } else if value.is_nan() {
                 self.print_space_before_identifier();
                 self.print(b"NaN");
             } else if value.is_infinite() {
@@ -6939,7 +6967,7 @@ pub(crate) mod __gated_printer {
                 }
 
                 // If we are not running the symbol renamer, we must not print "Infinity".
-                if IS_JSON || (!self.options.minify_syntax && self.options.has_run_symbol_renamer) {
+                if !self.options.minify_syntax && self.options.has_run_symbol_renamer {
                     self.print(b"Infinity");
                 } else if self.options.minify_whitespace {
                     self.print(b"1/0");
@@ -7460,8 +7488,6 @@ pub struct BufferWriter {
     /// reslice on read (`written()` / `written_without_trailing_zero()`). Avoids the O(n)
     /// `to_vec().into_boxed_slice()` copy the previous port did on every `done()`.
     pub(crate) written_len: usize,
-    // `done()` appends a NUL terminator when `append_null_byte` is true.
-    pub append_null_byte: bool,
     pub append_newline: bool,
 }
 
@@ -7483,7 +7509,6 @@ impl BufferWriter {
         BufferWriter {
             buffer: MutableString::init_empty(),
             written_len: 0,
-            append_null_byte: false,
             append_newline: false,
         }
     }
@@ -7497,7 +7522,6 @@ impl BufferWriter {
         BufferWriter {
             buffer: MutableString::init(capacity).unwrap_or_else(|_| MutableString::init_empty()),
             written_len: 0,
-            append_null_byte: false,
             append_newline: false,
         }
     }
@@ -7562,16 +7586,6 @@ impl BufferWriter {
         if self.append_newline {
             self.append_newline = false;
             self.buffer.list.push(b'\n');
-        }
-        if self.append_null_byte {
-            // Append a NUL unless the buffer already ends with one; the NUL is
-            // *included* in `written` (consumers strip it via
-            // `written_without_trailing_zero`).
-            //
-            // For an *empty* buffer we still append the NUL.
-            if self.buffer.list.last().copied() != Some(0) {
-                self.buffer.list.push(0);
-            }
         }
         self.written_len = self.buffer.list.len();
     }
@@ -7686,7 +7700,6 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
             IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
         ),
         cover_lines_without_mappings: true,
-        approximate_input_line_count: tree.approximate_newline_count,
         prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
         line_offset_tables: match opts.line_offset_tables.take() {
             Some(table) => LineOffsetTables::Borrowed(table),
@@ -7722,7 +7735,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     _writer: W,
     bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
-    symbols: js_ast::symbol::Map,
+    mut symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,
     opts: Options<'a>,
 ) -> crate::Result<usize> {
@@ -7744,6 +7757,21 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let module_scope = &tree.module_scope;
     let stable_source_indices = [source.index.0];
     let renamer: rename::Renamer<'_, '_> = if opts.minify_identifiers {
+        // Pinned before the reserved names are computed so no slot takes one of these names.
+        let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref]
+            .into_iter()
+            .chain(tree.named_exports.values().iter().map(|export| export.ref_));
+        for mut ref_ in dont_break_the_code {
+            // `export var t; var t` exports a linked ref, and the renamer names the symbol it links to.
+            while let Some(symbol) = symbols.get_mut(ref_) {
+                symbol.set_must_not_be_renamed(true);
+                if !symbol.has_link() {
+                    break;
+                }
+                ref_ = symbol.link.get();
+            }
+        }
+
         let mut reserved_names = rename::compute_initial_reserved_names(opts.module_type)?;
         for child in module_scope.children.slice() {
             // `StoreRef<Scope>` has safe `DerefMut`; copy the handle to a mut
@@ -7766,21 +7794,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let exports_ref = tree.exports_ref;
         let module_ref = tree.module_ref;
         let parts = &tree.parts;
-
-        // `symbols` was moved into `minify_renamer`; reach it through
-        // the renamer for the post-init `must_not_be_renamed` pass.
-        let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref];
-        for ref_ in dont_break_the_code {
-            if let Some(symbol) = minify_renamer.symbols.get_mut(ref_) {
-                symbol.set_must_not_be_renamed(true);
-            }
-        }
-
-        for named_export in tree.named_exports.values() {
-            if let Some(symbol) = minify_renamer.symbols.get_mut(named_export.ref_) {
-                symbol.set_must_not_be_renamed(true);
-            }
-        }
 
         if uses_exports_ref {
             minify_renamer.accumulate_symbol_use_count(

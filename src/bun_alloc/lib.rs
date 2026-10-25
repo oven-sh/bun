@@ -119,6 +119,8 @@ pub use mimalloc_arena::MimallocArena;
 pub type Arena = MimallocArena;
 mod baby_vec;
 pub use baby_vec::BabyVec;
+mod arena_box;
+pub use arena_box::ArenaBox;
 /// Arena-backed `Vec` with `u32` length/capacity.
 /// 24 B (vs 32 B for `Vec<T, &'a MimallocArena>`); the
 /// allocator handle is kept inline for lifetime checking. Growth/free route
@@ -568,26 +570,6 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     }
 }
 
-/// Resize a mimalloc-owned buffer, taking a raw pointer for callers that
-/// cannot soundly materialize a `&mut [u8]` over their buffer (e.g. it contains
-/// uninitialized or padding bytes). Returns the new base pointer;
-/// `min(old_size, new_size)` prefix bytes are preserved.
-///
-/// # Safety
-/// `ptr` must be a live allocation from the default (mimalloc) allocator with
-/// alignment ≤ `MI_MAX_ALIGN_SIZE`. After return, `ptr` is invalidated.
-pub unsafe fn realloc_raw(
-    ptr: *mut u8,
-    new_size: usize,
-) -> core::result::Result<*mut u8, AllocError> {
-    // SAFETY: caller guarantees `ptr` is a mimalloc-owned block.
-    let new_ptr = unsafe { mimalloc::mi_realloc(ptr.cast(), new_size) };
-    if new_ptr.is_null() {
-        return Err(AllocError);
-    }
-    Ok(new_ptr.cast::<u8>())
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Symbols hoisted DOWN into T0 so higher tiers can re-import without cycles.
 // ──────────────────────────────────────────────────────────────────────────
@@ -768,7 +750,6 @@ impl WTFStringImplStruct {
                 > old / Self::S_REF_COUNT_INCREMENT
                 || old & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
         );
-        let _ = old;
     }
     /// Inline port of `WTF::StringImpl::deref()` (StringImpl.h:1193).
     ///
@@ -1845,18 +1826,6 @@ impl BSSAppendable for &[u8] {
     }
     fn copy_into(&self, dst: &mut [u8]) {
         dst[..self.len()].copy_from_slice(self);
-    }
-}
-impl<const N: usize> BSSAppendable for [&[u8]; N] {
-    fn total_len(&self) -> usize {
-        self.iter().map(|s| s.len()).sum()
-    }
-    fn copy_into(&self, dst: &mut [u8]) {
-        let mut remainder = dst;
-        for val in self {
-            remainder[..val.len()].copy_from_slice(val);
-            remainder = &mut remainder[val.len()..];
-        }
     }
 }
 impl BSSAppendable for &[&[u8]] {

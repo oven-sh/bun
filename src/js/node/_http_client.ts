@@ -159,7 +159,7 @@ function rewriteForProxiedHttp(req, reqOptions) {
 // 'e' across the response/error/destroy/close paths. Near-zero cost when off.
 const kHttpTraceCat = "node,node.http";
 const kTraceRequestActive = Symbol("kTraceRequestActive");
-let traceEvents = null;
+let traceEvents: typeof import("internal/trace_events").default;
 function traceClientResponseEnd(req) {
   if (req[kTraceRequestActive]) {
     req[kTraceRequestActive] = false;
@@ -167,7 +167,7 @@ function traceClientResponseEnd(req) {
   }
 }
 
-function ClientRequest(input, options, cb) {
+function ClientRequest(input?, options?, cb?): void {
   if (!(this instanceof ClientRequest)) {
     return new (ClientRequest as any)(input, options, cb);
   }

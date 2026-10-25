@@ -434,14 +434,11 @@ WTF::String formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
+            if (frame.hasLineAndColumnInfo()) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
-
-                if (displayColumn.zeroBasedInt() > 0) {
-                    sb.append(':');
-                    sb.append(displayColumn.oneBasedInt());
-                }
+                sb.append(':');
+                sb.append(displayColumn.oneBasedInt());
             }
         }
 
@@ -585,7 +582,7 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
     if (!globalObject) {
         // node:vm will use a different JSGlobalObject
-        globalObject = defaultGlobalObject();
+        globalObject = defaultGlobalObject(vm);
         if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
             auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
             auto prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s));
@@ -651,7 +648,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     // The frames only: JavaScriptCore prepends the error's name and message when the stack is read.
-    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
+    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(vm), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
     if (scope.exception()) {
         // The onComputeErrorInfo hook cannot propagate a throw.
         (void)scope.tryClearException();
@@ -739,6 +736,11 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     if (!source || !destination) {
         throwTypeError(lexicalGlobalObject, scope, "First & second argument must be an Error object"_s);
         return {};
+    }
+
+    // appendVector() can't append a vector to itself, and the clear() below would drop the trace.
+    if (source == destination) {
+        return JSC::JSValue::encode(jsUndefined());
     }
 
     // A destination that is materialized, or is being formatted right now, never renders frames again.
@@ -840,7 +842,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
-    if (!objectArg.isObject()) {
+    // A WebAssembly GC object can't get a property and its Structure has no global object. V8 rejects it too.
+    if (!objectArg.isObject() || objectArg.asCell()->type() == JSC::JSType::WebAssemblyGCObjectType) {
         return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
     }
 

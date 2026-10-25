@@ -6,7 +6,6 @@
 //! `extern "Rust"` decls.
 
 use bun_alloc::Arena as ArenaAllocator;
-use bun_bundler::transpiler::PluginRunner;
 use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
@@ -244,36 +243,75 @@ extern "C" fn Bun__getDefaultLoader(
     loader
 }
 
-/// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin runner is set).
+/// The namespace (`b""` for `file`) and path that plugins are asked about for `specifier`, if they are asked.
+pub(crate) fn plugin_namespace_and_path(specifier: &[u8]) -> Option<(&[u8], &[u8])> {
+    if !could_be_plugin(specifier) {
+        return None;
+    }
+    let namespace = extract_namespace(specifier);
+    Some(if namespace.is_empty() {
+        (namespace, specifier)
+    } else {
+        (namespace, &specifier[namespace.len() + 1..])
+    })
+}
+
+/// The `namespace:` prefix of `specifier`, or `b""` if it has none
+/// (Windows drive-letter prefixes are not namespaces).
+fn extract_namespace(specifier: &[u8]) -> &[u8] {
+    let Some(colon) = bun_core::strings::index_of_char_usize(specifier, b':') else {
+        return b"";
+    };
+    if cfg!(windows)
+        && colon == 1
+        && specifier.len() > 3
+        && bun_paths::resolve_path::is_sep_any(specifier[2])
+        && ((specifier[0] > b'a' && specifier[0] < b'z')
+            || (specifier[0] > b'A' && specifier[0] < b'Z'))
+    {
+        return b"";
+    }
+    &specifier[..colon]
+}
+
+/// Cheap pre-filter before calling into a plugin: has a file extension or a `namespace:`.
+fn could_be_plugin(specifier: &[u8]) -> bool {
+    if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
+        let ext = &specifier[last_dot + 1..];
+        // '.' followed by either a letter or a non-ascii character
+        // maybe there are non-ascii file extensions?
+        // we mostly want to cheaply rule out "../" and ".." and "./"
+        if !ext.is_empty()
+            && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
+        {
+            return true;
+        }
+    }
+    !bun_paths::is_absolute(specifier)
+        && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
+}
+
+/// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin serves it).
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__runVirtualModule(
     global: &JSGlobalObject,
     specifier_ptr: *const bun_core::String,
 ) -> JSValue {
     jsc::mark_binding();
-    if global.bun_vm().plugin_runner.is_none() {
+    if !global.has_plugins() {
         return JSValue::ZERO;
     }
 
     // SAFETY: C++ passed a valid `bun.String*`.
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
-    let specifier = specifier_slice.slice();
-
-    if !PluginRunner::could_be_plugin(specifier) {
+    let Some((namespace, after_namespace)) = plugin_namespace_and_path(specifier_slice.slice())
+    else {
         return JSValue::ZERO;
-    }
-
-    let namespace = PluginRunner::extract_namespace(specifier);
-    let after_namespace = if namespace.is_empty() {
-        specifier
-    } else {
-        &specifier[(namespace.len() + 1).min(specifier.len())..]
     };
 
     match global.run_on_load_plugins(
         &bun_core::String::from_bytes(namespace),
         &bun_core::String::from_bytes(after_namespace),
-        crate::BunPluginTarget::Bun,
     ) {
         Ok(Some(v)) => v,
         Ok(None) | Err(_) => JSValue::ZERO,

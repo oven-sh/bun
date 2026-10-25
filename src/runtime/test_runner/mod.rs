@@ -9,15 +9,11 @@
 //! body forwards to the canonical `bun_jsc::JSValue` / `JSGlobalObject`
 //! inherent so there is exactly one FFI declaration per symbol.
 
-#![allow(non_snake_case)]
-
 // ─── pure-Rust leaf (no JSC) — always compiles ───────────────────────────
-pub mod diff {
+pub(crate) mod diff {
     // mod-rs path rule: inline `mod diff` + `#[path]` → test_runner/diff/<file>
     #[path = "printDiff.rs"]
-    pub mod print_diff;
-    #[path = "text_diff.rs"]
-    pub mod text_diff;
+    pub(crate) mod print_diff;
 }
 
 // ─── JSC-heavy core ──────────────────────────────────────────────────────
@@ -26,7 +22,7 @@ pub mod diff {
 // single token if `bun_jsc` ever needs to be feature-gated again).
 macro_rules! cfg_jsc { ($($i:item)*) => { $( $i )* }; }
 
-/// Stamps out an `impl Expect { #[host_fn(method)] pub fn $method(..) }` that
+/// Stamps out an `impl Expect { pub fn $method(..) }` that
 /// delegates to [`Expect::run_unary_predicate`]. Defined here (top-level,
 /// outside `cfg_jsc!`) so it can be addressed as
 /// `crate::unary_predicate_matcher!` from each `expect/toBe*.rs` file —
@@ -36,13 +32,17 @@ macro_rules! cfg_jsc { ($($i:item)*) => { $( $i )* }; }
 macro_rules! unary_predicate_matcher {
     ($method:ident, $name:literal, |$v:ident| $pred:expr) => {
         impl $crate::test_runner::expect_core::Expect {
-            #[::bun_jsc::host_fn(method)]
-            pub fn $method(
+            pub(crate) fn $method(
                 &self,
-                g: &::bun_jsc::JSGlobalObject,
-                f: &::bun_jsc::CallFrame,
+                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
+                cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
             ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                self.run_unary_predicate(g, f, $name, |$v: ::bun_jsc::JSValue| $pred)
+                self.run_unary_predicate(
+                    cx.global(),
+                    this_value.to_js(),
+                    $name,
+                    |$v: ::bun_jsc::JSValue| $pred,
+                )
             }
         }
     };
@@ -82,7 +82,7 @@ macro_rules! __expect_throw_dispatch {
     // base: no positional args left. `$this`/`$global` are always plain idents
     // at every call site (this/self, global/global_this); duplicating them
     // across the two colour branches is side-effect-free and avoids moving a
-    // `PostMatchGuard`/`scopeguard` before its natural scope end.
+    // `PostMatchGuard` before its natural scope end.
     (@go $this:expr, $global:expr, $sig:expr, $fmt:expr;
         bound = [$(($n:ident $v:expr))*];
         args  = [];
@@ -134,49 +134,40 @@ macro_rules! throw_pretty_static {
 }
 
 cfg_jsc! {
-    #[path = "bun_test.rs"]       pub mod bun_test;
-    #[path = "Collection.rs"]     pub mod collection;
-    #[path = "debug.rs"]          pub mod debug;
-    #[path = "diff_format.rs"]    pub mod diff_format;
-    #[path = "DoneCallback.rs"]   pub mod done_callback;
-    #[path = "Execution.rs"]      pub mod execution;
-    #[path = "jest.rs"]           pub mod jest;
-    #[path = "Order.rs"]          pub mod order;
-    #[path = "pretty_format.rs"]  pub mod pretty_format;
-    #[path = "ScopeFunctions.rs"] pub mod scope_functions;
-    #[path = "snapshot.rs"]       pub mod snapshot;
+    #[path = "bun_test.rs"]       pub(crate) mod bun_test;
+    #[path = "Collection.rs"]     pub(crate) mod collection;
+    #[path = "debug.rs"]          pub(crate) mod debug;
+    #[path = "diff_format.rs"]    pub(crate) mod diff_format;
+    #[path = "DoneCallback.rs"]   pub(crate) mod done_callback;
+    #[path = "Execution.rs"]      pub(crate) mod execution;
+    #[path = "jest.rs"]           pub(crate) mod jest;
+    #[path = "Order.rs"]          pub(crate) mod order;
+    #[path = "pretty_format.rs"]  pub(crate) mod pretty_format;
+    #[path = "ScopeFunctions.rs"] pub(crate) mod scope_functions;
+    #[path = "snapshot.rs"]       pub(crate) mod snapshot;
 
     // expect.rs is the umbrella file (Expect struct + asymmetric matchers +
     // ExpectStatic + mock helpers); each `expect/to*.rs` adds one inherent
-    // method or free host_fn to `Expect`. Declared `pub` because the
-    // generate-classes.ts Rust emitter resolves payload types at
-    // `crate::test_runner::expect_core::Expect*` (see
-    // build/debug/codegen/generated_classes.rs); the `pub mod expect` façade
+    // method to `Expect`. The `pub mod expect` façade
     // below layers matcher submodules + shims on top via `pub use`.
     #[path = "expect.rs"]
-    pub mod expect_core;
+    pub(crate) mod expect_core;
 }
 
 cfg_jsc! {
-    pub mod timers {
-        #[path = "FakeTimers.rs"] pub mod fake_timers;
+    pub(crate) mod timers {
+        #[path = "FakeTimers.rs"] pub(crate) mod fake_timers;
     }
 }
 
 cfg_jsc! {
-pub mod expect {
+pub(crate) mod expect {
     // Re-export the umbrella surface so every matcher can `use super::*`.
-    pub use super::expect_core::*;
-    pub use super::expect_core::mock;
+    pub(crate) use super::expect_core::*;
+    pub(crate) use super::expect_core::mock;
     pub(crate) use super::diff_format::DiffFormatter;
 
-    /// `Expect.js.*GetCached` / `*SetCached` accessors (generate-classes.ts
-    /// `cache: true` slots from jest.classes.ts). Exposed as a
-    /// sibling `js` module so matcher drafts can write `super::js::captured_value_get_cached(..)`
-    /// — `Expect::js::..` does not resolve in Rust (no inherent associated modules).
-    pub mod js {
-        ::bun_jsc::codegen_cached_accessors!("Expect"; capturedValue, resultValue);
-    }
+    pub(crate) use crate::generated_bindgen::expect::js_Expect as js;
 
     /// Free-fn alias for `Expect::get_signature` — many matcher modules
     /// import it as a path item (`use super::get_signature`),
@@ -204,10 +195,10 @@ pub mod expect {
     use bun_jsc::{JSGlobalObject, JSValue, JsResult};
     use bun_jsc::console_object::Formatter;
 
-    pub trait JSValueTestExt {
+    pub(crate) trait JSValueTestExt {
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
         fn is_reg_exp(self) -> bool;
-        fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
+        fn as_big_int_compare(self, other: JSValue) -> BigIntCompare;
         fn bind(
             self,
             global: &JSGlobalObject,
@@ -246,12 +237,9 @@ pub mod expect {
             self.is_cell() && self.js_type() == bun_jsc::JSType::RegExpObject
         }
         #[inline]
-        fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare {
-            // Trait keeps the matcher modules' `(other, global)` ordering; the upstream
-            // inherent is `(global, other)` — adapt here so 75 matcher
-            // call-sites stay untouched.
+        fn as_big_int_compare(self, other: JSValue) -> BigIntCompare {
             use bun_jsc::ComparisonResult as R;
-            match JSValue::as_big_int_compare(self, global, other) {
+            match JSValue::as_big_int_compare(self, other) {
                 R::Equal => BigIntCompare::Equal,
                 R::Undefined => BigIntCompare::Undefined,
                 R::GreaterThan => BigIntCompare::GreaterThan,
@@ -274,7 +262,7 @@ pub mod expect {
 
     /// Result of `JSValue::as_big_int_compare`.
     #[derive(Copy, Clone, PartialEq, Eq)]
-    pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
+    pub(crate) enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
     /// `super::make_formatter(global_this)`
     /// is the universal matcher pattern; `Formatter` has no `Default` (it
@@ -349,26 +337,14 @@ pub mod expect {
         fn numeric_ordering_matcher(
             &self,
             global: &JSGlobalObject,
-            frame: &bun_jsc::CallFrame,
+            this_value: JSValue,
+            other_value: JSValue,
             name: &'static str,
             rel: OrderingRelation,
         ) -> JsResult<JSValue> {
-            // `defer this.postMatch(globalThis)` — run on every exit path.
-            let this = scopeguard::guard(self, |this| this.post_match(global));
-
-            let this_value = frame.this();
-            let arguments: &[JSValue] = frame.arguments();
-
-            if arguments.is_empty() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "{name}() requires 1 argument"
-                )));
-            }
+            let this = self.post_match_guard(global);
 
             this.increment_expect_call_counter();
-
-            let other_value = arguments[0];
-            other_value.ensure_still_alive();
 
             let value: JSValue =
                 this.get_value(global, this_value, name, "<green>expected<r>")?;
@@ -385,9 +361,9 @@ pub mod expect {
             let mut pass = if !value.is_big_int() && !other_value.is_big_int() {
                 rel.cmp_f64(value.as_number(), other_value.as_number())
             } else if value.is_big_int() {
-                rel.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(value, other_value, global))
+                rel.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(value, other_value))
             } else {
-                rel.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(other_value, value, global))
+                rel.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(other_value, value))
             };
 
             if not { pass = !pass; }
@@ -419,7 +395,7 @@ pub mod expect {
     /// exposes `quote_strings` as a public field, not a chained setter. A
     /// handful of matcher modules write
     /// `Formatter::new(g).with_quote_strings(true)`.
-    pub trait FormatterTestExt: Sized {
+    pub(crate) trait FormatterTestExt: Sized {
         fn with_quote_strings(self, b: bool) -> Self;
     }
     impl<'a> FormatterTestExt for Formatter<'a> {
@@ -428,12 +404,11 @@ pub mod expect {
     }
 
     // ── matcher modules ───────────────────────────────────────────────
-    // Each file is `impl Expect { pub fn to_*(..) }` or a free
-    // `#[bun_jsc::host_fn(method)] pub fn to_*(this: &mut Expect, ..)`.
+    // Each file is `impl Expect { pub fn to_*(..) }`.
     // Trivial one-liners live together in `simple_matchers`.
     macro_rules! matchers {
         ( $( $file:literal => $mod:ident ),* $(,)? ) => {
-            $( #[path = $file] pub mod $mod; )*
+            $( #[path = $file] pub(crate) mod $mod; )*
         };
     }
     matchers! {
@@ -491,8 +466,8 @@ pub mod expect {
 
 // public surface for `crate::test_runner::*` consumers
 cfg_jsc! {
-    pub use done_callback::DoneCallback;
-    pub use expect::{
+    pub(crate) use done_callback::DoneCallback;
+    pub(crate) use expect::{
         Expect, ExpectAny, ExpectAnything, ExpectArrayContaining, ExpectCloseTo,
         ExpectCustomAsymmetricMatcher, ExpectMatcherContext, ExpectMatcherUtils,
         ExpectObjectContaining, ExpectStatic, ExpectStringContaining, ExpectStringMatching,

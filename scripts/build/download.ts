@@ -179,6 +179,8 @@ export async function downloadWithRetry(
   dest: string,
   logPrefix: string,
   retry: RetryPolicy = downloadRetry,
+  /** Gives the whole download up when it fires (an `AbortSignal.timeout`): for a caller that has a fallback. */
+  signal?: AbortSignal,
 ): Promise<void> {
   const prefetched = prefetchPathForUrl(url);
   if (prefetched !== undefined && existsSync(prefetched)) {
@@ -205,7 +207,7 @@ export async function downloadWithRetry(
 
     const tmpPath = `${dest}.${process.pid}.partial`;
     try {
-      const res = await fetch(url, { headers: { "User-Agent": "bun-build-system" } });
+      const res = await fetch(url, { headers: { "User-Agent": "bun-build-system" }, ...(signal ? { signal } : {}) });
       if (!res.ok || res.body === null) {
         lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${url}`);
         // 4xx is deterministic (bad URL, missing artifact) and won't succeed

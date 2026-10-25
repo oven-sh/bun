@@ -123,7 +123,6 @@ pub mod options {
     /// §Forbidden re: `&'static [T]` for arena-freed data.
     #[derive(Clone, Default)]
     pub struct Framework {
-        pub is_built_in_react: bool,
         pub server_components: Option<FrameworkServerComponents>,
         pub react_fast_refresh: Option<ReactFastRefresh>,
     }
@@ -221,6 +220,9 @@ pub mod Runtime {
         /// This comment must never be used manually.
         pub dont_bundle_twice: bool,
 
+        /// Only hashed: `js_printer::Options::code_coverage` changes the source map that is cached.
+        pub code_coverage: bool,
+
         /// This is a list of packages which even when require() is used, we will
         /// instead convert to ESM import statements.
         ///
@@ -298,6 +300,7 @@ pub mod Runtime {
                 auto_polyfill_require: false,
                 replace_exports: ReplaceableExportMap::default(),
                 dont_bundle_twice: false,
+                code_coverage: false,
                 unwrap_commonjs_packages: &[],
                 commonjs_at_runtime: false,
                 unwrap_commonjs_to_esm: false,
@@ -359,7 +362,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
+            let bools: [bool; 18] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -372,6 +375,7 @@ pub mod Runtime {
                 self.set_breakpoint_on_first_line,
                 self.trim_unused_imports,
                 self.dont_bundle_twice,
+                self.code_coverage,
                 self.commonjs_at_runtime,
                 self.emit_decorator_metadata,
                 self.standard_decorators,
@@ -717,7 +721,6 @@ pub struct TransposeState {
     pub(crate) is_then_catch_target: bool,
     pub(crate) is_require_immediately_assigned_to_decl: bool,
     pub(crate) loc: bun_ast::Loc,
-    pub(crate) import_record_tag: Option<bun_ast::ImportRecordTag>,
     pub(crate) import_loader: Option<bun_ast::Loader>,
     pub(crate) import_options: Expr,
 }
@@ -729,7 +732,6 @@ impl Default for TransposeState {
             is_then_catch_target: false,
             is_require_immediately_assigned_to_decl: false,
             loc: bun_ast::Loc::EMPTY,
-            import_record_tag: None,
             import_loader: None,
             import_options: Expr::EMPTY,
         }
@@ -1360,7 +1362,6 @@ pub(crate) struct ImportClause<'a> {
 }
 
 pub struct PropertyOpts {
-    pub(crate) async_range: bun_ast::Range,
     pub(crate) declare_range: bun_ast::Range,
     pub(crate) is_async: bool,
     pub(crate) is_generator: bool,
@@ -1379,7 +1380,6 @@ pub struct PropertyOpts {
 impl Default for PropertyOpts {
     fn default() -> Self {
         Self {
-            async_range: bun_ast::Range::NONE,
             declare_range: bun_ast::Range::NONE,
             is_async: false,
             is_generator: false,
@@ -1399,7 +1399,6 @@ pub struct ScanPassResult {
     pub import_records: Vec<ImportRecord>,
     pub(crate) named_imports: bun_ast::ast_result::NamedImports,
     pub(crate) used_symbols: ParsePassSymbolUsageMap,
-    pub(crate) approximate_newline_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -1416,7 +1415,6 @@ impl ScanPassResult {
             import_records: Vec::new(),
             named_imports: Default::default(),
             used_symbols: ParsePassSymbolUsageMap::default(),
-            approximate_newline_count: 0,
         }
     }
 
@@ -1424,7 +1422,6 @@ impl ScanPassResult {
         self.named_imports.clear_retaining_capacity();
         self.import_records.clear();
         self.used_symbols.clear_retaining_capacity();
-        self.approximate_newline_count = 0;
     }
 }
 
@@ -1905,7 +1902,6 @@ impl ReactRefresh<'_> {
     /// `visit/mod.rs` stay safe; callers must not hold two results live at
     /// once (same uniqueness contract as `P::log()`).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn hook_ctx_mut<'s>(&self) -> Option<&'s mut Option<HookContext>> {
         // SAFETY: `hook_ctx_storage` is `Some` only while a `visit_*` frame
         // higher on the stack has installed `&mut react_hook_data` (a stack

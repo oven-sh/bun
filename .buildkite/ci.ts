@@ -32,7 +32,6 @@ import {
   getSecret,
   isBuildkite,
   isFork,
-  isGithubAction,
   isMainBranch,
   isMergeQueue,
   isPullRequest,
@@ -57,18 +56,6 @@ function parseGitRepository(url: string | URL): string | undefined {
 function getRepository(): string | undefined {
   const url = getRepositoryUrl();
   return url ? parseGitRepository(url) : undefined;
-}
-
-function getBuildNumber(): number | undefined {
-  if (isBuildkite) {
-    return parseInt(getEnv("BUILDKITE_BUILD_NUMBER"));
-  }
-
-  if (isGithubAction) {
-    return parseInt(getEnv("GITHUB_RUN_ID"));
-  }
-
-  return undefined;
 }
 
 function isBuildManual(): boolean | undefined {
@@ -144,67 +131,6 @@ function getGithubApiUrl(): URL {
   return new URL(process.env.GITHUB_API_URL || "https://api.github.com");
 }
 
-function toYaml(obj: object, indent = 0): string {
-  const spaces = " ".repeat(indent);
-  let result = "";
-  const entries: [string, unknown][] = Object.entries(obj);
-  for (const [key, value] of entries) {
-    if (value === undefined) {
-      continue;
-    }
-    if (value === null) {
-      result += `${spaces}${key}: null\n`;
-      continue;
-    }
-    if (Array.isArray(value)) {
-      result += `${spaces}${key}:\n`;
-      value.forEach((item: unknown) => {
-        if (typeof item === "object" && item !== null) {
-          result += `${spaces}- \n${toYaml(item, indent + 2)
-            .split("\n")
-            .map(line => `${spaces}  ${line}`)
-            .join("\n")}\n`;
-        } else {
-          result += `${spaces}- ${item}\n`;
-        }
-      });
-      continue;
-    }
-    if (typeof value === "object") {
-      result += `${spaces}${key}:\n${toYaml(value, indent + 2)}`;
-      continue;
-    }
-    if (
-      typeof value === "string" &&
-      (value.includes(":") ||
-        value.includes("#") ||
-        value.includes("'") ||
-        value.includes('"') ||
-        value.includes("\\") ||
-        value.includes("\n") ||
-        value.includes("*") ||
-        value.includes("&") ||
-        value.includes("!") ||
-        value.includes("|") ||
-        value.includes(">") ||
-        value.includes("%") ||
-        value.includes("@") ||
-        value.includes("`") ||
-        value.includes("{") ||
-        value.includes("}") ||
-        value.includes("[") ||
-        value.includes("]") ||
-        value.includes(",") ||
-        value.includes(";"))
-    ) {
-      result += `${spaces}${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n`;
-      continue;
-    }
-    result += `${spaces}${key}: ${value}\n`;
-  }
-  return result;
-}
-
 type Emoji = keyof typeof emojiMap;
 
 const emojiMap = {
@@ -214,8 +140,6 @@ const emojiMap = {
   ubuntu: ["🐧", "ubuntu"],
   alpine: ["🐧", "alpine"],
   aws: ["☁️", "aws"],
-  amazonlinux: ["🐧", "aws"],
-  nix: ["🐧", "nix"],
   windows: ["🪟", "windows"],
   true: ["✅", "white_check_mark"],
   false: ["❌", "x"],
@@ -227,8 +151,6 @@ const emojiMap = {
   clipboard: ["📋", "clipboard"],
   package: ["📦", "package"],
   rocket: ["🚀", "rocket"],
-  openbsd: ["🐡", "openbsd"],
-  netbsd: ["🚩", "netbsd"],
   freebsd: ["😈", "freebsd"],
 };
 
@@ -247,8 +169,8 @@ function getBuildkiteEmoji(emoji: Emoji): string {
 
 /** A target's abi. glibc is the absence of one, so "gnu" is never spelled here. */
 type Abi = Exclude<HostAbi, "gnu">;
-type Distro = "debian" | "ubuntu" | "alpine" | "amazonlinux";
-type Tier = "latest" | "previous" | "oldest" | "eol" | "beta";
+type Distro = "debian" | "ubuntu" | "alpine";
+type Tier = "latest" | "previous" | "oldest" | "beta";
 type Profile = "release" | "assert" | "debug" | "asan";
 
 interface Target {
@@ -301,7 +223,6 @@ type Platform = Target & {
   distro?: Distro;
   release: string;
   tier?: Tier;
-  features?: string[];
 };
 
 type AzureVmTier = "build" | "test";
@@ -577,7 +498,9 @@ function getBuildAgent(platform: Platform): Ec2Agent {
   // (buildHostPlatform) and cross-compiles to its target; the target's
   // os/arch only affect build args, not agent tags or image-name.
   const { os, arch, abi, profile } = platform;
-  // Lanes without LTO (see ltoDefault in scripts/build/config.ts): rustc does its own fat LTO + codegen inside cargo, so the C++ compile overlapping it costs ~20s on 16 vCPUs; give them 32.
+  // Lanes without C/C++ LTO (see ltoDefault in scripts/build/config.ts) get 32 vCPUs. That was sized when rustc ran a
+  // fat LTO inside cargo beside the C++ compile (~20s lost to the overlap on 16); not re-measured since the link runs
+  // the Rust LTO.
   const nonLto =
     profile === "asan" || abi === "android" || os === "freebsd" || (os === "windows" && arch === "aarch64");
   return getEc2Agent(buildHostPlatform, {
@@ -645,19 +568,16 @@ function getTestAgent(platform: Platform): Agent {
  * Steps
  */
 
-/** The `ci-<mode>` profile of scripts/build.ts a build command runs. */
-type BuildMode = "build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link";
-
 /**
  * Build the scripts/build.ts argument list from a target's properties.
  * Replaces the old getBuildEnv (cmake -D env vars) + getBuildCommand
  * (--target passthrough) with direct build.ts flags.
  */
-function getBuildArgs(target: Target, options: PipelineOptions, mode: BuildMode): string {
+function getBuildArgs(target: Target, options: PipelineOptions): string {
   const { os, arch, abi, baseline, profile } = target;
   const { canary } = options;
 
-  const args = [`--profile=ci-${mode}`];
+  const args = ["--profile=ci-build"];
 
   // All build lanes share a debian-13 arm64 host, so host detection cannot
   // infer the target triple — always pass os/arch (and abi on linux).
@@ -676,19 +596,19 @@ function getBuildArgs(target: Target, options: PipelineOptions, mode: BuildMode)
   return args.join(" ");
 }
 
-function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMode): string {
+function getBuildCommand(target: Target, options: PipelineOptions): string {
   // Windows code signing is handled by a dedicated 'windows-sign' step after
   // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
   // so signing on the build agent wouldn't work for ARM64 anyway.
   //
-  // Literal `node` — ci.ts generates pipeline YAML that runs on a
+  // Literal `node` — ci.ts generates a pipeline that runs on a
   // different agent later, so process.execPath (the generator's path)
   // is wrong. PATH on the agent has node: the image's bake installs it.
-  return `node scripts/build.ts ${getBuildArgs(target, options, mode)}`;
+  return `node scripts/build.ts ${getBuildArgs(target, options)}`;
 }
 
 /**
- * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_runtime.a and the dep libs.
+ * deps + C++ + Rust + link on one agent.
  */
 function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandStep {
   const { arch } = platform;
@@ -711,7 +631,7 @@ function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandS
       // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
-    command: [...nasmSetup, getBuildCommand(platform, options, "build")],
+    command: [...nasmSetup, getBuildCommand(platform, options)],
   };
 }
 
@@ -872,13 +792,12 @@ function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): Co
 }
 
 /**
- * Targets whose build lane cross-compiles (so `canTraceOrderFile()` is false)
- * but whose test fleet is native. A `-trace-order` step runs there, downloads
- * the cross-built `bun-profile`, traces it, and uploads the `.order` artifact
- * that the next build's `inheritOrderFile()` picks up. One build of lag.
- *
- * linux-aarch64 is absent because its build lane runs on the aarch64 host and
- * traces itself; `packageAndUpload()` is its sole publisher.
+ * The targets that link with a symbol ordering file (flags.ts `usesOrderFile`),
+ * and the test machine each is traced on. No build traces its own binary: a
+ * `-trace-order` step runs after the build on a machine of the target's own
+ * architecture, downloads the build's `bun-profile`, traces it, and uploads the
+ * `.order` artifact that later builds' `inheritOrderFile()` picks up: every
+ * build, of main or of a pull request, links against the most recent one.
  *
  * The `on` platforms are entries of `testPlatforms`, so the step runs on an
  * image that exists. The windows tracer is built on the test VM for whichever
@@ -888,23 +807,24 @@ function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): Co
 const traceOrderTargets: { os: Os; arch: Arch; on: Platform }[] = [
   { os: "darwin", arch: "aarch64", on: { os: "darwin", arch: "aarch64", release: "26", tier: "latest" } },
   { os: "linux", arch: "x64", on: { os: "linux", arch: "x64", distro: "debian", release: "13" } },
+  { os: "linux", arch: "aarch64", on: { os: "linux", arch: "aarch64", distro: "debian", release: "13" } },
   { os: "windows", arch: "x64", on: { os: "windows", arch: "x64", release: "2019", tier: "oldest" } },
   { os: "windows", arch: "aarch64", on: { os: "windows", arch: "aarch64", release: "11", tier: "latest" } },
 ];
 
 /**
- * Trace the symbol order file for a cross-compiled target on a native-arch
- * host, so the next build's `inheritOrderFile()` has something to download.
+ * Trace the symbol order file for a target on a machine of its own
+ * architecture, so the next build's `inheritOrderFile()` has something to download.
  *
- * The build lane cross-compiles from the aarch64 `buildHostPlatform` and cannot
- * run the binary it linked. This step runs on the target-arch test fleet,
+ * Every target is linked on the aarch64 `buildHostPlatform`, which cannot run
+ * most of them. This step runs on the target-arch test fleet,
  * downloads that lane's unstripped `bun-profile`, runs it under `scripts/
  * orderfile/generate.ts` (the traced binary doubles as the interpreter), and
  * uploads the result.
  *
- * Non-PR only — `orderFileEligible()` ignores PR builds, so a trace there has
- * no consumer. Soft-fail: the order file is an optimization, and a broken
- * tracer must not fail a build.
+ * Main only: every build, of any branch or pull request, inherits from main's
+ * builds, so a trace anywhere else has no consumer. Soft-fail: the order file
+ * is an optimization, and a broken tracer must not fail a build.
  *
  * Windows agents run commands under cmd.exe (see getVerifyBaselineStep for the
  * `|| exit /b 1` convention). The generator compiles the tracer there, which
@@ -1078,13 +998,6 @@ function getImageSteps(
       {
         ...waitStep,
         label: `${getImageLabel(platform)} - bake-image`,
-        env: {
-          // Packer needs several minutes to delete its temp Azure resources after a cancel;
-          // the agent's default 10s grace SIGKILLs it mid-cleanup and leaks a full
-          // VM/NIC/IP stack per retry. The agent reads this from job env — there's no
-          // step-level property for it.
-          BUILDKITE_SIGNAL_GRACE_PERIOD_SECONDS: `${10 * 60}`,
-        },
         // One command, so that a cancel reaches Packer (see bakeWindowsImage).
         command: `node ./scripts/ci-image.ts bake-image --key=${key} --name=${name} --timeout-minutes=${bakeTimeout - 10}`,
       },
@@ -1149,8 +1062,9 @@ function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptio
     }),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
+    // smctl runs signtool.exe, which is only in PATH in a Visual Studio environment.
     command: [
-      `powershell -NoProfile -ExecutionPolicy Bypass -File .buildkite/scripts/sign-windows-artifacts.ps1 ` +
+      `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 pwsh -NoProfile -File .\\.buildkite\\scripts\\sign-windows-artifacts.ps1 ` +
         `-Artifacts ${artifacts.join(",")} ` +
         `-BuildSteps ${buildSteps.join(",")}`,
     ],
@@ -1234,7 +1148,7 @@ interface Pipeline {
 }
 
 /**
- * The agent tags a step targets. toYaml() drops the `undefined` ones.
+ * The agent tags a step targets. JSON.stringify() drops the `undefined` ones.
  */
 type Agent = Ec2Agent | QueueAgent;
 
@@ -1352,7 +1266,6 @@ interface PipelineOptions {
   skipSizeCheck?: OptionFlag;
   forceBuilds?: OptionFlag;
   signWindows?: OptionFlag;
-  dryRun?: OptionFlag;
   canary?: number;
   buildPlatforms?: Platform[];
   testPlatforms?: Platform[];
@@ -1590,7 +1503,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
             getBuildProfiles().map(profile => ({ ...getSelectedPlatform(testPlatformsMap, key), profile })),
           )
         : Array.from(testPlatformsMap.values()),
-      dryRun: parseBoolean(options["dry-run"]),
     };
   }
 
@@ -1621,7 +1533,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
-    dryRun: parseOption(/\[(dry run)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1787,7 +1698,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     steps.push({ key: "images", group: getBuildkiteEmoji("aws"), steps: imageSteps });
   }
 
-  const { skipBuilds, forceBuilds, dryRun } = options;
+  const { skipBuilds, forceBuilds } = options;
 
   let buildId: string | undefined;
   if (skipBuilds && !forceBuilds) {
@@ -1875,17 +1786,15 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           );
         }
 
-        // Seed the symbol order file for a cross-compiled target on its native
-        // test fleet (see getTraceOrderStep). Always on main so the inheritance
-        // chain stays fed, and anywhere else on commit-message opt-in so a PR
-        // that changes the tracer can prove the step works before merge — the
-        // same `[generate symbol order]` tag ci.ts already honours. Release
-        // profile only — usesOrderFile() is false under a sanitizer anyway.
+        // Trace the symbol order file later builds inherit, on the target's own
+        // test fleet (see getTraceOrderStep). On main: that is where every
+        // build, of a pull request too, inherits from. Release profile only —
+        // usesOrderFile() is false under a sanitizer anyway.
         const traceOn = traceOrderTargets.find(
           t =>
             t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
         );
-        if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage() ?? ""))) {
+        if (traceOn && isMainBranch()) {
           const traceDeps = getImageDependsOn(traceOn.on, baking);
           steps.push(
             ...placeBinaryCheck(
@@ -2036,8 +1945,9 @@ async function main() {
     return;
   }
 
-  const content = toYaml(pipeline);
-  const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
+  // JSON is YAML, which is what `buildkite-agent pipeline upload` parses every file as.
+  const content = JSON.stringify(pipeline, null, 2);
+  const contentPath = join(process.cwd(), ".buildkite", "ci.json");
   writeFileSync(contentPath, content);
 
   console.log("Generated pipeline:");

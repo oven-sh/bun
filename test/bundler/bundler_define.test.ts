@@ -103,6 +103,13 @@ const repros: Repro[] = [
       ['process.env["NODE_ENV"]', '"production"'],
       ['process["env"]["NODE_ENV"]', '"production"'],
       ['process["env"].NODE_ENV', '"production"'],
+      // The cases of esbuild's `DefineOptionalChain`
+      ['a["b"]["c"]', "d"],
+      ['a?.["b"]["c"]', "d"],
+      ['a["b"]?.["c"]', "d"],
+      // An index that is not a string literal does not match
+      ["a[b][c]", "a[b][c]"],
+      ["a?.[b][c]", "a?.[b][c]"],
       // The rest of a partly replaced optional chain continues on the new value
       ["a?.b.x", "c.x"],
       ["a?.b()", "c()"],
@@ -173,6 +180,32 @@ const repros: Repro[] = [
       ['labels?.["ключ"]', "8"],
       // Only a top-level `this` is replaced
       ["function () { return this; }", "function() { return this; }"],
+    ],
+  },
+  {
+    // The cases of esbuild's `DefineThis`
+    name: "keys that start with `this`",
+    defines: {
+      this: "_replaced",
+      "this.foo.bar": "_replaced_foo_bar",
+      "this.foo": "_replaced_foo",
+    },
+    cases: [
+      ["this", "_replaced"],
+      ["this.foo", "_replaced_foo"],
+      ["this.foo.bar", "_replaced_foo_bar"],
+      // Only `this.foo` is a key
+      ["this.foo.baz", "_replaced_foo.baz"],
+      ["this.bar", "_replaced.bar"],
+      // An arrow function has the `this` of the file
+      [
+        "() => [this, this.foo.bar, this.foo.baz, this.bar]",
+        "() => [_replaced, _replaced_foo_bar, _replaced_foo.baz, _replaced.bar]",
+      ],
+      [
+        "function () { return [this, this.foo, this.foo.bar, this.foo.baz, this.bar]; }",
+        "function() { return [this, this.foo, this.foo.bar, this.foo.baz, this.bar]; }",
+      ],
     ],
   },
   {

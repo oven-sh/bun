@@ -644,6 +644,11 @@ pub(super) fn finalize_bundle(
         )?;
     }
 
+    // A save can link a client entry point to a failure on record. No failure walk visits it then, the second pass did.
+    if !dev.bundling_failures.is_empty() && dev.incremental_result.had_adjusted_edges {
+        dev.fail_loaded_routes_above_client_entry_points(&ctx.gts.client_bits);
+    }
+
     // Index all failed files now that the incremental graph has been updated.
     if !dev.incremental_result.failures_removed.is_empty()
         || !dev.incremental_result.failures_added.is_empty()

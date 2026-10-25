@@ -335,18 +335,17 @@ it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number us
 // A poll that a loop has watched goes back to the VM's pool from a list, which the thread's loop empties each time it
 // turns. spawnSync waits on a loop of its own, so the polls of these calls (two pipes and the process each) stay on
 // the list, and past the pool's 128 slots a poll is a heap allocation that only the list names. The pool was freed
-// with the VM and the list was not. LeakSanitizer reports that on the ASAN lane. The calls are made in a callback
-// because leaksan.supp hides what module evaluation allocates.
-it.skipIf(!isASAN || isWindows)(
-  "polls left by spawnSync are freed when a VM ends before its loop turns",
-  async () => {
+// with the VM and the list was not: 40 bytes for each of those polls, which only LeakSanitizer sees.
+it.skipIf(!isASAN || isWindows)("polls left by spawnSync are freed when a VM ends before its loop turns", async () => {
+  // The bytes LeakSanitizer reports for a VM that ends in the task that made `calls` piped spawnSync calls.
+  async function leakedBytes(calls: number) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
         setImmediate(() => {
-          for (let i = 0; i < 70; i++) Bun.spawnSync({ cmd: ["true"], stdio: ["ignore", "pipe", "pipe"] });
+          for (let i = 0; i < ${calls}; i++) Bun.spawnSync({ cmd: ["true"], stdio: ["ignore", "pipe", "pipe"] });
           console.log("ok");
           process.exit(0);
         });
@@ -355,15 +354,21 @@ it.skipIf(!isASAN || isWindows)(
       env: {
         ...bunEnv,
         BUN_DESTRUCT_VM_ON_EXIT: "1",
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
+        // symbolize=0 keeps a child that leaks fast. It also turns the suppressions off, which is fine: the two
+        // runs below are compared, so what a process leaks once cancels out.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "symbolize=0"].filter(Boolean).join(":"),
       },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
-  },
-  // When there is a leak, LeakSanitizer symbolizes its report, which alone can take longer than the default timeout.
-  60_000,
-);
+    const summary = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
+    // With no report, only exit code 0 means that the scan ran and found nothing.
+    if (!summary) expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(stdout).toBe("ok\n");
+    return Number(summary?.[1] ?? 0);
+  }
+  // One call stays inside the pool. 70 calls leave 82 polls on the heap.
+  const [one, many] = await Promise.all([leakedBytes(1), leakedBytes(70)]);
+  expect({ leakedBytes: many - one }).toEqual({ leakedBytes: 0 });
+});

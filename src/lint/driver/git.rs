@@ -2,8 +2,9 @@
 //! reads a file's text from git if the index and the disk differ.
 //!
 //! Git runs in the working directory and inherits this process's environment. In a hook, that environment tells git
-//! where the index is. These calls start no program that `git diff --name-only` wouldn't start itself: no pager, no
-//! external diff, no textconv, no submodule scan, no fetch.
+//! where the index is. For `git commit <path>` that's a temporary index, and the real one is locked beside it, so
+//! [`Files::stage`] writes both. These calls start no program that `git diff --name-only` wouldn't start itself: no
+//! pager, no external diff, no textconv, no submodule scan, no fetch.
 
 use crate::args::{UsageError, error};
 use crate::embedded::Framework;
@@ -31,6 +32,8 @@ pub struct Command<'c> {
     /// Written to git's stdin.
     pub input: &'c [u8],
     pub cwd: &'c [u8],
+    /// Environment variables for this invocation, set on top of this process's environment and [`Command::VARIABLES`].
+    pub variables: &'c [(&'c [u8], &'c [u8])],
 }
 
 impl Command<'_> {
@@ -226,10 +229,21 @@ impl<'e> Files<'e> {
     }
 
     fn git(&self, args: &[&[u8]], input: &[u8]) -> Result<Finished, Fatal> {
+        self.git_with(args, input, &[])
+    }
+
+    /// Runs git with `variables` set in its environment.
+    fn git_with(
+        &self,
+        args: &[&[u8]],
+        input: &[u8],
+        variables: &[(&[u8], &[u8])],
+    ) -> Result<Finished, Fatal> {
         let command = Command {
             args,
             input,
             cwd: &self.environment.cwd,
+            variables,
         };
         (self.environment.run_git)(&command).map_err(|why| match why {
             NotRun::NotFound => {
@@ -471,7 +485,13 @@ impl<'e> Files<'e> {
             input.extend_from_slice(&paths::relative(&self.environment.cwd, &path));
             input.push(0);
         }
-        let finished = self.git(&[b"update-index", b"-z", b"--stdin"], &input)?;
+        const UPDATE_INDEX: [&[u8]; 3] = [b"update-index", b"-z", b"--stdin"];
+        let mut finished = self.git(&UPDATE_INDEX, &input)?;
+        if finished.is_ok && let Some(lock) = self.real_index_lock() {
+            let lock = paths::to_native(lock);
+            let variables: [(&[u8], &[u8]); 1] = [(b"GIT_INDEX_FILE", &lock)];
+            finished = self.git_with(&UPDATE_INDEX, &input, &variables)?;
+        }
         match finished.is_ok {
             true => Ok(()),
             false => Err(with_git_stderr(
@@ -479,6 +499,26 @@ impl<'e> Files<'e> {
                 &finished,
             )),
         }
+    }
+
+    /// In a pre-commit hook for `git commit <path>`, returns the lock file that becomes the real index when the commit
+    /// succeeds. Git builds such a commit from a temporary index, `next-index-<pid>.lock` next to the real one, and
+    /// that's the index `GIT_INDEX_FILE` names in the hook. The real index is already locked, with the named paths as
+    /// they were before the hook ran, and git throws the temporary index away after the commit. So what the hook
+    /// stages is only kept if it's staged into the real index's lock file too.
+    ///
+    /// `None` for every other index: a plain `git commit` names the real index, and `git commit -a` names its lock.
+    /// `GIT_INDEX_FILE=other git commit <path>` locks `other.lock` instead, which the hook can't tell from the
+    /// temporary index, so `index.lock` doesn't exist then.
+    fn real_index_lock(&self) -> Option<Vec<u8>> {
+        let index = bun_core::getenv_z(&bun_core::ZBox::from_bytes(b"GIT_INDEX_FILE"))?;
+        let name = paths::file_name(index);
+        if !name.ends_with(b".lock") || name == b"index.lock" {
+            return None;
+        }
+        let index = paths::resolve(&self.environment.cwd, &paths::from_native(index));
+        let lock = paths::join(paths::dirname(&index), b"index.lock");
+        fs::is_file(&lock).then_some(lock)
     }
 }
 

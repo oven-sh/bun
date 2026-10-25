@@ -180,8 +180,7 @@ fn run_git(command: &git::Command) -> Result<git::Finished, git::NotRun> {
         .map(Box::<[u8]>::from)
         .collect();
     let adapt = |variables: &mut bun_dotenv::Map| {
-        git::Command::VARIABLES
-            .iter()
+        (git::Command::VARIABLES.iter().chain(command.variables))
             .all(|(name, value)| variables.put(name, value).is_ok())
     };
     match run_to_end(argv, command.cwd, &adapt, &[command.input]) {

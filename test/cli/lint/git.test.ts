@@ -3,6 +3,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -444,14 +445,22 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(await git(root, "show", ":sub/bad.js")).toBe("\n" + before);
   });
 
-  test.skipIf(isWindows)("works in a pre-commit hook, on the index of that commit", async () => {
-    using repo = await repository({ "a.js": tidy, "b.js": tidy });
-    const { root } = repo;
-    const hook = join(root, ".git/hooks/pre-commit");
+  /** Creates a repository with a pre-commit hook that runs `bun <command> --staged` in `directory`, relative to the root. */
+  async function hooked(directory = ".") {
+    const repo = await repository({ "a.js": tidy, "b.js": tidy, "sub/c.js": tidy });
+    const hook = join(repo.root, ".git/hooks/pre-commit");
     const words = [bunExe(), ...writing[command], "--staged"].map(it => `'${it}'`).join(" ");
-    writeFileSync(hook, `#!/bin/sh\nexec ${words}\n`);
-    chmodSync(hook, 0o755);
+    const runIn = (directory: string) => {
+      writeFileSync(hook, `#!/bin/sh\ncd '${directory}' && exec ${words} '${relative(directory, ".") || "."}'\n`);
+      chmodSync(hook, 0o755);
+    };
+    runIn(directory);
+    return { ...repo, runIn };
+  }
 
+  test.skipIf(isWindows)("works in a pre-commit hook, on the index of that commit", async () => {
+    using repo = await hooked();
+    const { root } = repo;
     write(root, "a.js", before);
     await git(root, "add", "a.js");
     await git(root, "commit", "-q", "-m", "what is staged");
@@ -461,7 +470,61 @@ describe.concurrent.each(commands)("bun %s", command => {
     await git(root, "commit", "-q", "-a", "-m", "all");
     expect(await git(root, "show", "HEAD:b.js")).toBe(after[command]);
     expect(await git(root, "status", "--porcelain")).toBe("");
+    // `git commit <path>` builds the commit from a temporary index, and keeps the real index locked. What the hook
+    // stages has to reach both, or the real index keeps the text from before the hook.
+    write(root, "a.js", before);
+    await git(root, "add", "a.js");
+    await git(root, "commit", "-q", "-m", "a path", "a.js");
+    expect(await git(root, "show", "HEAD:a.js")).toBe(after[command]);
+    expect(await git(root, "show", ":a.js")).toBe(after[command]);
+    expect(await git(root, "status", "--porcelain")).toBe("");
   });
+
+  test.skipIf(isWindows)(
+    "in a pre-commit hook for git commit <path>, works in a subdirectory and in a linked work tree",
+    async () => {
+      using repo = await hooked("sub");
+      const { root } = repo;
+      write(root, "sub/c.js", before);
+      await git(root, "add", "sub/c.js");
+      await git(root, "commit", "-q", "-m", "a path", "sub/c.js");
+      expect(await git(root, "show", ":sub/c.js")).toBe(after[command]);
+      expect(await git(root, "status", "--porcelain")).toBe("");
+      // A linked work tree has an index of its own, next to which git puts the temporary one. Its hook has to stay at
+      // the root: git gives it GIT_DIR without GIT_WORK_TREE, so git takes the hook's working directory for the root.
+      repo.runIn(".");
+      const linked = join(root, "..", basename(root) + "-linked");
+      await git(root, "worktree", "add", "-q", linked, "-b", "linked");
+      try {
+        write(linked, "sub/d.js", before);
+        await git(linked, "add", "sub/d.js");
+        await git(linked, "commit", "-q", "-m", "a path", "sub/d.js");
+        expect(await git(linked, "show", ":sub/d.js")).toBe(after[command]);
+        expect(await git(linked, "status", "--porcelain")).toBe("");
+      } finally {
+        rmSync(linked, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.skipIf(isWindows)(
+    "in a pre-commit hook for git commit <path> with an index of the user's own, doesn't fail",
+    async () => {
+      using repo = await hooked();
+      const { root } = repo;
+      // Git locks that index instead of the real one, and the hook can't tell which. What it stages only reaches the
+      // commit, as before.
+      copyFileSync(join(root, ".git/index"), join(root, ".git/alt"));
+      write(root, "b.js", before);
+      const more = { GIT_INDEX_FILE: join(root, ".git/alt") };
+      expect((await run(["git", "add", "b.js"], root, more)).exitCode).toBe(0);
+      const { stderr, exitCode } = await run(["git", "commit", "-q", "-m", "alt index", "b.js"], root, more);
+      expect(stderr).not.toContain("Cannot stage");
+      expect(exitCode).toBe(0);
+      expect(await git(root, "show", "HEAD:b.js")).toBe(after[command]);
+      expect(existsSync(join(root, ".git/index.lock"))).toBe(false);
+    },
+  );
 
   test.skipIf(isWindows)("git never runs programs named in the repository's config", async () => {
     using repo = await repository({ "a.js": tidy, "b.js": tidy, ".gitattributes": "*.js diff=mine\n" });

@@ -3825,7 +3825,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let own = bound.fn_symbol[func.idx()];
         let is_itself = self
             .enclosing_declaration
-            .is_some_and(|at| (at.file, at.variable) == (file, declaration));
+            .is_some_and(|at| (at.file, at.variable, at.fake_scope) == (file, declaration, 0));
         let symbol = if is_itself && own.is_some() {
             own
         } else {

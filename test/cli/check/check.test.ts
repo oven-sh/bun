@@ -20701,6 +20701,40 @@ export const { length } = d1(tree, state => {});
       expect(exitCode).toBe(1);
     });
 
+    // Printing a signature with parameters or type parameters creates a scope for them, so the enclosing declaration
+    // inside isn't the variable, and the function's type is written as `typeof` the variable.
+    test("a function in a variable whose return type contains the function's type needs an annotation only if it has no parameters", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, noEmit: false, declaration: true, outDir: "out" },
+        }),
+        "a.ts": `export const a1 = (k: number) => b1();
+export function b1() { return { v: a1 }; }
+export const a2 = <T,>() => b2();
+export function b2() { return { v: a2 }; }
+export const a3 = function (k: number) { return b3(); };
+export function b3() { return { v: a3 }; }
+export const a4 = async ({ k }: { k: number }) => ({ k, more: b4 });
+export const b4 = { v: a4 };
+export const a5 = () => ({ more(k: number) { return b5; } });
+export const b5 = { v: a5 };
+export const c1 = () => d1();
+export function d1() { return { v: c1 }; }
+export const c2 = function named() { return d2(); };
+export function d2() { return { v: c2 }; }
+export const c3 = () => ({ more() { return d3; } });
+export const d3 = { v: c3 };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(11,14): error TS5088: The inferred type of 'c1' references a type with a cyclic structure which cannot be trivially serialized. A type annotation is necessary.
+        a.ts(13,14): error TS5088: The inferred type of 'c2' references a type with a cyclic structure which cannot be trivially serialized. A type annotation is necessary.
+        a.ts(15,14): error TS5088: The inferred type of 'c3' references a type with a cyclic structure which cannot be trivially serialized. A type annotation is necessary."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("the checks of an interface don't see an augmentation through a re-export that follows a direct augmentation", async () => {
       using dir = project({
         "both/expect.ts": `export interface Base<T> { a(): void }

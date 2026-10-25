@@ -3724,6 +3724,146 @@ describe("expect()", () => {
   });
 
   describe("toMatchObject", () => {
+    // Two Headers or two URLSearchParams are compared by their entries, as toEqual compares them.
+    describe("Headers and URLSearchParams in the pattern", () => {
+      const headers = (/** @type {Record<string, string>} */ init = {}) => new Headers(init);
+      const params = (/** @type {string} */ query) => new URLSearchParams(query);
+      /** @param {...string} values */
+      const cookies = (...values) => {
+        const result = new Headers({ "content-type": "text/plain" });
+        for (const value of values) result.append("set-cookie", value);
+        return result;
+      };
+      const withExtra = (/** @type {object} */ value, extra = 1) => Object.assign(value, { extra });
+
+      test("the same entries match", () => {
+        expect(headers({ a: "1", b: "2" })).toMatchObject(headers({ B: "2", A: "1" }));
+        expect(cookies("a=1", "b=2")).toMatchObject(cookies("a=1", "b=2"));
+        expect(headers()).toMatchObject(headers());
+        expect(params("tag=a&tag=b")).toMatchObject(params("tag=a&tag=b"));
+        expect(new URL("https://example.com/?tag=a&tag=b").searchParams).toMatchObject(params("tag=a&tag=b"));
+        expect({ status: 200, headers: cookies("a=1", "b=2") }).toMatchObject({ headers: cookies("a=1", "b=2") });
+        expect({ path: "/", query: params("tag=a&tag=b") }).toMatchObject({ query: params("tag=a&tag=b") });
+        expect([cookies("a=1", "b=2")]).toMatchObject([cookies("a=1", "b=2")]);
+        expect({ h: headers({ a: "1" }) }).toMatchObject({ h: expect.any(Headers) });
+        expect(headers({ a: "1" })).toMatchObject({});
+      });
+
+      test("Headers with other entries do not match", () => {
+        expect(headers({ a: "1" })).not.toMatchObject(headers({ a: "2" }));
+        expect(headers({ a: "1" })).not.toMatchObject(headers({ b: "1" }));
+        expect(headers({ a: "1", b: "2" })).not.toMatchObject(headers({ a: "1" }));
+        expect(headers({ a: "1" })).not.toMatchObject(headers({ a: "1", b: "2" }));
+        expect(headers({ a: "1" })).not.toMatchObject(headers());
+        expect(cookies("a=1", "b=2")).not.toMatchObject(cookies("a=1", "b=3"));
+        expect(cookies("a=1", "b=2")).not.toMatchObject(cookies("b=2", "a=1"));
+        expect(cookies("a=1", "b=2")).not.toMatchObject(cookies("a=1, b=2"));
+        expect({ h: headers({ a: "1" }) }).not.toMatchObject({ h: headers({ a: "2" }) });
+        expect([headers({ a: "1" })]).not.toMatchObject([headers({ a: "2" })]);
+      });
+
+      test("URLSearchParams with other entries do not match", () => {
+        expect(params("a=1")).not.toMatchObject(params("a=2"));
+        expect(params("a=1")).not.toMatchObject(params("b=1"));
+        expect(params("a=1&b=2")).not.toMatchObject(params("a=1"));
+        expect(params("a=1")).not.toMatchObject(params("a=1&b=2"));
+        expect(params("tag=a&tag=b")).not.toMatchObject(params("tag=a&tag=c"));
+        expect(params("tag=a&tag=b")).not.toMatchObject(params("tag=b&tag=a"));
+        expect(params("a=1&a=1&b=2")).not.toMatchObject(params("a=1&b=2&b=2"));
+        expect({ p: params("a=1") }).not.toMatchObject({ p: params("a=2") });
+        expect([params("a=1")]).not.toMatchObject([params("a=2")]);
+      });
+
+      test("a plain pattern reaches them through a getter of the value", () => {
+        const response = () => new Response(null, { status: 201, headers: { a: "1" } });
+        expect(response()).toMatchObject({ status: 201, headers: headers({ a: "1" }) });
+        expect(response()).not.toMatchObject({ headers: headers({ a: "2" }) });
+        expect(new URL("https://example.com/?a=1")).toMatchObject({ searchParams: params("a=1") });
+        expect(new URL("https://example.com/?a=1")).not.toMatchObject({ searchParams: params("a=2") });
+      });
+
+      // The names that the pattern inherits reject these pairs, not the entries.
+      test("a value of another class does not match", () => {
+        const formData = new FormData();
+        formData.append("a", "1");
+        expect(params("a=1")).not.toMatchObject(headers({ a: "1" }));
+        expect(headers({ a: "1" })).not.toMatchObject(params("a=1"));
+        expect(formData).not.toMatchObject(headers({ a: "1" }));
+        expect(formData).not.toMatchObject(params("a=1"));
+        expect(new Map([["a", "1"]])).not.toMatchObject(headers({ a: "1" }));
+      });
+
+      test("the own properties of an equal pair are compared", () => {
+        expect(withExtra(headers({ a: "1" }))).toMatchObject(withExtra(headers({ a: "1" })));
+        expect(headers({ a: "1" })).not.toMatchObject(withExtra(headers({ a: "1" })));
+        expect(withExtra(headers({ a: "1" }), 1)).not.toMatchObject(withExtra(headers({ a: "1" }), 2));
+        expect(withExtra(headers({ a: "1" }))).not.toMatchObject(withExtra(headers({ a: "2" })));
+      });
+
+      test("the entries are read when the matcher runs", () => {
+        const received = headers({ a: "1" });
+        received.set("a", "2");
+        expect(received).toMatchObject(headers({ a: "2" }));
+        expect(received).not.toMatchObject(headers({ a: "1" }));
+
+        const expected = params("a=1");
+        const pattern = { p: expected };
+        expected.append("a", "2");
+        expect({ p: params("a=1&a=2") }).toMatchObject(pattern);
+        expect({ p: params("a=1") }).not.toMatchObject(pattern);
+
+        const url = new URL("https://example.com/?a=1");
+        const searchParams = url.searchParams;
+        url.search = "?a=1&a=2";
+        expect(searchParams).toMatchObject(params("a=1&a=2"));
+        expect(searchParams).not.toMatchObject(params("a=1&a=3"));
+      });
+
+      test("in the calls of a mock", () => {
+        const fn = jest.fn();
+        fn({ status: 200, headers: cookies("a=1", "b=2"), query: params("tag=a&tag=b") });
+        expect(fn.mock.calls).toMatchObject([[{ headers: cookies("a=1", "b=2"), query: params("tag=a&tag=b") }]]);
+        expect(fn.mock.calls).not.toMatchObject([[{ headers: cookies("a=1", "b=3") }]]);
+        expect(fn.mock.calls).not.toMatchObject([[{ query: params("tag=a&tag=c") }]]);
+      });
+
+      test("with resolves and rejects", async () => {
+        await expect(Promise.resolve(headers({ a: "1" }))).resolves.toMatchObject(headers({ a: "1" }));
+        await expect(Promise.resolve(headers({ a: "1" }))).resolves.not.toMatchObject(headers({ a: "2" }));
+        await expect(Promise.reject(params("a=1"))).rejects.toMatchObject(params("a=1"));
+        await expect(Promise.reject(params("a=1"))).rejects.not.toMatchObject(params("a=2"));
+      });
+
+      test("the sample of expect.objectContaining stays a subset of properties", () => {
+        expect(headers({ a: "1" })).toEqual(expect.objectContaining(headers({ a: "2" })));
+        expect(params("a=1")).toEqual(expect.objectContaining(params("a=2")));
+        expect({ h: headers({ a: "1" }) }).toMatchObject({ h: expect.objectContaining(headers({ a: "2" })) });
+      });
+
+      if (isBun) {
+        // Jest and Vitest compare the constructors.
+        test("an instance of a subclass is compared by its entries", () => {
+          class MyHeaders extends Headers {}
+          expect(new MyHeaders({ a: "1" })).toMatchObject(headers({ a: "1" }));
+          expect(new MyHeaders({ a: "1" })).not.toMatchObject(headers({ a: "2" }));
+        });
+
+        // In Jest and Vitest the own properties of two iterables must be equal.
+        test("the value can hold an own property that the pattern does not have", () => {
+          expect(withExtra(headers({ a: "1" }))).toMatchObject(headers({ a: "1" }));
+          expect(withExtra(params("a=1"))).toMatchObject(params("a=1"));
+        });
+
+        test("Headers that hold a name without a value", () => {
+          // get("location") returns null for these Headers, and count is 1.
+          const noValue = () => Response.redirect("").headers;
+          expect(noValue()).toMatchObject(noValue());
+          expect(noValue()).not.toMatchObject(headers({ "content-type": "text/plain" }));
+          expect(headers({ "content-type": "text/plain" })).not.toMatchObject(noValue());
+        });
+      }
+    });
+
     if (isBun) {
       test("with Bun.deepMatch", () => {
         expect(Bun.deepMatch({ a: 1, b: 2 }, { a: 1 })).toBe(false);

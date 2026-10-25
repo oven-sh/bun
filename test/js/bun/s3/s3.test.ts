@@ -1582,15 +1582,17 @@ describe.concurrent("Bun.write(S3File, input, options)", () => {
     const ofDestination = client.file(randomUUIDv7(), { partSize: 6 * MiB });
     await Bun.write(ofDestination, Bun.file(input));
 
-    // The ETag of a multipart upload ends with the number of its parts.
+    // The ETag of one PUT is an MD5. The ETag of a multipart upload ends with the number of its parts.
+    const onePut = expect.stringMatching(/^"[0-9a-f]{32}"$/);
+    const twoParts = expect.stringMatching(/^"[0-9a-f]{32}-2"$/);
     expect({
       fromStream: (await fromStream.stat()).etag,
       fromFile: (await fromFile.stat()).etag,
       ofDestination: (await ofDestination.stat()).etag,
     }).toEqual({
-      fromStream: expect.not.stringContaining("-"),
-      fromFile: expect.stringMatching(/-2"$/),
-      ofDestination: expect.not.stringContaining("-"),
+      fromStream: onePut,
+      fromFile: twoParts,
+      ofDestination: onePut,
     });
   });
 });

@@ -293,10 +293,10 @@ describe("a macro result that is bound to a name", () => {
     [`const a = obj(); a.x = 1; export default a.x;`, 1],
     [`const l = arr(); l.push(4); export default l.length;`, 4],
     [`const c = obj(); function read() { return c.a; } c.a = 9; export default read();`, 9],
-    [`obj().a = 5; obj().a += 1; obj().b.c ||= 2; obj().a++; --obj().a; export default "loads";`, "loads"],
+    [`export default [obj().a = 5, obj().a += 1, obj().b.c ||= 2, obj().a++, --obj().a];`, [5, 2, 2, 1, 0]],
     [
-      `[obj().a] = [5]; ({ k: obj().a } = { k: 1 }); for (obj().a of [1]) {} for (obj().b.c in { k: 1 }) {} export default "loads";`,
-      "loads",
+      `for (obj().a of [1]) {} for (obj().b.c in { k: 1 }) {} export default [([obj().a] = [5])[0], ({ k: obj().a } = { k: 7 }).k];`,
+      [5, 7],
     ],
     [`export default [delete odd().n, delete odd()["n"], delete holes().a];`, [true, true, true]],
     [`const n = num(); const s = hello(); export default [n + n, s + s.length];`, [42, "Hello5"]],
@@ -552,10 +552,13 @@ describe("a macro result that is bound to a name", () => {
       );
       expect(named).toEqual({ lastLine: "hello world Hello 21", stderr: "", exitCode: 0 });
       expect(called).toEqual({ lastLine: `[{"a":1},[1,2],{"o":{"a":1},"n":21}]`, stderr: "", exitCode: 0 });
-      for (const { stderr, exitCode } of rejected) {
-        expect(stderr).toContain(" error in macro");
+      // A name is an identifier for the macro. A property of a name is an argument of no known type.
+      const identifier = `"Cannot convert identifier to JS. Try a statically-known value" error in macro`;
+      const reasons = [identifier, identifier, identifier, `"Cannot convert argument type to JS" error in macro`];
+      rejected.forEach(({ stderr, exitCode }, i) => {
+        expect(stderr).toContain(reasons[i]);
         expect(exitCode).toBe(1);
-      }
+      });
     },
   );
 

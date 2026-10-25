@@ -2506,10 +2506,7 @@ export function dts(files: readonly SchemaFile[]): string {
       )
       .join(", ");
   };
-  /** A result that is absent is `null`, never `undefined` too. */
-  const resultType = (type: Type) =>
-    type instanceof OptionalType && type.modifier === "nullable" ? `${type.inner.tsType} | null` : type.tsType;
-  const signatureType = (signature: Signature) => `(${parameters(signature)}) => ${resultType(signature.returns)}`;
+  const signatureType = (signature: Signature) => `(${parameters(signature)}) => ${signature.returns.tsResultType}`;
   const member = (name: string, optional: boolean, type: string) =>
     `    ${JSON.stringify(name)}${optional ? "?" : ""}: ${type};`;
   const overloadsType = (fn: FunctionDefinition) => fn.signatures.map(s => `(${signatureType(s)})`).join(" & ");
@@ -2520,9 +2517,9 @@ export function dts(files: readonly SchemaFile[]): string {
   const getterMember = (getter: Getter) => {
     if (getter.writable) return member(getter.name, false, "any");
     const name = JSON.stringify(getter.name);
-    if (!getter.hasSetter) return `    readonly ${name}: ${resultType(getter.type)};`;
+    if (!getter.hasSetter) return `    readonly ${name}: ${getter.type.tsResultType};`;
     if (getter.setterType === getter.type) return `    ${name}: ${getter.type.tsType};`;
-    return `    get ${name}(): ${resultType(getter.type)};\n    set ${name}(value: ${getter.setterType.tsType});`;
+    return `    get ${name}(): ${getter.type.tsResultType};\n    set ${name}(value: ${getter.setterType.tsType});`;
   };
   const declarations = files.flatMap(file =>
     file.types.map(type => {
@@ -2547,7 +2544,7 @@ ${[
       ? `
   interface ${type.name}Constructor {
 ${[
-  ...(type.call ? type.call.signatures.map(call => `    (${parameters(call)}): ${resultType(call.returns)};`) : []),
+  ...(type.call ? type.call.signatures.map(call => `    (${parameters(call)}): ${call.returns.tsResultType};`) : []),
   `    new (${parameters(type.construct)}): ${type.name};`,
   `    readonly prototype: ${type.name};`,
   ...type.staticFunctions.map(functionMember),
@@ -2561,7 +2558,7 @@ ${[
   const exported = (file: SchemaFile) => [
     ...file.functions.map(
       fn =>
-        `      ${JSON.stringify(fn.name)}: ${fn.isValue ? resultType(fn.signatures[0].returns) : overloadsType(fn)};`,
+        `      ${JSON.stringify(fn.name)}: ${fn.isValue ? fn.signatures[0].returns.tsResultType : overloadsType(fn)};`,
     ),
     ...file.types
       .filter(type => type instanceof ClassType && type.construct)

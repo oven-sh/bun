@@ -264,6 +264,10 @@ export abstract class Type {
   abstract readonly idlType: string;
   /** TypeScript spelling of the values it takes: `any` where the conversion coerces. */
   abstract readonly tsType: string;
+  /** TypeScript spelling of the values it gives. `Object.create` also takes `object` and gives `any`. */
+  get tsResultType(): string {
+    return this.tsType;
+  }
 
   /** How `IDLNullable<this>::ImplementationType` says "null". */
   get nullRepresentation(): "optional" | "pointer" | "emptyValue" {
@@ -1300,13 +1304,25 @@ export class LocalType extends Type {
   readonly #marker: string;
   readonly #valueKinds: ValueKinds;
   readonly #refuses: string | null;
-  constructor(idlType: string, tsType: string, marker: string, valueKinds: ValueKinds, refuses: string | null) {
+  readonly #tsResultType: string;
+  constructor(
+    idlType: string,
+    tsType: string,
+    marker: string,
+    valueKinds: ValueKinds,
+    refuses: string | null,
+    tsResultType = tsType,
+  ) {
     super();
     this.idlType = idlType;
     this.tsType = tsType;
+    this.#tsResultType = tsResultType;
     this.#marker = marker;
     this.#valueKinds = valueKinds;
     this.#refuses = refuses;
+  }
+  get tsResultType(): string {
+    return this.#tsResultType;
   }
   get valueKinds(): ValueKinds {
     return this.#valueKinds;
@@ -1336,13 +1352,21 @@ export class LocalType extends Type {
     return `bindgen::to_js::any(heap, ${value})`;
   }
 }
-export const objectType = new LocalType("Bun::Bindgen::IDLRawObject", "object", "bun_jsc::JSObject", "any", nonObjects);
+export const objectType = new LocalType(
+  "Bun::Bindgen::IDLRawObject",
+  "object",
+  "bun_jsc::JSObject",
+  "any",
+  nonObjects,
+  "any",
+);
 export const jsArrayType = new LocalType(
   "Bun::Bindgen::IDLRawArray",
   "readonly any[]",
   "bun_jsc::JSArray",
   ["array"],
   null,
+  "any[]",
 );
 export const stringLikeType = new LocalType(
   "Bun::Bindgen::IDLRawStringLike",
@@ -1382,6 +1406,7 @@ export class CellType extends LocalType {
       options.rustPath ?? "",
       kindsOfCell(cpp),
       null,
+      options.tsType ?? "any",
     );
     this.cpp = cpp;
     this.header = header;
@@ -1797,6 +1822,10 @@ export class OptionalType extends Type {
     const absent = this.modifier === "optional" || this.modifier === "ifPassed" ? "undefined" : "null | undefined";
     return `${this.inner.tsType} | ${absent}`;
   }
+  /** A result that is absent is `null`, never `undefined` too. */
+  get tsResultType(): string {
+    return `${this.inner.tsResultType} | ${this.modifier === "nullable" ? "null" : "undefined"}`;
+  }
   get takesUndefined(): boolean {
     return true;
   }
@@ -2126,6 +2155,9 @@ export class ArrayType extends Type {
   }
   get tsType(): string {
     return `(${this.element.tsType})[]`;
+  }
+  get tsResultType(): string {
+    return `(${this.element.tsResultType})[]`;
   }
   get valueKinds(): ValueKinds {
     return ["array"];
@@ -2667,6 +2699,9 @@ export class UnionType extends NamedType {
   }
   get tsType(): string {
     return this.alternatives.map(a => a.type.tsType).join(" | ");
+  }
+  get tsResultType(): string {
+    return this.alternatives.map(a => a.type.tsResultType).join(" | ");
   }
   get takesUndefined(): boolean {
     return this.alternatives.some(a => a.type.takesUndefined);

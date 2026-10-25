@@ -632,8 +632,6 @@ describe("@types/bun integration test", () => {
     ).toEqual([
       // Published as the type of its argument.
       "Crypto.bind.ts: new Crypto().getRandomValues() is ArrayBuffer | ArrayBufferView<ArrayBufferLike>, not T",
-      // `JSX.Element`, which is `unknown` without the types of React.
-      "MarkdownObject.bind.ts: react() is object, not unknown",
       // An `S3File` is a `Blob` to which C++ adds `bucket` and `presign`. Nothing has ever had `readable`.
       "S3Client.bind.ts: new S3Client().file() has no readable, bucket, presign",
       "S3Client.bind.ts: new S3Client().file().lastModified is not published",

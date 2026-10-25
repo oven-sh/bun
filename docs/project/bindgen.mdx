@@ -277,7 +277,8 @@ throws: nothing would release the pointer. A generic `T` is written as its insta
 
 `b.cell("JSC::RegExpObject", "JavaScriptCore/RegExpObject.h", { rustPath: "bun_jsc::RegExp" })` names the C++ class, its
 header and the Rust type that marks the handle. `reportedAs` is what an error calls it, if not the class without its `JS`,
-and `tsType` what the generated `.d.ts` does, if not `object`. `b.dataView` is one.
+and `tsType` what the generated `.d.ts` does, if not `object` for an argument and `any` for a result, as for `b.object`.
+`b.dataView` is one.
 `b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" })` gives what `wrapped()`
 of the instance returns. The argument keeps it alive, so it is an argument or an alternative of one; `.shared` is a
 reference on it, `ExternalShared<T>`, which a dictionary can hold and a body can store. It also names a generated class

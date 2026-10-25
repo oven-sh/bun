@@ -57,7 +57,6 @@ bun_output::define_scoped_log!(map_log, crate::bake::dev_server::SourceMapStore)
 use core::sync::atomic::Ordering;
 
 use bun_collections::StringArrayHashMap;
-use bun_sys::FdExt as _;
 
 use super::{Graph, Side};
 

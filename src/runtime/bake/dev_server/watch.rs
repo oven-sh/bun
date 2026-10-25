@@ -110,12 +110,7 @@ impl DevServer {
                         || event.op.contains(bun_watcher::Op::RENAME)
                     {
                         // TODO: audit this line heavily
-                        self.bun_watcher.remove_at_index::<false>(
-                            bun_watcher::Kind::File,
-                            event.index,
-                            0,
-                            &[],
-                        );
+                        self.bun_watcher.remove_at_index(event.index);
                     }
 
                     // SAFETY: `ev_ptr` is this thread's exclusively-acquired

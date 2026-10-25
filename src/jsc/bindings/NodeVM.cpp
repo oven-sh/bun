@@ -1041,6 +1041,11 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     addressOfGlobalThis()->set(vm, this, NodeVMGlobalProxy::create(vm, this));
     setPrototypeDirect(vm, jsNull());
 
+    // `Atomics.Mutex`, `Atomics.Condition`, `Reflect.canBeShared` and `SharedArray` are lazy here too, as in the default
+    // realm. The sandbox is not set yet, so the context's own builtins are the ones that get them.
+    defineStructsSurfaceLazily(this);
+    RETURN_IF_EXCEPTION(scope, );
+
     // microtaskMode: "afterEvaluate" — give this context its own microtask
     // queue, like Node's contextify own_microtask_queue. Microtasks enqueued
     // for this global no longer land on the VM's default queue (which the

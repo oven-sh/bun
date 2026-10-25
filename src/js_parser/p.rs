@@ -7151,21 +7151,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         opts: IdentifierOpts,
         is_this_define: bool,
     ) -> Expr {
-        let mut splitter = strings::split(name, b".");
-        let first: &'a [u8] = splitter.next().unwrap_or(name);
-        let mut rest: Vec<&'a [u8]> = Vec::new();
-        while let Some(part) = splitter.next() {
-            rest.push(part);
-        }
-
-        // In `a.b = 1` the target is the chain, so the head `a` is only read
-        let head_opts = if rest.is_empty() {
-            opts
-        } else {
-            IdentifierOpts::new()
-                .with_was_originally_identifier(true)
-                .with_is_property_access_target(rest.len() > 1 || !opts.is_delete_target())
-        };
+        let (first, mut rest, head_opts) = split_define_value(name, opts);
 
         let value: Expr = match first {
             b"null" => Expr {
@@ -7308,6 +7294,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         false
     }
+}
+
+/// The first part of a define value, the parts after it, and the options for the first part.
+#[inline(never)]
+fn split_define_value(name: &[u8], opts: IdentifierOpts) -> (&[u8], Vec<&[u8]>, IdentifierOpts) {
+    let mut splitter = strings::split(name, b".");
+    let first = splitter.next().unwrap_or(name);
+    let mut rest: Vec<&[u8]> = Vec::new();
+    while let Some(part) = splitter.next() {
+        rest.push(part);
+    }
+
+    // In `a.b = 1` the target is the chain, so the head `a` is only read
+    let head_opts = if rest.is_empty() {
+        opts
+    } else {
+        IdentifierOpts::new()
+            .with_was_originally_identifier(true)
+            .with_is_property_access_target(rest.len() > 1 || !opts.is_delete_target())
+    };
+    (first, rest, head_opts)
 }
 
 /// Is `expr` the node `target` (`call_target`, `template_tag`) holds? `this` and `import.meta` have no identity.

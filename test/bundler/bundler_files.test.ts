@@ -849,55 +849,58 @@ describe("bundler files option", () => {
 
     // Without a manifest the bundle keeps an import of the page's path. No file is at
     // that path, so the bundle does not start.
-    test.each(["bun", "node"] as const)("Bun.serve serves an in-memory page from a bundle for %s", async target => {
-      using dir = tempDir("bundler-files-html-serve", {
-        "server.js": `
-          import page from "./page.html";
-          const server = Bun.serve({
-            port: 0,
-            hostname: "127.0.0.1",
-            routes: { "/": page },
-            fetch: () => new Response("not found", { status: 404 }),
-          });
-          const html = await fetch(server.url);
-          const text = await html.text();
-          const script = await fetch(new URL(text.match(/<script[^>]* src="([^"]+)"/)[1], server.url));
-          const stylesheet = await fetch(new URL(text.match(/<link[^>]* href="([^"]+)"/)[1], server.url));
-          console.log(JSON.stringify({
-            page: html.status,
-            script: [script.status, (await script.text()).includes(${JSON.stringify(clientJs)})],
-            stylesheet: [stylesheet.status, (await stylesheet.text()).includes("color: red")],
-          }));
-          await server.stop(true);
-        `,
-      });
+    test.concurrent.each(["bun", "node"] as const)(
+      "Bun.serve serves an in-memory page from a bundle for %s",
+      async target => {
+        using dir = tempDir("bundler-files-html-serve", {
+          "server.js": `
+            import page from "./page.html";
+            const server = Bun.serve({
+              port: 0,
+              hostname: "127.0.0.1",
+              routes: { "/": page },
+              fetch: () => new Response("not found", { status: 404 }),
+            });
+            const html = await fetch(server.url);
+            const text = await html.text();
+            const script = await fetch(new URL(text.match(/<script[^>]* src="([^"]+)"/)[1], server.url));
+            const stylesheet = await fetch(new URL(text.match(/<link[^>]* href="([^"]+)"/)[1], server.url));
+            console.log(JSON.stringify({
+              page: html.status,
+              script: [script.status, (await script.text()).includes(${JSON.stringify(clientJs)})],
+              stylesheet: [stylesheet.status, (await stylesheet.text()).includes("color: red")],
+            }));
+            await server.stop(true);
+          `,
+        });
 
-      await Bun.build({
-        entrypoints: [`${dir}/server.js`],
-        target,
-        outdir: `${dir}/dist`,
-        files: {
-          [`${dir}/page.html`]: pageHtml,
-          [`${dir}/page.css`]: pageCss,
-          [`${dir}/client.js`]: clientJs,
-        },
-      });
+        await Bun.build({
+          entrypoints: [`${dir}/server.js`],
+          target,
+          outdir: `${dir}/dist`,
+          files: {
+            [`${dir}/page.html`]: pageHtml,
+            [`${dir}/page.css`]: pageCss,
+            [`${dir}/client.js`]: clientJs,
+          },
+        });
 
-      // Bun.serve looks for the files of a manifest in the working directory.
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "server.js"],
-        cwd: `${dir}/dist`,
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: `{"page":200,"script":[200,true],"stylesheet":[200,true]}\n`,
-        stderr: "",
-        exitCode: 0,
-      });
-    });
+        // Bun.serve looks for the files of a manifest in the working directory.
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "server.js"],
+          cwd: `${dir}/dist`,
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: `{"page":200,"script":[200,true],"stylesheet":[200,true]}\n`,
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
 
     test("each in-memory .html file gets one manifest, however often it is imported", async () => {
       const result = await Bun.build({

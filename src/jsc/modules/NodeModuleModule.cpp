@@ -803,8 +803,7 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
     return prototype;
 }
 
-// Node: `main = process.argv[1]`, then `path.resolve(main)` throws for a non-string.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/run_main.js#L140
+// Node: executeUserEntryPoint() in lib/internal/modules/run_main.js
 static NEVER_INLINE String runMainNameSlowCase(JSGlobalObject* globalObject, JSValue main)
 {
     auto& vm = JSC::getVM(globalObject);

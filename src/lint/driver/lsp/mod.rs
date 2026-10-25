@@ -44,7 +44,7 @@ pub struct Features {
     pub lint: bool,
 }
 
-/// What follows the command on the command line, without `--lsp`: the flags of the command that started the server.
+/// What follows the command on the command line, `--lsp` included: the flags of the command that started the server.
 /// The other command runs with its defaults.
 #[derive(Copy, Clone)]
 pub enum Args<'a> {

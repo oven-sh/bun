@@ -67,7 +67,7 @@ Once the server is running, VS Code's own formatting and code action settings wo
 
 You can also run "Format Document" or "Format Selection" from the command palette.
 
-This feature requires Bun 1.4.4 or later. If the `bun` executable on your `PATH` (or the one set in `bun.runtime`) is older or cannot be started, the language server is skipped and a message is written to the "Bun" output channel. The server is started again after `bun.runtime` changes.
+This feature requires a Bun that has `bun fmt --lsp` (Bun 1.4.5 or later). If the `bun` executable on your `PATH` (or the one set in `bun.runtime`) is older or cannot be started, the language server is skipped and a message is written to the "Bun" output channel. The server is started again after `bun.runtime` changes.
 
 Formatting works on stable releases of Bun. Lint diagnostics and the `source.fixAll.bun` code action need a canary build of Bun (`bun upgrade --canary`); on a stable build the server only advertises formatting.
 

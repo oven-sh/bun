@@ -114,8 +114,8 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
     while (group->iterator) {
         struct us_socket_t *s = group->iterator;
         group->iterator = s->next;
-        /* Its owner ended this one, and only the peer's close_notify is awaited: the wait is over, and the kernel goes on delivering what it took. */
-        if (!thread_ends && s->ssl && us_internal_ssl_close_waits_for_peer(s)) {
+        /* Its owner ended this stream, so nothing of it is held back: every wait is over, and the kernel goes on delivering what it took. */
+        if (!thread_ends && s->ssl && us_internal_ssl_sealed_close_notify(s)) {
             us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
             continue;
         }

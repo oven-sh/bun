@@ -331,6 +331,8 @@ const khandlers = Symbol("khandlers");
 const kConnectReq = Symbol("kConnectReq");
 const kclosed = Symbol("closed");
 const kended = Symbol("ended");
+// The handle closed behind the peer's EOF: the peer hung up, and the loop closed the descriptor.
+const kHungUp = Symbol("kHungUp");
 const kpendingSession = Symbol("pendingSession");
 const kALPNError = Symbol("kALPNError");
 const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
@@ -838,6 +840,7 @@ function onReadEnd(self, err?) {
 function onHandleClose(self, handle, err) {
   if (self[kclosed]) return;
   self[kclosed] = true;
+  self[kHungUp] = self[kended];
   if (closeWithTLSSocket(self, handle)) return;
   // A connection attempt that lost the race and a handle that a TLS upgrade replaced end quietly.
   if (handle !== self._handle) err = undefined;
@@ -1589,6 +1592,7 @@ function Socket(options?): void {
   this[kLastWriteQueueSize] = 0;
   this[kclosed] = false;
   this[kended] = false;
+  this[kHungUp] = false;
   this.connecting = false;
   this._host = undefined;
   this._port = undefined;
@@ -2576,7 +2580,8 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();
   } else if (status !== true) {
     // https://github.com/nodejs/node/blob/v26.5.0/lib/internal/stream_base_commons.js#L158-L159
-    callback(new ErrnoException(status, "write"));
+    // Node still holds the descriptor of a peer that hung up, so its write fails with EPIPE.
+    callback(new ErrnoException(this[kHungUp] && status === uv().UV_EBADF ? uv().UV_EPIPE : status, "write"));
   } else if (this.encrypted) {
     // A TLS write is never done in the same call in Node, so writableLength counts it until the next tick (test-tls-buffersize.js).
     process.nextTick(callback);
@@ -3882,6 +3887,7 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
+  self[kHungUp] = false;
   // Bytes the onread callback declined belong to the previous connection.
   if (self[kOnreadTail] !== undefined) {
     self[kOnreadTail] = undefined;

@@ -3405,7 +3405,6 @@ impl<'a> Resolver<'a> {
         // the `dir_info_uncached` call, mirroring `dir_info_cached_miss`: the
         // route loaders iterate the `DirEntry.data` map under this lock.
         let _entries_unlock = rfs!().entries_mutex.lock_guard();
-        let mut cached_dir_entry_result = rfs!().listing_slot(dir_path, b"")?;
 
         // NOTE: always assigned by either the cached-hit arm or the
         // `needs_iter` block below; null-init so rustc accepts the proof.
@@ -3422,10 +3421,12 @@ impl<'a> Resolver<'a> {
                     bun_ast::Loc::EMPTY,
                     format_args!("Unable to open directory: {}", bstr::BStr::new(err.name())),
                 );
-                self.expire_unopened_listing(dir_path, cached_dir_entry_result);
+                let slot = rfs!().entries.get_or_put(dir_path)?;
+                self.expire_unopened_listing(dir_path, slot);
                 return Err(err.into());
             }
         };
+        let mut cached_dir_entry_result = listing_slot_for_walk(rfs!(), dir_path, b"")?;
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
@@ -3539,16 +3540,9 @@ impl<'a> Resolver<'a> {
         // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
         // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
         let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
-        // The key of a path that was once walked through a link maps to the listing of
-        // the real directory, whose name is the real path.
-        let abs_path = if listing_is_named(dir_entries_dir, dir_path) {
-            dir_entries_dir
-        } else {
-            Fs::file_system::DirnameStore::instance().append_slice(dir_path)?
-        };
         self.dir_info_uncached(
             dir_info_ptr,
-            abs_path,
+            dir_entries_dir,
             // no parent to learn a real path from
             b"",
             // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
@@ -4346,11 +4340,12 @@ impl<'a> Resolver<'a> {
                         let slot = unsafe { queue[i].assume_init_mut() };
                         // `safe_path` becomes `DirInfo.abs_path`, which stays as walked. A
                         // key that a link leads through maps to the listing of the real
-                        // directory, which is named by that one.
+                        // directory, which is named by that one. Its fd is open on that
+                        // directory, where the path does not lead once the link is replaced.
                         if listing_is_named(entries.dir, top) {
                             slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                            slot.fd = entries.fd;
                         }
-                        slot.fd = entries.fd;
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
                         debuglog!(
@@ -4388,8 +4383,8 @@ impl<'a> Resolver<'a> {
                             let slot = unsafe { queue[i].assume_init_mut() };
                             if listing_is_named(entries.dir, top) {
                                 slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                                slot.fd = entries.fd;
                             }
-                            slot.fd = entries.fd;
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
                             debuglog!(
@@ -4647,9 +4642,8 @@ impl<'a> Resolver<'a> {
                 _ => b"",
             };
 
-            let mut cached_dir_entry_result = rfs!()
-                .listing_slot(dir_path, real_dir)
-                .expect("unreachable");
+            let mut cached_dir_entry_result =
+                listing_slot_for_walk(rfs!(), dir_path, real_dir).expect("unreachable");
 
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
                 core::ptr::null_mut();
@@ -6247,12 +6241,13 @@ impl<'a> Resolver<'a> {
             .map(Interned::as_bytes)
     }
 
-    /// The real path of the directory walked as `path`, or empty when `path` is
-    /// the real path: where a link at `path` leads, else the place of the
-    /// directory under the real path of `parent`. `dir_info_cached_miss` asks
-    /// before it chooses the listing slot, which belongs to the real directory.
-    /// `fd` is open on the directory, or invalid. The caller holds
-    /// `entries_mutex`.
+    /// The real path of the directory walked as `path`: where a link at `path`
+    /// leads, else the place of the directory under the real path of `parent`.
+    /// Empty when that is `path` itself, and when there is none to give: `parent`
+    /// has no entry for the directory, or the path does not fit a path buffer.
+    /// `dir_info_cached_miss` asks before it chooses the listing slot, which
+    /// belongs to the real directory. `fd` is open on the directory, or invalid.
+    /// The caller holds `entries_mutex`.
     fn real_dir_from_parent(&mut self, parent: DirInfoRef, path: &[u8], fd: FD) -> &'static [u8] {
         // The process-global RealFS, by raw pointer: `Entry::symlink` reborrows it
         // only internally, so the `&mut self` calls below do not invalidate it.
@@ -7034,6 +7029,27 @@ fn primary_side_effects(
 fn listing_is_named(listing_dir: &[u8], dir: &[u8]) -> bool {
     strings::without_trailing_slash_windows_path(listing_dir)
         == strings::without_trailing_slash_windows_path(dir)
+}
+
+/// `RealFS::listing_slot` for the walk that builds the `DirInfo` of `walked`. With no `real`
+/// path, `walked` is read into a listing of its own name. Its key can still be mapped to the
+/// listing of a directory that a link at `walked` once led to: the key is unmapped from that
+/// listing, which stays with its other keys. The caller holds `entries_mutex`.
+fn listing_slot_for_walk(
+    rfs: &mut Fs::file_system::RealFS,
+    walked: &[u8],
+    real: &[u8],
+) -> crate::CrateResult<allocators::Result> {
+    let slot = rfs.listing_slot(walked, real)?;
+    if real.is_empty()
+        && let Some(Fs::file_system::real_fs::EntriesOption::Entries(listing)) =
+            rfs.entries.at_index(slot.index)
+        && !listing_is_named(listing.dir, walked)
+    {
+        rfs.entries.remove_hash(slot.hash);
+        return rfs.listing_slot(walked, real);
+    }
+    Ok(slot)
 }
 
 #[inline]

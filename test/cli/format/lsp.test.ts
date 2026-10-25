@@ -1,7 +1,7 @@
 // `bun fmt --no-script --lsp`: the language server over standard input and output, as an editor uses it.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
-import { readdirSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 
@@ -446,7 +446,7 @@ exports.format = async (text, options) => {
   );
 
   // Each change of a configuration file gives the folder a new set of VMs, and the old ones are freed with their
-  // threads. JSC starts helper threads of the process when the first VM is freed, so the count is taken after that.
+  // threads. Only the VM threads are counted: JSC starts helper threads of the process as it goes.
   test.skipIf(!isLinux)(
     "frees the threads of a folder's VMs when its configuration changes",
     async () => {
@@ -465,7 +465,16 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
       client.notify("initialized");
       const text = "<p   >a</p>\n";
       open(client, join(String(dir), "a.astro"), text, "astro");
-      const threads = () => readdirSync(`/proc/${client.proc.pid}/task`).length;
+      const vmThreads = () => {
+        const tasks = `/proc/${client.proc.pid}/task`;
+        return readdirSync(tasks).filter(task => {
+          try {
+            return readFileSync(join(tasks, task, "comm"), "utf8").startsWith("Bun Lint JS");
+          } catch {
+            return false;
+          }
+        }).length;
+      };
       const counts: number[] = [];
       for (let generation = 1; generation <= 20; generation++) {
         writeFileSync(join(String(dir), "bunfig.toml"), `[fmt]\nprintWidth = ${80 + generation}\n`);
@@ -475,9 +484,10 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
         const formatted = await format(client, join(String(dir), "a.astro"));
         expect(formatted.error).toBeUndefined();
         expect(applyEdits(text, formatted.result)).toBe("<p >a</p>\n");
-        counts.push(threads());
+        counts.push(vmThreads());
       }
-      expect(counts[19]).toBe(counts[1]);
+      expect(counts[0]).toBeGreaterThan(0);
+      expect(counts[19]).toBe(counts[0]);
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();

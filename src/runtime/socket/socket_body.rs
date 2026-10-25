@@ -3921,6 +3921,15 @@ pub(crate) mod testing_apis {
         crate::socket::upgraded_duplex::LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Temporary: `tlsCloseCounts` of `bun:internal-for-testing`.
+    pub(crate) fn tls_close_counts() -> [c_int; 7] {
+        unsafe extern "C" {
+            static us_internal_ssl_close_counts: [c_int; 7];
+        }
+        // SAFETY: plain counters that only grow.
+        unsafe { us_internal_ssl_close_counts }
+    }
+
     /// `sweepSocketTimers` of `bun:internal-for-testing`.
     pub(crate) fn sweep_socket_timers(cx: &mut JsScope<'_>, count: f64) -> JsResult<()> {
         let loop_ = uws::Loop::get();

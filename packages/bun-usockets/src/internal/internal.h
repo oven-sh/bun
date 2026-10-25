@@ -271,6 +271,10 @@ struct us_socket_t *us_internal_ssl_on_open(us_socket_r s, int is_client, char *
 struct us_socket_t *us_internal_ssl_on_data(us_socket_r s, char *data, int length);
 struct us_socket_t *us_internal_ssl_on_writable(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_timeout(us_socket_r s);
+/* Temporary: close_notifies that waited for the kernel, then what ended the graceful closes that waited for the peer's. */
+enum { US_SSL_COUNT_WAITED_FOR_KERNEL, US_SSL_COUNT_PEER_CLOSE_NOTIFY, US_SSL_COUNT_PEER_FIN, US_SSL_COUNT_DEADLINE, US_SSL_COUNT_ERROR, US_SSL_COUNT_CLOSED_AGAIN, US_SSL_COUNT_OTHER, US_SSL_COUNTS };
+/* Temporary: says what is about to end the close of `s`. */
+void us_internal_ssl_close_ends_by(us_socket_r s, int count);
 struct us_socket_t *us_internal_ssl_on_close(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_on_end(us_socket_r s);
 struct us_socket_t *us_internal_ssl_close_after_rejected_send(us_socket_r s, int unread);

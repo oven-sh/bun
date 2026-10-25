@@ -7,12 +7,10 @@ use bun_core::strings;
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
 #[derive(Clone)]
 pub struct Url {
-    /// The url as written. It points into the parser source or arena, like the
-    /// path of the import record. A pointer and a `u32` length keep `Url` at
-    /// 24 bytes, so that `Property` does not grow.
+    /// The url as written. A pointer and a `u32` length: a slice grows `Property` by 8 bytes.
     text: *const u8,
     text_len: u32,
-    /// The import record of this `url()`. Each `url()` has its own record.
+    /// The import record of this `url()`.
     pub(crate) import_record_idx: u32,
     /// The location where the `url()` was seen in the CSS source file.
     pub(crate) loc: crate::dependencies::Location,
@@ -179,8 +177,7 @@ impl Url {
         self.clone()
     }
 
-    /// Two `url()` values of one stylesheet are equal when they are written the same.
-    /// Their import records differ.
+    /// Each `url()` has its own import record, so the text decides.
     pub fn eql(&self, other: &Url) -> bool {
         self.text() == other.text()
     }

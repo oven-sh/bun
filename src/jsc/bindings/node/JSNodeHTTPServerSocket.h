@@ -14,6 +14,8 @@ struct us_socket_t;
 struct us_bun_verify_error_t;
 
 void Bun__NodeHTTPResponse_takeBackConnection(void* zigResponse, JSC::EncodedJSValue jsValue);
+size_t Bun__NodeHTTPResponse_bytesWritten(void* zigResponse);
+void Bun__NodeHTTPSocket__addBytesWritten(void* handle, bool ssl, uint64_t bytes);
 }
 
 namespace uWS {
@@ -74,6 +76,9 @@ public:
     {
         if (auto* replaced = m_currentResponse.get(); replaced != nullptr && replaced != response) {
             Bun__NodeHTTPResponse_takeBackConnection(replaced->wrapped(), JSC::JSValue::encode(replaced));
+            if (m_socketHandle) {
+                Bun__NodeHTTPSocket__addBytesWritten(m_socketHandle, is_ssl, Bun__NodeHTTPResponse_bytesWritten(replaced->wrapped()));
+            }
         }
         m_currentResponse.set(vm, this, response);
     }

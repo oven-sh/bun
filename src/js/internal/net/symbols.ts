@@ -9,8 +9,6 @@ export default {
   kForeignListener: Symbol("kForeignListener"),
   // A function that node:http puts on a socket it handed to 'connect' or 'upgrade'. net.Socket calls it when the connection has closed.
   kHandleClosed: Symbol("kHandleClosed"),
-  // How many bytes the kernel had taken when net.Socket's timer last found a write queue that moved.
-  kLastBytesSent: Symbol("kLastBytesSent"),
   kPreHandshakeWrite: Symbol("kPreHandshakeWrite"),
   // net.Socket.prototype method for child_process: Node's handle.readStop().
   kReadStop: Symbol("kReadStop"),

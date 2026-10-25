@@ -16,7 +16,6 @@ extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_grantConnection(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
-extern "C" size_t Bun__NodeHTTPResponse_bytesWritten(void* zigResponse);
 extern "C" uint64_t Bun__NodeHTTPResponse_bufferedAmount(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_updateParked(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);

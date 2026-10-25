@@ -2787,6 +2787,104 @@ describe("tunnel socket bytesWritten and bytesRead", () => {
   });
 });
 
+// Windows takes a first send of any size whole, so nothing is unsent there.
+test.skipIf(isWindows).each(["http", "https"] as const)(
+  "%s: bytesWritten keeps what was still unsent when the body of an Upgrade request ended",
+  async proto => {
+    const { setSocketOptions } = require("bun:internal-for-testing");
+    const big = Buffer.alloc(2 << 20, "a");
+    const server = proto === "https" ? https.createServer(tlsCert) : http.createServer();
+    const upgraded = Promise.withResolvers<void>();
+    const seen = Promise.withResolvers<Record<string, number | boolean>>();
+    server.on("upgrade", (req, stream) => {
+      const socket = req.socket as net.Socket & { _handle: { bytesWritten: number; writeQueueSize: number } };
+      setSocketOptions(socket, 1, 65536);
+      stream.on("error", () => {});
+      stream.write(big);
+      const written = socket.bytesWritten;
+      const sent = socket._handle.bytesWritten - socket._handle.writeQueueSize;
+      req.resume().on("close", async () => {
+        // The connection leaves HTTP once the read that brought the end of the body is over.
+        for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve));
+        seen.resolve({
+          unsent: socket._handle.writeQueueSize > 0,
+          written: socket.bytesWritten - written,
+          sentNoLess: socket._handle.bytesWritten - socket._handle.writeQueueSize >= sent,
+        });
+      });
+      upgraded.resolve();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const client =
+      proto === "https"
+        ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+        : net.connect(port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      await once(client, proto === "https" ? "secureConnect" : "connect");
+      setSocketOptions(client, 2, 65536);
+      client.write("GET / HTTP/1.1\r\nHost: x\r\nUpgrade: x\r\nConnection: Upgrade\r\nContent-Length: 8\r\n\r\nhalf");
+      await upgraded.promise;
+      client.write("half");
+      expect(await seen.promise).toEqual({ unsent: true, written: 0, sentNoLess: true });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  },
+);
+
+// Node also counts the heads, so only the order is compared.
+test.each(["http", "https"] as const)(
+  "%s: req.socket.bytesWritten only grows over the responses of a connection and its hand-off",
+  async proto => {
+    const seen: number[] = [];
+    const body = Buffer.alloc(1000, "a");
+    const server = proto === "https" ? https.createServer(tlsCert) : http.createServer();
+    let finished = Promise.withResolvers<void>();
+    server.on("request", (req, res) => {
+      seen.push(req.socket.bytesWritten);
+      res.end(body, () => {
+        seen.push(req.socket.bytesWritten);
+        finished.resolve();
+      });
+    });
+    const done = Promise.withResolvers<void>();
+    server.on("upgrade", (req, duplex) => {
+      const socket = duplex as net.Socket;
+      seen.push(socket.bytesWritten);
+      socket.end("tunnel", () => {
+        seen.push(socket.bytesWritten);
+        done.resolve();
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const client =
+      proto === "https"
+        ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+        : net.connect(port, "127.0.0.1");
+    try {
+      client.on("error", () => {}).resume();
+      for (let i = 0; i < 3; i++) {
+        client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        await finished.promise;
+        finished = Promise.withResolvers<void>();
+      }
+      client.write("GET / HTTP/1.1\r\nHost: x\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n");
+      await done.promise;
+      expect(seen).toEqual(seen.toSorted((a, b) => a - b));
+      expect(seen.at(-1)).toBeGreaterThanOrEqual(3 * body.length + "tunnel".length);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  },
+);
+
 // The handed-off socket writes straight to the kernel. While uWS still holds
 // bytes of the response before the CONNECT, such a write must go out behind them.
 describe("a CONNECT tunnel pipelined behind a response that still drains", () => {

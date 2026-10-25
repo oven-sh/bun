@@ -53,7 +53,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// What `socket.write()` wrote, plus the body of the response that has the connection while uWS owns it.
+    /// What `socket.write()` wrote and the bodies of the finished responses, plus the body of the response that has the connection while uWS owns it.
     pub(crate) fn total_bytes_written(&self) -> u64 {
         let own = self.bytes_written.get();
         match self.socket.get().socket {
@@ -115,9 +115,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.socket.get().resume_stream();
         }
         if !unsent.is_empty() {
-            // The handle counted them when uWS took them, and the flush counts them again.
-            this.bytes_written
-                .set(this.bytes_written.get().saturating_sub(unsent.len() as u64));
             this.buffered_data_for_node_net
                 .with_mut(|queued| queued.append_slice(unsent));
             fold(Self::on_writable(this, this.socket.get()));
@@ -348,6 +345,18 @@ pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__onEnd(handle: *mut c_void, 
         this,
         this.socket.get()
     )))
+}
+
+/// Another response takes the connection from one that wrote `bytes` of body.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__addBytesWritten(
+    handle: *mut c_void,
+    ssl: bool,
+    bytes: u64,
+) {
+    with_handle!(ssl, handle, |this| {
+        this.bytes_written.set(this.bytes_written.get() + bytes)
+    })
 }
 
 /// uWS closed the connection and is about to free the `us_socket_t`. JavaScript hears of it in `onClose`.

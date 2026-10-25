@@ -51,7 +51,6 @@ const {
   kDestroyOnRead,
   kForeignListener,
   kHandleClosed,
-  kLastBytesSent,
   kPreHandshakeWrite,
   kReadStop,
   kSecureConnectDone,
@@ -360,6 +359,8 @@ const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 const kOnreadEmptyTail = Buffer.alloc(0);
 // The write the handle queued, like Node's WriteWrap: { handle, callback, frame }.
 const kWriteReq = Symbol("kWriteReq");
+// How many bytes the kernel had taken when the timer last found a write queue that moved.
+const kLastBytesSent = Symbol("kLastBytesSent");
 const kSocketClass = Symbol("kSocketClass");
 const kServerSocket = Symbol("kServerSocket");
 

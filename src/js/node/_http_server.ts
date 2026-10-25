@@ -43,7 +43,7 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
-const { kForeignListener, kHandleClosed, kLastBytesSent, kSNIContexts } = require("internal/net/symbols");
+const { kForeignListener, kHandleClosed, kSNIContexts } = require("internal/net/symbols");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const {
   kInternalSocketData,
@@ -1545,8 +1545,6 @@ function detachFromHttp(socket, req) {
   delete socket._onTimeout;
   // Only that function ignores the keep-alive timer, which stays armed while a request is in flight.
   if (socket.timeout === 0) socket.setTimeout(0);
-  // The handle's bytesWritten no longer counts the responses.
-  socket[kLastBytesSent] = 0;
   delete socket._final;
   delete socket._destroy;
   const server = socket.server;
@@ -2219,8 +2217,6 @@ function onSocketTimeoutTimerExpired(this: any) {
   const lastWrite = socket[kLastResponseWrite];
   if (lastWrite !== undefined) {
     socket[kLastResponseWrite] = undefined;
-    // bytesWritten starts again with each response.
-    socket[kLastBytesSent] = 0;
     const timer = socket[kTimeout];
     if (timer != null && lastWrite > timer._idleStart) {
       timer.refresh();

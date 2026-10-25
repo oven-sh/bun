@@ -454,21 +454,16 @@ impl NodeModulesScope {
     /// Is the file `path` a package file? A file named `node_modules` is not inside one.
     #[inline]
     pub fn file_is_inside_node_modules(&self, path: &[u8]) -> bool {
-        self.is_inside_node_modules(path, false, crate::Platform::AUTO)
+        self.is_inside_node_modules(path, crate::Platform::AUTO)
     }
 
     /// A path without the component costs one search and no read of the scope.
     #[inline]
-    fn is_inside_node_modules(
-        &self,
-        path: &[u8],
-        last_component_counts: bool,
-        platform: crate::Platform,
-    ) -> bool {
-        node_modules_component_end(path, 0, last_component_counts, platform).is_some()
-            && self.project_root.is_none_or(|root| {
-                is_inside_node_modules_of_project(root, path, last_component_counts, platform)
-            })
+    fn is_inside_node_modules(&self, path: &[u8], platform: crate::Platform) -> bool {
+        node_modules_component_end(path, 0, false, platform).is_some()
+            && self
+                .project_root
+                .is_none_or(|root| is_inside_node_modules_of_project(root, path, platform))
     }
 }
 
@@ -499,28 +494,29 @@ fn project_root(root: &[u8], platform: crate::Platform) -> Option<&[u8]> {
         b'.' => names.len(),
         _ => first,
     };
-    let package = &root[..root.len() - names.len() + package_end];
-    // `is_parent_or_equal` trims a backslash that ends a POSIX name, so it cannot compare such a root.
-    (!package.last().is_some_and(|&last| crate::is_sep_any(last))).then_some(package)
+    Some(&root[..root.len() - names.len() + package_end])
 }
 
 /// `path` has the component. At or below the project, only the components after `root` count.
-fn is_inside_node_modules_of_project(
-    root: &[u8],
-    path: &[u8],
-    last_component_counts: bool,
-    platform: crate::Platform,
-) -> bool {
-    match resolve_path::is_parent_or_equal(root, path) {
-        resolve_path::ParentEqual::Unrelated => true,
-        resolve_path::ParentEqual::Equal => false,
-        resolve_path::ParentEqual::Parent => {
-            let below = &path[root.len()..];
-            // On POSIX `is_parent_or_equal` takes `root\x` for a folder of `root`.
-            !platform.is_separator(below[0])
-                || node_modules_component_end(below, 0, last_component_counts, platform).is_some()
-        }
+fn is_inside_node_modules_of_project(root: &[u8], path: &[u8], platform: crate::Platform) -> bool {
+    match after_folder(root, path, platform) {
+        Some(below) => node_modules_component_end(below, 0, false, platform).is_some(),
+        // Outside the project, or spelled unlike its folder: tested whole.
+        None => true,
     }
+}
+
+/// What `path` has after `folder`, if it is `folder` or a path below it. On Windows the two separators are one, and so are the cases of a letter.
+fn after_folder<'a>(folder: &[u8], path: &'a [u8], platform: crate::Platform) -> Option<&'a [u8]> {
+    let (head, rest) = path.split_at_checked(folder.len())?;
+    let is_same = if platform.is_separator(b'\\') {
+        head.iter().zip(folder).all(|(&a, &b)| {
+            a.eq_ignore_ascii_case(&b) || (platform.is_separator(a) && platform.is_separator(b))
+        })
+    } else {
+        head == folder
+    };
+    (is_same && rest.first().is_none_or(|&next| platform.is_separator(next))).then_some(rest)
 }
 
 /// The end of the first `node_modules` component at or after `from`. `last_component_counts` lets the end of `path` close one.
@@ -829,7 +825,6 @@ mod tests {
     #[test]
     fn node_modules_is_matched_as_a_path_component() {
         use crate::Platform::{Posix, Windows};
-        let whole_path = NodeModulesScope { project_root: None };
         // (platform, path, as the path of a file, as the path of a directory)
         let rows: &[(crate::Platform, &[u8], bool, bool)] = &[
             (Posix, b"/p/node_modules/pkg/index.js", true, true),
@@ -866,8 +861,8 @@ mod tests {
         ];
         for &(platform, path, as_file, as_dir) in rows {
             let got = (
-                whole_path.is_inside_node_modules(path, false, platform),
-                whole_path.is_inside_node_modules(path, true, platform),
+                node_modules_component_end(path, 0, false, platform).is_some(),
+                node_modules_component_end(path, 0, true, platform).is_some(),
             );
             assert_eq!(
                 got,
@@ -951,14 +946,17 @@ mod tests {
                 b"/p/node_modules/.bun/pkg@1.0.0/node_modules/pkg/src",
                 ISOLATED,
             ),
-            // A backslash is a byte of a name there. `is_parent_or_equal` cannot compare a root that ends in one.
+            // A backslash is a byte of a name there.
             (
                 Posix,
                 b"/p/node_modules/a\\b/src",
                 Some(b"/p/node_modules/a\\b"),
             ),
-            (Posix, b"/p/node_modules/pkg\\", None),
-            (Posix, b"/p/node_modules/pkg\\/src", None),
+            (
+                Posix,
+                b"/p/node_modules/pkg\\/src",
+                Some(b"/p/node_modules/pkg\\"),
+            ),
             (Posix, b"/p/node_modules\\pkg", None),
             (Windows, b"C:\\p", None),
             (Windows, b"C:\\p\\node_modules", None),
@@ -991,24 +989,18 @@ mod tests {
         const PKG: &[u8] = b"/p/node_modules/pkg";
         const SCOPED: &[u8] = b"/p/node_modules/@scope/pkg/tests";
         const ISOLATED: &[u8] = b"/p/node_modules/.bun/pkg@1.0.0/node_modules/pkg";
+        const STORED: &[u8] = b"/p/node_modules/.store/app-npm-1.0.0/package";
         const WIN_PKG: &[u8] = b"C:\\p\\node_modules\\pkg";
-        // (platform, the folder bun starts in, path, as the path of a file, as the path of a directory)
-        let rows: &[(crate::Platform, &[u8], &[u8], bool, bool)] = &[
+        // (platform, the folder bun starts in, path, is a package file)
+        let rows: &[(crate::Platform, &[u8], &[u8], bool)] = &[
             // A start outside a package folder: every component counts.
-            (Posix, b"/p", b"/p/src/a.js", false, false),
-            (Posix, b"/p", b"/p/node_modules/dep/a.js", true, true),
-            (
-                Posix,
-                b"/p/node_modules",
-                b"/p/node_modules/dep/a.js",
-                true,
-                true,
-            ),
+            (Posix, b"/p", b"/p/src/a.js", false),
+            (Posix, b"/p", b"/p/node_modules/dep/a.js", true),
+            (Posix, b"/p/node_modules", b"/p/node_modules/dep/a.js", true),
             (
                 Posix,
                 b"/p/node_modules/@scope",
                 b"/p/node_modules/@scope/pkg/a.js",
-                true,
                 true,
             ),
             (
@@ -1016,19 +1008,14 @@ mod tests {
                 b"/p/node_modules/.store",
                 b"/p/node_modules/.store/app-npm-1.0.0/package/a.js",
                 true,
-                true,
             ),
-            // The files and folders of the project.
-            (Posix, PKG, b"/p/node_modules/pkg/index.js", false, false),
-            (Posix, PKG, b"/p/node_modules/pkg/src/util.js", false, false),
-            (Posix, PKG, b"/p/node_modules/pkg", false, false),
-            (Posix, PKG, b"/p/node_modules/pkg/", false, false),
-            (Posix, PKG, b"/p/node_modules/pkg/src/", false, false),
+            // The files of the project.
+            (Posix, PKG, b"/p/node_modules/pkg/index.js", false),
+            (Posix, PKG, b"/p/node_modules/pkg/src/util.js", false),
             (
                 Posix,
                 PKG,
                 b"/p/node_modules/pkg/node_modules-cleaner/a.js",
-                false,
                 false,
             ),
             // A start below the package folder: the files of the package beside it are the project's too.
@@ -1037,61 +1024,55 @@ mod tests {
                 b"/p/node_modules/pkg/src",
                 b"/p/node_modules/pkg/lib/a.js",
                 false,
-                false,
             ),
             (
                 Posix,
                 b"/p/node_modules/pkg/tests/",
                 b"/p/node_modules/pkg/cake.ts",
                 false,
-                false,
             ),
-            (
-                Posix,
-                SCOPED,
-                b"/p/node_modules/@scope/pkg/a.js",
-                false,
-                false,
-            ),
-            (
-                Posix,
-                SCOPED,
-                b"/p/node_modules/@scope/other/a.js",
-                true,
-                true,
-            ),
+            (Posix, SCOPED, b"/p/node_modules/@scope/pkg/a.js", false),
+            (Posix, SCOPED, b"/p/node_modules/@scope/other/a.js", true),
             // The packages of the project.
             (
                 Posix,
                 PKG,
                 b"/p/node_modules/pkg/node_modules/dep/a.js",
                 true,
-                true,
             ),
-            (Posix, PKG, b"/p/node_modules/pkg/node_modules", false, true),
-            (Posix, PKG, b"/p/node_modules/pkg/node_modules/", true, true),
+            (Posix, PKG, b"/p/node_modules/pkg/node_modules/a.js", true),
             (
                 Posix,
                 PKG,
                 b"/p/node_modules/pkg/src/node_modules/dep/a.js",
                 true,
-                true,
             ),
             // Above the project and beside it.
-            (Posix, PKG, b"/p/node_modules/dep/a.js", true, true),
-            (Posix, PKG, b"/p/node_modules/pkg-2/a.js", true, true),
-            (Posix, PKG, b"/p/node_modules/pkg.js", true, true),
-            (Posix, PKG, b"/p/node_modules", false, true),
-            (Posix, PKG, b"/p/node_modules/", true, true),
-            (Posix, PKG, b"/p/src/a.js", false, false),
-            (Posix, PKG, b"/q/node_modules/pkg/a.js", true, true),
-            // A backslash does not start a folder of the project there.
-            (Posix, PKG, b"/p/node_modules/pkg\\x/a.js", true, true),
+            (Posix, PKG, b"/p/node_modules/dep/a.js", true),
+            (Posix, PKG, b"/p/node_modules/pkg-2/a.js", true),
+            (Posix, PKG, b"/p/node_modules/pkg.js", true),
+            (Posix, PKG, b"/p/node_modules/a.js", true),
+            (Posix, PKG, b"/p/src/a.js", false),
+            (Posix, PKG, b"/q/node_modules/pkg/a.js", true),
+            // There the case of a letter counts, and a backslash is a byte of a name.
+            (Posix, PKG, b"/p/node_modules/PKG/a.js", true),
+            (Posix, PKG, b"/p/node_modules/pkg\\x/a.js", true),
+            (
+                Posix,
+                b"/p/node_modules/pkg\\",
+                b"/p/node_modules/pkg\\/a.js",
+                false,
+            ),
+            (
+                Posix,
+                b"/p/node_modules/pkg\\",
+                b"/p/node_modules/pkg/a.js",
+                true,
+            ),
             (
                 Posix,
                 ISOLATED,
                 b"/p/node_modules/.bun/pkg@1.0.0/node_modules/pkg/a.js",
-                false,
                 false,
             ),
             (
@@ -1099,28 +1080,24 @@ mod tests {
                 ISOLATED,
                 b"/p/node_modules/.bun/dep@2.0.0/node_modules/dep/a.js",
                 true,
-                true,
             ),
             (
                 Posix,
                 ISOLATED,
                 b"/p/node_modules/.bun/pkg@1.0.0/node_modules/dep/a.js",
                 true,
-                true,
             ),
             // In a dot folder the project is the start folder.
             (
                 Posix,
-                b"/p/node_modules/.store/app-npm-1.0.0/package",
+                STORED,
                 b"/p/node_modules/.store/app-npm-1.0.0/package/a.js",
-                false,
                 false,
             ),
             (
                 Posix,
-                b"/p/node_modules/.store/app-npm-1.0.0/package",
+                STORED,
                 b"/p/node_modules/.store/dep-npm-2.0.0/package/a.js",
-                true,
                 true,
             ),
             (
@@ -1128,27 +1105,11 @@ mod tests {
                 WIN_PKG,
                 b"C:\\p\\node_modules\\pkg\\src\\a.js",
                 false,
-                false,
-            ),
-            (
-                Windows,
-                WIN_PKG,
-                b"C:\\p\\node_modules\\pkg/src/a.js",
-                false,
-                false,
-            ),
-            (
-                Windows,
-                WIN_PKG,
-                b"C:\\p\\node_modules\\pkg\\",
-                false,
-                false,
             ),
             (
                 Windows,
                 b"C:\\p\\node_modules\\pkg\\src\\",
                 b"C:\\p\\node_modules\\pkg\\lib\\a.js",
-                false,
                 false,
             ),
             (
@@ -1156,49 +1117,33 @@ mod tests {
                 WIN_PKG,
                 b"C:\\p\\node_modules\\pkg\\node_modules\\dep\\a.js",
                 true,
-                true,
             ),
+            (Windows, WIN_PKG, b"C:\\p\\node_modules\\dep\\a.js", true),
+            (Windows, WIN_PKG, b"C:\\p\\node_modules\\pkg-2\\a.js", true),
+            // There a path matches the start folder with either separator and in either case.
+            (Windows, WIN_PKG, b"C:/p/node_modules/pkg/src/a.js", false),
+            (Windows, WIN_PKG, b"c:\\P\\node_modules\\PKG\\a.js", false),
             (
                 Windows,
                 WIN_PKG,
-                b"C:\\p\\node_modules\\pkg\\node_modules",
-                false,
+                b"c:/p/node_modules\\pkg/node_modules\\dep/a.js",
                 true,
             ),
-            (
-                Windows,
-                WIN_PKG,
-                b"C:\\p\\node_modules\\dep\\a.js",
-                true,
-                true,
-            ),
-            (
-                Windows,
-                WIN_PKG,
-                b"C:\\p\\node_modules\\pkg-2\\a.js",
-                true,
-                true,
-            ),
-            // A path that is spelled unlike the start folder is tested whole.
+            // A path on another drive is tested whole.
             (
                 Windows,
                 WIN_PKG,
                 b"D:\\p\\node_modules\\pkg\\src\\a.js",
                 true,
-                true,
             ),
         ];
-        for &(platform, start, path, as_file, as_dir) in rows {
+        for &(platform, start, path, is_package_file) in rows {
             let scope = NodeModulesScope {
                 project_root: project_root(start, platform),
             };
-            let got = (
-                scope.is_inside_node_modules(path, false, platform),
-                scope.is_inside_node_modules(path, true, platform),
-            );
             assert_eq!(
-                got,
-                (as_file, as_dir),
+                scope.is_inside_node_modules(path, platform),
+                is_package_file,
                 "{platform:?} {} {}",
                 bstr::BStr::new(start),
                 bstr::BStr::new(path)

@@ -155,14 +155,16 @@ test("coverage lists the files of a project in a package folder of node_modules,
     "node_modules/@scope/my-pkg": { "cake.ts": cake, "tests/cake.test.ts": testFile("", "bake()") },
     "plain": {
       "lib.ts": `export const lib = () => 1;\n`,
+      "node_modules-tools/extra.ts": `export const extra = () => 0;\n`,
       "late.test.ts": `import { expect, test } from "bun:test";
 import { lib } from "./lib.ts";
+import { extra } from "./node_modules-tools/extra.ts";
 test("late", async () => {
   const cwd = process.cwd();
   process.chdir("node_modules/late");
   try {
     const { late } = await import("late");
-    expect(lib() + late()).toBe(3);
+    expect(lib() + late() + extra()).toBe(3);
   } finally {
     process.chdir(cwd);
   }
@@ -182,7 +184,7 @@ test("late", async () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     // A row of the table is ` <file> | ...`. A debug build also lists the test file.
     const files = [...stderr.matchAll(/^ (\S+) +\|/gm)].map(row => row[1].replaceAll("\\", "/"));
-    return { cwd, files: files.filter(file => !file.endsWith(".test.ts")), exitCode };
+    return { cwd, files: files.filter(file => !file.endsWith(".test.ts")).sort(), exitCode };
   };
   const starts = {
     // The package folder, a folder below it, and the same for a scoped package.
@@ -193,7 +195,8 @@ test("late", async () => {
     // In node_modules itself and in a scope folder, every folder is a package.
     "node_modules": [],
     "node_modules/@scope": [],
-    "plain": ["lib.ts"],
+    // A folder whose name only has the letters is not a package folder.
+    "plain": ["lib.ts", "node_modules-tools/extra.ts"],
   };
   expect(await Promise.all(Object.keys(starts).map(coverage))).toEqual(
     Object.entries(starts).map(([cwd, files]) => ({ cwd, files, exitCode: 0 })),

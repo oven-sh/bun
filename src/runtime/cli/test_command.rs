@@ -1726,8 +1726,7 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     let slice: &[u8] = zig_slice.slice();
 
     // Skip package files. The folder bun started in tells which `node_modules` components count.
-    if (strings::contains(slice, b"/node_modules/")
-        || strings::contains(slice, b"\\node_modules\\"))
+    if strings::contains(slice, b"node_modules")
         && NodeModulesScope::below_root(
             bun_path::fs::FileSystem::instance().initial_top_level_dir(),
         )

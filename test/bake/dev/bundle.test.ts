@@ -918,19 +918,21 @@ devTest("build error in a file imported by a 'use client' component", {
 // chunk does not say that the file lost its directive.
 {
   const framework = { ...minimalFramework, serverComponents: separateSSRGraph };
-  // Holds the loads of `hold` until `until` is loaded `times` times for the server. The dev server receives
-  // the chunks in the order in which the bundler queued the files, so what the held loads lead to comes last.
-  const holdLoad = (hold: string, until: string, times: number) => `
+  // Holds the loads of `hold`, from load number `from`, until `until` is loaded `times` times for the server.
+  // The dev server receives the chunks in the order in which the bundler queued the files, so what the held
+  // loads lead to comes last.
+  const holdLoad = (hold: string, until: string, times: number, from = 1) => `
     export default [
       {
         name: "hold-load",
         setup(build) {
           const reached = Promise.withResolvers();
           let loads = 0;
+          let held = 0;
           build.onLoad({ filter: /${until}$/ }, args => {
             if (args.side === "server" && ++loads === ${times}) reached.resolve();
           });
-          build.onLoad({ filter: /${hold}$/ }, () => reached.promise);
+          build.onLoad({ filter: /${hold}$/ }, () => (++held >= ${from} ? reached.promise : undefined));
         },
       },
     ];
@@ -998,20 +1000,25 @@ devTest("build error in a file imported by a 'use client' component", {
       expect(html.match(/<button>.*?<\/button>/g)).toEqual(["<button>page</button>", "<button>form</button>"]);
     },
   });
-  devTest("a page imports a client component that imports a client component", {
+  // The browser graph makes Inner.ts a client component here. The second load of Outer.ts is its SSR copy, and
+  // the first load of Inner.ts for the server is the SSR copy of its client reference.
+  devTest("a client component that only a client component imports keeps its client reference", {
     framework,
+    pluginFile: holdLoad("Outer[.]ts", "Inner[.]ts", 1, 2),
     files: {
       "Outer.ts": `"use client"; import { inner } from "./Inner"; export function Outer() { return inner; }`,
       "Inner.ts": `"use client"; export const inner = 1;`,
       "routes/index.ts": `
+        import { serverManifest } from "bun:bake/server";
         import * as Outer from "../Outer";
-        export default () => new Response("outer: " + typeof Outer.Outer);
+        export default () => Response.json({ outer: typeof Outer.Outer, manifest: Object.keys(serverManifest) });
       `,
     },
     async test(dev) {
-      await dev.fetch("/").equals("outer: object");
+      const clientReferences = { outer: "object", manifest: ["Outer.ts#Outer", "Inner.ts#inner"] };
+      expect(await dev.fetch("/").json()).toEqual(clientReferences);
       await dev.write("Inner.ts", `"use client"; export const inner = 2;`, { errors: null });
-      await dev.fetch("/").equals("outer: object");
+      expect(await dev.fetch("/").json()).toEqual(clientReferences);
     },
   });
   // dep-ssr.ts is in the SSR graph only: the browser graph resolves "#dep" to dep-browser.ts.

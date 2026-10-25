@@ -325,7 +325,9 @@ impl<'p, 's> Checker<'p, 's> {
         if is_in_progress {
             // Each resolution from the temporary types of a loop reports, as below.
             if self.is_in_flow_loop() {
-                self.reported.extend(reported.into_iter().flatten());
+                if let Some(reported) = reported {
+                    self.keep_call_errors_in_flow_loop(file, call, reported);
+                }
             } else if let Some(reported) = reported
                 && (self.p.diagnostics_of_re_resolved_calls)
                     .get_ref(&self.task, &(file, call))
@@ -361,11 +363,25 @@ impl<'p, 's> Checker<'p, 's> {
         } else if let Some(reported) = reported
             && self.is_in_flow_loop()
         {
-            // `len(c.flowLoopStack) != 0`: the signature isn't stored, and the errors that
-            // `resolveCall` reported from the temporary types stay.
-            self.reported.extend(reported);
+            self.keep_call_errors_in_flow_loop(file, call, reported);
         }
         resolved
+    }
+
+    /// `len(c.flowLoopStack) != 0`: the signature isn't stored, and the errors that `resolveCall`
+    /// reported from the temporary types stay. `getCandidateForOverloadFailure` has deferred the
+    /// call, so the second visit of the check in progress doesn't visit the arguments.
+    fn keep_call_errors_in_flow_loop(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        reported: Vec<Reported>,
+    ) {
+        self.reported.extend(reported);
+        if let Some(check) = self.check_in_flow_loop {
+            let deferred = Query::ExprInFlowLoop(file, call);
+            self.checked_in_flow_loop.insert(deferred, (0, check.work));
+        }
     }
 
     /// `resolved_signature` for one of `calls_to_resolve_afresh`, run once for each. What's stored and what was

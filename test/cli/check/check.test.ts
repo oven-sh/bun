@@ -17386,6 +17386,35 @@ export function parameter<Q>(q: Q) { gobj({ v: q, cb: x => x.zz }); }
       expect(exitCode).toBe(1);
     });
 
+    // `getCandidateForOverloadFailure` defers the call, whose arguments are checked once it's resolved. The expected output is tsc's.
+    test("a callback of a call that fails while a loop is analyzed gets its parameter types from the resolved call", async () => {
+      using dir = project({
+        "a.ts": `declare const c: boolean;
+declare function gen<T>(x: T[], f: (a: T) => T): T;
+declare function over(x: number, f: (a: number) => void): "n";
+declare function over<T>(x: T[], f: (a: T) => T): T;
+export function generic() { let y; while (c) { y = gen(y, p => 1); } return y; }
+export function overloaded() { let y; while (c) { y = over(y, p => { const _: never = p; }); } return y; }
+export function once() { let y; y = gen(y, p => 1); return y; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        `a.ts(5,56): error TS2345: Argument of type 'undefined' is not assignable to parameter of type 'unknown[]'.`,
+        `a.ts(5,56): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'unknown[]'.`,
+        `a.ts(6,60): error TS2769: No overload matches this call.`,
+        `  The last overload gave the following error.`,
+        `    Argument of type 'string | undefined' is not assignable to parameter of type 'unknown[]'.`,
+        `      Type 'undefined' is not assignable to type 'unknown[]'.`,
+        `a.ts(6,60): error TS2769: No overload matches this call.`,
+        `  The last overload gave the following error.`,
+        `    Argument of type 'undefined' is not assignable to parameter of type 'unknown[]'.`,
+        `a.ts(6,76): error TS2322: Type 'number' is not assignable to type 'never'.`,
+        `a.ts(7,41): error TS2345: Argument of type 'undefined' is not assignable to parameter of type 'unknown[]'.`,
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2775 only for the CommonJS-exported assertion functions that tsc rejects", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,

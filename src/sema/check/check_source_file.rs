@@ -1800,6 +1800,8 @@ impl<'s> Checker<'_, 's> {
                 if (self.p.call_diagnostics)
                     .get_ref(&self.task, &(file, e))
                     .is_some()
+                    || self.is_checking_in_flow_loop
+                        && (self.checked_in_flow_loop).contains_key(&Query::ExprInFlowLoop(file, e))
                 {
                     self.check_node_deferred(file, e);
                 } else if ty == TypeId::SILENT_NEVER && self.is_silent_never_signature(file, e) {

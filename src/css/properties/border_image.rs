@@ -472,9 +472,6 @@ pub(crate) struct BorderImageHandler {
     pub has_any: bool,
 }
 
-/// A new value normally replaces the buffered one. When the two differ and some
-/// target does not support the new value, the buffered one is a manual fallback
-/// and has to be flushed to the output first.
 macro_rules! keeps_fallback {
     ($buffered:expr, $new:expr, $targets:expr) => {
         matches!(
@@ -592,9 +589,7 @@ impl BorderImageHandler {
         self.repeat = None;
     }
 
-    /// Whether `handle_property(property)` flushes the buffered declarations
-    /// before it records `property`. `BorderHandler` flushes itself first in
-    /// that case, so a buffered `border` stays ahead of what this handler emits.
+    /// Matches each flush in `handle_property`, so `BorderHandler` can write its `border` first.
     pub(crate) fn will_flush(&self, property: &Property, targets: &css::targets::Targets) -> bool {
         let prefixed = self.vendor_prefix != VendorPrefix::NONE;
         match property {

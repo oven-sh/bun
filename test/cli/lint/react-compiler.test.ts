@@ -4,6 +4,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { realpathSync } from "node:fs";
+import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 import expected from "./oracle/react-compiler/expected.json";
 import {
@@ -402,14 +403,14 @@ ${chain}
     expect([0, 1]).toContain(exit);
   });
 
-  // For a build, the compiler finds that a memo block would have to declare `g` because of the read that nothing
-  // uses, and leaves the component as written. Lint keeps upstream's result, which is the finding for the ref.
+  // A memo block would have to declare `g` for the read that nothing uses, so a build leaves `Plain` as written. The
+  // ref stops a build of `WithRef` before that. Lint keeps upstream's result, which is the finding for the ref.
   test("a read that nothing uses doesn't hide another finding", async () => {
-    const { diagnostics, exit } = await report({
+    const files = {
       ".oxlintrc.json": rc(),
       "hoisted.jsx": `import { useRef } from "react";
 const count = list => list.length;
-export function Component({ c }) {
+export function WithRef({ c }) {
   const ref = useRef(null);
   const bad = ref.current;
   const x = g();
@@ -421,10 +422,29 @@ export function Component({ c }) {
   const state = (g, c ? "a" : "b", "read");
   return <div state={state} info={info} bad={bad} />;
 }
+export function Plain({ c }) {
+  const x = g();
+  function g() {
+    return [c];
+  }
+  const info = { first: x[0] };
+  count(x);
+  const state = (g, c ? "a" : "b", "read");
+  return <div state={state} info={info} />;
+}
 `,
-    });
+    };
+    const { diagnostics, exit } = await report(files);
     expect(locationsOf(diagnostics["hoisted.jsx"])).toEqual([["react(refs)", 5, 15]]);
     expect(exit).toBe(1);
+
+    using dir = tempDir("bun-lint-react-compiler", files);
+    const build = async (reactCompiler: boolean) => {
+      const entrypoints = [join(String(dir), "hoisted.jsx")];
+      const { outputs } = await Bun.build({ entrypoints, external: ["*"], reactCompiler });
+      return outputs[0].text();
+    };
+    expect(await build(true)).toBe(await build(false));
   });
 
   test("reports nothing for a path that contains node_modules", async () => {

@@ -1328,6 +1328,16 @@ impl RewriterPipe {
 
     /// `SinkHandle::write` entry — input bytes arrived.
     pub fn write(&self, data: &StreamResult) -> Writable {
+        self.write_input(data, false)
+    }
+
+    /// [`write`](Self::write) of the bytes of a JS buffer. A handler can detach, shrink or overwrite
+    /// it, and lol-html reads the chunk again once the handler returns.
+    pub(crate) fn write_js_buffer(&self, data: &StreamResult) -> Writable {
+        self.write_input(data, true)
+    }
+
+    fn write_input(&self, data: &StreamResult, copy_before_handlers: bool) -> Writable {
         let _pin = self.pin();
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
@@ -1353,7 +1363,11 @@ impl RewriterPipe {
             self.pending_input.with_mut(|v| v.extend_from_slice(bytes));
             return held(len);
         }
-        let fed = self.feed(bytes);
+        let fed = if copy_before_handlers {
+            self.feed(&bytes.to_vec())
+        } else {
+            self.feed(bytes)
+        };
         // `feed` ran user JS; a handler may have cancelled the output reader
         // (`cancel_from_output`). Return `Done` so the native caller detaches
         // its sink snapshot, even if the handler also suspended.
@@ -1887,7 +1901,7 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     // the last ref drops.
     unsafe fn finalize(_this: *mut Self) {}
     fn write_bytes(&mut self, data: &StreamResult) -> Writable {
-        RewriterPipe::write(self, data)
+        self.write_js_buffer(data)
     }
     fn write_utf16(&mut self, data: &StreamResult) -> Writable {
         let mut buf = Vec::new();

@@ -113,25 +113,29 @@ impl Default for Config {
 use bun_bundler_jsc::options_jsc::loader_from_js;
 use bun_collections::index_sort;
 
-/// Reads the `code` argument. Copies a buffer because the loader's `toString()` and macros run JS that can
-/// write to, shrink or detach it. Skips the copy when the parser will reject the buffer for its length anyway.
-fn code_from_js(
+/// Reads the `code` and `loader` arguments. Copies a buffer because the loader's `toString()` and macros run JS that
+/// can write to, shrink or detach it. A buffer that is too long for a parser to reach a macro is not copied, and is
+/// read where it is once the loader's `toString()` has run.
+fn code_and_loader_from_js(
     global: &JSGlobalObject,
-    value: StringOrJsBytes<'_>,
-) -> JsResult<StringOrBuffer<'static>> {
-    let parsed = StringOrBuffer::from_string_or_js_bytes(global, value, Encoding::Utf8);
-    let StringOrBuffer::Buffer(buffer) = &parsed else {
-        return Ok(parsed);
-    };
-    if !buffer.buffer.can_change_under_borrow()
-        && buffer.buffer.byte_len > bun_ast::Source::MAX_PARSEABLE_LEN
+    code: StringOrJsBytes<'_>,
+    loader: JSValue,
+) -> JsResult<(StringOrBuffer<'static>, Option<Loader>)> {
+    let mut code = StringOrBuffer::from_string_or_js_bytes(global, code, Encoding::Utf8);
+    if let StringOrBuffer::Buffer(buffer) = &code
+        && (buffer.buffer.can_change_under_borrow()
+            || buffer.buffer.byte_len <= bun_ast::Source::MAX_PARSEABLE_LEN)
     {
-        return Ok(parsed);
+        code = match buffer.buffer.try_copy_bytes() {
+            Some(copy) => StringOrBuffer::owned(copy),
+            None => return Err(global.throw_out_of_memory()),
+        };
     }
-    match buffer.buffer.try_copy_bytes() {
-        Some(copy) => Ok(StringOrBuffer::owned(copy)),
-        None => Err(global.throw_out_of_memory()),
+    let loader = loader_from_js(global, loader)?;
+    if let StringOrBuffer::Buffer(buffer) = &mut code {
+        *buffer = Buffer::from_array_buffer(global, buffer.buffer.value);
     }
+    Ok((code, loader))
 }
 
 /// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>`, so an owned copy
@@ -1231,10 +1235,8 @@ impl JSTranspiler {
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
         let global = cx.global();
-        let code_holder = code_from_js(global, code_arg)?;
+        let (code_holder, loader) = code_and_loader_from_js(global, code_arg, loader_arg.to_js())?;
         let code = code_holder.slice();
-
-        let loader: Option<Loader> = loader_from_js(global, loader_arg.to_js())?;
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
@@ -1335,21 +1337,21 @@ impl JSTranspiler {
 
         let arena = Arena::new();
         let global = cx.global();
-        let code_holder = code_from_js(global, code_arg)?;
-        let code = code_holder.slice();
 
         let mut js_ctx_value: JSValue = JSValue::ZERO;
-        let loader: Option<Loader> = 'brk: {
+        let loader_arg = {
             let arg = loader_or_context.to_js();
             if arg.is_number() || arg.is_string() {
-                break 'brk loader_from_js(global, arg)?;
+                arg
+            } else {
+                if arg.is_object() {
+                    js_ctx_value = arg;
+                }
+                JSValue::UNDEFINED
             }
-
-            if arg.is_object() {
-                js_ctx_value = arg;
-            }
-            break 'brk None;
         };
+        let (code_holder, loader) = code_and_loader_from_js(global, code_arg, loader_arg)?;
+        let code = code_holder.slice();
 
         let context = context.to_js();
         if !context.is_undefined() {
@@ -1516,13 +1518,9 @@ impl JSTranspiler {
         loader_arg: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let code_holder = code_from_js(global, code_arg)?;
+        let (code_holder, loader) = code_and_loader_from_js(global, code_arg, loader_arg.to_js())?;
         let code = code_holder.slice();
-
-        let mut loader: Loader = self.config.get().default_loader;
-        if let Some(l) = loader_from_js(global, loader_arg.to_js())? {
-            loader = l;
-        }
+        let loader: Loader = loader.unwrap_or(self.config.get().default_loader);
 
         if !loader.is_java_script_like() {
             return Err(global.throw_invalid_arguments(format_args!(

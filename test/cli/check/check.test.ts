@@ -1865,6 +1865,28 @@ export function lastInAnObject() { ({ ...x6 } = o); }
     expect(exitCode).toBe(1);
   });
 
+  // Each object literal is one more member of the array's element type until the array is read, and each `push` applied
+  // all the earlier ones again: 4 s for each of these functions in a release build. 2,000 is TS2563's limit.
+  test("doesn't slow down on untyped arrays filled by 1,900 `push` calls with object literals", async () => {
+    const n = isDebug || isASAN ? 300 : 1900;
+    const pushes = Array.from({ length: n }, (_, i) => `  rows.push({ path: "/p${i}", id: ${i} });\n`).join("");
+    const functions = Array.from(
+      { length: 8 },
+      (_, i) => `export function f${i}() {\n  const rows = [];\n${pushes}  const probe: never = rows;\n}\n`,
+    );
+    using dir = project({ "a.ts": functions.join("") });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      functions
+        .map(
+          (_, i) =>
+            `a.ts(${(i + 1) * (n + 4) - 1},9): error TS2322: Type '{ path: string; id: number; }[]' is not assignable to type 'never'.`,
+        )
+        .join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // Whether a statement is reachable is decided by a walk back to the statement before it. That walk went back to the
   // start of the file whenever a reference in between had asked about its own declaration: 25 s for these 100,000 lines
   // in a release build.

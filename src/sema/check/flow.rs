@@ -185,6 +185,8 @@ pub(super) struct FlowMemo {
     unreachable_with_reduced_labels: crate::util::FxHashSet<FlowId>,
     /// `finalArrayType` of an evolving array type whose element type is a union.
     final_array_types: FxHashMap<TypeId, TypeId>,
+    /// `after_array_mutation`, keyed by the array type and the mutation.
+    mutated_array_types: FxHashMap<(TypeId, FileId, ExprId), TypeId>,
     /// Two bits per flow node of the file `settled_calls_of`. The first marks a `Flow::Call` node
     /// whose call has an entry in `effects_signatures` (settled). The second marks one whose entry
     /// is `None` (idle).
@@ -7388,6 +7390,21 @@ impl<'p, 's> Checker<'p, 's> {
         if !matches!(self.data(ty), TypeData::EvolvingArray(_)) {
             return ty;
         }
+        // Each reference to the array applies all the mutations before it again, and each object
+        // literal that's added is one more member of the union to search and to copy.
+        let key = (ty, file, expr);
+        if let Some(&known) = self.flow_memo.mutated_array_types.get(&key) {
+            return known;
+        }
+        let (mutated, stored) =
+            self.run_memoizable(|c| c.after_array_mutation_uncached(file, ty, expr));
+        if stored.is_some() {
+            self.flow_memo.mutated_array_types.insert(key, mutated);
+        }
+        mutated
+    }
+
+    fn after_array_mutation_uncached(&mut self, file: FileId, ty: TypeId, expr: ExprId) -> TypeId {
         let hir = self.hir(file);
         match hir[expr].kind {
             ExprKind::Call(c) => {

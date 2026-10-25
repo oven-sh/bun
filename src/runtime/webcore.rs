@@ -366,8 +366,7 @@ impl SinkHandle {
             // No `FileReader` is wired to these.
             SinkHandle::ServerResponse(_)
             | SinkHandle::HttpResponse(_)
-            | SinkHandle::HttpsResponse(_)
-            | SinkHandle::ArrayBuffer(_) => true,
+            | SinkHandle::HttpsResponse(_) => true,
         }
     }
 

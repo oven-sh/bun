@@ -3269,7 +3269,11 @@ declare module "bun" {
      * wider minimum.
      *
      * The build fails when two entry points, chunks or copied assets get the
-     * same path, unless they are copied assets with identical contents.
+     * same path, unless they are copied assets with identical contents. With
+     * `outdir`, two paths that differ only in the case of the letters A to Z
+     * also count as the same path, if the output directory stores them as one
+     * file and their contents differ. Standalone HTML does not have this
+     * check.
      *
      * @default { entry: "[dir]/[name].[ext]", chunk: "./chunk-[hash].[ext]", asset: "./[name]-[hash].[ext]" }
      */

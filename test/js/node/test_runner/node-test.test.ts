@@ -1,7 +1,9 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { run } from "node:test";
 import { inspect } from "node:util";
 
 describe("node:test", () => {
@@ -524,26 +526,24 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
 });
 
 describe("node:test run({ argv })", () => {
-  const { run } = require("node:test");
+  // A debug build needs more than a second for a `bun test` that runs a file. So the tests here whose child runs one are
+  // not concurrent: each then has the default timeout to itself. The fixture starts 12 such children, and has its own
+  // timeout.
 
   // The cases that must hold in Node.js too are in the fixture. It passes under `node` as it is.
-  test.concurrent(
-    "gives argv to each test file and applies none of it",
-    async () => {
-      const { exitCode, stderr } = await runTests(["32-run-argv.mjs"]);
-      expect(stderr).toContain("6 pass");
-      expect({ exitCode, stderr }).toMatchObject({
-        exitCode: 0,
-        stderr: expect.stringContaining("0 fail"),
-      });
-    },
-    120_000,
-  );
+  test("gives argv to each test file and applies none of it", async () => {
+    const { exitCode, stderr } = await runTests(["41-run-argv.mjs"]);
+    expect(stderr).toContain(" 2 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining(" 0 fail"),
+    });
+  }, 30_000);
 
   const node = nodeExeAtLeast("26.3.0");
-  (node ? test.concurrent : test.skip)("the same cases pass in Node.js", async () => {
+  (node ? test : test.skip)("the same cases pass in Node.js", async () => {
     await using proc = Bun.spawn({
-      cmd: [node!, join(import.meta.dirname, "fixtures", "32-run-argv.mjs")],
+      cmd: [node!, join(import.meta.dirname, "fixtures", "41-run-argv.mjs")],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -565,47 +565,38 @@ describe("node:test run({ argv })", () => {
   }
 
   // A preload from bunfig.toml loads before one from `--preload`, so only the runtime can have set process.argv for it.
-  test.concurrent(
-    "a preload from bunfig.toml already reads argv",
-    async () => {
-      using dir = tempDir("node-test-run-argv-bunfig", {
-        "bunfig.toml": `[test]\npreload = ["./preload.cjs"]\n`,
-        "preload.cjs": `globalThis.preloadArgv = process.argv.slice(2);`,
-        "a.test.mjs": `
-          import { test } from "node:test";
-          test(JSON.stringify(globalThis.preloadArgv), () => {});
-        `,
-      });
-      const argv = ["--timeout", "1"];
-      const stream = run({ files: ["a.test.mjs"], argv, cwd: String(dir), env: bunEnv });
-      expect(await reported(stream)).toEqual([`test:pass ${JSON.stringify(argv)}`]);
-    },
-    30_000,
-  );
-
-  test.concurrent(
-    "the workers of a `--parallel` child give argv to their files and apply none of it",
-    async () => {
-      // With `--only` applied, a worker does not run this test and the file is not written.
-      const record = `
+  test("a preload from bunfig.toml already reads argv", async () => {
+    using dir = tempDir("node-test-run-argv-bunfig", {
+      "bunfig.toml": `[test]\npreload = ["./preload.cjs"]\n`,
+      "preload.cjs": `globalThis.preloadArgv = process.argv.slice(2);`,
+      "a.test.mjs": `
         import { test } from "node:test";
-        import { writeFileSync } from "node:fs";
-        test("record", () => writeFileSync(import.meta.filename + ".json", JSON.stringify(process.argv.slice(2))));
-      `;
-      using dir = tempDir("node-test-run-argv-parallel", {
-        "tests/one.test.mjs": record,
-        "tests/two.test.mjs": record,
-      });
-      const argv = ["--only", "", "x"];
-      const stream = run({ files: ["tests"], argv, execArgv: ["--parallel=2"], cwd: String(dir), env: bunEnv });
-      expect(await reported(stream)).not.toContainEqual(expect.stringContaining("test:fail"));
-      expect({
-        one: await Bun.file(join(String(dir), "tests/one.test.mjs.json")).json(),
-        two: await Bun.file(join(String(dir), "tests/two.test.mjs.json")).json(),
-      }).toEqual({ one: argv, two: argv });
-    },
-    30_000,
-  );
+        test(JSON.stringify(globalThis.preloadArgv), () => {});
+      `,
+    });
+    const argv = ["--timeout", "1"];
+    const stream = run({ files: ["a.test.mjs"], argv, cwd: String(dir), env: bunEnv });
+    expect(await reported(stream)).toEqual([`test:pass ${JSON.stringify(argv)}`]);
+  });
+
+  test("a flag of `bun test` acts on the child from execArgv, and is a value for the file from argv", async () => {
+    using dir = tempDir("node-test-run-argv-bail", {
+      "fail.test.mjs": `
+        import { test } from "node:test";
+        test("one " + JSON.stringify(process.argv.slice(2)), () => { throw new Error("failed"); });
+        test("two", () => { throw new Error("failed"); });
+      `,
+    });
+    const options = { files: ["fail.test.mjs"], cwd: String(dir), env: bunEnv };
+    const [fromExecArgv, fromArgv] = await Promise.all([
+      reported(run({ ...options, execArgv: ["--bail"] })),
+      reported(run({ ...options, argv: ["--bail"] })),
+    ]);
+    expect({ fromExecArgv, fromArgv }).toEqual({
+      fromExecArgv: ["test:fail one []: failed"],
+      fromArgv: [`test:fail one ["--bail"]: failed`, "test:fail two: failed"],
+    });
+  });
 
   // The first argument of Node's command line that has a NUL, with Node's message. Node.js reports the error as the
   // `test:fail` of the file. Bun ends the stream with it, as for every child that it cannot start.
@@ -624,14 +615,19 @@ describe("node:test run({ argv })", () => {
   });
 
   // run() hands argv to its child in BUN_INTERNAL_NODE_TEST_ARGV: the file that it starts the child for, then the
-  // values, each as "<UTF-8 byte length>:<bytes>". The lines below are a child of run(), written out by hand.
+  // values, each as "<UTF-8 byte length>:<bytes>". The child takes the values, and takes the variable out of its
+  // environment.
   const kArgv = "BUN_INTERNAL_NODE_TEST_ARGV";
   const encode = (...entries: string[]) => entries.map(entry => `${Buffer.byteLength(entry)}:${entry}`).join("");
-  // The name of the one test is what the file read in process.argv, and what it has of the variable.
+  // The name of the one test is what the file read in process.argv, what process.env has of the variable, and what a
+  // process that the file starts with no `env` has of it. Bun.spawn does not take that environment from process.env.
   const readsArgv = `
     import { test } from "node:test";
-    test(JSON.stringify([process.argv.slice(2), process.env.${kArgv} ?? null]), () => {});
+    const started = Bun.spawnSync({ cmd: [process.execPath, "-p", "JSON.stringify(process.env.${kArgv} ?? null)"] });
+    const has = [process.env.${kArgv} ?? null, JSON.parse(started.stdout.toString())];
+    test(JSON.stringify([process.argv.slice(2), ...has]), () => {});
   `;
+  // The environment of a child of run(), for a child that a test starts by hand.
   const asRunChild = { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1", NODE_TEST_CONTEXT: "child-v8" };
 
   /** Runs `bun test <file>` in the directory of the file, with `env`. */
@@ -647,97 +643,69 @@ describe("node:test run({ argv })", () => {
     return { stdout, stderr, exitCode };
   }
 
-  test.concurrent(
-    "a run() without argv keeps the variable that its own process has out of the child",
-    async () => {
-      using dir = tempDir("node-test-run-argv-stale", { "a.test.mjs": readsArgv });
-      const file = join(String(dir), "a.test.mjs");
-      const stream = run({ files: [file], env: { ...bunEnv, [kArgv]: encode(file, "stale") } });
-      expect(await reported(stream)).toEqual([`test:pass ${JSON.stringify([[], null])}`]);
-    },
-    30_000,
-  );
+  test("a run() without argv keeps the variable that its own process has out of the child", async () => {
+    using dir = tempDir("node-test-run-argv-stale", { "a.test.mjs": readsArgv });
+    const file = join(String(dir), "a.test.mjs");
+    const stream = run({ files: [file], cwd: String(dir), env: { ...bunEnv, [kArgv]: encode(file, "stale") } });
+    expect(await reported(stream)).toEqual([`test:pass ${JSON.stringify([[], null, null])}`]);
+  });
 
-  test.concurrent(
-    "the variable is for the file that run() names in it",
-    async () => {
-      using dir = tempDir("node-test-run-argv-bound", { "a.test.mjs": readsArgv, "b.test.mjs": readsArgv });
-      const [a, b] = [join(String(dir), "a.test.mjs"), join(String(dir), "b.test.mjs")];
-      const value = encode(a, "x", "");
-      const [forA, forB] = await Promise.all([
-        bunTest(a, { ...asRunChild, [kArgv]: value }),
-        bunTest(b, { ...asRunChild, [kArgv]: value }),
-      ]);
-      expect(forA.stderr).toContain(`(pass) ${JSON.stringify([["x", ""], value])}`);
-      expect(forB.stderr).toContain(`(pass) ${JSON.stringify([[], value])}`);
-      expect({ a: forA.exitCode, b: forB.exitCode }).toEqual({ a: 0, b: 0 });
-    },
-    30_000,
-  );
+  test("the variable is for the file that run() names in it, and no test file has it", async () => {
+    using dir = tempDir("node-test-run-argv-bound", { "a.test.mjs": readsArgv, "b.test.mjs": readsArgv });
+    const [a, b] = [join(String(dir), "a.test.mjs"), join(String(dir), "b.test.mjs")];
+    const value = encode(a, "x", "");
+    const [forA, forB, forCommand] = await Promise.all([
+      bunTest(a, { ...asRunChild, [kArgv]: value }),
+      bunTest(b, { ...asRunChild, [kArgv]: value }),
+      // `test` is on the command line of `bun test <file>` too, and is not a file of it.
+      bunTest(a, { ...asRunChild, [kArgv]: encode("test", "x") }),
+    ]);
+    expect(forA.stderr).toContain(`(pass) ${JSON.stringify([["x", ""], null, null])}`);
+    expect(forB.stderr).toContain(`(pass) ${JSON.stringify([[], null, null])}`);
+    expect(forCommand.stderr).toContain(`(pass) ${JSON.stringify([[], null, null])}`);
+    expect({ a: forA.exitCode, b: forB.exitCode, command: forCommand.exitCode }).toEqual({ a: 0, b: 0, command: 0 });
+  });
 
-  test.concurrent(
-    "a `bun test` that run() did not start does not read the variable",
-    async () => {
-      using dir = tempDir("node-test-run-argv-plain", {
-        "a.test.mjs": readsArgv,
-        // An env file is not the environment that run() gives its child.
-        ".env.test": `BUN_TEST_DRAIN_EVENT_LOOP=1\n${kArgv}=not what run() writes\n`,
-      });
-      const file = join(String(dir), "a.test.mjs");
-      const plain = { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: undefined, [kArgv]: "not what run() writes" };
-      const { stderr, exitCode } = await bunTest(file, plain);
-      expect(stderr).toContain(`(pass) ${JSON.stringify([[], "not what run() writes"])}`);
-      expect(exitCode).toBe(0);
-    },
-    30_000,
-  );
-
-  // A worker has no file on its command line to check the variable against. It gets the variable only from a
-  // coordinator that took it: not from an env file, and not from a coordinator that was started for another file.
-  test.concurrent.each([
-    ["from an env file", { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: undefined, [kArgv]: undefined }],
-    ["of another file", { ...asRunChild, [kArgv]: encode("/another/file.test.mjs", "x") }],
-  ])(
-    "the workers of `--parallel` do not read the variable %s",
-    async (_, env) => {
-      const record = `
+  // A `Worker` loads the environment of the process again (`Loader::clone_for_worker`), so it still has the variable.
+  // #41932 changes that loader.
+  test.failing("a Worker of the test file does not have the variable", async () => {
+    using dir = tempDir("node-test-run-argv-worker", {
+      "a.test.mjs": `
         import { test } from "node:test";
-        import { writeFileSync } from "node:fs";
-        test("record", () => writeFileSync(import.meta.filename + ".json", JSON.stringify(process.argv.slice(2))));
-      `;
-      using dir = tempDir("node-test-run-argv-workers", {
-        "tests/one.test.mjs": record,
-        "tests/two.test.mjs": record,
-        ".env.test": `BUN_TEST_DRAIN_EVENT_LOOP=1\n${kArgv}=not what run() writes\n`,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--parallel=2", join(String(dir), "tests")],
-        env,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain("2 pass");
-      expect({
-        one: await Bun.file(join(String(dir), "tests/one.test.mjs.json")).json(),
-        two: await Bun.file(join(String(dir), "tests/two.test.mjs.json")).json(),
-      }).toEqual({ one: [], two: [] });
-      expect(exitCode).toBe(0);
-    },
-    30_000,
-  );
+        const worker = new Worker("data:text/javascript,postMessage(process.env.${kArgv} ?? null)");
+        const inWorker = await new Promise(resolve => (worker.onmessage = event => resolve(event.data)));
+        worker.terminate();
+        test(JSON.stringify({ inWorker }), () => {});
+      `,
+    });
+    const file = join(String(dir), "a.test.mjs");
+    const { stderr } = await bunTest(file, { ...asRunChild, [kArgv]: encode(file, "x") });
+    const inWorker = /\(pass\) \{"inWorker":(.*)\}/.exec(stderr)?.[1];
+    // With no report from the Worker, a failure here is not the one that this test waits for.
+    if (inWorker === undefined) return;
+    expect(inWorker).toBe("null");
+  });
 
-  test.concurrent(
-    "an empty variable is no variable",
-    async () => {
-      using dir = tempDir("node-test-run-argv-empty", { "a.test.mjs": readsArgv });
-      const { stderr, exitCode } = await bunTest(join(String(dir), "a.test.mjs"), { ...asRunChild, [kArgv]: "" });
-      expect(stderr).toContain(`(pass) ${JSON.stringify([[], ""])}`);
-      expect(exitCode).toBe(0);
-    },
-    30_000,
-  );
+  test("a `bun test` that run() did not start does not read the variable", async () => {
+    using dir = tempDir("node-test-run-argv-plain", {
+      "a.test.mjs": readsArgv,
+      // An env file is not the environment that run() gives its child.
+      ".env.test": `BUN_TEST_DRAIN_EVENT_LOOP=1\n${kArgv}=not what run() writes\n`,
+    });
+    const file = join(String(dir), "a.test.mjs");
+    const plain = { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: undefined, [kArgv]: "not what run() writes" };
+    const { stderr, exitCode } = await bunTest(file, plain);
+    const value = "not what run() writes";
+    expect(stderr).toContain(`(pass) ${JSON.stringify([[], value, value])}`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("an empty variable is no variable", async () => {
+    using dir = tempDir("node-test-run-argv-empty", { "a.test.mjs": readsArgv });
+    const { stderr, exitCode } = await bunTest(join(String(dir), "a.test.mjs"), { ...asRunChild, [kArgv]: "" });
+    expect(stderr).toContain(`(pass) ${JSON.stringify([[], "", ""])}`);
+    expect(exitCode).toBe(0);
+  });
 
   // Not a length, a length past the end, no length, a length that is not only digits, bytes left over.
   test.concurrent.each(["x", "2:x", ":x", "0_1:x", "1:xy"])(
@@ -749,6 +717,28 @@ describe("node:test run({ argv })", () => {
       expect(stderr).not.toContain("a.test.mjs");
       expect(exitCode).toBe(1);
     },
-    30_000,
   );
+
+  test("with `--parallel` and one test file, the file gets argv", async () => {
+    using dir = tempDir("node-test-run-argv-parallel-one", { "a.test.mjs": readsArgv });
+    const argv = ["--only", "", "x"];
+    const stream = run({ files: ["a.test.mjs"], argv, execArgv: ["--parallel=2"], cwd: String(dir), env: bunEnv });
+    expect(await reported(stream)).toEqual([`test:pass ${JSON.stringify([argv, null, null])}`]);
+  });
+
+  // A worker of `--parallel` is not the process that run() starts, and run() gets no test events from a worker.
+  test("with `--parallel` and two test files, the child starts no worker and says why", async () => {
+    const ran = `
+      import { test } from "node:test";
+      import { writeFileSync } from "node:fs";
+      writeFileSync(import.meta.filename + ".ran", "");
+      test("ran", () => {});
+    `;
+    using dir = tempDir("node-test-run-argv-parallel", { "tests/one.test.mjs": ran, "tests/two.test.mjs": ran });
+    const stream = run({ files: ["tests"], argv: ["x"], execArgv: ["--parallel=2"], cwd: String(dir), env: bunEnv });
+    expect(await reported(stream)).toEqual([
+      "test:fail tests: error: run() of node:test cannot give `argv` to the workers of --parallel. Name each test file in `files`, or remove --parallel from `execArgv`",
+    ]);
+    expect(readdirSync(join(String(dir), "tests")).sort()).toEqual(["one.test.mjs", "two.test.mjs"]);
+  });
 });

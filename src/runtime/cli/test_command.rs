@@ -941,8 +941,8 @@ fn node_test_argv(encoded: &[u8], ctx: &Command::ContextData) -> Vec<Box<[u8]>> 
         );
         Global::exit(1);
     };
-    // The variable is inherited: only the process that `run()` started for `file`, and its `--parallel` workers, take the values.
-    if !ctx.test_options.test_worker && !ctx.positionals.iter().any(|it| **it == **file) {
+    // The variable can reach another `bun test`: through a `Worker` of the test file, or through a child of `run()` that is not `bun test`.
+    if !ctx.positionals.iter().skip(1).any(|it| **it == **file) {
         return Vec::new();
     }
     argv.iter().map(|value| Box::from(*value)).collect()
@@ -1999,12 +1999,6 @@ impl TestCommand {
             })?
         };
         vm.argv = core::mem::take(&mut ctx.passthrough);
-        // `run()` of `node:test` sets both. Every start already reads the first, so a plain `bun test` does not look up the second.
-        if should_drain_event_loop()
-            && let Some(encoded) = env_var::BUN_INTERNAL_NODE_TEST_ARGV.get_not_empty()
-        {
-            vm.argv = node_test_argv(encoded, ctx);
-        }
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload = ctx.preloads.clone();
         vm.transpiler.options.rewrite_jest_for_tests = true;
@@ -2028,6 +2022,15 @@ impl TestCommand {
         }
 
         vm.transpiler.configure_defines()?;
+
+        // `run()` of `node:test` sets both. Every start already reads the first, so a plain `bun test` does not look up the second.
+        if should_drain_event_loop()
+            && let Some(encoded) = env_var::BUN_INTERNAL_NODE_TEST_ARGV.get_not_empty()
+        {
+            vm.argv = node_test_argv(encoded, ctx);
+            // Out of the map of this VM: `process.env` and what the main thread starts do not have it. A `Worker` loads the process environment again.
+            env_loader.map.remove(b"BUN_INTERNAL_NODE_TEST_ARGV");
+        }
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;

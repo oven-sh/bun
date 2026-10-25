@@ -60,10 +60,14 @@ pub(crate) fn run_as_coordinator(
         return Ok(false);
     }
 
-    // A worker takes `BUN_INTERNAL_NODE_TEST_ARGV` with no file to check it against, so it only gets the value that this process took.
+    // `bun test` has `process.argv` values only from `run()` of `node:test`, for the one process that it starts. A worker does not get them.
     // SAFETY: see vm_ptr note above.
-    if unsafe { (*vm_ptr).argv.is_empty() } {
-        env.map.remove(b"BUN_INTERNAL_NODE_TEST_ARGV");
+    if !unsafe { (*vm_ptr).argv.is_empty() } {
+        Output::err_generic(
+            "run() of node:test cannot give `argv` to the workers of --parallel. Name each test file in `files`, or remove --parallel from `execArgv`\n",
+            (),
+        );
+        Global::exit(1);
     }
 
     // Workers' stderr is a pipe; have them format with ANSI when we will be

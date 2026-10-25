@@ -449,10 +449,9 @@ function validateRunChildArg(arg: string, index: number) {
 }
 
 // undefined for an empty argv, which also keeps a value that this process inherited out of the child.
-function encodeRunChildArgv(args: string[], argv: string[]) {
+function encodeRunChildArgv(file: string, args: string[], argv: string[]) {
   if (argv.length === 0) return undefined;
   for (let i = 0; i < args.length; i++) validateRunChildArg(`${args[i]}`, i);
-  const file = args[args.length - 1];
   let encoded = `${Buffer.byteLength(file)}:${file}`;
   for (let i = 0; i < argv.length; i++) {
     const value = `${argv[i]}`;
@@ -498,7 +497,7 @@ async function runOneFile(
       ...(opts.env ?? process.env),
       BUN_TEST_DRAIN_EVENT_LOOP: "1",
       [kRunChildEnv]: kRunChildEnvValue,
-      [kRunChildArgvEnv]: encodeRunChildArgv(args, opts.argv as string[]),
+      [kRunChildArgvEnv]: encodeRunChildArgv(absolute, args, opts.argv as string[]),
     },
     stdout: "pipe",
     stderr: "pipe",

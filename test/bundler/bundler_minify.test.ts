@@ -310,6 +310,145 @@ describe("bundler", () => {
     ],
     minifySyntax: true,
   });
+  // A `--define` value is parsed as JSON, not by the lexer, and is stored as 8-bit WTF-8. The
+  // folds of `[n]`, `.charCodeAt(n)`, `.length`, `<` and unary `+` have to read such a string per
+  // UTF-16 code unit, not per byte.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`minify/DefineNonAsciiStringFolding${backend === "cli" ? "Cli" : "Api"}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          declare const U: string, E: string, D: string, N: string, S: string, H: string, L: string;
+          declare const A: { s: string; n: string[] }, R: string[], B: Record<string, number>, Q: string, P: string, Z: string, C: string;
+          console.log(JSON.stringify([U, U[0], U[1], U[3], \`\${U}\`.length, U.length, (U + "")[0], U + "!", U === "é😀", U.charCodeAt(0), U.charCodeAt(2)]));
+          console.log(JSON.stringify([E === U, E[0], \`\${E}\`.length]));
+          console.log(JSON.stringify([+D, -D, ~D, +N, +U]));
+          console.log(JSON.stringify([S.length, S.charCodeAt(0), \`\${S}\`.length, (H + L).length, (H + L)[0] === H, (H + L).charCodeAt(1), H + L === "😀"]));
+          console.log(JSON.stringify([A.s[0], A.n[0][0], \`\${A.n[0]}\`.length, R[0][0], R[0].length, B.clé, Q.length, Q[0]]));
+          console.log(JSON.stringify([(C + "x")[1], (C + "x").length, (C + "x")[0], ("x" + C)[1], \`\${C}x\`[1], \`\${C}x\`.length]));
+          console.log(JSON.stringify([P < Z, P > Z, Z <= P, U < "z", U >= "z", ({ "Ã©": 1 } as any).é === undefined]));
+          console.log(JSON.stringify([(/é/ + "x")[1], (/é/ + "x").length, ("ab" + "cd")[3], ("ab" + "cd").charCodeAt(2)]));
+          switch (U[0]) {
+            case "é":
+              console.log("case é");
+              break;
+            default:
+              console.log("default");
+          }
+        `,
+      },
+      define: {
+        U: '"é😀"',
+        // the same value spelled in ASCII
+        E: '"\\u00e9\\ud83d\\ude00"',
+        // U+2028 and U+00A0 are StrWhiteSpace for ToNumber
+        D: '"\u2028 12 "',
+        N: '"\u00a01"',
+        // half of a surrogate pair is one code unit, and the two halves join into one character
+        S: '"\\ud800"',
+        H: '"\\ud83d"',
+        L: '"\\ude00"',
+        A: '{"s":"ü!","n":["中文"]}',
+        R: '["é","x"]',
+        B: '{"clé":2}',
+        // not JSON and not an identifier: the value is the text itself
+        Q: "é-x",
+        // U+FF5E is after U+1F600 in UTF-16 code units, and before it in bytes
+        P: '"\uff5e"',
+        Z: '"😀"',
+        C: '"€"',
+      },
+      minifySyntax: true,
+      backend,
+      run: {
+        stdout: [
+          '["é😀","é","\\ud83d",null,3,3,"é","é😀!",true,233,56832]',
+          '[true,"é",3]',
+          "[12,-12,-13,1,null]",
+          "[1,55296,1,2,true,56832,true]",
+          '["ü","中",2,"é",1,2,3,"é"]',
+          '["x",2,"€","€","x",2]',
+          "[false,true,true,false,true,true]",
+          '["é",4,"d",99]',
+          "case é",
+        ].join("\n"),
+      },
+    });
+  }
+  // A branch is removed only if its condition folds, and the build then needs no "./missing-*.js".
+  itBundled("minify/DefineNonAsciiDeadBranch", {
+    files: {
+      "/entry.js": /* js */ `
+        if (X.length === 1) console.log("one"); else require("./missing-length.js");
+        if (+X) require("./missing-number.js"); else console.log("nan");
+        if (X < "z") require("./missing-order.js"); else console.log("after z");
+        if (X[0] === "é") console.log("first"); else require("./missing-index.js");
+        if (X.charCodeAt(0) === 233) console.log("code"); else require("./missing-code.js");
+      `,
+    },
+    define: { X: '"é"' },
+    minifySyntax: true,
+    run: { stdout: "one\nnan\nafter z\nfirst\ncode" },
+  });
+  // A join of two 8-bit strings is still resolved at build time when one of them is not ASCII.
+  itBundled("minify/DefineNonAsciiRequireJoin", {
+    files: {
+      "/entry.js": /* js */ `console.log(require(D + "/m.js"));`,
+      "/dér/m.js": /* js */ `module.exports = "from m";`,
+    },
+    define: { D: '"./dér"' },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("from m");
+    },
+    run: { stdout: "from m" },
+  });
+  // The index and charCodeAt folds read every segment of a joined string. An index past the end
+  // is left for run time.
+  itBundled("minify/StringIndexFoldingAcrossJoin", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(("ab" + "cd")[3]);
+        capture(("ab" + "cd").charCodeAt(2));
+        capture(("ab" + "cd")[4]);
+        capture("ab".charCodeAt(2));
+      `,
+    },
+    capture: ['"d"', "99", '"abcd"[4]', '"ab".charCodeAt(2)'],
+    minifySyntax: true,
+  });
+  // `import.meta.file`/`dir` (cjs output) and `module.filename` are inlined from the file path,
+  // which is 8-bit and can be non-ASCII. Its folds have to read it per UTF-16 code unit, and
+  // `require(import.meta.dir + "/m.js")` still has to resolve at build time.
+  itBundled("minify/InlinedImportMetaPathNonAscii", {
+    files: {
+      "/dér/filé.js": /* js */ `
+        const m = require(import.meta.dir + "/m.js");
+        const t = require(\`\${import.meta.dir}/t.js\`);
+        console.log(JSON.stringify([import.meta.file, import.meta.file[3], import.meta.file[4], import.meta.file.length, import.meta.file.charCodeAt(3), \`\${import.meta.file}\`.length, m.x, t.y]));
+      `,
+      "/dér/m.js": `module.exports.x = "from m";`,
+      "/dér/t.js": `module.exports.y = "from t";`,
+    },
+    format: "cjs",
+    target: "bun",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("from m");
+      expect(code).toContain("from t");
+    },
+    run: { stdout: '["filé.js","é",".",7,233,7,"from m","from t"]' },
+  });
+  itBundled("minify/InlinedModuleFilenameNonAscii", {
+    files: {
+      "/dér/cjé.cjs": /* js */ `
+        console.log(JSON.stringify([module.filename, module.filename[2], module.filename[3], module.filename.length, \`\${module.filename}\`.length]));
+      `,
+    },
+    target: "bun",
+    minifySyntax: true,
+    run: { stdout: '["cjé.cjs","é",".",7,7]' },
+  });
   itBundled("minify/FunctionExpressionRemoveName", {
     files: {
       "/entry.js": /* js */ `

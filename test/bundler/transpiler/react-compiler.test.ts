@@ -4118,6 +4118,45 @@ describe("bundler", () => {
       });
     },
   });
+
+  // A `define` string is 8-bit WTF-8. Constant propagation joins it to a UTF-16 literal by code
+  // unit, and the two halves of a surrogate pair that meet are one character. With one code unit
+  // per byte, `"中" + ACCENT` was "中Ã©".
+  itBundled("react-compiler/JoinOfAUtf16LiteralAndANonAsciiDefine", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as forms from "./forms";
+        const units = (s: string) => Array.from({ length: s.length }, (_, i) => s.charCodeAt(i).toString(16)).join(" ");
+        for (const name of Object.keys(forms).sort()) {
+          console.log(name + "=" + units(forms[name]({}).props.children));
+        }
+      `,
+      "/forms.jsx": /* jsx */ `
+        export function LiteralThenDefine() {
+          return <div>{"中" + ACCENT}</div>;
+        }
+        export function DefineThenLiteral() {
+          return <div>{ACCENT + "中"}</div>;
+        }
+        export function HalfThenHalfDefine() {
+          return <div>{"\\uD83D" + LOW}</div>;
+        }
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": ``,
+      "/node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `export const c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    },
+    define: {
+      ACCENT: '"é"',
+      LOW: '"\\ude00"',
+    },
+    reactCompiler: true,
+    target: "browser",
+    run: {
+      stdout: ["DefineThenLiteral=e9 4e2d", "HalfThenHalfDefine=d83d de00", "LiteralThenDefine=4e2d e9"].join("\n"),
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

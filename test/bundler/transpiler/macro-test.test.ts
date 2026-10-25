@@ -358,6 +358,59 @@ test("a macro that returns a JSON or text Response or Blob is inlined by its con
   expect(exitCode).toBe(0);
 });
 
+// The strings of a macro's JSON Response, and the data: URL of a binary one, are stored as 8-bit WTF-8. Their folds,
+// and the folds of a `--define` string in a macro argument, have to read such a string per UTF-16 code unit. A macro
+// argument that does not fold is an error.
+test("non-ASCII strings from a macro and in a macro argument fold per UTF-16 code unit", async () => {
+  using dir = tempDir("macro-non-ascii-folds", {
+    "m.ts": [
+      `export function json() {`,
+      `  return Response.json(["é😀", { "clé": "ü\\n\\"" }]);`,
+      `}`,
+      `export function bin() {`,
+      `  return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": 'application/x-thing; name="é.bin"' } });`,
+      `}`,
+      `export function echo(value: unknown) {`,
+      `  return { got: value, type: typeof value };`,
+      `}`,
+    ].join("\n"),
+    "index.ts": [
+      `import { json, bin, echo } from "./m.ts" with { type: "macro" };`,
+      `declare const X: string;`,
+      `console.log(JSON.stringify([json()[0], json()[0][0], json()[0][1], \`\${json()[0]}\`.length, json()[0].length, json()[1]]));`,
+      `console.log(JSON.stringify([bin().length, \`\${bin()}!\`.length, (bin() + "!")[33]]));`,
+      `console.log(JSON.stringify([echo(X.length), echo(X[0]), echo(X.charCodeAt(0)), echo(X + "x"), echo(\`\${X}x\`), echo(+X), echo(X < "z")]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "--define", 'X="é"', "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect({ lines: stdout.trim().split("\n").slice(-3), stderr }).toEqual({
+    lines: [
+      JSON.stringify(["é😀", "é", "\ud83d", 3, 3, { "clé": 'ü\n"' }]),
+      JSON.stringify([50, 51, "."]),
+      JSON.stringify([
+        { got: 1, type: "number" },
+        { got: "é", type: "string" },
+        { got: 233, type: "number" },
+        { got: "éx", type: "string" },
+        { got: "éx", type: "string" },
+        { got: null, type: "number" },
+        { got: false, type: "boolean" },
+      ]),
+    ],
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // The classification follows the MIME essence, not the category table the runtime uses for blob types:
 // any `+json` suffix or `/json` subtype is JSON, and the JavaScript and XML `application/*` types are text.
 // The data URL keeps the raw content type, parameters included.

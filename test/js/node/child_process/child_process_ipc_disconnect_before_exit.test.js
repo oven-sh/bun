@@ -21,10 +21,13 @@ if (process.argv[2] === "child") {
 
 if (process.argv[2] === "child-that-exits") {
   const fs = require("node:fs");
-  process.send("bye");
-  // Exit on our own, but only once the parent is inside its 'message' handler.
-  blockUntil("the parent to get the message", () => fs.existsSync(process.argv[3]));
-  process.exit(3);
+  // The callback runs once the message has left (Windows writes it from the event loop). Then
+  // exit on our own, but only when the parent is inside its 'message' handler.
+  process.send("bye", () => {
+    blockUntil("the parent to get the message", () => fs.existsSync(process.argv[3]));
+    process.exit(3);
+  });
+  return;
 }
 
 const assert = require("node:assert");
@@ -36,7 +39,12 @@ const path = require("node:path");
 const { after, test } = require("node:test");
 
 const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "ipc-disconnect-before-exit-"));
-after(() => fs.rmSync(tmpdir, { recursive: true, force: true }));
+const children = [];
+after(() => {
+  // A test that failed early leaves its child running.
+  for (const child of children) child.kill("SIGKILL");
+  fs.rmSync(tmpdir, { recursive: true, force: true });
+});
 
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -69,6 +77,7 @@ function blockUntilDead(pid) {
 async function forkChild(name) {
   const closed = path.join(tmpdir, `${name}-channel-closed`);
   const child = fork(__filename, ["child", closed], { stdio: ["ignore", "pipe", "inherit", "ipc"] });
+  children.push(child);
   const events = [];
   child.on("disconnect", () => events.push("disconnect"));
   child.on("exit", () => events.push("exit"));
@@ -98,6 +107,7 @@ test("the child is killed with a message from the parent possibly still unread",
 test("the child sends a message and exits on its own", async () => {
   const parentIsBusy = path.join(tmpdir, "parent-is-busy");
   const child = fork(__filename, ["child-that-exits", parentIsBusy]);
+  children.push(child);
   const events = [];
   child.on("message", message => {
     events.push(`message:${message}`);

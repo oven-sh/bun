@@ -1239,11 +1239,14 @@ impl SendQueue {
     }
 
     /// The peer process has exited: closes what is left of the channel and reports the close now,
-    /// for the owner to report before the exit (node's order). The deferred task, which may also
-    /// have been scheduled for it, runs later and finds nothing to do.
+    /// for the owner to report before the exit (node's order). A channel with input the loop has
+    /// yet to read stays open for that read; its close follows the exit.
     pub(crate) fn close_after_peer_exit(&self) {
         log!("SendQueue#closeAfterPeerExit");
         if self.socket_is_open() {
+            if self.is_connected() && self.has_unread_input() {
+                return;
+            }
             // A disconnect() still postponed (behind a handle's ack, or on its task) is overtaken.
             self.close_after_flush.set(false);
             self.pending_close.set(false);
@@ -1258,6 +1261,38 @@ impl SendQueue {
         }
         let _scope = self.get_global_this().bun_vm().enter_event_loop_scope();
         self.run_after_close();
+    }
+
+    /// Whether the kernel holds input for the channel that the loop has not read yet.
+    fn has_unread_input(&self) -> bool {
+        let SocketUnion::Open(socket) = *self.socket.get() else {
+            return false;
+        };
+        #[cfg(not(windows))]
+        {
+            let mut queued: c_int = 0;
+            // SAFETY: FIONREAD writes one int.
+            let rc =
+                unsafe { libc::ioctl(socket.fd().native(), libc::FIONREAD as _, &raw mut queued) };
+            rc == 0 && queued > 0
+        }
+        #[cfg(windows)]
+        {
+            use bun_sys::windows::kernel32::PeekNamedPipe;
+            let mut queued: u32 = 0;
+            // SAFETY: `socket` is the live pipe (`socket == Open`); only `queued` is written.
+            let peeked = unsafe {
+                PeekNamedPipe(
+                    (*socket).handle,
+                    core::ptr::null_mut(),
+                    0,
+                    core::ptr::null_mut(),
+                    &raw mut queued,
+                    core::ptr::null_mut(),
+                )
+            };
+            peeked != 0 && queued > 0
+        }
     }
 
     /// `uv::open_handles` closes the channel's pipe through here at a thread

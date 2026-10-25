@@ -602,9 +602,12 @@ if (cluster.isPrimary) {
   cluster.on("exit", (_worker, code) => events.push("exit:" + code));
   process.on("exit", () => console.log(JSON.stringify(events)));
 } else {
-  process.send("bye");
-  blockUntil("the primary to get the message", () => existsSync("primary-is-busy"));
-  process.exit(3);
+  // The callback runs once the message has left. Windows writes it from the event loop, so
+  // blocking right after send() would keep it from ever going out.
+  process.send("bye", () => {
+    blockUntil("the primary to get the message", () => existsSync("primary-is-busy"));
+    process.exit(3);
+  });
 }
 `,
   });

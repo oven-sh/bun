@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isLinux, isWindows, tempDir } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
+import { bunEnv, bunExe, gcTick, isLinux, isWindows, shellExe, tempDir } from "harness";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -76,34 +76,41 @@ async function runReceiver(serialization: "json" | "advanced", senderSource: str
   return { stdout: stdout.split("\n").filter(Boolean), stderr, exitCode };
 }
 
-// Kills the child and returns once it is dead without touching the event loop, so that its exit
-// is pending at the same time as whatever its death did to the channel. On Linux the child is dead
-// once /proc shows it as a zombie with no other threads left (the last thread to go is the one
-// that closes its descriptors and signals the exit; a debug build takes ~15ms to get there), or
-// once it is gone from /proc (already reaped by the waiter thread). Elsewhere a SIGKILL'd child is
-// gone within a few milliseconds.
-function killAndBlockUntilDead(child: Bun.Subprocess) {
-  child.kill("SIGKILL");
+function blockUntil(what: string, condition: () => boolean) {
+  const deadline = Date.now() + 30_000;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    Bun.sleepSync(1);
+  }
+}
+
+// Returns once a child that was killed, or is exiting on its own, is dead, without touching the
+// event loop, so that its exit is pending at the same time as whatever its death did to the
+// channel. On Linux the child is dead once /proc shows it as a zombie with no other threads left
+// (the last thread to go is the one that closes its descriptors and signals the exit; a debug build
+// takes ~15ms to get there), or once it is gone from /proc (already reaped by the waiter thread).
+// Elsewhere such a child is gone within a few milliseconds.
+function blockUntilDead(pid: number) {
   if (!isLinux) {
     Bun.sleepSync(100);
     return;
   }
-  const deadline = Date.now() + 30_000;
-  for (;;) {
-    let dead: boolean;
+  blockUntil("the child to die", () => {
     try {
-      const stat = readFileSync(`/proc/${child.pid}/stat`, "latin1");
-      dead = stat[stat.lastIndexOf(")") + 2] === "Z" && readdirSync(`/proc/${child.pid}/task`).length === 1;
+      const stat = readFileSync(`/proc/${pid}/stat`, "latin1");
+      return stat[stat.lastIndexOf(")") + 2] === "Z" && readdirSync(`/proc/${pid}/task`).length === 1;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ESRCH") {
         throw error;
       }
-      dead = true;
+      return true;
     }
-    if (dead) return;
-    if (Date.now() > deadline) throw new Error("child did not die");
-    Bun.sleepSync(1);
-  }
+  });
+}
+
+function killAndBlockUntilDead(child: Bun.Subprocess) {
+  child.kill("SIGKILL");
+  blockUntilDead(child.pid);
 }
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -301,6 +308,46 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
       "exit",
     ]);
   });
+
+  // Closing the channel when the child exits must not discard what the child sent last. On Windows
+  // the exit reaches the loop ahead of that message when the child wrote it, and exited, while an
+  // `ipc` handler was running.
+  it.concurrent("delivers what the child sent right before exiting while an ipc handler was running", async () => {
+    using dir = tempDir("ipc-last-message", {});
+    const parentIsBusy = path.join(String(dir), "parent-is-busy");
+    const received: unknown[] = [];
+    const disconnected = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { existsSync } = require("node:fs");
+        process.send("first");
+        // The last message goes out only once the parent handles the first, and the exit follows
+        // once that message has left (Windows writes it from the event loop).
+        const deadline = Date.now() + 30_000;
+        const timer = setInterval(() => {
+          if (Date.now() > deadline) process.exit(1);
+          if (!existsSync(${JSON.stringify(parentIsBusy)})) return;
+          clearInterval(timer);
+          process.send("last", () => process.exit(0));
+        }, 1);`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: mode,
+      ipc(message, subprocess) {
+        received.push(message);
+        if (message === "first") {
+          writeFileSync(parentIsBusy, "");
+          blockUntilDead(subprocess.pid);
+        }
+      },
+      onDisconnect: () => disconnected.resolve(),
+    });
+    await disconnected.promise;
+    expect(received).toEqual(["first", "last"]);
+  });
 });
 
 // The waiter thread is the Linux fallback for kernels and sandboxes without pidfd. It hands the
@@ -381,6 +428,52 @@ describe("ipc mode json", () => {
       exitCode: 0,
     });
   });
+
+  // A process that inherited the child's end of the channel can still write to it once the child
+  // is gone. When that input and the exit are pending together, with the exit first, the close that
+  // the exit brings must wait for the loop to read the input.
+  it.concurrent.skipIf(isWindows)(
+    "does not close the channel over input that is unread when the child exits",
+    async () => {
+      using dir = tempDir("ipc-unread-at-exit", {});
+      const exitNow = path.join(String(dir), "exit-now");
+      const writeNow = path.join(String(dir), "write-now");
+      const written = path.join(String(dir), "written");
+      const received: unknown[] = [];
+      const disconnected = Promise.withResolvers<void>();
+      await using child = spawn({
+        // fd 3 is the shell's end of the channel. The background subshell inherits it, outlives the
+        // shell, and writes one JSON message to it when told to. Both give up after 30 seconds.
+        cmd: [
+          shellExe(),
+          "-c",
+          `(i=0; while [ ! -e "$2" ] && [ $i -lt 3000 ]; do sleep 0.01; i=$((i+1)); done
+          echo '"written after the exit"' >&3; : > "$3") >/dev/null 2>&1 &
+        echo ready
+        i=0; while [ ! -e "$1" ] && [ $i -lt 3000 ]; do sleep 0.01; i=$((i+1)); done`,
+          "sh",
+          exitNow,
+          writeNow,
+          written,
+        ],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "inherit"],
+        serialization: "json",
+        ipc: message => void received.push(message),
+        onDisconnect: () => disconnected.resolve(),
+      });
+      await child.stdout.getReader().read();
+      // A few turns of the loop with the channel idle. Without them the channel is still queued
+      // from its first writable event, ahead of the exit.
+      for (let i = 0; i < 3; i++) await new Promise<void>(resolve => setImmediate(resolve));
+      writeFileSync(exitNow, "");
+      blockUntilDead(child.pid);
+      writeFileSync(writeNow, "");
+      blockUntil("the write to the channel", () => existsSync(written));
+      await disconnected.promise;
+      expect(received).toEqual(["written after the exit"]);
+    },
+  );
 });
 
 describe("ipc mode advanced", () => {

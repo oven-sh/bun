@@ -10,7 +10,7 @@ use enumset::EnumSet;
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
 use crate::generated_bindgen::response::{
-    BodyInit, OptionName, RequestInit, RequestInput, ResponseInit, SignalInit, js_Request as js,
+    BodyInit, RequestInit, RequestInput, ResponseInit, SignalInit, js_Request as js,
 };
 use crate::webcore::BlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
@@ -30,7 +30,7 @@ use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
-use bun_jsc::bindgen::{JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper, StringLike};
 use bun_ptr::RefPtr;
 use bun_ptr::weak_ptr::WeakPtrData;
 use core::mem::ManuallyDrop;
@@ -961,19 +961,13 @@ enum Fields {
 /// `None` if the member is missing. Throws unless it is one of the names of `E`.
 pub(crate) fn optional_enum<E: bun_jsc::FromJsEnum>(
     global: &JSGlobalObject,
-    name: OptionName<'_>,
+    name: Option<JsLocal<'_, StringLike>>,
     property_name: &'static str,
 ) -> JsResult<Option<E>> {
-    let name = match name {
-        OptionName::Missing => return Ok(None),
-        OptionName::Text(name) => name.to_js(),
-        OptionName::Other => {
-            return Err(
-                global.throw_invalid_arguments(format_args!("{} must be a string", property_name))
-            );
-        }
+    let Some(name) = name else {
+        return Ok(None);
     };
-    Ok(Some(name.to_enum::<E>(global, property_name)?))
+    Ok(Some(name.to_js().to_enum::<E>(global, property_name)?))
 }
 
 impl Request {

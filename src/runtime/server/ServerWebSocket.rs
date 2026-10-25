@@ -12,8 +12,8 @@ use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::generated_bindgen::server::{
-    WebSocketCloseCode, WebSocketCompress, WebSocketMessage, WebSocketTopic,
-    js_ServerWebSocket as js, web_socket_message_text,
+    WebSocketCompress, WebSocketMessage, WebSocketTopic, js_ServerWebSocket as js,
+    web_socket_message_text,
 };
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
@@ -1107,7 +1107,7 @@ impl ServerWebSocket {
     pub(crate) fn close<'a>(
         &self,
         cx: &mut JsScope<'a>,
-        code: WebSocketCloseCode,
+        code: Deferred<'a, Option<f64>>,
         reason: Deferred<'a, Option<Utf8Bytes<'static>>>,
     ) -> bindgen::Result<'a, ()> {
         bun_output::scoped_log!(WebSocketServer, "close()");
@@ -1116,16 +1116,9 @@ impl ServerWebSocket {
             return Ok(());
         }
 
-        let code: i32 = match code {
-            WebSocketCloseCode::Missing => 1000,
-            WebSocketCloseCode::Code(code) => {
-                JSValue::js_number(code).coerce_to_i32(cx.global())?
-            }
-            WebSocketCloseCode::Other => {
-                return Err(cx.heap.invalid_arguments(format_args!(
-                    "close requires a numeric code or undefined"
-                )));
-            }
+        let code: i32 = match code.convert(cx.global())? {
+            None => 1000,
+            Some(code) => JSValue::js_number(code).coerce_to_i32(cx.global())?,
         };
         let reason = reason.convert(cx.global())?.unwrap_or(Utf8Bytes::EMPTY);
         let reason = bun_core::strings::truncate_to_char_boundary(reason.slice(), MAX_CLOSE_REASON);

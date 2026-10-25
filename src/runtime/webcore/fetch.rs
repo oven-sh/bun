@@ -26,7 +26,7 @@ pub(crate) mod proxy_testing;
 use crate::generated_bindgen::fetch::{
     CompressInit, FetchInit, FetchInput, FetchVerbose, MaxRedirects,
 };
-use crate::generated_bindgen::fetch_session::{FetchTLSOption, FlagOrNumber, UnixPath};
+use crate::generated_bindgen::fetch_session::{FlagOrNumber, UnixPath};
 use crate::generated_bindgen::response::{BodyInit, HeadersInit, SignalInit};
 use crate::node;
 use crate::node::types::PathLikeExt as _;
@@ -573,8 +573,11 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         }
         let objects_to_try = [options_object, request_init_object];
         for obj in objects_to_try.into_iter().flatten() {
-            if let Some((session, _)) = obj.session(global_this)? {
-                break 'extract_session Some(fetch_session::SessionHold::new(global_this, session));
+            if let Some((_, session)) = obj.session(global_this)? {
+                break 'extract_session Some(fetch_session::SessionHold::from_js(
+                    global_this,
+                    session.to_js(),
+                )?);
             }
         }
         break 'extract_session None;
@@ -587,7 +590,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         let objects_to_try = [options_object, request_init_object];
 
         for obj in objects_to_try.into_iter().flatten() {
-            if let FetchTLSOption::Options(tls) = obj.tls(global_this)? {
+            if let Some(tls) = obj.tls(global_this)? {
                 request_has_tls = true;
                 let parsed = fetch_session::parse_tls(vm, global_this, tls)?;
                 if let Some(reject) = parsed.reject_unauthorized {
@@ -810,44 +813,33 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
     // detaches (no fallback to the input Request's signal); a present non-null
     // non-AbortSignal is a TypeError.
     signal = 'extract_signal: {
-        if let Some(options) = options_object {
-            match options.signal(global_this)? {
-                SignalInit::Missing => {}
-                SignalInit::Null => break 'extract_signal None,
-                SignalInit::Signal(signal) => break 'extract_signal Some(signal),
-                SignalInit::Other => {
-                    let err = ctx.to_type_error(
-                        jsc::ErrorCode::INVALID_ARG_TYPE,
-                        format_args!("signal is not of type AbortSignal."),
-                    );
-                    return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+        let mut init = match options_object {
+            Some(options) => options.signal(global_this)?,
+            None => SignalInit::Missing,
+        };
+        if matches!(init, SignalInit::Missing) {
+            if let Some(req) = request_mut!() {
+                if let Some(signal_) = req.abort_signal() {
+                    break 'extract_signal Some(signal_.ref_());
                 }
+                break 'extract_signal None;
+            }
+
+            if let Some(options) = request_init_object {
+                init = options.signal(global_this)?;
             }
         }
-
-        if let Some(req) = request_mut!() {
-            if let Some(signal_) = req.abort_signal() {
-                break 'extract_signal Some(signal_.ref_());
-            }
-            break 'extract_signal None;
-        }
-
-        if let Some(options) = request_init_object {
-            match options.signal(global_this)? {
-                SignalInit::Missing => {}
-                SignalInit::Null => break 'extract_signal None,
-                SignalInit::Signal(signal) => break 'extract_signal Some(signal),
-                SignalInit::Other => {
-                    let err = ctx.to_type_error(
-                        jsc::ErrorCode::INVALID_ARG_TYPE,
-                        format_args!("signal is not of type AbortSignal."),
-                    );
-                    return Ok(JSPromise::rejected_promise(global_this, err).to_js());
-                }
+        match init {
+            SignalInit::Missing | SignalInit::Null => None,
+            SignalInit::Signal(signal) => Some(signal),
+            SignalInit::Other => {
+                let err = ctx.to_type_error(
+                    jsc::ErrorCode::INVALID_ARG_TYPE,
+                    format_args!("signal is not of type AbortSignal."),
+                );
+                return Ok(JSPromise::rejected_promise(global_this, err).to_js());
             }
         }
-
-        break 'extract_signal None;
     };
 
     // We do this 2nd to last instead of last so that if it's a FormData
@@ -964,56 +956,35 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         let mut created_headers: Option<HeadersRef> = None;
 
         let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
-            if let Some(options) = options_object {
-                match options.headers(global_this)? {
-                    HeadersInit::Missing => {}
-                    HeadersInit::Headers((headers__, _)) => {
-                        if headers__.is_empty() {
-                            break 'brk None;
-                        }
-                        break 'brk Some(core::ptr::from_ref(headers__).cast_mut());
+            let mut init = match options_object {
+                Some(options) => options.headers(global_this)?,
+                None => HeadersInit::Missing,
+            };
+            if matches!(init, HeadersInit::Missing) {
+                if let Some(req) = request_mut!() {
+                    if let Some(head) = req.get_fetch_headers_unless_empty() {
+                        break 'brk Some(head.as_ptr());
                     }
-                    HeadersInit::Init(headers_value) => {
-                        if let Some(headers__) =
-                            HeadersRef::create_from_js(ctx, headers_value.to_js())?
-                        {
-                            break 'brk Some(created_headers.insert(headers__).as_ptr());
-                        }
+                    break 'brk None;
+                }
 
+                if let Some(options) = request_init_object {
+                    init = options.headers(global_this)?;
+                }
+            }
+            match init {
+                HeadersInit::Missing => break 'extract_headers headers,
+                HeadersInit::Headers((headers__, _)) => {
+                    if headers__.is_empty() {
                         break 'brk None;
                     }
+                    Some(core::ptr::from_ref(headers__).cast_mut())
+                }
+                HeadersInit::Init(headers_value) => {
+                    HeadersRef::create_from_js(ctx, headers_value.to_js())?
+                        .map(|headers__| created_headers.insert(headers__).as_ptr())
                 }
             }
-
-            if let Some(req) = request_mut!() {
-                if let Some(head) = req.get_fetch_headers_unless_empty() {
-                    break 'brk Some(head.as_ptr());
-                }
-                break 'brk None;
-            }
-
-            if let Some(options) = request_init_object {
-                match options.headers(global_this)? {
-                    HeadersInit::Missing => {}
-                    HeadersInit::Headers((headers__, _)) => {
-                        if headers__.is_empty() {
-                            break 'brk None;
-                        }
-                        break 'brk Some(core::ptr::from_ref(headers__).cast_mut());
-                    }
-                    HeadersInit::Init(headers_value) => {
-                        if let Some(headers__) =
-                            HeadersRef::create_from_js(ctx, headers_value.to_js())?
-                        {
-                            break 'brk Some(created_headers.insert(headers__).as_ptr());
-                        }
-
-                        break 'brk None;
-                    }
-                }
-            }
-
-            break 'extract_headers headers;
         };
 
         let result = if let Some(headers_) = fetch_headers {

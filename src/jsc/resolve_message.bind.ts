@@ -3,7 +3,7 @@ import * as b from "../codegen/bindgen-lib.ts";
 const js = { capability: "js", throws: true } as const;
 const text = { getter: b.string.utf8, cache: true } as const;
 const label = { getter: b.string.local, cache: true, ...js } as const;
-const position = { getter: b.object.nullable, cache: true, ...js } as const;
+const position = { getter: b.opaque, cache: true, ...js } as const;
 
 /** Error.prototype in the chain: userland checks `err instanceof Error`. */
 const errorClass = { construct: "illegal", prototypeBase: "Error" } as const;

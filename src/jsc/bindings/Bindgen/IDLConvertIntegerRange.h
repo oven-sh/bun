@@ -79,7 +79,8 @@ private:
 
 template<std::integral T, T Min, T Max, T... NaN>
 struct WebCore::Converter<Bun::Bindgen::IDLValidateIntegerRange<T, Min, Max, NaN...>> : WebCore::DefaultConverter<Bun::Bindgen::IDLValidateIntegerRange<T, Min, Max, NaN...>> {
-    static_assert(std::in_range<int64_t>(Min) && std::in_range<int64_t>(Max));
+    // They are compared as doubles, which hold every integer up to 2^53.
+    static_assert(std::cmp_greater_equal(Min, -(1LL << 53)) && std::cmp_less_equal(Max, 1LL << 53));
 
     // False if it threw.
     static bool convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, WTF::ASCIILiteral name, T& result)

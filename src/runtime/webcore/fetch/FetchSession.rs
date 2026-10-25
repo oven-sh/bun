@@ -20,8 +20,8 @@ use crate::webcore::response::HeadersRef;
 
 pub(crate) use crate::generated_bindgen::fetch_session::js_FetchSession as js;
 use crate::generated_bindgen::fetch_session::{
-    CheckServerIdentity, FetchKeepAlive, FetchSessionInitArgument, FetchTLS, FetchTLSOption,
-    FlagOrNumber, IdleTimeout, ProxyHeaders, ProxyInit, UnixPath,
+    CheckServerIdentity, FetchKeepAlive, FetchSessionInit, FetchTLS, FlagOrNumber, IdleTimeout,
+    ProxyHeaders, ProxyInit, UnixPath,
 };
 
 /// `proxy` as given to `fetch()` or to a session. Absent means "inherit".
@@ -204,22 +204,18 @@ pub(crate) struct SessionHold(RefPtr<FetchSession>);
 
 impl SessionHold {
     pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<SessionHold> {
-        let Some(session) = value.as_class_ref::<FetchSession>() else {
+        let Some(session) = value.as_::<FetchSession>() else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "fetch: 'session' must be a Bun.FetchSession"
             )));
         };
-        Ok(Self::new(global, session))
-    }
-
-    pub(crate) fn new(global: &JSGlobalObject, session: &FetchSession) -> SessionHold {
-        // SAFETY: its wrapper holds a ref on it.
-        let session = unsafe { RefPtr::init_ref(core::ptr::from_ref(session).cast_mut()) };
+        // SAFETY: `value` holds a ref on it.
+        let session = unsafe { RefPtr::init_ref(session) };
         session.used.set(true);
         if session.is_only_hold() {
             session.this_value.with_mut(|r| r.upgrade(global));
         }
-        SessionHold(session)
+        Ok(SessionHold(session))
     }
 
     fn session(&self) -> &FetchSession {
@@ -267,7 +263,7 @@ impl FetchSession {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        init: FetchSessionInitArgument<'a>,
+        init: Option<FetchSessionInit<'a>>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let mut this = Box::new(FetchSession {
             pool: http::PoolOptions {
@@ -307,33 +303,19 @@ impl FetchSession {
     fn parse_options(
         this: &mut Self,
         global: &JSGlobalObject,
-        options: FetchSessionInitArgument<'_>,
+        options: Option<FetchSessionInit<'_>>,
     ) -> JsResult<Option<JSValue>> {
         let vm = global.bun_vm();
         let mut check_server_identity = None;
-        let options = match options {
-            FetchSessionInitArgument::Missing => return Ok(None),
-            FetchSessionInitArgument::Options(options) => options,
-            FetchSessionInitArgument::Other => {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "FetchSession: options must be an object"
-                )));
-            }
+        let Some(options) = options else {
+            return Ok(None);
         };
 
-        match options.tls(global)? {
-            FetchTLSOption::Missing => {}
-            FetchTLSOption::Options(tls) => {
-                let parsed = parse_tls(vm, global, tls)?;
-                this.ssl_config = parsed.ssl_config;
-                this.reject_unauthorized = parsed.reject_unauthorized;
-                check_server_identity = parsed.check_server_identity;
-            }
-            FetchTLSOption::Other => {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "FetchSession: 'tls' must be an object"
-                )));
-            }
+        if let Some(tls) = options.tls(global)? {
+            let parsed = parse_tls(vm, global, tls)?;
+            this.ssl_config = parsed.ssl_config;
+            this.reject_unauthorized = parsed.reject_unauthorized;
+            check_server_identity = parsed.check_server_identity;
         }
 
         match parse_proxy(global, options.proxy(global)?)? {
@@ -383,11 +365,6 @@ impl FetchSession {
                     }
                     this.pool.max_idle_sockets = count;
                 }
-            }
-            FetchKeepAlive::Other => {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "FetchSession: 'keepAlive' must be a boolean or an object"
-                )));
             }
         }
 

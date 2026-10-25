@@ -96,7 +96,7 @@ export const SignalInit = b.union({
   other: b.ignored,
 });
 /** The name of a value of one of the enumerations of `bun_http_types`. */
-export const OptionName = b.union({ missing: b.null, text: b.stringLike, other: b.ignored });
+const optionName = (name: string) => ({ type: b.stringLike.nullable, expected: `${name} must be a string` });
 /** `response::Init` reads `headers` and `method`, as a `ResponseInit`. Here they only say whether they are there. */
 export const RequestInit = b.dictionary(
   {
@@ -106,9 +106,9 @@ export const RequestInit = b.dictionary(
     signal: SignalInit,
     headers: b.opaque.optional,
     method: b.opaque.optional,
-    redirect: OptionName,
-    cache: OptionName,
-    mode: OptionName,
+    redirect: optionName("redirect"),
+    cache: optionName("cache"),
+    mode: optionName("mode"),
   },
   { deferred: true },
 );

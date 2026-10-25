@@ -739,7 +739,6 @@ export const countOrText = b.fn({ args: { value: TestCountOrText }, returns: b.i
 
 export const TestLength = b.union({ number: b.f64, bigInt: b.i64.asIntN, other: b.ignored });
 export const lengthOf = b.fn({ args: { length: TestLength }, returns: b.f64.nullable });
-export const returnsNull = b.fn({ args: {}, returns: b.null });
 
 export const TestLenientOptions = b.dictionary(
   { strict: b.bool.default(true), level: b.i32.default(4) },

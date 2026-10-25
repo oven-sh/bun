@@ -11,7 +11,6 @@ export const FetchTLS = b.dictionary(
   { rejectUnauthorized: FlagOrNumber, checkServerIdentity: CheckServerIdentity },
   { deferred: true },
 );
-export const FetchTLSOption = b.union({ missing: b.null, options: FetchTLS, other: b.ignored });
 
 export const ProxyHeaders = b.union({ missing: b.null, headers: Headers, init: b.opaque });
 export const ProxyOptions = b.dictionary(
@@ -42,18 +41,28 @@ export const KeepAliveOptions = b.dictionary(
   },
   { deferred: true, reportedAs: "keepAlive" },
 );
-export const FetchKeepAlive = b.union({ missing: b.null, flag: b.bool, options: KeepAliveOptions, other: b.ignored });
+export const FetchKeepAlive = b.union({ missing: b.null, flag: b.bool, options: KeepAliveOptions });
 export const FetchSessionInit = b.dictionary(
-  { tls: FetchTLSOption, proxy: ProxyInit, unix: UnixPath, keepAlive: FetchKeepAlive },
+  {
+    tls: { type: FetchTLS.nullable, expected: "FetchSession: 'tls' must be an object" },
+    proxy: ProxyInit,
+    unix: UnixPath,
+    keepAlive: { type: FetchKeepAlive, expected: "FetchSession: 'keepAlive' must be a boolean or an object" },
+  },
   { deferred: true },
 );
-export const FetchSessionInitArgument = b.union({ missing: b.null, options: FetchSessionInit, other: b.ignored });
 
 export const FetchSession = b.class({
   rustPath: "crate::webcore::fetch::FetchSession",
   refCounted: true,
   finalize: true,
-  construct: { args: { init: FetchSessionInitArgument }, ...js, passStructure: true, length: 0 },
+  construct: {
+    args: { init: FetchSessionInit.nullable },
+    expected: { init: "FetchSession: options must be an object" },
+    ...js,
+    passStructure: true,
+    length: 0,
+  },
   internalFields: ["checkServerIdentity"],
   proto: {
     close: {},

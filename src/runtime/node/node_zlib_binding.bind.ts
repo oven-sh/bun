@@ -34,16 +34,13 @@ const write = {
   },
 } as const;
 const int32 = b.i32.validateInteger();
-/** An error shows `other`. */
-export const Uint32ArrayArgument = b.union({
-  array: b.cell("JSC::JSUint32Array", "JavaScriptCore/JSTypedArrays.h", {
-    rustPath: "bun_jsc::bindgen::BufferSource",
-    tsType: "Uint32Array",
-  }),
-  other: b.opaque,
-});
-export const ZlibProcessCallback = b.union({ callback: b.callable, other: b.opaque });
-export const ZlibDictionary = b.union({ missing: b.undefined, buffer: b.bufferSource.allowShared, other: b.opaque });
+const uint32Array = b.cell("JSC::JSUint32Array", "JavaScriptCore/JSTypedArrays.h", {
+  rustPath: "bun_jsc::bindgen::BufferSource",
+  tsType: "Uint32Array",
+}).deferred;
+const callback = b.callable.deferred;
+const dictionary = b.bufferSource.allowShared.optional.deferred;
+const bufferSource = ["Buffer", "TypedArray", "DataView"];
 
 /** The native handle of a `node:zlib` stream: `kHandle` in `src/js/node/zlib.ts`. */
 const compressionStream = <Init extends object, Params extends object>(
@@ -79,10 +76,11 @@ export const NativeZlib = compressionStream(
       level: int32,
       memLevel: int32,
       strategy: int32,
-      writeState: Uint32ArrayArgument,
-      processCallback: ZlibProcessCallback,
-      dictionary: ZlibDictionary,
+      writeResult: uint32Array,
+      writeCallback: callback,
+      dictionary,
     },
+    expected: { writeResult: ["Uint32Array"], writeCallback: ["function"], dictionary: bufferSource },
   },
   { ...method, args: { level: int32, strategy: int32 } },
 );
@@ -92,10 +90,16 @@ export const NativeBrotli = compressionStream(
   [8, 9],
   {
     args: {
-      initParamsArray: Uint32ArrayArgument,
-      writeState: Uint32ArrayArgument,
-      processCallback: ZlibProcessCallback,
-      dictionary: ZlibDictionary,
+      params: uint32Array,
+      writeResult: uint32Array,
+      writeCallback: callback,
+      dictionary,
+    },
+    expected: {
+      params: ["Uint32Array"],
+      writeResult: ["Uint32Array"],
+      writeCallback: ["function"],
+      dictionary: bufferSource,
     },
     returns: b.bool,
   },
@@ -107,11 +111,17 @@ export const NativeZstd = compressionStream(
   [10, 11],
   {
     args: {
-      initParamsArray: Uint32ArrayArgument,
+      initParamsArray: uint32Array,
       pledgedSrcSize: b.f64.otherAsNull,
-      writeState: Uint32ArrayArgument,
-      processCallback: ZlibProcessCallback,
-      dictionary: ZlibDictionary,
+      writeState: uint32Array,
+      processCallback: callback,
+      dictionary,
+    },
+    expected: {
+      initParamsArray: ["Uint32Array"],
+      writeState: ["Uint32Array"],
+      processCallback: ["function"],
+      dictionary: bufferSource,
     },
     returns: b.bool,
   },

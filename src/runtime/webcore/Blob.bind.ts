@@ -2,7 +2,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 import { BuildArtifact } from "../api/JSBundler.bind.ts";
 import { Image, ImageOptions } from "../image/Image.bind.ts";
 import { PathOrFileDescriptor } from "../node/node_fs_binding.bind.ts";
-import { BlobChunkSize, BlobSliceBound, BunWriteData } from "./BlobArguments.bind.ts";
+import { BlobSliceBound, BunWriteData, chunkSize } from "./BlobArguments.bind.ts";
 
 export default b.module({ rustPath: "crate::webcore::blob" });
 
@@ -20,7 +20,6 @@ export const OptionText = b.union({
 export const S3Size = b.union({ missing: b.null, bigInt: b.i64.asIntN, other: b.f64.loose });
 /** `number` saturates and `other` wraps. */
 export const S3Count = b.union({ missing: b.null, number: b.f64, other: b.i32.allowBigInt.wrap });
-export const S3Name = b.union({ missing: b.null, name: b.string.utf8.owned, other: b.ignored });
 /** What a function that reads or writes a file reads of its options when the file is in S3. */
 export const S3Options = b.dictionary(
   {
@@ -35,8 +34,8 @@ export const S3Options = b.dictionary(
     partSize: S3Size,
     queueSize: S3Count,
     retry: S3Count,
-    acl: S3Name,
-    storageClass: S3Name,
+    acl: { type: b.string.utf8.owned.nullable, expected: "acl must be a string" },
+    storageClass: { type: b.string.utf8.owned.nullable, expected: "storageClass must be a string" },
     contentDisposition: OptionText,
     type: OptionText,
     contentEncoding: OptionText,
@@ -58,7 +57,6 @@ export const BlobParts = b.union({
   null: b.null,
   list: b.jsArray,
   buffer: b.bufferSource.allowShared,
-  other: b.ignored,
 });
 
 export const BlobOptionsArgument = b.union({ missing: b.undefined, options: b.object, other: b.ignored });
@@ -79,7 +77,12 @@ export const Blob = b.class({
   overridesToJS: true,
   rustTraits: ["crate::webcore::blob::BlobExt"],
   estimatedSize: true,
-  construct: { args: { parts: BlobParts, options: BlobOptionsArgument }, ...js, length: 0 },
+  construct: {
+    args: { parts: BlobParts, options: BlobOptionsArgument },
+    expected: { parts: "new Blob() expects an Array" },
+    ...js,
+    length: 0,
+  },
   internalFields: ["stream"],
   proto: {
     arrayBuffer: method,
@@ -106,7 +109,13 @@ export const Blob = b.class({
       length: 2,
     },
     stat: { ...method, returns: b.opaque },
-    stream: { ...method, args: { chunkSize: BlobChunkSize }, returns: b.object, passThis: true },
+    stream: {
+      ...method,
+      args: { chunkSize },
+      expected: { chunkSize: "chunkSize must be a number" },
+      returns: b.object,
+      passThis: true,
+    },
     text: method,
     type: { getter: b.string.local, capability: "js" },
     unlink,

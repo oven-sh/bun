@@ -13,7 +13,7 @@ use bun_s3_signing::{
 };
 use bun_url::URL;
 
-use crate::generated_bindgen::blob::{OptionText, S3Count, S3Name, S3Options, S3Size};
+use crate::generated_bindgen::blob::{OptionText, S3Count, S3Options, S3Size};
 
 /// `opts.{key}` → owned UTF-8 slice when the property is present, truthy, a
 /// JS string, and non-empty. A non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`.
@@ -275,22 +275,18 @@ pub(crate) fn count_from_js(count: S3Count) -> Option<i32> {
 
 fn enum_from_map<E: Copy + 'static, M: ComptimeStringMap<Value = E>>(
     global_object: &JSGlobalObject,
-    name: S3Name,
+    name: Option<bun_core::Utf8Bytes<'static>>,
     property_name: &str,
     map: &'static M,
     one_of: &str,
 ) -> JsResult<Option<E>> {
-    match name {
-        S3Name::Missing => Ok(None),
-        S3Name::Name(name) => match map.lookup(name.slice()) {
-            Some(value) => Ok(Some(*value)),
-            None => Err(global_object
-                .throw_invalid_arguments(format_args!("{property_name} must be one of {one_of}"))),
-        },
-        S3Name::Other => {
-            Err(global_object
-                .throw_invalid_arguments(format_args!("{property_name} must be a string")))
-        }
+    let Some(name) = name else {
+        return Ok(None);
+    };
+    match map.lookup(name.slice()) {
+        Some(value) => Ok(Some(*value)),
+        None => Err(global_object
+            .throw_invalid_arguments(format_args!("{property_name} must be one of {one_of}"))),
     }
 }
 

@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use crate::generated_bindgen::node_http_binding::WebSocketHandlers;
 use crate::generated_bindgen::server::{
-    DeflateOption, OptionBool, OptionNumber, PerMessageDeflate, WebSocketOptions,
+    DeflateOption, OptionNumber, PerMessageDeflate, WebSocketOptions,
 };
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_core::comptime_string_map::ComptimeStringMap;
@@ -246,11 +246,6 @@ pub(crate) fn on_create(
         PerMessageDeflate::Flag(false) | PerMessageDeflate::Null => {
             server.compression = 0;
         }
-        PerMessageDeflate::Other => {
-            return Err(global_object.throw_invalid_arguments(format_args!(
-                "websocket expects perMessageDeflate to be a boolean or an object"
-            )));
-        }
         PerMessageDeflate::Options(per_message_deflate) => {
             let compress = deflate_option(
                 global_object,
@@ -324,43 +319,19 @@ pub(crate) fn on_create(
         }
     }
 
-    match object.close_on_backpressure_limit(global_object)? {
-        OptionBool::Missing => {}
-        OptionBool::Flag(value) => {
-            server.close_on_backpressure_limit = value;
-        }
-        OptionBool::Other => {
-            return Err(global_object.throw_invalid_arguments(format_args!(
-                "websocket expects closeOnBackpressureLimit to be a boolean"
-            )));
-        }
+    if let Some(value) = object.close_on_backpressure_limit(global_object)? {
+        server.close_on_backpressure_limit = value;
     }
 
-    match object.send_pings(global_object)? {
-        OptionBool::Missing => {}
-        OptionBool::Flag(value) => {
-            server.send_pings_automatically = value;
-        }
-        OptionBool::Other => {
-            return Err(global_object.throw_invalid_arguments(format_args!(
-                "websocket expects sendPings to be a boolean"
-            )));
-        }
+    if let Some(value) = object.send_pings(global_object)? {
+        server.send_pings_automatically = value;
     }
 
-    match object.publish_to_self(global_object)? {
-        OptionBool::Missing => {}
-        OptionBool::Flag(value) => {
-            server
-                .handler
-                .flags
-                .set(HandlerFlags::PUBLISH_TO_SELF, value);
-        }
-        OptionBool::Other => {
-            return Err(global_object.throw_invalid_arguments(format_args!(
-                "websocket expects publishToSelf to be a boolean"
-            )));
-        }
+    if let Some(value) = object.publish_to_self(global_object)? {
+        server
+            .handler
+            .flags
+            .set(HandlerFlags::PUBLISH_TO_SELF, value);
     }
 
     Ok(server)

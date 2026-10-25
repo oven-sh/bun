@@ -61,13 +61,10 @@ mod _impl {
     use core::cell::Cell;
     use core::ffi::c_uint;
 
-    use bun_jsc::bindgen::{JsScope, JsWrapper};
+    use bun_jsc::bindgen::{BufferSource, Callable, Deferred, JsLocal, JsScope, JsWrapper};
     use bun_jsc::{ErrorCode, JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
     use bun_ptr::RefPtr;
 
-    use crate::generated_bindgen::node_zlib_binding::{
-        Uint32ArrayArgument, ZlibDictionary, ZlibProcessCallback,
-    };
     use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive, Error};
     use crate::node::util::validators;
 
@@ -155,10 +152,10 @@ mod _impl {
             &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
-            init_params_array: Uint32ArrayArgument<'_>,
-            write_state: Uint32ArrayArgument<'_>,
-            process_callback: ZlibProcessCallback<'_>,
-            dictionary: ZlibDictionary<'_>,
+            params: Deferred<'_, JsLocal<'_, BufferSource>>,
+            write_result: Deferred<'_, JsLocal<'_, BufferSource>>,
+            write_callback: Deferred<'_, JsLocal<'_, Callable>>,
+            dictionary: Deferred<'_, Option<JsLocal<'_, BufferSource>>>,
         ) -> JsResult<bool> {
             let global_this = cx.global();
             let this_value = this_value.to_js();
@@ -168,16 +165,7 @@ mod _impl {
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_result_value = match write_state {
-                Uint32ArrayArgument::Array(array) => array.to_js(),
-                Uint32ArrayArgument::Other(value) => {
-                    return Err(global_this.throw_invalid_argument_type_value(
-                        "writeResult",
-                        "Uint32Array",
-                        value.to_js(),
-                    ));
-                }
-            };
+            let write_result_value = write_result.convert(global_this)?.to_js();
             if write_result_value
                 .as_array_buffer(global_this)
                 .is_none_or(|buf| buf.byte_len < 2 * size_of::<u32>())
@@ -189,46 +177,22 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_callback = match process_callback {
-                ZlibProcessCallback::Callback(callback) => {
-                    validators::validate_function(global_this, "writeCallback", callback.to_js())?
-                }
-                ZlibProcessCallback::Other(value) => {
-                    return Err(global_this.throw_invalid_argument_type_value(
-                        "writeCallback",
-                        "function",
-                        value.to_js(),
-                    ));
-                }
-            };
+            let write_callback = validators::validate_function(
+                global_this,
+                "writeCallback",
+                write_callback.convert(global_this)?.to_js(),
+            )?;
 
             // Validate `params` before any native state is initialized so the
             // error path needs no cleanup. `as_u32` reinterprets the view's
             // bytes, so the element type must actually be Uint32Array.
-            let mut params_buf = match init_params_array {
-                Uint32ArrayArgument::Array(array) => Some(array.as_array_buffer(global_this)),
-                Uint32ArrayArgument::Other(value) => {
-                    return Err(global_this.throw_invalid_argument_type_value(
-                        "params",
-                        "Uint32Array",
-                        value.to_js(),
-                    ));
-                }
-            };
+            let mut params_buf = Some(params.convert(global_this)?.as_array_buffer(global_this));
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
             // outlives the `stream.init` call below (E0716 otherwise).
-            let dictionary_buf = match dictionary {
-                ZlibDictionary::Missing => None,
-                ZlibDictionary::Buffer(buffer) => Some(buffer.as_array_buffer(global_this)),
-                ZlibDictionary::Other(value) => {
-                    return Err(global_this.throw_invalid_argument_type_value(
-                        "dictionary",
-                        "Buffer, TypedArray, or DataView",
-                        value.to_js(),
-                    ));
-                }
-            };
+            let dictionary_buf = dictionary
+                .convert(global_this)?
+                .map(|buffer| buffer.as_array_buffer(global_this));
             let dictionary = dictionary_buf.as_ref().map(|buf| buf.byte_slice());
 
             js::write_result_set_cached(this_value, global_this, write_result_value);

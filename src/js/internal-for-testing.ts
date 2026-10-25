@@ -340,7 +340,6 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   describePathOrFd: $bindgen("bindgen_test.bind.ts", "describePathOrFd"),
   countOrText: $bindgen("bindgen_test.bind.ts", "countOrText"),
   lengthOf: $bindgen("bindgen_test.bind.ts", "lengthOf"),
-  returnsNull: $bindgen("bindgen_test.bind.ts", "returnsNull"),
   describeAbsent: $bindgen("bindgen_test.bind.ts", "describeAbsent"),
   describeAbsentDeferred: $bindgen("bindgen_test.bind.ts", "describeAbsentDeferred"),
   describeDeferred: $bindgen("bindgen_test.bind.ts", "describeDeferred"),

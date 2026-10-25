@@ -1,5 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { BlobChunkSize, BlobSliceBound } from "../webcore/BlobArguments.bind.ts";
+import { BlobSliceBound, chunkSize } from "../webcore/BlobArguments.bind.ts";
 
 export default b.module({ rustPath: "crate::api::js_bundler" });
 
@@ -26,7 +26,13 @@ export const BuildArtifact = b.class({
     },
     /** `Bun.build` fills the field of an output that has a source map. */
     sourcemap: { getter: b.self.nullable, cache: true, capability: "heap" },
-    stream: { ...method, args: { chunkSize: BlobChunkSize }, returns: b.object, passThis: true },
+    stream: {
+      ...method,
+      args: { chunkSize },
+      expected: { chunkSize: "chunkSize must be a number" },
+      returns: b.object,
+      passThis: true,
+    },
     text: method,
     type: { getter: b.string.local, cache: true, capability: "js" },
   },

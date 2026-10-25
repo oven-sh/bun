@@ -5,16 +5,13 @@ mod _impl {
     use core::ffi::{c_int, c_uint, c_void};
     use core::ptr;
 
-    use bun_jsc::bindgen::{JsScope, JsWrapper};
+    use bun_jsc::bindgen::{BufferSource, Callable, Deferred, JsLocal, JsScope, JsWrapper};
     use bun_jsc::{
         self as jsc, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
     };
     use bun_ptr::RefPtr;
     use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
-    use crate::generated_bindgen::node_zlib_binding::{
-        Uint32ArrayArgument, ZlibDictionary, ZlibProcessCallback,
-    };
     use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive, Error};
     use crate::node::util::validators;
     // #[repr(u8)] enum shared by all native-zlib stream types.
@@ -113,11 +110,11 @@ mod _impl {
             &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
-            init_params_array: Uint32ArrayArgument<'_>,
+            init_params_array: Deferred<'_, JsLocal<'_, BufferSource>>,
             pledged_src_size: Option<f64>,
-            write_state: Uint32ArrayArgument<'_>,
-            process_callback: ZlibProcessCallback<'_>,
-            dictionary: ZlibDictionary<'_>,
+            write_state: Deferred<'_, JsLocal<'_, BufferSource>>,
+            process_callback: Deferred<'_, JsLocal<'_, Callable>>,
+            dictionary: Deferred<'_, Option<JsLocal<'_, BufferSource>>>,
         ) -> JsResult<bool> {
             let global = cx.global();
             let this_value = this_value.to_js();
@@ -125,16 +122,7 @@ mod _impl {
             // across threads; a closed `Context` cannot be re-initialized.
             self.throw_unless_idle(global)?;
 
-            let write_state_value = match write_state {
-                Uint32ArrayArgument::Array(array) => array.to_js(),
-                Uint32ArrayArgument::Other(value) => {
-                    return Err(global.throw_invalid_argument_type_value(
-                        "writeState",
-                        "Uint32Array",
-                        value.to_js(),
-                    ));
-                }
-            };
+            let write_state_value = write_state.convert(global)?.to_js();
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
             if write_state_value
@@ -150,18 +138,11 @@ mod _impl {
             }
             js::write_result_set_cached(this_value, global, write_state_value);
 
-            let write_js_callback = match process_callback {
-                ZlibProcessCallback::Callback(callback) => {
-                    validators::validate_function(global, "processCallback", callback.to_js())?
-                }
-                ZlibProcessCallback::Other(value) => {
-                    return Err(global.throw_invalid_argument_type_value(
-                        "processCallback",
-                        "function",
-                        value.to_js(),
-                    ));
-                }
-            };
+            let write_js_callback = validators::validate_function(
+                global,
+                "processCallback",
+                process_callback.convert(global)?.to_js(),
+            )?;
             js::write_callback_set_cached(
                 this_value,
                 global,
@@ -180,17 +161,9 @@ mod _impl {
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
             // outlives the `stream.init` call below (E0716 otherwise).
-            let dictionary_buf = match dictionary {
-                ZlibDictionary::Missing => None,
-                ZlibDictionary::Buffer(buffer) => Some(buffer.as_array_buffer(global)),
-                ZlibDictionary::Other(value) => {
-                    return Err(global.throw_invalid_argument_type_value(
-                        "dictionary",
-                        "Buffer, TypedArray, or DataView",
-                        value.to_js(),
-                    ));
-                }
-            };
+            let dictionary_buf = dictionary
+                .convert(global)?
+                .map(|buffer| buffer.as_array_buffer(global));
             let dictionary = dictionary_buf.as_ref().map(|buf| buf.byte_slice());
 
             let err = self
@@ -201,16 +174,7 @@ mod _impl {
                 return Ok(false);
             }
 
-            let mut params_ = match init_params_array {
-                Uint32ArrayArgument::Array(array) => Some(array.as_array_buffer(global)),
-                Uint32ArrayArgument::Other(value) => {
-                    return Err(global.throw_invalid_argument_type_value(
-                        "initParamsArray",
-                        "Uint32Array",
-                        value.to_js(),
-                    ));
-                }
-            };
+            let mut params_ = Some(init_params_array.convert(global)?.as_array_buffer(global));
             let params_: &mut [u32] = params_.as_mut().map_or(&mut [], jsc::ArrayBuffer::as_u32);
             for (i, &x) in params_.iter().enumerate() {
                 if x == u32::MAX {

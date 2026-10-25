@@ -18,8 +18,9 @@ public:
     {
     }
 
-    // Empty if it threw. Out of line: inlined, it is most of the size of every generated dictionary converter.
+    // Empty if it threw.
     JSC::JSValue get(unsigned index) { return get(m_memberNames[index]); }
+    // Inlined, it is most of the size of every generated dictionary converter.
     NEVER_INLINE JSC::JSValue get(const JSC::Identifier&);
     // As `get`, of the object's own properties.
     JSC::JSValue getOwn(unsigned index);

@@ -9,7 +9,7 @@ use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{Deferred, JsLocal, JsScope, JsWrapper};
 
 use crate::webcore::jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
@@ -120,7 +120,7 @@ use crate::generated_bindgen::blob::{
     BlobName, BlobOptionsArgument, BlobOrBuildArtifact, BlobParts, BlobPropertyBag, BlobType,
     BunFileOptions, BunWriteOptions, OptionText, S3Options, WriteOptionsArgument,
 };
-use crate::generated_bindgen::blob_arguments::{BlobChunkSize, BlobSliceBound, BunWriteData};
+use crate::generated_bindgen::blob_arguments::{BlobSliceBound, BunWriteData};
 use crate::generated_bindgen::image::ImageOptions;
 
 /// [`BlobExt::get`] goes through all of them, and takes a value that is not a list as the only part.
@@ -192,13 +192,13 @@ pub(crate) trait BlobExt {
         &self,
         this_value: JsWrapper<'_, Blob>,
         cx: &mut JsScope<'_>,
-        chunk_size: BlobChunkSize,
+        chunk_size: Deferred<'_, Option<f64>>,
     ) -> JsResult<JSValue>;
     fn get_stream_with_cache(
         &self,
         cx: &bun_jsc::JsThread<'_>,
         this_value: JSValue,
-        chunk_size: BlobChunkSize,
+        chunk_size: Deferred<'_, Option<f64>>,
         get_cached: fn(JSValue) -> Option<JSValue>,
         set_cached: fn(JSValue, &JSGlobalObject, JSValue),
     ) -> JsResult<JSValue>;
@@ -1102,7 +1102,7 @@ impl BlobExt for Blob {
         &self,
         this_value: JsWrapper<'_, Blob>,
         cx: &mut JsScope<'_>,
-        chunk_size: BlobChunkSize,
+        chunk_size: Deferred<'_, Option<f64>>,
     ) -> JsResult<JSValue> {
         self.get_stream_with_cache(
             &cx.js_thread(),
@@ -1120,7 +1120,7 @@ impl BlobExt for Blob {
         &self,
         cx: &bun_jsc::JsThread<'_>,
         this_value: JSValue,
-        chunk_size: BlobChunkSize,
+        chunk_size: Deferred<'_, Option<f64>>,
         get_cached: fn(JSValue) -> Option<JSValue>,
         set_cached: fn(JSValue, &JSGlobalObject, JSValue),
     ) -> JsResult<JSValue> {
@@ -1129,20 +1129,12 @@ impl BlobExt for Blob {
             return Ok(cached);
         }
         let mut recommended_chunk_size: SizeType = 0;
-        match chunk_size {
-            BlobChunkSize::Missing => {}
-            BlobChunkSize::Size(chunk_size) => {
-                // `(x << 12) >> 12` on i64 truncates to a sign-extended i52
-                // (arithmetic right-shift sign-extends bit 51), so negatives clamp to 0
-                // via `.max(0)` instead of becoming the 52-bit zero-extended mask.
-                let v = ((chunk_size as i64) << 12) >> 12;
-                recommended_chunk_size = v.max(0) as SizeType;
-            }
-            BlobChunkSize::Other => {
-                return Err(
-                    global_this.throw_invalid_arguments(format_args!("chunkSize must be a number"))
-                );
-            }
+        if let Some(chunk_size) = chunk_size.convert(global_this)? {
+            // `(x << 12) >> 12` on i64 truncates to a sign-extended i52
+            // (arithmetic right-shift sign-extends bit 51), so negatives clamp to 0
+            // via `.max(0)` instead of becoming the 52-bit zero-extended mask.
+            let v = ((chunk_size as i64) << 12) >> 12;
+            recommended_chunk_size = v.max(0) as SizeType;
         }
         let stream = ReadableStream::from_blob_copy_ref(cx, self, recommended_chunk_size)?;
 
@@ -2120,10 +2112,6 @@ impl BlobExt for Blob {
                 BlobParts::Undefined | BlobParts::Null => Blob::init_empty(global_this),
                 BlobParts::List(parts) => Blob::get::<false, true>(global_this, parts.to_js())?,
                 BlobParts::Buffer(parts) => Blob::get::<false, true>(global_this, parts.to_js())?,
-                BlobParts::Other => {
-                    return Err(global_this
-                        .throw_invalid_arguments(format_args!("new Blob() expects an Array")));
-                }
             };
 
             if let BlobOptionsArgument::Options(options) = options
@@ -3779,7 +3767,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
             match pathlike_tag {
                 PathOrFileDescriptorSerializeTag::Fd => {
                     let fd: Fd = reader.read_struct()?;
-                    // Wire bytes are untrusted: enforce the same range as `FdJsc::from_js_validated`
+                    // Wire bytes are untrusted: enforce the range an fd argument has,
                     // so a crafted record cannot materialize an fd no JS could construct (fd == -1
                     // hits `Fd::as_borrowed_fd`'s `raw != -1` assert on posix and aborts).
                     #[cfg(not(windows))]

@@ -11,7 +11,7 @@ use crate::generated_bindgen::filesystem_router::FrameworkRouterStyle;
 use crate::generated_bindgen::response::HeadersInit;
 use crate::generated_bindgen::server::{
     ServeOptions, ServerFetchInit, ServerFetchInput, ServerProtocol, TimeoutTarget, UpgradeHeaders,
-    UpgradeOptionsArgument, WebSocketMessage,
+    UpgradeInit, WebSocketMessage,
 };
 use crate::generated_bindgen::server_body::{
     BunServe__onRejectPlugins, BunServe__onResolvePlugins,
@@ -30,7 +30,7 @@ use bun_core::{Output, fmt as bun_fmt};
 use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, Deferred, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, GlobalRef, JSGlobalObject, JSObject, JSPromise, JSValue, JsError,
@@ -1217,7 +1217,10 @@ struct UpgradeOptions {
 }
 
 impl UpgradeOptions {
-    fn from_js(global: &JSGlobalObject, options: UpgradeOptionsArgument<'_>) -> JsResult<Self> {
+    fn from_js(
+        global: &JSGlobalObject,
+        options: Deferred<'_, Option<UpgradeInit<'_>>>,
+    ) -> JsResult<Self> {
         let mut this = Self {
             data: JSValue::ZERO,
             headers: None,
@@ -1225,13 +1228,8 @@ impl UpgradeOptions {
             _headers_object: jsc::EnsureStillAlive(JSValue::UNDEFINED),
             _headers_converted: None,
         };
-        let options = match options {
-            UpgradeOptionsArgument::Missing => return Ok(this),
-            UpgradeOptionsArgument::Options(options) => options,
-            UpgradeOptionsArgument::Other => {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("upgrade options must be an object")));
-            }
+        let Some(options) = options.convert(global)? else {
+            return Ok(this);
         };
         if let Some(data) = options.data(global)? {
             this.data = data.to_js();
@@ -1250,11 +1248,6 @@ impl UpgradeOptions {
                     ._headers_converted
                     .as_ref()
                     .and_then(|headers| NonNull::new(headers.as_ptr()));
-            }
-            UpgradeHeaders::Other => {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "upgrade options.headers must be a Headers or an object"
-                )));
             }
         }
         if let Some(headers) = this.headers()
@@ -1567,7 +1560,7 @@ where
         &self,
         cx: &mut JsScope<'_>,
         request: Option<JsLocal<'_, JSObject>>,
-        options: UpgradeOptionsArgument<'_>,
+        options: Deferred<'_, Option<UpgradeInit<'_>>>,
     ) -> JsResult<bool> {
         use bun_core::Utf8Bytes;
         use bun_jsc::HTTPHeaderName;

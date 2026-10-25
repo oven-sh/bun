@@ -57,7 +57,7 @@ export const f64 = new DoubleType();
 /** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. As a result, `b.string.local`. */
 export const string = new StringType();
 
-/** Any JS value, as a `JsLocal<'a>`: Rust holds it, stores it and hands it back, and cannot look inside. */
+/** Any JS value, as a `JsLocal<'a>`, for a function that does not depend on its type: it holds it, stores it or hands it on. */
 export { opaqueType as opaque } from "./bindgen-lib-internal.ts";
 
 /** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */

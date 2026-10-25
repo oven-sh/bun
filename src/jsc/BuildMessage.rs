@@ -94,7 +94,7 @@ impl BuildMessage {
         object.put(
             global,
             b"position",
-            Self::generate_position_object(&self.msg, global)?.unwrap_or(JSValue::NULL),
+            Self::generate_position_object(&self.msg, global)?,
         );
         object.put(
             global,
@@ -108,9 +108,9 @@ impl BuildMessage {
     pub(crate) fn generate_position_object(
         msg: &bun_ast::Msg,
         global: &JSGlobalObject,
-    ) -> JsResult<Option<JSValue>> {
+    ) -> JsResult<JSValue> {
         let Some(location) = &msg.data.location else {
-            return Ok(None);
+            return Ok(JSValue::NULL);
         };
         let object = JSValue::create_empty_object(global, 7);
 
@@ -137,7 +137,7 @@ impl BuildMessage {
         object.put(global, b"length", JSValue::from(location.length));
         object.put(global, b"offset", JSValue::from(location.offset));
 
-        Ok(Some(object))
+        Ok(object)
     }
 
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
@@ -155,7 +155,7 @@ impl BuildMessage {
         }
     }
 
-    pub fn get_position(&self, cx: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
+    pub fn get_position(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         BuildMessage::generate_position_object(&self.msg, cx.global())
     }
 

@@ -1362,8 +1362,6 @@ pub(crate) fn length_of(length: TestLength) -> Option<f64> {
     }
 }
 
-pub(crate) fn returns_null() {}
-
 pub(crate) fn describe_absent(
     count: i32,
     flag: Option<bool>,

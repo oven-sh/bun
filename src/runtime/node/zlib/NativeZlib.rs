@@ -8,13 +8,10 @@ mod _impl {
     use super::*;
     use core::cell::Cell;
 
-    use bun_jsc::bindgen::{JsScope, JsWrapper};
+    use bun_jsc::bindgen::{BufferSource, Callable, Deferred, JsLocal, JsScope, JsWrapper};
     use bun_jsc::{JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
     use bun_ptr::RefPtr;
 
-    use crate::generated_bindgen::node_zlib_binding::{
-        Uint32ArrayArgument, ZlibDictionary, ZlibProcessCallback,
-    };
     use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive};
     use crate::node::util::validators;
 
@@ -88,9 +85,9 @@ mod _impl {
             level: i32,
             mem_level: i32,
             strategy: i32,
-            write_state: Uint32ArrayArgument<'_>,
-            process_callback: ZlibProcessCallback<'_>,
-            dictionary: ZlibDictionary<'_>,
+            write_result: Deferred<'_, JsLocal<'_, BufferSource>>,
+            write_callback: Deferred<'_, JsLocal<'_, Callable>>,
+            dictionary: Deferred<'_, Option<JsLocal<'_, BufferSource>>>,
         ) -> JsResult<()> {
             let global = cx.global();
             let this_value = this_value.to_js();
@@ -100,16 +97,7 @@ mod _impl {
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_result_value = match write_state {
-                Uint32ArrayArgument::Array(array) => array.to_js(),
-                Uint32ArrayArgument::Other(value) => {
-                    return Err(global.throw_invalid_argument_type_value(
-                        "writeResult",
-                        "Uint32Array",
-                        value.to_js(),
-                    ));
-                }
-            };
+            let write_result_value = write_result.convert(global)?.to_js();
             if write_result_value
                 .as_array_buffer(global)
                 .is_none_or(|buf| buf.byte_len < 2 * size_of::<u32>())
@@ -121,31 +109,16 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_callback = match process_callback {
-                ZlibProcessCallback::Callback(callback) => {
-                    validators::validate_function(global, "writeCallback", callback.to_js())?
-                }
-                ZlibProcessCallback::Other(value) => {
-                    return Err(global.throw_invalid_argument_type_value(
-                        "writeCallback",
-                        "function",
-                        value.to_js(),
-                    ));
-                }
-            };
+            let write_callback = validators::validate_function(
+                global,
+                "writeCallback",
+                write_callback.convert(global)?.to_js(),
+            )?;
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
             // the call to `stream.init` below (E0716 otherwise).
-            let dictionary_buf = match dictionary {
-                ZlibDictionary::Missing => None,
-                ZlibDictionary::Buffer(buffer) => Some(buffer.as_array_buffer(global)),
-                ZlibDictionary::Other(value) => {
-                    return Err(global.throw_invalid_argument_type_value(
-                        "dictionary",
-                        "Buffer, TypedArray, or DataView",
-                        value.to_js(),
-                    ));
-                }
-            };
+            let dictionary_buf = dictionary
+                .convert(global)?
+                .map(|buffer| buffer.as_array_buffer(global));
             let dictionary = dictionary_buf.as_ref().map(|buf| buf.byte_slice());
             // `deflateSetDictionary`/`inflateSetDictionary` take a `uInt`
             // length; reject anything larger before `Context::init` copies it.

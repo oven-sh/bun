@@ -1350,12 +1350,6 @@ describe(".asIntN", () => {
   });
 });
 
-describe("b.null", () => {
-  it("is a result", () => {
-    expect(bindgen.returnsNull()).toBeNull();
-  });
-});
-
 describe("a union as an alternative", () => {
   it("is a variant that holds the inner enum", () => {
     expect(bindgen.describeNested(1)).toBe("count 1");

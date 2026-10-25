@@ -31,10 +31,15 @@ export const TimeoutTarget = b.union({
   other: b.ignored,
 });
 
-export const UpgradeHeaders = b.union({ missing: b.null, headers: Headers, init: b.object, other: b.ignored });
+export const UpgradeHeaders = b.union({ missing: b.null, headers: Headers, init: b.object });
 /** `server.upgrade` reads them only for a valid handshake. */
-export const UpgradeInit = b.dictionary({ data: b.opaque.optional, headers: UpgradeHeaders }, { deferred: true });
-export const UpgradeOptionsArgument = b.union({ missing: b.null, options: UpgradeInit, other: b.ignored });
+export const UpgradeInit = b.dictionary(
+  {
+    data: b.opaque.optional,
+    headers: { type: UpgradeHeaders, expected: "upgrade options.headers must be a Headers or an object" },
+  },
+  { deferred: true },
+);
 
 /** Told apart without running JavaScript. `stringObject`, and `other` where a method takes it, is sent as its `webSocketMessageText`. */
 export const WebSocketMessage = b.union({
@@ -49,12 +54,9 @@ export const WebSocketMessage = b.union({
 export const WebSocketTopic = b.union({ text: b.string.view, stringObject: b.stringObject, other: b.opaque });
 export const webSocketMessageText = b.conversion(b.string.loose);
 export const WebSocketCompress = b.union({ missing: b.undefined, flag: b.bool, other: b.ignored });
-export const WebSocketCloseCode = b.union({ missing: b.undefined, code: b.f64, other: b.ignored });
 
 /** Each option reports `other` in its own words. */
 export const OptionNumber = b.union({ missing: b.null, number: b.f64, other: b.ignored });
-export const OptionBool = b.union({ missing: b.null, flag: b.bool, other: b.ignored });
-/** `""` is as good as missing. */
 /** `false` is as good as missing. */
 export const Stringish = b.union({
   missing: b.null,
@@ -80,18 +82,23 @@ export const PerMessageDeflate = b.union({
   null: b.null,
   flag: b.bool,
   options: PerMessageDeflateOptions,
-  other: b.ignored,
 });
 /** The `websocket` option of `Bun.serve`. Its handlers are a `WebSocketHandlers`. */
 export const WebSocketOptions = b.dictionary(
   {
-    perMessageDeflate: PerMessageDeflate,
+    perMessageDeflate: {
+      type: PerMessageDeflate,
+      expected: "websocket expects perMessageDeflate to be a boolean or an object",
+    },
     maxPayloadLength: OptionNumber,
     idleTimeout: OptionNumber,
     backpressureLimit: OptionNumber,
-    closeOnBackpressureLimit: OptionBool,
-    sendPings: OptionBool,
-    publishToSelf: OptionBool,
+    closeOnBackpressureLimit: {
+      type: b.bool.nullable,
+      expected: "websocket expects closeOnBackpressureLimit to be a boolean",
+    },
+    sendPings: { type: b.bool.nullable, expected: "websocket expects sendPings to be a boolean" },
+    publishToSelf: { type: b.bool.nullable, expected: "websocket expects publishToSelf to be a boolean" },
   },
   { deferred: true },
 );
@@ -364,7 +371,8 @@ function server(name: string) {
       },
       unref: { returns: b.self, passThis: true, rustName: "do_unref" },
       upgrade: {
-        args: { request: b.object.otherAsNull, options: UpgradeOptionsArgument },
+        args: { request: b.object.otherAsNull, options: UpgradeInit.nullable.deferred },
+        expected: { options: "upgrade options must be an object" },
         returns: b.bool,
         capability: "js",
         throws: true,
@@ -416,7 +424,8 @@ export const ServerWebSocket = b.class({
   proto: {
     binaryType: { getter: BinaryType, setter: true },
     close: {
-      args: { code: WebSocketCloseCode, reason: b.string.loose.utf8.owned.optional.deferred },
+      args: { code: b.f64.optional.deferred, reason: b.string.loose.utf8.owned.optional.deferred },
+      expected: { code: "close requires a numeric code or undefined" },
       capability: "js",
       throws: true,
       length: 3,

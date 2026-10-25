@@ -4,7 +4,7 @@ import { ReadableStream } from "./ByteStream.bind.ts";
 import { Request, Response } from "./response.bind.ts";
 
 /** A cached stream is returned whatever `chunkSize` is. */
-export const BlobChunkSize = b.union({ missing: b.null, size: b.f64, other: b.ignored });
+export const chunkSize = b.f64.nullable.deferred;
 /** A string in place of `start` or `end` is the content type, and the strings after it are not read. */
 export const BlobSliceBound = b.union({
   contentType: b.string.allowStringObject.deferred,

@@ -251,7 +251,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.wrapped(class, header, options)`      | `&'a T`                          | what an instance of a hand-written C++ wrapper wraps          |
 | `b.opaque`                               | `JsLocal<'a>`                    | anything; see [Opaque values](#opaque-values)                 |
 | `b.rest(T)`                              | `bindgen::Rest<'a, T>`           | this argument and every one after it; only the last argument  |
-| `b.null`                                 | `()`                             | `null` or `undefined`, in a union; as a result, `null`        |
+| `b.null`                                 | `()`                             | `null` or `undefined`, in a union                             |
 | `b.undefined`                            | `()`                             | `undefined`; only in a union                                  |
 | `b.ignored`                              | `()`                             | anything; only the last alternative of a union                |
 | `b.promisePtr("crate::T")`               | `*mut T`                         | the context of a promise reaction; see below                  |
@@ -334,11 +334,11 @@ or an array, compares it with another as a whole, or prints it. All of those tak
 parts of a `Blob`.
 
 A body that tests a value or converts it declares what it looks for instead: a union, a class, `.deferred`. The
-compiler does not hold a body to that, since every handle has `to_js()`. It is what a review of a schema looks for.
+compiler does not hold a body to that, since every handle has `to_js()`.
 
 `b.opaque.optional` is `None` for `undefined`, `.nullable` for `null` too.
 
-A value that was not an argument is a `JSValue`, and the body tests it as before: an element of an array, a property
+A value that was not an argument is a `JSValue`, which the body tests itself: an element of an array, a property
 read while walking, an internal field. `JsLocal::new(&cx.heap, value)` makes a handle of one, for what takes a handle,
 and `JsLocal::<JSObject>::from_js(global, value)` one of an object.
 

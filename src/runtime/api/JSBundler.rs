@@ -3,7 +3,7 @@
 use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
-use crate::generated_bindgen::blob_arguments::{BlobChunkSize, BlobSliceBound};
+use crate::generated_bindgen::blob_arguments::BlobSliceBound;
 use crate::generated_bindgen::js_bundler::js_BuildArtifact as js;
 use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
@@ -15,7 +15,7 @@ use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, Deferred, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
     self as jsc, JSGlobalObject, JSObject, JSString, JSValue, JsError, JsResult, StringJsc as _,
 };
@@ -1991,7 +1991,7 @@ impl BuildArtifact {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        chunk_size: BlobChunkSize,
+        chunk_size: Deferred<'_, Option<f64>>,
     ) -> JsResult<JSValue> {
         self.blob.get_stream_with_cache(
             &cx.js_thread(),

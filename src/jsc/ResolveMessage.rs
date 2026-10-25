@@ -257,8 +257,7 @@ impl ResolveMessage {
         object.put(
             global,
             b"position",
-            crate::BuildMessage::generate_position_object(&self.msg, global)?
-                .unwrap_or(JSValue::NULL),
+            crate::BuildMessage::generate_position_object(&self.msg, global)?,
         );
         object.put(global, b"message", utf8(&self.get_message())?);
         object.put(global, b"level", self.msg.kind.to_js(global)?);
@@ -281,7 +280,7 @@ impl ResolveMessage {
         Ok(resolve_error.to_js(global))
     }
 
-    pub fn get_position(&self, cx: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
+    pub fn get_position(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         crate::BuildMessage::generate_position_object(&self.msg, cx.global())
     }
 

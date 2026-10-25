@@ -584,11 +584,6 @@ fn spawn_maybe_sync<'a>(
                     }
                 }
                 SpawnStdioList::None => {}
-                SpawnStdioList::Other => {
-                    return Err(cx
-                        .global()
-                        .throw_invalid_arguments(format_args!("stdio must be an array")));
-                }
                 SpawnStdioList::Missing => {
                     Stdio::extract(&mut stdio[0], cx, 0, args.stdin(cx.global())?, is_sync)?;
                     Stdio::extract(&mut stdio[2], cx, 2, args.stderr(cx.global())?, is_sync)?;

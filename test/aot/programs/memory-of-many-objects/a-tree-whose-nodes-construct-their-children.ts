@@ -1,7 +1,11 @@
 // A tree of 1.4 million nodes whose constructor constructs the children.
 // Measured: 69 to 70 MB; 89 to 90 MB where the nodes counted as made seldom; 99 to 101 MB in plain Bun.
+// Kept after a collection, by the engine's own count: 64.0 MB; 85.4 MB in plain Bun.
 declare const console: { log(...values: unknown[]): void };
-declare const process: { memoryUsage(): { rss: number } };
+declare const process: { memoryUsage(): { rss: number; heapUsed: number } };
+declare const Bun: { gc(isSynchronous: boolean): void };
+Bun.gc(true);
+const usedBefore = process.memoryUsage().heapUsed;
 const before = process.memoryUsage().rss;
 class Tree {
   first: Tree | null; second: Tree | null; third: Tree | null; fourth: Tree | null; n: number;
@@ -21,3 +25,7 @@ const total = count(tree);
 const grown = process.memoryUsage().rss - before;
 console.log(total, tree.n);
 console.log("grew by less than 80 MB:", grown < 80 * 1024 * 1024);
+Bun.gc(true);
+const kept = process.memoryUsage().heapUsed - usedBefore;
+console.log("what is kept takes less than 75 MB of the heap:", kept < 75 * 1024 * 1024);
+console.log(tree.n);

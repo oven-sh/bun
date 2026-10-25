@@ -23,6 +23,8 @@ const plainBunVaries: Record<string, string> = {
     "plain Bun begins the five CommonJS files that the entry point imports in one of many orders from run to run; the stored output has them in the order of the import statements, which is what the executable always prints",
   "memory-of-many-objects/records-made-by-a-callback-for-each-element":
     "it asks whether the process grew by less than 320 MB: plain Bun grows by 340 MB on Linux, and on macOS by a little less than the bound in some runs",
+  "memory-of-many-objects/records-with-thirty-optional-fields":
+    "it asks whether the process grew by less than 115 MB and keeps less than 92 MB: plain Bun is over both on Linux, and on macOS under both in some runs",
   "objects/copies-of-an-object-with-very-many-names-take-time-in-proportion":
     "each line has a bound of 10 s: plain Bun is under it on a fast machine, and a debug or sanitizer build on a busy one may not be",
   "modules/commonjs-requires-es-modules-of-the-graph-being-linked":

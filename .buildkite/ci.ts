@@ -889,9 +889,11 @@ interface TestOptions {
 
 // test/aot costs several times the rest of test/, so it has steps of its own: test/aot/README.md, "What CI has to know".
 type AotTests = "all" | "a tenth";
-// They come in two steps. "fixed" is the same on every commit and may hold up a merge. "drawn" is whatever goes by the commit, files and shares of programs alike: each commit takes
-// others, so that in time all are taken, and what it finds is seen and holds up nothing.
+// They come in two steps. "fixed" is the same on every commit and may hold up a merge. "drawn" is a sample, files and shares of programs alike, and what it finds is seen and holds up
+// nothing.
 type AotTakes = "fixed" | "drawn";
+// What the sample goes by. The next commit takes the same files and programs, so it shows whether what failed is fixed. Change it to take others, so that in time all are taken.
+const aotSample = "58b3677a4d38b2500927f51f945beb4c1a01886a";
 
 const aotSources = [
   "src/aot/",
@@ -1125,6 +1127,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
       );
       args.push(...getAotAlwaysInDrawnStep(platform, aot).map(group => `--always-draw=${group}`));
     }
+    if (aotTakes === "drawn") args.push(`--aot-sample=${aotSample}`);
     args.push(...getAotExcludes(platform, aot).map(group => `--exclude=${group}`));
   } else if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));

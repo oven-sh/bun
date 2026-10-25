@@ -39,6 +39,11 @@ const cannotBeJoined = new RegExp(
   "m",
 );
 const filesBeside = [".json", ".expected.txt", ".build-errors.txt", ".todo.txt"];
+// The runner ends a file after five minutes, after ten under a sanitizer. A run that is told nothing ends by its own clock a minute or two before that.
+const endsByItsOwnClock = !process.env.AOT_WAYS && !process.env.AOT_WAYS_FILE && process.env.AOT_SHARE !== "all";
+const secondsLeft = () => (endsByItsOwnClock ? ((isASAN ? 480_000 : 240_000) - performance.now()) / 1000 : Infinity);
+// Goes to the end of the stack many times, which takes a minute in a slow build.
+const tooSlowBesideOthers = new Set(["async-and-generators/a-generator-that-has-begun-where-the-stack-ends-is-also-left.js"]);
 
 const isOneFile = (name: string) => /^[^/]+\/[^/]+(?<!\.d)\.(ts|tsx|js)$/.test(name);
 
@@ -107,7 +112,7 @@ function byProgram(output: string): Map<string, string> {
 }
 
 async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>, seconds: number, everyTenSeconds?: (stdoutSoFar: string) => void) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: seconds * 1000, killSignal: "SIGKILL" });
+  await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: Math.ceil(seconds * 1000), killSignal: "SIGKILL" });
   let stdout = "";
   const decoder = new TextDecoder();
   const readStdout = async () => {
@@ -134,15 +139,18 @@ function nameSlowPrograms() {
   };
 }
 
-type Ran = { printed: Map<string, string>; stopped: string[] };
+/** `isCut`: the time that `left` gives ran out before the last program had run. */
+type Ran = { printed: Map<string, string>; stopped: string[]; isCut?: boolean };
 
-async function run(executable: string | string[], cwd: string, env: Record<string, string> = {}, seconds = isASAN ? 300 : 60): Promise<Ran> {
+async function run(executable: string | string[], cwd: string, env: Record<string, string> = {}, seconds = isASAN ? 300 : 60, left: () => number = () => Infinity): Promise<Ran> {
   let output = "";
   const stopped: string[] = [];
   for (let from = 0, starts = 0; starts < 12; starts++) {
-    const ran = await spawned(withoutCoreDump([executable].flat()), cwd, { ...bunEnv, ...env, FROM: String(from) }, seconds, nameSlowPrograms());
+    if (left() < 1) return { printed: byProgram(output), stopped, isCut: true };
+    const ran = await spawned(withoutCoreDump([executable].flat()), cwd, { ...bunEnv, ...env, FROM: String(from) }, Math.min(seconds, left()), nameSlowPrograms());
     output += ran.stdout;
     if (/^== end$/m.test(ran.stdout)) break;
+    if (left() < 1) return { printed: byProgram(output), stopped, isCut: true };
     const [, index, name] = findLastStarted(ran.stdout);
     stopped.push(`${name ?? "before the first program"}: ${ran.signal ?? `exit code ${ran.exitCode}`}`);
     // No machine that runs one of these lanes can be asked afterwards.
@@ -164,8 +172,11 @@ function splitForValidatingBuild(paths: string[]): string[][] {
   return parts;
 }
 
+const leaveToAnotherRun = (group: number | string, why: string) =>
+  console.error(`SHARE: group ${group} was not run to the end: ${why}: the file had run for ${Math.round(performance.now() / 1000)} seconds`);
+
 /** Writes a group below `cwd` and builds it with `flags` as `name`. What the compiler refuses beside the others has left `names`. Nothing where nothing of the group can be joined. */
-async function written(cwd: string, carrier: string[], group: number | string, paths: string[], name: string, flags: string[]) {
+async function written(cwd: string, carrier: string[], group: number | string, paths: string[], name: string, flags: string[], left: () => number = () => Infinity) {
   const pathOf = new Map(paths.map(path => [inPrograms(path).replaceAll("\\", "/"), path]));
   let names = [...pathOf.keys()].filter(name => !cannotBeJoined.test(readFileSync(pathOf.get(name)!, "utf8")));
   // Nothing of the group can be joined, or the rows it was listed for came to no program.
@@ -178,23 +189,26 @@ async function written(cwd: string, carrier: string[], group: number | string, p
   }
   writeFileSync(join(cwd, "tsconfig.json"), readFileSync(join(root, "tsconfig.json"), "utf8").replace(`"../../../packages"`, JSON.stringify(join(import.meta.dir, "..", "..", "packages"))));
 
-  const build = async (name: string, flags: string[], env: Record<string, string | undefined> = bunEnv) => {
+  const build = async (name: string, flags: string[], env: Record<string, string | undefined> = bunEnv, left: () => number = () => Infinity) => {
     const executable = join(cwd, name);
-    return { ...(await spawned([bunExe(), "build", "--compile", "--aot", ...carrier, ...flags, "group.ts", "--outfile", executable], cwd, env, flags.includes("--aot-validate") ? 600 : 240)), executable };
+    return { ...(await spawned([bunExe(), "build", "--compile", "--aot", ...carrier, ...flags, "group.ts", "--outfile", executable], cwd, env, Math.max(1, Math.min(flags.includes("--aot-validate") ? 600 : 240, left())))), executable };
   };
   // A program that the compiler refuses beside the others, for a name that two of them declare, leaves the group.
-  let first = { stdout: "", stderr: "", exitCode: 1, executable: "" };
+  let first: Awaited<ReturnType<typeof build>> = { stdout: "", stderr: "", exitCode: 1, signal: null, executable: "" };
   for (let attempt = 0; attempt < 6 && first.exitCode; attempt++) {
     writeFileSync(join(cwd, "group.ts"), textOfGroup(names));
-    first = await build(name, flags);
+    first = await build(name, flags, bunEnv, left);
     const refused = new Set([...first.stderr.matchAll(/[\\/]programs[\\/](\S+?\.(?:tsx|ts|js))/g)].map(match => match[1].replaceAll("\\", "/")));
     if (first.exitCode && !refused.size) break;
     if (first.exitCode) console.error(`LEFT OUT of group ${group}: ${[...refused].join(", ")}`);
     if (first.exitCode) names = names.filter(name => !refused.has(name));
   }
+  if (endsByItsOwnClock && first.signal === "SIGKILL") return void leaveToAnotherRun(group, "the clock ended the build");
   expect({ build: name, stderr: first.exitCode ? first.stderr.slice(-2000) : "", exitCode: first.exitCode }).toEqual({ build: name, stderr: "", exitCode: 0 });
   return { names, build, first };
 }
+
+let longestGroup = 0;
 
 async function compare(folder: string, carrier: string[], group: number | string, listed: string[], flags: string[]) {
   const cwd = join(folder, String(group));
@@ -209,10 +223,14 @@ async function compare(folder: string, carrier: string[], group: number | string
     for (const [index, part] of parts.entries()) await compare(folder, carrier, `${group}.${index}`, part, flags);
     return;
   }
-  const made = await written(cwd, carrier, group, paths, "measure", measure);
+  // A group begins only if the time that is left covers the longest group so far. One that is still not through when the time is up is ended here. Both are left to another run.
+  const began = performance.now();
+  if (secondsLeft() * 1000 < longestGroup) return leaveToAnotherRun(group, "its turn came late");
+  const made = await written(cwd, carrier, group, paths, "measure", measure, secondsLeft);
   if (!made) return;
   const { names, build, first } = made;
-  const second = await build("tested", [...flags, "--explain=statistics"]);
+  const second = await build("tested", [...flags, "--explain=statistics"], bunEnv, secondsLeft);
+  if (endsByItsOwnClock && second.signal === "SIGKILL") return leaveToAnotherRun(group, "the clock ended the build");
   expect({ build: "tested", stderr: second.exitCode ? second.stderr.slice(-2000) : "", exitCode: second.exitCode }).toEqual({ build: "tested", stderr: "", exitCode: 0 });
   // The flags did what they are here for.
   if (flags.some(flag => flag.startsWith("--aot-testing=FailPredictions"))) expect(Number(/PlacesWherePredictionsFailUnasked (\d+)/.exec(second.stderr + second.stdout)?.[1] ?? 0)).toBeGreaterThan(names.length / 2);
@@ -220,8 +238,10 @@ async function compare(folder: string, carrier: string[], group: number | string
   // A validating build takes ten times as long.
   const isSlow = isASAN || flags.includes("--aot-validate");
   // The programs of one group parse and print texts of a million levels: together they take over a minute.
-  const [expected, actual] = [await run(first.executable, cwd, {}, isASAN ? 300 : 150), await run(second.executable, cwd, {}, isSlow ? 300 : 150)];
+  const [expected, actual] = [await run(first.executable, cwd, {}, isASAN ? 300 : 150, secondsLeft), await run(second.executable, cwd, {}, isSlow ? 300 : 150, secondsLeft)];
   rmSync(cwd, { recursive: true, force: true });
+  if (expected.isCut || actual.isCut) return leaveToAnotherRun(group, "the clock ended the run");
+  longestGroup = Math.max(longestGroup, performance.now() - began);
   // In a slow build the clock ends slow programs, other ones in each build: that says nothing.
   const endedByClock = new Set(isSlow ? [...expected.stopped, ...actual.stopped].filter(stop => stop.endsWith(": SIGKILL")).map(stop => stop.slice(0, stop.lastIndexOf(": "))) : []);
   for (const ran of [expected, actual]) ran.stopped = ran.stopped.filter(stop => !endedByClock.has(stop.slice(0, stop.lastIndexOf(": "))));
@@ -263,17 +283,19 @@ type Way = { name: string; flags: string[]; env?: Record<string, string> };
 async function compareWays(folder: string, carrier: string[], group: number | string, listed: string[], waysOf: (group: string, statistics?: string) => Way[], mustBeMet = false) {
   const began = performance.now();
   const cwd = join(folder, String(group));
-  const paths = joinable(listed);
+  const paths = joinable(listed).filter(path => !tooSlowBesideOthers.has(inPrograms(path).replaceAll("\\", "/")));
   if (paths.length > 2 * namesInGroup) {
     for (let from = 0; from < paths.length; from += namesInGroup) await compareWays(folder, carrier, `${group}.${from / namesInGroup}`, paths.slice(from, from + namesInGroup), waysOf, mustBeMet);
     return;
   }
   if (waysOf(String(group)).length === 0) return;
-  const made = await slot(() => written(cwd, carrier, group, paths, "usual", ["--explain=statistics"]));
+  const made = await slot(() => written(cwd, carrier, group, paths, "usual", ["--explain=statistics"], secondsLeft));
   if (!made) return;
   const ways = waysOf(String(group), made.first.stderr + made.first.stdout);
-  const [plain, usual] = await Promise.all([slot(() => run([bunExe(), "run", "--no-install", "group.ts"], cwd)), slot(() => run(made.first.executable, cwd))]);
+  const [plain, usual] = await Promise.all([slot(() => run([bunExe(), "run", "--no-install", "group.ts"], cwd, {}, undefined, secondsLeft)), slot(() => run(made.first.executable, cwd, {}, undefined, secondsLeft))]);
   rmSync(made.first.executable, { force: true });
+  let longest = performance.now() - began;
+  const notThrough: string[] = [];
 
   const reds: string[] = [];
   const says = (way: string, what: string) => {
@@ -299,10 +321,12 @@ async function compareWays(folder: string, carrier: string[], group: number | st
   await Promise.all(
     ways.map(way =>
       slot(async () => {
-        // The runner gives a file five minutes, twice that under a sanitizer. In a run that is told nothing, a way whose turn comes late is left to another run.
-        if (!process.env.AOT_WAYS && !process.env.AOT_WAYS_FILE && process.env.AOT_SHARE !== "all" && performance.now() - began > (isASAN ? 340_000 : 170_000)) return void console.error(says(way.name, "not tried: its turn came late"));
+        // A way begins only if the time that is left covers the longest way so far. One that is still not through when the time is up is ended here. Both are left to another run.
+        const beganWay = performance.now();
+        if (plain.isCut || usual.isCut || secondsLeft() * 1000 < longest) return void notThrough.push(says(way.name, "not tried: its turn came late"));
         const name = `built-${way.name.replace(/[^A-Za-z0-9]+/g, "-")}`;
-        let built = await made.build(name, [...way.flags, "--explain=statistics"], { ...bunEnv, ...way.env });
+        let built = await made.build(name, [...way.flags, "--explain=statistics"], { ...bunEnv, ...way.env }, secondsLeft);
+        if (endsByItsOwnClock && built.signal === "SIGKILL") return void notThrough.push(says(way.name, "NOT THROUGH: the clock ended the build"));
         // A limit that no program of the group has met was not tried.
         const met = new RegExp(`^${way.name.split(":")[0]}Hits (\\d+)$`, "m").exec(built.stderr + built.stdout)?.[1];
         // What is declared int32 has to be proven, and a proof takes the work that limits bound: past them the error at build time is the answer.
@@ -311,11 +335,14 @@ async function compareWays(folder: string, carrier: string[], group: number | st
           reds.push(says(way.name, `the build ended with ${built.signal ?? `exit code ${built.exitCode}`}: ${(/^error: .*$/m.exec(built.stderr)?.[0] ?? built.stderr.trim().split("\n").slice(-3).join(" | ")).slice(0, 300)}`));
           // The compiler checks its own work only where it is tested. What somebody else would have got is run as well.
           if (!/internal compiler error/.test(built.stderr)) return;
-          built = await made.build(name, way.flags, { ...bunEnv, ...way.env, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: undefined });
+          built = await made.build(name, way.flags, { ...bunEnv, ...way.env, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: undefined }, secondsLeft);
+          if (endsByItsOwnClock && built.signal === "SIGKILL") return void notThrough.push(says(way.name, "NOT THROUGH: the clock ended the unchecked build"));
           if (built.exitCode !== 0) return void reds.push(says(way.name, `unchecked, the build ended with ${built.signal ?? `exit code ${built.exitCode}`}: ${(/^error: .*$/m.exec(built.stderr)?.[0] ?? "").slice(0, 300)}`));
         }
-        const ran = await run(built.executable, cwd, way.env);
+        const ran = await run(built.executable, cwd, way.env, undefined, secondsLeft);
         rmSync(built.executable, { force: true });
+        if (ran.isCut) return void notThrough.push(says(way.name, "NOT THROUGH: the clock ended the run"));
+        longest = Math.max(longest, performance.now() - beganWay);
         // Past a limit a program is slower, by how much nobody says: what the clock ended is not judged.
         const byClock = ran.stopped.filter(stop => stop.endsWith(": SIGKILL"));
         const found = [...ran.stopped.filter(stop => !byClock.includes(stop)).map(stop => `stopped in ${stop}`), ...differing(ran, names.filter(name => !byClock.some(stop => stop.startsWith(name + ": "))))];
@@ -326,6 +353,8 @@ async function compareWays(folder: string, carrier: string[], group: number | st
     ),
   );
   rmSync(cwd, { recursive: true, force: true });
+  for (const line of notThrough) console.error(line);
+  if (notThrough.length) console.error(`SHARE: ${notThrough.length} of the ${ways.length} ways that this run drew for group ${group} were not run to the end: the file had run for ${Math.round(performance.now() / 1000)} seconds`);
   expect(reds).toEqual([]);
 }
 

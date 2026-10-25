@@ -1,7 +1,11 @@
 // Five million instances of a class that hold references, constructed in one plain loop and kept in an array.
 // Measured: 228 to 236 MB; 302 to 315 MB where they counted as made seldom; 369 MB in plain Bun.
+// Kept after a collection, by the engine's own count: 190.7 MB; 267.0 MB where their references are wide; 343.5 MB in plain Bun.
 declare const console: { log(...values: unknown[]): void };
-declare const process: { memoryUsage(): { rss: number } };
+declare const process: { memoryUsage(): { rss: number; heapUsed: number } };
+declare const Bun: { gc(isSynchronous: boolean): void };
+Bun.gc(true);
+const usedBefore = process.memoryUsage().heapUsed;
 const before = process.memoryUsage().rss;
 class Leaf { constructor(public v: number) {} }
 class Item {
@@ -15,3 +19,7 @@ for (const item of items) sum += item.a.v + item.d.v + item.n;
 const grown = process.memoryUsage().rss - before;
 console.log(sum, items.length);
 console.log("grew by less than 275 MB:", grown < 275 * 1024 * 1024);
+Bun.gc(true);
+const kept = process.memoryUsage().heapUsed - usedBefore;
+console.log("what is kept takes less than 229 MB of the heap:", kept < 229 * 1024 * 1024);
+console.log(items.length);

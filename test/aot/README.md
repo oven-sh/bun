@@ -144,7 +144,7 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   in the ASAN build, whatever those lanes draw. A program that is written for a fix gets a line there. One that compares two times (`"skipWithASAN": "a clock"`) is
   run by every commit too, in the step that holds up nothing: a machine that runs other tests beside it moves the ratio.
 - **A mark that outlives its cure hides the next fault.** `programs-marked-as-failing` runs the programs that are left out because they fail (`<name>.todo.txt`, `"todoOn"` for the
-  platform, and with AddressSanitizer a `"skipWithASAN"` that begins with `TODO`), and one that does what is expected is red: its mark goes out. A `.todo.txt` that begins with
+  platform or the platform and architecture, and with AddressSanitizer a `"skipWithASAN"` that begins with `TODO`), and one that does what is expected is red: its mark goes out. A `.todo.txt` or a `"todoOn"` that begins with
   `Not every time:` is not asked, nor is a program that compares two times. It is in the step that holds up nothing,
   on every lane whatever the lane draws (`getAotAlwaysInDrawnStep()` in `.buildkite/ci.ts`). A `test.todo` with a body is asked the same by `bun test --todo <file>`.
 - **The engine's tests with a sanitizer and assertions.** `engine-tests-in-parts-<part>` on the ASAN lane, where `engine-tests-ir`, `engine-tests-ir-of-bun` and `engine-tests-native-<part>` skip themselves: every twelfth IR text

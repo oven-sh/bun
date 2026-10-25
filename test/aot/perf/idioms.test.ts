@@ -20,7 +20,7 @@ import { bunEnv, bunExe, isASAN, isDebug, isMusl, isWindows, tempDir } from "har
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import { withSteadyCollections } from "../harness/counted-run";
-import { slot, spawned, withoutDebugInformation } from "../run-programs";
+import { isToldWhatToTake, slot, spawned, withoutDebugInformation } from "../run-programs";
 import { describe, test } from "../supported";
 import { writeUntypedIdioms } from "./untyped-idioms";
 
@@ -80,8 +80,13 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
   const carrier = skipped ? [] : withoutDebugInformation();
   const untypedRoot = join(folder, "idioms");
   if (!skipped) writeUntypedIdioms(untypedRoot);
+  // Without pins only what the three forms print is compared. There a run that is told nothing starts no idiom after 200 seconds and says so.
+  const mayLeaveOut = !hasPins && !mode && !process.env.AOT_PERF_ONLY && !isToldWhatToTake;
+  let leftOut = 0;
   afterAll(() => {
     rmSync(folder, { recursive: true, force: true });
+    if (leftOut)
+      console.error(`SHARE: ${leftOut} of the ${idioms.length} idioms were not run: the file had run for 200 seconds`);
     if (mode === "update" || mode === "lower") writeFileSync(pinsPath, JSON.stringify(pins, null, 2) + "\n");
   });
 
@@ -139,6 +144,7 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
       name,
       () =>
         slot(async () => {
+          if (mayLeaveOut && performance.now() > 200_000) return void leftOut++;
           const n = turns[name];
           const typed = await compiled(root, name + ".ts", n);
           const untyped = await compiled(untypedRoot, name + ".js", n);

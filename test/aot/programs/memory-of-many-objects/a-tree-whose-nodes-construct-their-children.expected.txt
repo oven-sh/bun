@@ -1,2 +1,4 @@
 1864131 11
 grew by less than 80 MB: true
+what is kept takes less than 75 MB of the heap: true
+11

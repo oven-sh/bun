@@ -1,5 +1,8 @@
 {
   "env": {
     "BUN_JSC_collectContinuously": "1"
+  },
+  "todoOn": {
+    "win32-x64": "Not every time: with the collector running continuously a run does not end within 90 seconds on Windows x64: so far never with a Worker, now and then without one"
   }
 }

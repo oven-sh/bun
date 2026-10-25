@@ -31,6 +31,7 @@ import {
   spawned,
   taken,
   told,
+  todoReason,
   unsupported,
   wanted,
   withoutCoreDump,
@@ -78,7 +79,7 @@ function canBeOneOfMany(path: string): boolean {
   if (familiesAlone.some(family => family.test(nameOf(path)))) return false;
   if (existsSync(beside + ".todo.txt") || existsSync(beside + ".build-errors.txt")) return false;
   const { build, entryPoints, buildEnv, reference, alone, skipWithASAN, todoOn } = optionsOf(path);
-  if (build?.length || entryPoints?.length || buildEnv || reference || alone || (isASAN && skipWithASAN) || todoOn?.[process.platform]) return false;
+  if (build?.length || entryPoints?.length || buildEnv || reference || alone || (isASAN && skipWithASAN) || todoReason({ todoOn })) return false;
   return !hasProjectOfItsOwn(path) && !declaresForEverybody(path);
 }
 

@@ -26,7 +26,7 @@
 //                                         "runWithASAN": why a Bun built with AddressSanitizer runs the program even where the quick subset leaves it out
 //                                         "skipInVariants": why variant() leaves the program out
 //                                         "skipInVariant": { "<label>": why variant("<label>", ..) or programsBuiltWith(.., "<label>", ..) alone leaves the program out }
-//                                         "todoOn": { "<process.platform>": what happens there today }: the program is listed as a todo and not run on that platform alone
+//                                         "todoOn": { "<process.platform>" or "<process.platform>-<process.arch>": what happens there today }: the program is listed as a todo and not run there alone
 //                                         "alone": why programs-as-entry-points.ts leaves the program out: what it prints hangs on being the first entry point, or on what else the executable holds
 //                                         "mainThread": why programs-as-separate-entry-points.ts leaves the program out: a Worker does not print what the main thread prints
 //   // STATISTIC: <name> (= | >= | <=) <n>  a line of the entry point: what the build counted under that `StatisticId`, as the hidden `--explain=statistics` prints it.
@@ -642,7 +642,7 @@ function define(title: string, chosen: string[], settings: Omit<Setup, "folder" 
       const beside = besideOf(path);
       const name = inPrograms(beside).replaceAll("\\", "/");
       const skipWithASAN: string | undefined = isASAN && existsSync(beside + ".json") ? JSON.parse(readFileSync(beside + ".json", "utf8")).skipWithASAN : undefined;
-      const todoHere: string | undefined = existsSync(beside + ".json") ? JSON.parse(readFileSync(beside + ".json", "utf8")).todoOn?.[process.platform] : undefined;
+      const todoHere = existsSync(beside + ".json") ? todoReason(JSON.parse(readFileSync(beside + ".json", "utf8"))) : undefined;
       if (existsSync(beside + ".todo.txt")) test.todo(name);
       else if (todoHere) {
         console.error(`TODO: ${name}: ${todoHere}`);
@@ -673,6 +673,8 @@ export function programs(topic: string, part = 1, parts = 1) {
 }
 
 /** What compares times says so where it leaves the sanitizer out: "skipWithASAN": "a clock". */
+/** Why a program is a todo on this platform, or on this platform and architecture. */
+export const todoReason = (options: { todoOn?: Record<string, string> }): string | undefined => options.todoOn?.[`${process.platform}-${process.arch}`] ?? options.todoOn?.[process.platform];
 export const isJudgedByClock = (path: string) => existsSync(keptBeside(path) + ".json") && /\bclock\b|\bcompares two times\b/.test(JSON.parse(readFileSync(keptBeside(path) + ".json", "utf8")).skipWithASAN ?? "");
 
 /**
@@ -705,13 +707,14 @@ function markOfFailure(path: string): string | undefined {
   // Such a build is many times slower, and what fails everywhere is looked at elsewhere.
   if (isASAN) return /^TODO\b/.test(options.skipWithASAN ?? "") ? `"skipWithASAN" in ${name}.json` : undefined;
   if (existsSync(kept + ".todo.txt")) return readFileSync(kept + ".todo.txt", "utf8").startsWith("Not every time:") ? undefined : `${name}.todo.txt`;
-  return options.todoOn?.[process.platform] ? `"todoOn" in ${name}.json` : undefined;
+  const reason = todoReason(options);
+  return reason && !reason.startsWith("Not every time:") ? `"todoOn" in ${name}.json` : undefined;
 }
 
 /**
  * A mark that outlives its cure hides the next fault. The programs that are left out because they fail (`<name>.todo.txt`, "todoOn" for this platform, and with AddressSanitizer a
  * "skipWithASAN" that begins with TODO) are run as programs() runs the others, and one that does what is expected is red: its mark goes out. What fails on one run and not on the
- * next is not asked: a `<name>.todo.txt` that begins with "Not every time:", and what compares two times, where the machine decides.
+ * next is not asked: a `<name>.todo.txt` or a "todoOn" that begins with "Not every time:", and what compares two times, where the machine decides.
  */
 export function programsMarkedAsFailing() {
   const folder = String(tempDir("aot-programs", {}));

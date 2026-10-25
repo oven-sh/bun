@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN } from "harness";
 import { join } from "path";
-import { inPrograms, inShare, inTenthOfAll, inThirdOfAll, isJudgedByClock, listWrittenPrograms, mayHoldWhatIsWanted, slot, spawned, taken, told, unsupported, wanted } from "./run-programs";
+import { inPrograms, inShare, inTenthOfAll, inThirdOfAll, isJudgedByClock, listWrittenPrograms, mayHoldWhatIsWanted, slot, spawned, taken, todoReason, told, unsupported, wanted } from "./run-programs";
 
 const root = join(import.meta.dir, "programs");
 
@@ -33,6 +33,8 @@ function findPrograms(folder: string, into: string[]) {
 
 const hash = (path: string) => BigInt(Bun.hash(inPrograms(path).replaceAll("\\", "/")));
 const withoutExtension = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
+const optionsOf = (path: string): { env?: Record<string, string>; todoOn?: Record<string, string> } =>
+  existsSync(withoutExtension(path) + ".json") ? JSON.parse(readFileSync(withoutExtension(path) + ".json", "utf8")) : {};
 
 const knownDifferences = new Set(
   readFileSync(join(import.meta.dir, "jit-mode-eager-tier-up-known.txt"), "utf8")
@@ -54,7 +56,7 @@ export function eagerTierUpSweep(part: number, parts: number) {
       .filter(path => Number((hash(path) >> 16n) % BigInt(parts)) === part - 1)
       .filter(path => !isASAN || inThirdOfAll("eager tier-up", path)),
     path => (wanted === "" || wanted === "quick" ? inTenthOfAll("eager tier-up", path) : inPrograms(path).includes(wanted)),
-  ).filter(path => !existsSync(withoutExtension(path) + ".build-errors.txt") && !existsSync(withoutExtension(path) + ".todo.txt"));
+  ).filter(path => !existsSync(withoutExtension(path) + ".build-errors.txt") && !existsSync(withoutExtension(path) + ".todo.txt") && !todoReason(optionsOf(path)));
 
   describe.concurrent("run --aot with eager tier-up", () => {
     if (unsupported) return void test.skip(unsupported, () => {});
@@ -69,8 +71,7 @@ export function eagerTierUpSweep(part: number, parts: number) {
         name,
         () =>
           slot(async () => {
-            const options: { env?: Record<string, string> } = existsSync(withoutExtension(path) + ".json") ? JSON.parse(readFileSync(withoutExtension(path) + ".json", "utf8")) : {};
-            const env = { ...bunEnv, ...options.env, BUN_JSC_crashIfInterpreterIsUsed: undefined };
+            const env = { ...bunEnv, ...optionsOf(path).env, BUN_JSC_crashIfInterpreterIsUsed: undefined };
             const cmd = [bunExe(), "run", "--aot", path];
             const byDefault = await spawned(cmd, join(path, ".."), env);
             const eager = await spawned(cmd, join(path, ".."), { ...env, ...eagerTierUp });

@@ -345,7 +345,7 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
-    /** Of the tests that are left after --include and --exclude, one in this many: others for each commit. */
+    /** Of the tests that are left after --include and --exclude, one in this many: others for each commit, or for each --aot-sample. */
     ["one-in"]: {
       type: "string",
       default: undefined,
@@ -355,6 +355,11 @@ const { values: options, positionals: filters } = parseArgs({
      * have nothing of the kind are left out. `drawn`: only the tests that take a share by the commit, and only that share.
      */
     ["aot-takes"]: {
+      type: "string",
+      default: undefined,
+    },
+    /** What the draws go by in place of the commit: --one-in here, and the shares of programs in test/aot (AOT_SHARE). */
+    ["aot-sample"]: {
       type: "string",
       default: undefined,
     },
@@ -2220,6 +2225,7 @@ async function spawnBunTest(
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
     ...(isPartOfOneTestFile(testPath) && { TEST_PART: testPath }),
     ...(options["aot-takes"] && { AOT_TAKES: options["aot-takes"] }),
+    ...(options["aot-sample"] && { AOT_SHARE: options["aot-sample"] }),
     ...opts.env,
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
@@ -2793,7 +2799,7 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
   const oneIn = parseInt(options["one-in"] ?? "1");
   if (oneIn > 1) {
     // Every shard draws the same files, because it draws by the path and the commit.
-    const commit = process.env.BUILDKITE_COMMIT ?? "";
+    const commit = options["aot-sample"] ?? process.env.BUILDKITE_COMMIT ?? "";
     const isDrawn = (testPath: string) =>
       createHash("sha1")
         .update(`${commit} ${testPath.replaceAll("\\", "/")}`)

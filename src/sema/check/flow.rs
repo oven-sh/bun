@@ -194,6 +194,9 @@ pub(super) struct FlowMemo {
     /// run of idle calls: the node where the run ended, and how many calls it passed. See
     /// `before_idle_calls`.
     idle_runs: Vec<(FlowId, u32)>,
+    /// Indexed by flow node of the file `reachable_like_of`. See `is_reachable_worker`.
+    reachable_like: Vec<FlowId>,
+    reachable_like_of: Option<FileId>,
     /// The subjects of each test in the file `tests_of`, indexed by the test's flow node.
     tests: Vec<TestSubjects>,
     tests_of: Option<FileId>,
@@ -7912,9 +7915,37 @@ impl<'p, 's> Checker<'p, 's> {
         // first.
         let mut shared: SmallVec<[(FlowId, Memoizable); 2]> = SmallVec::new();
         let mut shared_with_reduced_labels: SmallVec<[FlowId; 2]> = SmallVec::new();
+        // FOR SPEED. Assignments, conditions and idle calls are as reachable as the node before
+        // them. `lastFlowNode` only ends the walk for a statement at the statement before it until
+        // a reference in between asks about its declaration. To keep n statements from taking
+        // n * n steps, some nodes of a long row of such nodes remember where the row ends.
+        const LONG: u32 = 32;
+        let mut row: SmallVec<[FlowId; 4]> = SmallVec::new();
+        let mut row_len = 0u32;
         let reachable = loop {
             if (file, flow) == (self.last_flow_node.0, self.last_flow_node.1) {
                 break self.last_flow_node.2;
+            }
+            let is_in_row = !bound.is_shared(flow)
+                && match bound.flow[flow.idx()] {
+                    Flow::Assign { .. } | Flow::Cond { .. } | Flow::ArrayMutation { .. } => true,
+                    Flow::Call { .. } => self.flow_memo.is_idle_call(file, flow),
+                    _ => false,
+                };
+            if !is_in_row {
+                self.note_reachable_like(file, &mut row, flow);
+                row_len = 0;
+            } else if self.flow_memo.reachable_like_of == Some(file)
+                && let end = self.flow_memo.reachable_like[flow.idx()]
+                && end.is_some()
+            {
+                flow = end;
+                continue;
+            } else {
+                if row_len.is_multiple_of(LONG) {
+                    row.push(flow);
+                }
+                row_len += 1;
             }
             // With a label reduced, the answer isn't the one for the node by itself.
             if bound.is_shared(flow) && reduced.is_empty() {
@@ -7993,6 +8024,7 @@ impl<'p, 's> Checker<'p, 's> {
                 },
             }
         };
+        self.note_reachable_like(file, &mut row, flow);
         while let Some((flow, begun)) = shared.pop() {
             if self.end_memoizable(begun).is_some() {
                 (self.p.flow_node_reachable).rewrite(&self.task, (file, flow), reachable);
@@ -8002,6 +8034,26 @@ impl<'p, 's> Checker<'p, 's> {
             (self.flow_memo.unreachable_with_reduced_labels).extend(shared_with_reduced_labels);
         }
         reachable
+    }
+
+    /// Records that the nodes in `row` are as reachable as `end`, and empties `row`. The last one
+    /// is fewer than `LONG` steps from `end`.
+    fn note_reachable_like(&mut self, file: FileId, row: &mut SmallVec<[FlowId; 4]>, end: FlowId) {
+        // Calls are only known to be idle in the task's file.
+        if row.len() > 1 && self.task.file == Some(file) {
+            cold_path();
+            let nodes = self.bound(file).flow.len();
+            let memo = &mut self.flow_memo;
+            if memo.reachable_like_of != Some(file) {
+                memo.reachable_like_of = Some(file);
+                memo.reachable_like.clear();
+                memo.reachable_like.resize(nodes, FlowId::NONE);
+            }
+            for &flow in &row[..row.len() - 1] {
+                memo.reachable_like[flow.idx()] = end;
+            }
+        }
+        row.clear();
     }
 
     /// `isPostSuperFlowNode`

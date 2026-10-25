@@ -1826,6 +1826,20 @@ export function lastInAnObject() { ({ ...x6 } = o); }
     expect(exitCode).toBe(1);
   });
 
+  // Whether a statement is reachable is decided by a walk back to the statement before it. That walk went back to the
+  // start of the file whenever a reference in between had asked about its own declaration: 25 s for these 100,000 lines
+  // in a release build.
+  test("doesn't slow down on 100,000 method calls on a constant", async () => {
+    const n = isDebug || isASAN ? 10_000 : 100_000;
+    const calls = Array.from({ length: n }, (_, i) => `map.set("k${i}", ${i});\n`).join("");
+    using dir = project({
+      "a.ts": `const map = new Map<string, number>();\n${calls}export const probe: never = map;\n`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(`a.ts(${n + 2},14): error TS2322: Type 'Map<string, number>' is not assignable to type 'never'.`);
+    expect(exitCode).toBe(1);
+  });
+
   // This used to be quadratic: over 60 s for these 60,000 `paths` in a release build.
   test("doesn't slow down on a tsconfig.json with 60,000 `paths` keys", async () => {
     const n = isDebug || isASAN ? 10_000 : 60_000;

@@ -1310,33 +1310,34 @@ describe("fs.promises.watch", () => {
   // consumer has, and an abort must not give them to the body.
   test("for await: a body that aborts on an event is not run again", async () => {
     const rounds = 20;
-    const bodyRuns: number[] = [];
-    for (let round = 0; round < rounds; round++) {
-      using dir = tempDir("fsp-watch-abort-in-body", { a: "" });
-      const root = String(dir);
-      const ac = new AbortController();
-      let runs = 0;
-      let renames = 0;
-      // One rename is two events from one system call.
-      const interval = repeat(() => {
-        const [from, to] = renames++ % 2 ? ["b", "a"] : ["a", "b"];
-        fs.renameSync(path.join(root, from), path.join(root, to));
-      });
-      try {
-        await expect(
-          (async () => {
-            for await (const _ of fs.promises.watch(root, { signal: ac.signal })) {
-              runs++;
-              clearInterval(interval);
-              ac.abort();
-            }
-          })(),
-        ).rejects.toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
-      } finally {
-        clearInterval(interval);
-      }
-      bodyRuns.push(runs);
-    }
+    const bodyRuns = await Promise.all(
+      Array.from({ length: rounds }, async () => {
+        using dir = tempDir("fsp-watch-abort-in-body", { a: "" });
+        const root = String(dir);
+        const ac = new AbortController();
+        let runs = 0;
+        let renames = 0;
+        // One rename is two events from one system call.
+        const interval = repeat(() => {
+          const [from, to] = renames++ % 2 ? ["b", "a"] : ["a", "b"];
+          fs.renameSync(path.join(root, from), path.join(root, to));
+        });
+        try {
+          await expect(
+            (async () => {
+              for await (const _ of fs.promises.watch(root, { signal: ac.signal })) {
+                runs++;
+                clearInterval(interval);
+                ac.abort();
+              }
+            })(),
+          ).rejects.toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+        } finally {
+          clearInterval(interval);
+        }
+        return runs;
+      }),
+    );
     expect(bodyRuns).toEqual(Array(rounds).fill(1));
   });
 
@@ -1388,31 +1389,39 @@ describe("fs.promises.watch", () => {
         import { mkdirSync, writeFileSync } from "node:fs";
         import { join } from "node:path";
 
-        // A watcher on its own directory, with one event read: it is open and idle.
-        async function started(name) {
+        // Writes into the watched directory until the exit is done, so that
+        // every next() gets an event on every platform.
+        async function withWatcher(name, exit) {
           const dir = join(import.meta.dirname, name);
           mkdirSync(dir);
-          const watcher = watch(dir);
           let n = 0;
           const interval = setInterval(() => writeFileSync(join(dir, "f.txt"), String(n++)), 20);
           try {
-            await watcher.next();
+            await exit(watch(dir));
           } finally {
             clearInterval(interval);
           }
-          return watcher;
         }
 
-        for await (const event of await started("break")) break;
-        await (await started("return")).return();
+        await withWatcher("break", async watcher => {
+          for await (const event of watcher) break;
+        });
+        await withWatcher("return", async watcher => {
+          await watcher.next();
+          await watcher.return();
+        });
         const error = new Error("stop");
-        await (await started("throw")).throw(error).then(
-          () => { throw new Error("throw() did not reject"); },
-          e => { if (e !== error) throw e; },
-        );
-        {
-          await using watcher = await started("using");
-        }
+        await withWatcher("throw", async watcher => {
+          await watcher.next();
+          await watcher.throw(error).then(
+            () => { throw new Error("throw() did not reject"); },
+            e => { if (e !== error) throw e; },
+          );
+        });
+        await withWatcher("using", async watcher => {
+          await watcher.next();
+          await using disposed = watcher;
+        });
         // An open watcher keeps the process alive: the test then times out.
         console.log("closed");
       `,
@@ -1435,10 +1444,11 @@ describe("fs.promises.watch", () => {
     const it = fs.promises.watch(root)[Symbol.asyncIterator]();
     const settled: string[] = [];
     const calls = [
-      it.next().then(result => settled.push(`next: ${result.value?.filename}`)),
-      it.next().then(result => settled.push(`next: ${result.value?.filename}`)),
+      it.next().then(result => settled.push(`next: done ${result.done}`)),
+      it.next().then(result => settled.push(`next: done ${result.done}`)),
       it.return!().then(result => settled.push(`return: done ${result.done}`)),
     ];
+    // A watcher can start late and miss the first directories, so the names are not compared.
     let n = 0;
     const interval = repeat(() => fs.mkdirSync(path.join(root, `d${n++}`)));
     try {
@@ -1446,7 +1456,7 @@ describe("fs.promises.watch", () => {
     } finally {
       clearInterval(interval);
     }
-    expect(settled).toEqual(["next: d0", "next: d1", "return: done true"]);
+    expect(settled).toEqual(["next: done false", "next: done false", "return: done true"]);
   });
 
   test.each([

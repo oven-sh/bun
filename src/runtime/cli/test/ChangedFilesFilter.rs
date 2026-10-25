@@ -150,6 +150,8 @@ pub(crate) fn filter<'a>(
     // The module graph scan is best-effort. A test file that imports
     // something unresolved should still be considered, not abort --changed.
     scan_transpiler.options.ignore_module_resolution_errors = true;
+    // The scan runs no plugin, and a plugin of a preload file is what compiles a component.
+    scan_transpiler.options.component_scripts = true;
     scan_transpiler.options.output_dir = Box::default();
     scan_transpiler.options.tree_shaking = false;
     scan_transpiler.configure_linker();

@@ -1395,6 +1395,9 @@ pub struct BundleOptions<'a> {
 
     pub ignore_module_resolution_errors: bool,
 
+    /// `bun test --changed`: read what the `<script>` blocks of a file with the file loader import. A plugin compiles such a file in the test run.
+    pub component_scripts: bool,
+
     /// Package names whose barrel files should be optimized.
     /// When set, barrel files from these packages will only load submodules
     /// that are actually imported. Also, any file with sideEffects: false
@@ -1574,6 +1577,7 @@ impl<'a> BundleOptions<'a> {
             supports_multiple_outputs: self.supports_multiple_outputs,
             force_node_env: self.force_node_env,
             ignore_module_resolution_errors: self.ignore_module_resolution_errors,
+            component_scripts: self.component_scripts,
             optimize_imports: self.optimize_imports,
         }
     }
@@ -1826,6 +1830,7 @@ impl<'a> BundleOptions<'a> {
             supports_multiple_outputs: true,
             force_node_env: ForceNodeEnv::Unspecified,
             ignore_module_resolution_errors: false,
+            component_scripts: false,
             optimize_imports: None,
         };
 

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { appendFileSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -66,6 +66,64 @@ async function runTestChanged(
  *  header in bun test's stderr). */
 function ranFiles(stderr: string, names: string[]): string[] {
   return names.filter(n => stderr.includes(n + ":")).sort();
+}
+
+type Fixture = Record<string, string | Buffer>;
+
+/** A test file with one test. `imports` is what comes before the test, `body` is in it. */
+function testFile(name: string, imports = "", body = "expect(1).toBe(1);") {
+  return `import { expect, test } from "bun:test";\n${imports}\ntest(${JSON.stringify(name)}, async () => {\n  ${body}\n});\n`;
+}
+
+// One committed repository per fixture. Each case edits a copy of it.
+const committed = new Map<Fixture, string>();
+function committedRepo(files: Fixture): string {
+  let repo = committed.get(files);
+  if (repo === undefined) {
+    repo = tempDirWithFiles("test-changed-fixture", files);
+    for (const args of [
+      ["init", "-q"],
+      ["add", "-A"],
+      ["commit", "-q", "-m", "initial"],
+    ])
+      git(repo, ...args);
+    committed.set(files, repo);
+  }
+  return repo;
+}
+
+/**
+ * Runs `bun test --changed` after an edit of each of `edits`. With `breaks`, the edit makes the file
+ * throw when a run evaluates it. The result has the `--changed:` line, the test files that ran, and
+ * those of them that the throw failed: a selected test that does not load the edited file passes.
+ * `present` is which of `probe` exists after the run. With `nodeModules`, the case has the packages
+ * of the test suite.
+ */
+async function changed(
+  files: Fixture,
+  edits: string[],
+  { breaks = true, probe = [] as string[], nodeModules = false } = {},
+) {
+  const missing = edits.filter(edit => !(edit in files));
+  if (missing.length > 0) throw new Error(`not in the fixture: ${missing.join(", ")}`);
+  using dir = tempDir("test-changed-case", committedRepo(files));
+  if (nodeModules)
+    symlinkSync(join(import.meta.dir, "../../node_modules"), join(String(dir), "node_modules"), "junction");
+  for (const edit of edits) {
+    appendFileSync(join(String(dir), edit), breaks ? `\nthrow new Error("edited");\n` : "\n");
+  }
+  const { stderr, exitCode } = await runTestChanged(String(dir));
+  const tests = Object.keys(files).filter(name => /\.test\.[cm]?[jt]s$/.test(name));
+  // What a test file prints is between its header and the next one.
+  const sections = stderr.split(/^(?=\S+\.test\.[cm]?[jt]s:$)/m);
+  const failed = tests.filter(name => sections.some(it => it.startsWith(name + ":") && it.includes("error: edited")));
+  return {
+    status: /^--changed: (.*)$/m.exec(stderr)?.[1],
+    ran: ranFiles(stderr, tests),
+    ...(breaks ? { failed: failed.sort() } : {}),
+    ...(probe.length > 0 ? { present: probe.filter(name => existsSync(join(String(dir), name))) } : {}),
+    exitCode,
+  };
 }
 
 // The --watch test at the end is the slow one; everything else is independent
@@ -414,6 +472,346 @@ test("hot", () => {
   });
 });
 
+// A stand-in for a component compiler: the module of a component is the code of its scripts.
+const componentPlugin = String.raw`import { plugin } from "bun";
+import { readFileSync } from "node:fs";
+
+const transpiler = new Bun.Transpiler({
+  loader: "tsx",
+  trimUnusedImports: false,
+  tsconfig: { compilerOptions: { jsx: "react", jsxFactory: "h" } },
+});
+
+plugin({
+  name: "components",
+  setup(build) {
+    build.onLoad({ filter: /\.(svelte|vue|astro|sfc)$/ }, ({ path }) => {
+      const scripts = /^---\n(.*?)\n---|<script(?:"[^"]*"|[^">])*>(.*?)<\/script>/gs;
+      const code = Array.from(readFileSync(path, "utf8").matchAll(scripts), match => match[1] ?? match[2]);
+      return { contents: transpiler.transformSync(code.join("\n")) + "\nexport default {};", loader: "js" };
+    });
+  },
+});
+`;
+
+// A component is a file of markup and `<script>` blocks. A plugin of a preload file compiles it in a
+// run. The scan that selects the tests runs no plugin: it reads what the scripts import.
+const components = {
+  "package.json": JSON.stringify({ name: "components", type: "module", sideEffects: false }),
+  "bunfig.toml": `[test]\npreload = ["./component-plugin.ts"]\n`,
+  "component-plugin.ts": componentPlugin,
+  "dep.ts": `export const dep = 1;\n`,
+  "types.ts": `export type Props = { label: string };\n`,
+  // The import of a type comes first, and only the markup uses Button.
+  "App.svelte": `<script lang="ts">
+  import type { Props } from "./types.ts";
+  import Button from "./Button.svelte";
+
+  export let props: Props = { label: "ok" };
+</script>
+
+<Button label={props.label} />
+`,
+  "Button.svelte": `<script lang="ts">
+  import { dep } from "./dep.ts";
+
+  export let label: string = String(dep);
+</script>
+
+<button>{label}</button>
+`,
+  // The second script has the import, and its open tag has a `>` in an attribute.
+  "Table.svelte": `<script module>
+  export const columns = 2;
+</script>
+
+<script
+  lang="ts"
+  generics="T extends Record<string, number>"
+>
+  import { dep } from "./dep.ts";
+
+  export let rows: T[] = [];
+  export const count = rows.length + dep;
+</script>
+
+<table></table>
+`,
+  "Card.vue": `<script lang="ts">
+export const name: string = "Card";
+</script>
+
+<script setup lang="ts">
+import { dep } from "./dep.ts";
+
+const title = String(dep);
+</script>
+
+<template>
+  <h2>{{ title }}</h2>
+</template>
+`,
+  // TypeScript cannot parse the element. One import is above it, and the import of dep.ts is below it.
+  "View.vue": `<script lang="tsx">
+import { h } from "./h.ts";
+export const view = <p />;
+
+import { dep } from "./dep.ts";
+export const title = String(dep);
+</script>
+`,
+  "h.ts": `export const h = (tag: string) => tag;\n`,
+  "Page.astro": `---
+import { dep } from "./dep.ts";
+
+const title = String(dep);
+---
+
+<h1>{title}</h1>
+`,
+  // The name of a component does not matter.
+  "Panel.sfc": `<script>\n  import Field from "./Field.sfc";\n</script>\n\n<Field />\n`,
+  "Field.sfc": `<script>\n  import { dep } from "./dep.ts";\n\n  export const field = dep;\n</script>\n\n<input />\n`,
+  // The script does not parse, and its import is above the error. A run fails on the error.
+  // Only TypeScript reads as far as the import: TSX takes `<T>` for an element.
+  "Broken.svelte": `<script>\n  const same = <T>(value: T) => value;\n  import { dep } from "./dep.ts";\n\n  const = same(dep);\n</script>\n`,
+  // The package has no side effects, so the barrel file ui/index.ts loads ./a only for an import that asks for it.
+  "Badge.svelte": `<script>\n  import { a } from "./ui";\n\n  export const badge = a;\n</script>\n`,
+  "ui/index.ts": `export { a } from "./a";\nexport { b } from "./b";\n`,
+  "ui/a.ts": `import { dep } from "../dep.ts";\n\nexport const a = dep;\n`,
+  "ui/b.ts": `export const b = "b";\n`,
+  "Static.svelte": `<p>static</p>\n`,
+  "app.test.ts": testFile("app", `import App from "./App.svelte";`, "expect(App).toBeDefined();"),
+  "table.test.ts": testFile("table", `import { columns } from "./Table.svelte";`, "expect(columns).toBe(2);"),
+  "card.test.ts": testFile("card", "", `expect(require("./Card.vue").name).toBe("Card");`),
+  "view.test.ts": testFile("view", `import { view } from "./View.vue";`, `expect(view).toBe("p");`),
+  "page.test.ts": testFile("page", `import Page from "./Page.astro";`, "expect(Page).toBeDefined();"),
+  "panel.test.ts": testFile("panel", `import Panel from "./Panel.sfc";`, "expect(Panel).toBeDefined();"),
+  "broken.test.ts": testFile("broken", `import Broken from "./Broken.svelte";`, "expect(Broken).toBeDefined();"),
+  "badge.test.ts": testFile("badge", `import { badge } from "./Badge.svelte";`, "expect(badge).toBe(1);"),
+  "static.test.ts": testFile("static", `import Static from "./Static.svelte";`, "expect(Static).toBeDefined();"),
+  "unrelated.test.ts": testFile("unrelated"),
+};
+// Each of these loads dep.ts in a run. The scan also selects broken.test.ts.
+const loadDep = [
+  "app.test.ts",
+  "badge.test.ts",
+  "card.test.ts",
+  "page.test.ts",
+  "panel.test.ts",
+  "table.test.ts",
+  "view.test.ts",
+];
+
+describe.concurrent("bun test --changed, a component", () => {
+  test("an edit behind the scripts of a component", async () => {
+    expect(await changed(components, ["dep.ts"])).toEqual({
+      status: "1 changed file, running 8/10 test files",
+      ran: [...loadDep, "broken.test.ts"].sort(),
+      failed: loadDep,
+      exitCode: 1,
+    });
+  });
+
+  // The plugin of test/js/third_party/svelte compiles each component with the Svelte compiler.
+  test("with the Svelte compiler", async () => {
+    const files = {
+      "package.json": JSON.stringify({ name: "svelte-app", type: "module" }),
+      ".gitignore": "node_modules\n",
+      "bunfig.toml": `[test]\npreload = [${JSON.stringify(join(import.meta.dir, "../../js/third_party/svelte/bun-loader-svelte.ts"))}]\n`,
+      "store.ts": `export const label = "ok";\n`,
+      "Label.svelte": `<script lang="ts">\n  import { label } from "./store.ts";\n</script>\n\n<span>{label}</span>\n`,
+      "App.svelte": `<script lang="ts">\n  import Label from "./Label.svelte";\n</script>\n\n<h1><Label /></h1>\n`,
+      "app.test.ts": testFile(
+        "app",
+        `import { render } from "svelte/server";\nimport App from "./App.svelte";`,
+        `expect(render(App).body).toContain("ok");`,
+      ),
+      "unrelated.test.ts": testFile("unrelated"),
+    };
+    expect(await changed(files, ["store.ts"], { nodeModules: true })).toEqual({
+      status: "1 changed file, running 1/2 test files",
+      ran: ["app.test.ts"],
+      failed: ["app.test.ts"],
+      exitCode: 1,
+    });
+  });
+
+  // The scan cannot know that no plugin loads App.svelte. It reads the script, and the selected test passes.
+  test("with no plugin, the test of a component is selected too", async () => {
+    const files = {
+      "package.json": JSON.stringify({ name: "no-plugin", type: "module" }),
+      "dep.ts": `export const dep = 1;\n`,
+      "App.svelte": `<script>\n  import { dep } from "./dep.ts";\n</script>\n\n<p>{dep}</p>\n`,
+      "app.test.ts": testFile("app", `import app from "./App.svelte";`, `expect(app).toEndWith("App.svelte");`),
+      "unrelated.test.ts": testFile("unrelated"),
+    };
+    expect(await changed(files, ["dep.ts"])).toEqual({
+      status: "1 changed file, running 1/2 test files",
+      ran: ["app.test.ts"],
+      failed: [],
+      exitCode: 0,
+    });
+  });
+
+  // Each row is a component, the file that its script imports, and a test that imports the component.
+  // No plugin loads a component here: the rows show only what the scan takes for a script.
+  test("what the scan takes for a script", async () => {
+    const rows: Record<string, [file: string, text: string]> = {
+      // The first `<script` is in a comment. The script comes after it.
+      comment: ["Comment.svelte", `<!-- put the <script> first -->\n<script>\n  import "./comment.ts";\n</script>\n`],
+      apostrophe: [
+        "Apostrophe.svelte",
+        `<!-- a <script> can't go here -->\n<script>\n  import "./apostrophe.ts";\n</script>\n`,
+      ],
+      quotes: [
+        "Quotes.svelte",
+        `<script lang='ts' generics='T extends Record<string, number>'>\n  import "./quotes.ts";\n</script>\n`,
+      ],
+      // The import is below a string that has a `<script`.
+      string: ["String.svelte", `<script>\n  const tag = "<script>";\n  import("./string.ts");\n</script>\n`],
+      second: [
+        "Second.svelte",
+        `<script module>\n  export const one = 1;\n</script>\n\n<script>\n  const tag = "<script>";\n  import("./second.ts");\n</script>\n`,
+      ],
+      crlf: ["Crlf.astro", `---\r\nimport "./crlf.ts";\r\n---\r\n<p></p>\r\n`],
+      mark: ["Mark.astro", `\uFEFF---\nimport "./mark.ts";\n---\n<p></p>\n`],
+      blank: ["Blank.astro", `\n\n---\nimport "./blank.ts";\n---\n<p></p>\n`],
+      fence: ["Fence.astro", `---\n// --- this line is not the end ---\nimport "./fence.ts";\n---\n<p></p>\n`],
+      waits: ["Waits.astro", `---\nconst one = await Promise.resolve(1);\nimport "./waits.ts";\n---\n<p>{one}</p>\n`],
+      // A macro does not run in the scan, and its file is an import like another.
+      macro: [
+        "Macro.svelte",
+        `<script>\n  import { mark } from "./macro.ts" with { type: "macro" };\n\n  export const value = mark();\n</script>\n`,
+      ],
+      // Not a script: a component compiler takes `<script` in lower case only.
+      upper: ["Upper.svelte", `<SCRIPT>\n  import "./upper.ts";\n</SCRIPT>\n`],
+    };
+    const files: Fixture = { "package.json": JSON.stringify({ name: "scripts", type: "module" }) };
+    for (const [row, [file, text]] of Object.entries(rows)) {
+      files[file] = text;
+      files[`${row}.ts`] =
+        row === "macro"
+          ? `import { writeFileSync } from "node:fs";\n\nexport function mark() {\n  writeFileSync("macro-ran", "");\n  return 1;\n}\n`
+          : `export {};\n`;
+      files[`${row}.test.ts`] = testFile(row, `import file from "./${file}";`, "expect(file).toBeString();");
+    }
+    const names = Object.keys(rows);
+    expect(
+      await changed(
+        files,
+        names.map(row => `${row}.ts`),
+        { breaks: false, probe: ["macro-ran"] },
+      ),
+    ).toEqual({
+      status: "12 changed files, running 11/12 test files",
+      ran: names
+        .filter(row => row !== "upper")
+        .map(row => `${row}.test.ts`)
+        .sort(),
+      present: [],
+      exitCode: 0,
+    });
+  });
+
+  // The scan has one row for each file. An import of a code file as text must not hide what that file imports.
+  test("a script that imports a code file as text", async () => {
+    const files = {
+      "package.json": JSON.stringify({ name: "as-text", type: "module" }),
+      "Source.svelte": `<script>\n  import text from "./shown.ts" with { type: "text" };\n\n  export const size = text.length;\n</script>\n`,
+      "shown.ts": `export { two } from "./two.ts";\n`,
+      "two.ts": `export const two = 2;\n`,
+      "a.ts": `export * from "./b.ts";\n`,
+      "b.ts": `export * from "./c.ts";\n`,
+      "c.ts": `export * from "./shown.ts";\n`,
+      "shown.test.ts": testFile(
+        "shown",
+        `import source from "./Source.svelte";\nimport { two } from "./a.ts";`,
+        "expect([source, two]).toHaveLength(2);",
+      ),
+    };
+    expect(await changed(files, ["two.ts"])).toEqual({
+      status: "1 changed file, running 1/1 test file",
+      ran: ["shown.test.ts"],
+      failed: ["shown.test.ts"],
+      exitCode: 1,
+    });
+  });
+
+  // Each `<script` that does not end is one more script to try. The scan reads each byte twice at most.
+  test("a file with thousands of scripts that do not end", async () => {
+    const lines = (line: string, count: number) => Buffer.alloc(line.length * count, line).toString();
+    const files = {
+      "package.json": JSON.stringify({ name: "many-scripts", type: "module" }),
+      "Values.svelte": lines("<script>x\n", 10_000),
+      "Returns.svelte": lines("<script>return;\n", 6_000),
+      "many.test.ts": testFile(
+        "many",
+        `import values from "./Values.svelte";\nimport returns from "./Returns.svelte";`,
+        "expect([values, returns]).toHaveLength(2);",
+      ),
+      "dep.ts": `export const dep = 1;\n`,
+      "dep.test.ts": testFile("dep", `import { dep } from "./dep.ts";`, "expect(dep).toBe(1);"),
+    };
+    expect(await changed(files, ["dep.ts"], { breaks: false })).toEqual({
+      status: "1 changed file, running 1/2 test files",
+      ran: ["dep.test.ts"],
+      exitCode: 0,
+    });
+  });
+
+  // The scan does not read a file with no `<script`, or a binary file.
+  test("a file that is not a component stays an asset", async () => {
+    const files = {
+      "package.json": JSON.stringify({ name: "assets", type: "module" }),
+      "notes.dat": `import "./notes-dep.ts";\n`,
+      "blob.dat": Buffer.from(`\0<script>\n  import "./blob-dep.ts";\n</script>\n`),
+      "notes-dep.ts": `export {};\n`,
+      "blob-dep.ts": `export {};\n`,
+      "assets.test.ts": testFile(
+        "assets",
+        `import notes from "./notes.dat";\nimport blob from "./blob.dat";`,
+        "expect([notes, blob]).toHaveLength(2);",
+      ),
+    };
+    expect(await changed(files, ["notes-dep.ts", "blob-dep.ts"], { breaks: false })).toEqual({
+      status: "2 changed files, but no test files are affected",
+      ran: [],
+      exitCode: 0,
+    });
+  });
+
+  // The bundler of `Bun.serve` loads what a page imports, and there a component is an asset.
+  // A second copy of m.ts under the page would hide the copy that m.test.ts imports.
+  test("a component that a page imports stays an asset", async () => {
+    const files = {
+      "package.json": JSON.stringify({ name: "component-page", type: "module" }),
+      "page.html": `<!doctype html>\n<html>\n  <body>\n    <script type="module" src="./client.ts"></script>\n  </body>\n</html>\n`,
+      "client.ts": `import App from "./App.svelte";\nconsole.log(App);\n`,
+      "App.svelte": `<script>\n  import { m } from "./m.ts";\n</script>\n\n<p>{m}</p>\n`,
+      "m.ts": `export const m = 1;\n`,
+      "m.test.ts": testFile("m", `import { m } from "./m.ts";`, "expect(m).toBe(1);"),
+      "page.test.ts": testFile("page", `import page from "./page.html";`, "expect(page).toBeDefined();"),
+    };
+    expect(await changed(files, ["m.ts"])).toEqual({
+      status: "1 changed file, running 1/2 test files",
+      ran: ["m.test.ts"],
+      failed: ["m.test.ts"],
+      exitCode: 1,
+    });
+  });
+
+  // Only the scan of `bun test --changed` reads the scripts of a component. A build copies the file.
+  test("bun build copies a component", async () => {
+    using dir = tempDir("test-changed-build-component", {
+      "entry.js": `import app from "./App.svelte";\nconsole.log(app);\n`,
+      "App.svelte": `<script>\n  import "./not-there";\n</script>\n`,
+    });
+    const build = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], target: "bun" });
+    expect(build.outputs.map(output => output.kind).sort()).toEqual(["asset", "entry-point"]);
+  });
+});
+
 // On Windows, `bun test --watch` runs as a parent watcher-manager that
 // respawns a child process on change (rather than exec()-in-place), which
 // makes this test's stderr-stream sync points racy there. The 15 cases
@@ -572,6 +970,43 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     const triggerPath = JSON.parse(match![1]);
     expect(typeof triggerPath).toBe("string");
     expect(basename(triggerPath)).toMatch(/^\.bun-test-changed-[0-9a-f]{32}\.trigger$/);
+
+    proc.kill();
+    reader.releaseLock();
+  }, 60_000);
+
+  test("an edit behind a component reruns the tests that load it", async () => {
+    using dir = tempDir("test-changed-watch-component", committedRepo(components));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    async function waitFor(needle: string, from = 0): Promise<void> {
+      while (!buf.slice(from).includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
+        buf += decoder.decode(value, { stream: true });
+      }
+    }
+
+    await waitFor("no changed files");
+    await waitFor("Ran 0 tests");
+
+    // The watcher has dep.ts only if the scan found it behind the components.
+    const before = buf.length;
+    appendFileSync(join(String(dir), "dep.ts"), "// touched\n");
+    await waitFor("across 8 files", before);
+    expect(ranFiles(buf.slice(before), Object.keys(components))).toEqual([...loadDep, "broken.test.ts"].sort());
 
     proc.kill();
     reader.releaseLock();

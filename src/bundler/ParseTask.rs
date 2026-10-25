@@ -1376,6 +1376,20 @@ pub mod parse_worker {
             }
             Loader::File | Loader::Wasm => {
                 debug_assert!(loader.should_copy_for_bundling());
+                // A plugin compiles a component in the test run. This scan runs no plugin, and reads what the scripts import.
+                if topts.component_scripts
+                    && topts.target.is_server_side()
+                    && crate::component_scripts::has_scripts(source.path.text, source.contents())
+                {
+                    return get_component_ast(
+                        log,
+                        &mut topts.define,
+                        &topts.loaders,
+                        opts,
+                        bump,
+                        source,
+                    );
+                }
 
                 // Put a unique key in the AST to implement the URL loader. At the end
                 // of the bundle, the key is replaced with the actual URL.
@@ -1445,6 +1459,94 @@ pub mod parse_worker {
                 return Ok(ast);
             }
         }
+    }
+
+    /// The AST of a component in a scan: it has what the scripts import and nothing else. No macro runs, and no error is reported.
+    #[cold]
+    fn get_component_ast(
+        log: &mut Log,
+        define: &'static mut js_parser::Define,
+        loaders: &bun_ast::LoaderHashTable,
+        opts: ParserOptions<'static>,
+        bump: &'static Bump,
+        source: &'static Source,
+    ) -> core::result::Result<JSAst<'static>, AnyError> {
+        let mut scan_pass = js_parser::ScanPassResult::init();
+        // A script that does not parse keeps the imports before the error: the test run reports the error.
+        let mut scan = |is_jsx: bool, script: &Source| -> (Vec<ImportRecord>, bool) {
+            let mut script_opts = opts.clone_for_lazy_export();
+            script_opts.ts = true;
+            script_opts.jsx.parse = is_jsx;
+            scan_pass.reset();
+            let mut errors = Log::init();
+            let scanned = (crate::cache::JavaScript {}).scan(
+                bump,
+                &mut scan_pass,
+                script_opts,
+                define,
+                &mut errors,
+                script,
+            );
+            let is_parsed = scanned.is_ok() && errors.errors == 0;
+            (core::mem::take(&mut scan_pass.import_records), is_parsed)
+        };
+        let mut import_records = Vec::new();
+        crate::component_scripts::for_each(source.path.text, source.contents(), |code| {
+            let script = Source {
+                path: source.path,
+                contents: std::borrow::Cow::Borrowed(code),
+                index: source.index,
+                ..Default::default()
+            };
+            // The language of a script is not read: TypeScript has JavaScript, and TSX has JSX.
+            let (mut records, is_parsed) = scan(false, &script);
+            if !is_parsed {
+                records.append(&mut scan(true, &script).0);
+            }
+            for mut record in records {
+                // The markup uses the imports that the script does not.
+                record.flags.remove(bun_ast::ImportRecordFlags::IS_UNUSED);
+                // The scan has one row for each path: `with { type: "text" }` must not make a code file an asset for its other importers.
+                if let Some(Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Css) =
+                    record.path.loader(loaders)
+                {
+                    record.loader = None;
+                }
+                import_records.push(record);
+            }
+        });
+        // The scan pass has no named imports, so each import takes every export of a barrel file.
+        let mut symbols = bun_ast::symbol::List::with_capacity_in(import_records.len(), bump);
+        for _ in &import_records {
+            symbols.push(Default::default());
+        }
+        let mut ast = js_parser::new_lazy_export_ast_impl(
+            bump,
+            define,
+            opts,
+            log,
+            Expr::init(E::Missing {}, Loc::EMPTY),
+            source,
+            b"",
+            symbols,
+        )?
+        .ok_or(AnyError::ParserError)?;
+        for index in 0..import_records.len() as u32 {
+            bun_core::handle_oom(ast.named_imports.put(
+                ast::Ref::new(index, source.index.0, ast::RefTag::Symbol),
+                ast::NamedImport {
+                    alias: Some(ast::StoreStr::new(b"")),
+                    alias_loc: Loc::EMPTY,
+                    namespace_ref: ast::Ref::NONE,
+                    import_record_index: index,
+                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                    alias_is_star: true,
+                    is_exported: false,
+                },
+            ));
+        }
+        ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
+        Ok(JSAst::init(ast))
     }
 
     // ───────────────────────────────────────────────────────────────────────────

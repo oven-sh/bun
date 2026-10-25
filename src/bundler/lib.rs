@@ -138,6 +138,7 @@ pub use bundled_ast::BundledAst;
 pub mod barrel_imports;
 #[path = "Chunk.rs"]
 pub mod chunk;
+pub(crate) mod component_scripts;
 pub mod defines;
 pub mod linker;
 #[path = "LinkerGraph.rs"]

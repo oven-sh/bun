@@ -5485,22 +5485,10 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(raw) = self.provisional(Query::ReturnOfSignature(sig)) {
             return TypeId(raw as u32);
         }
-        if !self.enter(Query::ReturnOfSignature(sig)) {
-            return if self.found_cycle {
-                TypeId::ERROR
-            } else {
-                TypeId::UNRESOLVED
-            };
-        }
-        let ty = resolve(self);
-        let left = self.leave(Query::ReturnOfSignature(sig));
-        if self.left_a_cycle {
-            let stored = self.cycle_result();
-            if let Some((file, func, _)) = self.sig_decl(self.types().sig_origin(sig)) {
-                self.report_circular_return_type(Some(Query::ReturnOfSignature(sig)), file, func);
-            }
-            return (self.p.resolved_return_types).insert(&self.task, sig, TypeId::ANY, stored);
-        }
+        let (ty, left) = match self.resolve_return_type_once(sig, resolve) {
+            Ok(resolved) => resolved,
+            Err(circular) => return circular,
+        };
         // `if sig.resolvedReturnType == nil`
         if let Some(resolved) = self.p.resolved_return_types.get(&self.task, &sig) {
             return resolved;
@@ -5516,6 +5504,55 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         ty
+    }
+
+    /// `getReturnTypeOfSignature` for the instantiation `sig` of the signature of `func` that
+    /// `createSignatureInstantiation` made for one call. Here `sig` is also the signature that
+    /// `getSignatureInstantiation` returns for the same type arguments, and its `resolvedReturnType` isn't this one's.
+    pub(super) fn return_type_of_own_instantiation(
+        &mut self,
+        sig: SigId,
+        (file, func, mapper): (FileId, FnId, MapperId),
+    ) -> TypeId {
+        let resolved = self.resolve_return_type_once(sig, |c| {
+            let declared = c.return_type_of_fn(file, func);
+            c.instantiate_result_of_sig(declared, file, func, mapper)
+        });
+        match resolved {
+            Ok((ty, _)) => ty,
+            Err(circular) => circular,
+        }
+    }
+
+    /// The result of `resolve` between `pushTypeResolution` and `popTypeResolution`, and what `leave` returned. `Err` if
+    /// either of the two found a cycle, with the type that `getReturnTypeOfSignature` returns then.
+    fn resolve_return_type_once(
+        &mut self,
+        sig: SigId,
+        resolve: impl FnOnce(&mut Self) -> TypeId,
+    ) -> Result<(TypeId, Result<Stored, Open>), TypeId> {
+        if !self.enter(Query::ReturnOfSignature(sig)) {
+            return Err(if self.found_cycle {
+                TypeId::ERROR
+            } else {
+                TypeId::UNRESOLVED
+            });
+        }
+        let ty = resolve(self);
+        let left = self.leave(Query::ReturnOfSignature(sig));
+        if self.left_a_cycle {
+            let stored = self.cycle_result();
+            if let Some((file, func, _)) = self.sig_decl(self.types().sig_origin(sig)) {
+                self.report_circular_return_type(Some(Query::ReturnOfSignature(sig)), file, func);
+            }
+            return Err((self.p.resolved_return_types).insert(
+                &self.task,
+                sig,
+                TypeId::ANY,
+                stored,
+            ));
+        }
+        Ok((ty, left))
     }
 
     /// True if `mapper` maps any type parameter to another type. A declared type or signature has

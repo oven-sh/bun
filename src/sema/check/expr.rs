@@ -1856,7 +1856,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return (TypeId::SILENT_NEVER, false);
                 }
                 let resolved = self.resolved_signature(file, e);
-                let resolved = self.with_return_type(resolved);
+                let resolved = self.with_return_type_of_call(file, e, resolved);
                 let call = &hir[c];
                 let may_short_circuit = match call.chain {
                     Chain::No => false,
@@ -1958,7 +1958,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ExprKind::TaggedTemplate(_) | ExprKind::New(_) => {
                 let resolved = self.resolved_signature(file, e);
-                self.with_return_type(resolved).ret
+                self.with_return_type_of_call(file, e, resolved).ret
             }
             ExprKind::Array(items) => {
                 self.push_cached_contextual_type(file, e);

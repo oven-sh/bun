@@ -296,8 +296,11 @@ impl<'p, 's> Checker<'p, 's> {
         let reported = std::mem::replace(&mut self.call_resolution_errors, outer_errors);
         self.resolution_start = resolution_start;
         self.resolved_meanwhile.push((file, call, resolved));
-        let resolved = self.with_return_type(resolved);
+        let resolved = self.with_return_type_of_call(file, call, resolved);
         self.resolved_meanwhile.pop();
+        if !is_in_progress && !self.calls_with_own_instantiation.is_empty() {
+            (self.calls_with_own_instantiation).retain(|&it| it != (file, call));
+        }
         // `getResolvedSignature`: `links.resolvedSignature != c.resolvingSignature`, "this inner
         // resolution sets the resolvedSignature first", and `result = links.resolvedSignature`.
         let assigned_within = (self.signatures_resolved_within.iter())
@@ -1162,6 +1165,12 @@ impl<'p, 's> Checker<'p, 's> {
             Some(sig) => sig,
             None => self.candidate_for_overload_failure(&s),
         };
+        if !is_chosen
+            && !s.candidates.contains(&sig)
+            && !self.calls_with_own_instantiation.contains(&(file, call))
+        {
+            self.calls_with_own_instantiation.push((file, call));
+        }
         // `reorderCandidates`: with `callChainFlags` a candidate is its `getOptionalCallSignature`.
         // Only the return type of the clone differs, so the chosen signature is cloned.
         let sig = self.optional_call_signature_in_chain(file, call, sig);
@@ -1207,6 +1216,33 @@ impl<'p, 's> Checker<'p, 's> {
             },
             _ => resolved,
         }
+    }
+
+    /// `with_return_type` for the call itself. `getSignatureInstantiation` returns the same signature for the same type
+    /// arguments, so calls share its `resolvedReturnType`. `createSignatureInstantiation`, for a call that no candidate
+    /// accepts, makes a new one each time. What another call has resolved or is resolving for these type arguments
+    /// doesn't count for it, only what's known about `sig.target`.
+    pub(super) fn with_return_type_of_call(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        resolved: ResolvedCall,
+    ) -> ResolvedCall {
+        if !self.calls_with_own_instantiation.is_empty()
+            && self.calls_with_own_instantiation.contains(&(file, call))
+            && resolved.ret == TypeId::UNRESOLVED
+            && let Some(sig) = resolved.sig
+            && let SigData::Decl {
+                file: of,
+                func,
+                mapper,
+            } = *self.types().sig(sig)
+        {
+            cold_path();
+            let ret = self.return_type_of_own_instantiation(sig, (of, func, mapper));
+            return ResolvedCall { ret, ..resolved };
+        }
+        self.with_return_type(resolved)
     }
 
     /// `chooseOverload`

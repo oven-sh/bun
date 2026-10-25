@@ -8876,6 +8876,41 @@ export function g() { return f(); }
       }
     });
 
+    // `f3<Ast>(x)` fails, so its signature comes from `createSignatureInstantiation` and no other call has it. `f3(ast)`
+    // infers the same type argument and gets the signature that `getSignatureInstantiation` remembers. In the cycle the
+    // second one resolves to `any` first. If the first one took that, `f1` would return `Ast` and `+` would be an error.
+    test("a call that no candidate accepts doesn't share the return type of its instantiation with other calls", async () => {
+      using dir = project({
+        "lib.ts": `export type Ast = {};
+export declare const ast: Ast; export declare const n: number; export declare const flag: boolean;
+export declare function mapAll<T, U>(xs: T[], f: (x: T, i: number) => U): U[];
+`,
+        "m1.ts": `import { n, mapAll } from "./lib"; import type { Ast } from "./lib";
+import { f3 } from "./m2";
+export function f1<T>(x: T) { switch (n) { case 2: return new C().run(x); default: return (f3<Ast>(x), n); } }
+export class C { run(x: Ast): Ast { return x; } }
+export const f2 = function (x: Ast) { return mapAll([x], x => f1<Ast>(x)); };
+`,
+        "m2.ts": `import { ast, flag, n } from "./lib";
+import { f1, f2 } from "./m1";
+export let v = flag ? f3(ast) : f1([ast]) + 1;
+export function f3<T>(x: T) { switch (n) { case 2: return f2(x); default: return v; } }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").map(line => line.slice(0, line.indexOf(": ", line.indexOf("error"))))).toEqual([
+        "m1.ts(3,17): error TS7023",
+        "m1.ts(3,71): error TS2345",
+        "m1.ts(3,100): error TS2345",
+        "m1.ts(5,14): error TS7023",
+        "m1.ts(5,58): error TS7024",
+        "m2.ts(3,12): error TS7022",
+        "m2.ts(4,17): error TS7023",
+        "m2.ts(4,62): error TS2345",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("TS7053 prints an aliased intersection with a class by its members", async () => {
       using dir = project({
         "a.ts": `class User { id = 1 }

@@ -5201,6 +5201,7 @@ impl VirtualMachine {
                 bun_ast::Loader::File
             }),
             module_type,
+            unused_import_flags_ts: guard.0.transpiler.options.unused_import_flags_ts,
             source_code_printer: printer.as_ptr(),
             // `fetchWithoutOnLoadPlugins` forbids the async path.
             promise_ptr: core::ptr::null_mut(),

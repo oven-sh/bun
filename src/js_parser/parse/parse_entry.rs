@@ -152,7 +152,9 @@ pub struct Options<'a> {
     /// Keeps every directive in the AST, in its original position and with its original text.
     /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
     pub keep_directives: bool,
-    pub preserve_unused_imports_ts: bool,
+    /// From the tsconfig.json that governs the file. Empty for a file inside node_modules
+    /// and for a declaration file.
+    pub unused_import_flags_ts: options::TSUnusedImportFlags,
     pub use_define_for_class_fields: bool,
     pub suppress_warnings_about_weird_code: bool,
     pub features: RuntimeFeatures,
@@ -173,6 +175,8 @@ pub struct Options<'a> {
     pub jsc_builtin_syntax: bool,
     pub output_format: options::Format,
 
+    /// The output is text for another tool (`bun build --no-bundle`) and Bun does not
+    /// link it. Off by default: a new parse site gets output that links.
     pub transform_only: bool,
 
     /// Used for inlining the state of import.meta.main during visiting
@@ -210,7 +214,7 @@ impl<'a> Default for Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             keep_directives: false,
-            preserve_unused_imports_ts: false,
+            unused_import_flags_ts: options::TSUnusedImportFlags::empty(),
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
@@ -262,7 +266,7 @@ impl<'a> Options<'a> {
             keep_names: self.keep_names,
             ignore_dce_annotations: self.ignore_dce_annotations,
             keep_directives: self.keep_directives,
-            preserve_unused_imports_ts: self.preserve_unused_imports_ts,
+            unused_import_flags_ts: self.unused_import_flags_ts,
             use_define_for_class_fields: self.use_define_for_class_fields,
             suppress_warnings_about_weird_code: self.suppress_warnings_about_weird_code,
             features: RuntimeFeatures {
@@ -341,6 +345,10 @@ impl<'a> Options<'a> {
 
         if self.ts {
             hasher.update(b"TS");
+            if !self.unused_import_flags_ts.is_empty() {
+                hasher.update(b"ts_unused_imports=");
+                hasher.update(&[self.unused_import_flags_ts.bits()]);
+            }
         } else {
             hasher.update(b"NO_TS");
         }
@@ -354,6 +362,18 @@ impl<'a> Options<'a> {
         }
 
         self.features.hash_for_runtime_transpiler(hasher);
+    }
+
+    /// `KEEP_VALUES` prints an unused import name only in transform output. The runtime
+    /// and a bundle link what is printed, so there the name goes and the statement stays.
+    pub(crate) fn keeps_unused_import_names_ts(&self) -> bool {
+        self.ts
+            && self.transform_only
+            && self
+                .unused_import_flags_ts
+                .contains(options::TSUnusedImportFlags::KEEP_VALUES)
+            && !self.bundle
+            && !self.features.minify_identifiers
     }
 
     // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
@@ -371,7 +391,7 @@ impl<'a> Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             keep_directives: false,
-            preserve_unused_imports_ts: false,
+            unused_import_flags_ts: options::TSUnusedImportFlags::empty(),
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
@@ -593,8 +613,9 @@ impl<'a> Parser<'a> {
             }
         }
 
-        //
-        if TS {
+        // With a tsconfig.json setting that keeps unused imports, a statement that
+        // survives the parse survives the transform too, and the guess below is wrong.
+        if TS && p.options.unused_import_flags_ts.is_empty() {
             for import_record in p.import_records.items_mut() {
                 // Mark everything as unused
                 // Except:
@@ -1540,6 +1561,7 @@ impl<'a> Parser<'a> {
                             items: bun_ast::StoreSlice::EMPTY,
                             is_single_line: false,
                             phase_defer: false,
+                            has_items_clause: false,
                         },
                         ns_loc,
                     );
@@ -2090,10 +2112,12 @@ impl<'a> Parser<'a> {
             }
 
             for item in p.import_records.items() {
-                // skip if they did import it
-                if item.path.text == b"bun:test"
-                    || item.path.text == b"@jest/globals"
-                    || item.path.text == b"vitest"
+                // skip if they did import it. An unused record is not an import: its
+                // statement binds no value, or a `declare` block holds it.
+                if !item.flags.contains(ImportRecordFlags::IS_UNUSED)
+                    && (item.path.text == b"bun:test"
+                        || item.path.text == b"@jest/globals"
+                        || item.path.text == b"vitest")
                 {
                     if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                         // If we rewrote import paths, we need to disable the runtime transpiler cache
@@ -2248,6 +2272,7 @@ impl<'a> Parser<'a> {
                         star_name_loc: bun_ast::Loc::EMPTY,
                         is_single_line: false,
                         phase_defer: false,
+                        has_items_clause: false,
                     },
                     bun_ast::Loc::EMPTY,
                 );

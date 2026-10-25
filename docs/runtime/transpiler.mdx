@@ -214,6 +214,8 @@ interface TranspilerOptions {
 
   // Whether to remove unused imports from transpiled file
   // Default: false
+  // With tsconfig `verbatimModuleSyntax: true`, the unused names go
+  // and the statement stays as `import "module"`
   trimUnusedImports?: boolean,
 
   // Whether to enable a set of JSX optimizations

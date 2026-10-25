@@ -274,6 +274,7 @@ pub(crate) fn add_imports_to_program(
                 import_record_index,
                 is_single_line: true,
                 phase_defer: false,
+                has_items_clause: false,
             },
             Loc::EMPTY,
         ));

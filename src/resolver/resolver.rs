@@ -277,6 +277,7 @@ use bun_alloc as allocators;
 // `bun.resolver.SideEffects` — same type as `Result.primary_side_effects_data`
 // (re-exported from `bun_ast`; see `result.rs`).
 use bun_ast::SideEffects;
+use bun_js_parser::options::TSUnusedImportFlags;
 
 // ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
 // The DirInfo cache (`DirInfo::hash_map_instance()`) is a true process-lifetime
@@ -1625,6 +1626,12 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
+                // As `unused_import_flags_ts`, for the file that is parsed.
+                if primary && !dir.is_inside_node_modules() {
+                    result
+                        .flags
+                        .set_unused_import_flags_ts(tsconfig.unused_import_flags());
+                }
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
@@ -6659,6 +6666,12 @@ impl<'a> Resolver<'a> {
                 if let Some(value) = parent_config.preserve_imports_not_used_as_values {
                     mc.preserve_imports_not_used_as_values = Some(value);
                 }
+                if let Some(value) = parent_config.preserve_value_imports {
+                    mc.preserve_value_imports = Some(value);
+                }
+                if let Some(value) = parent_config.verbatim_module_syntax {
+                    mc.verbatim_module_syntax = Some(value);
+                }
 
                 // TypeScript replaces paths across extends (child overrides parent
                 // entirely), so when a more-specific config defines paths, replace
@@ -6690,7 +6703,9 @@ impl<'a> Resolver<'a> {
             }
             // SAFETY: from `parse_tsconfig` (heap::into_raw) above; the walk is over, so this
             // is the only pointer to it.
-            return Ok(Some(unsafe { bun_core::heap::take(merged_config) }));
+            let mut merged_config = unsafe { bun_core::heap::take(merged_config) };
+            merged_config.fold_unused_import_flags();
+            return Ok(Some(merged_config));
         }
         Ok(None)
     }
@@ -6736,6 +6751,30 @@ impl<'a> Resolver<'a> {
                 .enclosing_tsconfig_json
                 .map(TSConfigRef::OfDirectory),
         }
+    }
+
+    /// What the TypeScript files of `dir_info` do with an unused import: what the nearest
+    /// tsconfig.json says, and nothing inside node_modules. A package was not written for the
+    /// settings of the project that installs it. esbuild's `tsConfigForDir` has the same rule.
+    pub fn unused_import_flags_ts(&mut self, dir_info: &DirInfo::DirInfo) -> TSUnusedImportFlags {
+        if dir_info.is_inside_node_modules() {
+            return TSUnusedImportFlags::empty();
+        }
+        // No `Arc` clone of the override per file: this runs for every TypeScript module.
+        if self.opts.tsconfig_override.is_some() && self.opts.load_tsconfig_json {
+            if self.opts.tsconfig_override_json.is_none() {
+                let _ = self.tsconfig_override();
+            }
+            return match &self.opts.tsconfig_override_json {
+                Some(Some(tsconfig)) => tsconfig.unused_import_flags(),
+                _ => TSUnusedImportFlags::empty(),
+            };
+        }
+        dir_info
+            .enclosing_tsconfig_json
+            .map_or(TSUnusedImportFlags::empty(), |tsconfig| {
+                tsconfig.unused_import_flags()
+            })
     }
 
     /// `DirInfo::tsconfig_json`, for this resolver.

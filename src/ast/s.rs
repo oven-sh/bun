@@ -214,6 +214,10 @@ pub struct Import {
     /// proposal. Only valid with a namespace import (`star_name_loc` is set,
     /// `default_name`/`items` are empty).
     pub phase_defer: bool, // = false
+    /// A TypeScript source had a `{ ... }` clause here. Read only while `items` is
+    /// empty, where it tells `import {} from 'path'` (type-only to TypeScript, printed
+    /// with its braces when kept) from `import 'path'`. Never set for JavaScript.
+    pub has_items_clause: bool, // = false
 }
 
 impl Default for Import {
@@ -226,6 +230,7 @@ impl Default for Import {
             import_record_index: u32::MAX,
             is_single_line: false,
             phase_defer: false,
+            has_items_clause: false,
         }
     }
 }

@@ -118,9 +118,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut items = bun_alloc::ArenaVec::<ClauseItem>::new_in(p.arena);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
-        // this variable should not exist if we're not in a typescript file
-        // Declared unconditionally — dead-store elim removes it when !TS.
-        let mut had_type_only_imports = false;
 
         while p.lexer.token != T::TCloseBrace {
             // The alias may be a keyword;
@@ -160,11 +157,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.lexer.token == T::TIdentifier {
                             // "import { type as as as } from 'mod'"
                             // "import { type as as foo } from 'mod'"
-                            had_type_only_imports = true;
                             p.lexer.next()?;
                         } else {
                             // "import { type as as } from 'mod'"
-
                             items.push(ClauseItem {
                                 alias: alias.into(),
                                 alias_loc,
@@ -173,8 +168,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             });
                         }
                     } else if p.lexer.token == T::TIdentifier {
-                        had_type_only_imports = true;
-
                         // "import { type as xxx } from 'mod'"
                         original_name = p.lexer.identifier;
                         name = LocRef {
@@ -220,7 +213,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // An import where the name is a keyword must have an alias
                         p.lexer.expected_string(b"\"as\"")?;
                     }
-                    had_type_only_imports = true;
                 }
             } else {
                 if p.lexer.is_contextual_keyword(b"as") {
@@ -280,11 +272,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ImportClause {
             items: items.into_bump_slice_mut(),
             is_single_line,
-            had_type_only_imports: if TYPESCRIPT {
-                had_type_only_imports
-            } else {
-                false
-            },
         })
     }
 

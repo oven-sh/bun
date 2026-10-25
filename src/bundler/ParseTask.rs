@@ -109,6 +109,7 @@ pub struct ParseTask {
 
     pub(crate) known_target: options::Target,
     pub(crate) module_type: options::ModuleType,
+    pub(crate) unused_import_flags_ts: options::TSUnusedImportFlags,
     pub(crate) emit_decorator_metadata: bool,
     pub(crate) experimental_decorators: bool,
     pub(crate) use_define_for_class_fields: bool,
@@ -292,6 +293,7 @@ impl ParseTask {
             jsx: resolve_result.jsx.clone(),
             source_index,
             module_type: resolve_result.module_type,
+            unused_import_flags_ts: resolve_result.flags.unused_import_flags_ts(),
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
             experimental_decorators: resolve_result.flags.experimental_decorators(),
             use_define_for_class_fields: resolve_result.flags.use_define_for_class_fields(),
@@ -348,6 +350,7 @@ impl Default for ParseTask {
             stage: ParseTaskStage::NeedsSourceCode,
             known_target: options::Target::default(),
             module_type: options::ModuleType::Unknown,
+            unused_import_flags_ts: options::TSUnusedImportFlags::empty(),
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: true,
@@ -634,6 +637,7 @@ pub mod parse_worker {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             module_type: options::ModuleType::Unknown,
+            unused_import_flags_ts: options::TSUnusedImportFlags::empty(),
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: true,
@@ -2548,6 +2552,7 @@ pub mod parse_worker {
             || !(task.experimental_decorators || task.emit_decorator_metadata);
         opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
         opts.features.no_macros = topts.no_macros;
+        opts.unused_import_flags_ts = task.unused_import_flags_ts;
         // Modeled as
         // `Option<Box<StringSet>>` on both sides, so we deep-clone (small —
         // CLI-supplied flag set). PERF: retype

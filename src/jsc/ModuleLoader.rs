@@ -129,6 +129,8 @@ pub struct TranspileExtra {
     pub path: bun_resolver::fs::Path<'static>,
     pub loader: bun_ast::Loader,
     pub module_type: bun_bundler::options::ModuleType,
+    /// `Resolver::unused_import_flags_ts` for the directory of `path`.
+    pub unused_import_flags_ts: bun_bundler::options::TSUnusedImportFlags,
     /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null.
     pub source_code_printer: *mut bun_js_printer::BufferPrinter,
     /// `?*?*jsc.JSInternalPromise` — out-param for the async-module path.

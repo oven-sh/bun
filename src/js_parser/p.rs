@@ -2490,6 +2490,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 default_name: None,
                 star_name_loc: bun_ast::Loc::EMPTY,
                 phase_defer: false,
+                has_items_clause: false,
             },
             bun_ast::Loc::default(),
         );
@@ -2660,6 +2661,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     default_name: None,
                     star_name_loc: bun_ast::Loc::EMPTY,
                     phase_defer: false,
+                    has_items_clause: false,
                 },
                 bun_ast::Loc::EMPTY,
             )
@@ -4113,12 +4115,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Only assert above; do not actually pop.
     }
 
+    /// `starts_unused`: the record is created with `IS_UNUSED` set, and stays so unless
+    /// `ImportScanner::scan` keeps the statement.
     pub(crate) fn process_import_statement(
         &mut self,
         stmt_: S::Import,
         path: ParsedPath<'a>,
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
+        starts_unused: bool,
     ) -> Result<Stmt, crate::Error> {
         let is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
@@ -4251,6 +4256,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_records.items_mut()[stmt.import_record_index as usize]
             .flags
             .set(bun_ast::ImportRecordFlags::PHASE_DEFER, stmt.phase_defer);
+        self.import_records.items_mut()[stmt.import_record_index as usize]
+            .flags
+            .set(bun_ast::ImportRecordFlags::IS_UNUSED, starts_unused);
 
         if let Some(star) = stmt.star_name_loc.to_nullable() {
             let name = self.load_name_from_ref(stmt.namespace_ref);
@@ -9613,6 +9621,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !TYPESCRIPT {
             // This is so it doesn't impact runtime transpiler caching when not in use
             opts.features.emit_decorator_metadata = false;
+        }
+
+        // Every parse passes here, so this is where a declaration file loses the flags.
+        if !opts.unused_import_flags_ts.is_empty()
+            && options::TSUnusedImportFlags::is_declaration_file(source.path.text)
+        {
+            opts.unused_import_flags_ts = options::TSUnusedImportFlags::empty();
         }
 
         let unwrap_all_requires = 'brk: {

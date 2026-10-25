@@ -1257,6 +1257,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // TODO: import assertions
                     // path.assertions
                 );
+                // A `declare` block is dropped whole, and its records with it.
+                if opts.is_typescript_declare {
+                    p.import_records.items_mut()[import_record_index as usize]
+                        .flags
+                        .insert(ImportRecordFlags::IS_UNUSED);
+                }
 
                 if path.is_macro {
                     p.log().add_error(
@@ -1303,14 +1309,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     p.lexer.expect_or_insert_semicolon()?;
 
-                    if Self::IS_TYPESCRIPT_ENABLED {
-                        // export {type Foo} from 'bar';
-                        // ->
-                        // nothing
-                        // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
-                        if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
-                            return Ok(p.s(S::TypeScript {}, loc));
-                        }
+                    // export {type Foo} from 'bar';
+                    // export {} from 'bar';
+                    // ->
+                    // nothing, or `export {} from 'bar'` when tsconfig keeps the statement
+                    // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
+                    let valueless_clause =
+                        Self::IS_TYPESCRIPT_ENABLED && export_clause.clauses.is_empty();
+                    if valueless_clause && p.options.unused_import_flags_ts.drops_valueless_clause()
+                    {
+                        return Ok(p.s(S::TypeScript {}, loc));
                     }
 
                     if parsed_path.is_macro {
@@ -1329,6 +1337,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let import_record_index =
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
+                    // As for an import: see `starts_unused` in `t_import`.
+                    if opts.is_typescript_declare || (valueless_clause && !SCAN_ONLY) {
+                        p.import_records.items_mut()[import_record_index as usize]
+                            .flags
+                            .insert(ImportRecordFlags::IS_UNUSED);
+                    }
                     let path_name = fs::PathName::init(parsed_path.text);
                     let namespace_ref = {
                         use std::io::Write as _;
@@ -1369,7 +1383,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // ->
                     // nothing
                     // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
-                    if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                    if export_clause.clauses.is_empty()
+                        && export_clause.had_type_only_exports
+                        && p.options.unused_import_flags_ts.drops_valueless_clause()
+                    {
                         return Ok(p.s(S::TypeScript {}, loc));
                     }
                 }
@@ -1476,13 +1493,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
                 let import_clause = p.parse_import_clause()?;
-                if Self::IS_TYPESCRIPT_ENABLED {
-                    if import_clause.had_type_only_imports && import_clause.items.is_empty() {
-                        p.lexer.expect_contextual_keyword(b"from")?;
-                        let _ = p.parse_path()?;
-                        p.lexer.expect_or_insert_semicolon()?;
-                        return Ok(p.s(S::TypeScript {}, loc));
-                    }
+                // "import {} from 'mod'"
+                // "import { type Foo } from 'mod'"
+                if Self::IS_TYPESCRIPT_ENABLED
+                    && import_clause.items.is_empty()
+                    && p.options.unused_import_flags_ts.drops_valueless_clause()
+                {
+                    p.lexer.expect_contextual_keyword(b"from")?;
+                    let _ = p.parse_path()?;
+                    p.lexer.expect_or_insert_semicolon()?;
+                    return Ok(p.s(S::TypeScript {}, loc));
                 }
 
                 stmt = S::Import {
@@ -1492,6 +1512,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // moved into the AST node here; no other &mut alias exists.
                     items: import_clause.items.into(),
                     is_single_line: import_clause.is_single_line,
+                    has_items_clause: Self::IS_TYPESCRIPT_ENABLED,
                     ..Default::default()
                 };
                 p.lexer.expect_contextual_keyword(b"from")?;
@@ -1554,7 +1575,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let path = p.parse_path()?;
                     p.lexer.expect_or_insert_semicolon()?;
-                    return p.process_import_statement(stmt, path, loc, false);
+                    return p.process_import_statement(
+                        stmt,
+                        path,
+                        loc,
+                        false,
+                        opts.is_typescript_declare,
+                    );
                 }
 
                 if Self::IS_TYPESCRIPT_ENABLED {
@@ -1654,6 +1681,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         T::TOpenBrace => {
                             let import_clause = p.parse_import_clause()?;
 
+                            // "import d, {} from 'mod'"
+                            // "import d, { type T } from 'mod'"
+                            // The default name decides the statement. The empty clause
+                            // goes with the same test as in the `{` arm above.
+                            stmt.has_items_clause = Self::IS_TYPESCRIPT_ENABLED
+                                && !(import_clause.items.is_empty()
+                                    && p.options.unused_import_flags_ts.drops_valueless_clause());
                             // SAFETY: sole owner — fresh arena slice from parse_import_clause,
                             // moved into the AST node here; no other &mut alias exists.
                             stmt.items = import_clause.items.into();
@@ -1677,7 +1711,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let path = p.parse_path()?;
         p.lexer.expect_or_insert_semicolon()?;
 
-        p.process_import_statement(stmt, path, loc, was_originally_bare_import)
+        // Nothing may act on these two records before `ImportScanner::scan` decides. A
+        // `declare` block is dropped whole, so its statement never reaches the scanner. A
+        // clause with no value binding stays only because tsconfig keeps the statement.
+        let valueless_clause =
+            stmt.has_items_clause && stmt.items.is_empty() && stmt.default_name.is_none();
+        let starts_unused = opts.is_typescript_declare || (valueless_clause && !SCAN_ONLY);
+        p.process_import_statement(stmt, path, loc, was_originally_bare_import, starts_unused)
     }
 
     /// Out-of-line tail for the (uncommon) `label: stmt` form reached from

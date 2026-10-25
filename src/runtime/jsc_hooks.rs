@@ -38,7 +38,7 @@ use bun_jsc::{
 use bun_ast::ImportKind;
 use bun_ast::Loader;
 use bun_bundler::entry_points::ServerEntryPoint;
-use bun_bundler::options::{self, ModuleType};
+use bun_bundler::options::{self, ModuleType, TSUnusedImportFlags};
 use bun_resolve_builtins::Module as HardcodedModule;
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
@@ -2634,6 +2634,8 @@ fn transpile_source_code_of_any_provenance(
                     macro_remappings,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     jsx: unsafe { &*jsc_vm }.transpiler.options.jsx.clone(),
+                    // SAFETY: per fn contract — `extra` is live for the call.
+                    unused_import_flags_ts: unsafe { (*extra).unused_import_flags_ts },
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     emit_decorator_metadata: unsafe {
                         (*jsc_vm).transpiler.options.emit_decorator_metadata
@@ -2649,6 +2651,7 @@ fn transpile_source_code_of_any_provenance(
                     virtual_source,
                     dont_bundle_twice: true,
                     allow_commonjs: true,
+                    transform_only: false,
                     module_type: module_type_only_for_wrappables,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     inject_jest_globals: unsafe {
@@ -3954,6 +3957,9 @@ struct LoaderResult<'a> {
     specifier: &'a [u8],
     /// Always `None` for non-JS-like loaders (not needed there).
     package_json: Option<&'a bun_resolver::package_json::PackageJSON>,
+    /// `Resolver::unused_import_flags_ts` for the directory of `path`. For a source that no
+    /// directory holds, that of the top-level directory.
+    unused_import_flags_ts: TSUnusedImportFlags,
 }
 
 /// `options.getLoaderAndVirtualSource` — high-tier body.
@@ -4076,11 +4082,25 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // package.json sniff for `.js`/`.ts` module-type.
     let dir = path.name().dir;
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
+    // Only a TypeScript parse reads the flags, and a file with no extension can become one.
+    let may_be_typescript = loader.is_none_or(|l| l.is_typescript());
+    let mut unused_import_flags_ts = if may_be_typescript {
+        // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
+        unsafe { (*jsc_vm).transpiler.options.unused_import_flags_ts }
+    } else {
+        TSUnusedImportFlags::empty()
+    };
     let package_json = if is_js_like && bun_paths::is_absolute(dir) {
         // SAFETY: per fn contract — `transpiler.resolver` is a value field of
         // the VM; `read_dir_info` is re-entrant on the JS thread.
-        match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
-            Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
+        let resolver = unsafe { &mut (*jsc_vm).transpiler.resolver };
+        match resolver.read_dir_info(dir) {
+            Ok(Some(dir_info)) => {
+                if may_be_typescript {
+                    unused_import_flags_ts = resolver.unused_import_flags_ts(&dir_info);
+                }
+                dir_info.package_json().or(dir_info.enclosing_package_json)
+            }
             _ => None,
         }
     } else {
@@ -4094,6 +4114,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
         is_main,
         specifier,
         package_json,
+        unused_import_flags_ts,
     })
 }
 
@@ -4351,6 +4372,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                     referrer.clone(),
                     concurrent_loader,
                     lr.package_json,
+                    lr.unused_import_flags_ts,
                     module_loader,
                 )
             };
@@ -4443,6 +4465,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         path: unsafe { lr.path.into_static() },
         loader: synchronous_loader,
         module_type,
+        unused_import_flags_ts: lr.unused_import_flags_ts,
         source_code_printer: printer_ptr,
         // Resolving a package asynchronously is the global object's loader's only.
         promise_ptr: if allow_promise && module_loader.is_empty() {
@@ -4583,10 +4606,19 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     });
 
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
+    // A plugin's source has no directory to read: the top-level setting, and none under
+    // node_modules.
+    let unused_import_flags_ts = if path.is_node_module() {
+        TSUnusedImportFlags::empty()
+    } else {
+        // SAFETY: `jsc_vm` is the live per-thread VM.
+        unsafe { (*jsc_vm).transpiler.options.unused_import_flags_ts }
+    };
     let mut extra = TranspileExtra {
         path,
         loader,
         module_type: ModuleType::Unknown,
+        unused_import_flags_ts,
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(), // null forbids async resolution
     };

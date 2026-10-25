@@ -238,6 +238,21 @@ impl<'a> BundleV2<'a> {
         self.graph.path_to_source_index_map(target)
     }
 
+    /// `ParseTask::unused_import_flags_ts` for a task that no resolver result describes: the
+    /// setting of the tsconfig.json of the top-level directory, and none inside node_modules.
+    pub(crate) fn root_unused_import_flags_ts(
+        &mut self,
+        target: options::Target,
+        path: &crate::bun_fs::Path<'_>,
+    ) -> options::TSUnusedImportFlags {
+        if path.is_node_module() {
+            return options::TSUnusedImportFlags::empty();
+        }
+        self.transpiler_for_target(target)
+            .options
+            .unused_import_flags_ts
+    }
+
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
         // SAFETY: all three pointers are live for `'a` (set in `init`); the
         // `client_transpiler` arm is only reached when bake populated it.
@@ -4218,6 +4233,7 @@ pub mod bv2_impl {
             } else {
                 self.transpiler_for_target(known_target).options.jsx.clone()
             };
+            let unused_import_flags_ts = self.root_unused_import_flags_ts(known_target, &task_path);
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
             // `arena()` ends before we take `&mut self` below.
@@ -4228,6 +4244,7 @@ pub mod bv2_impl {
                 jsx,
                 source_index: bun_ast::Index::init(source_index.get()),
                 module_type,
+                unused_import_flags_ts,
                 emit_decorator_metadata: false, // TODO
                 package_version: bun_ast::StoreStr::EMPTY,
                 loader: Some(loader),
@@ -5427,6 +5444,10 @@ pub mod bv2_impl {
                                     ..Default::default()
                                 })
                                 .expect("unreachable");
+                            let unused_import_flags_ts = this.root_unused_import_flags_ts(
+                                resolve.import_record.original_target,
+                                &path,
+                            );
                             let task_val = ParseTask {
                                 // SAFETY: `from_mut(this)` is the live bundle (write provenance);
                                 // outlives the task.
@@ -5450,6 +5471,7 @@ pub mod bv2_impl {
                                     .clone(),
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
+                                unused_import_flags_ts,
                                 loader: Some(loader),
                                 known_target: resolve.import_record.original_target,
                                 is_entry_point: resolve.import_record.kind

@@ -35,6 +35,22 @@ import * as tsd from "./utilities";
   tsd.expectType<FileBlob>(f);
 }
 {
+  new Bun.Transpiler({
+    loader: "ts",
+    tsconfig: {
+      compilerOptions: {
+        verbatimModuleSyntax: true,
+        preserveValueImports: false,
+        importsNotUsedAsValues: "remove",
+      },
+    },
+  });
+  new Bun.Transpiler({
+    // @ts-expect-error
+    tsconfig: { compilerOptions: { verbatimModuleSyntax: "yes" } },
+  });
+}
+{
   Bun.spawn(["anything"], {
     env: process.env,
   });

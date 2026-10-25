@@ -3591,6 +3591,10 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       this._header = " ";
     }
     if (callback) queueEndCallback(this, callback);
+    // Node's end() compares the lengths next, whatever has become of the socket. Only the native handle counts them.
+    const expected = strictContentLength(this, headerState, true);
+    const written = expected !== undefined ? handle.getBytesWritten?.() : undefined;
+    if (written !== undefined && written !== expected) throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(written, expected);
     // With the head out and no chunk or terminating chunk to send, Node's end() writes nothing, so its onFinish() still runs.
     if (
       !chunk &&
@@ -3641,6 +3645,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
         // point threw with headers already on the wire, exactly like
         // handle.end throwing after handle.writeHead succeeded.
         const code = (e as { code?: string } | null | undefined)?.code;
+        if (!chunk || headerState === NodeHTTPHeaderState.none) keepCallbackOfMismatchedEnd(this, callback, e);
         if (
           code !== "ERR_STREAM_ALREADY_FINISHED" &&
           code !== "ERR_HTTP_HEADERS_SENT" &&
@@ -3666,7 +3671,12 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // (no native call in between can change it), so reuse its bits instead of
     // paying two more native getter crossings.
     if (!(!chunk && flags & NodeHTTPResponseFlags.ended) && !(flags & NodeHTTPResponseFlags.socket_closed)) {
-      draining = handle.end(chunk, encoding, undefined, strictContentLength(this, headerState, true)) < 0;
+      try {
+        draining = handle.end(chunk, encoding, undefined, strictContentLength(this, headerState, true)) < 0;
+      } catch (e) {
+        if (!chunk) keepCallbackOfMismatchedEnd(this, callback, e);
+        throw e;
+      }
     }
   }
   this._header = " ";
@@ -3689,6 +3699,12 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
 
   return this;
 };
+
+// Node's end() queues its callback, then compares the lengths: https://github.com/nodejs/node/blob/v26.12.1/lib/_http_outgoing.js#L1328-L1333
+// Only a chunk that follows the head is compared ahead of that, in write_(). `_contentLength` is still null for the one that renders it.
+function keepCallbackOfMismatchedEnd(res, callback, e) {
+  if (callback && e?.code === "ERR_HTTP_CONTENT_LENGTH_MISMATCH") queueEndCallback(res, callback);
+}
 
 // 'finish' waits a tick: the dispatcher sets kDetachedFrom after a sync handler returns, and 'finish' reads it.
 function queueResponseFinished(res) {

@@ -6996,6 +6996,103 @@ describe("res.strictContentLength", () => {
     });
     expect(result).toEqual([undefined, MISMATCH]);
   });
+
+  // What became of the callbacks of two end() calls that threw, once the rest of the body and a last end() have finished the response.
+  async function callbacksAfterMismatch(
+    prepare: (res: http.ServerResponse) => void,
+    chunk: string | Buffer,
+    rest: string,
+  ) {
+    return await inServer(res => {
+      const { promise, resolve } = Promise.withResolvers<unknown[]>();
+      const events: unknown[] = [];
+      res.strictContentLength = true;
+      prepare(res);
+      events.push(code(() => res.end(chunk, (err?: Error | null) => void events.push(`with a chunk: ${err}`))));
+      events.push(code(() => res.end((err?: Error | null) => void events.push(`without a chunk: ${err}`))));
+      res.write(rest);
+      res.end((err?: Error | null) => resolve([...events, `last: ${err}`]));
+      return promise;
+    });
+  }
+
+  test("an end() that mismatched keeps its callback, but for a chunk that follows the head", async () => {
+    const result = await callbacksAfterMismatch(
+      res => {
+        res.setHeader("Content-Length", 5);
+        res.write("he");
+      },
+      "x",
+      "llo",
+    );
+    expect(result).toEqual([MISMATCH, MISMATCH, "without a chunk: null", "last: null"]);
+  });
+
+  test("an end() that mismatched keeps its callback, but for a chunk after writeHead()", async () => {
+    const result = await callbacksAfterMismatch(res => void res.writeHead(200, { "Content-Length": 5 }), "x", "hello");
+    expect(result).toEqual([MISMATCH, MISMATCH, "without a chunk: null", "last: null"]);
+  });
+
+  test("an end() that mismatched keeps its callback, also with the chunk that renders the head", async () => {
+    const result = await callbacksAfterMismatch(
+      res => void res.setHeader("Content-Length", 5),
+      Buffer.alloc(0),
+      "hello",
+    );
+    expect(result).toEqual([MISMATCH, MISMATCH, "with a chunk: null", "without a chunk: null", "last: null"]);
+  });
+
+  test("end() on a destroyed response that is short of its length throws, and nothing reports a finish", async () => {
+    const result = await inServer(res => {
+      const { promise, resolve } = Promise.withResolvers<unknown[]>();
+      const events: unknown[] = [];
+      res.on("finish", () => events.push("finish"));
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 5);
+      res.write("he", () => {
+        res.destroy();
+        events.push(code(() => res.end((err?: Error | null) => void events.push(`callback: ${err}`))));
+        res.on("close", () => setImmediate(() => resolve([...events, res.writableFinished])));
+      });
+      return promise;
+    });
+    expect(result).toEqual([MISMATCH, false]);
+  });
+
+  test("end() on a destroyed response that has its whole length finishes", async () => {
+    const result = await inServer(res => {
+      const { promise, resolve } = Promise.withResolvers<unknown[]>();
+      const events: unknown[] = [];
+      res.on("finish", () => resolve([...events, "finish", res.writableFinished]));
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 5);
+      res.write("hello", () => {
+        res.destroy();
+        events.push(code(() => res.end((err?: Error | null) => void events.push(`callback: ${err}`))));
+      });
+      return promise;
+    });
+    expect(result).toEqual([undefined, "callback: null", "finish", true]);
+  });
+
+  test("end() after a socket from emit('connection') closed with the whole length out finishes", async () => {
+    const socket = new Duplex({ read() {}, write: (_chunk, _encoding, callback) => callback() });
+    const { promise, resolve } = Promise.withResolvers<unknown[]>();
+    const events: unknown[] = [];
+    const server = http.createServer((req, res) => {
+      res.on("finish", () => resolve([...events, "finish"]));
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 5);
+      res.write("hello");
+      socket.on("close", () => {
+        events.push(code(() => res.end((err?: Error | null) => void events.push(`callback: ${err}`))));
+      });
+      setImmediate(() => socket.destroy());
+    });
+    server.emit("connection", socket);
+    socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    expect(await promise).toEqual([undefined, "callback: null", "finish"]);
+  });
 });
 
 describe("connectionListener maxRequestsPerSocket", () => {

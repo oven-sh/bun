@@ -13,7 +13,9 @@ use bun_lsquic_sys as lsquic;
 use super::endpoint::{alloc_exposed_array_buffer, read_u64_option};
 use super::ffi::lsquic_callback;
 use super::session::{H3_INTERNAL_ERROR, QuicSession, SessionEvent};
-use crate::generated_bindgen::quic::{StreamBatch, StreamDestroyReason, StreamSource, Uint64Option};
+use crate::generated_bindgen::quic::{
+    StreamBatch, StreamDestroyReason, StreamSource, Uint64Option,
+};
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
 const QUIC_STREAM_HEADERS_KIND_INITIAL: u32 = 1;

@@ -23,7 +23,9 @@ pub(crate) mod proxy_testing;
 // fetch() implementation
 // ──────────────────────────────────────────────────────────────────────────
 
-use crate::generated_bindgen::fetch::{CompressInit, FetchInit, FetchInput, FetchVerbose, MaxRedirects};
+use crate::generated_bindgen::fetch::{
+    CompressInit, FetchInit, FetchInput, FetchVerbose, MaxRedirects,
+};
 use crate::generated_bindgen::fetch_session::{FetchTLSOption, FlagOrNumber, UnixPath};
 use crate::generated_bindgen::response::{BodyInit, HeadersInit, SignalInit};
 use crate::node;
@@ -32,7 +34,9 @@ use crate::node::types::{Encoding, PathOrFileDescriptor};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
-use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine};
+use crate::webcore::jsc::{
+    self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
+};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::s3::client as s3;
 use crate::webcore::{

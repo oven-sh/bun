@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -833,10 +833,14 @@ describe("bundler files option", () => {
       const [manifest, ...extra] = manifestsIn(await outputText(result, "server.js"));
       expect(extra).toBeEmpty();
       expect(manifest.index).toMatch(/page\.html$/);
-      expect(manifest.files.map(f => [f.input, f.loader]).toSorted()).toEqual([
-        ["page.html", "css"],
-        ["page.html", "html"],
-        ["page.html", "js"],
+      // A `files` key has "/" separators on Windows, where the root has "\\". `input` is
+      // then the whole key.
+      const input = isWindows ? expect.stringMatching(/(^|\/)page\.html$/) : "page.html";
+      const byLoader = manifest.files.toSorted((a, b) => a.loader.localeCompare(b.loader));
+      expect(byLoader.map(f => [f.input, f.loader])).toEqual([
+        [input, "css"],
+        [input, "html"],
+        [input, "js"],
       ]);
       const { path: jsPath } = manifest.files.find(f => f.loader === "js")!;
       expect(await outputText(result, manifest.index)).toContain(basename(jsPath));

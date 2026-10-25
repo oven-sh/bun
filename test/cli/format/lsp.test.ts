@@ -449,6 +449,39 @@ exports.format = async (text, options) => {
     timeout,
   );
 
+  // The same redaction as `bun install` prints for a bunfig.toml that does not parse.
+  test(
+    "shows a syntax error of bunfig.toml without repeating its text, which may be a secret",
+    async () => {
+      const token = "npm_abcdefghijklmnopqrstuvwxyz0123456789";
+      using dir = tempDir("bun-fmt-lsp", {
+        "bunfig.toml": `[install]\ntoken = ${token}\n`,
+        "a.js": "",
+      });
+      await using client = new Client(String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      open(client, join(String(dir), "a.js"), "a  ;\n");
+      const shown = client.notification(it => it.method === "window/showMessage");
+      const formatted = await format(client, join(String(dir), "a.js"));
+      expect(formatted.error).toBeUndefined();
+      expect(formatted.result).toBeNull();
+      const { params } = await shown;
+      expect(params.type).toBe(1);
+      expect(params.message).toMatch(/Cannot use bunfig\.toml:2:\d+: Strings must be quoted$/);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, stderr, garbage, rest } = await client.end();
+      const messages = client.received.filter(it => it.method === "window/showMessage").map(it => it.params.message);
+      expect(messages.length).toBeGreaterThan(0);
+      for (const message of messages) expect(message).not.toContain(token);
+      expect(stderr).not.toContain(token);
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test(
     "refuses a second initialize, and answers a cancelled request with RequestCancelled",
     async () => {

@@ -119,10 +119,10 @@ fn read_bunfig_text(
     is_named: bool,
     read: &mut dyn FnMut(&bun_ast::Expr, &[u8], bool) -> Result<Above, bunfig::BunfigError>,
 ) -> Result<Above, Vec<u8>> {
-    use bun_lint_driver::json::{Notation, with_parsed};
+    use bun_lint_driver::json::{Notation, with_parsed_redacted};
     let text = bun_core::strings::without_utf8_bom(text);
-    let (at, message) = match with_parsed(Notation::Toml, text, |file| read(file, shown, is_named))
-    {
+    let parsed = with_parsed_redacted(Notation::Toml, text, |file| read(file, shown, is_named));
+    let (at, message) = match parsed {
         Ok(Ok(above)) => return Ok(above),
         Ok(Err(rejection)) => (line_and_column(text, rejection.at), rejection.message),
         Err(error) => {

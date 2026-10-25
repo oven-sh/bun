@@ -197,6 +197,25 @@ pub fn with_parsed<T>(
     text: &[u8],
     read: impl FnOnce(&Expr) -> T,
 ) -> Result<T, SyntaxError> {
+    with_parsed_in(notation, text, false, read)
+}
+
+/// As [`with_parsed`], but the syntax error repeats nothing of `text`: for a file that may hold a secret, such as a
+/// bunfig.toml, when the error goes to a log or an editor. Only TOML's errors quote the text.
+pub fn with_parsed_redacted<T>(
+    notation: Notation,
+    text: &[u8],
+    read: impl FnOnce(&Expr) -> T,
+) -> Result<T, SyntaxError> {
+    with_parsed_in(notation, text, true, read)
+}
+
+fn with_parsed_in<T>(
+    notation: Notation,
+    text: &[u8],
+    redact: bool,
+    read: impl FnOnce(&Expr) -> T,
+) -> Result<T, SyntaxError> {
     let arena = bun_alloc::Arena::new();
     let mut allocator = ASTMemoryAllocator::borrowing(&arena);
     let _scope = allocator.enter();
@@ -205,7 +224,7 @@ pub fn with_parsed<T>(
     let mut log = Log::init();
     let root = match notation {
         Notation::Json5 => JSON5Parser::parse(&source, &mut log, &arena).ok(),
-        Notation::Toml => TOML::parse(&source, &mut log, &arena, false).ok(),
+        Notation::Toml => TOML::parse(&source, &mut log, &arena, redact).ok(),
         Notation::Yaml => YAML::parse(&source, &mut log, &arena, CyclicAliases::Reject).ok(),
     };
     let Some(root) = root else {

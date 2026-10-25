@@ -1,12 +1,15 @@
 import type { S3File, S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
+import { brotliCompressSync } from "node:zlib";
 import path from "path";
-import { spawnServer } from "s3-server";
+import { serve, spawnServer, type S3Server } from "s3-server";
 const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
+/** Bytes as text, so that a failed assertion prints one line and not one line for each byte. */
+const hex = (bytes: Uint8Array | ArrayBuffer) => Buffer.from(bytes as Uint8Array).toString("hex");
 
 type S3Credentials = S3Options & {
   service: string;
@@ -467,6 +470,21 @@ for (let credentials of allCredentials) {
                 const response = await fetch(s3file.presign(), { decompress: false });
                 expect(response.headers.get("content-encoding")).toBe("gzip");
               }
+            });
+            it("should read a slice of an object that has a content-encoding", async () => {
+              await using tmpfile = await tmp();
+              const s3file = bucket.file(tmpfile.name, options!);
+              const stored = Bun.gzipSync(Buffer.alloc(600, "hello "));
+              await s3file.write(stored, { contentEncoding: "gzip" });
+              // The content-encoding is metadata of the object. A slice is a range of the bytes
+              // that the object holds.
+              expect({
+                head: hex(await s3file.slice(0, 10).bytes()),
+                middle: hex(await s3file.slice(10, 20).bytes()),
+              }).toEqual({
+                head: hex(stored.subarray(0, 10)),
+                middle: hex(stored.subarray(10, 20)),
+              });
             });
 
             it("should be able to upload large files using bucket.write + readable Request", async () => {
@@ -1512,6 +1530,121 @@ describe("s3-server", () => {
         });
       }
     }
+  });
+});
+
+// S3 keeps the `Content-Encoding` of an upload as metadata of the object. It sends the header back
+// with the bytes that the object holds, whole or as a range of them. Two tests need the request
+// log of the server or a server in front of it, so the server is in the process of the test.
+describe("s3 object that has a content-encoding", () => {
+  const text = Buffer.alloc(600, "hello ");
+  let server: S3Server;
+  let client: S3Client;
+  beforeAll(() => {
+    server = serve({ buckets: ["encoded", "wire", "front"] });
+    client = new S3Client(server.clientOptions("encoded"));
+  });
+  afterAll(() => server.stop());
+
+  it.each([
+    ["gzip", Bun.gzipSync(text)],
+    ["x-gzip", Bun.gzipSync(text)],
+    ["deflate", Bun.deflateSync(text)],
+    ["br", brotliCompressSync(text)],
+    ["zstd", Bun.zstdCompressSync(text)],
+  ] as const)("a read of a %s object that sends a range returns the stored bytes", async (contentEncoding, stored) => {
+    const file = client.file(randomUUIDv7());
+    await file.write(stored, { contentEncoding });
+
+    const actual: Record<string, string> = {};
+    const expected: Record<string, string> = {};
+    const ranges: [number, number?][] = [[0, 10], [10], [10, 20], [0, stored.length], [0, stored.length + 100]];
+    for (const range of ranges) {
+      const slice = file.slice(...range);
+      actual[`slice(${range}).bytes()`] = hex(await slice.bytes());
+      actual[`slice(${range}).stream()`] = hex(await slice.stream().bytes());
+      expected[`slice(${range}).bytes()`] = expected[`slice(${range}).stream()`] = hex(stored.subarray(...range));
+    }
+    expect(actual).toEqual(expected);
+
+    // These send no range. They read the file as before.
+    expect({
+      "text()": await file.text(),
+      "stream()": await file.stream().text(),
+      "slice()": await file.slice().text(),
+      "slice(0)": await file.slice(0).text(),
+      "slice(type)": await file.slice("text/plain").text(),
+    }).toEqual({
+      "text()": text.toString(),
+      "stream()": text.toString(),
+      "slice()": text.toString(),
+      "slice(0)": text.toString(),
+      "slice(type)": text.toString(),
+    });
+  });
+
+  it("a slice of an object whose bytes do not match its content-encoding", async () => {
+    const file = client.file(randomUUIDv7());
+    await file.write("Hello Bun!", { contentEncoding: "gzip" });
+    expect({
+      head: await file.slice(0, 5).text(),
+      tail: await file.slice(6).text(),
+    }).toEqual({ head: "Hello", tail: "Bun!" });
+  });
+
+  it("only a request with a range accepts no coding", async () => {
+    const file = new S3Client(server.clientOptions("wire")).file("object");
+    await file.write(Bun.gzipSync(text), { contentEncoding: "gzip" });
+    await file.slice(0, 10).bytes();
+    await file.slice(0, 10).stream().bytes();
+    await file.bytes();
+    await file.stream().bytes();
+    await file.delete();
+
+    expect(
+      server.requests
+        .filter(request => request.bucket === "wire")
+        .map(({ operation, headers }) => [operation, headers.get("range"), headers.get("accept-encoding")]),
+    ).toEqual([
+      ["PutObject", null, "gzip, deflate, br, zstd"],
+      ["GetObject", "bytes=0-9", "identity"],
+      ["GetObject", "bytes=0-9", "identity"],
+      ["GetObject", null, "gzip, deflate, br, zstd"],
+      ["GetObject", null, "gzip, deflate, br, zstd"],
+      ["DeleteObject", null, "gzip, deflate, br, zstd"],
+    ]);
+  });
+
+  it("a slice through a server that compresses unless the request accepts only identity", async () => {
+    // As a reverse proxy with a default encoding does. It compresses a 206 too.
+    await using front = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(request) {
+        const response = await server.fetch(request);
+        if (request.method !== "GET" || request.headers.get("accept-encoding") === "identity") return response;
+        const headers = new Headers(response.headers);
+        headers.set("content-encoding", "gzip");
+        headers.delete("content-length");
+        return new Response(Bun.gzipSync(await response.arrayBuffer()), { status: response.status, headers });
+      },
+    });
+    const file = new S3Client({ ...server.clientOptions("front"), endpoint: front.url.href }).file("object");
+    await file.write(text);
+
+    expect(await file.slice(6, 11).text()).toBe("hello");
+  });
+
+  it("Bun.Image reads a slice", async () => {
+    // A 1x1 PNG. The object names a coding that its bytes do not have.
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const file = client.file(randomUUIDv7());
+    await file.write(png, { contentEncoding: "gzip" });
+
+    expect(await file.slice(0, png.length).image().metadata()).toEqual({ width: 1, height: 1, format: "png" });
   });
 });
 

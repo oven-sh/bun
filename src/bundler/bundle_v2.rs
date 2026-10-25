@@ -6897,15 +6897,18 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
-                // An in-memory file stands in for the resolver's result from here on.
-                let in_memory_result: Option<_resolver::Result> =
-                    self.file_map.and_then(|file_map| {
-                        file_map.resolve(self.arena(), source.path.text, import_record.path.text)
-                    });
-                let is_in_memory = in_memory_result.is_some();
+                let mut is_in_memory = false;
                 let mut had_busted_dir_cache = false;
-                let resolve_result: _resolver::Result = 'inner: loop {
-                    if let Some(result) = in_memory_result {
+                let mut resolve_result: _resolver::Result = 'inner: loop {
+                    // An in-memory file stands in for the resolver's result from here on.
+                    if let Some(file_map) = self.file_map
+                        && let Some(result) = file_map.resolve(
+                            self.arena(),
+                            source.path.text,
+                            import_record.path.text,
+                        )
+                    {
+                        is_in_memory = true;
                         break result;
                     }
                     match transpiler.resolver.resolve_with_framework(
@@ -7100,7 +7103,6 @@ pub mod bv2_impl {
                         }
                     }
                 };
-                let mut resolve_result = resolve_result;
                 // if there were errors, lets go ahead and collect them all
                 if last_error.is_some() {
                     continue;

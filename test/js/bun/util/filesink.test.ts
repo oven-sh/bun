@@ -1333,6 +1333,125 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   });
 });
 
+// `Bun.write(dest, Bun.stdin.stream())` wires the reader of the pipe to the sink with no
+// script in between. The end of the pipe settles the promise from a callback of the event
+// loop, so the sink has to run the reaction before that callback returns: with nothing
+// else alive the process exits next. On Windows the sink never closes a descriptor it was
+// given (`Bun.stdout`, `Bun.file(fd)`), so it settles the promise where it ends its
+// writer, not in its close callback.
+//
+// As above, the fixtures have no timer and only one has a 'beforeExit' listener.
+describe("a pipe piped into a FileSink settles the promise with nothing else alive", () => {
+  const line = "a line from the pipe\n";
+
+  const dests = {
+    stdout: "Bun.stdout",
+    // A descriptor the fixture opened itself: the sink writes to it and leaves it open.
+    fd: `Bun.file(require("node:fs").openSync(process.argv[1], "w"))`,
+  };
+
+  const inputs = {
+    // The test closes the pipe once the line is through, so the end arrives in a callback
+    // of its own.
+    alone: `Bun.stdin.stream()`,
+    // A slice of exactly the line's length: the reader reports the end together with the
+    // chunk that completes it.
+    withTheLastChunk: `Bun.stdin.slice(0, ${line.length}).stream()`,
+  };
+
+  function fixture(dest: string, input: string, countBeforeExit: boolean) {
+    return `
+      let settled = "pending";
+      let beforeExit = ${countBeforeExit ? 0 : undefined};
+      if (beforeExit === 0) process.on("beforeExit", () => { beforeExit++; });
+      process.on("exit", code => console.error(JSON.stringify({ settled, code, beforeExit })));
+      Bun.write(${dest}, ${input}).then(
+        n => { settled = "resolved " + n; },
+        e => { settled = "rejected " + e.message; },
+      );
+      console.error("wired");
+    `;
+  }
+
+  // Reads a pipe of the fixture as it comes. `printed(text)` is true once the fixture has
+  // printed `text`, false if the pipe closed first; with no text it reads to the end.
+  function watch(stream: ReadableStream<Uint8Array>) {
+    const decoder = new TextDecoder();
+    const reader = stream.getReader();
+    const watched = { text: "", printed };
+    async function printed(text?: string) {
+      while (text === undefined || !watched.text.includes(text)) {
+        const { value, done } = await reader.read();
+        if (done) return false;
+        watched.text += decoder.decode(value, { stream: true });
+      }
+      return true;
+    }
+    return watched;
+  }
+
+  // The fixture wires the pipe to the sink and prints "wired". Only then is `write` sent,
+  // so it arrives from the event loop, after the script has returned to it.
+  async function run({
+    dest = "stdout",
+    input = "alone",
+    write = line,
+    countBeforeExit = false,
+  }: { dest?: keyof typeof dests; input?: keyof typeof inputs; write?: string; countBeforeExit?: boolean } = {}) {
+    using dir = tempDir("filesink-piped-pipe", {});
+    const path = join(String(dir), "written.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(dests[dest], inputs[input], countBeforeExit), path],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = watch(proc.stdout);
+    const stderr = watch(proc.stderr);
+    await stderr.printed("wired\n");
+    if (write) {
+      proc.stdin.write(write);
+      await proc.stdin.flush();
+      if (dest === "stdout" && input === "alone") await stdout.printed(write);
+    }
+    await proc.stdin.end();
+    const [, , exitCode] = await Promise.all([stdout.printed(), stderr.printed(), proc.exited]);
+    const written = dest === "stdout" ? stdout.text : await Bun.file(path).text();
+    return { written, stderr: stderr.text, exitCode };
+  }
+
+  const settled = (n: number, beforeExit?: number) => ({
+    written: line.slice(0, n),
+    stderr: "wired\n" + JSON.stringify({ settled: `resolved ${n}`, code: 0, beforeExit }) + "\n",
+    exitCode: 0,
+  });
+
+  it.concurrent("the end of the pipe arrives alone", async () => {
+    expect(await run()).toEqual(settled(line.length));
+  });
+
+  it.concurrent("the end arrives with the last chunk", async () => {
+    expect(await run({ input: "withTheLastChunk" })).toEqual(settled(line.length));
+  });
+
+  it.concurrent("the pipe ends with nothing written", async () => {
+    expect(await run({ write: "" })).toEqual(settled(0));
+  });
+
+  // On Windows this write is not done when the end arrives: the sink ends its writer from
+  // the callback that completes the write.
+  it.concurrent("into a descriptor the sink does not own", async () => {
+    expect(await run({ dest: "fd", input: "withTheLastChunk" })).toEqual(settled(line.length));
+  });
+
+  // With a listener the reaction runs on unfixed code too: the listener's own checkpoint
+  // runs it. The loop must come to its exit once all the same.
+  it.concurrent("'beforeExit' is emitted once, and the promise has settled", async () => {
+    expect(await run({ countBeforeExit: true })).toEqual(settled(line.length, 1));
+  });
+});
+
 // FileSink::on_close tells the owner of the sink that it closed, and a Subprocess then drops its ref
 // on its stdin sink. That is the only ref when script never read `proc.stdin`, and on_close used the
 // sink after it (ASAN: heap-use-after-free in settle_stream_done). Outside tests only the stop phase

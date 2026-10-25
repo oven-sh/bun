@@ -253,14 +253,14 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinLooseEq => {
                 match data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
-                    Equality::RequireMainAndModule if !p.has_user_declared_module => {
+                    Equality::RequireMainAndModule => {
                         p.ignore_usage_of_runtime_require();
                         p.ignore_usage(p.module_ref);
                         return p.value_for_import_meta_main(false, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: true }, v.loc),
                     Equality::NotEqual => return p.new_expr(E::Boolean { value: false }, v.loc),
-                    Equality::Unknown | Equality::RequireMainAndModule => {}
+                    Equality::Unknown => {}
                 }
 
                 if p.options.features.minify_syntax {
@@ -283,14 +283,14 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinStrictEq => {
                 match data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
-                    Equality::RequireMainAndModule if !p.has_user_declared_module => {
+                    Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(false, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: true }, v.loc),
                     Equality::NotEqual => return p.new_expr(E::Boolean { value: false }, v.loc),
-                    Equality::Unknown | Equality::RequireMainAndModule => {}
+                    Equality::Unknown => {}
                 }
 
                 if p.options.features.minify_syntax {
@@ -306,14 +306,14 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinLooseNe => {
                 match data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
-                    Equality::RequireMainAndModule if !p.has_user_declared_module => {
+                    Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(true, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: false }, v.loc),
                     Equality::NotEqual => return p.new_expr(E::Boolean { value: true }, v.loc),
-                    Equality::Unknown | Equality::RequireMainAndModule => {}
+                    Equality::Unknown => {}
                 }
                 if p.options.features.minify_syntax {
                     // "typeof x != 'undefined'" => "typeof x < 'u'"
@@ -333,14 +333,14 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinStrictNe => {
                 match data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
-                    Equality::RequireMainAndModule if !p.has_user_declared_module => {
+                    Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(true, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: false }, v.loc),
                     Equality::NotEqual => return p.new_expr(E::Boolean { value: true }, v.loc),
-                    Equality::Unknown | Equality::RequireMainAndModule => {}
+                    Equality::Unknown => {}
                 }
 
                 if p.options.features.minify_syntax {

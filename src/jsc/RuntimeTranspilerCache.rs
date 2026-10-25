@@ -77,8 +77,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 42: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 44: `module.require()` stays as written in a file with its own `var module = ...`.
-const EXPECTED_VERSION: u32 = 44;
+const EXPECTED_VERSION: u32 = 43;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

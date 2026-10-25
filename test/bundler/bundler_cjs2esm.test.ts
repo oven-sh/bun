@@ -2735,10 +2735,9 @@ describe("bundler", () => {
         module.exports.kind = typeof exports.local;
       `,
       "/fake-module.cjs": /* js */ `
-        var module = { exports: { fake: true }, id: "user" };
+        var module = { exports: { fake: true } };
         module.exports.x = 1;
         exports.viaParam = typeof module.exports.fake;
-        exports.id = module.id;
       `,
       "/reassigned.cjs": /* js */ `
         exports.before = 1;
@@ -2781,7 +2780,7 @@ describe("bundler", () => {
     },
     run: {
       stdout:
-        '{"lib":{"answer":42,"kind":"boolean"},"fake":{"viaParam":"boolean","id":"user"},"reassigned":{"before":1,"after":"string"},"uninit":{"foo":123,"bar":124},"nested":{"viaParam":"boolean"},"aliasedA":"aliased","chainedB":"chained","destructured":{"kind":"boolean"},"forHeader":{"kind":"boolean"},"forOf":{},"moduleRequire":{"dep":"dep","kind":"boolean"},"ambientOk":1,"namedExports":["undefined",2],"namedModule":["undefined",2],"forInModuleKind":"undefined","blockShadowFoo":"undefined","functionModuleFoo":"undefined"}',
+        '{"lib":{"answer":42,"kind":"boolean"},"fake":{"viaParam":"boolean"},"reassigned":{"before":1,"after":"string"},"uninit":{"foo":123,"bar":124},"nested":{"viaParam":"boolean"},"aliasedA":"aliased","chainedB":"chained","destructured":{"kind":"boolean"},"forHeader":{"kind":"boolean"},"forOf":{},"moduleRequire":{"dep":"dep","kind":"boolean"},"ambientOk":1,"namedExports":["undefined",2],"namedModule":["undefined",2],"forInModuleKind":"undefined","blockShadowFoo":"undefined","functionModuleFoo":"undefined"}',
     },
   });
   // In an unwrapped package `module.exports = require()` becomes `export * from`.
@@ -2816,15 +2815,25 @@ describe("bundler", () => {
       stdout: "undefined react-is",
     },
   });
-  // With a `module` of its own, `require.main === module` compares that object and
-  // is not the entry point check.
-  itBundled("cjs2esm/RequireMainComparedWithOwnVarModule", {
+  // After `var module = module || {}` or a conditional `var module`, `module` is
+  // still the wrapper's object at run time. In a bundle that object has no
+  // `require`, so these rewrites stay beside any `var module`.
+  itBundled("cjs2esm/VarModuleShimKeepsModuleRequireAndRequireMain", {
     files: {
       "/entry.cjs": /* js */ `
-        var module = { exports: {} };
-        console.log(require.main === module);
+        var module = module || {};
+        console.log(require.main === module, module.require("./conditional.cjs").value);
+      `,
+      "/conditional.cjs": /* js */ `
+        if (typeof module === "undefined") {
+          var module = { exports: {} };
+        }
+        module.exports.value = module.require("./dep.cjs").value;
+      `,
+      "/dep.cjs": /* js */ `
+        exports.value = "dep";
       `,
     },
-    run: { stdout: "false" },
+    run: { stdout: "true dep" },
   });
 });

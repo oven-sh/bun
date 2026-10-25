@@ -895,7 +895,7 @@ pub mod fs {
         pub(crate) fn remove_hash(&mut self, key_hash: u64) -> bool {
             self.inner().remove_hash(key_hash)
         }
-        pub fn alias(&mut self, key_hash: u64, index: bun_alloc::IndexType) {
+        pub(crate) fn alias(&mut self, key_hash: u64, index: bun_alloc::IndexType) {
             self.inner().alias(key_hash, index)
         }
         /// Also the hash of `key` in `dir_info::HashMap`, which trims and hashes the same way.

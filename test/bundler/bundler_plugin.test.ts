@@ -2264,9 +2264,9 @@ describe("bundler", () => {
     );
   }
 
-  // A module that only a plugin can name stays a plugin module: the "sideEffects" of the package.json
-  // above it does not remove it. The resolver cannot find a path that is not on disk, a file in `files`,
-  // or a spelling it would not print, so no other import can create these modules.
+  // A module whose path the resolver does not name stays a plugin module: the "sideEffects" of the
+  // package.json above it does not remove it. The resolver cannot find a path with no file on disk
+  // (a key of `files` included), and it does not print a spelling with a doubled separator.
   test.concurrent("plugin/onResolve path the resolver cannot name keeps its side effects", async () => {
     using dir = tempDir("plugin-resolved-file-not-on-disk", {
       "package.json": JSON.stringify({ name: "app", sideEffects: false }),

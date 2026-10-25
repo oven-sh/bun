@@ -5020,6 +5020,7 @@ pub mod bv2_impl {
             let Some(kind) = task.created_by_on_resolve.take() else {
                 return;
             };
+            // A key of `files` is built without a resolver result, as the `files` branch of `resolve_import_records` builds it.
             if !task.path.is_file()
                 || self
                     .file_map

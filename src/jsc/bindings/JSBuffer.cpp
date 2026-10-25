@@ -3078,7 +3078,7 @@ fastPath:
         return JSValue::encode(jsNumber(JSC::purifyNaN(static_cast<double>(std::bit_cast<T>(raw)))));
     } else if constexpr (byteSize == 8) {
         // readBigInt64* / readBigUInt64*
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(lexicalGlobalObject, std::bit_cast<T>(raw))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(lexicalGlobalObject, std::bit_cast<T>(raw))));
     } else
         return JSValue::encode(jsNumber(std::bit_cast<T>(raw)));
 }

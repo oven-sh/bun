@@ -11,15 +11,6 @@
 #[path = "ffi_body.rs"]
 mod ffi_body;
 
-/// `js2native` codegen resolves `$rust(ffi.rs, Bun__FFI__cc)` to
-/// `crate::ffi::ffi::bun__ffi__cc`; the module name maps the `.rs` basename.
-/// `FFI::bun_ffi_cc` lives in `ffi_body` — re-export it under
-/// the codegen-expected path so the dispatch table links without forcing the
-/// generator to special-case `ffi/ffi.rs`.
-pub(crate) mod ffi {
-    pub(crate) use super::ffi_body::bun__ffi__cc;
-}
-
 #[path = "FFIObject.rs"]
 pub(crate) mod ffi_object_draft;
 
@@ -124,12 +115,6 @@ pub(crate) fn get_dl_error() -> Box<[u8]> {
         Box::<[u8]>::from(msg)
     }
 }
-
-// ═════════════════════════════════════════════════════════════════════════════
-// FFI — `.classes.ts` payload (the C++ JSCell wrapper stays generated; this is
-// `m_ctx`). The codegen `FFIPrototype__*` thunks resolve to `crate::ffi::FFI`,
-// so this MUST be the same type that `to_js()` boxes into the wrapper.
-// ═════════════════════════════════════════════════════════════════════════════
 
 pub(crate) use ffi_body::FFI;
 

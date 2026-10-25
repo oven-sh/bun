@@ -12,8 +12,9 @@ import {
   isWindows,
   tempDir,
   tempDirWithFiles,
+  unprivilegedSpawnOptions,
 } from "harness";
-import { EventEmitter } from "node:events";
+import { EventEmitter, getEventListeners } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -787,48 +788,6 @@ describe("fs.watch", () => {
         expect(result.closed).toBe(false);
         expect(result.openDelivered).toBe(true);
         expect(exitCode).toBe(0);
-
-        // fs.promises.watch wraps the native watcher in an async iterator with
-        // no user-accessible handle. A subtree-registration error that keeps
-        // the native watcher open must not leave it refing the event loop
-        // after the iterator throws, or the process hangs at exit.
-        const promisesFixture = `
-          const fs = require("fs");
-          const root = process.env.WATCH_ROOT;
-          (async () => {
-            let caught = null;
-            try {
-              for await (const e of fs.promises.watch(root, { recursive: true })) break;
-            } catch (e) {
-              caught = { code: e.code, syscall: e.syscall, path: e.path };
-            }
-            console.log(JSON.stringify({ caught }));
-          })();
-          setTimeout(() => { console.log(JSON.stringify({ hung: true })); process.exit(1); }, 4000).unref();
-        `;
-        await using proc2 = Bun.spawn({
-          cmd: [bunExe(), "-e", promisesFixture],
-          env: { ...bunEnv, WATCH_ROOT: root },
-          cwd: "/",
-          uid: NOBODY,
-          gid: NOBODY,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout2, stderr2, exitCode2] = await Promise.all([
-          proc2.stdout.text(),
-          proc2.stderr.text(),
-          proc2.exited,
-        ]);
-        expect(stderr2).toBe("");
-        const result2 = JSON.parse(stdout2.trim());
-        expect(result2.hung).toBeUndefined();
-        expect(result2.caught).toEqual({
-          code: "EACCES",
-          syscall: "watch",
-          path: path.join(root, "locked"),
-        });
-        expect(exitCode2).toBe(0);
       } finally {
         fs.chmodSync(path.join(root, "locked"), 0o755);
         for (const [p, mode] of ancestors) fs.chmodSync(p, mode);
@@ -1336,21 +1295,219 @@ describe("fs.promises.watch", () => {
     }
   });
 
-  test("abort between yields throws AbortError on the next next()", async () => {
-    const root = path.join(testDir, "abort-at-yield-dir");
-    fs.mkdirSync(root, { recursive: true });
-    const ac = new AbortController();
-    const it = fs.promises.watch(root, { signal: ac.signal })[Symbol.asyncIterator]();
-    const interval = repeat(() => fs.writeFileSync(path.join(root, "a.txt"), "1"));
+  // The first next() starts the watcher, and a watcher can start late: write until an event arrives.
+  async function firstEvent(it: AsyncIterator<any>, root: string) {
+    let n = 0;
+    const interval = repeat(() => fs.writeFileSync(path.join(root, "first.txt"), String(n++)));
     try {
-      const r1 = await it.next();
-      expect(r1.done).toBe(false);
-      // generator is now suspended at `yield event`; abort here.
-      ac.abort();
-      await expect(it.next()).rejects.toMatchObject({ name: "AbortError" });
-      expect(await it.return()).toEqual({ value: undefined, done: true });
+      return await it.next();
     } finally {
       clearInterval(interval);
+    }
+  }
+
+  // Released bun passes this too. A watcher can hold more events than the one its
+  // consumer has, and an abort must not give them to the body.
+  test("for await: a body that aborts on an event is not run again", async () => {
+    const rounds = 20;
+    const bodyRuns: number[] = [];
+    for (let round = 0; round < rounds; round++) {
+      using dir = tempDir("fsp-watch-abort-in-body", { a: "" });
+      const root = String(dir);
+      const ac = new AbortController();
+      let runs = 0;
+      let renames = 0;
+      // One rename is two events from one system call.
+      const interval = repeat(() => {
+        const [from, to] = renames++ % 2 ? ["b", "a"] : ["a", "b"];
+        fs.renameSync(path.join(root, from), path.join(root, to));
+      });
+      try {
+        await expect(
+          (async () => {
+            for await (const _ of fs.promises.watch(root, { signal: ac.signal })) {
+              runs++;
+              clearInterval(interval);
+              ac.abort();
+            }
+          })(),
+        ).rejects.toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+      } finally {
+        clearInterval(interval);
+      }
+      bodyRuns.push(runs);
+    }
+    expect(bodyRuns).toEqual(Array(rounds).fill(1));
+  });
+
+  test.each([
+    ["return()", (it: AsyncGenerator<any>) => it.return(undefined)],
+    [
+      "throw()",
+      async (it: AsyncGenerator<any>) => {
+        const error = new Error("stop");
+        await expect(it.throw(error)).rejects.toBe(error);
+      },
+    ],
+    ["Symbol.asyncDispose", (it: AsyncGenerator<any>) => it[Symbol.asyncDispose]()],
+    [
+      "break",
+      async (it: AsyncGenerator<any>, root: string) => {
+        let n = 0;
+        const interval = repeat(() => fs.writeFileSync(path.join(root, "second.txt"), String(n++)));
+        try {
+          for await (const _ of it) break;
+        } finally {
+          clearInterval(interval);
+        }
+      },
+    ],
+  ])("%s ends the iterator and removes its abort listener", async (_name, exit) => {
+    using dir = tempDir("fsp-watch-exit", {});
+    const root = String(dir);
+    const ac = new AbortController();
+    const listeners = () => getEventListeners(ac.signal, "abort").length;
+    const it = fs.promises.watch(root, { signal: ac.signal })[Symbol.asyncIterator]() as AsyncGenerator<any>;
+    try {
+      // Nothing is set up before the first next().
+      expect(listeners()).toBe(0);
+      expect((await firstEvent(it, root)).done).toBe(false);
+      expect(listeners()).toBe(1);
+      await exit(it, root);
+      expect(listeners()).toBe(0);
+      expect(await it.next()).toEqual({ value: undefined, done: true });
+    } finally {
+      ac.abort();
+    }
+  });
+
+  test("break, return(), throw() and await using each close the watcher", async () => {
+    using dir = tempDir("fsp-watch-exits", {
+      "exits.mjs": `
+        import { watch } from "node:fs/promises";
+        import { mkdirSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        // A watcher on its own directory, with one event read: it is open and idle.
+        async function started(name) {
+          const dir = join(import.meta.dirname, name);
+          mkdirSync(dir);
+          const watcher = watch(dir);
+          let n = 0;
+          const interval = setInterval(() => writeFileSync(join(dir, "f.txt"), String(n++)), 20);
+          try {
+            await watcher.next();
+          } finally {
+            clearInterval(interval);
+          }
+          return watcher;
+        }
+
+        for await (const event of await started("break")) break;
+        await (await started("return")).return();
+        const error = new Error("stop");
+        await (await started("throw")).throw(error).then(
+          () => { throw new Error("throw() did not reject"); },
+          e => { if (e !== error) throw e; },
+        );
+        {
+          await using watcher = await started("using");
+        }
+        // An open watcher keeps the process alive: the test then times out.
+        console.log("closed");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exits.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "closed\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("return() waits behind the pending next() calls, and one event settles one call", async () => {
+    using dir = tempDir("fsp-watch-return-queued", {});
+    const root = String(dir);
+    const it = fs.promises.watch(root)[Symbol.asyncIterator]();
+    const settled: string[] = [];
+    const calls = [
+      it.next().then(result => settled.push(`next: ${result.value?.filename}`)),
+      it.next().then(result => settled.push(`next: ${result.value?.filename}`)),
+      it.return!().then(result => settled.push(`return: done ${result.done}`)),
+    ];
+    let n = 0;
+    const interval = repeat(() => fs.mkdirSync(path.join(root, `d${n++}`)));
+    try {
+      await Promise.all(calls);
+    } finally {
+      clearInterval(interval);
+    }
+    expect(settled).toEqual(["next: d0", "next: d1", "return: done true"]);
+  });
+
+  test.each([
+    ["a filename that is not a string", () => fs.promises.watch(12 as any)],
+    ["a signal that is not an AbortSignal", () => fs.promises.watch(testDir, { signal: "no" as any })],
+    ["an ignore option of the wrong type", () => fs.promises.watch(testDir, { ignore: 5 as any })],
+  ])("%s rejects the first next(), not the call", async (_name, call) => {
+    const it = call()[Symbol.asyncIterator]();
+    await expect(it.next()).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+    expect(await it.next()).toEqual({ value: undefined, done: true });
+  });
+
+  test.skipIf(!isLinux)("a watcher error rejects next(), and then the process can exit", async () => {
+    using dir = tempDir("fsp-watch-subtree-error", {
+      "open/.keep": "",
+      "locked/.keep": "",
+    });
+    const root = fs.realpathSync(String(dir));
+    // inotify cannot watch a directory that denies read, so the recursive
+    // watcher reports EACCES for it and stays open.
+    fs.chmodSync(path.join(root, "locked"), 0o000);
+    try {
+      using unprivileged = unprivilegedSpawnOptions(root);
+      // fs.promises.watch wraps the native watcher in an async iterator with
+      // no user-accessible handle. A subtree-registration error that keeps
+      // the native watcher open must not leave it refing the event loop
+      // after the iterator throws, or the process hangs at exit.
+      const promisesFixture = `
+        const fs = require("fs");
+        const root = process.env.WATCH_ROOT;
+        (async () => {
+          let caught = null;
+          try {
+            for await (const e of fs.promises.watch(root, { recursive: true })) break;
+          } catch (e) {
+            caught = { code: e.code, syscall: e.syscall, path: e.path };
+          }
+          console.log(JSON.stringify({ caught }));
+        })();
+        setTimeout(() => { console.log(JSON.stringify({ hung: true })); process.exit(1); }, 4000).unref();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", promisesFixture],
+        env: { ...bunEnv, WATCH_ROOT: root },
+        cwd: "/",
+        ...unprivileged,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const result = JSON.parse(stdout.trim());
+      expect(result.hung).toBeUndefined();
+      expect(result.caught).toEqual({
+        code: "EACCES",
+        syscall: "watch",
+        path: path.join(root, "locked"),
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      fs.chmodSync(path.join(root, "locked"), 0o755);
     }
   });
 

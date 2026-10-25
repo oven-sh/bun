@@ -127,10 +127,7 @@ pub struct DirInfo {
     /// skips a nameless package.json.
     pub package_json_for_module_type: Option<&'static PackageJSON>,
 
-    /// The nearest package.json in this directory or above it that has a "name"
-    /// or a "sideEffects" field. `finalize_result` takes "sideEffects" of a file
-    /// in this directory from it, by every import route. A package.json with
-    /// neither, such as `{ "type": "module" }`, does not hide the one above.
+    /// The nearest package.json at or above this directory with a "name" or a "sideEffects" field.
     pub package_json_for_side_effects: Option<&'static PackageJSON>,
 
     // `NonNull` (not `&'static`) so `enqueue_dependency_to_resolve` can write

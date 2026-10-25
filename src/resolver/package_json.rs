@@ -227,11 +227,9 @@ impl PackageJSON {
 #[derive(Default)]
 pub enum SideEffects {
     /// `package.json` has no "sideEffects". Treat all files as side effects.
-    /// Without a "name" it does not decide: see `decides_side_effects`.
     #[default]
     Unspecified,
-    /// "sideEffects": true, or a value that is not a boolean or an array.
-    /// Treat all files as side effects
+    /// "sideEffects": true, or a value that is not a boolean or an array. Treat all files as side effects.
     True,
     /// "sideEffects": false
     False,

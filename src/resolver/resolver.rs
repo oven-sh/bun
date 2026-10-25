@@ -1594,8 +1594,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // Only the path that `Result::path()` returns takes attributes. They depend on
-            // that path as resolved, before the symlink rewrite, and not on the import route.
+            // Only `Result::path()` takes attributes, by its spelling before the symlink rewrite below.
             if primary {
                 if let Some(pkg) = dir.package_json_for_side_effects {
                     result.primary_side_effects_data =

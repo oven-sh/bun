@@ -441,8 +441,7 @@ export async function lintExamples(dir: string, examples: Example[], byPage: Map
   const nameOf = (it: Example) => `${it.page.replaceAll("/", "__")}__${it.line}`;
   // Those in another language are below an ESLint config of their own.
   const languagesOf = (it: Example) => byPage.get(it.page)!.languages;
-  // A `root` example has options that are paths. It is below a directory with a name that is a pattern, because the
-  // working directory is a path in each pattern that a rule joins to it.
+  // A `root` example has options that are paths, so it runs below a directory with a name that is a pattern.
   const above = (it: Example) => [
     ...(languagesOf(it).length ? ["languages"] : []),
     ...(it.root ? ["[p]{a,b}+(c)"] : []),

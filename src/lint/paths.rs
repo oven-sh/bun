@@ -225,11 +225,7 @@ pub fn inside_as<'p>(style: Style, directory: &[u8], path: &'p [u8]) -> Option<&
     }
 }
 
-/// Splits `joined`, which is `texts` joined to `directory` one after the other, into what is left of the directory and
-/// what the texts say. The first part is a path, whatever bytes it has. A `..` that leads out of the texts takes a
-/// name off it. The second part is a pattern if a text is one. Unless the first part is empty, the second is empty or
-/// starts with a `/`, so it matches what it matched as a part of `joined`. `separators` are the bytes that the join
-/// took for separators in the texts.
+/// Splits `joined`, `texts` joined to `directory`, after the directory less a name for each `..` that leaves the texts.
 pub fn split_joined<'j>(
     directory: &[u8],
     texts: &[&[u8]],

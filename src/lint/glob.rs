@@ -235,9 +235,7 @@ impl Minimatch {
     }
 }
 
-/// A pattern for the paths below a directory, with the directory kept out of the pattern. Joined into one pattern, a
-/// directory named `[app]` or `{a,b}` is a class or a group, and matches no path in it. `directory` is compared byte
-/// by byte, and `below` matches the rest of the path.
+/// A pattern for the paths below `directory`, which is compared byte by byte: a name like `[app]` is no class there.
 pub struct Under<M> {
     directory: Box<[u8]>,
     below: M,

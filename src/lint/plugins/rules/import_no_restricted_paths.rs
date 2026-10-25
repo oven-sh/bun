@@ -13,8 +13,7 @@ use std::sync::OnceLock;
 pub struct NoRestrictedPaths {
     zones: Vec<ZoneOptions>,
     base_path: Option<Box<[u8]>>,
-    /// The zones with absolute paths, for a file with [`reads_cwd_as_path`] and for one without. Every file in a run
-    /// has the same working directory.
+    /// The zones with absolute paths, built once for each answer of [`reads_cwd_as_path`].
     read: [OnceLock<Vec<Zone>>; 2],
 }
 
@@ -84,8 +83,7 @@ impl Target {
 }
 
 impl Zone {
-    /// `makePathValidators`. `base_path` is `base_text` resolved on the working directory, which is `cwd` if
-    /// [`reads_cwd_as_path`].
+    /// `makePathValidators`. `base_path` is `base_text` resolved on the cwd, which is `cwd` if [`reads_cwd_as_path`].
     fn new(zone_options: &ZoneOptions, base_text: &[u8], base_path: &[u8], cwd: Option<&[u8]>) -> Zone {
         let absolute = |it: &[u8]| paths::resolve(base_path, it);
         // An absolute path has nothing of the working directory.

@@ -52,8 +52,7 @@ impl Glob {
 
 /// `new Minimatch(joined)` for `texts` that a rule joined to the working directory.
 pub(crate) enum JoinedGlob {
-    /// The working directory is a part of the pattern, as in the plugin. In a directory named `[app]` or `{a,b}` the
-    /// pattern matches no file.
+    /// The working directory is a part of the pattern, as in the plugin: in one named `[app]` it matches no file.
     Whole(Glob),
     /// The working directory is a path, whatever its name is, and only what the texts say is a pattern.
     BelowCwd(Under<Minimatch>),
@@ -89,9 +88,7 @@ impl JoinedGlob {
     }
 }
 
-/// True if `file` has no ESLint or oxlint config. No rule has to match the plugin then, so the working directory is a
-/// path in each pattern that a rule joins to it, whatever bytes its name has. A glob as written still matches the
-/// whole path of a file.
+/// True without an ESLint or oxlint config: no rule has to match the plugin, so a joined working directory is a path.
 pub(crate) fn reads_cwd_as_path(file: &File) -> bool {
     file.language().has_no_foreign_config
 }
@@ -99,8 +96,7 @@ pub(crate) fn reads_cwd_as_path(file: &File) -> bool {
 /// `globs.some((glob) => minimatch(path, glob) || minimatch(path, join(process.cwd(), glob)))`
 pub(crate) struct GlobsFromCwd {
     patterns: Vec<Box<[u8]>>,
-    /// Each glob twice: as written, and joined to the cwd. Parsed once for a file with [`reads_cwd_as_path`] and once
-    /// for one without, because every file in a run has the same cwd.
+    /// Each glob as written and joined to the cwd, parsed once for each answer of [`reads_cwd_as_path`].
     parsed: [OnceLock<Vec<(Glob, JoinedGlob)>>; 2],
 }
 

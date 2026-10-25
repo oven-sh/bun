@@ -147,8 +147,7 @@ struct Caches<'h> {
     resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
     /// Maps a directory to the `tsconfig.json` path for its files. With [`Store::tsconfig`], the key is a file.
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
-    /// Caches [`Graph::scopes_in`] and [`Graph::scopes_of`], and [`Graph::scopes_of_typescript_resolver`] with a NUL
-    /// before the key.
+    /// Caches [`Graph::scopes_in`], [`Graph::scopes_of`] and, after a NUL, [`Graph::scopes_of_typescript_resolver`].
     scopes: ShardedMap<Vec<u8>, Vec<Scope>>,
     /// Caches [`Graph::configs_of_typescript_resolver`], keyed by the directory and the projects, and
     /// [`Graph::listed_projects`], keyed by the projects.
@@ -231,11 +230,9 @@ pub type Parallel<'p> = &'p dyn Fn(usize, &(dyn Fn(usize) + Sync));
 /// How the directory of a `tsconfig.json` is read in an `include` or `exclude` entry that is joined to it.
 #[derive(Copy, Clone)]
 enum Directory {
-    /// As a part of the pattern, like oxc-resolver does. A directory named `[x]` or `{y}` is a class or a group, so
-    /// oxlint applies no `include` pattern in it.
+    /// As a part of the pattern, like oxc-resolver: in a directory named `[x]` oxlint applies no `include` pattern.
     Pattern,
-    /// As a path, whatever its name is. For eslint-import-resolver-typescript a `[` or a `{` is no syntax anywhere in
-    /// an entry. Here the rest of the entry is still a pattern as oxc-resolver reads it.
+    /// As a path, whatever its name is, like eslint-import-resolver-typescript. The rest of an entry stays a pattern.
     Path,
 }
 
@@ -467,8 +464,7 @@ impl<'h> Graph<'h> {
         }
     }
 
-    /// The same for eslint-import-resolver-typescript, which applies `include` and `exclude` in a directory of any
-    /// name.
+    /// The same with [`Directory::Path`], for eslint-import-resolver-typescript.
     fn scopes_of_typescript_resolver(&self, config: &[u8]) -> &[Scope] {
         let key = [b"\0", config].concat();
         match self.caches().scopes.get_ref(&key[..]) {
@@ -581,9 +577,7 @@ impl<'h> Graph<'h> {
             }
             0 => self.config_in(&self.store.cwd).into_iter().collect(),
             1 => listed,
-            // The closest project that includes the file, alone. The resolver does that once the project has resolved
-            // an import. Before, it also tries the next projects that include the file, so what it reports depends on
-            // the order of the files and of their imports.
+            // The closest project that includes the file, alone, as the resolver does once it has resolved an import.
             _ => match listed.iter().position(applies_to_file) {
                 Some(at) => vec![listed.swap_remove(at)],
                 None => listed,

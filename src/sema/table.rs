@@ -908,8 +908,9 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
             None => self.published_at(at),
             // `snapshot_of` runs before the load, because a miss counts as a look at the file too.
             Some(view) => {
-                let raw = self.seen_up_to(view.snapshot_of(FileId(file)), at);
-                match raw != 0 && view.hides(FileId(file), self.stamp_at(at)) {
+                let snapshot = view.snapshot_of(FileId(file));
+                let raw = self.seen_up_to(snapshot, at);
+                match raw != 0 && view.hides(FileId(file), snapshot, self.stamp_at(at)) {
                     true => 0,
                     false => raw,
                 }

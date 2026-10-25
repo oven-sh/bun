@@ -2653,7 +2653,8 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(owner) = self.takes_context(file, func) else {
             return Vec::new();
         };
-        if !self.is_context_sensitive(file, owner) {
+        // The contextual signature can be that of another function that adopts its type parameters.
+        if !self.is_context_sensitive(file, owner) || self.is_stack_low() {
             return Vec::new();
         }
         // tsc stored the type parameters when it checked the function, so a cycle through this
@@ -2664,6 +2665,10 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(contextual) = contextual else {
             return Vec::new();
         };
+        // The contextual signature can be the function's own signature.
+        if (self.sig_decl(contextual)).is_some_and(|(f, g, _)| (f, g) == (file, func)) {
+            return Vec::new();
+        }
         let mut params = self.sig_type_params(contextual).into_vec();
         params.retain(|&param| {
             self.types()

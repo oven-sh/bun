@@ -5584,7 +5584,7 @@ impl<'p, 's> Checker<'p, 's> {
             crate::bind::FnOwner::Expr(owner) => self.is_context_sensitive(file, owner),
             _ => false,
         };
-        if !takes_one_from_context {
+        if !takes_one_from_context || self.is_stack_low() {
             return None;
         }
         let contextual = self.assigned_contextual_signature(file, func)?;

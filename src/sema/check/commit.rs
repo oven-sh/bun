@@ -63,7 +63,9 @@
 //!   (`Checker::is_left_to_an_earlier_file`). And whether tsc reports an error can depend on the context in which it first
 //!   gets there. So a task ignores what a task of a later file has stored under a file, if the later task found an error
 //!   there and this task would still report it (`View::hides`). A task only moves forward in program order, so it
-//!   never finds such entries of its own. This covers the entries under nodes, not those under records.
+//!   never finds such entries of its own. This covers the entries under nodes, not those under records. Only an error
+//!   found by a commit in the task's snapshot of the file counts, so the file doesn't change under a statement or
+//!   during a visit because of this either.
 //! - **A comparison during which a type was inferred from the body of a function expression or of a method or an
 //!   accessor of an object literal never leaves the task** (`relations_of_this_task`). It's stored under two types, so
 //!   a task would find it that doesn't see the inferred type, which is stored under a node: its snapshot of that file
@@ -121,9 +123,9 @@ pub(super) struct Commits<'s> {
     cycle_commits: Guarded<Vec<CycleCommit>>,
     /// `Files::rank_of_file`, indexed by file.
     ranks_of_files: &'s [u32],
-    /// One bit per file. Set once a task that was checking another file has found an error while evaluating something
-    /// about this file, and has committed. See `View::hides`.
-    with_errors: &'s [AtomicU32],
+    /// Indexed by file: the number of the first commit by a task that was checking another file and found an error while
+    /// evaluating something about this file. 0 if there's none. See `View::hides`.
+    first_with_error: &'s [AtomicU32],
     /// `tables_written_immediately`
     immediate_tables: u128,
 }
@@ -180,7 +182,7 @@ impl<'s> Commits<'s> {
             },
             cycle_commits: Guarded::default(),
             ranks_of_files: &[],
-            with_errors: &[],
+            first_with_error: &[],
             immediate_tables: tables_written_immediately(),
         }
     }
@@ -194,8 +196,8 @@ impl<'s> Commits<'s> {
 
     /// `ranks` is `Files::rank_of_file`, indexed by file. Without this call, no task hides anything. See `View::hides`.
     pub(super) fn for_files(mut self, ranks: &'s [u32], arena: &'s Arena) -> Commits<'s> {
-        let words = (0..ranks.len().div_ceil(32)).map(|_| AtomicU32::new(0));
-        (self.ranks_of_files, self.with_errors) = (ranks, arena.alloc_slice_fill_iter(words));
+        let none = ranks.iter().map(|_| AtomicU32::new(0));
+        (self.ranks_of_files, self.first_with_error) = (ranks, arena.alloc_slice_fill_iter(none));
         self
     }
 
@@ -209,7 +211,7 @@ impl<'s> Commits<'s> {
         View {
             numbers: self.numbers,
             ranks_of_files: self.ranks_of_files,
-            with_errors: self.with_errors,
+            first_with_error: self.first_with_error,
             rank: Cell::new(0),
             file_snapshots: vec![Cell::new(0); files].into_boxed_slice(),
             touched: RefCell::default(),
@@ -284,7 +286,7 @@ pub(crate) struct View<'s> {
     numbers: &'s Numbers,
     /// See `Commits`.
     ranks_of_files: &'s [u32],
-    with_errors: &'s [AtomicU32],
+    first_with_error: &'s [AtomicU32],
     /// `ranks_of_files[pinned]`
     rank: Cell<u32>,
     /// Indexed by file: one more than the number of the last commit the task sees there, or 0 if the task hasn't looked
@@ -358,18 +360,21 @@ impl View<'_> {
         self.compared_with_pinned.set(snapshot);
     }
 
-    /// True if the task ignores what `commit` stored under `file`.
+    /// True if the task, which sees the commits up to `snapshot` in `file`, ignores what `commit` stored under `file`.
     ///
     /// tsc checks the files in program order, and whether it reports an error can depend on the context in which it
     /// first gets there. The first task in program order that gets to an error decides. So once a task has found an
     /// error while it evaluated something about another file, the tasks that would still report in that file ignore
     /// what tasks of later files stored under it. That way they run into the same cache misses as on one thread. Files
     /// without errors lose nothing.
+    ///
+    /// An error that a commit after `snapshot` found doesn't count. The task has already looked at the file, and an
+    /// entry it found there must not vanish, nor the entries that were stored together with it.
     #[inline]
-    pub(crate) fn hides(&self, file: FileId, commit: u32) -> bool {
-        let word = self.with_errors.get(file.idx() / 32);
-        word.is_some_and(|it| it.load(Ordering::Relaxed) >> (file.0 % 32) & 1 != 0)
-            && self.hides_a_later_commit(file, commit)
+    pub(crate) fn hides(&self, file: FileId, snapshot: u32, commit: u32) -> bool {
+        let first = self.first_with_error.get(file.idx());
+        let first = first.map_or(0, |it| it.load(Ordering::Relaxed));
+        first != 0 && first <= snapshot && self.hides_a_later_commit(file, commit)
     }
 
     #[cold]
@@ -805,10 +810,12 @@ impl<'s> Checker<'_, 's> {
         }
         let number = *committing + 1;
         *committing = number;
-        // Set before the commit stores, so a task that finds one of its entries also sees these.
+        // Set before the commit stores, so a task that sees this commit also sees these.
         for file in self.files_with_errors.drain() {
-            if let Some(word) = p.commits.with_errors.get(file.idx() / 32) {
-                word.fetch_or(1 << (file.0 % 32), Ordering::Relaxed);
+            if let Some(first) = p.commits.first_with_error.get(file.idx())
+                && first.load(Ordering::Relaxed) == 0
+            {
+                first.store(number, Ordering::Relaxed);
             }
         }
         p.commits.numbers.ranks.lock().push(rank);

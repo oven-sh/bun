@@ -1337,6 +1337,45 @@ module.exports = Base;
     }
   });
 
+  // The larger files are checked first. `first.ts` resolves the call in `slice.ts`, which also checks `s => s`. The check of
+  // `slice.ts` begins after that and finds the call resolved. While it's busy with the slow types, `last.ts` finds the
+  // error in `slice.ts`. From then on a check that begins ignores what the later files found out about `slice.ts`. This
+  // one has already used some of it, so it must find the rest too: with the call resolved and `s => s` unchecked, the
+  // contextual signature of `s => s` is its own signature.
+  test("a file's check that has begun keeps what later files found out about the file when one of them finds an error there", async () => {
+    const padding = (elements: number) => `export type Padding = [${Array(elements).fill(0).join(", ")}];\n`;
+    const slow = (types: number) =>
+      `type Repeat<N extends number, A extends 0[] = []> = A["length"] extends N ? A : Repeat<N, [...A, 0]>;\n` +
+      Array.from({ length: types }, (_, i) => `export type Slow${i} = Repeat<${200 - i}>;\n`).join("");
+    using dir = project({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: JSON.parse(tsconfig).compilerOptions,
+        files: ["slice.ts", "core.ts", "first.ts", "busy1.ts", "busy2.ts", "last.ts"],
+      }),
+      "core.ts": `export declare function createSlice<S, R extends Record<string, (s: S, p: any) => S | void>>(o: {
+  initial: S;
+  reducers: R;
+}): { reducer: S; actions: R };
+`,
+      "slice.ts":
+        `import { createSlice } from "./core";
+export const slice = createSlice({ initial: { n: 0 }, reducers: { clear: s => s } });
+export const text = String(1);
+` +
+        slow(4) +
+        "export class Bad extends Missing {}\n",
+      "first.ts": `import { slice } from "./slice";\nexport const reducer = slice.reducer;\n` + padding(400),
+      "busy1.ts": slow(1) + padding(300),
+      "busy2.ts": slow(1) + padding(299),
+      "last.ts": `import { Bad } from "./slice";\nexport const bad = new Bad();\n`,
+    });
+    const threads = [1, 2, 2, 3, 3, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe("slice.ts(9,26): error TS2304: Cannot find name 'Missing'.");
+      expect(exitCode).toBe(1);
+    }
+  });
+
   // TypeScript stops resolving a base constraint ten levels down, so `a.v` is an error if nothing has resolved the inner
   // levels before. The check of `t.ts` comes first and resolves them from the inside out, and the checks of `f1.ts` and
   // `f2.ts` must find that, whether or not they share a task with `t.ts`. That depends on the size of `t.ts`.

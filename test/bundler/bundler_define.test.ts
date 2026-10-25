@@ -1,3 +1,4 @@
+import type { BuildConfig, TranspilerOptions } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
@@ -216,6 +217,182 @@ describe("define values are symbols, not text", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("1 2\n");
     expect(exitCode).toBe(0);
+  });
+
+  /** Runs `file` with `globals.js` of `dir` loaded first. */
+  async function runWithGlobals(dir: string, file: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", join(dir, "globals.js"), file],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  /** Bundles `entry.js`, then runs the bundle. */
+  async function bundleAndRun(files: Record<string, string>, options: Partial<BuildConfig>) {
+    using dir = tempDir("bundler-define-head", files);
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "out"),
+      ...options,
+    });
+    expect(result.logs).toEqual([]);
+    expect(result.success).toBe(true);
+    const code = await result.outputs[0].text();
+    return { code, run: await runWithGlobals(String(dir), result.outputs[0].path) };
+  }
+
+  /** Transpiles `entry.js` without a bundle, then runs the output. */
+  async function transpileAndRun(files: Record<string, string>, options: TranspilerOptions) {
+    using dir = tempDir("bundler-define-head", files);
+    const code = new Bun.Transpiler(options).transformSync(files["entry.js"], "js");
+    await Bun.write(join(String(dir), "out.js"), code);
+    return { code, run: await runWithGlobals(String(dir), join(String(dir), "out.js")) };
+  }
+
+  // Every one-character name is the head of a define value, so each short name
+  // that the minifier can hand out first is the name of a global that the file reads.
+  const heads = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ$_"];
+  const headDefines = Object.fromEntries(heads.map((head, i) => [`HEAD_${i}`, `${head}.url`]));
+  const headReads = heads.map((_, i) => `HEAD_${i}`).join(", ");
+
+  // The bundler and the transpiler each call the renamer on their own path
+  describe.each([
+    ["Bun.build", bundleAndRun],
+    ["Bun.Transpiler", transpileAndRun],
+  ])("%s", (_, minifyAndRun) => {
+    test.each([
+      [
+        "the locals of a function",
+        `
+          function compute(firstLocal, secondLocal, thirdLocal) {
+            var fourthLocal = firstLocal + secondLocal + thirdLocal;
+            return [${headReads}, fourthLocal];
+          }
+          console.log(JSON.stringify(compute(1, 2, 3)));
+        `,
+      ],
+      [
+        "top-level variables",
+        `
+          let firstLocal = 1, secondLocal = 2, thirdLocal = 3;
+          firstLocal += secondLocal + thirdLocal;
+          console.log(JSON.stringify([${headReads}, firstLocal]));
+        `,
+      ],
+    ])("the minifier does not rename %s to the global at the head of a member chain", async (_, source) => {
+      const { code, run } = await minifyAndRun(
+        {
+          "entry.js": source,
+          "globals.js": `for (const head of ${JSON.stringify(heads)}) globalThis[head] = { url: head };`,
+        },
+        { define: headDefines, minify: { identifiers: true } },
+      );
+      // The locals were renamed
+      expect(code).not.toContain("Local");
+      // Each define reads its global, not a local that took the name of the global
+      expect(run).toEqual({ stdout: JSON.stringify([...heads, 6]) + "\n", stderr: "", exitCode: 0 });
+    });
+  });
+
+  test("a top-level name in another module does not capture the global at the head of a member chain", async () => {
+    // No minifier: the two modules share one scope in the bundle, so the module's `config` needs a new name
+    const { run } = await bundleAndRun(
+      {
+        "entry.js": `
+          import { touch } from "./declares.js";
+          import { read } from "./reads.js";
+          console.log(JSON.stringify([read(), touch().url]));
+        `,
+        "declares.js": `
+          var config = { url: "module" };
+          export function touch() { return config; }
+        `,
+        "reads.js": `export function read() { return CONFIG_URL; }`,
+        "globals.js": `globalThis.config = { url: "global" };`,
+      },
+      { define: { CONFIG_URL: "config.url" } },
+    );
+    expect(run).toEqual({ stdout: '["global","module"]\n', stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    ["a plain bundle", {}],
+    ["a minified bundle", { minify: true }],
+  ])("%s keeps an import that only the head of a member chain reads", async (_, options) => {
+    const { run } = await bundleAndRun(
+      {
+        "entry.js": `
+          import { config } from "./settings.js";
+          console.log(CONFIG_URL);
+        `,
+        "settings.js": `export const config = { url: "import" };`,
+        "globals.js": `globalThis.config = { url: "global" };`,
+      },
+      { define: { CONFIG_URL: "config.url" }, ...options },
+    );
+    // The value names the import that is in scope, not the global
+    expect(run).toEqual({ stdout: "import\n", stderr: "", exitCode: 0 });
+  });
+
+  // The parser builds a define value at its use site. So the bundle must be
+  // the one that the same files give with the value written there.
+  test.each([
+    {
+      name: "`this` in a CommonJS export that is called as a method",
+      key: "WHO_TAG",
+      value: "this.tag",
+      files: (read: string) => ({
+        "entry.js": `
+          import * as lib from "./lib.cjs";
+          console.log(lib.readExpression(), lib.readDeclaration());
+        `,
+        "lib.cjs": `
+          exports.tag = "exports";
+          exports.readExpression = function () { return ${read}; };
+          function readDeclaration() { return ${read}; }
+          exports.readDeclaration = readDeclaration;
+        `,
+      }),
+    },
+    {
+      name: "a property of the default import of a CommonJS module",
+      key: "LIB_FOO",
+      value: "lib.foo",
+      files: (read: string) => ({
+        "entry.js": `
+          import lib from "./lib.cjs";
+          console.log(${read});
+        `,
+        "lib.cjs": `exports.foo = "foo";`,
+      }),
+    },
+    {
+      name: "`delete` of a property of the default import of a CommonJS module",
+      key: "settings.gone",
+      value: "lib.gone",
+      files: (target: string) => ({
+        "entry.js": `
+          import lib from "./lib.cjs";
+          delete ${target};
+          console.log(Object.keys(lib));
+        `,
+        "lib.cjs": `exports.foo = "foo"; exports.gone = 1;`,
+      }),
+    },
+  ])("$name bundles like the literal", async ({ key, value, files }) => {
+    async function bundle(expression: string, define: Defines) {
+      using dir = tempDir("bundler-define-literal", files(expression));
+      const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], define });
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+      // The `// path` comments hold the name of the temporary directory
+      return (await result.outputs[0].text()).replace(/^\/\/ .*\n/gm, "");
+    }
+    expect(await bundle(key, { [key]: value })).toBe(await bundle(value, {}));
   });
 
   test("assigning through a member chain does not assign to the import at its head", async () => {

@@ -1,12 +1,12 @@
 //! JavaScript files: which diagnostics apply to them.
 //!
-//! A port of `canIncludeBindAndCheckDiagnostics`, `getBindAndCheckDiagnosticsWithChecker` and `getAdditionalJSSyntacticDiagnostics`
-//! (TypeScript 7.0.2, compiler/program.go). `checkJSSyntax` (parser/parser.go) runs in the parser: `hir::DiagnosticKind::Js`.
+//! A port of `canIncludeBindAndCheckDiagnostics`, `getBindAndCheckDiagnosticsWithChecker` and
+//! `getAdditionalJSSyntacticDiagnostics` (TypeScript 7.0.2, compiler/program.go). `checkJSSyntax` (parser/parser.go)
+//! runs in the parser: `hir::DiagnosticKind::Js`.
 
 use super::*;
 
-/// `plainJSErrors` (compiler/program.go): the codes reported for JavaScript that is not opted into
-/// checking. In order.
+/// `plainJSErrors` (compiler/program.go): the codes reported for JavaScript that isn't opted into checking. Sorted.
 pub(super) const PLAIN_JS_ERRORS: [u32; 91] = [
     1005, 1009, 1013, 1014, 1029, 1030, 1031, 1042, 1044, 1048, 1049, 1053, 1054, 1089, 1090, 1091,
     1097, 1100, 1101, 1102, 1104, 1105, 1106, 1107, 1111, 1113, 1114, 1115, 1116, 1123, 1155, 1156,
@@ -16,8 +16,8 @@ pub(super) const PLAIN_JS_ERRORS: [u32; 91] = [
     17000, 17001, 17012, 18006, 18007, 18012, 18013, 18016, 18036, 18038, 18041,
 ];
 
-/// The codes TypeScript's checker only reports through `grammarErrorOnNode` and similar functions,
-/// so never in a file with parse errors. In order.
+/// The codes TypeScript's checker only reports through `grammarErrorOnNode` and similar functions, so never in a file
+/// with parse errors. Sorted.
 pub(super) const GRAMMAR_ERRORS: [u32; 164] = [
     1014, 1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1024, 1028, 1029, 1030, 1031, 1035, 1036,
     1038, 1039, 1040, 1042, 1044, 1046, 1047, 1048, 1049, 1051, 1052, 1053, 1054, 1070, 1071, 1079,
@@ -46,7 +46,7 @@ impl Checker<'_, '_> {
         hir.is_js && hir.check_directive.is_none() && self.files().options.check_js.is_none()
     }
 
-    /// `SkipTypeChecking`: whether anything other than syntax errors is reported.
+    /// `SkipTypeChecking`: true if anything other than syntax errors is reported.
     pub fn reports_semantic_errors(&self, file: FileId) -> bool {
         let options = &self.files().options;
         let hir = self.hir(file);
@@ -62,8 +62,8 @@ impl Checker<'_, '_> {
 }
 
 impl Checker<'_, '_> {
-    /// `checkGrammarSourceFile`: 1046. At the top level of a declaration file, a value declaration
-    /// must have `declare` or `export`. Only the first that does not is reported.
+    /// `checkGrammarSourceFile`: 1046. At the top level of a declaration file, a value declaration must have `declare`
+    /// or `export`. Only the first one that doesn't is reported.
     pub(super) fn check_declare_modifiers(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.kind != FileKind::Declaration {
@@ -81,7 +81,10 @@ impl Checker<'_, '_> {
                     | StmtKind::Enum(_)
                     | StmtKind::Module(_)
                     | StmtKind::Var(_)
-            ) && !hir.modifier_list(hir[s].modifiers).iter().any(is_declared)
+            ) && !hir
+                .modifier_list(hir.stmt_modifiers(s))
+                .iter()
+                .any(is_declared)
             {
                 let start = hir[s].start;
                 self.error_at((file, start, 0), 1046, &[]);
@@ -90,8 +93,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `getAdditionalJSSyntacticDiagnostics`: the first decorator of each parameter, in a file the
-    /// checker does not check.
+    /// `getAdditionalJSSyntacticDiagnostics`: the first decorator of each parameter, in a file the checker doesn't
+    /// check.
     pub(super) fn get_additional_js_syntactic_diagnostics(&mut self, file: FileId) {
         let hir = self.hir(file);
         if !hir.is_js || hir.legacy_decorators || self.is_check_js(file) {
@@ -102,8 +105,8 @@ impl Checker<'_, '_> {
             if previous_owner.replace(owner) != Some(owner)
                 && matches!(owner, DecoratorOwner::Param(_))
             {
-                // `decorator.Loc`, which starts at the end of the previous token: `export` and
-                // `default` can come before it.
+                // `decorator.Loc`, which starts at the end of the previous token. `export` and `default` can come
+                // before it.
                 let at_sign = self.decorator_position(file, decorator).at_sign;
                 let pos = self.end_of_token_before(file, at_sign);
                 let at = (file, pos, end_of_expr(hir, decorator));

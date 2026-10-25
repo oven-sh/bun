@@ -463,8 +463,6 @@ fn wrap_rules_with_conditions(
     temp_bump: &Bump,
     conditions: &Vec<ImportConditions>,
 ) {
-    let mut dummy_import_records: Vec<ImportRecord> = Vec::new();
-
     let mut i: usize = conditions.len() as usize;
     while i > 0 {
         i -= 1;
@@ -522,8 +520,8 @@ fn wrap_rules_with_conditions(
                 ast.rules = arena_rule_list_one(
                     temp_bump,
                     BundlerCssRule::Supports(BundlerSupportsRule {
-                        condition: supports
-                            .clone_with_import_records(temp_bump, &mut dummy_import_records),
+                        // SAFETY: as for `layer` above.
+                        condition: unsafe { core::ptr::read(supports) },
                         rules: core::mem::take(&mut ast.rules),
                         loc: Location::dummy(),
                     }),
@@ -537,17 +535,14 @@ fn wrap_rules_with_conditions(
             ast.rules = arena_rule_list_one(
                 temp_bump,
                 BundlerCssRule::Media(BundlerMediaRule {
-                    query: item
-                        .media
-                        .clone_with_import_records(temp_bump, &mut dummy_import_records),
+                    // SAFETY: as for `layer` above.
+                    query: unsafe { core::ptr::read(&raw const item.media) },
                     rules: core::mem::take(&mut ast.rules),
                     loc: Location::dummy(),
                 }),
             );
         }
     }
-
-    debug_assert!(dummy_import_records.len() == 0);
 }
 
 pub use crate::ThreadPool;

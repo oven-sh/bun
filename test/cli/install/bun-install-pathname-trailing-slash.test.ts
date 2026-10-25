@@ -168,7 +168,7 @@ describe.concurrent("registry path without trailing slash is preserved", () => {
   });
 
   // The `.npmrc` key of `http://host/r/team` is `//host/r/team/`. The token on it used to go to `/r/<name>`.
-  test("the token keyed to the registry path goes to that path", async () => {
+  test("the token for the registry path is sent to that path", async () => {
     using registry = serve();
     using dir = tempDir("no-trailing-slash-token", {
       ".npmrc": `registry=${registry.origin}/r/team\n//${registry.host}/r/team/:_authToken=team-token\n`,

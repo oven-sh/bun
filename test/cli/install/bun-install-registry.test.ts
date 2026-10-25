@@ -12,6 +12,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  statSync,
 } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, symlink, writeFile } from "fs/promises";
 import {
@@ -378,6 +379,74 @@ describe.concurrent("certificate authority", () => {
     expect(out).toContain("+ no-deps@");
     expect(exitCode).toBe(0);
     expect(proxy.targets).toEqual([`localhost:${server.port}`, `localhost:${server.port}`]);
+  });
+
+  // With --use-system-ca, every file in $SSL_CERT_DIR is loaded. The default store only loads files named after the
+  // certificate's hash, so `my-ca.pem` is only trusted with the flag. Linux only: other systems don't use $SSL_CERT_DIR.
+  describe.skipIf(!isLinux)("--use-system-ca", () => {
+    async function run(args: string[], extraEnv: Record<string, string> = {}) {
+      const { packageDir, packageJson, env } = await setupTest();
+      using server = Bun.serve({
+        port: 0,
+        fetch: mockRegistryFetch(),
+        ...tls,
+      });
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.1.1",
+            dependencies: { "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz` },
+          }),
+        ),
+        write(
+          join(packageDir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: `https://localhost:${server.port}/` } }),
+        ),
+        write(join(packageDir, "certs", "my-ca.pem"), tls.cert),
+      ]);
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: packageDir,
+        stderr: "pipe",
+        stdout: "pipe",
+        env: {
+          ...env,
+          SSL_CERT_DIR: join(packageDir, "certs"),
+          SSL_CERT_FILE: "",
+          BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+          ...extraEnv,
+        },
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out, err, exitCode };
+    }
+
+    test("doesn't trust the certificate without the flag", async () => {
+      const { out, err, exitCode } = await run(["install"]);
+      expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(out).not.toContain("+ no-deps@");
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([
+      [["install", "--use-system-ca"], {}],
+      [["--use-system-ca", "install"], {}],
+      [["install"], { BUN_OPTIONS: "--use-system-ca" }],
+      [["install"], { NODE_USE_SYSTEM_CA: "1" }],
+    ])("bun %j with %j trusts the system's certificates", async (args, extraEnv) => {
+      const { out, err, exitCode } = await run(args, extraEnv);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("+ no-deps@");
+      expect(exitCode).toBe(0);
+    });
+
+    test("errors when combined with --use-bundled-ca", async () => {
+      const { err, exitCode } = await run(["install", "--use-system-ca", "--use-bundled-ca"]);
+      expect(err).toBe("error: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca\n");
+      expect(exitCode).toBe(1);
+    });
   });
 
   test(`non-existent --cafile`, async () => {
@@ -1115,7 +1184,8 @@ describe.concurrent("text lockfile", () => {
             expect(exitCode).toBe(0);
             return err;
           },
-          // Where a linker puts a registry package: hoisted into node_modules, isolated into the store.
+          // Returns where a linker puts a registry package: the hoisted linker in node_modules, the isolated linker in
+          // the store.
           installed: (pkg: string, version: string) =>
             exists(
               linker === "hoisted"
@@ -1132,7 +1202,7 @@ describe.concurrent("text lockfile", () => {
         };
       }
 
-      // A required peer stays: bun installs peerDependencies by default.
+      // A required peer is still installed, because Bun installs peerDependencies by default.
       test("--omit leaves it out with its group", async () => {
         const { packageDir, packageJson, install, installed, lockfileText, rmNodeModules } = await setup();
         await write(
@@ -1170,7 +1240,7 @@ describe.concurrent("text lockfile", () => {
         await install("--frozen-lockfile", "--omit=optional");
         expect(await installedNow()).toEqual({ "no-deps": true, "a-dep": true, "basic-1": false });
 
-        // `--omit=peer` alone leaves the other group in charge
+        // `--omit=peer` alone doesn't affect the other group.
         await rmNodeModules();
         await install("--frozen-lockfile", "--omit=peer");
         expect(await installedNow()).toEqual({ "no-deps": true, "a-dep": true, "basic-1": true });
@@ -1372,7 +1442,7 @@ describe.concurrent.each(["hoisted", "isolated"])("a peer dependency on bun, %s 
     expect(await lockfile()).not.toContain('"bun@');
   });
 
-  test("takes the bun the project depends on", async () => {
+  test("uses the bun that the project depends on", async () => {
     const { run, bun } = await project({ dependencies: { "peer-on-bun": "1.0.0", bun: "1.0.0" } });
     await run(...install);
     expect(await bun()).toBe("1.0.0");
@@ -1569,6 +1639,7 @@ describe.concurrent("frozen lockfile", () => {
       "Resolving dependencies
       Resolved, downloaded and extracted [4]
       error: lockfile had changes, but lockfile is frozen
+      note: dependencies in package.json changed since bun.lock was saved: basic-1 was added
       note: try re-running without --frozen-lockfile and commit the updated lockfile"
     `);
     expect(exitCode).toBe(1);
@@ -1880,8 +1951,8 @@ describe.concurrent("bundledDependencies", () => {
       }
     });
 
-    // What a tarball ships takes its place in the tree that is installed, as it does in the one
-    // that is saved. Each project aliases a name at the root, so the real package nests under the host.
+    // A package that a tarball ships takes its slot in the install tree, like it does in the saved tree. Each project
+    // aliases a name at the root, so the real package nests under the host.
     const manifestAt = (...path: string[]) => file(join(...path, "package.json")).json();
 
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) bundled copy keeps a nested dependency from hoisting above it`, async () => {
@@ -1992,9 +2063,9 @@ describe.concurrent("bundledDependencies", () => {
 
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) a peer under a bundling host shares the bundled copy`, async () => {
       const { packageDir, packageJson, env } = await setupTest();
-      // `bundled-peer-host` bundles `no-deps@1.0.0` and depends on `bundled-peer-plugin`, which
-      // has a peer dependency on `no-deps`. The plugin nests under the host and loads the host's
-      // bundled copy: no copy of its own, nothing at the root.
+      // `bundled-peer-host` bundles `no-deps@1.0.0` and depends on `bundled-peer-plugin`, which has a peer dependency
+      // on `no-deps`. The plugin nests under the host and loads the host's bundled copy. It gets no copy of its own,
+      // and nothing is installed at the root.
       await write(
         packageJson,
         JSON.stringify({
@@ -3875,7 +3946,7 @@ describe.concurrent("binaries", () => {
       isWindows ? ["multi-b.bunx", "multi-b.exe", "multi-c.bunx", "multi-c.exe"] : ["multi-b", "multi-c"],
     );
     expect(join(packageDir, "node_modules", ".bin", "multi-b")).toBeValidBin(join("..", "multi-bin", "cli.js"));
-    expect(stderr).toContain(`error: Failed to link multi-bin: ${isWindows ? "ENOENT" : "ENAMETOOLONG"}`);
+    expect(stderr).toContain(`error: failed to link multi-bin: ${isWindows ? "ENOENT" : "ENAMETOOLONG"}`);
     expect(exitCode).toBe(1);
   });
 
@@ -3927,7 +3998,7 @@ describe.concurrent("binaries", () => {
       chmodSync(binDir, 0o755);
     }
 
-    expect(err).not.toContain("Failed to link");
+    expect(err).not.toContain("failed to link");
     expect(err).not.toContain("error:");
     expect(binPath).toBeValidBin(join("..", "what-bin", "what-bin.js"));
     expect(lstatSync(binPath).mtimeMs).toBe(1000);
@@ -3955,8 +4026,8 @@ describe.concurrent("binaries", () => {
   });
 
   describe("existing destinations in the global bin dir", () => {
-    // What a bin named `name` occupies in a bin dir: the symlink itself on POSIX, the `.exe` half
-    // of the `.exe` + `.bunx` shim pair on Windows.
+    // Returns the file that a bin named `name` creates in a bin directory: the symlink itself on POSIX, and the `.exe`
+    // half of the `.exe` + `.bunx` shim pair on Windows.
     const binEntry = (name: string) => (isWindows ? `${name}.exe` : name);
     const linkTarget = (pkg: string, file: string) =>
       join("..", "global-install-dir", "install", "global", "node_modules", pkg, file);
@@ -3990,7 +4061,7 @@ describe.concurrent("binaries", () => {
       return { out, err, exitCode };
     }
 
-    test("a file, a directory and a link that bun did not make stay", async () => {
+    test("a file, a directory and a link that bun didn't create are kept", async () => {
       const { packageDir, env } = await setupTest();
       const binDir = join(packageDir, "global-bin-dir");
       await Promise.all([
@@ -4010,9 +4081,9 @@ describe.concurrent("binaries", () => {
         "dep-with-map-bins",
         "dep-with-file-bin",
       );
-      expect(err).toContain("Failed to link what-bin: EEXIST");
-      expect(err).toContain("Failed to link dep-with-map-bins: EEXIST");
-      if (!isWindows) expect(err).toContain("Failed to link dep-with-file-bin: EEXIST");
+      expect(err).toContain("failed to link what-bin: EEXIST");
+      expect(err).toContain("failed to link dep-with-map-bins: EEXIST");
+      if (!isWindows) expect(err).toContain("failed to link dep-with-file-bin: EEXIST");
 
       expect(await file(join(binDir, binEntry("what-bin"))).text()).toBe("not a bin of what-bin");
       expect(await file(join(binDir, binEntry("map-bin-1"), "inner.txt")).text()).toBe("keep");
@@ -4030,7 +4101,7 @@ describe.concurrent("binaries", () => {
       await write(join(binDir, binEntry("map-bin-1")), "not a bin of dep-with-map-bins");
 
       let result = await runGlobal(packageDir, env, "add", "dep-with-map-bins");
-      expect(result.err).toContain("error: Failed to link dep-with-map-bins: EEXIST");
+      expect(result.err).toContain("error: failed to link dep-with-map-bins: EEXIST");
       expect(join(binDir, "map-bin-2")).toBeValidBin(linkTarget("dep-with-map-bins", "map-bin-2"));
       expect(await file(join(globalDir, "package.json")).json()).toEqual({
         dependencies: { "dep-with-map-bins": "^1.0.0" },
@@ -4089,7 +4160,7 @@ describe.concurrent("binaries", () => {
       ]);
 
       const { err, exitCode } = await runGlobal(packageDir, env, "install", "test-native-binlink");
-      expect(err).toContain("Failed to link test-native-binlink: EEXIST");
+      expect(err).toContain("failed to link test-native-binlink: EEXIST");
       expect(await file(join(binDir, binEntry("test-binlink-cmd"))).text()).toBe("not a bin of test-native-binlink");
       expect(exitCode).toBe(1);
     });
@@ -4137,7 +4208,7 @@ describe.concurrent("binaries", () => {
         expect({ out, err }).toEqual({ out: "", err: "" });
       } else {
         // A path below a regular file is ENOTDIR on POSIX. Windows reports another errno.
-        expect(err).toContain(`error: Failed to link what-bin: ${isWindows ? "" : "ENOTDIR"}`);
+        expect(err).toContain(`error: failed to link what-bin: ${isWindows ? "" : "ENOTDIR"}`);
         expect(out).not.toContain("installed");
       }
       expect({
@@ -4183,9 +4254,9 @@ describe.concurrent("binaries", () => {
         if (flags.length > 0) {
           expect({ out, err }).toEqual({ out: "", err: "" });
         } else {
-          expect(err).toContain(`error: Failed to link into ${join(realpathSync(nodeModules), ".bin")}: EACCES`);
+          expect(err).toContain(`error: failed to link into ${join(realpathSync(nodeModules), ".bin")}: EACCES`);
         }
-        // The link is still there, and no bin went through it.
+        // The link is still there, and no bin was written through it.
         expect(await readlink(join(nodeModules, ".bin"))).toBe(join("..", "elsewhere"));
         expect(await readdirSorted(join(packageDir, "elsewhere"))).toEqual([]);
         expect(exitCode).toBe(1);
@@ -5084,7 +5155,7 @@ describe.concurrent("binaries", () => {
       const { out, err, exitCode } = await run(["install"], project, env);
       const shortened = await shorten();
 
-      expect(err).toContain(`error: Failed to link ${name}: ENAMETOOLONG`);
+      expect(err).toContain(`error: failed to link ${name}: ENAMETOOLONG`);
       expect(out).not.toContain("installed");
       // The package itself was installed. Only its bin is missing.
       expect(await exists(join(shortened, "node_modules", name, "package.json"))).toBeTrue();
@@ -5353,7 +5424,7 @@ describe.concurrent("binaries", () => {
         const { err, exitCode } = await install(linker);
         expect(err).toContain(
           linker === "hoisted"
-            ? "error: Failed to link long-dir-bin: ENAMETOOLONG"
+            ? "error: failed to link long-dir-bin: ENAMETOOLONG"
             : "ENAMETOOLONG: failed to link binaries for package: long-dir-bin@",
         );
         expect(exitCode).toBe(1);
@@ -5627,9 +5698,9 @@ describe.concurrent("binaries", () => {
     });
   });
 
-  // One `.bin` has one link per name. The order, under both linkers: what the root package or a
-  // workspace member depends on itself; then registry, tarball and git packages before workspace,
-  // `file:` and `link:` directories; then the dependency name.
+  // A `.bin` has one link per name. With both linkers, the order of precedence is: direct dependencies of the root
+  // package or a workspace first, then registry, tarball and git packages before workspace, `file:` and `link:`
+  // directories, then the dependency name.
   describe("a bin name that several packages declare", () => {
     // `aaa` sorts before the registry package `what-bin`, `zzz` after it. Both declare its bin.
     const claim = (dir: string, name: string) => ({
@@ -5745,7 +5816,7 @@ describe.concurrent("binaries", () => {
         ],
       ];
 
-    test.each(cases)("goes to %s (%s)", async (_, linker, files, bin, wins) => {
+    test.each(cases)("is linked to %s (%s)", async (_, linker, files, bin, wins) => {
       const { packageDir, env } = await setupTest();
       const text = (content: object | string) => (typeof content === "string" ? content : JSON.stringify(content));
       await Promise.all(
@@ -5776,7 +5847,73 @@ describe.concurrent("binaries", () => {
       }
     });
 
-    test("goes to the registry package once it is added next to a workspace package", async () => {
+    // `bunx <package>` starts the file of the package itself when another package has the name. So the file gets
+    // what a linked bin gets: the mode, and a `#!` line without a carriage return.
+    const claimWithCRLF = (dir: string, name: string) => ({
+      ...claim(dir, name),
+      [`${dir}/claim.js`]: "#!/usr/bin/env node\r\n",
+    });
+    test
+      .skipIf(isWindows)
+      .each<[title: string, linker: string, files: Record<string, object | string>, loser: string]>([
+        [
+          "a workspace package",
+          "hoisted",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: direct },
+            ...claimWithCRLF("packages/aaa", "aaa"),
+          },
+          "packages/aaa/claim.js",
+        ],
+        [
+          "a file: directory",
+          "hoisted",
+          {
+            "package.json": { name: "foo", dependencies: { ...direct, aaa: "file:./aaa" } },
+            ...claimWithCRLF("aaa", "aaa"),
+          },
+          "node_modules/aaa/claim.js",
+        ],
+        [
+          "a workspace package in a member's .bin",
+          "isolated",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"] },
+            "packages/app/package.json": { name: "app", dependencies: { ...direct, aaa: "workspace:*" } },
+            ...claimWithCRLF("packages/aaa", "aaa"),
+          },
+          "packages/aaa/claim.js",
+        ],
+      ])("the file of %s that does not get it is made executable (%s)", async (_, linker, files, loser) => {
+      const { packageDir, env } = await setupTest();
+      await Promise.all(
+        Object.entries(files).map(([path, content]) =>
+          write(join(packageDir, path), typeof content === "string" ? content : JSON.stringify(content)),
+        ),
+      );
+
+      // The second run finds a tree in which the file is not executable, as an earlier version left it.
+      for (const run of ["fresh", "again"]) {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker", linker],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect({
+          run,
+          ownerExecute: statSync(join(packageDir, loser)).mode & 0o100,
+          file: readFileSync(join(packageDir, loser), "utf8"),
+          exitCode,
+        }).toEqual({ run, ownerExecute: 0o100, file: "#!/usr/bin/env node\n", exitCode: 0 });
+        chmodSync(join(packageDir, loser), 0o644);
+      }
+    });
+
+    test("is linked to the registry package once it's added next to a workspace package", async () => {
       const { packageDir, packageJson, env } = await setupTest();
       const bin = join(packageDir, "node_modules", ".bin", "what-bin");
       await Promise.all([
@@ -6269,7 +6406,7 @@ describe.concurrent("hoisting", async () => {
     expect(lockfile).toMatchNodeModulesAt(packageDir);
   });
 
-  test("nested dependency is left alone when only an unrelated root sibling is reinstalled", async () => {
+  test("a nested dependency isn't touched when only an unrelated root sibling is reinstalled", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
@@ -6354,7 +6491,7 @@ describe.concurrent("hoisting", async () => {
     expect(lockfile).toMatchNodeModulesAt(packageDir);
   });
 
-  test("recreating a workspace link leaves the workspace's nested dependencies alone", async () => {
+  test("recreating a workspace link doesn't touch the workspace's nested dependencies", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
@@ -6776,7 +6913,7 @@ describe.concurrent("hoisting", async () => {
       const peerTarballRequested = Promise.withResolvers<void>();
       using proxy = Bun.serve({
         port: 0,
-        // The held responses stay open for as long as bun takes to reach the next step.
+        // The held responses stay open until bun reaches the next step.
         idleTimeout: 0,
         async fetch(req) {
           const { pathname } = new URL(req.url);
@@ -7155,7 +7292,7 @@ describe.concurrent("hoisting", async () => {
 
   // The layout decides which copy of a peer a package loads, so the range is checked against the layout, by the
   // install that resolved something (#7403).
-  describe.each(["hoisted", "isolated"] as const)("a peer served outside its range, %s linker", linker => {
+  describe.each(["hoisted", "isolated"] as const)("a peer that gets a version outside its range, %s linker", linker => {
     async function project(files: Record<string, object>) {
       const { packageDir } = await registry.createTestDir({
         bunfigOpts: { linker },
@@ -7195,7 +7332,7 @@ describe.concurrent("hoisting", async () => {
     const rootsNoDeps2 =
       'warn: incorrect peer dependency "no-deps@2.0.0": "peer-deps-fixed@1.0.0" requires "no-deps@^1.0.0"';
 
-    test("only --verbose says it", async () => {
+    test("is only reported with --verbose", async () => {
       const files = {
         "package.json": { name: "foo", dependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" } },
       };
@@ -7215,7 +7352,7 @@ describe.concurrent("hoisting", async () => {
       expect(await versionSeenFrom(dir, ["peer-deps-fixed"], "no-deps")).toBe("2.0.0");
       expect(await versionSeenFrom(dir, ["one-fixed-dep"], "no-deps")).toBe("1.0.0");
 
-      // Nothing to resolve, nothing repeated.
+      // There's nothing to resolve, so nothing is printed again.
       expect(await peerWarnings(dir)).toEqual([]);
       expect(await peerWarnings(dir, "--frozen-lockfile")).toEqual([]);
       await rm(join(dir, "node_modules"), { recursive: true, force: true });
@@ -7225,12 +7362,116 @@ describe.concurrent("hoisting", async () => {
       expect(await peerWarnings(dir, "a-dep@1.0.1")).toEqual([rootsNoDeps2]);
     });
 
-    test("nothing is said when the copy the dependent loads is inside the range", async () => {
+    test("nothing is printed when the copy that the dependent loads is inside the range", async () => {
       const dir = await project({
         "package.json": { name: "foo", dependencies: { "one-fixed-dep": "1.0.0", "peer-deps-fixed": "1.0.0" } },
       });
       expect(await peerWarnings(dir)).toEqual([]);
       expect(await versionSeenFrom(dir, ["peer-deps-fixed"], "no-deps")).toBe("1.0.0");
+    });
+
+    // Example: elysia has a peer dependency on @sinclair/typebox >=0.34.0, and @jest/schemas depends on ^0.27.8.
+    describe("doesn't fall back to a version that only unrelated packages depend on", () => {
+      // one-fixed-dep@2.0.0 depends on no-deps@2.0.0. peer-deps-fixed has a peer dependency on no-deps@^1.0.0.
+      async function expectSeparateVersions(dir: string, unrelated: string[]) {
+        expect(await versionSeenFrom(dir, ["peer-deps-fixed"], "no-deps")).toBe("1.1.0");
+        expect(await versionSeenFrom(dir, unrelated, "no-deps")).toBe("2.0.0");
+      }
+
+      test("on a fresh install", async () => {
+        const dir = await project({
+          "package.json": { name: "foo", dependencies: { "one-fixed-dep": "2.0.0", "peer-deps-fixed": "1.0.0" } },
+        });
+        expect(await peerWarnings(dir)).toEqual([]);
+        await expectSeparateVersions(dir, ["one-fixed-dep"]);
+
+        const lock = await file(join(dir, "bun.lock")).text();
+        await rm(join(dir, "node_modules"), { recursive: true, force: true });
+        expect(await peerWarnings(dir, "--frozen-lockfile")).toEqual([]);
+        await expectSeparateVersions(dir, ["one-fixed-dep"]);
+        expect(await file(join(dir, "bun.lock")).text()).toBe(lock);
+      });
+
+      test("when the package with the peer dependency is added later", async () => {
+        const dir = await project({ "package.json": { name: "foo", dependencies: { "one-fixed-dep": "2.0.0" } } });
+        expect(await peerWarnings(dir)).toEqual([]);
+        expect(await peerWarnings(dir, "peer-deps-fixed@1.0.0")).toEqual([]);
+        await expectSeparateVersions(dir, ["one-fixed-dep"]);
+      });
+
+      test("when the unrelated package is another workspace", async () => {
+        const dir = await project({
+          "package.json": { name: "mono", workspaces: ["packages/*"] },
+          "packages/a/package.json": { name: "a", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } },
+          "packages/b/package.json": { name: "b", version: "1.0.0", dependencies: { "peer-deps-fixed": "1.0.0" } },
+        });
+        expect(await peerWarnings(dir)).toEqual([]);
+        expect(await versionSeenFrom(join(dir, "packages", "b"), ["peer-deps-fixed"], "no-deps")).toBe("1.1.0");
+        expect(await versionSeenFrom(join(dir, "packages", "a"), [], "no-deps")).toBe("2.0.0");
+      });
+    });
+
+    test("a package two levels below a workspace uses the workspace's version", async () => {
+      // dedupe-divergent-peers depends on dedupe-divergent-strict, which has a peer dependency on no-deps@^2.0.0.
+      const dir = await project({
+        "package.json": { name: "mono", workspaces: ["packages/*"] },
+        "packages/a/package.json": {
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0", "dedupe-divergent-peers": "1.0.0" },
+        },
+      });
+      expect(await peerWarnings(dir)).toEqual([
+        'warn: incorrect peer dependency "no-deps@1.0.0": "dedupe-divergent-strict@1.0.0" requires "no-deps@^2.0.0"',
+      ]);
+      const below = ["dedupe-divergent-peers", "dedupe-divergent-strict"];
+      expect(await versionSeenFrom(join(dir, "packages", "a"), below, "no-deps")).toBe("1.0.0");
+    });
+
+    test("packages below a workspace use the version that satisfies the workspace's own peer dependency", async () => {
+      // one-fixed-dep@1.0.0 depends on no-deps@1.0.0. dedupe-divergent-strict has a peer dependency on no-deps@^2.0.0.
+      const dir = await project({
+        "package.json": { name: "mono", workspaces: ["packages/*"] },
+        "packages/a/package.json": {
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "one-fixed-dep": "1.0.0", "dedupe-divergent-strict": "1.0.0" },
+          peerDependencies: { "no-deps": "^1.0.0" },
+        },
+      });
+      expect(await peerWarnings(dir)).toEqual([
+        'warn: incorrect peer dependency "no-deps@1.0.0": "dedupe-divergent-strict@1.0.0" requires "no-deps@^2.0.0"',
+      ]);
+      expect(await versionSeenFrom(join(dir, "packages", "a"), ["dedupe-divergent-strict"], "no-deps")).toBe("1.0.0");
+      expect(await file(join(dir, "bun.lock")).text()).not.toContain("no-deps@2.0.0");
+    });
+
+    test("the root's own peer dependency doesn't fall back to an unrelated package's version either", async () => {
+      // one-fixed-dep@2.0.0 depends on no-deps@2.0.0.
+      const dir = await project({
+        "package.json": {
+          name: "foo",
+          dependencies: { "one-fixed-dep": "2.0.0", "peer-deps-fixed": "1.0.0" },
+          peerDependencies: { "no-deps": "^1.0.0" },
+        },
+      });
+      expect(await peerWarnings(dir)).toEqual([]);
+      expect(await versionSeenFrom(dir, [], "no-deps")).toBe("1.1.0");
+      expect(await versionSeenFrom(dir, ["peer-deps-fixed"], "no-deps")).toBe("1.1.0");
+      expect(await versionSeenFrom(dir, ["one-fixed-dep"], "no-deps")).toBe("2.0.0");
+    });
+
+    test("a direct dependency of a workspace uses the workspace's version", async () => {
+      const dir = await project({
+        "package.json": { name: "mono", workspaces: ["packages/*"] },
+        "packages/a/package.json": {
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" },
+        },
+      });
+      expect(await peerWarnings(dir)).toEqual([rootsNoDeps2]);
+      expect(await versionSeenFrom(join(dir, "packages", "a"), ["peer-deps-fixed"], "no-deps")).toBe("2.0.0");
     });
 
     test("one line for each dependent", async () => {
@@ -7246,7 +7487,7 @@ describe.concurrent("hoisting", async () => {
       ]);
     });
 
-    test("the range an override sets is the one that counts", async () => {
+    test("the range that an override sets is the one that's checked", async () => {
       const flat = await project({
         "package.json": {
           name: "foo",
@@ -7292,7 +7533,7 @@ describe.concurrent("hoisting", async () => {
       ]);
     });
 
-    test.each(["--omit=peer", "--lockfile-only", "--dry-run"])("%s says nothing", async flag => {
+    test.each(["--omit=peer", "--lockfile-only", "--dry-run"])("%s prints nothing", async flag => {
       const dir = await project({
         "package.json": { name: "foo", dependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" } },
       });
@@ -8420,7 +8661,7 @@ describe.concurrent("transitive file dependencies", () => {
     }
   });
 
-  test("a scoped override for another dependent leaves a registry package's own file: dependency alone", async () => {
+  test("a scoped override for another dependent doesn't affect a registry package's own file: dependency", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
@@ -8547,10 +8788,11 @@ describe.concurrent("transitive file dependencies", () => {
     });
   });
 
-  // A folder's own node_modules is whatever an install in that folder left there, so it is no part of the dependency:
-  // bun installs what bun.lock has. It installs nothing for what the folder bundles, which is taken from there.
+  // A folder's own node_modules is whatever an install in that folder left there, so it isn't part of the dependency.
+  // Bun installs what's in bun.lock. The exception is what the folder bundles, which Bun doesn't install and which is
+  // loaded from there.
   test.each(["hoisted", "isolated"])(
-    "a folder's own node_modules provides only what it bundles, %s linker",
+    "a folder's own node_modules only provides what it bundles, %s linker",
     async linker => {
       const { packageDir, packageJson, env } = await setupTest();
       const inFolder = (name: string, json: object) =>
@@ -8793,7 +9035,7 @@ describe.concurrent("update", () => {
       expect(out).toEqual([
         expect.stringContaining("bun update v1."),
         "",
-        // The exact pin does not move, so the minified package.json written above stays as it is.
+        // The exact pin doesn't move, so the minified package.json written above isn't rewritten.
         "Checked 1 install across 2 packages (no changes)",
       ]);
       await check(version);
@@ -9218,7 +9460,7 @@ describe.concurrent("update", () => {
       });
     });
 
-    test("a catalog reference in an earlier dependency group is left alone", async () => {
+    test("a catalog reference in an earlier dependency group isn't changed", async () => {
       const { packageDir, packageJson, env } = await setupTest();
       // devDependencies are visited before dependencies. The entry recorded for `dependencies`
       // must not be spent rewriting the `catalog:` reference.
@@ -12422,7 +12664,7 @@ describe.concurrent("outdated", () => {
     return out;
   }
 
-  // What follows the `bun outdated v1.x` line, one entry per line.
+  // Returns the output after the `bun outdated v1.x` line, one entry per line.
   const tableLines = (out: string) =>
     out
       .slice(out.indexOf("\n") + 1)
@@ -12682,7 +12924,7 @@ describe.concurrent("outdated", () => {
       dependencies: { "a-dep": `catalog:c${erase}t`, "no-deps": "1.0.0" },
     };
     const catalogs = { [`c${erase}t`]: { "a-dep": "1.0.1" } };
-    // `bun install` refuses the alias, so only a bun.lock somebody else wrote has it.
+    // `bun install` refuses the alias, so it can only come from a bun.lock that another tool or person wrote.
     await Promise.all([
       write(packageJson, JSON.stringify({ ...root, workspaces: { packages: ["packages/*"], catalogs } })),
       write(join(packageDir, "packages", "a", "package.json"), JSON.stringify(member)),
@@ -12722,7 +12964,7 @@ describe.concurrent("outdated", () => {
       "|--------------------------------------------------------------------------------------------|",
     ]);
     expect(table.map(line => Bun.stringWidth(line))).toEqual(table.map(() => 94));
-    // Nothing is placed in node_modules, so the name is only reported on.
+    // Nothing is placed in node_modules, so the name is only printed.
     expect(err).toBe("");
     expect(exitCode).toBe(0);
   });
@@ -12845,7 +13087,7 @@ describe.concurrent("outdated", () => {
 
   test("lists a dependency that is ahead of `latest` when `bun update` would move it", async () => {
     const packages: Record<string, { versions: string[]; tags: Record<string, string> }> = {
-      // Nothing newer in its range.
+      // There's nothing newer in its range.
       "ahead": { versions: ["1.9.0", "2.0.0", "2.1.0"], tags: { latest: "1.9.0" } },
       "beta": { versions: ["1.0.0", "2.0.0-beta.1", "2.0.0-beta.5"], tags: { latest: "1.0.0" } },
       // `latest` stays on the LTS major.
@@ -13729,7 +13971,7 @@ test.concurrent("rejects dependency aliases containing relative path segments", 
 
   let err = await stderr.text();
   await stdout.text();
-  expect(err).toContain('Invalid dependency name "../escaped-target"');
+  expect(err).toContain('invalid dependency name "../escaped-target"');
   // Nothing may be created outside of `node_modules`. `node_modules/../escaped-target`
   // resolves to a sibling of `node_modules` inside the project directory.
   expect(await exists(join(packageDir, "escaped-target"))).toBe(false);
@@ -13832,7 +14074,7 @@ test.concurrent("rejects package names containing relative path components in bu
   await stdout.text();
 
   // The lockfile entry must be rejected instead of being used as a cache path.
-  expect(err).toContain("Invalid package name");
+  expect(err).toContain("invalid package name");
 
   // Nothing may be created outside the cache directory. The escape target for
   // a "../escaped-pkg" name is a direct child of packageDir (a sibling of
@@ -13905,7 +14147,7 @@ test.concurrent("rejects npm aliases whose manifest URL resolves to a different 
   // The manifest request must be refused with a clear error (today the name is
   // already refused while resolving, before a URL is built; the URL check stays
   // behind it as a second line of defense)...
-  expect(err).toMatch(/Invalid dependency name|is not on registry/);
+  expect(err).toMatch(/invalid dependency name|is not on registry/);
   // ...and no request (carrying the registry Authorization header) may reach
   // a host other than the configured registry.
   expect(received).toEqual([]);
@@ -14295,7 +14537,8 @@ test.concurrent("npm manifest cache entries are only reused for the package name
   expect(npmPackages.map(pkg => pkg.name)).toEqual(["no-deps"]);
   expect(npmPackages[0].resolution.resolved).toBe(`http://localhost:${port}/no-deps/-/no-deps-1.0.0.tgz`);
 
-  // The rejected entry stays until its replacement is renamed over it, which the process waits for before it exits.
+  // The rejected entry stays in place until its replacement is renamed over it, which the process waits for before it
+  // exits.
   expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("no-deps");
   expect(exitCode).toBe(0);
 });
@@ -14789,7 +15032,7 @@ describe("manifest conditional requests", () => {
     },
   );
 
-  test("a version published to a registry that sends no-cache can be installed at once", async () => {
+  test("a version published to a registry that sends no-cache can be installed immediately", async () => {
     const served = { etag, cacheControl: "no-cache", versions: ["1.0.0"] };
     const { server, requests } = startRegistry(served);
     using _ = server;

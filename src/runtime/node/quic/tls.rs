@@ -446,6 +446,7 @@ impl TlsContext {
             if us_ssl_ctx_set_verify_signature_algorithms(ctx) != 1 {
                 return Err("failed to set the signature algorithms");
             }
+            us_ssl_ctx_reject_blocked_keys(ctx);
             if let Some(groups) = &config.groups {
                 if ssl::SSL_CTX_set1_groups_list(ctx, groups.as_ptr().cast()) != 1 {
                     return Err("invalid TLS groups list");
@@ -575,6 +576,8 @@ unsafe extern "C" {
     fn Bun__X509__validationErrorCode(err: i32) -> *const core::ffi::c_char;
     /// openssl.c: the signature algorithms every other TLS context of Bun accepts from a peer.
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
+    /// openssl.c: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
+    fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
 }
 
 /// node's `X509_V_ERR_UNSPECIFIED`, reported when a peer sent no certificate
@@ -654,8 +657,10 @@ pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     if ssl.is_null() {
         return None;
     }
-    // SAFETY: returns a borrowed X509 owned by the SSL.
-    let cert = unsafe { ssl::SSL_get_certificate(ssl) };
+    // `load_cert_chain` only installs certificates on the context. The context parses its
+    // leaf once, but `SSL_get_certificate` parses a copy for each SSL.
+    // SAFETY: returns a borrowed X509 owned by `ssl`'s context.
+    let cert = unsafe { ssl::SSL_CTX_get0_certificate(ssl::SSL_get_SSL_CTX(ssl)) };
     if cert.is_null() {
         return None;
     }

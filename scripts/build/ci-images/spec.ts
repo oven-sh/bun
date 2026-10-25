@@ -111,34 +111,34 @@ const prefetchTriggerVersion = 1;
  */
 export const pins = {
   nodejs: {
-    version: "26.3.0",
+    version: "26.12.1",
     nodeGypInstallVersion: "11",
     // SHASUMS256.txt beside the files; unofficial-builds.nodejs.org has its own for the musl builds.
     sha256: {
-      headers: "fca113c5d5add8bfb1aa31129a24acb8d49aa69ab3c22a2cc569aec88960526d",
-      "linux-x64": "a6e65cc653e40c1653b77742f9185dbce3ff1f99fa2746d211bddb53530ef206",
-      "linux-aarch64": "b2e01f65905c24cb5dd19c4cfbfefe0118e0504c170cc18beac343a2abbb59bd",
-      "linux-x64-musl": "6ad2e7c0cf693fecc2febb1abf753940244f3baaa04626361ed52d64843ffc67",
-      "linux-aarch64-musl": "2487ff4f03dbd8998a3778886d50c1ee5f13a3b9cefbfa3aed02c32dbf1e1fb8",
-      "darwin-x64": "7453bd54a17bdc656e2e784d702f6eeb224fb517965e6f8c5a31a88c83d3804c",
-      "darwin-aarch64": "77ef7f7a15aa757c2ca19d63cf41c8d9eb3b18590ebc6883871310787d8c6b6c",
+      headers: "a983cdcea96e85d137b9b807cc776bb5564fc9e3e1c9185d59bbfaa781efd08f",
+      "linux-x64": "0fd1eb7770598f52a21995edf6ed35fc690400fa437c2386af329519e9143132",
+      "linux-aarch64": "a6c01af459dd8972ab3fb08ee5da81244d26ba8c4944a62d5bbba8c597ae154f",
+      "linux-x64-musl": "8bf9cc0e7f8e3c7ec5368dca19242cad651b6b09d35bcdcf290ac3f80925e8dd",
+      "linux-aarch64-musl": "c3694551f6cb888fe0befb4cb2e13ffe45b0bb2528ec141e7c3a29a7d7974d13",
+      "darwin-x64": "b85c2ea4420ad0bc4abf2dc6cf1f55130ed681f1cabf60cf3f526e4c9e2712ff",
+      "darwin-aarch64": "1901d539912c02afa10d1cc126943a8855a7eedebe830119463470db5e6c59e8",
       // node.lib: Scoop installs Node.js itself on Windows.
-      "windows-x64": "2f71186cc7649a7406b1616566700e397e9dd52bd7267440d78d78a1725bd312",
-      "windows-aarch64": "bd474f1ca8c44b2ab10e908c14447c5d91e1bac3f3a4d3141c78b6dbb5d1a253",
+      "windows-x64": "caad0090dc3add94c06abd01e395e8ec0f1586c10071bda1f99480445d695f6f",
+      "windows-aarch64": "45084cbfc0170d7a30b29ab1eeeb2b0d770995ade0a13a4cc82cf31189f95c9f",
     },
   },
   bun: {
-    version: "1.4.2",
+    version: "1.4.4",
     // The release's SHASUMS256.txt.
     sha256: {
-      "linux-x64": "36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913",
-      "linux-aarch64": "54328bbc2d9c8e0c9f892c544d66c57a83b84139e34909e5ee81758f1ac8fda7",
-      "linux-x64-musl": "4835eca59d6da70f4674f5642f6e459dcadab773695b2ed9922d131057989742",
-      "linux-aarch64-musl": "71760b6c8ea30623b81a4907cb815d48e2ea266f2e73e751534a44a0607950df",
-      "darwin-x64": "80520d7e17526308c9185d261679ac6d27798d3803a0e9f7ff9121ab8affb012",
-      "darwin-aarch64": "90987a3a16d7db556d886ac3d551e7b6d3edf0a1cf43acaed622e8676be1d12f",
-      "windows-x64": "ce4c17497b2f29712a99d3d53f028de28cd42e3bacb8589599e7f000e49b6405",
-      "windows-aarch64": "a7a16b876a305fd1029c66dbd27007b4f6112ae896532f675878731a21e50cfd",
+      "linux-x64": "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c",
+      "linux-aarch64": "baa6bb36f51d6e58561e02bbea825038a9df454f673d6d776e8bbf86f8c7850e",
+      "linux-x64-musl": "a5a8ccc5e74dcb883fe974f125a7bdb3b41e5195ed1b870e73f17effd3eb2b2d",
+      "linux-aarch64-musl": "57f01b02ac7113c61c935f28f38c2eab849e3c970dab21f8b640a87b1ef65009",
+      "darwin-x64": "50a3491f73abc2fe81673171a85762d3bc2cc1680ccecadd983de99adf77977e",
+      "darwin-aarch64": "c240d7f0ccb90c263a849fcdb09b7ee62630d921348ed6aafda86b9d577bc510",
+      "windows-x64": "cd2c0fccc78f3ede1f50ca827a15f063eda13d4d150a3d0674f4f6e323d864a5",
+      "windows-aarch64": "2d57a0eec0cb44d95c918c3f9734f60455a1306ae5085d76fc68f44e3ee30d09",
     },
   },
   curlH3: {
@@ -156,13 +156,13 @@ export const pins = {
     },
   },
   buildkiteAgent: {
-    version: "3.114.0",
+    version: "4.7.0",
     // The release's buildkite-agent-<version>.SHA256SUMS.
     sha256: {
-      "linux-x64": "7f574fd8bcc3cd980f6d2d560e7481db4313e100ae587c2c32e4b5084369c4f4",
-      "linux-aarch64": "3eb580a2e39daed2c34b2d821b686131f2a6d8db2c4f255bbb1c2ed67bf6fcc0",
-      "windows-x64": "9a7880ce4ee0e1b6fd6e272bdf13f1b63b67f64a327c7d045be422890572dfb7",
-      "windows-aarch64": "2da2e9a7559b3a995964e721c94ceccc273e7972a5c042cb4a2ee08c079fab7a",
+      "linux-x64": "6a71ae796642ffa15063a1e571f160a758287cb8b028a7c00a599081eecdd2f5",
+      "linux-aarch64": "dfc9a41609cad90e4bf6a5acafcdf73e41790620128f562c88c06b532e9ce99f",
+      "windows-x64": "8fa3e012e646d7203574e34e23e56c1c7f0a36bed496aeab63d7e53d590ac87b",
+      "windows-aarch64": "92c5bdf99002d5f6636d9ad54af438694daafb33f4ed16d65a62449664a196cf",
     },
   },
   cmake: {
@@ -226,14 +226,14 @@ export const pins = {
     // Google only publishes a SHA-1, in dl.google.com/android/repository/repository2-3.xml. This is of the file that has it.
     sha256: "59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc",
   },
-  // A FreeBSD release moves from download.freebsd.org to the archive when it reaches end of life.
+  // download.freebsd.org has a release until its end of life, and then only archive.freebsd.org/old-releases does.
   freebsd: {
-    version: "14.3",
-    baseUrl: "https://archive.freebsd.org/old-releases",
+    version: "14.4",
+    baseUrl: "https://download.freebsd.org/releases",
     // base.txz in the MANIFEST beside it.
     sha256: {
-      x64: "e38b5cf756d60086a6c2f736eff19cc7685f7e2313e31d14342fc8df57200a92",
-      aarch64: "f83e824cb7a20dbadb2888a8bd253e6a1ac35024cc6dc8af9f3e229f75ec7129",
+      x64: "769f60a6eea2938ad6b7943cfbcc17dfaf7d1f7ba59a32b869a00349302df853",
+      aarch64: "c456bf75ee3d0b4da0b0b527402b0a9e61497f02756b2cc5801b51e80b3f90c4",
     },
   },
   // The release WebKit's prebuilt is built on (glibc 2.31).
@@ -551,6 +551,12 @@ const apkPackages = [
 ];
 
 /**
+ * Roots of the distro's ca-certificates package that the machines do not trust,
+ * by how their lines of /etc/ca-certificates.conf start.
+ */
+const droppedRoots = ["mozilla/Comodo_AAA", "mozilla/emSign"];
+
+/**
  * The macOS test machines. CI does not bake them: scripts/darwin-ci runs the
  * generated script in the Tart guest image it builds, or on a bare host.
  */
@@ -570,6 +576,9 @@ const scoopPackages = {
   // Neither has an arm64 build.
   x64: ["nasm", "mingw"],
 } as const;
+
+/** Roots that the Windows machines do not trust, by how their names start. */
+const droppedWindowsRoots = ["AAA Certificate Services", "emSign"];
 
 /** Where `bun run ci:images` and CI write an image's bake directory, from the repository's root. */
 export const bakeDirectory = (key: string) => `build/ci-images/${key}`;
@@ -665,6 +674,48 @@ function packages(image: LinuxImage): Tool {
     identity: packageDatabase,
     steps: [
       image.distro === "alpine" ? apkAdd(apkPackages, { update: true }) : aptInstall(aptPackages, { update: true }),
+    ],
+  };
+}
+
+/**
+ * The system's trusted roots without `droppedRoots`. curl, git, wget and the
+ * agent read them. Bun and Node.js use lists of their own unless told otherwise.
+ */
+function caCertificates(): Tool {
+  const trusted = "/etc/ssl/certs";
+  // Names each file after the first that holds the first file's certificate, and fails if there is one.
+  const stillHeld = [
+    `/^-----BEGIN CERTIFICATE-----/ { body = ""; next }`,
+    `/^-----END CERTIFICATE-----/ {`,
+    `  if (NR == FNR) dropped = body`,
+    `  else if (body == dropped) { print FILENAME " still holds " ARGV[1]; held = 1 }`,
+    `  next`,
+    `}`,
+    `{ body = body $0 }`,
+    `END { exit held }`,
+  ].join("\n");
+  return {
+    name: "ca-certificates",
+    identity: observed(run("grep", "-c", "BEGIN CERTIFICATE", `${trusted}/ca-certificates.crt`)),
+    steps: [
+      comment("A line that starts with ! names a root that the package has and the machine does not trust."),
+      ...droppedRoots.map(root => run("sed", "-i", `s,^${root},!&,`, "/etc/ca-certificates.conf")),
+      run("update-ca-certificates"),
+      comment("A dropped root's file stays in /usr/share. A release without the file has nothing to look for."),
+      ...droppedRoots.map(root =>
+        forEachFile("root", text`/usr/share/ca-certificates/${root}${glob("*")}`, [
+          ifExists(variable("root"), [
+            run(
+              "awk",
+              stillHeld,
+              variable("root"),
+              text`${trusted}/${glob("*.crt")}`,
+              text`${trusted}/${glob("*.pem")}`,
+            ),
+          ]),
+        ]),
+      ),
     ],
   };
 }
@@ -1688,6 +1739,18 @@ function windowsSystem(): Tool {
   };
 }
 
+/**
+ * Windows' trusted roots without `droppedWindowsRoots`. curl.exe, PowerShell, Git
+ * and the agent read them. Bun and Node.js use lists of their own unless told otherwise.
+ */
+function disallowedRoots(): Tool {
+  return {
+    name: "disallowed-roots",
+    identity: observed(printLine(property(cmdlet("Get-ChildItem", {}, "Cert:\\LocalMachine\\Disallowed"), "Count"))),
+    steps: [disallowRoots(droppedWindowsRoots)],
+  };
+}
+
 function scoop(image: WindowsImage): Tool {
   const home = locations.scoop;
   const { installer, core, mainBucket } = pins.scoop;
@@ -1725,6 +1788,8 @@ function scoop(image: WindowsImage): Tool {
       run("git", "config", "--system", "core.autocrlf", "false"),
       run("git", "config", "--system", "core.eol", "lf"),
       run("git", "config", "--system", "core.longpaths", "true"),
+      comment("Windows' trusted roots, not the list Git comes with."),
+      run("git", "config", "--system", "http.sslBackend", "schannel"),
     ],
   };
 }
@@ -1879,6 +1944,9 @@ function visualStudio(): Tool {
         installer,
         `--passive --norestart --wait --force --locale en-US ${components.map(id => `--add ${id}`).join(" ")} --includeRecommended`,
         [0, 3010],
+        // dd_<program>_<time>.log and its _errors.log. Not dd_setup_<time>_<n>_<package>.log: there are hundreds,
+        // and an MSI's ends with every property of the machine and the user.
+        [printEndOfLogs(environment("TEMP"), /^dd_[a-z_]+_\d+(_errors)?\.log$/)],
       ),
     ],
   };
@@ -1944,6 +2012,7 @@ export function tools(image: Image): readonly Tool[] {
   if (image.os === "windows") {
     return [
       windowsSystem(),
+      disallowedRoots(),
       scoop(image),
       nodejs(image),
       llvm(image),
@@ -1968,6 +2037,7 @@ export function tools(image: Image): readonly Tool[] {
   const apt = image.distro !== "alpine";
   return [
     packages(image),
+    caCertificates(),
     ulimits(image),
     ...(apt ? [] : [cloudInitDhcpClient()]),
     agentAccount(),
@@ -2841,6 +2911,38 @@ const firewallAllowInbound = (options: { name: string; displayName: string; port
     }),
   );
 
+/**
+ * Windows refuses a certificate of the machine's Disallowed store, whichever other store has it. A root is trusted
+ * without being in a store: Windows fetches one that Windows Update lists when a chain first ends in it.
+ */
+const disallowRoots =
+  (names: readonly string[]): Step =>
+  c => {
+    const x509 = "System.Security.Cryptography.X509Certificates";
+    const named = names.map(name => `$name -like ${renderValue(`${name}*`, c, true)}`).join(" -or ");
+    return [
+      ...render([discardOutput(run("certutil", "-generateSSTFromWU", scratch("roots.sst")))], c),
+      `$roots = New-Object ${x509}.X509Certificate2Collection`,
+      `$roots.Import(${renderValue(scratch("roots.sst"), c)})`,
+      `$roots.AddRange((Get-ChildItem 'Cert:\\LocalMachine\\Root', 'Cert:\\LocalMachine\\AuthRoot'))`,
+      `$dropped = $roots | Where-Object { $name = $_.GetNameInfo("SimpleName", $false); ${named} }`,
+      `$disallowed = Get-Item 'Cert:\\LocalMachine\\Disallowed'`,
+      `$disallowed.Open("ReadWrite")`,
+      `foreach ($root in $dropped) { $disallowed.Add($root) }`,
+      `$disallowed.Close()`,
+      // ExplicitDistrust is the status of a certificate that is in a Disallowed store. One that fails otherwise is not refused by it.
+      `foreach ($root in $dropped) {`,
+      `  foreach ($attempt in 1..3) {`,
+      `    $chain = New-Object ${x509}.X509Chain $true`,
+      `    $chain.ChainPolicy.RevocationMode = "NoCheck"`,
+      `    if (-not $chain.Build($root) -and $chain.ChainStatus.Status -contains "ExplicitDistrust") { break }`,
+      `    if ($attempt -eq 3) { throw "bootstrap: $($root.Subject) is not refused" }`,
+      `    Start-Sleep -Seconds 2`,
+      `  }`,
+      "}",
+    ];
+  };
+
 /** A task that runs as SYSTEM each time the machine starts. */
 const scheduledTaskAtStartup = (options: { name: string; program: string; arguments: string }): Step[] => [
   set("action", output(cmdlet("New-ScheduledTaskAction", { Execute: options.program, Argument: options.arguments }))),
@@ -2861,12 +2963,36 @@ const scheduledTaskAtStartup = (options: { name: string; program: string; argume
   ),
 ];
 
-/** An installer that reports through its exit code. 3010: installed, and a restart is needed; the bake ends with one. */
+/**
+ * An installer that reports through its exit code. 3010: installed, and a restart is needed; the bake ends with one.
+ * `onFailure` runs before the bake fails: the machine is deleted next, and what the installer wrote with it.
+ */
 const runInstaller =
-  (what: string, program: Value, argumentList: Value, okExitCodes: number[] = [0]): Step =>
+  (what: string, program: Value, argumentList: Value, okExitCodes: number[] = [0], onFailure: Step[] = []): Step =>
+  c => {
+    const failed = okExitCodes.map(code => `$process.ExitCode -ne ${code}`).join(" -and ");
+    const fail = `throw "bootstrap: ${what} exited with code $($process.ExitCode)"`;
+    return [
+      `$process = Start-Process ${renderValue(program, c)} -ArgumentList ${renderValue(argumentList, c)} -Wait -PassThru -NoNewWindow`,
+      ...(onFailure.length > 0
+        ? [`if (${failed}) {`, ...indent([...render(onFailure, c), fail]), "}"]
+        : [`if (${failed}) { ${fail} }`]),
+    ];
+  };
+
+/**
+ * The last lines of the logs in `directory` that `names` matches. Anyone can read a bake's output, so `names` says
+ * what may be shown rather than what may not, and two things are left out of it: lines about telemetry, which have
+ * ids of the machine and the user, and the query of a URL, which can be a key to what it downloads.
+ */
+const printEndOfLogs =
+  (directory: Value, names: RegExp): Step =>
   c => [
-    `$process = Start-Process ${renderValue(program, c)} -ArgumentList ${renderValue(argumentList, c)} -Wait -PassThru -NoNewWindow`,
-    `if (${okExitCodes.map(code => `$process.ExitCode -ne ${code}`).join(" -and ")}) { throw "bootstrap: ${what} exited with code $($process.ExitCode)" }`,
+    `foreach ($log in Get-ChildItem ${renderValue(directory, c)} -File | Where-Object { $_.Name -match ${renderValue(names.source, c, true)} } | Sort-Object LastWriteTime) {`,
+    `  "---- the end of $($log.Name)"`,
+    // A log that cannot be read must not replace the installer's exit code as the bake's error.
+    `  Get-Content $log.FullName -Tail 100 -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch 'telemetry' } | ForEach-Object { $_ -replace '(https?://[^\\s?]+)\\?\\S*', '$1?...' }`,
+    `}`,
   ];
 
 // --------------------------------------------------------------------- tools

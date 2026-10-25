@@ -96,7 +96,7 @@ test.skipIf(!isWindows)("bin linking reports a shebang launcher that is not vali
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("Failed to link");
+  expect(stderr).toContain("failed to link");
   expect(stderr).toContain("InvalidBinContent");
   expect(await Bun.file(join(String(dir), "app", "node_modules", "shebang-pkg", "package.json")).exists()).toBe(true);
   expect(exitCode).toBe(1);

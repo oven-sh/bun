@@ -6,8 +6,8 @@ use crate::resolve::{Host, Resolver};
 use crate::session::Session;
 
 impl Files<'_> {
-    /// The lines. `has_made_diagnostics`: `includeProcessor.getDiagnostics` has been called.
-    /// `to_relative_file_name`: `toRelativeFileName`.
+    /// Returns the output lines. `has_made_diagnostics`: `includeProcessor.getDiagnostics` has
+    /// already been called. `to_relative_file_name`: `toRelativeFileName`.
     pub fn explain_files(
         &self,
         host: &dyn Host,
@@ -35,9 +35,9 @@ impl Files<'_> {
         };
         let resolving = Session::new();
         let resolver = Resolver::new(&resolving, host, self.options);
-        let mut is_asked = vec![true; self.modules.len()];
-        is_asked.push(false);
-        let visits = included.visits(&resolver, &is_asked);
+        let mut is_requested = vec![true; self.modules.len()];
+        is_requested.push(false);
+        let visits = included.visits(&resolver, &is_requested);
         // `fileIncludeReasons[path]`
         let reasons_of = |file: FileId, name: &[u8]| included.by_path_of(&visits[file.idx()], name);
         // `fmt.Fprintln(w, "  ", message)`
@@ -48,7 +48,7 @@ impl Files<'_> {
             }
             line
         };
-        // `referenceFileLocation.text` in a file whose text is not retained.
+        // `referenceFileLocation.text`, for a file whose text wasn't retained.
         let text_read = |it: &Reference| {
             let from: &Module = &self.modules[it.from.idx()];
             if it.is_synthetic() || !from.hir.text.is_empty() {
@@ -58,7 +58,7 @@ impl Files<'_> {
             Some(text.get(it.start as usize..it.end as usize)?.to_vec())
         };
         let mut lines: Vec<Vec<u8>> = Vec::new();
-        // `name` is that of `file`, or of a `redirectsFile` whose target is `file`.
+        // `name` is `file`'s name, or the name of a `redirectsFile` whose target is `file`.
         let mut explain_file = |name: &[u8], file: FileId| {
             let module: &Module = &self.modules[file.idx()];
             lines.push(to_relative_file_name(name));
@@ -76,7 +76,7 @@ impl Files<'_> {
                 included.explain_redirect_and_implied_format(&resolver, module, name, to_file_name);
             lines.extend(explained.iter().map(|(code, args)| line(*code, args)));
         };
-        // The visit at which `collectFiles` goes on to what the file refers to.
+        // The visit at which `collectFiles` descends into the file's references.
         let first: Vec<Option<&Visit>> = (self.modules.iter().enumerate())
             .map(|(i, module)| reasons_of(FileId(i as u32), module.file_name()))
             .map(|visits| visits.first().copied())
@@ -90,8 +90,8 @@ impl Files<'_> {
             let Some(&visit) = reasons_of(target, name).first() else {
                 continue;
             };
-            // `redirectsFile.index`. `files` has what `collectFiles` has come to before, but for
-            // the files that it is in the middle of.
+            // `redirectsFile.index`. `files` holds every file `collectFiles` reached earlier,
+            // except the ones it's still in the middle of.
             let mut unfinished: Vec<FileId> = Vec::new();
             let mut by = Some(visit);
             while let Some(Visit {

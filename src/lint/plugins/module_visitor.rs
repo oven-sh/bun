@@ -1,10 +1,10 @@
-//! `moduleVisitor` of eslint-module-utils: every place where a file names a module. And
-//! `isStaticRequire` of eslint-plugin-import.
+//! `moduleVisitor` from eslint-module-utils, which visits every module specifier in a file, and `isStaticRequire` from
+//! eslint-plugin-import.
 
 use bun_lint::prelude::*;
 use std::cmp::Reverse;
 
-/// Its options.
+/// `moduleVisitor`'s options.
 #[derive(Copy, Clone)]
 pub(crate) struct Systems {
     pub(crate) esmodule: bool,
@@ -12,7 +12,7 @@ pub(crate) struct Systems {
     pub(crate) amd: bool,
 }
 
-/// What it calls its visitor with.
+/// The arguments `moduleVisitor` calls its visitor with.
 pub(crate) struct Visited<'a> {
     /// `source.value`
     pub(crate) specifier: &'a [u8],
@@ -22,11 +22,11 @@ pub(crate) struct Visited<'a> {
     pub(crate) is_require: bool,
 }
 
-/// `moduleSystem`, as [`Visited::is_require`] has it.
+/// The values of `moduleSystem`, encoded like [`Visited::is_require`].
 const IMPORT: bool = false;
 const REQUIRE: bool = true;
 
-/// What has a `source`.
+/// The statements that have a `source`.
 const DECLARATIONS: [StmtTag; 3] = [StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar];
 
 /// [`Visitor::visit`] without `ignore`.
@@ -34,7 +34,7 @@ pub(crate) fn visit<'a>(file: &'a File<'a>, systems: Systems) -> Vec<Visited<'a>
     Visitor::of(systems).visit(file)
 }
 
-/// `isStaticRequire`: the argument. Also of `require?.("a")` and `(require)(("a"))`.
+/// `isStaticRequire`. Returns the argument. Also matches `require?.("a")` and `(require)(("a"))`.
 pub(crate) fn static_require(call: Call<'_>) -> Option<Expr<'_>> {
     let arguments = call.args();
     if !call.callee().is_ident("require") || arguments.len() != 1 {
@@ -72,20 +72,20 @@ impl Visitor {
         }
     }
 
-    /// `false`: [`Visitor::visit`] finds nothing.
+    /// A cheap check that's false if [`Visitor::visit`] can't find anything.
     pub(crate) fn may_visit(&self, file: &File) -> bool {
         let may_visit_declarations = self.systems.esmodule
             && (file.has_stmts(DECLARATIONS) || file.has_exprs([ExprTag::ImportCall]));
         may_visit_declarations || (self.may_visit_calls(file) && file.has_exprs([ExprTag::Call]))
     }
 
-    /// Whether a callee can be the `require` or the `define` that the systems look for.
+    /// True if the file may have a call to the `require` or `define` that the enabled systems look for.
     fn may_visit_calls(&self, file: &File) -> bool {
         let Systems { commonjs, amd, .. } = self.systems;
         ((commonjs || amd) && file.mentions("require")) || (amd && file.mentions("define"))
     }
 
-    /// In the order in which ESLint comes to the nodes that `visitModules` listens for.
+    /// Returns the results in the order ESLint visits the nodes that `visitModules` listens for.
     pub(crate) fn visit<'a>(&self, file: &'a File<'a>) -> Vec<Visited<'a>> {
         let Systems {
             esmodule,
@@ -125,7 +125,7 @@ impl Visitor {
     }
 }
 
-/// A `Literal` whose value is a string: the value, and where it is.
+/// A `Literal` whose value is a string: the value and the span.
 type Source<'a> = (&'a [u8], Span);
 
 fn string_literal(e: Expr<'_>) -> Option<Source<'_>> {
@@ -135,7 +135,7 @@ fn string_literal(e: Expr<'_>) -> Option<Source<'_>> {
 /// The functions inside `visitModules`.
 struct Checks<'a, 'v> {
     ignore: &'v [Regex],
-    /// The node that ESLint was at, and what the visitor was called with.
+    /// The span of the node ESLint was visiting, and the arguments the visitor was called with.
     visited: Vec<(Span, Visited<'a>)>,
 }
 
@@ -202,7 +202,7 @@ impl<'a> Checks<'a, '_> {
             let Some(source) = string_literal(element) else {
                 continue;
             };
-            // The magic modules of RequireJS.
+            // RequireJS's magic modules.
             if matches!(source.0, b"require" | b"exports") {
                 continue;
             }

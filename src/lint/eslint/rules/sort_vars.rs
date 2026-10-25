@@ -17,18 +17,17 @@ fn name_of(declaration: VarDecl<'_>) -> &[u8] {
     declaration.pat().as_ident().map(Name::bytes).unwrap_or_default()
 }
 
-/// Whether moving the declaration could change what the code does: its initializer is not a
-/// `Literal`.
+/// True if moving the declaration could change behavior, because its initializer isn't a `Literal`.
 fn has_dynamic_init(declaration: VarDecl) -> bool {
     declaration.init().is_some_and(|init| !ast_utils::is_literal(init))
 }
 
-/// The declarations in the order of `sorted`, with what is written between those of `written`.
-fn text_of<'a>(sorted: &[VarDecl<'a>], written: &[VarDecl<'a>], file: &'a File<'a>) -> Vec<u8> {
+/// Returns the declarations in the order of `sorted`, separated by the text between the declarations of `original`.
+fn text_of<'a>(sorted: &[VarDecl<'a>], original: &[VarDecl<'a>], file: &'a File<'a>) -> Vec<u8> {
     let mut out = Vec::new();
     for (i, declaration) in sorted.iter().enumerate() {
         out.extend_from_slice(declaration.text());
-        if let (Some(here), Some(next)) = (written.get(i), written.get(i + 1)) {
+        if let (Some(here), Some(next)) = (original.get(i), original.get(i + 1)) {
             out.extend_from_slice(file.slice(here.span().between(next.span())));
         }
     }
@@ -45,7 +44,7 @@ impl SortVars {
     }
 
     fn sorted_text<'a>(&self, declarations: &[VarDecl<'a>], file: &'a File<'a>) -> Vec<u8> {
-        // `sort((a, b) => name(a) > name(b) ? 1 : -1)`: of two with the same name, the later one ends up first.
+        // `sort((a, b) => name(a) > name(b) ? 1 : -1)`: if two have the same name, the later one ends up first.
         let key = |name| match self.ignore_case {
             true => text::to_lower_case(name),
             false => Cow::Borrowed(name),
@@ -56,11 +55,12 @@ impl SortVars {
         text_of(&sorted, declarations, file)
     }
 
-    /// oxlint's rule. It compares with the one before, and sorts the declarations side by side that can be moved.
+    /// oxlint's rule. It compares each declaration with the previous one, and its fix sorts a run of adjacent movable
+    /// declarations.
     fn check_as_oxlint<'a>(&self, all: &[VarDecl<'a>], cx: &Cx<'a, Self>) {
         let is_movable = |it: &VarDecl| it.pat().tag() == PatTag::Ident && !has_dynamic_init(*it);
         let mut previous: Option<VarDecl<'a>> = None;
-        // What is before this index has its fix, which is the same for all that are moved by it.
+        // Declarations before this index are already covered by a fix. One fix handles the whole run it moves.
         let mut unfixed_from = 0;
         for (index, &declaration) in all.iter().enumerate().filter(|(_, it)| it.pat().tag() == PatTag::Ident) {
             let is_sorted = previous.is_none_or(|it| self.compare(declaration, it) != Ordering::Less);

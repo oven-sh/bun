@@ -1938,7 +1938,7 @@ impl<'a> Resolver<'a> {
         &buf[..real_len]
     }
 
-    /// The path that the module loader loads the existing file `path` under, for `import.meta.resolve`.
+    /// The path that the module loader loads the existing file `path` under. With `must_confirm`, `Same` also says that the file exists.
     pub fn loader_key_of_existing_file<'b>(
         &mut self,
         path: &[u8],
@@ -2010,7 +2010,9 @@ impl<'a> Resolver<'a> {
         let (key, is_fresh_target): (&[u8], bool) =
             match RealPath::of_entry(link_target, dir_real_path) {
                 RealPath::LinkTarget => {
-                    let out = &mut buf[..link_target.len()];
+                    let Some(out) = buf.get_mut(..link_target.len()) else {
+                        return LoaderKey::NotAFile;
+                    };
                     out.copy_from_slice(link_target);
                     (out, !from_cache)
                 }

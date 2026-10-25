@@ -26,7 +26,7 @@ pub struct Graph<'a> {
 
     /// Mapping user-specified entry points to their Source Index
     pub entry_points: Vec<Index>,
-    /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins, and for an entry written like its `./` key in `files`)
+    /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
     pub(crate) entry_point_original_names: IndexStringMap,
     /// Every source index has an associated InputFile
     pub input_files: MultiArrayList<InputFile>,

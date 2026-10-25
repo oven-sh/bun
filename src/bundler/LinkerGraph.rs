@@ -10,6 +10,7 @@ use bun_collections::{AutoBitSet, DynamicBitSetUnmanaged as BitSet, MultiArrayLi
 use bun_core::RawSlice;
 
 use crate::IndexStringMap::IndexStringMap;
+use crate::bundle_v2::FileMap;
 use crate::{ImportTracker, Index, JSAst, Part, Ref, UseDirective, import_record, index, part};
 // `items_<field>()` column accessors — bring the `*ListExt` traits into scope.
 // Note: `BundledAstColumns` is emitted by `bun_collections::multi_array_columns!`
@@ -661,6 +662,7 @@ impl<'a> LinkerGraph<'a> {
         server_component_boundaries: &server_component_boundary::List,
         dynamic_import_entry_points: &[index::Int],
         entry_point_original_names: &IndexStringMap,
+        file_map: Option<&FileMap>,
     ) -> Result<(), crate::Error> {
         let scb = server_component_boundaries.slice();
         self.files.set_capacity(sources.len())?;
@@ -680,6 +682,11 @@ impl<'a> LinkerGraph<'a> {
 
         // Setup entry points
         {
+            // A file that a `./` key of `files` names is written at its path from the cwd.
+            let output_path_of = |source: &bun_ast::Source| -> &[u8] {
+                (file_map.and_then(|files| files.output_path(source.path.text)))
+                    .unwrap_or(source.path.text)
+            };
             self.entry_points.set_capacity(
                 entry_points.len()
                     + server_component_boundaries.list.len()
@@ -699,7 +706,7 @@ impl<'a> LinkerGraph<'a> {
                 // Check if this entry point has an original name (from virtual entry resolution)
                 let output_path = match entry_point_original_names.get(i.get()) {
                     Some(original_name) => RawSlice::new(original_name),
-                    None => RawSlice::new(source.path.text),
+                    None => RawSlice::new(output_path_of(source)),
                 };
                 self.entry_points.append_assume_capacity(EntryPoint {
                     source_index: source.index.0,
@@ -720,7 +727,7 @@ impl<'a> LinkerGraph<'a> {
 
                 self.entry_points.append_assume_capacity(EntryPoint {
                     source_index: id,
-                    output_path: RawSlice::new(source.path.text),
+                    output_path: RawSlice::new(output_path_of(source)),
                 });
             }
 

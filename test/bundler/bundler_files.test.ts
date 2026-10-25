@@ -603,40 +603,6 @@ describe("bundler files option", () => {
     expect(output).toContain("injected by plugin");
   });
 
-  // `[dir]` is the directory of a file from the root. A directory that is only in `files` cannot be opened.
-  describe("[dir] of a file in a directory that is not on disk", () => {
-    const pathsOf = (result: Awaited<ReturnType<typeof Bun.build>>) =>
-      result.outputs.map(output => output.path.replaceAll("\\", "/")).sort();
-
-    test("a directory inside the root keeps its path from the root", async () => {
-      using dir = tempDir("bundler-files-dir-in-root", { "keep": "" });
-      const result = await Bun.build({
-        root: String(dir),
-        entrypoints: [`${dir}/entry.ts`, `${dir}/virtual/page.ts`, `${dir}/..cache/page.ts`],
-        splitting: true,
-        naming: { chunk: "[dir]/[name]-chunk.[ext]" },
-        files: {
-          [`${dir}/entry.ts`]: `import("./lazy/mod.ts");`,
-          [`${dir}/lazy/mod.ts`]: `export const lazy = 1;`,
-          [`${dir}/virtual/page.ts`]: `console.log("page");`,
-          [`${dir}/..cache/page.ts`]: `console.log("cache");`,
-        },
-      });
-      expect(result.logs).toBeEmpty();
-      expect(pathsOf(result)).toEqual(["..cache/page.js", "./entry.js", "./lazy/mod-chunk.js", "virtual/page.js"]);
-    });
-
-    // The docs example: every file is in memory, at a path above the root (the cwd).
-    test("a directory outside the root is the path of the key", async () => {
-      const result = await Bun.build({
-        entrypoints: ["/app/nested/index.ts"],
-        files: { "/app/nested/index.ts": `console.log("index");` },
-      });
-      expect(result.logs).toBeEmpty();
-      expect(pathsOf(result)).toEqual([isWindows ? expect.stringContaining("index.js") : "app/nested/index.js"]);
-    });
-  });
-
   // A relative key is a path from the cwd of the `Bun.build()` call. One child
   // process runs the builds of every case, each in a directory of its own. The
   // build script is in another directory, so a key resolved against the script
@@ -989,10 +955,10 @@ describe("bundler files option", () => {
       },
     );
 
-    // Nothing is on disk. The entry imports the other key as "./lib.js".
+    // No file of these builds is on disk. The entry imports the other key as "./lib.js".
     buildsIn(
       "an entry point names a key by its text or by the absolute path of its file",
-      {},
+      { "proj/keep": "", "with-src/src/keep": "" },
       ["entry in memory", "lib in memory"],
       `(() => {
         const build = (entry, key) => ({
@@ -1009,6 +975,15 @@ describe("bundler files option", () => {
           "entry.js": build("entry.js", "./entry.js"),
           "entry.js, absolute key": build("entry.js", abs("entry.js")),
           "./entry.js, absolute key": build("./entry.js", abs("entry.js")),
+          // The default root is the directory of such an entry point.
+          "a directory that is not on disk": build("virtual/entry.js", "./virtual/entry.js"),
+          "a directory with no such file": { ...build("src/entry.js", "./src/entry.js"), chdir: "with-src" },
+          // Before the disk resolver, Bun joins such an entry point onto the directory above the cwd. An absolute key can be there.
+          "an absolute key at the entry point from the directory above the cwd": {
+            ...build("proj/entry.js", abs("proj/entry.js")),
+            root: ".",
+            chdir: "proj",
+          },
         };
       })()`,
       report => {
@@ -1024,6 +999,9 @@ describe("bundler files option", () => {
           "entry.js": notFound("entry.js"),
           "entry.js, absolute key": notFound("entry.js"),
           "./entry.js, absolute key": notFound("./entry.js"),
+          "a directory that is not on disk": { threw: expect.stringContaining("failed to open root directory") },
+          "a directory with no such file": notFound("src/entry.js"),
+          "an absolute key at the entry point from the directory above the cwd": inMemory,
         });
       },
     );
@@ -1162,12 +1140,27 @@ describe("bundler files option", () => {
           files: { "./src/config.ts": 'export const config = "config from memory";' },
           metafile: true,
         },
+        // The path of this module is a name. An import in it is a path from the directory of the call.
+        "process.chdir() after the call, an import in a name": {
+          chdir: "one",
+          chdirAfterCall: "../other",
+          entrypoints: ["worker.ts"],
+          files: {
+            "worker.ts": 'import { config } from "./src/config.ts"; console.log(config);',
+            [abs("one/src/config.ts")]: 'export const config = "config from memory";',
+          },
+        },
       }`,
       report => {
         const inMemory = { logs: [], outputs: ["./index.js"], found: ["config from memory"] };
         expect(report).toEqual({
           "the directory of the call": inMemory,
           "process.chdir() after the call": { ...inMemory, inputs: expect.arrayContaining(["src/config.ts"]) },
+          "process.chdir() after the call, an import in a name": {
+            logs: [],
+            outputs: [expect.stringContaining("worker.js")],
+            found: ["config from memory"],
+          },
         });
       },
     );
@@ -1470,6 +1463,127 @@ describe("bundler files option", () => {
       report => {
         const worker = { logs: [], outputs: ["out/virtual/worker.js"], found: ["entry in memory", "lib from disk"] };
         expect(report).toEqual({ "a directory that is not on disk": worker, "a directory above the cwd": worker });
+      },
+    );
+
+    // The output of a "./" key has the directory and the name of its path from the cwd, like the
+    // key text gave it on Bun 1.4. No directory of these keys is on disk. The first five builds
+    // import the key by its text, and give the output of Bun 1.4.
+    buildsIn(
+      "the output of a ./ key is at its path from the cwd",
+      { "src/keep": "", "packages/app/keep": "" },
+      [],
+      `(() => {
+        const build = (entry, key, options) => ({
+          entrypoints: [entry],
+          files: { [entry]: "import(" + JSON.stringify(key) + ");", [key]: "export const lazy = 1;" },
+          splitting: true,
+          naming: { chunk: "[dir]/[name]-chunk.[ext]" },
+          outdir: "out",
+          ...options,
+        });
+        return {
+          "the default root": build("./entry.ts", "./lazy/mod.ts"),
+          "root": build("./src/entry.ts", "./src/lazy/mod.ts", { root: "./src" }),
+          "a key above the cwd, inside root": build("./entry.ts", "../lazy/mod.ts", { root: "..", chdir: "packages/app" }),
+          "a key above the cwd": build("./entry.ts", "../lazy/mod.ts", { chdir: "packages/app" }),
+          "a key outside root": build("./src/entry.ts", "./gen/lazy/mod.ts", { root: "./src" }),
+          "an entry point that is the absolute path of the key": {
+            ...build("./virtual/entry.ts", "./lazy/mod.ts"),
+            entrypoints: [abs("virtual/entry.ts")],
+          },
+        };
+      })()`,
+      report => {
+        const at = (...outputs: string[]) => ({ logs: [], outputs, found: [] });
+        expect(report).toEqual({
+          "the default root": at("out/entry.js", "out/lazy/mod-chunk.js"),
+          "root": at("out/entry.js", "out/lazy/mod-chunk.js"),
+          "a key above the cwd, inside root": at("out/app/entry.js", "out/app/lazy/mod-chunk.js"),
+          "a key above the cwd": at("out/entry.js", "out/lazy/mod-chunk.js"),
+          "a key outside root": at("out/_.._/gen/lazy/mod-chunk.js", "out/entry.js"),
+          "an entry point that is the absolute path of the key": at("out/lazy/mod-chunk.js", "out/virtual/entry.js"),
+        });
+      },
+    );
+
+    // The module of a "./" key is the file at its path, so the imports in it resolve from the
+    // directory of the key. Bun 1.4 resolved them from the cwd. A key without "./" is a name:
+    // the imports in it resolve from the cwd.
+    buildsIn(
+      "an import in a ./ key resolves from the directory of the key, and in a name from the cwd",
+      {
+        "helper.js": `export const helper = "helper in the cwd";`,
+        "both.js": `export const both = "both in the cwd";`,
+        "src/both.js": `export const both = "both beside the key";`,
+        "packages/app/node_modules/app-lib/package.json": JSON.stringify({ name: "app-lib", main: "index.js" }),
+        "packages/app/node_modules/app-lib/index.js": `export const lib = "package of the cwd";`,
+      },
+      ["helper in the cwd", "both in the cwd", "both beside the key", "package of the cwd"],
+      `(() => {
+        // An onResolve plugin that declines sends an import through another branch of the bundler.
+        const declines = [{
+          name: "declines",
+          setup(build) {
+            build.onResolve({ filter: /helper|both|app-lib/ }, () => undefined);
+          },
+        }];
+        const helper = 'import { helper } from "./helper.js"; console.log(helper);';
+        const both = 'import { both } from "./both.js"; console.log(both);';
+        const lib = 'import { lib } from "app-lib"; console.log(lib);';
+        const build = (key, text, plugins = []) => ({ entrypoints: [key], files: { [key]: text }, plugins });
+        return {
+          "a file of the cwd": build("./src/a.ts", helper),
+          "a file of the cwd, declined": build("./src/a.ts", helper, declines),
+          "a file in both directories": build("./src/a.ts", both),
+          "a package of the cwd, in a key above the cwd": { ...build("../up.ts", lib), chdir: "packages/app" },
+          "a name: a file of the cwd": build("src/a.ts", helper),
+          "a name: a file of the cwd, declined": build("src/a.ts", helper, declines),
+          "a name: a file in both directories": build("src/a.ts", both),
+        };
+      })()`,
+      report => {
+        const notResolved = (message: string) => ({ logs: ["ResolveMessage: " + message], outputs: [], found: [] });
+        expect(report).toEqual({
+          "a file of the cwd": notResolved(`Could not resolve: "./helper.js"`),
+          "a file of the cwd, declined": notResolved(`Could not resolve: "./helper.js"`),
+          "a file in both directories": { logs: [], outputs: ["src/a.js"], found: ["both beside the key"] },
+          "a package of the cwd, in a key above the cwd": notResolved(
+            `Could not resolve: "app-lib". Maybe you need to "bun install"?`,
+          ),
+          "a name: a file of the cwd": { logs: [], outputs: ["src/a.js"], found: ["helper in the cwd"] },
+          "a name: a file of the cwd, declined": { logs: [], outputs: ["src/a.js"], found: ["helper in the cwd"] },
+          "a name: a file in both directories": { logs: [], outputs: ["src/a.js"], found: ["both in the cwd"] },
+        });
+      },
+    );
+
+    // `files` answers an import before the `external` option does. The disk resolver answers
+    // "./config", so that import is external. An absolute key does the same.
+    buildsIn(
+      "a key answers an import before the external option",
+      {
+        "src/index.ts": `import { config } from "./config.ts"; import { config as other } from "./config"; console.log(config, other);`,
+        "src/config.ts": `export const config = "config from disk";`,
+      },
+      ["config from disk", "config from memory", 'raw:from "./config.ts"', 'raw:from "./config"'],
+      `(() => {
+        const build = (key, external) => ({
+          entrypoints: ["./src/index.ts"],
+          files: { [key]: 'export const config = "config from memory";' },
+          external,
+        });
+        return {
+          "every import is external": build("./src/config.ts", ["*"]),
+          "every import is external, absolute key": build(abs("src/config.ts"), ["*"]),
+        };
+      })()`,
+      report => {
+        const bundled = { logs: [], outputs: ["./index.js"], found: ["config from memory", 'raw:from "./config"'] };
+        expect(report).toEqual({
+          "every import is external": bundled,
+          "every import is external, absolute key": bundled,
+        });
       },
     );
 

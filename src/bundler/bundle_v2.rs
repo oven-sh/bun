@@ -1086,8 +1086,6 @@ pub mod bv2_impl {
                     // A name is its own key in `map`.
                     let path = if !Self::starts_with_dot_slash(text) {
                         text
-                    } else if self.spelled.is_empty() {
-                        return None;
                     } else {
                         &**self.spelled.get(text)?
                     };
@@ -1123,45 +1121,38 @@ pub mod bv2_impl {
                     found.map(|(_, file)| &*file.contents)
                 }
 
-                /// `path` is the path of a module, or the text of a key.
+                /// `path` is the path of a module, the text of a key, or an entry point that names a file here.
                 pub fn contains(&self, path: &[u8]) -> bool {
                     self.get(path).is_some()
                 }
 
-                /// `entry_point` is the text of a key, or the absolute path of a file. The default root is then the cwd.
-                pub fn is_written_as_key(&self, entry_point: &[u8]) -> bool {
-                    if bun_paths::is_absolute_loose(entry_point) {
-                        self.file(entry_point).is_some()
-                    } else {
-                        self.file_spelled(entry_point).is_some()
-                    }
+                /// The path from the cwd of a file that a `./` key names. Its output takes that directory and name.
+                pub(crate) fn output_path(&self, path: &[u8]) -> Option<&[u8]> {
+                    self.file(path)?.1.pretty.as_deref()
                 }
 
-                /// The file that an entry point names, and whether the entry point is the text of a `./` key.
-                fn entry_point(&self, entry_point: &[u8]) -> Option<(&[u8], &File, bool)> {
+                /// The file that an entry point names.
+                fn entry_point(&self, entry_point: &[u8]) -> Option<(&[u8], &File)> {
                     if entry_point.is_empty() {
                         return None;
                     }
                     if bun_paths::is_absolute_loose(entry_point) {
-                        let (path, file) = self.file(entry_point)?;
-                        return Some((path, file, false));
+                        return self.file(entry_point);
                     }
-                    if let Some((path, file)) = self.file_spelled(entry_point) {
-                        return Some((path, file, file.pretty.is_some()));
+                    if let Some(found) = self.file_spelled(entry_point) {
+                        return Some(found);
                     }
-                    // With no importer, the base of the join is the directory above the cwd. Only an absolute key answers.
-                    let (path, file) = self.file_beside(b"", entry_point)?;
-                    file.absolute.then_some((path, file, false))
+                    // Kept from #25852: with no importer, the base of the join is the directory above the cwd. Only an absolute key answers.
+                    (self.file_beside(b"", entry_point)).filter(|(_, file)| file.absolute)
                 }
 
-                /// The in-memory file that an entry point names, and whether its output keeps the written name.
                 pub(crate) fn resolve_entry_point(
                     &self,
                     arena: &bun_alloc::Arena,
                     entry_point: &[u8],
-                ) -> Option<(bun_resolver::Result, bool)> {
-                    let (path, file, keeps_written_name) = self.entry_point(entry_point)?;
-                    Some((Self::result(arena, path, file), keeps_written_name))
+                ) -> Option<bun_resolver::Result> {
+                    let (path, file) = self.entry_point(entry_point)?;
+                    Some(Self::result(arena, path, file))
                 }
 
                 /// `./a` and `../a` name the file beside `source_file` first, others the key text.
@@ -1206,13 +1197,14 @@ pub mod bv2_impl {
                     source_file: &[u8],
                     specifier: &[u8],
                 ) -> Option<(&[u8], &File)> {
-                    // `source_file` may itself be relative (e.g. on Windows).
+                    // The path of a module can be a name. It is then a path from the cwd of the call.
                     let mut abs_source_buf = bun_paths::path_buffer_pool::get();
                     let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
                         source_file
                     } else {
-                        bun_resolver::fs::FileSystem::instance()
-                            .abs_buf_checked(&[source_file], &mut *abs_source_buf)?
+                        bun_paths::resolve_path::join_abs_string_buf_checked::<
+                            bun_paths::platform::Loose,
+                        >(self.cwd, &mut **abs_source_buf, &[source_file])?
                     };
 
                     // Windows paths from the real filesystem may use backslashes.
@@ -1240,7 +1232,7 @@ pub mod bv2_impl {
                         {
                             b"/"
                         } else {
-                            bun_resolver::fs::FileSystem::instance().top_level_dir()
+                            self.cwd
                         }
                     } else {
                         source_dir
@@ -1450,6 +1442,12 @@ pub mod bv2_impl {
                     );
                     assert_eq!(import("/proj/src/index.ts", "./missing.ts", js), None);
                     assert_eq!(import("/proj/src/index.ts", "", js), None);
+                    // The path of an importer can be a name. It is then a path from the cwd of the call.
+                    assert_eq!(import("lib/name.ts", "../src/config.ts", js), config);
+                    assert_eq!(
+                        import("lib/name.ts", "../../abs/chart.js", js),
+                        Some("/abs/chart.js")
+                    );
                 }
 
                 #[test]
@@ -1458,32 +1456,37 @@ pub mod bv2_impl {
                         ("./src/entry.ts", ""),
                         ("worker.js", ""),
                         ("/abs/entry.ts", ""),
+                        ("/proj/in-cwd.ts", ""),
                     ]);
-                    // (the path of the file, the output keeps the written name)
                     let entry = |entry_point: &str| {
                         let found = files.entry_point(entry_point.as_bytes());
-                        found.map(|(path, _, keeps_written_name)| (text(path), keeps_written_name))
+                        found.map(|(path, _)| text(path))
                     };
-                    let relative = Some(("/proj/src/entry.ts", true));
-                    assert_eq!(entry("./src/entry.ts"), relative);
-                    let absolute = Some(("/proj/src/entry.ts", false));
-                    assert_eq!(entry("/proj/src/entry.ts"), absolute);
-                    assert_eq!(entry("worker.js"), Some(("worker.js", false)));
-                    assert_eq!(entry("/abs/entry.ts"), Some(("/abs/entry.ts", false)));
+                    assert_eq!(entry("./src/entry.ts"), Some("/proj/src/entry.ts"));
+                    assert_eq!(entry("/proj/src/entry.ts"), Some("/proj/src/entry.ts"));
+                    assert_eq!(entry("worker.js"), Some("worker.js"));
+                    assert_eq!(entry("/abs/entry.ts"), Some("/abs/entry.ts"));
                     assert_eq!(entry("/abs/missing.ts"), None);
                     assert_eq!(entry(""), None);
+                    // Any other relative entry point is joined onto the directory above the cwd. Only an absolute key answers.
+                    assert_eq!(entry("src/entry.ts"), None);
+                    assert_eq!(entry("in-cwd.ts"), None);
+                    assert_eq!(entry("proj/in-cwd.ts"), Some("/proj/in-cwd.ts"));
+                    assert_eq!(entry("proj/src/entry.ts"), None);
 
-                    // The default root is the cwd for these entry points.
-                    for written_as_key in ["./src/entry.ts", "/proj/src/entry.ts", "worker.js"] {
-                        assert!(files.is_written_as_key(written_as_key.as_bytes()));
+                    // The output of a file that a `./` key names is at its path from the cwd.
+                    let output_path = |path: &str| files.output_path(path.as_bytes()).map(text);
+                    assert_eq!(output_path("/proj/src/entry.ts"), Some("src/entry.ts"));
+                    assert_eq!(output_path("/abs/entry.ts"), None);
+                    assert_eq!(output_path("worker.js"), None);
+
+                    // The parse task, the debug assertions and the default root ask with the path of a module or the text of a key.
+                    for found in ["/proj/src/entry.ts", "./src/entry.ts", "worker.js"] {
+                        assert!(files.contains(found.as_bytes()));
                     }
-                    assert!(!files.is_written_as_key(b"src/entry.ts"));
-
-                    // The parse task and the debug assertions ask with the path of a module.
-                    assert!(files.contains(b"/proj/src/entry.ts") && files.contains(b"worker.js"));
-                    assert!(
-                        !files.contains(b"/proj/worker.js") && !files.contains(b"src/entry.ts")
-                    );
+                    for missing in ["/proj/worker.js", "src/entry.ts"] {
+                        assert!(!files.contains(missing.as_bytes()));
+                    }
                 }
             }
 
@@ -3143,10 +3146,7 @@ pub mod bv2_impl {
                                 .unwrap_or(Loader::File);
                         };
                         // For virtual files, use the path text as-is (no relative path computation needed).
-                        // A relative path already has its display path.
-                        if path_primary.pretty.as_ptr() == path_primary.text.as_ptr() {
-                            path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
-                        }
+                        path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
                         let mut tmp_source = bun_ast::Source {
                             path: path_as_static(&path_primary),
                             contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -4009,28 +4009,15 @@ pub mod bv2_impl {
 
                 // Check FileMap first for in-memory entry points
                 if let Some(file_map) = self.file_map {
-                    if let Some((file_map_result, keeps_written_name)) =
+                    if let Some(file_map_result) =
                         file_map.resolve_entry_point(self.arena(), entry_point)
                     {
-                        let source_index = self.enqueue_entry_item(
+                        let _ = self.enqueue_entry_item(
                             &mut { file_map_result },
                             true,
                             self.transpiler.options.target,
                             None,
                         )?;
-                        // An entry point written like its `./` key keeps that name and directory.
-                        if let Some(source_index) = source_index {
-                            if keeps_written_name {
-                                let mut written = entry_point.to_vec();
-                                bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<
-                                    u8,
-                                >(&mut written);
-                                let _ = self
-                                    .graph
-                                    .entry_point_original_names
-                                    .put(source_index, written);
-                            }
-                        }
                         continue;
                     }
                 }

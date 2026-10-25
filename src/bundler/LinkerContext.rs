@@ -583,6 +583,8 @@ impl<'a> LinkerContext<'a> {
             dyn_entry_points.keys(),
             // SAFETY: parse_graph backref
             unsafe { &(*self.parse_graph).entry_point_original_names },
+            // SAFETY: a `Copy` field of `*bundle` that is disjoint from `self`.
+            unsafe { (*bundle).file_map },
         )?;
         dyn_entry_points.clear_retaining_capacity();
 

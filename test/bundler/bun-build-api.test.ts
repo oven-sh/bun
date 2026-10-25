@@ -324,14 +324,22 @@ describe("Bun.build", () => {
     expect(after - base).toBeLessThanOrEqual(limit);
   });
 
-  // A pool thread holds a build's ASTs until it tears its worker down; macOS and Windows read files on a second pool.
+  // A pool thread holds a build's ASTs until it tears its worker down; macOS and Windows read files on a second pool,
+  // and a file that imports a macro is parsed on a pool of its own.
   // The 250ms load outlasts an idle pool thread's first park (100ms, timed), so they are all parked for good at the end.
-  test.concurrent.each([{}, { BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" }])(
-    "every pool thread a build ran on tears its worker down once the build is done %j",
-    async env => {
+  test.concurrent.each([
+    [{}, false],
+    [{ BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" }, false],
+    [{}, true],
+    [{ BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" }, true],
+  ] as [env: Record<string, string>, importsAMacro: boolean][])(
+    "every pool thread a build ran on tears its worker down once the build is done %j, macro import: %p",
+    async (env, importsAMacro) => {
       const files: Record<string, string> = { "entry.js": `export * from "slow";\n` };
+      if (importsAMacro) files["macro.ts"] = `export function m() { return 1; }\n`;
       for (let i = 0; i < 32; i++) {
         files[`m${i}.js`] =
+          (importsAMacro ? `import { m } from "./macro.ts" with { type: "macro" };\n` : "") +
           `export function f${i}(a, b) { for (let j = 0; j < b; j++) a += j ^ ${i}; return { a, b }; }\n`;
         files["entry.js"] += `export * from "./m${i}.js";\n`;
       }

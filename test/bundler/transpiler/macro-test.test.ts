@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, compileFixture, isASAN, isCI, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -563,6 +563,581 @@ describe("event loop routing around macros", () => {
     expect({ lines, stderr }).toEqual({ lines: ["1 chained"], stderr: "" });
     expect(exitCode).toBe(0);
   });
+});
+
+// A macro runs on the thread that parses the file that calls it, and that thread sleeps until the
+// promise the macro returned settles. A module that is not the entry point used to be parsed on a
+// thread of the work pool, and a waiting macro held that thread. Most macros wait for a task of
+// that same pool (a file read, a DNS lookup, a hash), so with as many such modules as the pool
+// has threads, every thread slept and no task ran. A file that imports a macro is now parsed on a
+// thread of a second pool. Two threads are the smallest work pool, and what a machine with two
+// CPUs gets without the variable.
+describe("macros in more modules than the work pool has threads", () => {
+  const poolEnv = { ...bunEnv, UV_THREADPOOL_SIZE: "2" };
+  // A process that hangs is killed, so that the test says how it ended and leaves none behind.
+  // On a busy machine one process of a debug build can need more than the 5 seconds that
+  // `bun test` gives a test, so each test here names its time.
+  const killAfter = isCI || isDebug || isASAN ? 60_000 : 4_000;
+  const timeout = killAfter + 10_000;
+  const readsAFile = `import { promises as fs } from "node:fs";\nexport async function m() {\n  return (await fs.readFile(import.meta.dir + "/data.txt", "utf8")).trim();\n}\n`;
+  // A macro's runtime on a pool thread is never torn down. What the garbage in it owns (the Blob
+  // of Bun.file() is one) then reads as leaked when the process exits, with one module too.
+  const noLeakCheck = { ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") };
+
+  // `count` modules that each call the macro `m` (of one module, or of a module of their own),
+  // and an entry that imports them all and prints how many values it got and which.
+  function modules(count: number, macroSource: string, { use = "m()", macroPerModule = false }: Shape = {}) {
+    const files: Record<string, string> = { "data.txt": "hello\n" };
+    let entry = "";
+    for (let i = 0; i < count; i++) {
+      const macro = macroPerModule ? `m${i}.ts` : "m.ts";
+      files[macro] = macroSource;
+      files[`mod${i}.ts`] = `import { m } from "./${macro}" with { type: "macro" };\nexport const v = ${use};\n`;
+      entry += `import { v as v${i} } from "./mod${i}.ts";\n`;
+    }
+    const values = Array.from({ length: count }, (_, i) => `v${i}`).join(", ");
+    files["entry.ts"] = entry + `console.log([${values}].length, [...new Set([${values}])].join());\n`;
+    return files;
+  }
+
+  async function run(files: Record<string, string>, entry: string, env: Record<string, string> = {}) {
+    using dir = tempDir("macro-pool", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", entry],
+      env: { ...poolEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: killAfter,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds also print "[macro] call <name>" to stdout.
+    const lines = stdout
+      .trim()
+      .split("\n")
+      .filter(line => !line.startsWith("[macro]"));
+    return { lines, stderr, exitCode, signalCode: proc.signalCode };
+  }
+  const printed = (...lines: string[]) => ({ lines, stderr: "", exitCode: 0, signalCode: null });
+
+  type Shape = { use?: string; macroPerModule?: boolean; env?: Record<string, string> };
+  const awaited: [name: string, macroSource: string, shape: Shape][] = [
+    [
+      "Bun.file().text()",
+      `export async function m() {\n  return (await Bun.file(import.meta.dir + "/data.txt").text()).trim();\n}\n`,
+      { env: noLeakCheck },
+    ],
+    ["fs.promises.readFile()", readsAFile, {}],
+    [
+      // Also a pool task where Bun.file() is not one (Windows reads it on the thread's own loop).
+      "crypto.subtle.digest()",
+      `export async function m() {\n  await crypto.subtle.digest("SHA-256", new Uint8Array(4096));\n  return "hello";\n}\n`,
+      {},
+    ],
+    [
+      "dns.promises.lookup()",
+      `import { promises as dns } from "node:dns";\nexport async function m() {\n  await dns.lookup("localhost");\n  return "hello";\n}\n`,
+      {},
+    ],
+    [
+      // A thread evaluates a macro's module once, so each module gets a macro module of its own.
+      "a top-level await in the macro's module",
+      `import { promises as fs } from "node:fs";\nconst text = (await fs.readFile(import.meta.dir + "/data.txt", "utf8")).trim();\nexport function m() {\n  return text;\n}\n`,
+      { macroPerModule: true },
+    ],
+    [
+      "a promise inside the object it returns",
+      `import { promises as fs } from "node:fs";\nexport function m() {\n  return { text: fs.readFile(import.meta.dir + "/data.txt", "utf8").then(text => text.trim()) };\n}\n`,
+      { use: "m().text" },
+    ],
+  ];
+
+  test.concurrent.each(awaited)(
+    "a macro that waits for %s, through import",
+    async (_name, macroSource, shape) => {
+      expect(await run(modules(32, macroSource, shape), "entry.ts", shape.env)).toEqual(printed("32 hello"));
+    },
+    timeout,
+  );
+
+  // No promise is waited for here: the macro itself blocks its thread, and what wakes it is a
+  // Worker that first waits for a task of the work pool.
+  test.concurrent(
+    "a macro that blocks in Atomics.wait() until a Worker got a hash",
+    async () => {
+      const files = modules(
+        3,
+        [
+          `export function m() {`,
+          `  const done = new Int32Array(new SharedArrayBuffer(4));`,
+          `  const worker = new Worker(import.meta.dir + "/hash.ts");`,
+          `  worker.postMessage(done);`,
+          `  Atomics.wait(done, 0, 0);`,
+          `  worker.terminate();`,
+          `  return "hello";`,
+          `}`,
+        ].join("\n"),
+      );
+      files["hash.ts"] = [
+        `onmessage = async event => {`,
+        `  await crypto.subtle.digest("SHA-256", new Uint8Array(4096));`,
+        `  Atomics.store(event.data, 0, 1);`,
+        `  Atomics.notify(event.data, 0);`,
+        `};`,
+      ].join("\n");
+      expect(await run(files, "entry.ts")).toEqual(printed("3 hello"));
+    },
+    timeout,
+  );
+
+  test.concurrent(
+    "through import()",
+    async () => {
+      const files = modules(32, readsAFile);
+      files["index.ts"] = [
+        `const loaded = await Promise.all(Array.from({ length: 32 }, (_, i) => import("./mod" + i + ".ts")));`,
+        `console.log(loaded.length, [...new Set(loaded.map(mod => mod.v))].join());`,
+      ].join("\n");
+      expect(await run(files, "index.ts")).toEqual(printed("32 hello"));
+    },
+    timeout,
+  );
+
+  // macOS and Windows read the files of a build on a third pool, which the variable forces here.
+  const ioPool: Record<string, string>[] = [{}, { BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" }];
+
+  test.concurrent.each(ioPool)(
+    "through Bun.build() %j",
+    async env => {
+      const files = modules(32, readsAFile);
+      files["index.ts"] = [
+        `const result = await Bun.build({ entrypoints: ["./entry.ts"] });`,
+        `console.log(result.success, (await result.outputs[0].text()).split('"hello"').length - 1);`,
+      ].join("\n");
+      expect(await run(files, "index.ts", env)).toEqual(printed("true 32"));
+    },
+    timeout,
+  );
+
+  test.concurrent(
+    "through Bun.Transpiler#transform()",
+    async () => {
+      const files = {
+        "data.txt": "hello\n",
+        "m.ts": readsAFile,
+        "index.ts": [
+          `const transpiler = new Bun.Transpiler({ loader: "ts" });`,
+          `const code = "import { m } from " + JSON.stringify(import.meta.dir + "/m.ts") + ' with { type: "macro" };\\nexport const v = m();\\n';`,
+          `const outputs = await Promise.all(Array.from({ length: 32 }, () => transpiler.transform(code)));`,
+          `console.log(outputs.length, [...new Set(outputs.map(output => output.trim()))].join());`,
+          // A warning rejects transform(). The parse that stops before the import logs this one
+          // too, and only what the second parse logs is reported: one message, not a list of two.
+          `const warned = await transpiler.transform("--> a legacy comment\\n" + code).catch(error => error);`,
+          `console.log(warned.name + ": " + warned.message);`,
+        ].join("\n"),
+      };
+      expect(await run(files, "index.ts")).toEqual(
+        printed(
+          `32 export const v = "hello";`,
+          `BuildMessage: Treating "-->" as the start of a legacy HTML single-line comment`,
+        ),
+      );
+    },
+    timeout,
+  );
+
+  // The development server keeps the descriptor of each file it watches. The task that parses a
+  // changed file opens one more, which is closed when the file is already watched, so a task that
+  // is parsed a second time has to still know that it opened one.
+  test.concurrent.each(ioPool)(
+    "through a development server's HTML route, which rebuilds without leaking descriptors %j",
+    async env => {
+      const files = modules(8, readsAFile);
+      files["index.html"] =
+        `<!DOCTYPE html>\n<html><head><script type="module" src="./entry.ts"></script></head><body></body></html>\n`;
+      files["index.ts"] = [
+        `import { readdirSync, readlinkSync, writeFileSync } from "node:fs";`,
+        `import html from "./index.html";`,
+        `const server = Bun.serve({ port: 0, development: true, routes: { "/": html }, fetch: () => new Response("") });`,
+        `const deadline = performance.now() + 30_000;`,
+        `async function get(url: string | URL) {`,
+        `  return await (await fetch(url, { signal: AbortSignal.timeout(30_000) })).text();`,
+        `}`,
+        `async function bundle() {`,
+        `  return await get(new URL((await get(server.url)).match(/src="([^"]+)"/)![1], server.url));`,
+        `}`,
+        `const mod0 = import.meta.dir + "/mod0.ts";`,
+        `function descriptorsOfMod0() {`,
+        `  if (process.platform !== "linux") return 1;`,
+        `  return readdirSync("/proc/self/fd").filter(fd => {`,
+        `    try {`,
+        `      return readlinkSync("/proc/self/fd/" + fd) === mod0;`,
+        `    } catch {`,
+        `      return false;`,
+        `    }`,
+        `  }).length;`,
+        `}`,
+        `console.log((await bundle()).split('"hello"').length - 1, descriptorsOfMod0());`,
+        `for (let i = 0; i < 3; i++) {`,
+        `  writeFileSync(mod0, 'import { m } from "./m.ts" with { type: "macro" };\\nexport const v = m() + "#rebuild' + i + '";\\n');`,
+        `  while (!(await bundle()).includes("#rebuild" + i)) {`,
+        `    if (performance.now() > deadline) throw new Error("the server did not rebuild");`,
+        `  }`,
+        `}`,
+        `console.log(descriptorsOfMod0());`,
+        `server.stop(true);`,
+      ].join("\n");
+      // The server reports each build on stderr.
+      const { stderr: _, ...result } = await run(files, "index.ts", env);
+      expect(result).toEqual({ lines: ["8 1", "1"], exitCode: 0, signalCode: null });
+    },
+    timeout,
+  );
+
+  // The jobs of a Worker's VM take the same way to the second pool as those of the main thread's.
+  test.concurrent(
+    "through the import() and the Bun.build() of a Worker",
+    async () => {
+      const files = modules(32, readsAFile);
+      files["worker.ts"] = [
+        `const loaded = await Promise.all(Array.from({ length: 32 }, (_, i) => import("./mod" + i + ".ts")));`,
+        `const result = await Bun.build({ entrypoints: [import.meta.dir + "/entry.ts"] });`,
+        `const built = (await result.outputs[0].text()).split('"hello"').length - 1;`,
+        `postMessage([loaded.length, [...new Set(loaded.map(mod => mod.v))].join(), result.success, built].join(" "));`,
+      ].join("\n");
+      files["index.ts"] = [
+        `const worker = new Worker(import.meta.dir + "/worker.ts");`,
+        `worker.onmessage = event => {`,
+        `  console.log(event.data);`,
+        `  worker.terminate();`,
+        `};`,
+        `worker.onerror = event => console.log("error", event.message);`,
+      ].join("\n");
+      expect(await run(files, "index.ts")).toEqual(printed("32 hello true 32"));
+    },
+    timeout,
+  );
+
+  // An import that bunfig.toml or the `macro` option of Bun.Transpiler names binds a macro with
+  // no import attribute: by its default export in half of the modules here, by a named one in
+  // the others.
+  test.concurrent(
+    "macros that a remap binds",
+    async () => {
+      const files: Record<string, string> = {
+        "data.txt": "hello\n",
+        "bunfig.toml": `[macros]\nremapped = { "named" = "./m.ts", "default" = "./m.ts" }\n`,
+        "m.ts": [
+          `import { promises as fs } from "node:fs";`,
+          `const read = async () => (await fs.readFile(import.meta.dir + "/data.txt", "utf8")).trim();`,
+          `export const named = read;`,
+          `export default read;`,
+        ].join("\n"),
+      };
+      const sources = [
+        `import byDefault from "remapped";\nexport const v = byDefault();\n`,
+        `import { named } from "remapped";\nexport const v = named();\n`,
+      ];
+      let entry = "";
+      for (let i = 0; i < 32; i++) {
+        files[`mod${i}.ts`] = sources[i % 2];
+        entry += `import { v as v${i} } from "./mod${i}.ts";\n`;
+      }
+      const values = Array.from({ length: 32 }, (_, i) => `v${i}`).join(", ");
+      files["entry.ts"] = [
+        entry + `console.log([${values}].length, [...new Set([${values}])].join());`,
+        `const macro = { remapped: { named: import.meta.dir + "/m.ts", default: import.meta.dir + "/m.ts" } };`,
+        `const transpiler = new Bun.Transpiler({ loader: "ts", macro });`,
+        `const sources = ${JSON.stringify(sources)};`,
+        `const outputs = await Promise.all(Array.from({ length: 32 }, (_, i) => transpiler.transform(sources[i % 2])));`,
+        `console.log(outputs.length, [...new Set(outputs.map(output => output.trim()))].join());`,
+      ].join("\n");
+      expect(await run(files, "entry.ts")).toEqual(printed("32 hello", `32 export const v = "hello";`));
+    },
+    timeout,
+  );
+
+  // The threads of the second pool are named "Bun Macro <n>", those of the work pool "Bun Pool
+  // <n>". A file that the JS thread parses keeps its macros on that thread.
+  function macroOfEachHost() {
+    const files: Record<string, string> = {
+      "where.ts": [
+        `import { readFileSync } from "node:fs";`,
+        `export function where() {`,
+        `  return Bun.isMainThread + ":" + readFileSync("/proc/thread-self/comm", "utf8").trim();`,
+        `}`,
+      ].join("\n"),
+      "index.ts": [
+        `import { v as imported } from "./mod0.ts";`,
+        `const dynamic = (await import("./mod1.ts")).v;`,
+        `const required = require("./mod2.ts").v;`,
+        `const build = await Bun.build({ entrypoints: [import.meta.dir + "/mod3.ts"] });`,
+        `const built = (await build.outputs[0].text()).match(/"([^"]+)"/)?.[1];`,
+        `const transpiler = new Bun.Transpiler({ loader: "ts" });`,
+        `const code = "import { where } from " + JSON.stringify(import.meta.dir + "/where.ts") + ' with { type: "macro" };\\nexport const v = where();\\n';`,
+        `const transformed = (await transpiler.transform(code)).match(/"([^"]+)"/)?.[1];`,
+        `const transformedSync = transpiler.transformSync(code).match(/"([^"]+)"/)?.[1];`,
+        // \`bun build\` parses on a pool of its own, whose threads have the default name too.
+        `const cli = Bun.spawnSync({ cmd: [process.execPath, "build", import.meta.dir + "/mod3.ts"], env: process.env });`,
+        `const builtByTheCli = cli.stdout.toString().match(/"([^"]+)"/)?.[1];`,
+        `const thread = (value: unknown) => String(value).replace(/^true:.*$/, "the JS thread").replace(/ \\d+$/, "");`,
+        `const forms = { imported, dynamic, required, built, transformed, transformedSync, builtByTheCli };`,
+        `for (const [form, value] of Object.entries(forms)) console.log(form + ": " + thread(value));`,
+      ].join("\n"),
+    };
+    for (let i = 0; i < 4; i++) {
+      files[`mod${i}.ts`] = `import { where } from "./where.ts" with { type: "macro" };\nexport const v = where();\n`;
+    }
+    return files;
+  }
+  const onThreads = (pool: string) => [
+    `imported: false:${pool}`,
+    `dynamic: false:${pool}`,
+    "required: the JS thread",
+    `built: false:${pool}`,
+    `transformed: false:${pool}`,
+    "transformedSync: the JS thread",
+    "builtByTheCli: false:Bun Pool",
+  ];
+
+  test.concurrent.skipIf(!isLinux)(
+    "the thread that a macro runs on",
+    async () => {
+      expect(await run(macroOfEachHost(), "index.ts")).toEqual(printed(...onThreads("Bun Macro")));
+    },
+    timeout,
+  );
+
+  // Refuses a thread to a work pool thread that asks for one with a pool thread's stack: the
+  // first thread of the second pool. With REFUSE_WHILE, only while that file exists.
+  const refusesAThread = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/prctl.h>
+#include <unistd.h>
+
+int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *arg) {
+  char name[32] = "";
+  size_t stack = 0;
+  prctl(PR_GET_NAME, name, 0, 0, 0);
+  if (attr) pthread_attr_getstacksize(attr, &stack);
+  const char *flag = getenv("REFUSE_WHILE");
+  if (strncmp(name, "Bun Pool", 8) == 0 && stack == 4 * 1024 * 1024 && (!flag || access(flag, F_OK) == 0)) {
+    (void)!write(2, "refused a thread\\n", 17);
+    return EAGAIN;
+  }
+  return ((int (*)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *))dlsym(RTLD_NEXT, "pthread_create"))(thread, attr, start, arg);
+}
+`;
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  const preload = (shim: string) => ({ LD_PRELOAD: [shim, bunEnv.LD_PRELOAD].filter(Boolean).join(":") });
+
+  // A job scheduled on a pool that has no thread would never run.
+  describe.skipIf(!isLinux || isMusl || !cc)("when the OS refuses the first thread of the second pool", () => {
+    test.concurrent(
+      "a macro runs on the thread that parses its file",
+      async () => {
+        using shimDir = tempDir("macro-pool-shim", { "shim.c": refusesAThread });
+        const shim = compileFixture(path.join(String(shimDir), "shim.c"), { flags: ["-ldl"] });
+        const { stderr, ...result } = await run(macroOfEachHost(), "index.ts", preload(shim));
+        expect({ ...result, refused: stderr.includes("refused a thread") }).toEqual({
+          lines: onThreads("Bun Pool"),
+          exitCode: 0,
+          signalCode: null,
+          refused: true,
+        });
+      },
+      timeout,
+    );
+
+    // Such a macro can parse a file that imports a macro itself, with transformSync(). And a
+    // work pool thread that ran a macro runs no more of them once the second pool has a thread.
+    test.concurrent(
+      "macros move to the second pool when it gets a thread",
+      async () => {
+        const thread = `readFileSync("/proc/thread-self/comm", "utf8").trim().replace(/ \\d+$/, "")`;
+        const files: Record<string, string> = {
+          "shim.c": refusesAThread,
+          "refuse": "",
+          "data.txt": "hello\n",
+          "inner.ts": `import { readFileSync } from "node:fs";\nexport function inner() {\n  return ${thread};\n}\n`,
+          "first.ts": [
+            `import { readFileSync } from "node:fs";`,
+            `export function first() {`,
+            `  const code = "import { inner } from " + JSON.stringify(import.meta.dir + "/inner.ts") + ' with { type: "macro" };\\nexport const v = inner();\\n';`,
+            `  const nested = new Bun.Transpiler({ loader: "ts" }).transformSync(code).match(/"([^"]+)"/)?.[1];`,
+            `  return ${thread} + " > " + nested;`,
+            `}`,
+          ].join("\n"),
+          "later.ts": [
+            `import { promises as fs, readFileSync } from "node:fs";`,
+            `export async function later() {`,
+            `  await fs.readFile(import.meta.dir + "/data.txt", "utf8");`,
+            `  return ${thread};`,
+            `}`,
+          ].join("\n"),
+          "index.ts": [
+            `import { rmSync } from "node:fs";`,
+            `const values = (mods: { v: string }[]) => [...new Set(mods.map(mod => mod.v))].join();`,
+            `console.log("refused:", values(await Promise.all([import("./first0.ts"), import("./first1.ts")])));`,
+            `rmSync(import.meta.dir + "/refuse");`,
+            `const later = Array.from({ length: 4 }, (_, i) => import("./later" + i + ".ts"));`,
+            `console.log("allowed:", values(await Promise.all(later)));`,
+          ].join("\n"),
+        };
+        for (let i = 0; i < 2; i++) {
+          files[`first${i}.ts`] =
+            `import { first } from "./first.ts" with { type: "macro" };\nexport const v = first();\n`;
+        }
+        for (let i = 0; i < 4; i++) {
+          files[`later${i}.ts`] =
+            `import { later } from "./later.ts" with { type: "macro" };\nexport const v = later();\n`;
+        }
+        using dir = tempDir("macro-pool-refused", files);
+        const shim = compileFixture(path.join(String(dir), "shim.c"), { flags: ["-ldl"] });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", "index.ts"],
+          // The Bun.Transpiler of `first` stays in the runtime of a pool thread: see `noLeakCheck`.
+          env: { ...poolEnv, ...noLeakCheck, ...preload(shim), REFUSE_WHILE: path.join(String(dir), "refuse") },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: killAfter,
+          killSignal: "SIGKILL",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({
+          lines: stdout.split("\n").filter(line => line && !line.startsWith("[macro]")),
+          refused: stderr.includes("refused a thread"),
+          exitCode,
+          signalCode: proc.signalCode,
+        }).toEqual({
+          lines: ["refused: Bun Pool > Bun Pool", "allowed: Bun Macro"],
+          refused: true,
+          exitCode: 0,
+          signalCode: null,
+        });
+      },
+      timeout,
+    );
+  });
+
+  // A file whose macros cannot run is parsed where it is: no thread of the second pool starts
+  // for it.
+  const countsMacroThreads = [
+    `import { readdirSync, readFileSync } from "node:fs";`,
+    // A thread that a pool thread starts has that thread's name until it takes its own.
+    `function macroThreads() {`,
+    `  const names = readdirSync("/proc/self/task").map(task => {`,
+    `    try {`,
+    `      return readFileSync("/proc/self/task/" + task + "/comm", "utf8");`,
+    `    } catch {`,
+    `      return "";`,
+    `    }`,
+    `  });`,
+    `  return new Set(names.filter(name => name.startsWith("Bun Macro"))).size;`,
+    `}`,
+    `const messages = (build: { logs: { message: string }[] }) => build.logs.map(log => log.message).join();`,
+    `const failure = (error: unknown) => String((error as Error)?.message ?? error).split("\\n")[0];`,
+  ];
+  const callsAMacro = `import { m } from "./m.ts" with { type: "macro" };\nexport const v = m();\n`;
+  const returnsHello = `export function m() {\n  return "hello";\n}\n`;
+
+  test.concurrent.skipIf(!isLinux)(
+    "the second pool has no thread for macros that are disabled or in node_modules",
+    async () => {
+      const files = {
+        "m.ts": returnsHello,
+        "mod.ts": callsAMacro,
+        "node_modules/pkg/m.ts": returnsHello,
+        "node_modules/pkg/index.ts": callsAMacro,
+        "index.ts": [
+          ...countsMacroThreads,
+          `const disabled = await Bun.build({ entrypoints: ["./mod.ts"], macros: false, throw: false });`,
+          `console.log(messages(disabled) + ":", macroThreads());`,
+          `const inNodeModules = await Bun.build({ entrypoints: ["./node_modules/pkg/index.ts"], throw: false });`,
+          `console.log(messages(inNodeModules) + ":", macroThreads());`,
+          `const enabled = await Bun.build({ entrypoints: ["./mod.ts"] });`,
+          `console.log(enabled.success + ":", macroThreads() > 0);`,
+        ].join("\n"),
+      };
+      expect(await run(files, "index.ts")).toEqual(
+        printed(
+          "Macros are disabled: 0",
+          "For security reasons, macros cannot be run from node_modules.: 0",
+          "true: true",
+        ),
+      );
+    },
+    timeout,
+  );
+
+  test.concurrent.skipIf(!isLinux)(
+    "the second pool has no thread under --disallow-code-generation-from-strings=strict",
+    async () => {
+      const files = {
+        "m.ts": returnsHello,
+        "mod.ts": callsAMacro,
+        "index.ts": [
+          ...countsMacroThreads,
+          `console.log((await import("./mod.ts").then(() => "imported", failure)) + ":", macroThreads());`,
+          `const build = await Bun.build({ entrypoints: ["./mod.ts"], throw: false });`,
+          `console.log(messages(build) + ":", macroThreads());`,
+          `const code = ${JSON.stringify(callsAMacro)}.replace("./m.ts", import.meta.dir + "/m.ts");`,
+          `const transformed = new Bun.Transpiler({ loader: "ts" }).transform(code);`,
+          `console.log((await transformed.then(() => "transformed", failure)) + ":", macroThreads());`,
+        ].join("\n"),
+      };
+      const refusal = "Macros cannot be used with --disallow-code-generation-from-strings=strict: 0";
+      const strict = { BUN_OPTIONS: "--disallow-code-generation-from-strings=strict" };
+      expect(await run(files, "index.ts", strict)).toEqual(printed(refusal, refusal, refusal));
+    },
+    timeout,
+  );
+
+  // The error is the one that the parse on the second pool logged.
+  test.concurrent(
+    "a macro that fails after it waited fails each use with its error",
+    async () => {
+      const files = modules(
+        8,
+        `import { promises as fs } from "node:fs";\nexport async function m() {\n  await fs.readFile(import.meta.dir + "/data.txt", "utf8");\n  return Symbol("not a value that a macro can return");\n}\n`,
+      );
+      files["index.ts"] = [
+        `const message = (error: unknown) =>`,
+        `  String((error as Error)?.message ?? error).split("\\n")[0].replace(/ \\(JSType\\(\\d+\\)\\)/, "");`,
+        `console.log("import:", await import("./entry.ts").then(() => "resolved", message));`,
+        `const build = await Bun.build({ entrypoints: [import.meta.dir + "/entry.ts"], throw: false });`,
+        `console.log("build:", build.success, build.logs.length, [...new Set(build.logs.map(message))].join());`,
+        `const transpiler = new Bun.Transpiler({ loader: "ts" });`,
+        `const code = "import { m } from " + JSON.stringify(import.meta.dir + "/m.ts") + ' with { type: "macro" };\\nexport const v = m();\\n';`,
+        `const transformed = await Promise.allSettled(Array.from({ length: 8 }, () => transpiler.transform(code)));`,
+        `console.log("transform:", transformed.length, [...new Set(transformed.map(result => result.status + " " + message(result.reason)))].join());`,
+      ].join("\n");
+      const error = "cannot coerce symbol to Bun's AST. Please return a simpler type";
+      expect(await run(files, "index.ts")).toEqual(
+        printed(`import: ${error}`, `build: false 8 ${error}`, `transform: 8 rejected ${error}`),
+      );
+    },
+    timeout,
+  );
+
+  // Such a file is parsed on a thread that runs macros, and still nothing loads the macro's module.
+  test.concurrent(
+    "a macro that is imported and not called is not loaded",
+    async () => {
+      const files = modules(32, `console.log("loaded");\nexport function m() {\n  return "called";\n}\n`, {
+        use: `"hello"`,
+      });
+      expect(await run(files, "entry.ts")).toEqual(printed("32 hello"));
+    },
+    timeout,
+  );
 });
 
 // A module that is not the entry point is transpiled on a worker thread, where no VM exists yet. The

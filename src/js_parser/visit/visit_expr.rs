@@ -8,8 +8,8 @@ use bun_core::strings;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
-    StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
+    ExprIn, FnOrArrowDataVisit, IdentifierOpts, MacroRefusal, PrependTempRefsOpts, ReactRefresh,
+    Ref, StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
 };
 use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
@@ -715,21 +715,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return;
                         }
 
-                        // this ordering incase someone wants to use a macro in a node_module conditionally
-                        if p.options.features.no_macros {
-                            p.log()
-                                .add_error(Some(p.source), tag.loc, b"Macros are disabled");
-                            *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
-                            return;
-                        }
-
-                        if p.source.path.is_node_module() {
-                            p.log().add_error(
-                                Some(p.source),
-                                expr.loc,
-                                b"For security reasons, macros cannot be run from node_modules.",
-                            );
-                            *e = p.new_expr(E::Undefined {}, expr.loc);
+                        if let Some(refusal) = p.macro_refusal() {
+                            let loc = match refusal {
+                                MacroRefusal::Disabled => tag.loc,
+                                MacroRefusal::NodeModule => expr.loc,
+                            };
+                            p.log().add_error(Some(p.source), loc, refusal.message());
+                            *e = p.new_expr(E::Undefined {}, loc);
                             return;
                         }
 
@@ -2325,19 +2317,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
 
-                if p.options.features.no_macros {
+                if let Some(refusal) = p.macro_refusal() {
                     p.log()
-                        .add_error(Some(p.source), expr.loc, b"Macros are disabled");
-                    *e = p.new_expr(E::Undefined {}, expr.loc);
-                    return;
-                }
-
-                if p.source.path.is_node_module() {
-                    p.log().add_error(
-                        Some(p.source),
-                        expr.loc,
-                        b"For security reasons, macros cannot be run from node_modules.",
-                    );
+                        .add_error(Some(p.source), expr.loc, refusal.message());
                     *e = p.new_expr(E::Undefined {}, expr.loc);
                     return;
                 }

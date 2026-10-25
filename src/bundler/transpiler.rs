@@ -773,6 +773,15 @@ impl AlreadyBundled {
     }
 }
 
+/// Why a parse has no [`ParseResult`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ParseStop {
+    /// The log says why.
+    Failed,
+    /// The caller passed `defer_macro_imports`, and parses again on `bun_threading::MacroPool`.
+    MacroDeferred,
+}
+
 /// Output of the transpiler's parse step: the parsed AST plus its source and
 /// loader metadata.
 // lifetime-free — `runtime_transpiler_cache` is a raw pointer
@@ -1241,22 +1250,25 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
+    /// Never returns [`ParseStop::MacroDeferred`].
     pub fn parse(
         &mut self,
         this_parse: ParseOptions<'a, '_>,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
-    ) -> Option<ParseResult<'a>> {
+    ) -> Result<ParseResult<'a>, ParseStop> {
         self.parse_maybe_return_file_only::<false>(this_parse, client_entry_point_)
     }
 
+    /// Never returns [`ParseStop::MacroDeferred`].
     pub fn parse_maybe_return_file_only<const RETURN_FILE_ONLY: bool>(
         &mut self,
         this_parse: ParseOptions<'a, '_>,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
-    ) -> Option<ParseResult<'a>> {
+    ) -> Result<ParseResult<'a>, ParseStop> {
         self.parse_maybe_return_file_only_allow_shared_buffer::<RETURN_FILE_ONLY, false>(
             this_parse,
             client_entry_point_,
+            false,
         )
     }
 
@@ -1269,7 +1281,9 @@ impl<'a> Transpiler<'a> {
         // The only caller passes `EntryPoints::ClientEntryPoint`, so the
         // param is typed concretely.
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
-    ) -> Option<ParseResult<'a>> {
+        // Stop at an import that binds a macro, with `ParseStop::MacroDeferred`.
+        defer_macro_imports: bool,
+    ) -> Result<ParseResult<'a>, ParseStop> {
         let arena = this_parse.arena;
         let dirname_fd = this_parse.dirname_fd;
         let file_descriptor = this_parse.file_descriptor;
@@ -1324,7 +1338,7 @@ impl<'a> Transpiler<'a> {
                                 bstr::BStr::new(path.text),
                             ),
                         );
-                        return None;
+                        return Err(ParseStop::Failed);
                     }
                 };
                 let body = match data_url.decode_data() {
@@ -1339,12 +1353,12 @@ impl<'a> Transpiler<'a> {
                                 bstr::BStr::new(path.text),
                             ),
                         );
-                        return None;
+                        return Err(ParseStop::Failed);
                     }
                 };
                 source_backing = resolver::cache::Contents::from(body);
                 // SAFETY: `source_backing` is moved into the returned
-                // `ParseResult` (or drops on `return None`); the re-borrow is
+                // `ParseResult` (or drops on an early return); the re-borrow is
                 // sound for the lifetime of `source.contents`' consumers, which
                 // never outlive the `ParseResult`. A real lifetime can be
                 // threaded once `bun_ast::Source.contents` becomes `Cow`.
@@ -1377,7 +1391,7 @@ impl<'a> Transpiler<'a> {
                             bstr::BStr::new(path.text),
                         ),
                     );
-                    return None;
+                    return Err(ParseStop::Failed);
                 }
             };
             if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
@@ -1404,12 +1418,12 @@ impl<'a> Transpiler<'a> {
             match bun_ast::Source::init_recycled_file(&bun_ast::PathContentsPair { path, contents })
             {
                 Ok(s) => break 'brk s,
-                Err(_) => return None,
+                Err(_) => return Err(ParseStop::Failed),
             }
         });
 
         if RETURN_FILE_ONLY {
-            return Some(ParseResult::empty_with(
+            return Ok(ParseResult::empty_with(
                 arena,
                 source.clone(),
                 loader,
@@ -1421,7 +1435,7 @@ impl<'a> Transpiler<'a> {
             || (source.contents.len() < 33 && strings::trim(&source.contents, b"\n\r ").is_empty())
         {
             if !loader.handles_empty_file() {
-                return Some(ParseResult::empty_with(
+                return Ok(ParseResult::empty_with(
                     arena,
                     source.clone(),
                     loader,
@@ -1437,7 +1451,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Tsx => {
                 // wasm magic number
                 if source.is_web_assembly() {
-                    return Some(ParseResult::empty_with(
+                    return Ok(ParseResult::empty_with(
                         arena,
                         source.clone(),
                         options::Loader::Wasm,
@@ -1519,6 +1533,7 @@ impl<'a> Transpiler<'a> {
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
+                opts.features.defer_macro_imports = defer_macro_imports;
 
                 opts.features.code_coverage = self.options.code_coverage;
 
@@ -1603,9 +1618,10 @@ impl<'a> Transpiler<'a> {
                     .parse(arena, opts, define, log, source)
                 {
                     Ok(Some(r)) => r,
-                    Ok(None) | Err(_) => return None,
+                    Ok(None) | Err(_) => return Err(ParseStop::Failed),
                 };
-                return Some(match parsed {
+                return Ok(match parsed {
+                    js_ast::Result::MacroDeferred => return Err(ParseStop::MacroDeferred),
                     js_ast::Result::Ast(value) => ParseResult {
                         ast: *value,
                         source: source.clone(),
@@ -1747,7 +1763,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Html => parse_unsupported_loader(loader, &path),
         }
 
-        None
+        Err(ParseStop::Failed)
     }
 }
 
@@ -1767,7 +1783,7 @@ fn parse_data_loader<'a>(
     arena: &'a Arena,
     log: &mut bun_ast::Log,
     keep_json_and_toml_as_one_statement: bool,
-) -> Option<ParseResult<'a>> {
+) -> Result<ParseResult<'a>, ParseStop> {
     // `bun_parsers::*` parse into the T2 value AST
     // (`bun_ast::Expr`); lift into the full T4
     // `bun_ast::Expr` via the deep-convert `From` bridge
@@ -1778,18 +1794,18 @@ fn parse_data_loader<'a>(
             // These files implicitly become JSONC files, which aligns with the behavior of text editors.
             match bun_parsers::json::parse_jsonc_into_arena(source, log, arena) {
                 Ok(e) => e,
-                Err(_) => return None,
+                Err(_) => return Err(ParseStop::Failed),
             }
         }
         options::Loader::Json => {
             match bun_parsers::json::parse_json_into_arena(source, log, arena) {
                 Ok(e) => e,
-                Err(_) => return None,
+                Err(_) => return Err(ParseStop::Failed),
             }
         }
         options::Loader::Toml => match bun_parsers::toml::TOML::parse(source, log, arena, false) {
             Ok(e) => e,
-            Err(_) => return None,
+            Err(_) => return Err(ParseStop::Failed),
         },
         options::Loader::Yaml => match bun_parsers::yaml::YAML::parse(
             source,
@@ -1798,12 +1814,12 @@ fn parse_data_loader<'a>(
             bun_parsers::yaml::CyclicAliases::Reject,
         ) {
             Ok(e) => e,
-            Err(_) => return None,
+            Err(_) => return Err(ParseStop::Failed),
         },
         options::Loader::Json5 => {
             match bun_parsers::json5::JSON5Parser::parse(source, log, arena) {
                 Ok(e) => e,
-                Err(_) => return None,
+                Err(_) => return Err(ParseStop::Failed),
             }
         }
         options::Loader::Xml => {
@@ -1814,7 +1830,7 @@ fn parse_data_loader<'a>(
             bun_core::analytics::Features::xml_parse_inc();
             match bun_parsers::xml::XML::parse(source, log, arena, options) {
                 Ok(e) => e,
-                Err(_) => return None,
+                Err(_) => return Err(ParseStop::Failed),
             }
         }
         // SAFETY: outer match arm guarantees one of the six.
@@ -1830,7 +1846,7 @@ fn parse_data_loader<'a>(
     {
         expr = match bun_parsers::json::materialize(&expr, source, log, arena) {
             Ok(e) => e,
-            Err(_) => return None,
+            Err(_) => return Err(ParseStop::Failed),
         };
     }
 
@@ -1922,7 +1938,7 @@ fn parse_data_loader<'a>(
                             // SAFETY: ARENA — `arena` outlives
                             // the returned `ParseResult.ast`.
                             Ok(boxed) => bun_ast::StoreStr::new(arena.alloc_slice_copy(&boxed)),
-                            Err(_) => return None,
+                            Err(_) => return Err(ParseStop::Failed),
                         },
                         ..Default::default()
                     };
@@ -2011,7 +2027,7 @@ fn parse_data_loader<'a>(
     let mut ast = bun_ast::Ast::from_parts(parts, arena);
     ast.symbols = bun_alloc::vec_from_iter_in(symbols, arena);
 
-    return Some(ParseResult {
+    return Ok(ParseResult {
         ast,
         source: source.clone(),
         loader,
@@ -2030,7 +2046,7 @@ fn parse_text_loader<'a>(
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
-) -> Option<ParseResult<'a>> {
+) -> Result<ParseResult<'a>, ParseStop> {
     let expr = bun_ast::Expr::init(
         bun_ast::E::EString::init(&source.contents),
         bun_ast::Loc::EMPTY,
@@ -2051,7 +2067,7 @@ fn parse_text_loader<'a>(
         ..Default::default()
     }]);
 
-    return Some(ParseResult {
+    return Ok(ParseResult {
         ast: bun_ast::Ast::from_parts(parts, arena),
         source: source.clone(),
         loader,
@@ -2071,7 +2087,7 @@ fn parse_md_loader<'a>(
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
     log: &mut bun_ast::Log,
-) -> Option<ParseResult<'a>> {
+) -> Result<ParseResult<'a>, ParseStop> {
     let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
         // The rendered HTML is allocated via
         // `arena` (the per-parse arena), so it is freed with the
@@ -2087,7 +2103,7 @@ fn parse_md_loader<'a>(
                 bun_ast::Loc::EMPTY,
                 format_args!("Failed to render markdown to HTML"),
             );
-            return None;
+            return Err(ParseStop::Failed);
         }
     };
     let expr = bun_ast::Expr::init(bun_ast::E::EString::init(html), bun_ast::Loc::EMPTY);
@@ -2107,7 +2123,7 @@ fn parse_md_loader<'a>(
         ..Default::default()
     }]);
 
-    return Some(ParseResult {
+    return Ok(ParseResult {
         ast: bun_ast::Ast::from_parts(parts, arena),
         source: source.clone(),
         loader,
@@ -2129,7 +2145,7 @@ fn parse_wasm_loader<'a>(
     path: &bun_paths::fs::Path<'static>,
     target: options::Target,
     log: &mut bun_ast::Log,
-) -> Option<ParseResult<'a>> {
+) -> Result<ParseResult<'a>, ParseStop> {
     if target.is_bun() {
         if !source.is_web_assembly() {
             let _ = log.add_error_fmt(
@@ -2140,10 +2156,10 @@ fn parse_wasm_loader<'a>(
                     bstr::BStr::new(path.text)
                 ),
             );
-            return None;
+            return Err(ParseStop::Failed);
         }
 
-        return Some(ParseResult {
+        return Ok(ParseResult {
             ast: bun_ast::Ast::empty_in(arena),
             source: source.clone(),
             loader,
@@ -2154,7 +2170,7 @@ fn parse_wasm_loader<'a>(
             source_contents_backing: source_backing,
         });
     }
-    None
+    Err(ParseStop::Failed)
 }
 
 #[cold]
@@ -2884,7 +2900,7 @@ impl<'a> Transpiler<'a> {
                     allow_bytecode_cache: false,
                 };
 
-                let Some(mut result) = self.parse(parse_opts, client_entry_point_) else {
+                let Ok(mut result) = self.parse(parse_opts, client_entry_point_) else {
                     return Ok(None);
                 };
 

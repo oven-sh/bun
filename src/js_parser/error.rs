@@ -8,6 +8,9 @@ pub enum Error {
     Backtrack,
     #[error("MacroFailed")]
     MacroFailed,
+    /// Unwinds a parse to `Parser::parse`, which returns `Result::MacroDeferred` for it.
+    #[error("MacroDeferred")]
+    MacroDeferred,
     #[error(transparent)]
     Lexer(#[from] crate::lexer::Error),
     #[error(transparent)]
@@ -24,6 +27,7 @@ impl Error {
             Self::StackOverflow => "StackOverflow",
             Self::Backtrack => "Backtrack",
             Self::MacroFailed => "MacroFailed",
+            Self::MacroDeferred => "MacroDeferred",
             Self::Lexer(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),

@@ -177,6 +177,24 @@ const ROWS: Row[] = [
     ticket: "RuntimeTranspilerStore.rs",
     files: { "mod.ts": `export const x: number = ${Date.now()};\n` },
   },
+  // ── thread pool, then the macro pool: a parse that meets a macro import runs again there ──
+  {
+    // The job takes its ticket back for the second run.
+    name: "import() of a module that imports a macro",
+    worker: `import(require("node:path").join(workerData.dir, "mod.ts"));`,
+    ticket: "RuntimeTranspilerStore.rs",
+    files: {
+      "mod.ts": `import { m } from "./macro.ts" with { type: "macro" };\nexport const x = m();\n`,
+      "macro.ts": `export function m() {\n  return ${Date.now()};\n}\n`,
+    },
+  },
+  {
+    // The job's completion waits in the task while it is in the macro pool's queue.
+    name: "Bun.Transpiler.transform of code that imports a macro",
+    worker: `new Bun.Transpiler().transform("import { m } from " + JSON.stringify(require("node:path").join(workerData.dir, "macro.ts")) + ' with { type: "macro" };\\nexport const a = m();');`,
+    ticket: "JSTranspiler.rs",
+    files: { "macro.ts": `export function m() {\n  return ${Date.now()};\n}\n` },
+  },
   // ── HTTP thread ──────────────────────────────────────────────────────────
   {
     // Parked on a peer that never answers: the stop phase aborts it and the
@@ -193,6 +211,16 @@ const ROWS: Row[] = [
     worker: `Bun.build({ entrypoints: [require("node:path").join(workerData.dir, "entry.ts")] });`,
     ticket: "js_bundle_completion_task.rs",
     files: { "entry.ts": `export default 1;\n` },
+  },
+  {
+    // Its parse task runs a second time, on the macro pool.
+    name: "Bun.build of a module that imports a macro",
+    worker: `Bun.build({ entrypoints: [require("node:path").join(workerData.dir, "entry.ts")] });`,
+    ticket: "js_bundle_completion_task.rs",
+    files: {
+      "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nexport default m();\n`,
+      "macro.ts": `export function m() {\n  return ${Date.now()};\n}\n`,
+    },
   },
   // ── weak posters (no ticket): delivered while draining, or refused ───────
   {
@@ -454,6 +482,112 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
     ]);
     expect(stdout).toBe("terminating\nexit code: 1\n");
     expect(await proc.exited).toBe(0);
+  });
+});
+
+// A parse that meets a macro import on a work pool thread stops, and its job runs again on the
+// macro pool with the ticket it holds. Here both threads of that pool are inside a macro that
+// reads a FIFO, and one of the two work pool threads is parked too, so the other ran the worker's
+// job before the host's stat(): the job is in the macro pool's queue when the worker is
+// terminated. The macros are let go once the teardown names the ticket. The job then finds its
+// VM closing, hands the ticket back, and the worker's own macro never runs.
+describe.skipIf(isWindows || (!isDebug && !isASAN))("terminate() while a job waits for the macro pool", () => {
+  test.concurrent.each([
+    ["import()", `import(__dirname + "/mod.ts");`, "RuntimeTranspilerStore.rs"],
+    [
+      "Bun.Transpiler.transform",
+      `new Bun.Transpiler().transform("import { ran } from " + JSON.stringify(__dirname + "/ran.ts") + ' with { type: "macro" };\\nexport const v = ran();');`,
+      "JSTranspiler.rs",
+    ],
+  ])("%s", async (_name, work, ticket) => {
+    using dir = tempDir("worker-terminate-macro-pool", {
+      "hold.ts": [
+        `import { closeSync, openSync, readSync, writeFileSync } from "node:fs";`,
+        `export function hold(name: string) {`,
+        `  const fd = openSync(import.meta.dir + "/held", "r+");`,
+        `  writeFileSync(import.meta.dir + "/holding-" + name, "");`,
+        `  readSync(fd, Buffer.alloc(1));`,
+        `  closeSync(fd);`,
+        `  return name;`,
+        `}`,
+      ].join("\n"),
+      "hold0.ts": `import { hold } from "./hold.ts" with { type: "macro" };\nexport const v = hold("0");\n`,
+      "hold1.ts": `import { hold } from "./hold.ts" with { type: "macro" };\nexport const v = hold("1");\n`,
+      "ran.ts": `import { writeFileSync } from "node:fs";\nexport function ran() {\n  writeFileSync(import.meta.dir + "/ran", "");\n  return 1;\n}\n`,
+      "mod.ts": `import { ran } from "./ran.ts" with { type: "macro" };\nexport const v = ran();\n`,
+      "worker.js": [
+        work,
+        `setImmediate(() => require("node:fs").writeFileSync(__dirname + "/queued", ""));`,
+        `setInterval(() => {}, 1 << 30);`,
+      ].join("\n"),
+      "host.js": [
+        `const fs = require("node:fs");`,
+        `async function exists(...names) {`,
+        `  const deadline = performance.now() + 30_000;`,
+        `  while (!names.every(name => fs.existsSync(__dirname + "/" + name))) {`,
+        `    if (performance.now() > deadline) throw new Error("no " + names);`,
+        `    await Bun.sleep(1);`,
+        `  }`,
+        `}`,
+        `(async () => {`,
+        `  const held = [import("./hold0.ts"), import("./hold1.ts")];`,
+        `  await exists("holding-0", "holding-1");`,
+        `  fs.readFile(__dirname + "/parked", () => {});`,
+        // The parent of a node:worker_threads Worker posts to it for its stdio, and with the
+        // gate such a post waits for the teardown that this parent has yet to ask for.
+        `  const worker = new Worker(__dirname + "/worker.js");`,
+        `  worker.addEventListener("error", event => console.log("error", event.message));`,
+        `  const closed = new Promise(resolve => worker.addEventListener("close", event => resolve(event.code)));`,
+        `  await exists("queued");`,
+        `  await fs.promises.stat(__dirname);`,
+        `  worker.terminate();`,
+        `  const code = await closed;`,
+        `  const values = (await Promise.all(held)).map(mod => mod.v);`,
+        `  console.log(JSON.stringify({ held: values, code, ran: fs.existsSync(__dirname + "/ran") }));`,
+        `})();`,
+      ].join("\n"),
+    });
+    const held = path.join(String(dir), "held");
+    const parked = path.join(String(dir), "parked");
+    mkfifo(held);
+    mkfifo(parked);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "host.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "2", BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let stderr = "";
+    const decoder = new TextDecoder();
+    const reader = proc.stderr.getReader();
+    const read = async (until: () => boolean) => {
+      while (!until()) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stderr += decoder.decode(value, { stream: true });
+      }
+    };
+    const named = new RegExp(`taken at .*${ticket.replace(".", "\\.")}:\\d+`);
+    await read(() => named.test(stderr));
+    // One byte for each macro, and end of file for the parked read.
+    fs.writeFileSync(held, "xx");
+    fs.closeSync(fs.openSync(parked, "w"));
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), read(() => false), proc.exited]);
+    const cameBack = stderr.split("\n").some(l => l.startsWith("[vm] late completion from ") && l.includes(ticket));
+    expect({
+      // A debug build also prints "[macro] call <name>".
+      stdout: stdout.split("\n").filter(l => l && !l.startsWith("[macro]")),
+      cameBack,
+      exitCode,
+      // On a failure, everything the host printed.
+      detail: cameBack && exitCode === 0 ? "" : stderr,
+    }).toEqual({
+      stdout: [JSON.stringify({ held: ["0", "1"], code: 0, ran: false })],
+      cameBack: true,
+      exitCode: 0,
+      detail: "",
+    });
   });
 });
 

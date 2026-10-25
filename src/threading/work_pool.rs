@@ -1,6 +1,7 @@
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
-use crate::ThreadPool;
+use crate::{Guarded, ThreadPool};
 
 pub use crate::thread_pool::Batch;
 pub use crate::thread_pool::Task;
@@ -138,6 +139,52 @@ fn create() -> ThreadPool {
         max_threads: u32::from(bun_core::get_thread_count()),
         stack_size: crate::thread_pool::DEFAULT_THREAD_STACK_SIZE,
     })
+}
+
+/// The pool for the parse of a file that imports a macro. The thread that runs a macro sleeps
+/// until the macro's promise settles, and a [`WorkPool`] task is what most often settles it.
+pub struct MacroPool;
+
+static MACRO_POOL: OnceLock<ThreadPool> = OnceLock::new();
+/// Written with `MACRO_POOL_START` held.
+static MACRO_POOL_HAS_WORKER: AtomicBool = AtomicBool::new(false);
+static MACRO_POOL_START: Guarded<()> = Guarded::new(());
+
+#[cold]
+fn create_macro_pool() -> ThreadPool {
+    create().named("Bun Macro")
+}
+
+impl MacroPool {
+    fn get() -> &'static ThreadPool {
+        MACRO_POOL.get_or_init(create_macro_pool)
+    }
+
+    /// `false`: the OS refused the pool's first thread. Nothing scheduled here would run.
+    pub fn ensure_worker() -> bool {
+        MACRO_POOL_HAS_WORKER.load(Ordering::Relaxed) || Self::start_worker()
+    }
+
+    #[cold]
+    fn start_worker() -> bool {
+        let _start = MACRO_POOL_START.lock();
+        let pool = Self::get();
+        // Callers schedule only after `true`, so `has_workers` counts no start in progress.
+        if !pool.has_workers() {
+            pool.force_spawn();
+        }
+        if !pool.has_workers() {
+            // A refused start leaves the pool notified, and then only `warm` tries again.
+            pool.warm(1);
+        }
+        let has_worker = pool.has_workers();
+        MACRO_POOL_HAS_WORKER.store(has_worker, Ordering::Relaxed);
+        has_worker
+    }
+
+    pub fn schedule(task: *mut Task) {
+        Self::get().schedule(Batch::from(task));
+    }
 }
 
 impl WorkPool {

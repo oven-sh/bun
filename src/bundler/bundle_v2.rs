@@ -5675,12 +5675,18 @@ pub mod bv2_impl {
             let pool = self.graph.pool_mut();
             {
                 let mut assignments = pool.workers_assignments.lock();
-                if assignments.count() > 0 {
-                    for worker in assignments.values() {
-                        // SAFETY: worker ptrs are live until `deinit_soon`.
-                        unsafe { (**worker).deinit_soon() };
+                // A worker is on a thread of the worker pool, the IO pool or the macro pool.
+                let mut pools_to_wake: Vec<bun_ptr::BackRef<ThreadPoolLib>> = Vec::new();
+                for worker in assignments.values() {
+                    // SAFETY: worker ptrs are live until `deinit_soon`.
+                    if let Some(worker_pool) = unsafe { (**worker).deinit_soon() } {
+                        if !pools_to_wake.contains(&worker_pool) {
+                            pools_to_wake.push(worker_pool);
+                        }
                     }
-                    pool.wake_for_idle_events();
+                }
+                for worker_pool in pools_to_wake {
+                    worker_pool.wake_for_idle_events();
                 }
                 // `ThreadPool` is arena-allocated; the arena bulk-free won't
                 // run its `Drop`, so release the map's backing storage here.

@@ -4113,6 +4113,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Only assert above; do not actually pop.
     }
 
+    /// Why a call of a macro in this file is an error, if it is one.
+    pub(crate) fn macro_refusal(&self) -> Option<crate::parser::MacroRefusal> {
+        use crate::parser::MacroRefusal;
+        // this ordering incase someone wants to use a macro in a node_module conditionally
+        if self.options.features.no_macros {
+            return Some(MacroRefusal::Disabled);
+        }
+        if self.source.path.is_node_module() {
+            return Some(MacroRefusal::NodeModule);
+        }
+        None
+    }
+
+    /// At an import that binds a macro that a call would run: stops the parse if the host asked.
+    fn defer_macro_import(&self) -> Result<(), crate::Error> {
+        if self.options.features.defer_macro_imports
+            && !SCAN_ONLY
+            && !self.options.features.is_macro_runtime
+            && self.macro_refusal().is_none()
+            && self.options.macro_context.is_some()
+            && bun_core::code_generation_from_strings()
+                != bun_core::CodeGenerationFromStrings::Strict
+        {
+            return Err(crate::Error::MacroDeferred);
+        }
+        Ok(())
+    }
+
     pub(crate) fn process_import_statement(
         &mut self,
         stmt_: S::Import,
@@ -4124,6 +4152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
         if is_macro {
+            self.defer_macro_import()?;
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
             self.import_records.items_mut()[id as usize].path.namespace = crate::Macro::NAMESPACE;
             self.import_records.items_mut()[id as usize]
@@ -4317,6 +4346,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if let Some(remap) = macro_remap {
                     if let Some(remapped_path) = remap.get(b"default") {
+                        self.defer_macro_import()?;
                         let new_import_id =
                             self.add_import_record(ImportKind::Stmt, path.loc, remapped_path);
                         self.macro_.refs.put(
@@ -4398,6 +4428,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if let Some(remap) = macro_remap {
                 if let Some(remapped_path) = remap.get(alias) {
+                    self.defer_macro_import()?;
                     let new_import_id =
                         self.add_import_record(ImportKind::Stmt, path.loc, remapped_path);
                     self.macro_.refs.put(

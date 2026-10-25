@@ -29,6 +29,7 @@
     ]
   },
   "src/jsc/RuntimeTranspilerStore.rs": {
+    "MacroPool::schedule": 1,
     "WorkPool::schedule*": 1
   },
   "src/jsc/TopExceptionScope.rs": {
@@ -77,6 +78,7 @@
     ]
   },
   "src/runtime/api/JSTranspiler.rs": {
+    "MacroPool::schedule": 1,
     "unsafe impl Send": [
       "TransformTask"
     ]

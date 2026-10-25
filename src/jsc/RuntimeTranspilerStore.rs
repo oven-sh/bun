@@ -11,7 +11,9 @@ use bun_ast::{ASTMemoryAllocator, ExportsKind};
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::ModuleType;
-use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, Transpiler};
+use bun_bundler::transpiler::{
+    self as transpiler, AlreadyBundled, ParseOptions, ParseStop, Transpiler,
+};
 use bun_collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
@@ -27,7 +29,7 @@ use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
 use bun_threading::Guarded;
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
-use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+use bun_threading::work_pool::{MacroPool, Task as WorkPoolTask, WorkPool};
 use bun_watcher::Watcher;
 
 use crate::async_module::AsyncModule;
@@ -363,6 +365,7 @@ impl RuntimeTranspilerStore {
                 non_threadsafe_referrer: referrer,
                 vm,
                 ticket: None,
+                macro_deferred: false,
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
@@ -428,6 +431,8 @@ pub struct TranspilerJob {
     /// the job's own slot, the transpiler it copies and the store queue it
     /// pushes to are all VM-owned, and the VM's teardown waits for the ticket.
     pub(crate) ticket: Option<crate::Ticket>,
+    /// The parse returned [`ParseStop::MacroDeferred`]: the next one runs the macros.
+    macro_deferred: bool,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
     pub(crate) generation_number: u32,
@@ -603,16 +608,32 @@ impl TranspilerJob {
         // SAFETY: as above; set in `schedule`.
         let ticket =
             unsafe { (*this).ticket.take() }.expect("scheduled transpile job holds a ticket");
-        if ticket.script_allowed() {
-            // SAFETY: live slot, exclusively ours until dispatched.
-            unsafe { (*this).run(&ticket) };
-        } else {
+        if !ticket.script_allowed() {
             // SAFETY: as above.
-            unsafe { (*this).dispatch_to_main_thread(&ticket) };
+            return unsafe { (*this).dispatch_to_main_thread(&ticket) };
+        }
+        let deferred = Cell::new(false);
+        // SAFETY: live slot, exclusively ours until dispatched.
+        unsafe { (*this).run(&ticket, &deferred) };
+        if !deferred.get() {
+            return;
+        }
+        // SAFETY: not dispatched, so the slot is still ours.
+        unsafe {
+            (*this).macro_deferred = true;
+            if MacroPool::ensure_worker() {
+                // As in `schedule`: the pool calls this function again.
+                (*this).ticket = Some(ticket);
+                MacroPool::schedule(&raw mut (*this).work_task);
+            } else {
+                deferred.set(false);
+                (*this).run(&ticket, &deferred);
+            }
         }
     }
 
-    fn run(&mut self, ticket: &crate::Ticket) {
+    /// `deferred`: the parse returned [`ParseStop::MacroDeferred`], and nothing was dispatched.
+    fn run(&mut self, ticket: &crate::Ticket, deferred: &Cell<bool>) {
         // Stack-local per call, bulk-freed on return. An earlier version hoisted
         // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second
         // one inside a leaked `ASTMemoryAllocator`) and only `reset()` it at
@@ -629,12 +650,14 @@ impl TranspilerJob {
         // between calls.
         let arena = Arena::new();
 
-        // `defer this.dispatchToMainThread()` — fires on every return path.
+        // `defer this.dispatchToMainThread()` — fires on every return path but a deferral.
         let this_ptr: *mut TranspilerJob = self;
         scopeguard::defer! {
-            // SAFETY: `self` outlives this guard (guard drops before fn return);
-            // no other &mut alias is live at drop time.
-            unsafe { (*this_ptr).dispatch_to_main_thread(ticket) };
+            if !deferred.get() {
+                // SAFETY: `self` outlives this guard (guard drops before fn return);
+                // no other &mut alias is live at drop time.
+                unsafe { (*this_ptr).dispatch_to_main_thread(ticket) };
+            }
         }
 
         // SAFETY contract: `vm` outlives the job (BACKREF — VM owns the store).
@@ -898,34 +921,45 @@ impl TranspilerJob {
         let is_watcher_enabled =
             import_watcher.is_some_and(|iw| !matches!(&*iw, ImportWatcher::None));
 
-        let Some(mut parse_result) = transpiler
-            .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)
-        else {
-            if is_watcher_enabled && input_file_fd.is_valid() {
-                if !is_node_override
-                    && bun_paths::is_absolute(path.text)
-                    && !strings::contains(path.text, b"node_modules")
-                {
-                    if let Some(iw) = import_watcher {
-                        // SAFETY: BACKREF — process-lifetime watcher; no other
-                        // `&ImportWatcher` is live here, and `add_file` is
-                        // thread-safe via watcher mutex.
-                        let added = unsafe { iw.assume_mut() }.add_file::<true>(
-                            input_file_fd,
-                            path.text,
-                            hash,
-                            Fd::INVALID,
-                            package_json,
-                        );
-                        if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                            should_close_input_file_fd.set(false);
+        let defer_macro_imports = !self.macro_deferred;
+        let mut parse_result = match transpiler
+            .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(
+                parse_options,
+                None,
+                defer_macro_imports,
+            ) {
+            Ok(parse_result) => parse_result,
+            Err(ParseStop::MacroDeferred) => {
+                deferred.set(true);
+                return;
+            }
+            Err(ParseStop::Failed) => {
+                if is_watcher_enabled && input_file_fd.is_valid() {
+                    if !is_node_override
+                        && bun_paths::is_absolute(path.text)
+                        && !strings::contains(path.text, b"node_modules")
+                    {
+                        if let Some(iw) = import_watcher {
+                            // SAFETY: BACKREF — process-lifetime watcher; no other
+                            // `&ImportWatcher` is live here, and `add_file` is
+                            // thread-safe via watcher mutex.
+                            let added = unsafe { iw.assume_mut() }.add_file::<true>(
+                                input_file_fd,
+                                path.text,
+                                hash,
+                                Fd::INVALID,
+                                package_json,
+                            );
+                            if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+                                should_close_input_file_fd.set(false);
+                            }
                         }
                     }
                 }
-            }
 
-            self.parse_error = Some(crate::CrateError::ParseError);
-            return;
+                self.parse_error = Some(crate::CrateError::ParseError);
+                return;
+            }
         };
 
         if is_watcher_enabled && input_file_fd.is_valid() {

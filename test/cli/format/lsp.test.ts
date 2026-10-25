@@ -338,7 +338,8 @@ exports.format = async (text, options) => {
   );
 
   // The prefix names the half that failed, not the command that started the server: `bun fmt --lsp` lints too where
-  // the build has `bun lint`, and a `[fmt]` that `bun lint` would accept is still an error of `bun fmt`.
+  // the build has `bun lint`, and `bun lint` reads `[fmt]` as well. Each half reports the same `bunfig.toml` once,
+  // under its own name.
   test(
     "shows a bunfig.toml that bun fmt cannot use as an error of bun fmt, once",
     async () => {
@@ -347,7 +348,9 @@ exports.format = async (text, options) => {
       expect((await initialize(client, [String(dir)])).error).toBeUndefined();
       client.notify("initialized");
       open(client, join(String(dir), "a.js"), "a  ;\n");
-      const shown = client.notification(it => it.method === "window/showMessage");
+      const shown = client.notification(
+        it => it.method === "window/showMessage" && it.params.message.startsWith("bun fmt: "),
+      );
       const first = await format(client, join(String(dir), "a.js"));
       expect(first.error).toBeUndefined();
       expect(first.result).toBeNull();
@@ -361,7 +364,9 @@ exports.format = async (text, options) => {
       const { exitCode, garbage, rest } = await client.end();
       const messages = client.received.filter(it => it.method === "window/showMessage").map(it => it.params.message);
       expect(messages.filter(it => it.startsWith("bun fmt: "))).toHaveLength(1);
-      expect(messages.filter(it => it.startsWith("bun lint: "))).toEqual([]);
+      expect(messages.filter(it => it.startsWith("bun lint: "))).toEqual(
+        lints ? [expect.stringMatching(/^bun lint: Cannot use bunfig\.toml:2:1: Unknown key "sem" in \[fmt\]/)] : [],
+      );
       expect([garbage, rest]).toEqual([[], ""]);
       expect(exitCode).toBe(0);
     },

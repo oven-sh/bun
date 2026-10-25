@@ -60,6 +60,16 @@ enum Half {
     Format,
 }
 
+impl Half {
+    /// The name of the command, which its errors are shown under.
+    fn prefix(self) -> &'static [u8] {
+        match self {
+            Half::Lint => b"bun lint: ",
+            Half::Format => b"bun fmt: ",
+        }
+    }
+}
+
 /// The engine of one workspace folder while its configurations stay as they are. Its realms run on threads of their
 /// own.
 pub trait Realms: Engine + Send {
@@ -387,11 +397,7 @@ impl<'s> Server<'s> {
 
     /// Puts an error of `half` before the user, under the name of its command.
     fn show_error(&self, half: Half, message: &[u8]) {
-        let command: &[u8] = match half {
-            Half::Lint => b"bun lint: ",
-            Half::Format => b"bun fmt: ",
-        };
-        self.tell("window/showMessage", 1, &[command, message].concat());
+        self.tell("window/showMessage", 1, &[half.prefix(), message].concat());
     }
 
     /// The half that the command that started the server is.
@@ -571,11 +577,11 @@ impl<'s> Server<'s> {
         let Settings { lints, formats, .. } = *self.settings.lock();
         let options = lints.then(|| self.lint_options_of(root));
         if let Some(Err(why)) = &options {
-            worker.tell_once(why.clone(), |why| self.show_error(Half::Lint, why));
+            worker.show_error_once(Half::Lint, why);
         }
         match formats.then(|| self.format_options_of(root)) {
             Some(Ok(options)) => worker.format_options = Some(options),
-            Some(Err(why)) => worker.tell_once(why, |why| self.show_error(Half::Format, why)),
+            Some(Err(why)) => worker.show_error_once(Half::Format, &why),
             None => {}
         }
         let all = |session: Option<&Session>| {
@@ -613,7 +619,8 @@ struct Worker<'w, 's> {
     format_options: Option<crate::fmt::cli::Options>,
     /// By URI.
     known: FxHashMap<Vec<u8>, Known>,
-    /// What the user has been told, which is not said again.
+    /// What the user has been told, which is not said again. An error is kept with the name of its command: both
+    /// halves read the same `bunfig.toml`, and each reports its own failure.
     told: Vec<Vec<u8>>,
 }
 
@@ -623,6 +630,12 @@ impl Worker<'_, '_> {
             tell(&line);
             self.told.push(line);
         }
+    }
+
+    /// [`Server::show_error`], once per text and half.
+    fn show_error_once(&mut self, half: Half, message: &[u8]) {
+        let server = self.server;
+        self.tell_once([half.prefix(), message].concat(), |line| server.tell("window/showMessage", 1, line));
     }
 
     /// Said when a plugin would have run, which is when the user looks for it.
@@ -650,7 +663,7 @@ impl Worker<'_, '_> {
         match linted {
             Ok(linted) => Some(linted),
             Err(Fatal(why)) => {
-                self.tell_once(why, |why| server.show_error(Half::Lint, why));
+                self.show_error_once(Half::Lint, &why);
                 None
             }
         }
@@ -846,7 +859,7 @@ impl Worker<'_, '_> {
             Formatted::Failed { stderr } => {
                 let why = stderr.trim_ascii_end();
                 let why = why.strip_prefix(b"error: ").unwrap_or(why);
-                self.tell_once(why.to_vec(), |why| server.show_error(Half::Format, why));
+                self.show_error_once(Half::Format, why);
                 None
             }
         }

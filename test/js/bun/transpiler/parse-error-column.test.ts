@@ -189,6 +189,18 @@ test.concurrent.each([["build"], ["run"]])(
   },
 );
 
+// The line is cut when more than 80 bytes start at the error, and the cut
+// drops a prefix when more than 40 bytes precede the error.
+test.concurrent.each([
+  ["80 bytes from the error to the end keep the whole line", fill(100, "a") + "]" + fill(79, "b"), 0, 180],
+  ["81 bytes from the error to the end cut the line", fill(100, "a") + "]" + fill(80, "b"), 60, 180],
+  ["40 bytes before the error drop no prefix", fill(40, "a") + "]" + fill(100, "b"), 0, 120],
+  ["41 bytes before the error drop one byte", "c" + fill(40, "a") + "]" + fill(100, "b"), 1, 121],
+])("CLI caret at an excerpt limit: %s", async (_, line, start, end) => {
+  const { excerpts } = await printedExcerpts(["build", "long.js"], { "long.js": line });
+  expect(excerpts).toEqual([{ excerpt: "1 | " + line.slice(start, end), caret: 4 + line.indexOf("]") - start }]);
+});
+
 test.concurrent("CLI caret counts the left-trimmed prefix in columns, not bytes", async () => {
   // U+00E9 is 2 UTF-8 bytes but 1 column (Buffer.alloc fills by bytes, so
   // fill(200) is 100 characters). `]` is at byte 200 / column 101 of a

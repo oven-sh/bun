@@ -1232,80 +1232,136 @@ it.if(isWindows)("should not leak when connect({path}) fails asynchronously whil
   });
 });
 
-// On Windows, unix paths route through the named-pipe codepath which reports
-// failure asynchronously; this test targets the synchronous-failure branch in
-// Listener.connectInner.
-it.skipIf(isWindows)(
-  "should not leak when connect({path}) fails synchronously on a reused handle",
-  async () => {
-    // node:net creates a detached native socket (`_handle`) and passes it as
-    // `prev` to connectInner. connectInner unconditionally `socket.ref()`s
-    // before `doConnect`. A nonexistent unix path makes `doConnect` throw
-    // synchronously while the socket is still `.detached`, so
-    // `handleConnectError`'s own deref (gated on `!isDetached()`) does not
-    // fire — the ref taken here must be released by the caller for reused
-    // sockets too, not only freshly-allocated ones. Without that, every
-    // failed reconnect leaks one native TCPSocket struct + its connection
-    // string.
-    const script = `
-      const net = require("node:net");
-      const { heapStats } = require("bun:jsc");
-      const path = "/tmp/bun-test-nonexistent-" + process.pid + ".sock";
+// A connect can fail inside the native call: connect(2) to a unix socket path
+// that does not exist, or the bind() of a `localAddress` that is not local.
+it.concurrent("should not leak when a connect fails inside the native call", async () => {
+  // The native connect takes a reference on the socket for the attempt and
+  // roots its JS wrapper. A failure inside the call finds the socket still
+  // detached, so the error path has no reference of its own to drop: the
+  // caller releases the attempt's, for a socket node:net handed in (its
+  // `_handle`) as for one Bun.connect allocated. Without that, every failed
+  // connect leaks the native socket and its connection string.
+  //
+  // Both halves are exact. The native reference count is back to 1, the
+  // wrapper's, and no wrapper is left rooted: the socket is freed when its
+  // wrapper is collected.
+  using dir = tempDir("node-net-connect-fails-in-call", {});
+  const script = /* js */ `
+    const net = require("node:net");
+    const tls = require("node:tls");
+    const { heapStats } = require("bun:jsc");
+    const { refCount } = require("bun:internal-for-testing").socketInternals;
+    const path = "missing.sock";
 
-      function once() {
-        return new Promise(resolve => {
-          const s = new net.Socket();
-          s.on("error", () => {});
-          s.on("close", resolve);
-          s.connect({ path });
+    // Socket wrappers that a Strong handle roots.
+    function pinned() {
+      const { TCPSocket = 0, TLSSocket = 0 } = heapStats().protectedObjectTypeCounts;
+      return { TCPSocket, TLSSocket };
+    }
+    // The native socket of the last attempt.
+    let handle;
+    // One connect of a node:net socket that fails.
+    function attempt(socket, options) {
+      return new Promise(resolve => {
+        let code, afterCall;
+        socket.once("connectionAttempt", () => {
+          handle = socket._handle;
+          // Runs once the native connect has returned. An attempt that is over by
+          // then failed inside the call: one in flight holds a second reference.
+          process.nextTick(() => (afterCall = refCount(handle)));
         });
-      }
-      async function run(n) {
-        for (let i = 0; i < n; i += 100) {
-          const batch = [];
-          for (let j = 0; j < 100; j++) batch.push(once());
-          await Promise.all(batch);
-        }
-        Bun.gc(true);
-        await Bun.sleep(20);
-        Bun.gc(true);
-      }
+        socket.on("connect", () => socket.destroy());
+        socket.on("error", error => (code = error.code));
+        socket.on("close", () => resolve({ code, afterCall, atClose: refCount(handle) }));
+        socket.connect(options);
+      });
+    }
+    // Bun.connect allocates the native socket itself and gives it to connectError.
+    async function bunConnect(options) {
+      let failure;
+      const promise = Bun.connect({
+        ...options,
+        socket: {
+          data() {},
+          connectError(socket, error) {
+            failure = { socket, code: error.code };
+          },
+        },
+      });
+      // connectError has run by now only when the connect failed inside the call.
+      const inCall = failure !== undefined;
+      await promise.catch(() => {});
+      // The dispatch that reports a failure holds references of its own until it returns.
+      await new Promise(resolve => setImmediate(resolve));
+      return { code: failure.code, inCall, refs: refCount(failure.socket) };
+    }
 
-      // Count live mimalloc pages across all size bins. Each leaked
-      // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
-      // (release) / ~160 pages (debug+ASAN). Unlike RSS this is the
-      // allocator's own bookkeeping, so it's independent of OS page
-      // reclamation.
-      function pageCount() {
-        return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
-      }
+    const server = net.createServer(socket => socket.resume());
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
 
-      // Warm up with the SAME workload as the measured run: on builds where
-      // JSC shares mimalloc, its heap keeps growing until the first full-size
-      // batch, so equal batches make the delta isolate the per-run leak.
-      await run(8000);
-      const before = pageCount();
-      await run(8000);
-      const after = pageCount();
-      console.log(JSON.stringify({ before, after, delta: after - before }));
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
-    // Without the balancing deref: +25 pages (release) / +163 (debug+ASAN).
-    // With it the socket delta is 0, but since #34009 JSC shares mimalloc and
-    // adds up to +14 of heap noise on aarch64/darwin release (build 75589).
-    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(20);
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
+    const fresh = [];
+    for (let i = 0; i < 4; i++) fresh.push(await attempt(new net.Socket(), { path }));
+    // Four more connects through the native socket of the last one.
+    const sameHandle = [];
+    for (let i = 0; i < 4; i++) {
+      const socket = new net.Socket();
+      socket._handle = handle;
+      sameHandle.push(await attempt(socket, { path }));
+    }
+    const result = {
+      fresh,
+      sameHandle,
+      tls: await attempt(new tls.TLSSocket(), { path }),
+      // 192.0.2.1 is never a local address, so the bind ahead of the connect fails.
+      localAddress: await attempt(new net.Socket(), { port, host: "127.0.0.1", localAddress: "192.0.2.1" }),
+      bunConnect: await bunConnect({ unix: path }),
+      bunConnectTLS: await bunConnect({ unix: path, tls: true }),
+      pinned: pinned(),
+    };
+
+    // A connected socket holds more than its wrapper's reference and is rooted: neither reading is a constant.
+    const client = new net.Socket();
+    client.once("connectionAttempt", () => (handle = client._handle));
+    await new Promise((resolve, reject) => client.on("error", reject).connect(port, "127.0.0.1", resolve));
+    result.connected = { refs: refCount(handle) > 1, pinned: pinned().TCPSocket > 0 };
+    const closed = new Promise(resolve => client.on("close", resolve));
+    client.destroy();
+    await closed;
+    result.afterClose = refCount(handle);
+    server.close();
+
+    console.log(JSON.stringify(result));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // If the child died before reporting, the diff shows its raw output.
+  const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+  // A connect that the event loop fails reads 2 after the call. A leaked reference is still there at 'close'.
+  const failed = (code: string) => ({ code, afterCall: 1, atClose: 1 });
+  expect({ result, stderr, exitCode }).toEqual({
+    result: {
+      fresh: Array(4).fill(failed("ENOENT")),
+      sameHandle: Array(4).fill(failed("ENOENT")),
+      tls: failed("ENOENT"),
+      localAddress: failed("EADDRNOTAVAIL"),
+      bunConnect: { code: "ENOENT", inCall: true, refs: 1 },
+      bunConnectTLS: { code: "ENOENT", inCall: true, refs: 1 },
+      pinned: { TCPSocket: 0, TLSSocket: 0 },
+      connected: { refs: true, pinned: true },
+      afterClose: 1,
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
 
 // node only reaches readStart() from _read(), and read(0) never calls _read once
 // the readable side has ended, so a `readable: false` client leaves the peer's

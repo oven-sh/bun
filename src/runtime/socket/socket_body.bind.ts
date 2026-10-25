@@ -126,6 +126,11 @@ export const createSocketPair = b.fn({ ...js, returns: b.array(b.i32) });
 export const AnySocket = b.union({ tcp: TCPSocket, tls: TLSSocket, serverWebSocket: ServerWebSocket, other: b.any });
 export const setSocketOptions = b.fn({ ...js, args: { socket: AnySocket, option: b.i32, size: b.i32 } });
 const testing = (name: string) => `crate::socket::socket_body::testing_apis::${name}`;
+export const socketRefCount = b.fn({
+  args: { socket: BunSocket },
+  returns: b.u32,
+  rustPath: testing("socket_ref_count"),
+});
 export const socketFaultInjectionAvailable = b.fn({
   returns: b.bool,
   rustPath: testing("socket_fault_injection_available"),

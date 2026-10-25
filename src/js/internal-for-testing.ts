@@ -197,6 +197,11 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $b
 
 export const createSocketPair = $bindgen("socket_body.bind.ts", "createSocketPair") as () => [number, number];
 
+export const socketInternals = {
+  /** Native ref count of a `TCPSocket` or `TLSSocket`. Idle reads 1, the JS wrapper's. Its own handlers read more. */
+  refCount: $bindgen("socket_body.bind.ts", "socketRefCount") as (socket: object) => number,
+};
+
 export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
   "NodeModuleModule.cpp",
   "jsFunctionIsModuleResolveFilenameSlowPathEnabled",

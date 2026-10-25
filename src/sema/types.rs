@@ -3836,13 +3836,23 @@ impl<'p, 's> Types<'p, 's> {
         id
     }
 
-    /// Compares `a.id` with `b.id` for `isDeeplyNestedType`, which treats a higher id as a sign of a newer instantiation,
-    /// one caused by recursion. Only the heights are compared. The instantiations of a recursion
-    /// that steps from one literal type to the next all have the same height, and comparing their hashes would count
-    /// only about half of them. The caller orders two types with the same height.
+    /// One more than the greatest height of any type the key of `id` mentions. For `isDeeplyNestedType`, which treats a
+    /// higher id as a sign of a newer instantiation, one caused by recursion. The instantiations of a recursion that
+    /// steps from one literal type to the next all have the same height, and comparing their hashes would count only
+    /// about half of them. The caller orders two types with the same height.
     #[inline]
-    pub fn nesting_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        self.rank(a).height.cmp(&self.rank(b).height)
+    pub fn height(&self, id: TypeId) -> u32 {
+        self.rank(id).height
+    }
+
+    /// Returns a test that's false for a type whose key can't mention `part`, directly or through the types it mentions:
+    /// only a taller type whose last syntax isn't before that of `part` does.
+    pub fn may_mention(&self, part: TypeId) -> impl Fn(TypeId) -> bool + use<'p, 's> {
+        let (types, part) = (*self, self.rank(part));
+        move |whole| {
+            let whole = types.rank(whole);
+            whole.height > part.height && whole.last_syntax >= part.last_syntax
+        }
     }
 
     #[inline]
@@ -5675,11 +5685,10 @@ mod tests {
         ] {
             assert!(types.content_order(part, whole).is_lt());
             assert!(types.content_order(whole, part).is_gt());
-            assert!(types.nesting_order(whole, part).is_gt());
-            assert!(types.nesting_order(part, whole).is_lt());
+            assert!(types.height(whole) > types.height(part));
         }
         // Same height.
-        assert!(types.nesting_order(keyof_string, keyof_number).is_eq());
+        assert_eq!(types.height(keyof_string), types.height(keyof_number));
         assert!(types.content_order(outer, outer).is_eq());
     }
 

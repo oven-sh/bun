@@ -880,6 +880,8 @@ impl<'s> Program<'s> {
             partial_sig_params: Default::default(),
             declared_parameters: Default::default(),
             listed_in_unions: Default::default(),
+            keys_with: Default::default(),
+            keys_without: Default::default(),
             quick_initializers: Vec::new(),
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
@@ -1212,18 +1214,23 @@ enum Mention {
     Components(ComponentsId),
 }
 
-/// Searches a record, and the records it references, for a node or symbol of a file that `is_near` accepts. See
-/// `Checker::is_reachable_only_by_importers`.
+/// Searches a record, and the records it references, for a node or symbol of a file that `is_near` accepts, or for a type
+/// that `visits` finds. See `Checker::is_reachable_only_by_importers` and `Checker::key_mentions`.
 struct Mentioned<'a> {
     is_near: &'a dyn Fn(FileId) -> bool,
+    /// Returns `None` for the type that's searched for, and false for a type that isn't looked into.
+    visits: &'a mut dyn FnMut(TypeId) -> Option<bool>,
+    /// Whether the alias and the origin of a type are searched too.
+    whole_keys: bool,
     is_found: bool,
-    seen: crate::util::FxHashSet<Mention>,
+    /// `None` if a record is visited every time it's mentioned.
+    seen: Option<crate::util::FxHashSet<Mention>>,
     to_visit: Vec<Mention>,
 }
 
 impl Mentioned<'_> {
     fn record(&mut self, record: Mention) {
-        if !self.is_found && self.seen.insert(record) {
+        if !self.is_found && (self.seen.as_mut()).is_none_or(|seen| seen.insert(record)) {
             self.to_visit.push(record);
         }
     }
@@ -1241,7 +1248,11 @@ impl Visitor for Mentioned<'_> {
         self.record(Mention::Signature(id));
     }
     fn ty(&mut self, id: TypeId) {
-        self.record(Mention::Type(id));
+        match (self.visits)(id) {
+            None => self.is_found = true,
+            Some(true) => self.record(Mention::Type(id)),
+            Some(false) => {}
+        }
     }
     fn file(&mut self, file: FileId) {
         self.is_found |= (self.is_near)(file);
@@ -2068,6 +2079,9 @@ pub struct Checker<'p, 's> {
     /// Pairs of a type and a union for which `is_empty_intersection` has looked up every property
     /// name of the type in the union, and the results are stored.
     listed_in_unions: crate::util::FxHashSet<(TypeId, TypeId)>,
+    /// Pairs of types of which the first one's key mentions the second, and pairs of which it doesn't. See `key_mentions`.
+    keys_with: crate::util::FxHashSet<(TypeId, TypeId)>,
+    keys_without: crate::util::FxHashSet<(TypeId, TypeId)>,
     /// The results of `declared_parameter` for all parameters of a function, once `is_declared_parameter_settled`.
     declared_parameters: FxHashMap<(FileId, FnId), &'p [SigParam]>,
     /// Ranges of `stack`: the resolutions of declarations whose initializer
@@ -2640,8 +2654,10 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let mut mentioned = Mentioned {
             is_near: &is_near,
+            visits: &mut |_| Some(true),
+            whole_keys: false,
             is_found: false,
-            seen: Default::default(),
+            seen: Some(Default::default()),
             to_visit: Vec::new(),
         };
         self.stack[from..].iter().all(|&q| {
@@ -2660,26 +2676,75 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => {}
             }
             while let Some(record) = mentioned.to_visit.pop().filter(|_| !mentioned.is_found) {
-                match record {
-                    Mention::Type(ty) => self.data(ty).visit(&mut mentioned),
-                    Mention::Signature(signature) => {
-                        self.types().sig(signature).visit(&mut mentioned)
-                    }
-                    Mention::Mapper(mapper) => {
-                        for &(from, to) in self.types().mapping(mapper) {
-                            mentioned.ty(from);
-                            mentioned.ty(to);
-                        }
-                    }
-                    Mention::Components(list) => {
-                        self.types().components(list).visit(&mut mentioned)
-                    }
-                }
+                self.visit_mention(record, &mut mentioned);
             }
             mentioned.to_visit.clear();
-            mentioned.seen.clear();
+            mentioned.seen.iter_mut().for_each(|seen| seen.clear());
             mentioned.is_found
         })
+    }
+
+    fn visit_mention(&self, record: Mention, mentioned: &mut Mentioned) {
+        match record {
+            Mention::Type(ty) => {
+                self.data(ty).visit(mentioned);
+                if mentioned.whole_keys
+                    && let Some(provenance) = self.types().provenance(ty)
+                {
+                    provenance.visit(mentioned);
+                }
+            }
+            Mention::Signature(signature) => self.types().sig(signature).visit(mentioned),
+            Mention::Mapper(mapper) => {
+                for &(from, to) in self.types().mapping(mapper) {
+                    mentioned.ty(from);
+                    mentioned.ty(to);
+                }
+            }
+            Mention::Components(list) => self.types().components(list).visit(mentioned),
+        }
+    }
+
+    /// True if the key of `whole` mentions `part`, directly or through the types it mentions. The answer is kept for
+    /// every type that was searched to the end, and for those that lead to `part`.
+    pub(super) fn key_mentions(&mut self, whole: TypeId, part: TypeId) -> bool {
+        let may_mention = self.types().may_mention(part);
+        if !may_mention(whole) || self.keys_without.contains(&(whole, part)) {
+            return false;
+        }
+        if self.keys_with.contains(&(whole, part)) {
+            return true;
+        }
+        let mut mentioned = Mentioned {
+            is_near: &|_| false,
+            visits: &mut |mentioned| (mentioned != part).then(|| may_mention(mentioned)),
+            whole_keys: true,
+            is_found: false,
+            // A type that's mentioned twice has to be searched before the first of the types that mention it is done.
+            seen: None,
+            to_visit: vec![Mention::Type(whole)],
+        };
+        // The types that are being searched, each with the length of `to_visit` before what it mentions.
+        let mut open: Vec<(TypeId, usize)> = Vec::new();
+        while !mentioned.is_found {
+            if let Some(&(done, _)) = open.last().filter(|it| it.1 == mentioned.to_visit.len()) {
+                self.keys_without.insert((done, part));
+                open.pop();
+                continue;
+            }
+            let Some(record) = mentioned.to_visit.pop() else {
+                return false;
+            };
+            if let Mention::Type(next) = record {
+                if self.keys_without.contains(&(next, part)) {
+                    continue;
+                }
+                open.push((next, mentioned.to_visit.len()));
+            }
+            self.visit_mention(record, &mut mentioned);
+        }
+        (self.keys_with).extend(open.iter().map(|it| (it.0, part)));
+        true
     }
 
     /// Like `close_ring_from`, for in-progress state that isn't a query and was started when `stack` had

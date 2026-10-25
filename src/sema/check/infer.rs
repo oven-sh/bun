@@ -754,10 +754,11 @@ impl<'p, 's> Checker<'p, 's> {
         let push = 2 * n.source_stack.len() as u32;
         n.source_stack.push((source, push + 1));
         n.target_stack.push((target, push));
-        if self.is_deeply_nested_type(source, [&n.source_stack, &n.target_stack], true, 2) {
+        let stacks: [&[_]; 2] = [&n.source_stack, &n.target_stack];
+        if n.expanding & 1 == 0 && self.is_deeply_nested_type(source, stacks, true, 2) {
             n.expanding |= 1;
         }
-        if self.is_deeply_nested_type(target, [&n.source_stack, &n.target_stack], false, 2) {
+        if n.expanding & 2 == 0 && self.is_deeply_nested_type(target, stacks, false, 2) {
             cold_path();
             n.expanding |= 2;
         }

@@ -4441,40 +4441,97 @@ impl<'p, 's> Checker<'p, 's> {
         let identity = self.recursion_identity_from_target(t, data);
         let bit = identity_bit(identity);
         let mut count = 0;
-        let mut last = None;
         for (i, &(on_stack, _)) in stack.iter().enumerate() {
             if known.get(i).is_some_and(|known| known.may_match & bit == 0) {
                 continue;
             }
-            if self.has_matching_recursion_identity(on_stack, identity) {
-                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
-                    count += 1;
-                    if count >= max_depth {
-                        return true;
-                    }
-                }
-                last = Some(on_stack);
-            }
+            count += usize::from(self.has_matching_recursion_identity(on_stack, identity));
         }
-        false
+        count >= max_depth && self.has_newer_instantiations(identity, stacks, is_source, max_depth)
     }
 
-    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`. Height doesn't order two instantiations with the
-    /// same height. Counting each as newer than the other would cut off a comparison that only swaps the same two
-    /// types between the source stack and the target stack. tsgo creates an instantiation when a comparison first
-    /// reaches it, and the target's before the source's, so the type that was pushed first is the older one. Push
-    /// numbers grow with every level, and a level's target has a lower one than its source. No two entries share one,
-    /// so this is a total order: of two different types, exactly one is newer.
-    fn is_at_least_as_new(&self, t: TypeId, last: TypeId, stacks: [&[(TypeId, u32)]; 2]) -> bool {
-        let pushed = |t: TypeId| {
-            let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
-            stacks.into_iter().filter_map(first).min()
+    /// True if `max_depth` of the entries of the stack with `identity` have `t.id >= last.id` in tsgo, where `last` is the
+    /// entry with `identity` before `t`. Fewer entries than that need no order, so the callers count them first.
+    #[cold]
+    #[inline(never)]
+    fn has_newer_instantiations(
+        &mut self,
+        identity: RecursionId,
+        stacks: [&[(TypeId, u32)]; 2],
+        is_source: bool,
+        max_depth: usize,
+    ) -> bool {
+        let mut matching: SmallVec<[TypeId; 8]> = SmallVec::new();
+        for &(t, _) in stacks[usize::from(!is_source)] {
+            if self.has_matching_recursion_identity(t, identity) {
+                matching.push(t);
+            }
+        }
+        let mut count = 1;
+        for (i, (&last, &t)) in matching.iter().zip(matching.iter().skip(1)).enumerate() {
+            if count + matching.len() - 1 - i < max_depth {
+                break;
+            }
+            count += usize::from(self.is_at_least_as_new(t, last, stacks));
+        }
+        count >= max_depth
+    }
+
+    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`.
+    ///
+    /// tsgo creates the types a type's key mentions before the type itself, and the types of its members when a
+    /// comparison first reaches them. So a type is as old as the first level of the stacks that has it, as an entry or
+    /// mentioned by one. A level's source and target count as equally old. Of two types from the same level, the one
+    /// the other can mention is older: the lower one. Height doesn't order two instantiations with the same height,
+    /// and counting each as newer than the other would cut off a comparison that only swaps the same two types between
+    /// the stacks. tsgo creates the target's instantiation before the source's, and a level's target has a lower push
+    /// number than its source. No two entries share one, so this is a total order.
+    fn is_at_least_as_new(
+        &mut self,
+        t: TypeId,
+        last: TypeId,
+        stacks: [&[(TypeId, u32)]; 2],
+    ) -> bool {
+        if t == last {
+            return true;
+        }
+        if self.is_reached_through_checked_type_node(t, last, stacks) {
+            return false;
+        }
+        // Whatever has a type has the types it mentions.
+        if self.key_mentions(t, last) {
+            return true;
+        }
+        if self.key_mentions(last, t) {
+            return false;
+        }
+        let rank = |t: TypeId| {
+            let pushes = (stacks.into_iter().flatten()).filter(|it| it.0 == t);
+            (
+                self.types().height(t),
+                pushes.map(|it| it.1).min().unwrap_or(0),
+            )
         };
-        t == last
-            || !self.is_reached_through_checked_type_node(t, last, stacks)
-                && (self.types().nesting_order(t, last))
-                    .then_with(|| pushed(t).cmp(&pushed(last)))
-                    .is_ge()
+        let (of_t, of_last) = (rank(t), rank(last));
+        let ((higher, pushed), (lower, lower_pushed)) = match of_t >= of_last {
+            true => ((t, of_t.1), (last, of_last.1)),
+            false => ((last, of_last.1), (t, of_t.1)),
+        };
+        // Little is taller than the higher type, so little is searched for its first level. The lower type is older if
+        // any level up to that one has it. The levels next to it are the most likely to.
+        let mut level = pushed >> 1;
+        for stack in stacks {
+            let below = stack.iter().take_while(|it| it.1 >> 1 < level);
+            if let Some(first) = below.copied().find(|it| self.key_mentions(it.0, higher)) {
+                level = first.1 >> 1;
+            }
+        }
+        let is_lower_older = lower_pushed >> 1 <= level
+            || stacks.into_iter().any(|stack| {
+                let up_to = stack.iter().rev().skip_while(|it| it.1 >> 1 > level);
+                up_to.copied().any(|it| self.key_mentions(it.0, lower))
+            });
+        is_lower_older == (higher == t)
     }
 
     /// True if a type argument of `last` is on a stack between `last` and `t`, and it's a function type or a type literal
@@ -4554,7 +4611,6 @@ impl<'p, 's> Checker<'p, 's> {
         let identity = self.current_recursion_identity(t, cached_value);
         let bit = identity_bit(identity);
         let mut count = 0;
-        let mut last = None;
         for (&(on_stack, _), known) in stack.iter().zip(identities.iter()) {
             if known.may_match & bit == 0 {
                 continue;
@@ -4566,17 +4622,9 @@ impl<'p, 's> Checker<'p, 's> {
                 (cached_value == identity || identity == (0, on_stack.0, 0))
                     && self.current_recursion_identity(on_stack, cached_value) == identity
             };
-            if matches {
-                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
-                    count += 1;
-                    if count >= max_depth {
-                        return true;
-                    }
-                }
-                last = Some(on_stack);
-            }
+            count += usize::from(matches);
         }
-        false
+        count >= max_depth && self.has_newer_instantiations(identity, stacks, is_source, max_depth)
     }
 
     /// See `OnStack::may_match`.

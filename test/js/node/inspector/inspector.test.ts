@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import inspector from "node:inspector";
+import { join } from "node:path";
 
 test("inspector.url()", () => {
   expect(inspector.url()).toBeUndefined();
@@ -298,6 +299,127 @@ test("inspector.close() followed by inspector.open() starts a new server", async
   expect(summary.secondUrl).not.toBe(summary.firstUrl);
   expect(summary.protocolVersion).toBe("1.1");
   expect(summary.finalUrl).toBeNull();
+});
+
+// inspector.close() blocks its thread until the debugger thread has stopped the server. The
+// debugger thread must not wait for a garbage collection of its own heap before it says so: every
+// JSC heap in the process shares one set of GC helper threads, and while another heap's
+// collection holds them, a synchronous collection can wait forever.
+//
+// The two tests below read what a fixture logs under BUN_JSC_logGC. The log goes to a file: JSC
+// writes it in many small pieces, and a pipe that fills up while the reader is busy loses them.
+// They are not test.concurrent: a regression is a child that never exits, and bun test only kills
+// the child of a timed-out test outside a concurrent group.
+async function runCloseFixture(fixture: string, env: Record<string, string>, ...args: string[]) {
+  using dir = tempDir("inspector-close-gc", { "fixture.mjs": fixture });
+  const logPath = join(String(dir), "stderr.log");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs", ...args],
+    env: { ...bunEnv, BUN_JSC_logGC: "1", ...env },
+    cwd: String(dir),
+    stderr: Bun.file(logPath),
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const log = await Bun.file(logPath).text();
+  return { stdout, exitCode, signalCode: proc.signalCode, log, logIfFailed: exitCode === 0 ? "" : log.slice(-4096) };
+}
+
+const closeWithoutCollectionFixture = `
+import inspector from "node:inspector";
+import { writeSync } from "node:fs";
+
+// A full collection of this thread's heap, so the log is known to name them.
+Bun.gc(true);
+
+for (let round = 0; round < 3; round++) {
+  inspector.open(0, "127.0.0.1", false);
+  writeSync(2, "\\nCLOSING\\n");
+  inspector.close();
+  writeSync(2, "\\nCLOSED\\n");
+}
+console.log("closed every time");
+`;
+
+test("inspector.close() does not wait for a garbage collection on the debugger thread", async () => {
+  // BUN_IDLE_GC_SECONDS=0: the idle full collection of a quiet heap cannot land between the markers.
+  const { log, ...result } = await runCloseFixture(closeWithoutCollectionFixture, { BUN_IDLE_GC_SECONDS: "0" });
+
+  // The calling thread is blocked between the two markers, so a collection that starts there is the debugger thread's.
+  const closes = [...log.matchAll(/\nCLOSING\n(.*?)\nCLOSED\n/gs)].map(match => match[1]);
+  expect({
+    ...result,
+    logNamesFullCollections: log.includes("=> FullCollection"),
+    fullCollectionsDuringClose: closes.filter(close => close.includes("=> FullCollection")),
+  }).toEqual({
+    stdout: "closed every time\n",
+    exitCode: 0,
+    signalCode: null,
+    logIfFailed: "",
+    logNamesFullCollections: true,
+    fullCollectionsDuringClose: [],
+  });
+});
+
+const closeDuringCollectionFixture = `
+import inspector from "node:inspector";
+import { writeSync } from "node:fs";
+
+for (let round = 0; round < Number(process.argv[2]); round++) {
+  inspector.open(0, "127.0.0.1", false);
+  // Request a collection of this thread's heap. The allocations start it, and close()
+  // then blocks this thread while that collection still holds the GC helper threads.
+  Bun.gc(false);
+  const garbage = [];
+  for (let i = 0; i < 1000; i++) garbage.push({ i });
+  writeSync(2, "\\nCLOSING\\n");
+  inspector.close();
+  writeSync(2, "\\nCLOSED\\n");
+}
+console.log("closed every time");
+`;
+
+// A file, not -e: a one-shot -e run has a single GC marker and no helper threads to hold.
+test("inspector.close() returns while a garbage collection of the calling thread is in flight", async () => {
+  // The hang is a lost race. A round costs about 30 ms on a debug build and 1 ms on a release build.
+  const rounds = isDebug ? 10 : isASAN ? 100 : 500;
+  // With BUN_DESTRUCT_VM_ON_EXIT the fixture can take seconds to exit: under these options its
+  // exit-time collection waits for GC helper threads that the idle debugger thread still holds.
+  const { log, ...result } = await runCloseFixture(
+    closeDuringCollectionFixture,
+    {
+      // The hang needs JSC's stochastic scheduler and a helper thread. JSC turns both off on small machines.
+      BUN_JSC_useStochasticMutatorScheduler: "1",
+      BUN_JSC_numberOfGCMarkers: "8",
+      // A collection hands its marking to the helper threads and resumes its own thread at once.
+      BUN_JSC_gcPauseScale: "0",
+      BUN_JSC_minimumGCPauseMS: "0",
+      BUN_JSC_minimumMutatorUtilization: "1",
+      BUN_JSC_maximumMutatorUtilization: "1",
+    },
+    String(rounds),
+  );
+
+  // The first heap in the log is the calling thread's. Its collection is in flight at a close()
+  // when its last START before the marker has no END after it.
+  const callerHeap = log.match(/\[GC<([^>]+)>: starting /)?.[1];
+  const ended = new RegExp(`\\[GC<${callerHeap}>: .* END\\]`);
+  const closedDuringACollection = [...log.matchAll(/\nCLOSING\n/g)].some(({ index }) => {
+    const started = log.lastIndexOf(`[GC<${callerHeap}>: START `, index);
+    return started !== -1 && !ended.test(log.slice(started, index));
+  });
+  expect({
+    ...result,
+    schedulerReadItsOptions: log.includes("tp=0.000000ms"),
+    closedDuringACollection,
+  }).toEqual({
+    stdout: "closed every time\n",
+    exitCode: 0,
+    signalCode: null,
+    logIfFailed: "",
+    schedulerReadItsOptions: true,
+    closedDuringACollection: true,
+  });
 });
 
 // A failed inspector.open() (port already in use) must print Node's diagnostic

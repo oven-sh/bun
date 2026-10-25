@@ -653,6 +653,26 @@ export default function () {
       });
     });
 
+    // When the plugin answers for `g.ts`, its file is in the graph as the entry point of `f.ts`.
+    test.concurrent("when an onResolve plugin passes on a route that is a link to another route's file", async () => {
+      const realPages = ["a", "b", "d", "e", "h"];
+      const plugins = `{
+        name: "passes",
+        setup(build) {
+          build.onResolve({ filter: /[\\\\/]routes[\\\\/]g\\.ts$/ }, args => void asked(args));
+        },
+      }`;
+      using dir = tempDir("bake-production-plugin-linked-route", appFiles(realPages, { plugins }));
+      symlinkSync(path.join("..", "shared", "page.ts"), path.join(String(dir), "routes", "f.ts"));
+      symlinkSync(path.join("..", "shared", "page.ts"), path.join(String(dir), "routes", "g.ts"));
+      const { pages, asked, exitCode, stderr } = await prerender(String(dir));
+      expect({ pages, asked, exitCode }, stderr).toEqual({
+        pages: { ...ownPages(realPages), "/f": "shared-page", "/g": "shared-page" },
+        asked: ["entry-point-build g.ts"],
+        exitCode: 0,
+      });
+    });
+
     // The plugin sees `b.ts` twice: as an entry point, and as the import in `a.ts`.
     // Whichever it answers first puts the file in the graph.
     const passesOnImportedRoute = (entryPointFirst: boolean) => `{

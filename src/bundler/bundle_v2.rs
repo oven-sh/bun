@@ -3869,6 +3869,7 @@ pub mod bv2_impl {
             target: options::Target,
         ) -> Option<IndexInt> {
             let source_index = self.source_index_of_entry_item(resolved, target)?;
+            // `LinkerGraph::load` skips the repeat when the file is an entry point already.
             self.graph.entry_points.push(Index::init(source_index));
             Some(source_index)
         }

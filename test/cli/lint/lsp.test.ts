@@ -282,7 +282,13 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
           import markdown from "@eslint/markdown";
           import json from "@eslint/json";
           export default [
-            { files: ["**/*.md"], plugins: { markdown }, language: "markdown/gfm", rules: { "markdown/no-html": "error" } },
+            {
+              files: ["**/*.md"],
+              plugins: { markdown },
+              language: "markdown/gfm",
+              languageOptions: { frontmatter: "yaml" },
+              rules: { "markdown/no-html": "error" },
+            },
             { files: ["**/*.json"], plugins: { json }, language: "json/json", rules: { "json/no-duplicate-keys": "error" } },
             { files: ["**/*.jsonc"], plugins: { json }, language: "json/jsonc", rules: { "json/no-duplicate-keys": "error" } },
           ];`,
@@ -317,6 +323,18 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
         line: "# Title\n\n<!-- eslint-disable-next-line markdown/no-html -->\n<b>a</b>\n",
         file: "<!-- eslint-disable markdown/no-html -->\n# Title\n\n<b>a</b>\n",
       });
+      // The comment goes after the front matter, which must stay first.
+      const withFrontMatter = await disables("fm.md", "markdown", "---\ntitle: x\n---\n\n# Title\n\n<b>a</b>\n");
+      expect(withFrontMatter).toEqual({
+        code: "markdown/no-html",
+        line: "---\ntitle: x\n---\n\n# Title\n\n<!-- eslint-disable-next-line markdown/no-html -->\n<b>a</b>\n",
+        file: "---\ntitle: x\n---\n<!-- eslint-disable markdown/no-html -->\n\n# Title\n\n<b>a</b>\n",
+      });
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(join(String(dir), "fm.md")), version: 2 },
+        contentChanges: [{ text: withFrontMatter.file }],
+      });
+      expect((await client.diagnostics(join(String(dir), "fm.md"))).params.diagnostics).toHaveLength(0);
       const twice = '{ "a": 1, "a": 2 }\n';
       expect(await disables("a.jsonc", "jsonc", twice)).toEqual({
         code: "json/no-duplicate-keys",

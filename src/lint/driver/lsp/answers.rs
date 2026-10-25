@@ -30,8 +30,18 @@ pub(crate) struct Directives {
 pub(crate) enum Comments {
     /// `// ..` and `/* .. */`: JavaScript, JSONC and JSON5.
     Slashes,
-    /// `<!-- .. -->`: Markdown.
-    Html,
+    /// `<!-- .. -->`: Markdown. `front_matter`: the byte of the fences of its front matter (`---` or `+++`), if
+    /// `languageOptions.frontmatter` turns it on.
+    Html { front_matter: Option<u8> },
+}
+
+/// The fence that `languageOptions.frontmatter` picks: `---` for `"yaml"` and `"json"`, `+++` for `"toml"`.
+fn front_matter_fence(options: Option<&Json>) -> Option<u8> {
+    match options?.get(b"frontmatter")?.as_str()? {
+        b"yaml" | b"json" => Some(b'-'),
+        b"toml" => Some(b'+'),
+        _ => None,
+    }
 }
 
 impl Directives {
@@ -46,7 +56,9 @@ impl Directives {
                 let name = strings::split_once_char(name, b'/').map_or(name, |it| it.1);
                 match (config.dialect.as_ref()?.language.plugin(), name) {
                     (Plugin::Json, b"jsonc" | b"json5") => Comments::Slashes,
-                    (Plugin::Markdown, _) => Comments::Html,
+                    (Plugin::Markdown, _) => Comments::Html {
+                        front_matter: front_matter_fence(config.other_language_options.as_ref()),
+                    },
                     _ => return None,
                 }
             }
@@ -63,7 +75,7 @@ impl Directives {
     fn for_line(self) -> (Vec<u8>, &'static [u8]) {
         let (open, close): (&[u8], &[u8]) = match self.comments {
             Comments::Slashes => (b"// ", b""),
-            Comments::Html => (b"<!-- ", b" -->"),
+            Comments::Html { .. } => (b"<!-- ", b" -->"),
         };
         ([open, self.tool, b"-disable-next-line "].concat(), close)
     }
@@ -72,7 +84,7 @@ impl Directives {
     fn for_file(self) -> (Vec<u8>, &'static [u8]) {
         let (open, close): (&[u8], &[u8]) = match self.comments {
             Comments::Slashes => (b"/* ", b" */"),
-            Comments::Html => (b"<!-- ", b" -->"),
+            Comments::Html { .. } => (b"<!-- ", b" -->"),
         };
         ([open, self.tool, b"-disable "].concat(), close)
     }
@@ -277,20 +289,51 @@ impl<'t> Places<'t> {
         self.edit((start, start), &new)
     }
 
-    /// A comment at the top that turns `rule` off.
+    /// The start of the line after the front matter's closing fence, if the text after the byte order mark starts with
+    /// a line of three `fence`s and has another.
+    fn after_front_matter(&self, after_mark: usize, fence: u8) -> Option<usize> {
+        let is_fence = |line: &[u8]| {
+            line.len() >= 3
+                && line[..3].iter().all(|&byte| byte == fence)
+                && line[3..].iter().all(|byte| matches!(byte, b' ' | b'\t'))
+        };
+        if !is_fence(&self.text[after_mark..self.lines.line(0).1]) {
+            return None;
+        }
+        let mut line = 1;
+        loop {
+            let (start, end) = self.lines.line(line);
+            if start == self.text.len() {
+                return None;
+            }
+            if is_fence(&self.text[start..end]) {
+                return Some(self.lines.line(line + 1).0);
+            }
+            line += 1;
+        }
+    }
+
+    /// A comment at the top that turns `rule` off: after a shebang, or after Markdown's front matter.
     fn disable_for_file(&self, rule: &[u8], directives: Directives) -> Json {
         let after_mark = self.text.len() - strings::without_utf8_bom(self.text).len();
-        let at = match self.text[after_mark..].starts_with(b"#!") {
-            true => self.lines.line(1).0,
-            false => after_mark,
+        let at = match directives.comments {
+            Comments::Slashes if self.text[after_mark..].starts_with(b"#!") => self.lines.line(1).0,
+            Comments::Html {
+                front_matter: Some(fence),
+            } => self
+                .after_front_matter(after_mark, fence)
+                .unwrap_or(after_mark),
+            Comments::Slashes | Comments::Html { .. } => after_mark,
         };
         let line_break = self.lines.line_break();
-        // The interpreter's line is the last.
-        let before: &[u8] =
-            match at == self.text.len() && at > after_mark && self.lines.line(0).1 == at {
-                true => line_break,
-                false => b"",
-            };
+        // What is skipped ends the text without a line break.
+        let before: &[u8] = match at == self.text.len()
+            && at > after_mark
+            && !matches!(self.text.last(), Some(b'\n' | b'\r'))
+        {
+            true => line_break,
+            false => b"",
+        };
         let (comment, close) = directives.for_file();
         let new = [before, &comment, rule, close, line_break].concat();
         self.edit((at, at), &new)

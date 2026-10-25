@@ -302,8 +302,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                     flag,
                                 )
                             {
-                                // Step 3 bound each name of this export star to a read
-                                // off its namespace: "var ns = __toESM(require_x())".
+                                // Step 3 bound each name to `ns.name`: declare `ns`.
                                 stmts
                                     .inside_wrapper_prefix
                                     .append_non_dependency(Stmt::alloc(

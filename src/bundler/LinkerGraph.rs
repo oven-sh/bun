@@ -150,13 +150,8 @@ pub mod js_meta {
         pub(crate) needs_export_symbol_from_runtime: bool,
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
-        /// A lifted CommonJS file whose exports are all known at bundle time:
-        /// the parser lifted every `exports.x = ...` (it did not keep the file
-        /// CommonJS), and no `export *` of the file reaches a file with
-        /// unknown exports. Step 1 of `scan_imports_and_exports` keeps the
-        /// `__commonJS` wrapper of such a file when an importer holds its
-        /// `module.exports`. Its `exports_kind` is then `Cjs` like a genuine
-        /// CommonJS file, but an `export *` of it still resolves statically.
+        /// A lifted CommonJS file whose `named_exports` is its whole export
+        /// list, even once step 1 sets `exports_kind = Cjs` to keep its wrapper.
         pub(crate) lifted_exports_are_static: bool,
         pub(crate) wrap: WrapKind,
     }
@@ -873,8 +868,7 @@ impl<'a> LinkerGraph<'a> {
             .zip(dest_resolved_exports.iter_mut())
             .enumerate()
         {
-            // Snapshot of the parser's verdict, before the linker overwrites
-            // `exports_kind` for a lifted file that keeps its wrapper.
+            // The parser's verdict, read before step 1 overwrites `exports_kind`.
             dest_flags[source_index].lifted_exports_are_static = src_ast_flags[source_index]
                 .contains(bundled_ast::Flags::COMMONJS_LIFTED_TO_ESM)
                 && src_exports_kind[source_index] != bun_ast::ExportsKind::Cjs;

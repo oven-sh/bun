@@ -1458,11 +1458,8 @@ fn should_call_runtime_require(format: options::Format) -> bool {
     format != Format::Cjs
 }
 
-/// The target of an `export *` is a lifted CommonJS file that keeps its
-/// `__commonJS` wrapper (step 1 made it `Cjs` so that an importer gets the real
-/// `module.exports`) and whose exports are still all known at bundle time. The
-/// `export *` resolves statically. Each name is a property read off the
-/// `__toESM(require_x())` namespace, like a named import of a wrapped file.
+/// An `export *` target that keeps its `__commonJS` wrapper but whose exports
+/// are all known: the `export *` resolves statically, each name as `ns.name`.
 #[inline]
 pub(crate) fn export_star_target_is_wrapped_lifted(
     kind: ExportsKind,
@@ -1548,8 +1545,6 @@ impl DependencyWrapper<'_> {
             if found_dynamic {
                 for frame in self.export_star_stack.drain(..) {
                     let id = frame.source_index as usize;
-                    // An `export *` of this file reaches a file with unknown
-                    // exports, so its own export list is not static either.
                     self.flags[id].lifted_exports_are_static = false;
                     // A wrapped lifted file stays `Cjs`: the wrapper needs it.
                     if self.exports_kind[id] != ExportsKind::Cjs {
@@ -1651,28 +1646,24 @@ struct ExportStarContext<'a> {
     flags: *mut [js_meta::Flags],
     parts_list: *mut [PartList<'a>],
     top_level_symbol_to_parts_overlay: *mut [js_meta::TopLevelSymbolToParts],
-    /// The symbol made for one name read through one `export *` of a wrapped
-    /// lifted file, by (file, import record, alias). `add_exports` runs once
-    /// per file that has export stars, so the same edge is walked from every
-    /// file whose export stars reach it.
+    /// The symbol that reads one name off one `export *` of a wrapped lifted
+    /// file, by (file, import record, alias). Every walk through the edge shares it.
     wrapped_lifted_names: HashMap<(IndexInt, u32, &'static [u8]), Ref>,
     /// The export each such symbol stands for, for the ambiguity check.
     wrapped_lifted_targets: HashMap<Ref, ImportTracker>,
 }
 
-/// A file in the `export *` walk of `add_exports` and the index of its next
-/// export star record.
+/// A file in the `export *` walk of `add_exports` and its next export star record.
 struct ResolveExportStarFrame {
     source_index: IndexInt,
     next_record: usize,
-    /// Set once the walk has passed through an `export *` of a wrapped lifted
-    /// file: every name found from here on is read off that star's namespace.
+    /// The `export *` of a wrapped lifted file the walk passed through, if any:
+    /// every name found from here on is read off its namespace.
     via: Option<WrappedLiftedExportStar>,
 }
 
-/// The `export *` statement of `source_index` whose target is a wrapped lifted
-/// file. `namespace_ref` is the statement's namespace symbol, which
-/// `convert_stmts_for_chunk` declares as `var ns = __toESM(require_x())`.
+/// An `export *` statement whose target is a wrapped lifted file.
+/// `convert_stmts_for_chunk` declares its `namespace_ref` as `__toESM(require_x())`.
 #[derive(Clone, Copy)]
 struct WrappedLiftedExportStar {
     source_index: IndexInt,
@@ -1729,8 +1720,7 @@ impl<'a> ExportStarContext<'a> {
                     ExportsKind::Cjs,
                     col_ref!(self.flags)[other_id],
                 ) {
-                    // The exports of a CommonJS module are not known at bundle
-                    // time. The export star runs at run time instead (`__reExport`).
+                    // Unknown exports: the export star runs at run time (`__reExport`).
                     continue;
                 }
                 if via.is_none() {
@@ -1765,14 +1755,12 @@ impl<'a> ExportStarContext<'a> {
                     }
                 }
 
-                // The export this name resolves to.
                 let target = ImportTracker {
                     import_ref: name.ref_,
                     source_index: Index::source(other_source_index),
                     name_loc: name.alias_loc,
                 };
-                // What `resolved_exports` binds to: the export itself, or a
-                // symbol that reads it off the wrapped lifted file's namespace.
+                // The export itself, or a read of it off the wrapped file's namespace.
                 let binding = match via {
                     None => target,
                     Some(via) => ImportTracker {
@@ -1872,10 +1860,8 @@ impl<'a> ExportStarContext<'a> {
         unreachable!("an export star record always has its statement")
     }
 
-    /// The symbol in `via.source_index` that reads `alias` off the namespace
-    /// of `via`'s export star, made on first use. It is an import whose
-    /// `namespace_alias` prints it as `ns.alias`, the shape a named import of
-    /// a wrapped CommonJS file takes in step 4.
+    /// The import symbol in `via.source_index` whose `namespace_alias` prints
+    /// as `ns.alias`, the shape step 4 gives a named import of a wrapped file.
     fn wrapped_lifted_name(
         &mut self,
         graph: &mut LinkerGraph<'a>,

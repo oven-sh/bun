@@ -581,8 +581,7 @@ pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
                 lint_options: &lint_options_in,
                 format_options: &format_options_in,
             },
-        );
-        Outcome::default()
+        )
     })
 }
 

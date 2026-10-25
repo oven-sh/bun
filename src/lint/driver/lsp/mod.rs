@@ -72,7 +72,7 @@ pub struct Process<'p> {
     /// folder's plugins don't run.
     pub engines: &'p (dyn Fn() -> Option<Box<dyn Realms + 'p>> + Sync),
     /// Ends the process at once, whatever its threads are doing.
-    pub exit: &'p (dyn Fn(u8) + Sync),
+    pub exit: &'p (dyn Fn(u8) -> ! + Sync),
     pub features: Features,
     /// The flags of `bun lint` in a directory: those of its `bunfig.toml` and the ones above it, then the arguments.
     /// `Err`: what is wrong with one of them.
@@ -385,7 +385,7 @@ impl<'s> Server<'s> {
     }
 
     /// Ends the process with `code`, once the engines have ended their threads.
-    fn exit(&self, code: u8) {
+    fn exit(&self, code: u8) -> ! {
         let realms: Vec<Arc<dyn Realms + 's>> = std::mem::take(&mut *self.realms.lock());
         for realms in &realms {
             realms.end_all();
@@ -1120,7 +1120,7 @@ impl<'d> Desk<'d, '_, '_> {
     fn notification(&mut self, method: &[u8], params: &Json) {
         let server = self.server;
         if method == b"exit" {
-            return server.exit(u8::from(self.phase != Phase::Down));
+            server.exit(u8::from(self.phase != Phase::Down));
         }
         if self.phase != Phase::Running {
             return;
@@ -1229,7 +1229,7 @@ impl<'d> Desk<'d, '_, '_> {
         }
     }
 
-    fn run(&mut self) {
+    fn run(&mut self) -> ! {
         let server = self.server;
         let mut reader = Reader::new(server.process.read);
         loop {
@@ -1244,7 +1244,7 @@ impl<'d> Desk<'d, '_, '_> {
                     continue;
                 }
                 // The client is gone.
-                Frame::End => return server.exit(u8::from(self.phase != Phase::Down)),
+                Frame::End => server.exit(u8::from(self.phase != Phase::Down)),
             };
             match Incoming::parse(&message) {
                 Incoming::Request { id, method, params } => self.request(id, &method, &params),
@@ -1268,7 +1268,7 @@ impl<'d> Desk<'d, '_, '_> {
 }
 
 /// Serves a client until it says `exit` or is gone, which ends the process.
-pub fn serve<'a>(args: Args<'a>, environment: &'a Environment<'a>, process: &'a Process<'a>) {
+pub fn serve<'a>(args: Args<'a>, environment: &'a Environment<'a>, process: &'a Process<'a>) -> ! {
     let server = &Server {
         args,
         environment,
@@ -1290,9 +1290,6 @@ pub fn serve<'a>(args: Args<'a>, environment: &'a Environment<'a>, process: &'a 
             roots: Vec::new(),
             serial: 0,
         };
-        desk.run();
-        for root in &desk.roots {
-            root.change(|queue| queue.is_closed = true);
-        }
-    });
+        desk.run()
+    })
 }

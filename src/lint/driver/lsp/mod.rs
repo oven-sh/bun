@@ -1122,20 +1122,32 @@ impl<'d> Desk<'d, '_, '_> {
         params: &Json,
         job: impl FnOnce(Json, Arc<Document>) -> Option<Job>,
     ) {
-        let server = self.server;
-        let document = uri_in(params)
-            .and_then(|uri| self.documents.get(uri))
-            .cloned();
-        let root = document.as_ref().and_then(|it| self.root_of(&it.path));
-        let job = document.and_then(|it| job(id.clone(), it));
-        let (Some(root), Some(job)) = (root, job) else {
-            return (server.out).fail(
+        let target = self.target(params);
+        let job = target
+            .as_ref()
+            .and_then(|(document, _)| job(id.clone(), document.clone()));
+        match (target, job) {
+            (Some((_, root)), Some(job)) => self.enqueue(id, &root, job),
+            _ => (self.server.out).fail(
                 id,
                 ErrorCode::InvalidParams,
                 "The request is about no open document",
-            );
-        };
-        server.pending.lock().push((id, false));
+            ),
+        }
+    }
+
+    /// The open document a request is about, and the root whose thread serves it.
+    fn target(&mut self, params: &Json) -> Option<(Arc<Document>, Arc<Root>)> {
+        let document = uri_in(params)
+            .and_then(|uri| self.documents.get(uri))
+            .cloned()?;
+        let root = self.root_of(&document.path)?;
+        Some((document, root))
+    }
+
+    /// Queues a job for `root`'s thread, and the request as one that is pending.
+    fn enqueue(&self, id: Json, root: &Root, job: Job) {
+        self.server.pending.lock().push((id, false));
         root.change(|queue| queue.requests.push_back(job));
     }
 

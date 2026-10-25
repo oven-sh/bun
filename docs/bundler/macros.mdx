@@ -219,6 +219,21 @@ function howLong() {
 export { howLong };
 ```
 
+An object or an array that a macro returns is one value at run time when you bind it to a name, and the program can change it before the next call. A macro argument cannot name it, or a property of it. Call the macro inside the argument instead:
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import { getConfig } from "./getConfig.ts" with { type: "macro" };
+import { getText } from "./getText.ts" with { type: "macro" };
+
+const config = getConfig();
+
+// error: "Cannot convert identifier to JS. Try a statically-known value"
+getText(config);
+
+// this works
+getText(getConfig());
+```
+
 ## Examples
 
 ### Embed latest git commit hash
@@ -293,16 +308,16 @@ Bun erases the `extractMetaTags` function at bundle-time and replaces it with th
 import { extractMetaTags } from "./meta.ts" with { type: "macro" };
 
 export const Head = () => {
-  const headTags = extractMetaTags("https://example.com");
+  const { title, viewport } = extractMetaTags("https://example.com");
 
-  if (headTags.title !== "Example Domain") {
+  if (title !== "Example Domain") {
     throw new Error("Expected title to be 'Example Domain'");
   }
 
   return (
     <head>
-      <title>{headTags.title}</title>
-      <meta name="viewport" content={headTags.viewport} />
+      <title>{title}</title>
+      <meta name="viewport" content={viewport} />
     </head>
   );
 };
@@ -310,18 +325,22 @@ export const Head = () => {
 
 ```jsx output
 export const Head = () => {
-  const headTags = {
+  const { title, viewport } = {
     title: "Example Domain",
     viewport: "width=device-width, initial-scale=1",
   };
 
   return (
     <head>
-      <title>{headTags.title}</title>
-      <meta name="viewport" content={headTags.viewport} />
+      <title>{"Example Domain"}</title>
+      <meta name="viewport" content={"width=device-width, initial-scale=1"} />
     </head>
   );
 };
 ```
 
 </CodeGroup>
+
+The pattern binds `title` and `viewport` to strings. Inside one file, Bun inlines a `const` string, number or boolean from a macro into each read of it. `bun run` does this always, and `bun build` does it with the minify syntax option. A module that imports the `const` reads it at run time.
+
+An object or an array that you bind to a name (`const headTags = extractMetaTags(...)`) stays one value at run time. Bun emits it once, with each property that the macro returned, and `headTags.title` reads it when the code runs. So the branch above stays, and `import(headTags.page)` is not bundled (`--reject-unresolved` makes that a build error). To let Bun use a property at bundle-time, destructure it in the file that reads it, or read it from the call (`extractMetaTags(...).title`).

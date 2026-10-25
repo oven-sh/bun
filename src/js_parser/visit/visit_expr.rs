@@ -542,7 +542,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         spread_object = Some(*inner);
                     }
                     let mut props: G::PropertyList = match spread_object {
-                        // Another expression can reference the same spread object (e.g. a macro result), so copy its list.
+                        // The spread object can be a `define` value that was not cloned, so copy its list.
                         Some(object) => {
                             let mut props = G::PropertyList::init_capacity(
                                 object.properties.len() + usize::from(!e_.children.is_empty()),
@@ -1481,7 +1481,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if Self::ALLOW_MACROS {
                 if !p.options.features.is_macro_runtime {
+                    // `macro().a = v` and `delete macro().a` act on the object, not on the value of `a`.
                     if p.macro_call_count > 0
+                        && in_.assign_target == js_ast::AssignTarget::None
+                        && !is_delete_target
                         && matches!(e_.target.data, Data::EObject(..))
                         && e_
                             .target

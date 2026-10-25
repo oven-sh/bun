@@ -256,7 +256,7 @@ pub struct DynamicImportItem {
 }
 pub type DynamicImportAliases = ArrayHashMap<u32, DynamicImportUse, AutoContext, AstAlloc>;
 pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
-/// Printed in place of each read of a `const`. A macro object or array is copied per read (#7196).
+/// Printed in place of each read of a `const`. A primitive only: a copy of it is the same value.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct ConstValue(Expr);
@@ -274,8 +274,6 @@ impl ConstValue {
                 | ExprData::EInlinedEnum(_) => true,
                 ExprData::EUndefined(_) => !has_default,
                 ExprData::EString(str) => str.next.is_none(),
-                ExprData::EArray(array) => array.was_originally_macro,
-                ExprData::EObject(object) => object.was_originally_macro,
                 _ => false,
             };
         admit.then_some(Self(value))

@@ -621,11 +621,9 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
     return true;
 }
 
-// `Module.prototype.load` is backed by one slot shared by both prototype
-// objects, so assigning it on either is seen by every instance, as in Node.
-// The property is a CustomValue, so JSC only calls the setter when the
-// receiver is the prototype itself. A write through an instance or a derived
-// object adds an own property on the receiver instead (JSObject::putInlineSlow).
+// `Module.prototype.load` is one slot shared by both prototype objects, as in
+// Node. JSC calls a CustomValue setter only for the holder itself; a write
+// through an instance adds an own property on that instance instead.
 JSC_DEFINE_CUSTOM_GETTER(getterLoadFunction,
     (JSC::JSGlobalObject * globalObject,
         JSC::EncodedJSValue thisValue, JSC::PropertyName))

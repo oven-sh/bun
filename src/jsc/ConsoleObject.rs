@@ -1129,6 +1129,7 @@ impl<'a> DynWriteAdapter<'a> {
 }
 
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
+    let mut source_code = bun_core::Utf8Bytes::EMPTY;
     let mut holder = crate::zig_exception::Holder::init();
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
@@ -1139,7 +1140,14 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     // two simultaneous `&mut` into `holder`. Capture the flag in a local and
     // write it back after.
     let mut need_to_clear = holder.need_to_clear_parser_arena_on_deinit;
-    vm.remap_zig_exception(holder.zig_exception(), err, None, &mut need_to_clear, false);
+    vm.remap_zig_exception(
+        holder.zig_exception(),
+        err,
+        None,
+        &mut need_to_clear,
+        &mut source_code,
+        false,
+    );
     holder.need_to_clear_parser_arena_on_deinit = need_to_clear;
 
     let mut adapter = DynWriteAdapter::new(writer);

@@ -85,23 +85,26 @@ requires a real encoder, not a cast.
 
 `String` owns one ref when WTF-backed: `Drop` derefs, `Clone` refs, it is
 not `Copy`. Borrow with `&String` (or `StringView<'_>` when a by-value borrow
-is needed). Rust cannot build a `String` that borrows: only `StringView<'a>`
+is needed). Rust cannot build a `String` that borrows: `StringView<'a>`
 wraps a `&'a [u8]` without copying. It derefs to `&String`,
 `StringView::as_strings` lends a slice of them as `&[String]`, and
-`String::clone(&view)` copies the bytes into an owned `String`. (C++ can still
-write a `Bun::toStringView` into a `String` slot, as it does for
-`ZigStackTrace` source lines, whose owner the trace refs.) In an `extern "C"` signature a by-value `String` means ownership
+`String::clone(&view)` copies the bytes into an owned `String`. A field that
+holds either an owned `String` or borrowed bytes is a `StringOrView<'a>` (the
+`ZigException<'a>` / `ZigStackFrame<'a>` strings: C++ fills them with refs, the
+dev server with slices of a request body); it drops the ref if it has one and
+also derefs to `&String`. In an `extern "C"` signature a by-value `String` means ownership
 crosses the boundary (C++ `Bun::toStringRef` return / `transferToWTFString()`
 consumer); `&String` ⇔ `const BunString*`.
 
 ```rust
-use bun_core::{EncodedSlice, String, StringView, Utf8Bytes};   // the only import path for all four
+use bun_core::{EncodedSlice, String, StringOrView, StringView, Utf8Bytes};   // the only import path for all five
 
 let s = String::clone_utf8(utf8_bytes);    // copies into a WTFStringImpl
 let s = String::static_("literal");        // 'static ASCII slice, never freed
 let s = String::from_static_bytes(bytes);  // 'static UTF-8: ASCII is not copied, anything else is clone_utf8
 let v = StringView::borrow_utf8(utf8_bytes); // no copy; `v` cannot outlive the slice
 let v = StringView::from_bytes(bytes);       // borrow arbitrary bytes; tags UTF-8 if non-ASCII
+let f: StringOrView<'_> = StringOrView::from_bytes(bytes); // same borrow, for a field that `owned.into()` also fits
 s.eq_ascii(b"lit") / s.starts_with_ascii(b"lit")  // encoding-aware ASCII compare without transcoding
 
 let utf8: Utf8Bytes<'_>      = s.to_utf8();             // borrows `s` (ASCII/UTF-8) or transcodes; for locals

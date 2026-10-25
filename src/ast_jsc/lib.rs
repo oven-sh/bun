@@ -14,7 +14,7 @@ pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) 
     if let Some(value) = err.to_error() {
         value.to_zig_exception(global_object, zig_exception_holder.zig_exception());
     } else {
-        zig_exception_holder.zig_exception().message = err.to_bun_string(global_object)?;
+        zig_exception_holder.zig_exception().message = err.to_bun_string(global_object)?.into();
     }
 
     Ok(Msg {

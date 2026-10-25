@@ -383,7 +383,7 @@ mod _impl {
         } else {
             let exe_path = bun_core::self_exe_path().ok();
             args_list.push(match exe_path {
-                Some(str_) => BunString::from_static_bytes(str_.as_bytes()),
+                Some(str_) => BunString::clone_utf8(str_.as_bytes()),
                 None => BunString::static_("bun"),
             });
         }

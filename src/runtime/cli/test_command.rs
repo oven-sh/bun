@@ -297,7 +297,7 @@ impl TestFailure {
     /// Fold in a `ZigException` that `print_error_instance_body` has already
     /// populated. A test can throw more than once (body, then `afterEach`);
     /// the first name/message win and every stack is appended.
-    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException) {
+    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException<'_>) {
         let failure = slot.get_or_insert_default();
         let name = exception.name.to_utf8();
         let raw_message = exception.message.to_utf8();
@@ -373,7 +373,7 @@ impl TestFailure {
     }
 
     /// VirtualMachine::on_print_error_zig_exception thunk.
-    pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
+    pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException<'_>) {
         // SAFETY: `ctx` was set to `&mut CommandLineReporter.test_failure` by
         // `on_uncaught_exception` for the duration of a single
         // `run_error_handler` call; single-threaded, no other borrow live.

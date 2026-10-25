@@ -170,7 +170,7 @@ impl String {
         self.tag
     }
 
-    /// Wrap `slice` under `tag`, erasing its lifetime. Only for [`Self::static_`] and for [`StringView`], which keeps the lifetime.
+    /// Wrap `slice` under `tag`, erasing its lifetime. Only for [`Self::static_`] and for [`StringView`] and [`StringOrView`], which keep the lifetime.
     #[inline(always)]
     fn wrap(tag: Tag, slice: EncodedSlice<'_>) -> Self {
         Self {
@@ -1034,7 +1034,7 @@ impl Drop for String {
     }
 }
 impl Clone for String {
-    /// +1 on the same `WTF::StringImpl`; a copy of the bytes a [`StringView`] borrows.
+    /// +1 on the same `WTF::StringImpl`; a copy of the bytes a [`StringView`] or [`StringOrView`] borrows.
     #[inline]
     fn clone(&self) -> Self {
         if self.tag == Tag::EncodedSlice {
@@ -1133,6 +1133,42 @@ impl core::ops::Deref for StringView<'_> {
     }
 }
 impl core::fmt::Display for StringView<'_> {
+    #[inline]
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&**self, f)
+    }
+}
+
+/// An owned [`String`], or `'a` bytes borrowed like a [`StringView`]. No `DerefMut`: taking the `String` out would lose `'a`.
+#[repr(transparent)]
+pub struct StringOrView<'a>(String, core::marker::PhantomData<&'a [u8]>);
+
+impl<'a> StringOrView<'a> {
+    pub const EMPTY: StringOrView<'static> = StringOrView(String::EMPTY, core::marker::PhantomData);
+
+    /// Borrow `bytes` (no copy); scans and tags UTF-8 if any byte is non-ASCII.
+    #[inline]
+    pub fn from_bytes(bytes: &'a [u8]) -> Self {
+        Self(
+            String::wrap(Tag::EncodedSlice, EncodedSlice::from_bytes(bytes)),
+            core::marker::PhantomData,
+        )
+    }
+}
+impl From<String> for StringOrView<'_> {
+    #[inline]
+    fn from(owned: String) -> Self {
+        Self(owned, core::marker::PhantomData)
+    }
+}
+impl core::ops::Deref for StringOrView<'_> {
+    type Target = String;
+    #[inline]
+    fn deref(&self) -> &String {
+        &self.0
+    }
+}
+impl core::fmt::Display for StringOrView<'_> {
     #[inline]
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(&**self, f)

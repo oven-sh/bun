@@ -20,7 +20,7 @@ use bun_alloc::ArenaVecExt as _;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::ArrayHashMap;
 use bun_core::{Ordinal, Output};
-use bun_core::{String as BunString, strings};
+use bun_core::{String as BunString, StringOrView, strings};
 use bun_io::Write as _;
 use bun_jsc::{
     JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
@@ -123,15 +123,15 @@ impl ErrorReportRequest {
         let message = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
         let browser_url = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
         let stack_count = reader.read_int_le::<u32>()?.min(255); // does not support more than 255
-        let mut frames: Vec<Frame<'_>> = Vec::with_capacity(stack_count as usize);
+        let mut frames: Vec<ZigStackFrame<'_>> = Vec::with_capacity(stack_count as usize);
         for _ in 0..stack_count {
             let line = reader.read_int_le::<i32>()?;
             let column = reader.read_int_le::<i32>()?;
             let function_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             let file_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
-            frames.push(Frame {
-                function_name,
-                source_url: file_name,
+            frames.push(ZigStackFrame {
+                function_name: StringOrView::from_bytes(function_name),
+                source_url: StringOrView::from_bytes(file_name),
                 position: if line > 0 {
                     ZigStackFramePosition {
                         line: Ordinal::from_one_based(line),
@@ -149,7 +149,10 @@ impl ErrorReportRequest {
                         line_start_byte: 0,
                     }
                 },
+                code_type: ZigStackFrameCode::NONE,
+                is_async: false,
                 remapped: false,
+                jsc_stack_frame_index: -1,
             });
         }
 
@@ -173,7 +176,9 @@ impl ErrorReportRequest {
         let mut top_frame_position = ZigStackFramePosition::INVALID;
         let mut region_of_interest_line: u32 = 0;
         for frame in frames.iter_mut() {
-            let source_url = frame.source_url;
+            // Every `source_url` here is `Tag::EncodedSlice` (built via
+            // `StringOrView::from_bytes`), so `byte_slice()` is the right view.
+            let source_url: &[u8] = frame.source_url.byte_slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
             let Some(id) = parse_id(source_url, browser_url_origin) else {
@@ -219,7 +224,7 @@ impl ErrorReportRequest {
             if generated_mappings.len() <= 1
                 || frame.position.line.zero_based() < generated_mappings[1].lines.zero_based()
             {
-                frame.source_url = RUNTIME_NAME; // matches value in source map
+                frame.source_url = BunString::static_(RUNTIME_NAME).into(); // matches value in source map
                 frame.position = ZigStackFramePosition::INVALID;
                 continue;
             }
@@ -237,11 +242,11 @@ impl ErrorReportRequest {
                 let index = remapped_position.source_index;
                 if index >= 1 && (index as usize - 1) < result.file_paths.len() {
                     let abs_path: &[u8] = &result.file_paths[index as usize - 1];
-                    frame.source_url = abs_path;
+                    frame.source_url = StringOrView::from_bytes(abs_path);
                     let mut relative_path_buf = path_buffer_pool::get();
                     let rel_path = dev.relative_path(&mut relative_path_buf, abs_path);
-                    if strings::eql(frame.function_name, rel_path) {
-                        frame.function_name = b"";
+                    if strings::eql(frame.function_name.byte_slice(), rel_path) {
+                        frame.function_name = StringOrView::EMPTY;
                     }
                     frame.remapped = true;
 
@@ -263,7 +268,7 @@ impl ErrorReportRequest {
                     }
                 } else if index == 0 {
                     // Should be picked up by above but just in case.
-                    frame.source_url = RUNTIME_NAME;
+                    frame.source_url = BunString::static_(RUNTIME_NAME).into();
                     frame.position = ZigStackFramePosition::INVALID;
                 }
             }
@@ -276,7 +281,7 @@ impl ErrorReportRequest {
             for frame in frames.iter() {
                 // Pointer-identity check on the borrowed RUNTIME_NAME slice.
                 let is_runtime = frame.position.is_invalid()
-                    && frame.source_url.as_ptr() == RUNTIME_NAME.as_ptr();
+                    && frame.source_url.byte_slice().as_ptr() == RUNTIME_NAME.as_ptr();
                 if !is_runtime {
                     all_runtime = false;
                     break;
@@ -288,31 +293,20 @@ impl ErrorReportRequest {
 
             // Move all frames up.
             frames.retain(|frame| {
-                !(frame.position.is_invalid() && frame.source_url.as_ptr() == RUNTIME_NAME.as_ptr())
+                !(frame.position.is_invalid()
+                    && frame.source_url.byte_slice().as_ptr() == RUNTIME_NAME.as_ptr())
             });
         }
 
-        let mut zig_frames: Vec<ZigStackFrame> = frames
-            .iter()
-            .map(|frame| ZigStackFrame {
-                function_name: BunString::clone_utf8(frame.function_name),
-                source_url: BunString::clone_utf8(frame.source_url),
-                position: frame.position,
-                code_type: ZigStackFrameCode::NONE,
-                is_async: false,
-                remapped: frame.remapped,
-                jsc_stack_frame_index: -1,
-            })
-            .collect();
         let mut exception = ZigException {
             r#type: JSErrorCode::Error,
             runtime_type: JSRuntimeType::NOTHING,
-            name: BunString::clone_utf8(name),
-            message: BunString::clone_utf8(message),
-            stack: ZigStackTrace::from_frames(&mut zig_frames),
+            name: StringOrView::from_bytes(name),
+            message: StringOrView::from_bytes(message),
+            stack: ZigStackTrace::from_frames(&mut frames),
             exception: core::ptr::null_mut(),
             remapped: false,
-            browser_url: BunString::clone_utf8(browser_url),
+            browser_url: StringOrView::from_bytes(browser_url),
             errno: 0,
             syscall: BunString::EMPTY,
             system_code: BunString::EMPTY,
@@ -342,16 +336,16 @@ impl ErrorReportRequest {
 
         let mut out: Vec<u8> = Vec::new();
 
-        _ = out.write_int_le::<u32>(frames.len() as u32);
-        for frame in &frames {
+        _ = out.write_int_le::<u32>(exception.stack.frames_len as u32);
+        for frame in exception.stack.frames() {
             _ = out.write_int_le::<i32>(frame.position.line.one_based());
             _ = out.write_int_le::<i32>(frame.position.column.one_based());
 
-            let function_name = frame.function_name;
+            let function_name: &[u8] = frame.function_name.byte_slice();
             _ = out.write_int_le::<u32>(function_name.len() as u32);
             out.extend_from_slice(function_name);
 
-            let src_to_write = frame.source_url;
+            let src_to_write: &[u8] = frame.source_url.byte_slice();
             if strings::has_prefix_comptime(src_to_write, b"/") {
                 let mut relative_path_buf = path_buffer_pool::get();
                 let file = dev.relative_path(&mut relative_path_buf, src_to_write);
@@ -406,14 +400,6 @@ impl ErrorReportRequest {
         ErrorReportRequest::finalize(ctx);
         Ok(())
     }
-}
-
-/// A frame of the report. The strings borrow the request body, its arena or the source map store.
-struct Frame<'a> {
-    function_name: &'a [u8],
-    source_url: &'a [u8],
-    position: ZigStackFramePosition,
-    remapped: bool,
 }
 
 fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {

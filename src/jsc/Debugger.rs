@@ -969,12 +969,12 @@ bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 unsafe extern "C" {
     safe fn Bun__LifecycleAgentReportError(
         agent: &mut LifecycleHandle,
-        exception: &mut ZigException,
+        exception: &mut ZigException<'_>,
     );
 }
 
 impl LifecycleHandle {
-    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&mut self, exception: &mut ZigException<'_>) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)
     }
@@ -1010,7 +1010,7 @@ impl LifecycleAgent {
         core::ptr::NonNull::new(self.handle).map(|p| LifecycleHandle::opaque_mut(p.as_ptr()))
     }
 
-    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&mut self, exception: &mut ZigException<'_>) {
         if let Some(h) = self.handle_mut() {
             h.report_error(exception);
         }

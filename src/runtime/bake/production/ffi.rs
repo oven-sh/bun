@@ -180,10 +180,9 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> BunString {
     let pt = unsafe { &*pt };
     let utf8 = key.to_utf8();
     log!("BakeProdLoad: {}\n", BStr::new(utf8.slice()));
-    if let Some(value) = pt.module_map.get(utf8.slice()) {
+    if let Some(source) = pt.module_map.get(utf8.slice()) {
         log!("  found in module_map: {}\n", BStr::new(utf8.slice()));
-        // Copied: JavaScriptCore keeps the source for as long as the module, and `pt` drops before the VM.
-        return BunString::clone_latin1(pt.bundled_outputs[value.get() as usize].value.as_slice());
+        return source.clone();
     }
     BunString::DEAD
 }

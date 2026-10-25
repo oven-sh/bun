@@ -825,7 +825,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         entry_points,
         bundled_outputs_list,
         module_keys,
-        output_module_map,
+        &output_module_map,
         source_maps,
     )?;
     pt.attach();

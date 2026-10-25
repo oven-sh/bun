@@ -252,18 +252,18 @@ pub(crate) struct S3Client {
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
-    pub(crate) tagging: Option<Box<[u8]>>,
+    pub(crate) header_defaults: Option<std::sync::Arc<bun_s3_signing::PutHeaderDefaults>>,
 }
 
 impl S3Client {
-    pub(crate) fn from_options(aws_options: bun_s3_signing::S3CredentialsWithOptions) -> Self {
+    pub(crate) fn from_options(mut aws_options: bun_s3_signing::S3CredentialsWithOptions) -> Self {
         S3Client {
+            header_defaults: bun_s3_signing::PutHeaderDefaults::merged(&mut aws_options),
             credentials: aws_options.credentials.dupe(),
             options: aws_options.options,
             acl: aws_options.acl,
             storage_class: aws_options.storage_class,
             request_payer: aws_options.request_payer,
-            tagging: aws_options.tagging,
         }
     }
 
@@ -274,7 +274,7 @@ impl S3Client {
             acl: self.acl,
             storage_class: self.storage_class,
             request_payer: self.request_payer,
-            tagging: self.tagging.as_deref(),
+            headers: self.header_defaults.as_ref(),
         }
     }
 

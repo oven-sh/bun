@@ -1,5 +1,6 @@
 use core::mem::size_of;
 use std::io::Write as _;
+use std::sync::Arc;
 
 use bstr::BStr;
 
@@ -1191,6 +1192,45 @@ impl PutHeadersOwned {
     }
 }
 
+/// The string headers that a client or a file gives each of its writes. A file that sets none shares its client's.
+pub struct PutHeaderDefaults {
+    pub content_disposition: Option<Box<[u8]>>,
+    /// The `x-amz-tagging` value, encoded as `k=v&k2=v2`.
+    pub tagging: Option<Box<[u8]>>,
+    // No `content_encoding`: it describes the bytes of one upload, so only the upload call gives it.
+}
+
+impl PutHeaderDefaults {
+    /// What a client or a file keeps: each parsed value, else the inherited one. An empty value clears it.
+    pub fn merged(parsed: &mut S3CredentialsWithOptions) -> Option<Arc<Self>> {
+        let inherited = parsed.inherited.take();
+        if parsed.content_disposition.is_none() && parsed.tagging.is_none() {
+            return inherited;
+        }
+        let inherited = inherited.as_deref();
+        let merged = Self {
+            content_disposition: parsed
+                .content_disposition
+                .as_deref()
+                .or_else(|| inherited.and_then(|d| d.content_disposition.as_deref()))
+                .filter(|value| !value.is_empty())
+                .map(Box::<[u8]>::from),
+            // The parsed value is owned already, so it moves.
+            tagging: match parsed.tagging.take() {
+                Some(given) => (!given.is_empty()).then_some(given),
+                None => inherited.and_then(|d| d.tagging.clone()),
+            },
+        };
+        (merged.content_disposition.is_some() || merged.tagging.is_some()).then(|| Arc::new(merged))
+    }
+
+    pub fn estimated_size(&self) -> usize {
+        size_of::<Self>()
+            + self.content_disposition.as_deref().map_or(0, <[u8]>::len)
+            + self.tagging.as_deref().map_or(0, <[u8]>::len)
+    }
+}
+
 // transient param-pack struct; lifetime added because every field is a caller-owned
 // borrow. PORTING.md discourages struct lifetimes, but raw pointers here would be strictly worse.
 #[derive(Clone, Copy)]
@@ -1372,6 +1412,8 @@ pub struct S3CredentialsWithOptions {
     pub content_encoding: Option<bun_core::Utf8Bytes<'static>>,
     /// The `x-amz-tagging` value, encoded as `k=v&k2=v2`.
     pub tagging: Option<Box<[u8]>>,
+    /// What the client or the file gives a write that has no value of its own.
+    pub inherited: Option<Arc<PutHeaderDefaults>>,
     /// indicates if requester pays for the request (for requester pays buckets)
     pub request_payer: bool,
     /// indicates if the credentials have changed
@@ -1379,16 +1421,23 @@ pub struct S3CredentialsWithOptions {
 }
 
 impl S3CredentialsWithOptions {
-    /// The headers of a write. The blob's `content_type` wins over the `type` option.
+    /// The headers of a write. The blob's `content_type` wins over `type`. An empty call value hides the inherited one.
     pub fn put_headers<'a>(&'a self, content_type: Option<&'a [u8]>) -> PutHeaders<'a> {
+        let inherited = self.inherited.as_deref();
         PutHeaders {
             content_type: content_type.or(self.content_type.as_deref()),
-            content_disposition: self.content_disposition.as_deref(),
+            content_disposition: self
+                .content_disposition
+                .as_deref()
+                .or_else(|| inherited.and_then(|d| d.content_disposition.as_deref())),
             content_encoding: self.content_encoding.as_deref(),
             acl: self.acl,
             storage_class: self.storage_class,
             request_payer: self.request_payer,
-            tagging: self.tagging.as_deref(),
+            tagging: self
+                .tagging
+                .as_deref()
+                .or_else(|| inherited.and_then(|d| d.tagging.as_deref())),
         }
     }
 }

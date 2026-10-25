@@ -310,6 +310,11 @@ declare module "bun" {
      * The Content-Disposition header value.
      * Controls how the file is presented when downloaded.
      *
+     * A value given to `s3.file()` or to `new S3Client()` is the default of
+     * every upload of that file or client. The upload call overrides it. An
+     * empty string sends no header. A default does not apply to a presigned
+     * URL.
+     *
      * @example
      * ```ts
      * // Setting attachment disposition with filename
@@ -333,10 +338,14 @@ declare module "bun" {
      * Specifies what content encodings have been applied to the object,
      * for example to indicate that it has been compressed.
      *
+     * Pass this option to the upload call (`write()` or `writer()`). It labels
+     * the bytes of that upload: Bun does not compress them. It has no effect
+     * on `s3.file()` or on `new S3Client()`.
+     *
      * @example
      * ```ts
-     * // Setting gzip encoding
-     * const file = s3.file("data.json.gz", {
+     * // Setting gzip encoding on a writer
+     * const writer = s3.file("data.json.gz").writer({
      *   contentEncoding: "gzip"
      * });
      * ```

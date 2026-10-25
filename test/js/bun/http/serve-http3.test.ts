@@ -8,6 +8,7 @@ import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
 import { connect as connectTLS } from "node:tls";
 import { join } from "path";
+import { F, RawH2, T, baseHeaders, frame, hpackLiteral } from "./serve-http2-helpers";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
 // `protocol: "http3"` so a regression that silently falls back to TCP
@@ -2193,6 +2194,377 @@ describe("Bun.serve HTTP/3 request validation", () => {
       defaultNoCert: "200 served",
       lenientNoCert: "200 served",
       lenientUnverifiable: "200 served",
+    });
+  });
+});
+
+// RFC 9114 section 4.1.2: a request is malformed when its content-length is not
+// the sum of its DATA frames, and no handler may read its body to a clean end.
+// lsquic finds most of these requests and closes the connection for them (RFC
+// 9114 section 8 lets it), but its read of the body still ends cleanly first.
+// The others it does not find, and the listener resets their stream.
+describe.concurrent("Bun.serve HTTP/3 request body that doesn't match its content-length", () => {
+  type Row = {
+    method?: string;
+    contentLength?: string;
+    // A second HEADERS block ahead of the DATA.
+    laterHeaders?: Record<string, string>;
+    body?: string;
+    trailers?: Record<string, string>;
+    // No FIN follows the DATA.
+    open?: true;
+  };
+  type Outcome = { handler: string; client: string };
+  type Session = Awaited<ReturnType<typeof connect>>;
+  type QuicError = Error & { code?: string; errorCode?: bigint };
+
+  const aborted = "rejected AbortError: The connection was closed.";
+  const notRun = "did not run";
+  const connectionClosed = "session closed ERR_QUIC_APPLICATION_ERROR 270";
+  const streamReset = "stream reset ERR_QUIC_APPLICATION_ERROR 270, then 200 unread";
+  // What the client sees tells who found the request malformed. lsquic closes the
+  // connection. The listener resets the stream, and the connection serves the next request.
+  const byLsquic: Outcome = { handler: aborted, client: connectionClosed };
+  const byListener: Outcome = { handler: aborted, client: streamReset };
+  // lsquic 4.10.0 (685b1de) finds a request that ends with its HEADERS before a handler runs.
+  const byLsquicAtTheHeaders: Outcome = { handler: notRun, client: connectionClosed };
+  const malformed: Record<string, { row: Row; outcomes: Outcome[] }> = {
+    "fewer DATA bytes than the content-length": {
+      row: { contentLength: "1000", body: "abc" },
+      outcomes: [byLsquic],
+    },
+    "no DATA for a content-length above 0": {
+      row: { contentLength: "1000" },
+      outcomes: [byListener, byLsquicAtTheHeaders],
+    },
+    "more DATA bytes than the content-length": {
+      row: { contentLength: "3", body: "abcdef" },
+      outcomes: [byLsquic],
+    },
+    // The HTTP/1.1 and HTTP/2 listeners give this request no body to read.
+    "DATA for a content-length of 0": {
+      row: { contentLength: "0", body: "abc" },
+      outcomes: [byLsquic],
+    },
+    "fewer DATA bytes than the content-length, then trailers": {
+      row: { contentLength: "1000", body: "abc", trailers: { "x-checksum": "1" } },
+      outcomes: [byLsquic],
+    },
+    // lsquic checks the DATA against the content-length of the last header block
+    // it decoded: the trailers here, a second HEADERS block in the rows after.
+    "a content-length in the trailers that the DATA does match": {
+      row: { contentLength: "1000", body: "abc", trailers: { "content-length": "3" } },
+      outcomes: [byListener],
+    },
+    "a content-length in the trailers that the DATA doesn't match": {
+      row: { contentLength: "3", body: "abc", trailers: { "content-length": "1000" } },
+      outcomes: [byLsquic],
+    },
+    "a content-length in a second HEADERS block that the DATA doesn't match": {
+      row: { contentLength: "3", laterHeaders: { "content-length": "1000" }, body: "abc" },
+      outcomes: [byLsquic],
+    },
+    "a content-length in a second HEADERS block alone that the DATA doesn't match": {
+      row: { laterHeaders: { "content-length": "1000" }, body: "abc" },
+      outcomes: [byLsquic],
+    },
+    "more DATA bytes than the content-length of the first HEADERS block, and no end": {
+      row: { contentLength: "3", laterHeaders: { "content-length": "1000" }, body: "abcdef", open: true },
+      outcomes: [byListener],
+    },
+  };
+
+  const readers: Record<string, (req: Request) => Promise<string>> = {
+    text: req => req.text(),
+    async stream(req) {
+      const reader = req.body!.getReader();
+      let text = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return text;
+        text += Buffer.from(value).toString();
+      }
+    },
+    // This read starts after the request was aborted.
+    async late(req) {
+      if (!req.signal.aborted) await once(req.signal, "abort");
+      return await req.text();
+    },
+  };
+
+  // Serves /<fetch or route>/<reader>/<id>. `read(path)` is how the handler's read of that request ended.
+  function serve() {
+    const reads: Record<string, PromiseWithResolvers<string>> = {};
+    const readOf = (path: string) => (reads[path] ??= Promise.withResolvers<string>());
+    const handled: string[] = [];
+    const handler = async (req: Request) => {
+      const { pathname } = new URL(req.url);
+      handled.push(pathname);
+      const reader = pathname.split("/")[2];
+      if (reader === "unread") return new Response("unread");
+      const outcome = await readers[reader](req).then(
+        text => "read " + JSON.stringify(text),
+        (err: Error) => `rejected ${err.name}: ${err.message}`,
+      );
+      readOf(pathname).resolve(outcome);
+      return new Response(outcome);
+    };
+    const server = Bun.serve({
+      port: 0,
+      tls,
+      http1: false,
+      http2: true,
+      http3: true,
+      routes: { "/route/:reader/:id": handler },
+      fetch: handler,
+    });
+    return {
+      port: server.port!,
+      handled,
+      read: (path: string) => readOf(path).promise,
+      [Symbol.asyncDispose]: () => server.stop(true),
+    };
+  }
+
+  async function withSession<T>(port: number, run: (client: Session, closed: Promise<string>) => Promise<T>) {
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(`127.0.0.1:${port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    } as SessionOptions);
+    const closed = client.closed.then(
+      () => "session closed",
+      (err: QuicError) => `session closed ${err.code} ${err.errorCode}`,
+    );
+    await client.opened;
+    try {
+      return await run(client, closed);
+    } finally {
+      if (!client.destroyed) client.close().catch(() => {});
+    }
+  }
+
+  // "<status> <body>" for a response, "stream reset <code> <error code>" for a stream that failed.
+  async function request(client: Session, path: string, row: Row = {}) {
+    const { method = "POST", contentLength, laterHeaders, body, trailers, open } = row;
+    const headers = requestHeaders(path, {
+      ":method": method,
+      ...(contentLength === undefined ? {} : { "content-length": contentLength }),
+    });
+    const content = body === undefined ? undefined : new TextEncoder().encode(body);
+    // HEADERS, DATA and the FIN leave in one flight: lsquic then has the whole request
+    // when it reads the body. Only the writer can send more than these three.
+    const written = laterHeaders !== undefined || trailers !== undefined || open;
+    let status = "";
+    const stream = await client.createBidirectionalStream({
+      ...(written ? {} : { headers, body: content }),
+      ...(trailers ? { onwanttrailers: () => void stream.sendTrailers(trailers) } : {}),
+      onheaders(received) {
+        status = received[":status"] as string;
+      },
+    });
+    const ended = stream.closed.then(
+      () => "",
+      (err: QuicError) => `stream reset ${err.code} ${err.errorCode}`,
+    );
+    if (written) {
+      stream.sendHeaders(headers);
+      if (laterHeaders) stream.sendHeaders(laterHeaders);
+      if (content) stream.writer.writeSync(content);
+      if (!open) stream.writer.endSync();
+    }
+    let text = "";
+    try {
+      for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+        for (const chunk of batch) text += Buffer.from(chunk).toString("latin1");
+      }
+    } catch {}
+    return (await ended) || `${status} ${text}`;
+  }
+
+  const isResponse = (outcome: string) => /^\d{3} /.test(outcome);
+
+  // What the client sees of one request on a connection of its own.
+  const send = (port: number, path: string, row: Row) =>
+    withSession(port, async (client, closed) => {
+      const first = await request(client, path, row);
+      if (isResponse(first)) return first;
+      // A connection that lost only this stream serves the next request.
+      const next = await request(client, "/fetch/unread/next", { method: "GET" }).catch(() => "");
+      return isResponse(next) ? `${first}, then ${next}` : await closed;
+    });
+
+  // The handler's read ends in the engine pass that finds the request malformed,
+  // ahead of anything the client sees. `sent` settles first only if no handler ran.
+  const readBy = (served: ReturnType<typeof serve>, path: string, sent: Promise<unknown>) =>
+    Promise.race([served.read(path), sent.then(() => notRun)]);
+
+  // The row's outcome that was seen, or else its first one for the diff.
+  const expected = (outcomes: Outcome[], seen: Outcome) => outcomes.find(o => Bun.deepEquals(o, seen)) ?? outcomes[0];
+
+  describe.each(["fetch", "route"])("in a %s handler", kind => {
+    test.each(Object.keys(readers))("fails a read with %s", async reader => {
+      await using served = serve();
+      let id = 0;
+      for (const [name, { row, outcomes }] of Object.entries(malformed)) {
+        const path = `/${kind}/${reader}/${id++}`;
+        const sent = send(served.port, path, row);
+        const seen = { handler: await readBy(served, path, sent), client: await sent };
+        expect({ request: name, ...seen }).toEqual({ request: name, ...expected(outcomes, seen) });
+      }
+    });
+
+    // The response ends the exchange before the listener reads the rest of the
+    // request, so neither lsquic nor the listener looks at the body. The first
+    // response of a connection can still be in lsquic at that point, hence the
+    // request ahead of the others. A request that ends with its HEADERS or that
+    // stays open has no rest to skip.
+    test("answers a request whose body the handler doesn't read", async () => {
+      await using served = serve();
+      const rows = Object.entries(malformed).filter(([, { row }]) => row.body !== undefined && !row.open);
+      const results = await withSession(served.port, async client => {
+        const results: Record<string, string> = {
+          "first request": await request(client, `/${kind}/unread/first`, { method: "GET" }),
+        };
+        for (const [name, { row }] of rows) {
+          results[name] = await request(client, `/${kind}/unread/${Object.keys(results).length}`, row);
+        }
+        return results;
+      });
+      expect(results).toEqual(
+        Object.fromEntries(["first request", ...rows.map(([name]) => name)].map(name => [name, "200 unread"])),
+      );
+    });
+
+    test("reads a body that matches its content-length, or that has none", async () => {
+      await using served = serve();
+      const wellFormed: Record<string, Row> = {
+        "matching content-length": { contentLength: "3", body: "abc" },
+        "matching content-length, then trailers": { contentLength: "3", body: "abc", trailers: { "x-checksum": "1" } },
+        "content-length of 0": { contentLength: "0" },
+        "no content-length": { body: "abc" },
+        "no content-length, no DATA": {},
+      };
+      const results = await withSession(served.port, async client => {
+        const results: Record<string, string> = {};
+        for (const reader of ["text", "stream"]) {
+          for (const [name, row] of Object.entries(wellFormed)) {
+            const path = `/${kind}/${reader}/${Object.keys(results).length}`;
+            results[`${reader}: ${name}`] = await request(client, path, row);
+          }
+        }
+        return results;
+      });
+      expect(results).toEqual({
+        "text: matching content-length": '200 read "abc"',
+        "text: matching content-length, then trailers": '200 read "abc"',
+        "text: content-length of 0": '200 read ""',
+        "text: no content-length": '200 read "abc"',
+        "text: no content-length, no DATA": '200 read ""',
+        "stream: matching content-length": '200 read "abc"',
+        "stream: matching content-length, then trailers": '200 read "abc"',
+        "stream: content-length of 0": '200 read ""',
+        "stream: no content-length": '200 read "abc"',
+        "stream: no content-length, no DATA": '200 read ""',
+      });
+    });
+  });
+
+  // lsquic's close takes every stream of the connection. The second request is
+  // well-formed. Its handler runs only if both requests reach the listener in
+  // one engine pass, and then the end of its body comes after the close.
+  test("doesn't complete a request whose end it reads after lsquic closed the connection for another", async () => {
+    await using served = serve();
+    const sent = withSession(served.port, client =>
+      Promise.all([
+        request(client, "/fetch/text/malformed", { contentLength: "1000", body: "abc" }),
+        request(client, "/fetch/text/well-formed", { contentLength: "3", body: "abc" }),
+      ]),
+    );
+    expect(await readBy(served, "/fetch/text/malformed", sent)).toBe(aborted);
+    expect([aborted, notRun]).toContain(await readBy(served, "/fetch/text/well-formed", sent));
+  });
+
+  // The HTTP/2 listener counts the DATA of a request in the same way. A
+  // content-length of 0 is the difference: it leaves a request no body to read there.
+  test("fails the reads that the HTTP/2 listener fails", async () => {
+    await using served = serve();
+    const rows: Record<string, { row: Row; handler: string }> = {
+      "fewer DATA bytes than the content-length": { row: { contentLength: "1000", body: "abc" }, handler: aborted },
+      "no DATA for a content-length above 0": { row: { contentLength: "1000" }, handler: aborted },
+      "more DATA bytes than the content-length": { row: { contentLength: "3", body: "abcdef" }, handler: aborted },
+      "DATA for a content-length of 0": { row: { contentLength: "0", body: "abc" }, handler: 'read ""' },
+      "a content-length in the trailers that the DATA does match": {
+        row: { contentLength: "1000", body: "abc", trailers: { "content-length": "3" } },
+        handler: aborted,
+      },
+    };
+    const raw = await RawH2.connect(served.port, true);
+    try {
+      const results: Record<string, string> = {};
+      for (const [name, { row }] of Object.entries(rows)) {
+        const id = 2 * Object.keys(results).length + 1;
+        const fields = baseHeaders(`/fetch/text/h2-${id}`, "POST");
+        if (row.contentLength !== undefined) fields.push(["content-length", row.contentLength]);
+        // HEADERS without END_STREAM, so that every row reaches the handler.
+        const frames = [frame(T.HEADERS, F.END_HEADERS, id, hpackLiteral(fields))];
+        if (row.trailers) {
+          frames.push(frame(T.DATA, 0, id, Buffer.from(row.body ?? "")));
+          frames.push(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, id, hpackLiteral(Object.entries(row.trailers))));
+        } else {
+          frames.push(frame(T.DATA, F.END_STREAM, id, Buffer.from(row.body ?? "")));
+        }
+        raw.write(Buffer.concat(frames));
+        results[name] = await served.read(`/fetch/text/h2-${id}`);
+      }
+      expect(results).toEqual(Object.fromEntries(Object.entries(rows).map(([name, { handler }]) => [name, handler])));
+    } finally {
+      raw.close();
+    }
+  });
+
+  // lsquic takes any run of digits that fits 64 bits as the length. The listener
+  // checks a body against up to 18 digits, the limit of the HTTP/1.1 parser, and
+  // refuses a longer one before a handler runs.
+  test("answers 400 to a content-length of more than 18 digits", async () => {
+    await using served = serve();
+    const results = await withSession(served.port, async client => ({
+      "18 digits": await request(client, "/fetch/text/18", { contentLength: "000000000000000003", body: "abc" }),
+      "19 digits": await request(client, "/fetch/text/19", { contentLength: "0000000000000000003", body: "abc" }),
+      "19 digits, GET": await request(client, "/fetch/unread/get", {
+        method: "GET",
+        contentLength: "0000000000000000003",
+        body: "abc",
+      }),
+      // lsquic reads 1000 here and closes the connection when it reads the end of
+      // a shorter body. The answer comes first, so it never reads that end.
+      "22 digits, fewer DATA bytes": await request(client, "/fetch/text/22", {
+        contentLength: "0000000000000000001000",
+        body: "abc",
+      }),
+      "10^18": await request(client, "/fetch/text/10-18", { contentLength: "1000000000000000000", body: "abc" }),
+      "2^63": await request(client, "/fetch/text/2-63", { contentLength: "9223372036854775808", body: "abc" }),
+      "2^64 - 1": await request(client, "/fetch/text/2-64", { contentLength: "18446744073709551615", body: "abc" }),
+      // The handler's side refuses a length over maxRequestBodySize, as before.
+      "10^18 - 1": await request(client, "/fetch/text/10-18-1", { contentLength: "999999999999999999", body: "abc" }),
+      "the next request": await request(client, "/fetch/unread/next", { method: "GET" }),
+    }));
+    expect({ results, handled: served.handled }).toEqual({
+      results: {
+        "18 digits": '200 read "abc"',
+        "19 digits": "400 ",
+        "19 digits, GET": "400 ",
+        "22 digits, fewer DATA bytes": "400 ",
+        "10^18": "400 ",
+        "2^63": "400 ",
+        "2^64 - 1": "400 ",
+        "10^18 - 1": "413 ",
+        "the next request": "200 unread",
+      },
+      handled: ["/fetch/text/18", "/fetch/unread/next"],
     });
   });
 });

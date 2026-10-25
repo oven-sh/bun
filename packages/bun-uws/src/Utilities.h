@@ -64,6 +64,20 @@ static inline bool validPseudoHeaderTarget(std::string_view method, std::string_
     return true;
 }
 
+/* What a request without a Content-Length has for one. */
+static constexpr uint64_t NO_CONTENT_LENGTH = UINT64_MAX;
+
+/* RFC 9110 §8.6: 1*DIGIT. Returns UINT64_MAX for anything else, and for more than 18 digits. */
+static inline uint64_t parseContentLength(std::string_view value) {
+    if (value.empty() || value.length() > 18) return UINT64_MAX;
+    uint64_t length = 0;
+    for (char c : value) {
+        if (c < '0' || c > '9') return UINT64_MAX;
+        length = length * 10 + (uint64_t) (c - '0');
+    }
+    return length;
+}
+
 static inline bool isConnectionSpecificResponseField(std::string_view name, std::string_view value) {
     switch (name.size()) {
     case 2: return asciiIEquals(name, "te") && !(value.size() == 8 && asciiIEquals(value, "trailers"));

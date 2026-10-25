@@ -1287,6 +1287,15 @@ void us_quic_stream_reset_internal_error(us_quic_stream_t *s) {
     us_quic_stream_reset_with(s, 0x102);
 }
 
+/* H3_MESSAGE_ERROR, for a malformed message from the peer (RFC 9114 §4.1.2). */
+void us_quic_stream_reset_message_error(us_quic_stream_t *s) {
+    us_quic_stream_reset_with(s, 0x10E);
+}
+
+int us_quic_stream_connection_failed(us_quic_stream_t *s) {
+    return s->stream && lsquic_conn_status(lsquic_stream_conn(s->stream), NULL, 0) == LSCONN_ST_ERROR;
+}
+
 int us_quic_stream_has_unacked(us_quic_stream_t *s) {
     return s->stream ? lsquic_stream_has_unacked_data(s->stream) : 0;
 }

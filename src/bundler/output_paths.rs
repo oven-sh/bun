@@ -39,19 +39,19 @@ pub(crate) struct FirstAtPath<'p, T> {
     case_pairs: Vec<CasePair<T>>,
 }
 
+fn hash(pairs_case: bool, key: &[u8]) -> u64 {
+    match pairs_case {
+        true => bun_wyhash::hash_ascii_lowercase(0, key),
+        false => bun_wyhash::hash(key),
+    }
+}
+
 impl<'p, T: Copy> FirstAtPath<'p, T> {
     pub(crate) fn with_capacity(pairs_case: bool, capacity: usize) -> Self {
         Self {
             pairs_case,
             claims: HashTable::with_capacity(capacity),
             case_pairs: Vec::new(),
-        }
-    }
-
-    fn hash(pairs_case: bool, key: &[u8]) -> u64 {
-        match pairs_case {
-            true => bun_wyhash::hash_ascii_lowercase(0, key),
-            false => bun_wyhash::hash(key),
         }
     }
 
@@ -67,7 +67,7 @@ impl<'p, T: Copy> FirstAtPath<'p, T> {
         // The first output at this path in another letter case.
         let mut other_case: Option<(u32, T, &'p [u8], Box<[u8]>)> = None;
         let entry = self.claims.entry(
-            Self::hash(pairs_case, &key),
+            hash(pairs_case, &key),
             |claim| {
                 if claim.key == key {
                     return true;
@@ -87,7 +87,7 @@ impl<'p, T: Copy> FirstAtPath<'p, T> {
                 }
                 false
             },
-            |claim| Self::hash(pairs_case, &claim.key),
+            |claim| hash(pairs_case, &claim.key),
         );
         match entry {
             Entry::Occupied(entry) => {
@@ -135,7 +135,7 @@ pub(crate) fn lost_case_pairs<T: Copy>(
     };
     let mut note = None;
     for pair in pairs {
-        match directory.is_one_file(pair) {
+        match directory.is_one_file(&pair.first_key, &pair.second_key) {
             Ok(true) => {}
             Ok(false) => continue,
             // No answer. The build goes on as it does without this check.
@@ -166,9 +166,10 @@ struct OutputDirectory<'r> {
 }
 
 impl OutputDirectory<'_> {
-    /// Whether the two paths of `pair` are one file in the output directory. The directory itself answers: a volume
-    /// decides if it tells `X` from `x`, not the host, and a link makes two names one file on any volume.
-    fn is_one_file<T>(&mut self, pair: &CasePair<T>) -> bun_sys::Maybe<bool> {
+    /// Whether two paths that differ only in ASCII case are one file in the output directory. The directory itself
+    /// answers: a volume decides if it tells `X` from `x`, not the host, and a link makes two names one file on any
+    /// volume.
+    fn is_one_file(&mut self, first_key: &[u8], second_key: &[u8]) -> bun_sys::Maybe<bool> {
         // A Windows volume ignores case unless a directory opted out.
         if cfg!(windows) {
             return Ok(true);
@@ -181,7 +182,7 @@ impl OutputDirectory<'_> {
             }
         };
         // A link, or a file that an earlier build left in a directory that folds case.
-        if let (Some(first), Some(second)) = (file(&pair.first_key)?, file(&pair.second_key)?)
+        if let (Some(first), Some(second)) = (file(first_key)?, file(second_key)?)
             && first.st_dev == second.st_dev
             && first.st_ino == second.st_ino
         {
@@ -189,8 +190,7 @@ impl OutputDirectory<'_> {
         }
         // Otherwise each directory that gets a name in two spellings has to fold case.
         let mut directory = self.root.to_vec();
-        let names =
-            strings::split(&pair.first_key, b"/").zip(strings::split(&pair.second_key, b"/"));
+        let names = strings::split(first_key, b"/").zip(strings::split(second_key, b"/"));
         for (first, second) in names {
             if first != second && !self.folds_case(&directory)? {
                 return Ok(false);

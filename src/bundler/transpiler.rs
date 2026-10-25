@@ -2762,13 +2762,15 @@ impl<'a> Transpiler<'a> {
 
         let mut msg: Vec<u8> = Vec::new();
         writeln!(&mut msg, "Multiple files share the same output path")?;
-        let mut groups: Vec<_> = (by_dest_path.keys().iter())
-            .zip(by_dest_path.values())
-            .collect();
-        // The path of the earliest file comes first.
-        groups.sort_by_key(|(_, indices)| indices[0]);
-        for (dest_path, indices) in groups {
-            writeln!(&mut msg, "  {}:", bstr::BStr::new(dest_path))?;
+        // A shared path is listed at its first file, so the paths are in the order of the files.
+        for (first, file) in files.iter().enumerate() {
+            let Some(indices) = by_dest_path.get(&file.dest_path) else {
+                continue;
+            };
+            if indices[0] != first {
+                continue;
+            }
+            writeln!(&mut msg, "  {}:", bstr::BStr::new(&file.dest_path))?;
             for &index in indices {
                 writeln!(
                     &mut msg,
@@ -2784,13 +2786,19 @@ impl<'a> Transpiler<'a> {
             "entry naming is '{}', consider adding '[hash]' to make filenames unique",
             bstr::BStr::new(&self.entry_naming_template().data),
         )?;
-        let notes = (case_note.into_iter().chain([note])).map(|text| bun_ast::Data {
-            text: text.into(),
-            ..Default::default()
-        });
-        let notes: Box<[bun_ast::Data]> = notes.collect();
-        self.log_mut()
-            .add_range_error_with_notes(None, Default::default(), msg, notes);
+        let mut notes = Vec::with_capacity(2);
+        for text in case_note.into_iter().chain([note]) {
+            notes.push(bun_ast::Data {
+                text: text.into(),
+                ..Default::default()
+            });
+        }
+        self.log_mut().add_range_error_with_notes(
+            None,
+            Default::default(),
+            msg,
+            notes.into_boxed_slice(),
+        );
         Ok(())
     }
 

@@ -430,8 +430,10 @@ impl<'p, 's> Checker<'p, 's> {
                 // A resolution inside this one assigned another type, which every later request gets. Each pass of
                 // `resolveCall` checks the arguments again, so an argument that's being checked with `ty` isn't cached.
                 if assigned != ty && !flags.contains(SymFlags::ALIAS) {
-                    let is_variable = matches!(value_declaration, Some((_, Decl::Var(_))));
-                    self.note_checked_again_with_assigned_type(is_variable);
+                    self.note_checked_again_with_assigned_type(match value_declaration {
+                        Some((_, Decl::Var(_))) => CheckedAgain::Variable,
+                        _ => CheckedAgain::Property,
+                    });
                 }
             }
             Err(open) => self.cache_provisionally(Query::Symbol(sym), u64::from(ty.0), open),

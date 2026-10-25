@@ -1349,6 +1349,15 @@ struct InferenceContextInfo {
     context: Option<Box<infer::Inference>>,
 }
 
+/// Whose type `Checker::note_checked_again_with_assigned_type` is about.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum CheckedAgain {
+    Variable,
+    Property,
+    /// `getTypeOfAccessors` returned the error type and assigned nothing.
+    GetterInProgress,
+}
+
 /// The result of an `enter` call.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum EnterOutcome {
@@ -1428,6 +1437,8 @@ struct QueryFrame {
     /// `checkExpression` doesn't store anything, and the next visit sees whatever members exist by then, so no
     /// type is stored here either. Not set if there's no next visit, see `note_members_in_place_read_above`.
     has_read_members_in_place: bool,
+    /// It `has_read_members_in_place` because of `note_checked_again_with_assigned_type`.
+    is_checked_again_by_next_pass: bool,
     /// `getNarrowableTypeForReference` reached `isConstraintPosition` under it, so whether the
     /// constraints are substituted depends on the check mode and the contextual type. See `is_rechecked`.
     may_substitute_constraints: bool,
@@ -2451,6 +2462,7 @@ impl<'p, 's> Checker<'p, 's> {
             incomplete_flow: false,
             is_stored_by_nested_visit: false,
             has_read_members_in_place: false,
+            is_checked_again_by_next_pass: false,
             may_substitute_constraints: false,
             is_quick_type: false,
             source_element: self.current_source_element,
@@ -3822,10 +3834,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The innermost expressions are being checked with a type of a variable or property that later requests don't get.
     /// No type is stored for them, as in `note_members_in_place_read_above`, if tsc checks them again:
-    /// - They're part of an argument of the call that's being resolved, and not of another call in it. That's only for
-    ///   a variable, or a getter that's in progress (`is_variable`).
-    /// - They're part of the callee that `getQuickTypeOfExpression` checks. It doesn't resolve the call.
-    fn note_checked_again_with_assigned_type(&mut self, is_variable: bool) {
+    /// - They're part of an argument of the call that's being resolved, and not of another call in it. That's not for
+    ///   a property.
+    /// - They're part of the callee that `getQuickTypeOfExpression` checks. It doesn't resolve the call. That's not for
+    ///   a getter in progress.
+    fn note_checked_again_with_assigned_type(&mut self, of: CheckedAgain) {
         let is_part = |&q: &Query| match q {
             Query::Expr(file, e) => !matches!(
                 self.hir(file)[e].kind,
@@ -3834,18 +3847,23 @@ impl<'p, 's> Checker<'p, 's> {
                     | ExprKind::TaggedTemplate(_)
                     | ExprKind::Jsx(_)
             ),
-            Query::LiteralProp(..) => true,
+            Query::LiteralProp(..) => !self.is_resolution(q),
             _ => false,
         };
         let Some(at) = self.stack.iter().rposition(|q| !is_part(q)) else {
             return;
         };
-        let is_argument = is_variable
+        // A part of the callee can be directly above the call too (`resolve_chain_innermost_first`).
+        let is_argument = of != CheckedAgain::Property
             && matches!(self.stack[at], Query::Call(file, e)
                 if matches!(self.hir(file)[e].kind, ExprKind::Call(c) | ExprKind::New(c)
-                    if self.stack.get(at + 1) != Some(&Query::Expr(file, self.hir(file)[c].callee))));
-        if is_argument || self.frames[at].is_quick_type {
+                    if (self.hir(file).ids(self.hir(file)[c].args))
+                        .any(|arg| self.stack.get(at + 1) == Some(&Query::Expr(file, arg)))));
+        if is_argument || self.frames[at].is_quick_type && of != CheckedAgain::GetterInProgress {
             self.note_members_in_place_read_above(at + 1);
+            for frame in &mut self.frames[at + 1..] {
+                frame.is_checked_again_by_next_pass = frame.has_read_members_in_place;
+            }
         }
     }
 
@@ -4100,7 +4118,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Call after `cache_provisionally` for a `q` that `has_read_members_in_place`. The next pass of the `resolveCall`
+    /// Call after `cache_provisionally` for a `q` that `is_checked_again_by_next_pass`. The next pass of the `resolveCall`
     /// in progress checks the argument again, so it doesn't find the result. A later request for the call gets
     /// `links.resolvedSignature` and checks no argument. Here it's resolved again, and that resolution does find it.
     fn hide_provisional_from_call_in_progress(&mut self, q: Query) {

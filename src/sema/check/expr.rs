@@ -535,12 +535,14 @@ impl<'p, 's> Checker<'p, 's> {
                     self.keep_type_of_returned_expression_in_cycle(file, e, ty);
                 }
                 let is_final = !(self.frames.last()).is_some_and(|it| it.has_read_members_in_place);
+                let is_checked_again =
+                    (self.frames.last()).is_some_and(|it| it.is_checked_again_by_next_pass);
                 let left = self.leave_inline();
                 if let Err(open) = left {
                     cold_path();
                     if !is_uncached {
                         self.cache_provisionally(Query::Expr(file, e), u64::from(ty.0), open);
-                        if !is_final {
+                        if is_checked_again {
                             self.hide_provisional_from_call_in_progress(Query::Expr(file, e));
                         }
                     }
@@ -5431,7 +5433,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `getTypeOfAccessors`
             return if self.found_cycle {
                 // Nothing is assigned, so a later request can get another type.
-                self.note_checked_again_with_assigned_type(true);
+                self.note_checked_again_with_assigned_type(CheckedAgain::GetterInProgress);
                 TypeId::ERROR
             } else {
                 TypeId::UNRESOLVED
@@ -5439,6 +5441,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let ty = self.type_of_literal_prop_uncached(file, p);
         let is_final = !(self.frames.last()).is_some_and(|it| it.has_read_members_in_place);
+        let is_checked_again =
+            (self.frames.last()).is_some_and(|it| it.is_checked_again_by_next_pass);
         let left = self.leave(Query::LiteralProp(file, p));
         // `getTypeOfAccessors`: `if links.resolvedType == nil`. When two visits of an accessor nest, the inner one assigns.
         let is_accessor = matches!(self.hir(file)[p].kind, PropKind::Getter | PropKind::Setter);
@@ -5478,7 +5482,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Err(open) => {
                 self.cache_provisionally(Query::LiteralProp(file, p), u64::from(ty.0), open);
-                if !is_final {
+                if is_checked_again {
                     self.hide_provisional_from_call_in_progress(Query::LiteralProp(file, p));
                 }
                 ty

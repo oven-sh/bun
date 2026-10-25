@@ -16017,6 +16017,48 @@ const holder = { get g() { return router({ a: both }); } };
       expect(exitCode).toBe(1);
     });
 
+    // `x60.a` is in the callee of `merge` and `extend`, not in an argument. The getters of `x91` are only on the way into
+    // the cycle of `x30`, `x51` and `x60.a`.
+    test("a getter in progress in the callee of a call does not make getters on the way into the cycle circular", async () => {
+      const files = ["m8.ts", "ztypes.ts", "m3.ts", "u0.ts", "m6.ts", "m5.ts", "m9.ts"];
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files }),
+        "m8.ts": `import { x90Go } from "./m9";
+export function x80() { return x90Go()}
+`,
+        "ztypes.ts": `export declare const z: { lazy<S>(f: () => S): S };
+`,
+        "m3.ts": `import "./u0";
+import { x60 } from "./m6";
+import { x51 } from "./m5";
+export const x30 = x60.a.merge(x51);
+`,
+        "u0.ts": `import { x80 } from "./m8";
+export const u23 = [x80()];
+`,
+        "m6.ts": `import { x30 } from "./m3";
+export const x60 = { get a() { return x30;  } }
+`,
+        "m5.ts": `import { z } from "./ztypes";import { x60 } from "./m6";
+import { x91 } from "./m9";
+export const x51 = x60.a.extend({ kids: z.lazy(() => x91.b) });
+`,
+        "m9.ts": `import { x51 } from "./m5";
+import { x30 } from "./m3";
+export function x90(x = x51): asserts x is typeof x & { } {}
+export function x90Go() { x90(1);}
+export const x91 = { get a() { return x30; }, get b() { return this.a;}}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        "m3.ts(4,14): error TS7022: 'x30' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m5.ts(3,14): error TS7022: 'x51' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m6.ts(2,26): error TS7023: 'a' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // `x30` is resolved three times, one resolution inside the other. The innermost one finds `use` being resolved, so `u`
     // has no contextual type there. Its result isn't stored, and `return r` in `x20`, which is kept, doesn't report TS7006.
     test("a returned expression that is kept in a cycle does not report what a resolution inside it found that is resolved again", async () => {

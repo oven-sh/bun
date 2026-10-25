@@ -3393,7 +3393,6 @@ where
         _resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableByteStream");
-        let ctx = this;
         // SAFETY: `this` is live for the callback; only a shared view is
         // formed, so the `resume()` re-entry into `write_chunk` is fine.
         let this = unsafe { &*this };
@@ -3402,18 +3401,7 @@ where
             return false;
         }
         if let Some(bs) = this.byte_stream.get() {
-            let bs = bun_ptr::BackRef::from(bs);
-            if matches!(
-                bs.parent_const().producer.get(),
-                WebCore::streams::SourceHandle::HTMLRewriter(_)
-            ) {
-                // The rewrite that resumes here runs content handlers, and this callback owes the checkpoint for them. The pin is declared first: it outlives the checkpoint, which can end the response.
-                let pinned = RequestContextRef::pin(ctx);
-                let _exit = pinned.ctx().server().vm().enter_event_loop_scope();
-                bs.resume();
-                return true;
-            }
-            bs.resume();
+            bun_ptr::BackRef::from(bs).resume();
         }
         true
     }

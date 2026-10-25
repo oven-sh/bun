@@ -427,9 +427,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
     (rel, depth)
 }
 
-/// Tree `tree_id` is the `node_modules` of a package in the hoisted tree. Returns its parent tree,
-/// and a dependency that resolves to the package and has the name of the package's folder. `None`
-/// for the root tree.
+/// The parent of tree `tree_id` and a dependency on the package that owns it. `None` for the root.
 pub fn owner_of(lockfile: &Lockfile, tree_id: Id) -> Option<(Id, DependencyID)> {
     let tree = lockfile.buffers.trees.get(tree_id as usize)?;
     (tree.parent != INVALID_ID).then_some((tree.parent, tree.dependency_id))

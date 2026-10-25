@@ -863,8 +863,7 @@ fn print_node_modules_tree(
         let (name, package_id) = (name_of(owner), package_of(owner));
         let first = siblings.start
             + rows[siblings.clone()].partition_point(|&dep_id| name_of(dep_id) < name);
-        // Two rows can have one name, and one package too: a package can bundle a dependency that
-        // it lists twice. A workspace that lost its row to a dependency of its name has no row.
+        // The name is not enough: two rows can share it, and another package can hold it.
         let row = (first..siblings.end)
             .take_while(|&row| name_of(rows[row]) == name)
             .find(|&row| package_of(rows[row]) == package_id && own_folder[row].is_none());

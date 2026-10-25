@@ -1540,12 +1540,25 @@ pub(crate) fn with_node_marks_at<'a>(
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
-    if !f.context().cursor.is_active() {
-        return write(f);
+    let span = f.context().cursor.is_active().then(span);
+    if let Some(span) = span {
+        enter_node(span, f);
     }
-    let (cursor, span) = (f.context().cursor, span());
-    cursor.enter(span, f);
     write(f);
+    if let Some(span) = span {
+        exit_node(span, f);
+    }
+}
+
+#[cold]
+fn enter_node(span: Span, f: &mut Formatter<'_>) {
+    let cursor = f.context().cursor;
+    cursor.enter(span, f);
+}
+
+#[cold]
+pub(crate) fn exit_node(span: Span, f: &mut Formatter<'_>) {
+    let cursor = f.context().cursor;
     cursor.exit(span, f);
 }
 
@@ -1561,25 +1574,24 @@ pub(crate) fn with_jsx_children_marks<'a>(
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
-    if !f.context().cursor.is_active() {
-        return write(f);
-    }
-    let cursor = f.context().cursor;
-    let mark = |mark: CursorMark, f: &mut Formatter<'a>| {
-        let mark = crate::prelude::format_with(move |f: &mut Formatter<'a>| {
-            f.write_element(FormatElement::Cursor(mark))
-        });
-        match in_group {
-            true => if_group_breaks(&mark).fmt(f),
-            false => mark.fmt(f),
-        }
-    };
-    if cursor.starts_with_children_of == element {
-        mark(CursorMark::RegionStart, f);
+    let has_cursor = f.context().cursor.is_active();
+    if has_cursor && f.context().cursor.starts_with_children_of == element {
+        write_children_mark(CursorMark::RegionStart, in_group, f);
     }
     write(f);
-    if cursor.ends_with_children_of == element {
-        mark(CursorMark::RegionEnd, f);
+    if has_cursor && f.context().cursor.ends_with_children_of == element {
+        write_children_mark(CursorMark::RegionEnd, in_group, f);
+    }
+}
+
+#[cold]
+fn write_children_mark(mark: CursorMark, in_group: bool, f: &mut Formatter<'_>) {
+    let mark = crate::prelude::format_with(move |f: &mut Formatter<'_>| {
+        f.write_element(FormatElement::Cursor(mark))
+    });
+    match in_group {
+        true => if_group_breaks(&mark).fmt(f),
+        false => mark.fmt(f),
     }
 }
 
@@ -1588,8 +1600,7 @@ pub(crate) fn with_jsx_children_marks<'a>(
 #[inline]
 pub(crate) fn extend_node(span: Span, f: &mut Formatter<'_>) {
     if f.context().cursor.is_active() {
-        let cursor = f.context().cursor;
-        cursor.exit(span, f);
+        exit_node(span, f);
     }
 }
 

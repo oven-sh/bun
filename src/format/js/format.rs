@@ -36,41 +36,36 @@ impl<'a> Formatter<'a> {
     }
 
     /// Calls `write`, with [`Formatter::is_quiet`] set if there's no comment in `span`.
+    ///
+    /// `write` is inlined, so this and the functions like it call it in one place only.
     #[inline]
     fn in_scope(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
-        if self.context().cursor.is_active() {
-            return self.in_scope_with_cursor(span, write);
+        let (outer, has_cursor) = (self.context().is_quiet, self.context().cursor.is_active());
+        match has_cursor {
+            true => self.enter_scope_with_cursor(span),
+            false => self.context_mut().is_quiet = outer || self.has_no_comments_in(span),
         }
-        let outer = self.context().is_quiet;
-        self.context_mut().is_quiet = outer || self.has_no_comments_in(span);
         write(self);
+        if has_cursor {
+            crate::cursor::exit_node(span, self);
+        }
         self.context_mut().is_quiet = outer;
     }
 
     #[cold]
-    fn in_scope_with_cursor(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
+    fn enter_scope_with_cursor(&mut self, span: Span) {
         let cursor = self.context().cursor;
-        let outer = self.context().is_quiet;
         // The nodes that contain the cursor region, and the nodes right before and after it, aren't quiet, so this
         // still gets called for them.
         self.context_mut().is_quiet =
-            outer || (!cursor.overlaps(span) && self.has_no_comments_in(span));
+            self.context().is_quiet || (!cursor.overlaps(span) && self.has_no_comments_in(span));
         cursor.enter(span, self);
-        write(self);
-        cursor.exit(span, self);
-        self.context_mut().is_quiet = outer;
     }
 
     /// Calls `write`, which writes the node at `span`, for callers that don't go through [`Formatter::in_scope`].
     #[inline]
     pub(crate) fn track_cursor(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
-        let cursor = self.context().cursor;
-        if !cursor.is_active() {
-            return write(self);
-        }
-        cursor.enter(span, self);
-        write(self);
-        cursor.exit(span, self);
+        crate::cursor::with_node_marks(span, self, write);
     }
 }
 

@@ -491,6 +491,8 @@ pub mod defines {
     #[derive(Default)]
     pub struct Define {
         pub identifiers: StringHashMap<IdentifierDefine>,
+        /// The define for a top-level `this`. It is not in `identifiers`, so the visitor hashes nothing for a `this`.
+        pub this: Option<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
         /// Which `DotFilter::bit`s the keys of `dots` set. The visitor asks
         /// about every property access; nearly all miss, and this says so
@@ -623,7 +625,11 @@ pub mod defines {
         ) -> Result<(), bun_alloc::AllocError> {
             // e.g. IS_BROWSER
             if strings::index_of_any(key, b".[").is_none() {
-                self.identifiers.put_assume_capacity(key, value);
+                if key == b"this" {
+                    self.this = Some(value);
+                } else {
+                    self.identifiers.put_assume_capacity(key, value);
+                }
                 return Ok(());
             }
 

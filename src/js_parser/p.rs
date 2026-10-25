@@ -5924,24 +5924,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A `this` outside every function, with a user `--define this=...` applied first.
-    #[inline(never)]
-    pub(crate) fn value_for_top_level_this(
-        &mut self,
-        this: &Expr,
-        assign_target: js_ast::AssignTarget,
-        is_delete_target: bool,
-    ) -> Option<Expr> {
-        debug_assert!(!self.fn_only_data_visit.is_this_nested);
-        let defines = self.define;
-        if let Some(data) = defines.identifiers.get(b"this".as_slice()) {
-            if !data.valueless() {
-                return Some(self.value_for_define(this, assign_target, is_delete_target, data));
-            }
-        }
-        self.value_for_this(this.loc)
-    }
-
     pub(crate) fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
         if !self.fn_only_data_visit.is_this_nested {
             // In the REPL, top-level `this` must evaluate to the global object
@@ -7099,7 +7081,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_delete_target: bool,
         define_data: &DefineData,
     ) -> Expr {
-        let loc = replaced.loc;
+        // Only a member chain reads how the use site uses it
+        let opts = match define_data.value {
+            js_ast::ExprData::EIdentifier(_) => IdentifierOpts::new()
+                .with_assign_target(assign_target)
+                .with_is_delete_target(is_delete_target)
+                .with_is_call_target(is_same_node(self.call_target, replaced.data))
+                .with_is_template_tag(is_same_node(self.template_tag, replaced.data))
+                .with_was_originally_identifier(true),
+            _ => IdentifierOpts::new(),
+        };
+        self.instantiate_define(replaced.loc, define_data, opts)
+    }
+
+    /// The value of a define at `loc`. `opts` is how the use site uses a member chain.
+    fn instantiate_define(
+        &mut self,
+        loc: bun_ast::Loc,
+        define_data: &DefineData,
+        opts: IdentifierOpts,
+    ) -> Expr {
         // Callers gate on `!valueless()` before reaching here, so `value` is a
         // real Expr.Data by contract.
         let value = define_data.value;
@@ -7114,15 +7115,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // borrow lifetime so the parts can be stored in the AST.
                 let original_name: &'a [u8] =
                     unsafe { bun_collections::detach_lifetime(original_name) };
+                let is_this_define = self
+                    .define
+                    .this
+                    .as_ref()
+                    .is_some_and(|this| core::ptr::eq(this, define_data));
                 return self.instantiate_define_member_chain(
                     loc,
                     original_name,
-                    IdentifierOpts::new()
-                        .with_assign_target(assign_target)
-                        .with_is_delete_target(is_delete_target)
-                        .with_is_call_target(is_same_node(self.call_target, replaced.data))
-                        .with_is_template_tag(is_same_node(self.template_tag, replaced.data))
-                        .with_was_originally_identifier(true),
+                    opts,
+                    is_this_define,
                 );
             }
             js_ast::ExprData::EString(str_) => {
@@ -7147,6 +7149,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         name: &'a [u8],
         opts: IdentifierOpts,
+        is_this_define: bool,
     ) -> Expr {
         let mut splitter = strings::split(name, b".");
         let first: &'a [u8] = splitter.next().unwrap_or(name);
@@ -7154,6 +7157,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         while let Some(part) = splitter.next() {
             rest.push(part);
         }
+
+        // In `a.b = 1` the target is the chain, so the head `a` is only read
+        let head_opts = if rest.is_empty() {
+            opts
+        } else {
+            IdentifierOpts::new()
+                .with_was_originally_identifier(true)
+                .with_is_property_access_target(rest.len() > 1 || !opts.is_delete_target())
+        };
 
         let value: Expr = match first {
             b"null" => Expr {
@@ -7166,12 +7178,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             b"this" => {
                 self.this_expr_count = self.this_expr_count.wrapping_add(1);
-                // Not `value_for_top_level_this`: `--define this=this.x` must not recurse
-                match self.value_for_this(loc) {
-                    Some(value) => value,
-                    None => Expr {
-                        loc,
-                        data: js_ast::ExprData::EThis(E::This),
+                let defines = self.define;
+                match &defines.this {
+                    // As in esbuild, a top-level `this` takes the `this` define. The `this` of that define does not, so `this=this.x` ends.
+                    Some(this_define)
+                        if !is_this_define
+                            && !this_define.valueless()
+                            && !self.fn_only_data_visit.is_this_nested =>
+                    {
+                        self.instantiate_define(loc, this_define, head_opts)
+                    }
+                    _ => match self.value_for_this(loc) {
+                        Some(value) => value,
+                        None => Expr {
+                            loc,
+                            data: js_ast::ExprData::EThis(E::This),
+                        },
                     },
                 }
             }
@@ -7186,14 +7208,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 let result = self.find_symbol(loc, first).expect("unreachable");
-                // In `a.b = 1` the target is the chain, so the head `a` is only read
-                let head_opts = if rest.is_empty() {
-                    opts
-                } else {
-                    IdentifierOpts::new()
-                        .with_was_originally_identifier(true)
-                        .with_is_property_access_target(rest.len() > 1 || !opts.is_delete_target())
-                };
                 self.handle_identifier(
                     loc,
                     E::Identifier::init(result.r#ref)

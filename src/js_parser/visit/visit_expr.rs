@@ -119,8 +119,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_this(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         p.this_expr_count = p.this_expr_count.wrapping_add(1);
         if !p.fn_only_data_visit.is_this_nested {
-            let is_delete_target = matches!(p.delete_target, Data::EThis(..));
-            if let Some(exp) = p.value_for_top_level_this(e, in_.assign_target, is_delete_target) {
+            let defines = p.define;
+            if let Some(define) = &defines.this
+                && !define.valueless()
+            {
+                let is_delete_target = matches!(p.delete_target, Data::EThis(..));
+                *e = p.value_for_define(e, in_.assign_target, is_delete_target, define);
+            } else if let Some(exp) = p.value_for_this(e.loc) {
                 *e = exp;
             }
         }
@@ -934,18 +939,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_template_tag = matches!(p.template_tag, Data::EIndex(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
-        // `a["b"]` matches the same define as `a.b`. The filter takes UTF-8, and a non-ASCII literal is UTF-16.
-        if let Data::EString(s) = e_.index.data
-            && (if s.is_utf8() {
-                s.next.is_some() || p.define.dots_filter.may_contain(s.data.slice())
-            } else {
-                p.define.dots_filter.has_non_ascii()
-            })
-            && Self::apply_index_define(p, e, in_, is_delete_target)
-        {
-            return;
-        }
-
         // "a['b']" => "a.b"
         if p.options.features.minify_syntax {
             if let Some(mut s) = e_.index.data.e_string() {
@@ -976,6 +969,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
             }
+        }
+
+        // `a["b"]` matches the same define as `a.b`. The filter takes UTF-8, and a non-ASCII literal is UTF-16.
+        if let Data::EString(s) = e_.index.data
+            && (if s.is_utf8() {
+                s.next.is_some() || p.define.dots_filter.may_contain(s.data.slice())
+            } else {
+                p.define.dots_filter.has_non_ascii()
+            })
+            && Self::apply_index_define(p, e, in_, is_delete_target)
+        {
+            return;
         }
 
         p.visit_expr_in_out(

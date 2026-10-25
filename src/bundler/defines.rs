@@ -168,6 +168,7 @@ impl DefineExt for Define {
     ) -> Result<Box<Define>, bun_alloc::AllocError> {
         let mut define = Box::new(Define {
             identifiers: StringHashMap::default(),
+            this: None,
             dots: StringHashMap::default(),
             dots_filter: Default::default(),
             drop_debugger,

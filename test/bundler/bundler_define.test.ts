@@ -135,9 +135,14 @@ const repros: Repro[] = [
       'process.env["with:colon=equals"]': "6",
       'process.env["MY-VÄR"]': "7",
       "labels.ключ": "8",
+      THIS_FOO: "this.foo",
     },
     cases: [
       ["((g) => g)(this)", "((g) => g)(window)"],
+      // The `this` of another define value takes the `this` define, as in esbuild
+      ["THIS_FOO", "window.foo"],
+      ["() => THIS_FOO", "() => window.foo"],
+      ["function () { return THIS_FOO; }", "function() { return this.foo; }"],
       ["FOO", "123n"],
       ["HEX", "0xffn"],
       ['process.env["SOME-VAR"]', "3"],
@@ -155,6 +160,20 @@ const repros: Repro[] = [
       ['labels?.["ключ"]', "8"],
       // Only a top-level `this` is replaced
       ["function () { return this; }", "function() { return this; }"],
+    ],
+  },
+  {
+    // esbuild 0.28.2 overflows its stack on this input
+    name: "the `this` of a `this` define is the `this` of the file",
+    defines: {
+      this: "this.self",
+      THIS_X: "this.x",
+    },
+    cases: [
+      ["this", "exports.self"],
+      ["this.y", "exports.self.y"],
+      ["THIS_X", "exports.self.x"],
+      ["function () { return [this, THIS_X]; }", "function() { return [this, this.x]; }"],
     ],
   },
   {

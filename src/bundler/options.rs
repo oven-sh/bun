@@ -1460,6 +1460,7 @@ impl<'a> BundleOptions<'a> {
             banner: self.banner.clone(),
             define: Box::new(defines::Define {
                 identifiers: self.define.identifiers.clone(),
+                this: self.define.this.clone(),
                 dots: self.define.dots.clone(),
                 dots_filter: self.define.dots_filter.clone(),
                 drop_debugger: self.define.drop_debugger,

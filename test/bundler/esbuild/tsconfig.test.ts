@@ -1314,7 +1314,7 @@ describe("bundler", () => {
   // `itBundled` starts every build in the root. This build starts in the directory of the
   // application, as a script of its package.json does. "model" has no tsconfig.json at or above
   // its real path.
-  test("tsconfig/SymlinkedPackageBuildStartedInApplicationDirectory", async () => {
+  test.concurrent("tsconfig/SymlinkedPackageBuildStartedInApplicationDirectory", async () => {
     using dir = tempDir("bundler-linked-package-application-cwd", {
       ...Object.fromEntries(Object.entries(jsxRuntimeStubs).map(([file, text]) => [file.slice(1), text])),
       "apps/web/tsconfig.json": JSON.stringify({
@@ -1355,7 +1355,7 @@ describe("bundler", () => {
     [`packages/${name}/jsx-runtime.js`]: `export const jsx = () => "${name}"; export const jsxs = jsx; export const Fragment = "${name}";`,
     [`packages/${name}/jsx-dev-runtime.js`]: `export const jsxDEV = () => "${name}"; export const Fragment = "${name}";`,
   });
-  test.each(["isolated", "hoisted"])("tsconfig/SymlinkedPackageOfInstalledWorkspace-%s", async linker => {
+  test.concurrent.each(["isolated", "hoisted"])("tsconfig/SymlinkedPackageOfInstalledWorkspace-%s", async linker => {
     using dir = tempDir("bundler-linked-package-installed-workspace", {
       "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["apps/*", "packages/*"] }),
       "apps/web/package.json": JSON.stringify({
@@ -1397,7 +1397,7 @@ describe("bundler", () => {
   });
   // `bun build --app` has a resolver for the server and one for the client. Both take the
   // tsconfig.json above the real path of the package.
-  test("tsconfig/SymlinkedPackageInServerAndClientOfApp", async () => {
+  test.concurrent("tsconfig/SymlinkedPackageInServerAndClientOfApp", async () => {
     using dir = tempDir("bundler-linked-package-app", {
       ...Object.fromEntries(Object.entries(jsxRuntimeStubs).map(([file, text]) => [file.slice(1), text])),
       "apps/web/tsconfig.json": jsxImportSource("preact"),

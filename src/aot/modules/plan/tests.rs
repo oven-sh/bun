@@ -399,9 +399,9 @@ fn the_commonjs_files_of_a_graph_run_first() {
     ];
     with_plan(&files, |plan| {
         let expected = [
-            "request k3.cjs",
-            "request k2.cjs",
             "request k1.cjs",
+            "request k2.cjs",
+            "request k3.cjs",
             "request a.mjs",
         ];
         assert_eq!(plan.requests("main.mjs"), expected);

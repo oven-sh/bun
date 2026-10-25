@@ -31,6 +31,8 @@ export type GraphOptions = {
   leadingStatements?: boolean;
   /** Some layer blocks are empty. Default false. */
   emptyBlocks?: boolean;
+  /** Some rules are inside `@media` or `@supports`. Default false. */
+  conditions?: boolean;
 };
 
 const names = ["a", "b", "c"];
@@ -41,6 +43,7 @@ export function generateGraph(
   options: GraphOptions = {},
 ): { files: Record<string, string>; entry: string } {
   const { cycles = false, anonymous = false, leadingStatements = true, emptyBlocks = false } = options;
+  const { conditions = false } = options;
   const rnd = rng(seed);
   const int = (n: number, from = rnd) => Math.floor(from() * n);
   const pick = (pool: string[], from = rnd) => pool[int(pool.length, from)];
@@ -49,7 +52,7 @@ export function generateGraph(
   // Each optional shape draws from streams of its own, one per file, so a seed keeps its base graph whatever the
   // options are.
   const own = (shape: number) => Array.from({ length: n }, (_, i) => rng(seed ^ Math.imul(shape * 8 + i, 0x5bd1e995)));
-  const [leading, cyclic, anon, empty] = [1, 2, 3, 4].map(own);
+  const [leading, cyclic, anon, empty, conditional] = [1, 2, 3, 4, 5].map(own);
 
   const imports: string[][] = Array.from({ length: n }, () => []);
   const addImport = (i: number, target: number, from = rnd) => {
@@ -79,14 +82,26 @@ export function generateGraph(
       css += statement(leading[i]) + (leading[i]() < 0.4 ? statement(leading[i]) : "");
     }
     css += imports[i].join("");
+    let lastSupports = 0;
     for (let items = 1 + int(4); items > 0; items--) {
       if (emptyBlocks && empty[i]() < 0.3) css += `@layer ${outer(empty[i])} {}\n`;
       const kind = int(20);
-      if (kind < 5) css += statement();
-      else if (kind < 13) css += `@layer ${outer()} { ${style()} }\n`;
+      let item: string;
+      if (kind < 5) item = statement();
+      else if (kind < 13) item = `@layer ${outer()} { ${style()} }\n`;
       else if (kind < 18) {
-        css += `@layer ${outer()} { ${rnd() < 0.5 ? style() + " " : ""}@layer ${pick(names)} { ${style()} } }\n`;
-      } else css += style() + "\n";
+        item = `@layer ${outer()} { ${rnd() < 0.5 ? style() + " " : ""}@layer ${pick(names)} { ${style()} } }\n`;
+      } else item = style() + "\n";
+      const from = conditional[i];
+      if (conditions && from() < 0.35) {
+        const media = from() < 0.7;
+        let number = 1 + int(2, from);
+        // The minifier drops the second of two adjacent `@supports` rules with one condition (#46733).
+        if (!media && number === lastSupports) number = 3 - number;
+        lastSupports = media ? 0 : number;
+        item = `@${media ? `media (min-width: ${number}px)` : `supports (top: ${number}px)`} { ${item.trim()} }\n`;
+      } else lastSupports = 0;
+      css += item;
     }
     files[stem(i) + ".css"] = css;
   }
@@ -104,13 +119,23 @@ export type LayerEvaluation = { winner: string | undefined; order: Record<string
 type Layer = { name: string; path?: string; children: Layer[] };
 
 const comment = /\/\*[^]*?\*\//g;
-// `@name prelude;` or `@name prelude {`, a style rule, or the `}` of a block. Only `@import` and `@layer` are
-// modelled: any other block (`@media`, `@supports`) counts as its content.
+// `@name prelude;` or `@name prelude {`, a style rule, or the `}` of a block. `@import`, `@layer`, `@media` and
+// `@supports` are modelled: any other block counts as its content.
 const syntax = /@([\w-]+)\s*([^;{}]*?)\s*([;{])|([^{}@;]+)\{([^{}]*)\}|\}/g;
 const importPrelude = /^(?:url\(\s*)?["']?(?:\.\/)?([^"')\s]+)["']?\s*\)?\s*(?:(layer)(?:\(\s*([^)\s]+)\s*\))?)?/;
+// The generator gives every condition a number: "m1" is `@media (min-width: 1px)`, "s2" is `@supports (top: 2px)`.
+const condition = (at: string, prelude: string) => at[0] + /\d+/.exec(prelude)?.[0];
+const conditionalBlock = /@(media|supports)\s*([^;{}]*)\{/g;
 
-/** The graph as a browser sees it: every `@import` is followed. */
-export function evaluateSources(files: Record<string, string>, entry: string): LayerEvaluation {
+/**
+ * The graph as a browser sees it: every `@import` is followed. `state` has the conditions that hold: a block with
+ * another condition declares no layer and applies no rule.
+ */
+export function evaluateSources(
+  files: Record<string, string>,
+  entry: string,
+  state: ReadonlySet<string> = new Set(),
+): LayerEvaluation {
   const order: Record<string, string[]> = {};
   const root: Layer = { name: "", path: "", children: [] };
   const rules: { layer: Layer; id: string }[] = [];
@@ -131,10 +156,14 @@ export function evaluateSources(files: Record<string, string>, entry: string): L
     path.split(".").reduce((layer, name) => child(layer, name.trim()), from);
 
   const apply = (file: string, into: Layer, chain: string[]) => {
-    const stack = [into];
+    // `undefined`: inside a block whose condition does not hold.
+    const stack: (Layer | undefined)[] = [into];
     for (const [, at, prelude, open, selector, declarations] of files[file].replace(comment, "").matchAll(syntax)) {
       const top = stack[stack.length - 1];
-      if (at === "import") {
+      if (!top) {
+        if (open === "{") stack.push(undefined);
+        else if (!at && selector === undefined) stack.pop();
+      } else if (at === "import") {
         const [, target = "", layered, wrapper = ""] = importPrelude.exec(prelude) ?? [];
         const layer = layered ? descend(top, wrapper) : top;
         // An import that closes a cycle is not loaded, and neither is a missing file. Its layer is declared anyway.
@@ -142,7 +171,8 @@ export function evaluateSources(files: Record<string, string>, entry: string): L
       } else if (at === "layer" && open === ";") {
         for (const path of prelude.split(",")) descend(top, path);
       } else if (at) {
-        if (open === "{") stack.push(at === "layer" ? descend(top, prelude) : top);
+        const holds = (at !== "media" && at !== "supports") || state.has(condition(at, prelude));
+        if (open === "{") stack.push(at === "layer" ? descend(top, prelude) : holds ? top : undefined);
       } else if (selector !== undefined) {
         // The minifier merges adjacent rules into one with several `--k`. The last one wins, as with separate rules.
         for (const [, id] of declarations.matchAll(/--k\s*:\s*([^;\s]+)/g)) rules.push({ layer: top, id });
@@ -163,8 +193,8 @@ export function evaluateSources(files: Record<string, string>, entry: string): L
   return { winner: winner?.id, order };
 }
 
-export function evaluateBundle(css: string): LayerEvaluation {
-  return evaluateSources({ "bundle.css": css }, "bundle.css");
+export function evaluateBundle(css: string, state?: ReadonlySet<string>): LayerEvaluation {
+  return evaluateSources({ "bundle.css": css }, "bundle.css", state);
 }
 
 /** Whether `problem` says that `.t` gets another rule. The other problems are about the order of layers. */
@@ -201,7 +231,19 @@ export async function checkGraph(bun: string, seed: number, options?: GraphOptio
   if (exitCode !== 0 || stderr) {
     return { seed, status: "skipped", problems: [`bun build (exit code ${exitCode}): ` + stderr.slice(0, 400)] };
   }
-  const problems = compare(evaluateSources(files, entry), evaluateBundle(stdout));
+  // One evaluation per state of the conditions that the sources have.
+  const all = Object.values(files).flatMap(css =>
+    [...css.matchAll(conditionalBlock)].map(([, at, p]) => condition(at, p)),
+  );
+  const conditions = [...new Set(all)].sort();
+  const problems: string[] = [];
+  for (let bits = 0; bits < 1 << conditions.length; bits++) {
+    const state = new Set(conditions.filter((_, i) => bits & (1 << i)));
+    const where = conditions.length ? ` (conditions that hold: ${[...state].join(" ") || "none"})` : "";
+    for (const problem of compare(evaluateSources(files, entry, state), evaluateBundle(stdout, state))) {
+      problems.push(problem + where);
+    }
+  }
   if (stdout.includes("@import")) problems.push("the bundle still has an @import");
   return { seed, status: problems.length ? "wrong" : "ok", problems };
 }

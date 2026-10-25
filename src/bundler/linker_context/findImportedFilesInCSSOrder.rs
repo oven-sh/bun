@@ -101,6 +101,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         has_external_import: bool,
         /// Whether `order` has an entry for the layer of an "@import" that closes a cycle.
         has_cyclic_import_layer: bool,
+        /// Whether `order` has a file that first declares a layer inside "@media", "@supports" or "@-moz-document".
+        has_conditional_layer_file: bool,
         visited: Vec<Index>,
         order: Vec<CssImportOrder>,
 
@@ -343,6 +345,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     self.input_file_pretty(source_index),
                 );
             }
+            self.has_conditional_layer_file |= repr.has_conditional_layer_names;
             // Accumulate imports in depth-first postorder
             self.order.push(CssImportOrder {
                 // `crate::Index` (= `bun_ast::Index`) and the
@@ -376,6 +379,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         all_import_records: all_import_records_slice,
         has_external_import: false,
         has_cyclic_import_layer: false,
+        has_conditional_layer_file: false,
         order: Vec::new(),
         stack_check: StackCheck::init(),
         too_deep: None,
@@ -400,11 +404,12 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 
     let has_external_import = visitor.has_external_import;
     let mut order = visitor.order;
-    // Unlike esbuild: with a file's pre-import layers in the order, a `layer(...)` that only one of two condition lists has is not ignored.
-    let layers_matter = order
-        .slice()
-        .iter()
-        .any(|entry| matches!(entry.kind, CssImportOrderKind::Layers(Layers::PreImport(_))));
+    // Unlike esbuild: with a file's pre-import layers in the order, or a file that first declares a layer under a condition, a `layer(...)` that only one of two condition lists has is not ignored.
+    let layers_matter = visitor.has_conditional_layer_file
+        || order
+            .slice()
+            .iter()
+            .any(|entry| matches!(entry.kind, CssImportOrderKind::Layers(Layers::PreImport(_))));
     // Without them the order stays as esbuild has it. The layers of cyclic imports are the only other layer entries here.
     if visitor.has_cyclic_import_layer && !layers_matter {
         order.retain(|entry| !matches!(entry.kind, CssImportOrderKind::Layers(_)));
@@ -481,14 +486,20 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     }
                     let stylesheet = css_asts[idx.get() as usize].as_deref().unwrap();
                     // A CSS module with "composes" fails to print inside a wrapper, so its copy under a layer stays a list.
-                    let layers_matter = layers_matter && stylesheet.composes.count() == 0;
+                    let can_print_in_a_wrapper = stylesheet.composes.count() == 0;
                     for &j in gop.value_ptr.slice() {
                         // SAFETY: j < order.len; see note above.
                         let later = unsafe { &(*order_ptr.add(j as usize)).conditions };
-                        if is_conditional_import_redundant(&entry.conditions, later, layers_matter)
-                        {
+                        if is_conditional_import_redundant(
+                            &entry.conditions,
+                            later,
+                            layers_matter && can_print_in_a_wrapper,
+                        ) {
                             // A list of layer names cannot say that the file declares one of them only under "@media".
-                            if layers_matter && stylesheet.has_conditional_layer_names {
+                            if layers_matter
+                                && stylesheet.has_conditional_layer_names
+                                && (can_print_in_a_wrapper || entry.conditions.len() == 0)
+                            {
                                 copies_in_place_of_lists.push(i);
                                 continue 'next_backward;
                             }

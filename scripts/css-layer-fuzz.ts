@@ -1,5 +1,5 @@
 // bun scripts/css-layer-fuzz.ts <bun> <graphs> [first seed] [baseline bun]
-//   [--cycles] [--anonymous] [--no-leading-statements] [--empty-blocks]
+//   [--cycles] [--anonymous] [--no-leading-statements] [--empty-blocks] [--conditions]
 // Runs test/bundler/css-layer-order.ts over many seeds against <bun> and prints the seeds where the bundle does not
 // have the cascade layers of its sources. `<graphs>` = 1 prints the files of that seed too. With a baseline binary it
 // also prints the seeds the baseline gets right and <bun> gets wrong, and how many are the other way round. It does
@@ -13,7 +13,7 @@ import {
   type GraphResult,
 } from "../test/bundler/css-layer-order";
 
-const known = ["--cycles", "--anonymous", "--no-leading-statements", "--empty-blocks"];
+const known = ["--cycles", "--anonymous", "--no-leading-statements", "--empty-blocks", "--conditions"];
 const flags = process.argv.slice(2).filter(arg => arg.startsWith("--"));
 const [bun, count = "100", first = "1", baseline] = process.argv.slice(2).filter(arg => !arg.startsWith("--"));
 if (!bun || flags.some(flag => !known.includes(flag))) {
@@ -27,6 +27,7 @@ const options: GraphOptions = {
   anonymous: flags.includes("--anonymous"),
   leadingStatements: !flags.includes("--no-leading-statements"),
   emptyBlocks: flags.includes("--empty-blocks"),
+  conditions: flags.includes("--conditions"),
 };
 const locate = (binary: string) => Bun.which(binary) ?? resolve(binary);
 const [target, before] = [locate(bun), baseline && locate(baseline)];

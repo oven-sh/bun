@@ -1744,17 +1744,12 @@ const promiseOperatorLengths = { every: 1, forEach: 2, reduce: 3, toArray: 1, so
 >;
 let operators: Operators | undefined;
 
-const streamOperatorKeys = ObjectKeys(streamOperatorLengths);
-for (let i = 0; i < streamOperatorKeys.length; i++) {
-  const key = streamOperatorKeys[i];
-  const length = streamOperatorLengths[key];
-  let op;
+function installOperator(key: string, length: number, call: (this: unknown, args: unknown[]) => unknown) {
   function fn(...args) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
-    op ??= (operators ??= require("internal/streams/operators")).streamReturningOperators[key];
-    return Stream.Readable.from(op.$apply(this, args));
+    return call.$call(this, args);
   }
   ObjectDefineProperty(fn, "name", { __proto__: null, value: key });
   ObjectDefineProperty(fn, "length", { __proto__: null, value: length });
@@ -1766,28 +1761,25 @@ for (let i = 0; i < streamOperatorKeys.length; i++) {
     writable: true,
   });
 }
+
+const streamOperatorKeys = ObjectKeys(streamOperatorLengths);
+for (let i = 0; i < streamOperatorKeys.length; i++) {
+  const key = streamOperatorKeys[i];
+  let op;
+  installOperator(key, streamOperatorLengths[key], function (args) {
+    op ??= (operators ??= require("internal/streams/operators")).streamReturningOperators[key];
+    return Stream.Readable.from(op.$apply(this, args));
+  });
+}
 const promiseOperatorKeys = ObjectKeys(promiseOperatorLengths);
 for (let i = 0; i < promiseOperatorKeys.length; i++) {
   const key = promiseOperatorKeys[i];
-  const length = promiseOperatorLengths[key];
   let op;
-  function fn(...args) {
-    if (new.target) {
-      throw $ERR_ILLEGAL_CONSTRUCTOR();
-    }
-    return Promise.$resolve().then(() => {
+  installOperator(key, promiseOperatorLengths[key], function (args) {
+    return Promise.$resolve().$then(() => {
       op ??= (operators ??= require("internal/streams/operators")).promiseReturningOperators[key];
       return op.$apply(this, args);
     });
-  }
-  ObjectDefineProperty(fn, "name", { __proto__: null, value: key });
-  ObjectDefineProperty(fn, "length", { __proto__: null, value: length });
-  ObjectDefineProperty(Readable.prototype, key, {
-    __proto__: null,
-    value: fn,
-    enumerable: false,
-    configurable: true,
-    writable: true,
   });
 }
 

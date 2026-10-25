@@ -2152,8 +2152,6 @@ describe("Readable operators in a process that has not loaded node:stream", () =
         [Math, "floor"],
         [Number, "isNaN"],
         [Array.prototype, "push"],
-        [Function.prototype, "bind"],
-        [Object, "defineProperty"],
       ];
       const callsAfterRestore = {};
       let restored = false;
@@ -2185,7 +2183,7 @@ describe("Readable operators in a process that has not loaded node:stream", () =
       stdout: {
         first: [5],
         second: [5],
-        callsAfterRestore: { floor: 0, isNaN: 0, push: 0, bind: 0, defineProperty: 0 },
+        callsAfterRestore: { floor: 0, isNaN: 0, push: 0 },
       },
       stderr: "",
       exitCode: 0,

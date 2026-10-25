@@ -2658,7 +2658,8 @@ declare const either: Shape | Store;
       ["on the command line", "--stdin"],
     ] as const)("a rule that's turned on %s", (place, flag) => {
       const noTypes = "1 rule did not run because there is no type information for the files: ";
-      const notKnown = "1 rule did not run in 1 file because rules that run in JavaScript cannot read this from a type: ";
+      const notKnown =
+        "1 rule did not run in 1 file because rules that run in JavaScript cannot read this from a type: ";
       test.concurrent.each([
         ["gets types", facts, `"demo/title": "error"`, "a.ts", ["1024 1024 0 0"], ""],
         ["gets none under espree", facts, `"demo/title": "error"`, "a.js", [], noTypes + "demo/title"],

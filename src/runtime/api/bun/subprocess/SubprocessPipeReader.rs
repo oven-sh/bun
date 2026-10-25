@@ -12,8 +12,7 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_ptr::{ParentRef, RefCount, RefPtr};
 
-use super::readable::Readable;
-use super::{StdioKind, StdioResult, Subprocess};
+use super::{StdioResult, Subprocess};
 
 pub(crate) type IOReader = BufferedReader;
 
@@ -34,7 +33,7 @@ pub(crate) struct PipeReader {
     // Backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
     // `ParentRef` encapsulates the single unsafe deref behind a safe `Deref`/`get()`;
     // the Subprocess owns this PipeReader (via `Readable::Pipe`) and is guaranteed
-    // live whenever `process.is_some()` — see `on_close_io`/`finalize` ordering.
+    // live whenever `process.is_some()` — see `on_close_reader`/`finalize` ordering.
     // `'static` erases the borrow-checker lifetime (Subprocess is heap-pinned).
     pub(crate) process: Option<ParentRef<Subprocess<'static>>>,
     // Long-lived borrow of the VM's event loop. The VM (and its embedded
@@ -177,7 +176,7 @@ impl PipeReader {
             if let bun_sys::Result::Err(err) = self.reader.start_with_current_pipe() {
                 // Route through the same teardown as a read-callback error
                 // (matches POSIX's register_poll failure path): state=Err,
-                // detach from the Subprocess via on_close_io, release the
+                // detach from the Subprocess via on_close_reader, release the
                 // start() ref, and let the caller proceed to the sibling pipe.
                 // Returning Err would have the caller throw after try_kill
                 // without unwinding this pipe or the never-started sibling,
@@ -195,7 +194,7 @@ impl PipeReader {
             }
             // PosixBufferedReader.start() always returns Ok(()); if poll
             // registration fails it synchronously invokes onReaderError() first,
-            // which drops both the Readable.pipe ref (via onCloseIO) and the ref we
+            // which drops both the Readable.pipe ref (via on_close_reader) and the ref we
             // just took above. Hold one more ref so `this` survives long enough to
             // check state after start() returns.
             //
@@ -234,28 +233,11 @@ impl PipeReader {
         self.state = State::Done(owned);
         if let Some(process) = self.process.take() {
             // `process` backref is valid while set; cleared before deref.
-            let kind = self.kind(process.get());
-            process.on_close_io(kind);
+            process.on_close_reader(self);
         }
         // SAFETY: last use of `self`; caller holds only a raw parent pointer,
         // so freeing here does not invalidate any live `&mut`.
         unsafe { PipeReader::deref(self) };
-    }
-
-    fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
-        if let Readable::Pipe(pipe) = process.stdout.get() {
-            if core::ptr::eq(pipe.as_ptr(), self) {
-                return StdioKind::Stdout;
-            }
-        }
-
-        if let Readable::Pipe(pipe) = process.stderr.get() {
-            if core::ptr::eq(pipe.as_ptr(), self) {
-                return StdioKind::Stderr;
-            }
-        }
-
-        unreachable!("We should be either stdout or stderr");
     }
 
     fn to_owned_slice(&mut self) -> Vec<u8> {
@@ -345,8 +327,7 @@ impl PipeReader {
         self.state = State::Err(owned, err);
         if let Some(process) = self.process.take() {
             // `process` backref is valid while set; cleared before deref.
-            let kind = self.kind(process.get());
-            process.on_close_io(kind);
+            process.on_close_reader(self);
         }
         // SAFETY: last use of `self`; see `on_reader_done`.
         unsafe { PipeReader::deref(self) };

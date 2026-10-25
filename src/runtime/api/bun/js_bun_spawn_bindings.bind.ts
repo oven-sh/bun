@@ -11,3 +11,5 @@ const spawnSignature = {
 } as const;
 export const spawn = b.fn(spawnSignature);
 export const spawnSync = b.fn(spawnSignature);
+/** `spawnSync` as `node:child_process` needs it. Not on the `Bun` object. */
+export const spawnSyncForNode = b.fn(spawnSignature);

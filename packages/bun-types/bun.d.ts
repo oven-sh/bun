@@ -7828,6 +7828,11 @@ declare module "bun" {
        * something that will close it itself (e.g. `net.connect({fd})`).
        * On Windows it behaves the same as `"pipe"`.
        *
+       * The result of `spawnSync` has no `stdio`, so nothing can read a
+       * `"pipe"` at an index >= 3. The process gets the null device
+       * (`/dev/null`, `NUL` on Windows) there: it can write, and the bytes
+       * are discarded.
+       *
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`
        */

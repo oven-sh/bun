@@ -513,6 +513,7 @@ declare function $ERR_SERVER_NOT_RUNNING(): Error;
 declare function $ERR_SOCKET_BAD_TYPE(): Error;
 declare function $ERR_ZLIB_INITIALIZATION_FAILED(): Error;
 declare function $ERR_IPC_ONE_PIPE(): Error;
+declare function $ERR_IPC_SYNC_FORK(): Error;
 declare function $ERR_SOCKET_ALREADY_BOUND(): Error;
 declare function $ERR_SOCKET_BAD_BUFFER_SIZE(): Error;
 declare function $ERR_SOCKET_DGRAM_IS_CONNECTED(): Error;

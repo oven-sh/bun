@@ -28,7 +28,7 @@ use crate::api::bun_process::ExtraPipe;
 use crate::api::bun_process::SpawnResultExt as _;
 use crate::api::bun_process::{self as spawn, CStrPtr, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
-use crate::api::bun_spawn::stdio::{self, Stdio};
+use crate::api::bun_spawn::stdio::{self, SpawnMode, Stdio, SyncExtraSlot};
 use crate::api::bun_subprocess::{
     self as Subprocess, Readable, Subprocess as SubprocessT, Writable,
 };
@@ -270,7 +270,7 @@ pub(crate) fn spawn(
     options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
     spawn_maybe_sync(
-        false,
+        SpawnMode::Async,
         &cx.js_thread(),
         cmd_or_options.to_js(),
         options.to_js(),
@@ -284,10 +284,30 @@ pub(crate) fn spawn_sync(
     cmd_or_options: JsLocal<'_>,
     options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
+    spawn_sync_in_mode(SpawnMode::Sync, cx, cmd_or_options, options)
+}
+
+/// `spawnSync()` of `node:child_process` calls this. The result of `Bun.spawnSync()`, plus `extraStdio`
+/// when a `"pipe"` at a stdio index >= 3 was read: one entry per slot from index 3, a `Buffer` for each
+/// such pipe and `undefined` for any other slot.
+pub(crate) fn spawn_sync_for_node(
+    cx: &mut JsScope<'_>,
+    cmd_or_options: JsLocal<'_>,
+    options: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    spawn_sync_in_mode(SpawnMode::NodeSync, cx, cmd_or_options, options)
+}
+
+fn spawn_sync_in_mode(
+    mode: SpawnMode,
+    cx: &mut JsScope<'_>,
+    cmd_or_options: JsLocal<'_>,
+    options: JsLocal<'_>,
+) -> JsResult<JSValue> {
     let cx = &cx.js_thread();
     let mut bun_test_deadline: Option<Timespec> = None;
     let result = spawn_maybe_sync(
-        true,
+        mode,
         cx,
         cmd_or_options.to_js(),
         options.to_js(),
@@ -348,12 +368,13 @@ impl Drop for ReportUnwatchedExit {
 }
 
 fn spawn_maybe_sync(
-    is_sync: bool,
+    mode: SpawnMode,
     cx: &bun_jsc::JsThread<'_>,
     args_: JSValue,
     secondary_args_value: JSValue,
     bun_test_deadline: &mut Option<Timespec>,
 ) -> JsResult<JSValue> {
+    let is_sync = mode != SpawnMode::Async;
     if is_sync {
         // We skip this on Windows due to test failures.
         #[cfg(not(windows))]
@@ -399,6 +420,8 @@ fn spawn_maybe_sync(
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
+    // A sync spawn reads a pipe in `extra_fds` itself: see `SyncExtraSlot`.
+    let mut sync_reads_extra_pipe = false;
     #[cfg(not(windows))]
     let mut socket_fd_indices: Vec<usize> = Vec::new();
     let mut argv0: Option<*const c_char> = None;
@@ -635,10 +658,20 @@ fn spawn_maybe_sync(
                             let mut new_item: Stdio = Stdio::Ignore;
                             Stdio::extract(&mut new_item, cx, i, value, is_sync)?;
 
-                            let opt = match new_item.as_spawn_option(i) {
-                                stdio::ResultT::Result(opt) => opt,
-                                stdio::ResultT::Err(e) => {
-                                    return Err(e.throw_js(cx.global()));
+                            let opt = if is_sync {
+                                match new_item.as_sync_extra_slot(cx.global(), i, mode)? {
+                                    SyncExtraSlot::NoParentEnd(opt) => opt,
+                                    SyncExtraSlot::Read(opt) => {
+                                        sync_reads_extra_pipe = true;
+                                        opt
+                                    }
+                                }
+                            } else {
+                                match new_item.as_spawn_option(i) {
+                                    stdio::ResultT::Result(opt) => opt,
+                                    stdio::ResultT::Err(e) => {
+                                        return Err(e.throw_js(cx.global()));
+                                    }
                                 }
                             };
                             #[cfg(not(windows))]
@@ -801,7 +834,10 @@ fn spawn_maybe_sync(
                     // 'Infinity' does not set maxBuffer
                     let value = val.coerce_to_int64(cx.global())?;
                     if value > 0
-                        && (stdio[0].is_piped() || stdio[1].is_piped() || stdio[2].is_piped())
+                        && (stdio[0].is_piped()
+                            || stdio[1].is_piped()
+                            || stdio[2].is_piped()
+                            || sync_reads_extra_pipe)
                     {
                         max_buffer = Some(value);
                     }
@@ -1293,6 +1329,7 @@ fn spawn_maybe_sync(
         // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
+        extra_readables: None,
         ipc_data: JsCell::new(None),
         flags: Cell::new(if is_sync {
             Subprocess::Flags::IS_SYNC
@@ -1335,9 +1372,12 @@ fn spawn_maybe_sync(
             ptr: subprocess_nn.cast::<()>(),
             on_overflow: SubprocessT::on_max_buffer_overflow,
         };
-        let mut mb = None;
-        MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
-        subprocess.stderr_maxbuf.set(mb);
+        // node: a sync spawn counts one total over every output pipe. https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L648-L655
+        if mode != SpawnMode::NodeSync {
+            let mut mb = None;
+            MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
+            subprocess.stderr_maxbuf.set(mb);
+        }
         let mut mb = None;
         MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
         subprocess.stdout_maxbuf.set(mb);
@@ -1444,9 +1484,45 @@ fn spawn_maybe_sync(
         event_loop_nn,
         subprocess_nn,
         spawned_stderr,
-        subprocess.stderr_maxbuf.get(),
+        if mode == SpawnMode::NodeSync {
+            subprocess.stdout_maxbuf.get()
+        } else {
+            subprocess.stderr_maxbuf.get()
+        },
         is_sync,
     ));
+    if sync_reads_extra_pipe {
+        let maxbuf = subprocess.stdout_maxbuf.get();
+        let readables: Vec<JsCell<Readable>> = subprocess.stdio_pipes.with_mut(|pipes| {
+            pipes
+                .iter_mut()
+                .map(|slot| {
+                    JsCell::new(match Subprocess::take_owned_stdio_pipe(slot) {
+                        Some(parent_end) => Readable::init(
+                            Stdio::Pipe,
+                            event_loop_nn,
+                            subprocess_nn,
+                            parent_end,
+                            maxbuf,
+                            is_sync,
+                        ),
+                        None => Readable::Ignore,
+                    })
+                })
+                .collect()
+        });
+        subprocess.extra_readables = Some(Box::new(readables));
+    }
+    // A sync spawn gives JS no `.stdio` to read a parent end from: one left here is a pipe that fills
+    // up and blocks the child.
+    debug_assert!(
+        !is_sync
+            || !subprocess
+                .stdio_pipes
+                .get()
+                .iter()
+                .any(Subprocess::owns_stdio_pipe)
+    );
 
     // Inline terminals keep slave_fd until on_process_exit (BSD kernels flush
     // pty output on last slave close; see Terminal::drain_and_close_slave_fd).
@@ -1664,27 +1740,18 @@ fn spawn_maybe_sync(
         send_exit_notification.then(|| ReportUnwatchedExit(bun_ptr::BackRef::from(subprocess_nn)));
 
     // Start the readers before the Writable::Buffer stdin writer so that if
-    // the writer's start() throws below, both PipeReaders have taken their
+    // the writer's start() throws below, every PipeReader has taken its
     // start() ref and on_process_exit's later drain is refcount-balanced.
-    if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-        // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
-        // captured above) instead of the live `&mut subprocess`, which would
-        // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
-        if (is_sync || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
-            if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-                Readable::pipe_reader_mut(pipe).read_all();
-            }
-        }
-    }
-
-    if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-        // Note: see stdout arm above — avoid aliased &mut.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
-
-        if (is_sync || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
-            if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-                Readable::pipe_reader_mut(pipe).read_all();
+    for out in subprocess.readables() {
+        if let Readable::Pipe(pipe) = out.get() {
+            // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
+            // captured above) instead of the live `&mut subprocess`, which would
+            // alias with the borrow of `out` held by `pipe`.
+            Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
+            if is_sync || !lazy {
+                if let Readable::Pipe(pipe) = out.get() {
+                    Readable::pipe_reader_mut(pipe).read_all();
+                }
             }
         }
     }
@@ -1790,6 +1857,13 @@ fn spawn_maybe_sync(
         subprocess.close_readable_pipes();
     }
 
+    // The first read of a reader, above, can use up `maxBuffer`. `Process::kill` does nothing for a
+    // child that is not watched yet, so that kill was lost.
+    if subprocess.exited_due_to_maxbuf.get().is_some() {
+        let _ = subprocess.try_kill(subprocess.kill_signal);
+        subprocess.close_readable_pipes();
+    }
+
     if !subprocess.has_exited() {
         // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
         // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
@@ -1875,12 +1949,10 @@ fn spawn_maybe_sync(
                 Writable::buffer_writer_mut(buffer).watch();
             }
 
-            if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-                Readable::pipe_reader_mut(pipe).watch();
-            }
-
-            if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-                Readable::pipe_reader_mut(pipe).watch();
+            for out in subprocess.readables() {
+                if let Readable::Pipe(pipe) = out.get() {
+                    Readable::pipe_reader_mut(pipe).watch();
+                }
             }
 
             // Tick the isolated event loop without passing timeout to avoid blocking
@@ -1949,9 +2021,8 @@ fn spawn_maybe_sync(
     let signal_code = subprocess.signal_code_to_js(cx.global());
     let exit_code = subprocess.exit_code_to_js();
     let read_error = subprocess
-        .stdout
-        .with_mut(|s| s.take_read_error())
-        .or_else(|| subprocess.stderr.with_mut(|s| s.take_read_error()));
+        .readables()
+        .find_map(|out| out.with_mut(|s| s.take_read_error()));
     // Propagated after `finalize`, which must run even when building the output throws.
     let output = subprocess
         .stdout
@@ -1961,7 +2032,18 @@ fn spawn_maybe_sync(
                 .stderr
                 .with_mut(|s| s.to_buffered_value(cx.global()))?;
             let resource_usage = subprocess.create_resource_usage_object(cx.global())?;
-            Ok((stdout, stderr, resource_usage))
+            let extra_stdio = match &subprocess.extra_readables {
+                Some(extra) => {
+                    let array = JSValue::create_empty_array(cx.global(), 0)?;
+                    for out in extra.iter() {
+                        let bytes = out.with_mut(|s| s.to_buffered_value(cx.global()))?;
+                        array.push(cx.global(), bytes)?;
+                    }
+                    array
+                }
+                None => JSValue::ZERO,
+            };
+            Ok((stdout, stderr, resource_usage, extra_stdio))
         });
     let exited_due_to_timeout = did_timeout;
     let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf.get();
@@ -1972,7 +2054,7 @@ fn spawn_maybe_sync(
     unsafe {
         bun_jsc::host_fn::host_fn_finalize_ref_counted(subprocess_ptr, SubprocessT::finalize)
     };
-    let (stdout, stderr, resource_usage) = output?;
+    let (stdout, stderr, resource_usage, extra_stdio) = output?;
     if let Some(err) = setup_err {
         return Err(cx.global().throw_value(err.to_js(cx.global())));
     }
@@ -2026,6 +2108,9 @@ fn spawn_maybe_sync(
         );
     }
     sync_value.put(cx.global(), b"pid", result_pid);
+    if !extra_stdio.is_empty() {
+        sync_value.put(cx.global(), b"extraStdio", extra_stdio);
+    }
 
     Ok(sync_value)
 }

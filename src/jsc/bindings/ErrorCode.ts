@@ -149,6 +149,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_IPC_CHANNEL_CLOSED", Error],
   ["ERR_IPC_DISCONNECTED", Error],
   ["ERR_IPC_ONE_PIPE", Error],
+  ["ERR_IPC_SYNC_FORK", Error],
   ["ERR_LOAD_SQLITE_EXTENSION", Error],
   ["ERR_MEMORY_ALLOCATION_FAILED", RangeError],
   ["ERR_METHOD_NOT_IMPLEMENTED", Error],

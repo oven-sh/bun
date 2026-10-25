@@ -873,6 +873,255 @@ describe("spawnSync()", () => {
       signal: null,
     });
   });
+
+  const codeOf = (error: Error | undefined) => (error as NodeJS.ErrnoException | undefined)?.code;
+  // A `bun -e` script that writes `count` times `char` to each `fd`, in order. With `hang` it then stays alive
+  // until it is killed.
+  const writer = (writes: [fd: number, char: string, count: number][], hang = false) => `
+    const fs = require("fs");
+    for (const [fd, char, count] of ${JSON.stringify(writes)}) {
+      const bytes = Buffer.alloc(count, char);
+      for (let off = 0; off < bytes.length; ) off += fs.writeSync(fd, bytes, off);
+    }
+    ${hang ? "setInterval(() => {}, 60_000);" : ""}
+  `;
+  const chars = (char: string, count: number) => Buffer.alloc(count, char).toString();
+
+  // Node reads each "pipe" at a stdio index >= 3 while the child runs, as it reads stdout and stderr, and returns
+  // the bytes in `output` at that index. `output` has one entry per stdio slot.
+  describe("a pipe at a stdio index >= 3", () => {
+    it("is read while the child runs and returned in `output`", () => {
+      // More than a socket buffer holds on any platform: the child blocks unless fd 3 is read while it runs.
+      const size = 1024 * 1024;
+      const { output, status, signal, error } = spawnSync(
+        bunExe(),
+        [
+          "-e",
+          writer([
+            [3, "a", size],
+            [5, "b", 4],
+            [1, "c", 3],
+          ]),
+        ],
+        {
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "inherit", "pipe", "ignore", "pipe", "pipe"],
+          maxBuffer: 2 * size,
+        },
+      );
+      expect({ error, status, signal, lengths: output.map(out => out && out.length) }).toEqual({
+        error: undefined,
+        status: 0,
+        signal: null,
+        lengths: [null, 3, null, size, null, 4, 0],
+      });
+      expect(output[3]?.equals(Buffer.alloc(size, "a"))).toBe(true);
+      expect([String(output[1]), String(output[5]), output[6]]).toEqual(["ccc", "bbbb", Buffer.alloc(0)]);
+    });
+
+    it("gets the `encoding` of the call", () => {
+      const { output } = spawnSync(bunExe(), ["-e", writer([[3, "A", 2]])], {
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "inherit", "pipe", "pipe"],
+        encoding: "hex",
+      });
+      expect(output).toEqual([null, "", null, "4141", ""]);
+    });
+
+    it("is read while `input` is written to stdin", () => {
+      const copyStdinToFd3 = `
+        const fs = require("fs");
+        const input = fs.readFileSync(0);
+        for (let off = 0; off < input.length; ) off += fs.writeSync(3, input, off);
+      `;
+      const input = Buffer.alloc(300_000, "x");
+      const { output, status } = spawnSync(bunExe(), ["-e", copyStdinToFd3], {
+        env: bunEnv,
+        stdio: ["pipe", "pipe", "inherit", "pipe"],
+        input,
+      });
+      expect({ status, lengths: output.map(out => out && out.length) }).toEqual({
+        status: 0,
+        lengths: [null, 0, null, input.length],
+      });
+      expect(output[3]?.equals(input)).toBe(true);
+    });
+
+    it("is in the `output` of the error that execFileSync throws", () => {
+      let thrown: any;
+      try {
+        execFileSync(bunExe(), ["-e", writer([[3, "t", 5]]) + "process.exit(7);"], {
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "inherit", "pipe"],
+          encoding: "utf8",
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect({ status: thrown?.status, output: thrown?.output }).toEqual({
+        status: 7,
+        output: [null, "", null, "ttttt"],
+      });
+    });
+
+    it.skipIf(isWindows)("is read to EOF when a grandchild still holds it", () => {
+      // The grandchild keeps fd 3 only. It writes once the direct child is gone: `kill -0` fails from then on.
+      const grandchild = "while kill -0 $$ 2>/dev/null; do sleep 0.01; done; printf B >&3";
+      const { output, status } = spawnSync("sh", ["-c", `printf A >&3; ( ${grandchild} ) >/dev/null 2>&1 & exit 0`], {
+        stdio: ["ignore", "pipe", "pipe", "pipe"],
+        encoding: "utf8",
+      });
+      expect({ status, output }).toEqual({ status: 0, output: [null, "", "", "AB"] });
+    });
+
+    // `sh` is running within milliseconds, so a short timeout leaves it time to write. The `maxBuffer` tests
+    // below end the wait the same way on every platform.
+    it.skipIf(isWindows)("keeps the bytes read before `timeout` ended the wait", () => {
+      const running = spawnSync("sh", ["-c", "printf early >&3; exec sleep 1000"], {
+        stdio: ["ignore", "pipe", "pipe", "pipe"],
+        timeout: 1000,
+        encoding: "utf8",
+      });
+      expect({ code: codeOf(running.error), signal: running.signal, output: running.output }).toEqual({
+        code: "ETIMEDOUT",
+        signal: "SIGTERM",
+        output: [null, "", "", "early"],
+      });
+
+      // The direct child has exited. A grandchild holds the pipe for longer than the timeout.
+      const held = spawnSync("sh", ["-c", "printf A >&3; sleep 3 >/dev/null 2>&1 & exit 0"], {
+        stdio: ["ignore", "pipe", "pipe", "pipe"],
+        timeout: 500,
+        encoding: "utf8",
+      });
+      expect({ code: codeOf(held.error), status: held.status, output: held.output }).toEqual({
+        code: "ETIMEDOUT",
+        status: 0,
+        output: [null, "", "", "A"],
+      });
+    });
+
+    it("counts toward `maxBuffer`, also when stdout and stderr are not piped", () => {
+      const { error, signal, status, output } = spawnSync(bunExe(), ["-e", writer([[3, "a", 2000]], true)], {
+        env: bunEnv,
+        stdio: ["ignore", "inherit", "inherit", "pipe"],
+        maxBuffer: 1000,
+        encoding: "latin1",
+      });
+      expect({ code: codeOf(error), message: error?.message, signal, status, output }).toEqual({
+        code: "ENOBUFS",
+        message: `spawnSync ${bunExe()} ENOBUFS`,
+        signal: "SIGTERM",
+        status: null,
+        output: [null, null, null, chars("a", 2000)],
+      });
+    });
+  });
+
+  // https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L648-L655
+  it("`maxBuffer` is one total over every output pipe", () => {
+    const run = (stdio: StdioOptions, writes: Parameters<typeof writer>[0], hang = false) => {
+      const { error, status, signal, output } = spawnSync(bunExe(), ["-e", writer(writes, hang)], {
+        env: bunEnv,
+        stdio,
+        maxBuffer: 1000,
+        encoding: "latin1",
+      });
+      return { code: codeOf(error), status, signal, output };
+    };
+    const pipes: StdioOptions = ["ignore", "pipe", "pipe", "pipe"];
+
+    // 1000 bytes are at the limit, and 1001 are over it.
+    expect(
+      run(pipes, [
+        [1, "a", 400],
+        [2, "b", 300],
+        [3, "c", 300],
+      ]),
+    ).toEqual({
+      code: undefined,
+      status: 0,
+      signal: null,
+      output: [null, chars("a", 400), chars("b", 300), chars("c", 300)],
+    });
+    expect(
+      run(
+        pipes,
+        [
+          [1, "a", 400],
+          [2, "b", 300],
+          [3, "c", 301],
+        ],
+        true,
+      ),
+    ).toEqual({
+      code: "ENOBUFS",
+      status: null,
+      signal: "SIGTERM",
+      output: [null, chars("a", 400), chars("b", 300), chars("c", 301)],
+    });
+    // Without a pipe at an index >= 3 too.
+    expect(
+      run(
+        ["ignore", "pipe", "pipe"],
+        [
+          [1, "a", 600],
+          [2, "b", 600],
+        ],
+        true,
+      ),
+    ).toEqual({
+      code: "ENOBUFS",
+      status: null,
+      signal: "SIGTERM",
+      output: [null, chars("a", 600), chars("b", 600)],
+    });
+  });
+
+  // Only POSIX reads a pipe before the child is watched.
+  it.skipIf(isWindows)("kills a child whose first bytes are already over `maxBuffer`", () => {
+    // When that first read is the one that crosses `maxBuffer`, the kill has to reach the child anyway: this one
+    // never exits on its own.
+    for (let i = 0; i < 12; i++) {
+      const fd = i % 2 ? 3 : 1;
+      const { error, signal } = spawnSync("sh", ["-c", `head -c 2000 /dev/zero >&${fd}; exec sleep 1000`], {
+        stdio: ["ignore", "pipe", "inherit", "pipe"],
+        maxBuffer: 1000,
+      });
+      expect({ fd, code: codeOf(error), signal }).toEqual({ fd, code: "ENOBUFS", signal: "SIGTERM" });
+    }
+  });
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1035-L1043
+  it("'ipc' in stdio throws ERR_IPC_SYNC_FORK", () => {
+    const thrown = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (error: any) {
+        return { name: error.name, code: error.code, message: error.message };
+      }
+      return "did not throw";
+    };
+    const syncFork = { name: "Error", code: "ERR_IPC_SYNC_FORK", message: "IPC cannot be used with synchronous forks" };
+    const empty = [bunExe(), ["-e", ""]] as const;
+
+    for (const stdio of [
+      ["ipc", "pipe", "pipe"],
+      ["ignore", "pipe", "pipe", "ipc"],
+      ["ignore", "pipe", "pipe", "ipc", "ipc"],
+    ] as StdioOptions[]) {
+      expect(thrown(() => spawnSync(...empty, { env: bunEnv, stdio }))).toEqual(syncFork);
+      expect(thrown(() => execFileSync(...empty, { env: bunEnv, stdio }))).toEqual(syncFork);
+      expect(thrown(() => execSync("exit 0", { env: bunEnv, stdio }))).toEqual(syncFork);
+    }
+
+    // Node validates `timeout` before stdio, and `input` after it.
+    const stdio: StdioOptions = ["pipe", "pipe", "pipe", "ipc"];
+    expect(thrown(() => spawnSync(...empty, { env: bunEnv, stdio, timeout: -1 }))).toMatchObject({
+      code: "ERR_OUT_OF_RANGE",
+    });
+    expect(thrown(() => spawnSync(...empty, { env: bunEnv, stdio, input: 5 as any }))).toEqual(syncFork);
+  });
 });
 
 describe("execFileSync()", () => {

@@ -83,6 +83,25 @@ pub(crate) enum ResultT<T> {
 
 pub(crate) type Result = ResultT<SpawnOptionsStdio>;
 
+/// Who waits for the child, and by whose rules.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpawnMode {
+    Async,
+    Sync,
+    /// `spawnSync()` of `node:child_process`. As in Node, the call reads each `"pipe"` at a stdio index
+    /// >= 3 and returns its bytes, and `maxBuffer` is one total over every output pipe.
+    NodeSync,
+}
+
+/// What a sync spawn gives a stdio slot at an index >= 3. No object outlives the call to own the
+/// parent end of a pipe, so a slot has one only if the call itself reads it.
+pub(crate) enum SyncExtraSlot {
+    /// The child's end only: what the caller named (an fd, a file, nothing), or the null device.
+    NoParentEnd(SpawnOptionsStdio),
+    /// A pipe. The call reads its parent end to EOF.
+    Read(SpawnOptionsStdio),
+}
+
 pub(crate) enum ToSpawnOptsError {
     StdinUsedAsOut,
     OutUsedAsStdin,
@@ -288,6 +307,45 @@ impl Stdio {
             Self::Ignore => SpawnOptionsStdio::Ignore,
         };
         ResultT::Result(result)
+    }
+
+    /// `as_spawn_option` for a slot at an index >= 3 of a sync spawn. Only a `"pipe"` of
+    /// `SpawnMode::NodeSync` keeps its socketpair. Where `as_spawn_option` would make a socketpair for
+    /// anything else, the child gets the null device: it can write, and nothing in the parent blocks
+    /// it or buffers for it.
+    pub(crate) fn as_sync_extra_slot(
+        &mut self,
+        global: &JSGlobalObject,
+        i: i32,
+        mode: SpawnMode,
+    ) -> JsResult<SyncExtraSlot> {
+        debug_assert!(mode != SpawnMode::Async);
+        let slot: fn(SpawnOptionsStdio) -> SyncExtraSlot = match self {
+            Self::Pipe if mode == SpawnMode::NodeSync => SyncExtraSlot::Read,
+            Self::Pipe | Self::Ipc => {
+                return Ok(SyncExtraSlot::NoParentEnd(SpawnOptionsStdio::Path(
+                    Box::from(bun_core::null_device!().as_bytes()),
+                )));
+            }
+            // Only stdin has a writer for the bytes.
+            Self::Blob(_) => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "ArrayBufferView cannot be used for stdio[{i}] yet"
+                )));
+            }
+            Self::Inherit | Self::Ignore | Self::Fd(_) | Self::Path(_) => {
+                SyncExtraSlot::NoParentEnd
+            }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            Self::Memfd(_) => unreachable!("a memfd is made for stdin, stdout and stderr only"),
+            Self::Capture(_) | Self::Dup2(_) | Self::SocketFd | Self::ReadableStream(_) => {
+                unreachable!("Stdio::extract makes none of these at an index >= 3 of a sync spawn")
+            }
+        };
+        match self.as_spawn_option(i) {
+            ResultT::Result(opt) => Ok(slot(opt)),
+            ResultT::Err(e) => Err(e.throw_js(global)),
+        }
     }
 
     pub(crate) fn is_piped(&self) -> bool {

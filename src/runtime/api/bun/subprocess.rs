@@ -62,9 +62,28 @@ pub(crate) use crate::generated_bindgen::subprocess::js_Subprocess as js;
 pub(crate) use bun_spawn::subprocess::StdioResult;
 
 #[cfg(windows)]
-type StdioPipeItem = StdioResult;
+pub(crate) type StdioPipeItem = StdioResult;
 #[cfg(not(windows))]
-type StdioPipeItem = ExtraPipe;
+pub(crate) type StdioPipeItem = ExtraPipe;
+
+/// Whether a `stdio_pipes` slot holds the parent end of a pipe that this side has to read or close.
+pub(crate) fn owns_stdio_pipe(slot: &StdioPipeItem) -> bool {
+    #[cfg(windows)]
+    return matches!(slot, StdioResult::Buffer(_));
+    #[cfg(not(windows))]
+    return matches!(slot, ExtraPipe::OwnedFd(_));
+}
+
+/// Moves such a parent end out of its slot, in the form a `Readable` takes. `None` for any other slot.
+pub(crate) fn take_owned_stdio_pipe(slot: &mut StdioPipeItem) -> Option<StdioResult> {
+    if !owns_stdio_pipe(slot) {
+        return None;
+    }
+    #[cfg(windows)]
+    return Some(core::mem::take(slot));
+    #[cfg(not(windows))]
+    return Some(Some(core::mem::replace(slot, ExtraPipe::Unavailable).fd()));
+}
 
 pub(crate) type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
 
@@ -103,6 +122,14 @@ pub struct Subprocess<'a> {
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
     pub(crate) stdio_pipes: JsCell<Vec<StdioPipeItem>>,
+    /// What a `spawnSync` of `node:child_process` reads of the stdio slots at an index >= 3, one per slot
+    /// of `stdio_pipes`: the parent end of each `"pipe"` moves from there into a reader here. `None` for
+    /// every other spawn.
+    #[expect(
+        clippy::box_collection,
+        reason = "one pointer wide: a `Vec` here moves every `Subprocess` into the next allocator size class"
+    )]
+    pub(crate) extra_readables: Option<Box<Vec<JsCell<Readable>>>>,
     pub(crate) pid_rusage: Cell<Option<Rusage>>,
 
     /// Terminal attached to this subprocess (if spawned with terminal option)
@@ -135,12 +162,36 @@ pub struct Subprocess<'a> {
     pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
     pub(crate) kill_signal: SignalCode,
 
+    /// The `maxBuffer` budget of stdout. A `spawnSync` of `node:child_process` has one budget for all of
+    /// its output pipes, as Node has: it is this one, and `stderr_maxbuf` is `None`.
     pub(crate) stdout_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) stderr_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
+
+/// [`Subprocess::readables`]. Every spawn walks it several times. One without `extra_readables` pays one
+/// length check per walk.
+pub(crate) struct Readables<'a> {
+    stdout_stderr: [&'a JsCell<Readable>; 2],
+    extra: &'a [JsCell<Readable>],
+    next: usize,
+}
+
+impl<'a> Iterator for Readables<'a> {
+    type Item = &'a JsCell<Readable>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let i = self.next;
+        self.next += 1;
+        match self.stdout_stderr.get(i) {
+            Some(out) => Some(*out),
+            None => self.extra.get(i - self.stdout_stderr.len()),
+        }
+    }
+}
 
 // Note: no `Default` impl for `Subprocess`. `js_bun_spawn_bindings::
 // spawn_maybe_sync` fills every field explicitly (see note there), and
@@ -382,6 +433,19 @@ impl Subprocess<'_> {
         }
     }
 
+    /// stdout, stderr, then `extra_readables`.
+    pub(crate) fn readables(&self) -> Readables<'_> {
+        Readables {
+            stdout_stderr: [&self.stdout, &self.stderr],
+            extra: self
+                .extra_readables
+                .as_deref()
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+            next: 0,
+        }
+    }
+
     pub(crate) fn has_pending_activity_stdio(&self) -> bool {
         if self.stdin.get().has_pending_activity() {
             return true;
@@ -394,7 +458,55 @@ impl Subprocess<'_> {
             return true;
         }
 
-        false
+        match &self.extra_readables {
+            Some(extra) => extra.iter().any(|out| out.get().has_pending_activity()),
+            None => false,
+        }
+    }
+
+    /// A pipe reader is done or has failed: the `Readable` that holds it takes what it read.
+    pub(crate) fn on_close_reader(&self, reader: *const PipeReader::PipeReader) {
+        let out = self
+            .readables()
+            .find(|out| matches!(out.get(), Readable::Pipe(pipe) if core::ptr::eq(pipe.as_ptr(), reader)))
+            .expect("a PipeReader with a process is held by one of its Readables");
+        Self::take_reader_output(out);
+
+        // When the process exits before its stdout/stderr pipes have finished
+        // draining, onProcessExit's deferred updateHasPendingActivity() observes
+        // the pipe as still pending and keeps `this_value` Strong. When the pipe
+        // later completes and reaches here, we must re-evaluate so the JsRef can
+        // be downgraded and the JSSubprocess + buffered output become collectable.
+        self.update_has_pending_activity();
+    }
+
+    fn take_reader_output(out: &JsCell<Readable>) {
+        if matches!(out.get(), Readable::Pipe(_)) {
+            // Move the Rc<PipeReader> out of `*out` first so
+            // reassigning doesn't drop it while still borrowed.
+            let Readable::Pipe(pipe) = out.replace(Readable::Ignore) else {
+                unreachable!()
+            };
+            let pipe_state = &mut Readable::pipe_reader_mut(&pipe).state;
+            match pipe_state {
+                PipeReader::State::Done(done) => {
+                    let taken = core::mem::take(done);
+                    out.set(Readable::Buffer(readable::CowString::init_owned(
+                        taken.into_boxed_slice(),
+                    )));
+                    // pipe.state was emptied via take()
+                }
+                PipeReader::State::Err(bytes, err) => {
+                    let taken = core::mem::take(bytes);
+                    out.set(Readable::Errored(
+                        readable::CowString::init_owned(taken.into_boxed_slice()),
+                        err.clone(),
+                    ));
+                }
+                // *out stays Readable::Ignore (set by replace above).
+                PipeReader::State::Pending => {}
+            }
+        }
     }
 
     pub(crate) fn on_close_io(&self, kind: StdioKind) {
@@ -415,46 +527,10 @@ impl Subprocess<'_> {
                 }
                 _ => {}
             }),
-            StdioKind::Stdout | StdioKind::Stderr => {
-                let out: &JsCell<Readable> = if kind == StdioKind::Stdout {
-                    &self.stdout
-                } else {
-                    &self.stderr
-                };
-                if matches!(out.get(), Readable::Pipe(_)) {
-                    // Move the Rc<PipeReader> out of `*out` first so
-                    // reassigning doesn't drop it while still borrowed.
-                    let Readable::Pipe(pipe) = out.replace(Readable::Ignore) else {
-                        unreachable!()
-                    };
-                    let pipe_state = &mut Readable::pipe_reader_mut(&pipe).state;
-                    match pipe_state {
-                        PipeReader::State::Done(done) => {
-                            let taken = core::mem::take(done);
-                            out.set(Readable::Buffer(readable::CowString::init_owned(
-                                taken.into_boxed_slice(),
-                            )));
-                            // pipe.state was emptied via take()
-                        }
-                        PipeReader::State::Err(bytes, err) => {
-                            let taken = core::mem::take(bytes);
-                            out.set(Readable::Errored(
-                                readable::CowString::init_owned(taken.into_boxed_slice()),
-                                err.clone(),
-                            ));
-                        }
-                        // *out stays Readable::Ignore (set by replace above).
-                        PipeReader::State::Pending => {}
-                    }
-                }
-            }
+            StdioKind::Stdout => Self::take_reader_output(&self.stdout),
+            StdioKind::Stderr => Self::take_reader_output(&self.stderr),
         }
 
-        // When the process exits before its stdout/stderr pipes have finished
-        // draining, onProcessExit's deferred updateHasPendingActivity() observes
-        // the pipe as still pending and keeps `this_value` Strong. When the pipe
-        // later completes and reaches here, we must re-evaluate so the JsRef can
-        // be downgraded and the JSSubprocess + buffered output become collectable.
         self.update_has_pending_activity();
     }
 
@@ -623,15 +699,14 @@ impl Subprocess<'_> {
         sp.on_max_buffer(kind);
     }
 
-    /// Close still-open stdout/stderr pipe readers after a timeout/maxBuffer
+    /// Close still-open pipe readers after a timeout/maxBuffer
     /// kill; a grandchild may still hold the write end (Node.js
     /// `SyncProcessRunner::Kill()`). Called outside any reader callback.
     pub(crate) fn close_readable_pipes(&self) {
-        if matches!(self.stdout.get(), Readable::Pipe(_)) {
-            self.stdout.with_mut(|s| s.close());
-        }
-        if matches!(self.stderr.get(), Readable::Pipe(_)) {
-            self.stderr.with_mut(|s| s.close());
+        for out in self.readables() {
+            if matches!(out.get(), Readable::Pipe(_)) {
+                out.with_mut(|s| s.close());
+            }
         }
     }
 
@@ -943,25 +1018,16 @@ impl Subprocess<'_> {
         // resume reads here; timeout/maxBuffer bound the sync wait. A lazy
         // reader is paused until JS pulls, so unpause it first; backpressure
         // is moot once the direct child has exited.
-        if let Readable::Pipe(pipe) = self.stdout.get() {
-            if !pipe.reader.is_done() {
-                let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
-                // SAFETY: live pipe reader; `read` is the raw re-entrancy-safe
-                // entry (its dispatch runs user JS).
-                unsafe {
-                    (*reader).unpause();
-                    bun_io::BufferedReader::read(reader);
-                }
-            }
-        }
-
-        if let Readable::Pipe(pipe) = self.stderr.get() {
-            if !pipe.reader.is_done() {
-                let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
-                // SAFETY: as the stdout arm above.
-                unsafe {
-                    (*reader).unpause();
-                    bun_io::BufferedReader::read(reader);
+        for out in self.readables() {
+            if let Readable::Pipe(pipe) = out.get() {
+                if !pipe.reader.is_done() {
+                    let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
+                    // SAFETY: live pipe reader; `read` is the raw re-entrancy-safe
+                    // entry (its dispatch runs user JS).
+                    unsafe {
+                        (*reader).unpause();
+                        bun_io::BufferedReader::read(reader);
+                    }
                 }
             }
         }
@@ -1177,6 +1243,11 @@ impl Subprocess<'_> {
         self.close_io(StdioKind::Stdin);
         self.close_io(StdioKind::Stdout);
         self.close_io(StdioKind::Stderr);
+        if let Some(extra) = &self.extra_readables {
+            for out in extra.iter() {
+                out.with_mut(|s| s.finalize());
+            }
+        }
 
         #[cfg(windows)]
         for item in self.stdio_pipes.replace(Vec::new()) {

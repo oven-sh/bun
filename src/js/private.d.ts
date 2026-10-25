@@ -106,8 +106,9 @@ declare module "bun" {
   }
   function serve<WebSocketData>(options: Serve.NodeHTTPServeOptions<WebSocketData>): Server<WebSocketData>;
 
-  // The form of `Bun.spawn` / `Bun.spawnSync` that `node:child_process` uses: `cmd` inside the options, node's
-  // stdio entries, and `onDisconnect` told whether the channel closed cleanly.
+  // The form of `Bun.spawn` that `node:child_process` uses: `cmd` inside the options, node's stdio entries, and
+  // `onDisconnect` told whether the channel closed cleanly. Its `spawnSync` calls the native `spawnSyncForNode`
+  // (`js_bun_spawn_bindings.bind.ts`) in the same form.
   namespace Spawn {
     // `globalThis.`: inside this module the bare name is Bun's narrower `ArrayBufferView` alias.
     type NodeStdio = (Bun.SpawnOptions.Writable | globalThis.ArrayBufferView | "ipc" | "socket-fd")[];
@@ -126,9 +127,16 @@ declare module "bun" {
       cmd: string[];
       stdio: NodeStdio;
     }
+    interface NodeSyncSubprocess extends Omit<Bun.SyncSubprocess, "exitCode" | "stdout" | "stderr"> {
+      exitCode: number | null;
+      stdout?: Buffer | number | null;
+      stderr?: Buffer | number | null;
+      // One entry per stdio slot from index 3: what the child wrote to a "pipe", `undefined` for any other slot.
+      // Absent when no slot from index 3 is a "pipe".
+      extraStdio?: (Buffer | undefined)[];
+    }
   }
   function spawn(options: Spawn.NodeSpawnOptions): Subprocess;
-  function spawnSync(options: Spawn.NodeSpawnSyncOptions): SyncSubprocess;
 
   // `Bun.dns` also has the methods of the native `Resolver` class, which `node:dns` calls when no resolver
   // instance is involved. `setLocalAddress` and `cancel` exist on a `Resolver` only.

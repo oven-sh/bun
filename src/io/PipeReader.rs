@@ -711,6 +711,9 @@ impl PosixBufferedReader {
         if self.limit.reached() {
             return ReadOnce::Stop(Stop::Eof);
         }
+        if MaxBuf::is_exhausted(self.maxbuf) {
+            return ReadOnce::Stop(Stop::OverBudget);
+        }
         let buf = MaxBuf::clamp_read_buf(self.maxbuf, self.limit.clamp(buf));
         match self.sys_read(file_type, fd, buf) {
             sys::Result::Ok(0) => ReadOnce::Stop(Stop::Eof),
@@ -1893,6 +1896,13 @@ impl WindowsBufferedReader {
                         <= self._buffer.as_ptr() as usize + self._buffer.capacity()),
             "uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it."
         );
+
+        // libuv has read already: what arrives after another reader used up a shared `maxBuffer` is dropped.
+        let amount_result = if MaxBuf::is_exhausted(self.maxbuf) {
+            0
+        } else {
+            amount_result
+        };
 
         // move cursor foward
         // SAFETY: slice is inside _buffer's spare capacity; libuv wrote `amount_result` bytes.

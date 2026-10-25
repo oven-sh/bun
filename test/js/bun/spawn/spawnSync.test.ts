@@ -99,6 +99,42 @@ describe("spawnSync", () => {
     });
   });
 
+  // The result has no `.stdio`, so nothing can read what a child writes to a "pipe" at a stdio index >= 3. The
+  // child gets the null device there: a pipe that nothing reads fills up and blocks the child forever.
+  describe("a slot at a stdio index >= 3 that nothing reads", () => {
+    // More than a socket buffer holds on any platform.
+    const writer = `
+      const fs = require("fs");
+      const big = Buffer.alloc(1024 * 1024, "a");
+      for (let off = 0; off < big.length; ) off += fs.writeSync(3, big, off);
+      fs.writeSync(1, "done");
+    `;
+    for (const slot of ["pipe", "ipc"]) {
+      it(`does not block a child that writes to "${slot}"`, () => {
+        const result = Bun.spawnSync({
+          cmd: [bunExe(), "-e", writer],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "inherit", slot as "pipe"],
+        });
+        expect({ stdout: result.stdout.toString(), exitCode: result.exitCode, keys: Object.keys(result) }).toEqual({
+          stdout: "done",
+          exitCode: 0,
+          keys: ["exitCode", "stdout", "stderr", "success", "resourceUsage", "pid"],
+        });
+      });
+    }
+
+    it("rejects an ArrayBufferView, which nothing would write", () => {
+      expect(() =>
+        Bun.spawnSync({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "inherit", new Uint8Array(1) as any],
+        }),
+      ).toThrow("ArrayBufferView cannot be used for stdio[3] yet");
+    });
+  });
+
   // The result object is created from native code. It used to get a structure
   // with zero inline capacity, which trips ASSERT(hasInlineStorage()) in JSC's
   // object spread fast path on debug builds.

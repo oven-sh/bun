@@ -511,7 +511,7 @@ function nodeGetValidStdio(stdio, sync?) {
       if (sync || ipc !== undefined) {
         cleanup();
         if (!sync) throw $ERR_IPC_ONE_PIPE();
-        else throw makeCodedError(Error, "ERR_IPC_SYNC_FORK", "IPC cannot be used with synchronous forks");
+        else throw $ERR_IPC_SYNC_FORK();
       }
       ipc = { close() {} };
       ipcFd = i;

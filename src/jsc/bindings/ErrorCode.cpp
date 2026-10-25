@@ -2315,6 +2315,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed"_s));
     case ErrorCode::ERR_IPC_ONE_PIPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_ONE_PIPE, "Child process can have only one IPC pipe"_s));
+    case ErrorCode::ERR_IPC_SYNC_FORK:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_SYNC_FORK, "IPC cannot be used with synchronous forks"_s));
     case ErrorCode::ERR_SOCKET_ALREADY_BOUND:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_ALREADY_BOUND, "Socket is already bound"_s));
     case ErrorCode::ERR_SOCKET_BAD_BUFFER_SIZE:

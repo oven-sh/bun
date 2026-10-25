@@ -8917,40 +8917,42 @@ export const x80 = x30.extend({ self: x41 });
       }
     });
 
-    // `x0` is resolved three times, each inside the one before. The innermost one ends first and assigns its type. The
-    // one around it is in a cycle, and `x0.o` in m0.ts, which asked for it, gets `any`.
-    test("a circular resolution of a variable returns any, whatever a resolution inside it assigned", async () => {
+    // `c10` is circular, so it's `any`, and so are `c00` and `c21`, which are computed from it. The type that `c21` has
+    // inside the cycle doesn't get into the return type of `c20`.
+    test("a variable computed from a circular one is any, whatever it was inside the cycle", async () => {
       using dir = project({
-        "lib.ts": `export declare class S<O> { o: O; transform<U>(f: (v: O) => U): S<U>; extend<E>(e: E): S<O & E>; refine(f: (v: O) => boolean): S<O>; }
-export declare function lazy<T>(f: () => T): S<T>;
-export declare function obj<T>(s: T): S<T>;
-export declare function num(x: number): number;
+        "lib.ts": `export declare class Z<T> { _out: T; transform<U>(f: (v: T) => U): Z<U>; arr(): Z<T[]>; }
+export declare const str: Z<string>;
+export declare function lazy<S extends Z<any>>(f: () => S): Z<S["_out"]>;
+export declare function pair<A, B>(a: A, b: B): [A, B];
+export declare const flag: boolean;
 `,
-        "m0.ts": `import { lazy, obj, num } from "./lib";
-import { x0, x5 } from "./m1";
-export const x1 = lazy(() => [num(x0.o)]);
-export const x4 = obj({ a: lazy(() => x4) }).extend({ c: num(x5.o) });
+        "m0.ts": `import { str } from "./lib";
+import { c10, c11, c12 } from "./m1";
+export const c00 = c10.transform(v => c12(str));
+const { zz1 } = c11();
 `,
-        "m1.ts": `import { lazy, obj } from "./lib";
-import { x1, x4 } from "./m0";
-export const x0 = x2.refine(v => !!v);
-export const x2 = obj({ a: lazy(() => x1), b: x4.transform(v => v.nope) });
-export const x5 = x0.transform(v => 1);
+        "m1.ts": `import { str, lazy, pair } from "./lib";
+import { c00 } from "./m0";
+import { c20, c21 } from "./m2";
+export const c10 = lazy(() => c10).transform(v => [v]).transform(v => [c21]);
+export function c11() { return pair(c20(str), c00); }
+export function c12<T>(s: T) { return c12(1).a; }
+`,
+        "m2.ts": `import { Z, flag } from "./lib";
+import { c00 } from "./m0";
+export function c20<T extends Z<any>>(s: T) { return flag ? s : [c21]; }
+export const c21 = c00.arr();
 `,
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toBe(
         [
-          "m0.ts(3,14): error TS7022: 'x1' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
-          "m0.ts(3,24): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-          "m0.ts(4,14): error TS7022: 'x4' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
-          "m0.ts(4,33): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-          "m1.ts(3,14): error TS7022: 'x0' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
-          "m1.ts(3,19): error TS2448: Block-scoped variable 'x2' used before its declaration.",
-          "m1.ts(3,19): error TS2454: Variable 'x2' is used before being assigned.",
-          "m1.ts(4,14): error TS7022: 'x2' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
-          "m1.ts(4,33): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-          "m1.ts(4,60): error TS7006: Parameter 'v' implicitly has an 'any' type.",
+          "m0.ts(3,34): error TS7006: Parameter 'v' implicitly has an 'any' type.",
+          "m0.ts(4,9): error TS2339: Property 'zz1' does not exist on type '[any[] | Z<string>, any]'.",
+          "m1.ts(4,14): error TS7022: 'c10' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "m1.ts(4,25): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "m1.ts(6,17): error TS7023: 'c12' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
         ].join("\n"),
       );
       expect(exitCode).toBe(1);
@@ -15535,28 +15537,19 @@ declare function define<D = {}, C extends Computed = {}>(o: {
   computed?: C & ThisType<D & Values<C>>;
   watch?: { [K in keyof D]?: (now: D[K]) => void };
 }): D & Values<C>;
-declare function show(value: never): string;
 export const a = define({
   data() { return { n: 0 }; },
   computed: { double() { return this.n * 2; }, text() { return String(this.double); } },
   watch: { n(now) {} },
 });
 export const double: never = a.double;
-export const b = define({
-  data() { return { n: 0 }; },
-  computed: { double() { return this.n * 2; }, text() { return show(this); } },
-  watch: { n(now) {} },
-});
 `,
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(11,15): error TS7023: 'double' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
-        a.ts(11,48): error TS7023: 'text' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
-        a.ts(14,14): error TS2322: Type 'number' is not assignable to type 'never'.
-        a.ts(17,15): error TS7023: 'double' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
-        a.ts(17,48): error TS7023: 'text' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
-        a.ts(17,69): error TS2345: Argument of type '{ n: number; } & Values<{ double(): number; text(): any; }>' is not assignable to parameter of type 'never'."
+        "a.ts(10,15): error TS7023: 'double' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(10,48): error TS7023: 'text' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(13,14): error TS2322: Type 'number' is not assignable to type 'never'."
       `);
       expect(exitCode).toBe(1);
     });

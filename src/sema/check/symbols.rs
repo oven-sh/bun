@@ -424,23 +424,14 @@ impl<'p, 's> Checker<'p, 's> {
                     self.note_checked_again_with_assigned_type(is_variable);
                 }
             }
-            Err(_)
-                if is_variable_or_property(flags, value_declaration)
-                    && self.is_first_result_above_barrier(Query::Symbol(sym)) =>
-            {
-                self.p
-                    .symbol_types
-                    .insert(&self.task, sym, ty, Stored::new());
-                self.note_result(Query::Symbol(sym));
-                self.store_results_below_first_result(Query::Symbol(sym));
-            }
             Err(open) => self.cache_provisionally(Query::Symbol(sym), u64::from(ty.0), open),
         }
         ty
     }
 
-    /// Call after storing a result for which `is_first_result_above_barrier`. tsc has also assigned the types of the
-    /// variables and the return types that were resolved on the way to it, and nothing asks for them again from there.
+    /// Call after storing the result of a visit inside another visit of the same query, for which `leave` has returned
+    /// `Err`. tsc has also assigned the types of the variables and the return types that were resolved on the way to it,
+    /// and nothing asks for them again from there.
     /// The same is true of them: their frames only inherited that they're non-cacheable. What was reported on the way
     /// isn't reported again either, so it belongs to `first`, the query of that result.
     pub(super) fn store_results_below_first_result(&mut self, first: Query) {
@@ -2617,12 +2608,6 @@ impl<'p, 's> Checker<'p, 's> {
                     .pat_types
                     .insert(&self.task, (file, pat), (ty, false), stored);
             }
-            Err(_) if self.is_first_result_above_barrier(query) => {
-                let stored = Stored::new();
-                (self.p.pat_types).insert(&self.task, (file, pat), (ty, false), stored);
-                self.note_result(query);
-                self.store_results_below_first_result(query);
-            }
             Err(open) => self.cache_provisionally(query, u64::from(ty.0), open),
         }
         ty
@@ -4525,12 +4510,6 @@ impl<'p, 's> Checker<'p, 's> {
                 self.p
                     .fn_return_types
                     .insert(&self.task, (file, func), (ty, false), stored);
-            }
-            Err(_) if self.is_first_result_above_barrier(Query::Return(file, func)) => {
-                let stored = Stored::new();
-                (self.p.fn_return_types).insert(&self.task, (file, func), (ty, false), stored);
-                self.note_result(Query::Return(file, func));
-                self.store_results_below_first_result(Query::Return(file, func));
             }
             Err(open) => self.cache_provisionally(Query::Return(file, func), u64::from(ty.0), open),
         }

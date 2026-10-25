@@ -43,6 +43,7 @@ pub(crate) fn propagate_early_returns(
         env,
         last_usage,
         memo_blocks: SmallVec::new(),
+        hoisted: SmallVec::new(),
     };
     let mut state = State {
         within_reactive_scope: false,
@@ -78,6 +79,8 @@ struct Transform<'a> {
     last_usage: IdMap<DeclarationId, EvaluationOrder>,
     /// Not in upstream: the memo blocks around the visited instruction, for client output only.
     memo_blocks: SmallVec<[ScopeId; 4]>,
+    /// Not in upstream: each `let` and `const` that earlier code names, so far.
+    hoisted: SmallVec<[DeclarationId; 4]>,
 }
 
 impl Transform<'_> {
@@ -114,10 +117,10 @@ impl Transform<'_> {
                 {
                     continue;
                 }
-                if kind == InstructionKind::Function {
-                    // As a declaration it would not assign the `let` (facebook/react#37834).
+                if kind == InstructionKind::Function || self.hoisted.contains(&declaration_id) {
+                    // A function would not assign its `let` (facebook/react#37834). A `let` would lose its TDZ.
                     return Err(crate::diagnostics::cold_todo(
-                        "[PropagateEarlyReturns] Declare a function outside its memo block",
+                        "[PropagateEarlyReturns] Declare a function or a hoisted variable outside its memo block",
                         place.loc,
                     ));
                 }
@@ -186,10 +189,15 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         instruction: &mut ReactiveInstruction,
         state: &mut State,
     ) -> Result<(), crate::diagnostics::CompilerError> {
-        if !self.memo_blocks.is_empty()
-            && let ReactiveValue::Instruction(value) = &instruction.value
-        {
-            self.declare_used_after_memo_blocks(value)?;
+        if let ReactiveValue::Instruction(value) = &instruction.value {
+            if let InstructionValue::DeclareContext { lvalue, .. } = value
+                && let InstructionKind::HoistedLet | InstructionKind::HoistedConst = lvalue.kind
+            {
+                let identifier = &self.env.identifiers[lvalue.place.identifier.0 as usize];
+                self.hoisted.push(identifier.declaration_id);
+            } else if !self.memo_blocks.is_empty() {
+                self.declare_used_after_memo_blocks(value)?;
+            }
         }
         self.traverse_instruction(instruction, state)
     }

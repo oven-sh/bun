@@ -405,6 +405,116 @@ describe("HTTP/3 header blocks that follow another header block", () => {
   });
 });
 
+// lsquic keeps the bytes of a message that do not fill a packet in the
+// stream's buffer, the body under a DATA frame that has no size yet. They leave
+// when the congestion window gives a packet. Here each message is a header
+// block of most of a packet and a small body, and each side sends more of them
+// at once than its first flight holds. So the message at the end of the flight
+// still has its body in the buffer when its trailers arrive.
+test("HTTP/3 trailers that follow a body lsquic still buffers get their own HEADERS frame", async () => {
+  // About 1 KB each. The first flight is about 46 KB.
+  const STREAMS = 64;
+  // "X" has an 8-bit Huffman code, so QPACK sends this value as it is.
+  const filler = Buffer.alloc(1000, "X").toString();
+  const message = (i: number) => ({
+    headers: { "x-filler": filler },
+    body: `body of ${i}`,
+    trailers: { "x-stream": String(i) },
+  });
+  type Received = { body?: string; trailers?: Record<string, string> };
+  const damaged = (received: Map<number, Received>) => {
+    const list: string[] = [];
+    for (let i = 0; i < STREAMS; i++) {
+      const { body, trailers } = message(i);
+      const got = received.get(i);
+      if (got?.body !== body || got.trailers?.["x-stream"] !== trailers["x-stream"]) {
+        list.push(`stream ${i}: ${JSON.stringify(got)}`);
+      }
+    }
+    return list;
+  };
+  const readBody = async (stream: any) => {
+    const chunks: Uint8Array[] = [];
+    for await (const batch of stream) chunks.push(...batch);
+    return Buffer.concat(chunks).toString("latin1");
+  };
+
+  const requests = new Map<number, Received>();
+  const responses = new Map<number, Received>();
+  const numbers = new WeakMap<object, number>();
+  const unanswered: any[] = [];
+  await using server = await listen(
+    async serverSession => {
+      serverSession.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+      };
+      await serverSession.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [key], certs: [cert] } },
+      transportParams: { maxIdleTimeout: 10, initialMaxStreamsBidi: STREAMS },
+      async onheaders(this: any, headers: Record<string, string>) {
+        const i = Number(headers[":path"].slice(1));
+        numbers.set(this, i);
+        requests.set(i, {});
+        requests.get(i)!.body = await readBody(this);
+        // The server answers every request in one turn, so that the responses
+        // are more than its first flight too.
+        if (unanswered.push(this) < STREAMS) return;
+        for (const stream of unanswered) {
+          const { headers, body } = message(numbers.get(stream)!);
+          stream.sendHeaders({ ":status": "200", ...headers });
+          stream.writer.writeSync(Buffer.from(body));
+          stream.writer.endSync();
+        }
+      },
+      ontrailers(this: any, trailers: Record<string, string>) {
+        requests.get(numbers.get(this)!)!.trailers = trailers;
+      },
+      onwanttrailers(this: any) {
+        this.sendTrailers(message(numbers.get(this)!).trailers);
+      },
+    },
+  );
+
+  const client = await connect(server.address!, {
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 10 },
+  } as SessionOptions);
+  await client.opened;
+  await Promise.all(
+    Array.from({ length: STREAMS }, async (_, i) => {
+      const { headers, body, trailers } = message(i);
+      const response: Received = {};
+      responses.set(i, response);
+      const stream = await client.createBidirectionalStream({
+        onheaders() {},
+        ontrailers(received: Record<string, string>) {
+          response.trailers = received;
+        },
+        onwanttrailers(this: any) {
+          this.sendTrailers(trailers);
+        },
+      });
+      stream.sendHeaders({
+        ":method": "POST",
+        ":path": `/${i}`,
+        ":scheme": "https",
+        ":authority": "localhost",
+        ...headers,
+      });
+      stream.writer.writeSync(Buffer.from(body));
+      stream.writer.endSync();
+      response.body = await readBody(stream);
+      await stream.closed;
+    }),
+  );
+  client.close();
+
+  expect({ requests: damaged(requests), responses: damaged(responses) }).toEqual({ requests: [], responses: [] });
+});
+
 describe("verifyClient", () => {
   test("a server requiring a client certificate never surfaces streams from a client that presented none", async () => {
     let announcedStreams = 0;

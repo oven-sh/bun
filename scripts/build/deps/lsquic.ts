@@ -153,6 +153,11 @@ export const lsquic: Dependency = {
     // and failed for a larger one. Such a block gets a heap buffer, sized from
     // the header list.
     "patches/lsquic/large-header-block.patch",
+    // A header block sent while the end of the body was still in the stream's
+    // buffer (trailers) went out inside the body's last DATA frame, with no
+    // HEADERS frame of its own. The peer read the trailers as body bytes, or
+    // closed the connection when the frame's length did not match.
+    "patches/lsquic/headers-after-buffered-body.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

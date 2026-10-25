@@ -1,0 +1,72 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -4095,6 +4095,61 @@
+ }
+ 
+ 
++/* bun: a header block can follow DATA that is still in the stream's buffer
++ * (trailers).  That DATA frame has no length yet, so the offsets behind it
++ * still count as its payload, and the block went out inside it with no HEADERS
++ * frame of its own.  Give the frame its length when the block's bytes are
++ * written behind it.  A flush of the body then runs on into the HEADERS frame,
++ * so that frame's header takes its credit here as well.  When there is no
++ * credit, the block cannot be written and the DATA frame stays open.
++ */
++static void
++stream_size_buffered_hq_frame (struct lsquic_stream *stream)
++{
++    struct stream_hq_frame *shf, *next;
++    size_t before, after;
++    uint64_t size;
++
++    STAILQ_FOREACH(shf, &stream->sm_hq_frames, shf_next)
++        if (!(shf->shf_flags & SHF_FIXED_SIZE))
++            break;
++    if (!shf || shf->shf_frame_ptr)
++        return;
++
++    before = stream_hq_frame_size(shf);
++    /* A reset drops the buffer and keeps the frames: nothing is left of it */
++    size = stream->sm_payload + stream->sm_n_buffered;
++    size = size > shf->shf_off ? size - shf->shf_off : 0;
++    if (size)
++    {
++        next = STAILQ_NEXT(shf, shf_next);
++        if (next && !(next->shf_flags & SHF_CC_PAID))
++        {
++            if (!lsquic_stream_write_avail(stream))
++                return;
++            incr_conn_cap(stream, stream_hq_frame_size(next));
++            next->shf_flags |= SHF_CC_PAID;
++        }
++        shf->shf_frame_size = size;
++        shf->shf_flags |= SHF_FIXED_SIZE;
++        after = stream_hq_frame_size(shf);
++    }
++    else
++        after = 0;
++    if (before != after && (shf->shf_flags & SHF_CC_PAID))
++        decr_conn_cap(stream, before - after);
++    if (!size)
++        stream_hq_frame_put(stream, shf);
++    if (before != after && (stream->sm_qflags & SMQF_WANT_FLUSH))
++    {
++        stream->sm_flush_to = stream->tosend_off + stream->sm_n_buffered
++                                            + active_hq_frame_sizes(stream);
++        stream->sm_flush_to_payload = stream->sm_payload
++                                            + stream->sm_n_buffered;
++    }
++}
++
++
+ /* This bypasses COMMON_WRITE_CHECKS */
+ static ssize_t
+ stream_write_buf (struct lsquic_stream *stream, const void *buf, size_t sz)
+@@ -4110,6 +4165,7 @@
+         .lsqr_size = inner_reader_iovec_size,
+         .lsqr_ctx  = &iro,
+     };
++    stream_size_buffered_hq_frame(stream);
+     return stream_write(stream, &reader, SWO_BUFFER);
+ }
+ 

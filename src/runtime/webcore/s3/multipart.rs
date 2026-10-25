@@ -92,6 +92,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use std::io::Write as _;
+use std::rc::Rc;
 
 use bstr::BStr;
 
@@ -113,8 +114,8 @@ use bun_s3_signing::storage_class::StorageClass;
 // re-export hub instead.
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
-    self as s3_simple_request, S3CommitResult, S3DownloadResult, S3PartResult, S3UploadResult,
-    execute_simple_s3_request,
+    self as s3_simple_request, S3CommitResult, S3DeleteResult, S3DownloadResult, S3PartResult,
+    S3UploadResult, execute_simple_s3_request,
 };
 use crate::webcore::s3::xml_response;
 use bun_collections::index_sort;
@@ -184,9 +185,35 @@ bun_jsc::impl_abort_handle_owner!(MultiPartUpload, abort_handle, |this, _cause| 
     }
 });
 
+/// [`MultiPartUpload::fail_writer_collected`]'s task: same pointer as the upload, its own tag.
+#[repr(transparent)]
+pub(crate) struct WriterCollected(MultiPartUpload);
+impl bun_event_loop::Taskable for WriterCollected {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::S3UploadWriterCollected;
+    /// Drops the task's +1. The context that stopped fails the upload through `abort_handle`.
+    unsafe fn release_unrun(this: *mut Self) {
+        MultiPartUpload::deref_(this.cast::<MultiPartUpload>());
+    }
+    /// The context of the script that made the writer.
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+        // SAFETY: fn contract — the live upload `fail_writer_collected` queued.
+        unsafe { (*this.cast::<MultiPartUpload>()).context }
+    }
+}
+impl WriterCollected {
+    pub(crate) fn run(this: *mut Self) -> bun_jsc::JsResult<()> {
+        // SAFETY: adopts the +1 `fail_writer_collected` took; released after `fail`.
+        let upload = unsafe { RefPtr::from_raw(this.cast::<MultiPartUpload>()) };
+        upload.fail(S3Error {
+            code: b"UnknownError",
+            message: b"S3 writer was garbage collected before end() was called",
+        })
+    }
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum State {
+pub(crate) enum State {
     WaitStreamCheck,
     NotStarted,
     MultipartStarted,
@@ -212,9 +239,6 @@ impl MultiPartUpload {
     /// `this` must be a live heap-allocated `MultiPartUpload` created via
     /// `heap::alloc` with a non-zero intrusive refcount.
     #[inline]
-    // Forwards `this` to the derived intrusive-rc decrement without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn deref_(this: *mut Self) {
         // SAFETY: per fn contract — forwarded to the derived intrusive-rc decrement.
         unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
@@ -236,7 +260,7 @@ impl MultiPartUpload {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PartState {
+pub(crate) enum PartState {
     NotAssigned = 0,
     Pending = 1,
     Started = 2,
@@ -244,43 +268,33 @@ pub enum PartState {
     Canceled = 4,
 }
 
-pub struct UploadPart {
-    /// Raw owned slice; backing allocation length is `allocated_size` (may exceed `data.len()`).
-    /// Freed via `free_allocated_slice`. Default is a static empty slice.
-    pub(crate) data: Cell<*const [u8]>,
+pub(crate) struct UploadPart {
+    /// Refcounted so `perform` can keep the bytes alive if the request frees the part.
+    pub(crate) data: JsCell<Option<Rc<Vec<u8>>>>,
     pub ctx: bun_ptr::BackRef<MultiPartUpload, bun_ptr::Mut>, // BACKREF (LIFETIMES.tsv)
-    pub(crate) allocated_size: Cell<usize>,
     pub(crate) state: Cell<PartState>,
     pub(crate) part_number: Cell<u16>, // max is 10,000
     pub(crate) retry: Cell<u8>,        // auto retry, decrement until 0 and fail after this
     pub(crate) index: Cell<u8>,
 }
 
-pub struct UploadPartResult {
+pub(crate) struct UploadPartResult {
     pub(crate) number: u16,
     pub(crate) etag: Box<[u8]>,
 }
 
-impl UploadPart {
-    fn free_allocated_slice(&self) {
-        let allocated_size = self.allocated_size.get();
-        if allocated_size > 0 {
-            // SAFETY: `data.ptr` was allocated by the global allocator with capacity == allocated_size
-            // (either via `to_vec().into_boxed_slice()` where len==cap, or by taking ownership of
-            // StreamBuffer's backing allocation). Reconstruct and drop.
-            unsafe {
-                let ptr = (*self.data.get()).as_ptr().cast_mut();
-                drop(Vec::from_raw_parts(ptr, allocated_size, allocated_size));
-            }
-        }
-        self.data.set(std::ptr::from_ref::<[u8]>(b"" as &[u8]));
-        self.allocated_size.set(0);
-    }
+/// Selects the bytes of `buffered` that a new part uploads.
+#[derive(Clone, Copy)]
+enum PartBytes {
+    /// All of them. The buffer's allocation is moved into the part.
+    Whole,
+    /// A copy of the first `usize` bytes.
+    First(usize),
+}
 
-    #[inline]
-    fn data(&self) -> &[u8] {
-        // SAFETY: data is either a static empty slice or a live heap slice owned by this part
-        unsafe { &*self.data.get() }
+impl UploadPart {
+    fn free_data(&self) {
+        self.data.set(None);
     }
 
     fn on_part_response(result: S3PartResult, this: *mut c_void) -> bun_jsc::JsResult<()> {
@@ -293,7 +307,7 @@ impl UploadPart {
 
         if this.state.get() == PartState::Canceled || ctx.state.get() == State::Finished {
             scoped_log!(S3MultiPartUpload, "onPartResponse {} canceled", part_number);
-            this.free_allocated_slice();
+            this.free_data();
             MultiPartUpload::deref_(ctx_ptr);
             return Ok(());
         }
@@ -311,7 +325,7 @@ impl UploadPart {
                 } else {
                     scoped_log!(S3MultiPartUpload, "onPartResponse {} failed", part_number);
                     this.state.set(PartState::NotAssigned);
-                    this.free_allocated_slice();
+                    this.free_data();
                     // The ctx deref must run after fail():
                     let r = ctx.fail(err);
                     MultiPartUpload::deref_(ctx_ptr);
@@ -320,8 +334,8 @@ impl UploadPart {
             }
             S3PartResult::Etag(etag) => {
                 scoped_log!(S3MultiPartUpload, "onPartResponse {} success", part_number);
-                let sent = this.data().len();
-                this.free_allocated_slice();
+                let sent = this.data.get().as_deref().map_or(0, Vec::len);
+                this.free_data();
                 // we will need to order this
                 ctx.multipart_etags.with_mut(|etags| {
                     etags.push(UploadPartResult {
@@ -345,6 +359,7 @@ impl UploadPart {
 
     fn perform(&self) -> bun_jsc::JsResult<()> {
         let ctx = self.ctx.get();
+        let data = self.data.get().clone();
         let mut params_buffer = [0u8; 2048];
         let written = {
             let mut w: &mut [u8] = &mut params_buffer[..];
@@ -365,7 +380,7 @@ impl UploadPart {
                 path: &ctx.path,
                 method: bun_http::Method::PUT,
                 proxy_url: ctx.proxy_url(),
-                body: self.data(),
+                body: data.as_deref().map_or(&[][..], Vec::as_slice),
                 search_params: Some(search_params),
                 request_payer: ctx.request_payer,
                 ..Default::default()
@@ -390,7 +405,7 @@ impl UploadPart {
 
         match state {
             PartState::Pending => {
-                self.free_allocated_slice();
+                self.free_data();
             }
             // if is not pending we will free later or is already freed
             _ => {}
@@ -401,7 +416,7 @@ impl UploadPart {
 impl Drop for MultiPartUpload {
     fn drop(&mut self) {
         scoped_log!(S3MultiPartUpload, "deinit");
-        // queue: Box<[UploadPart]> — dropped automatically (parts' raw `data` already freed during lifecycle)
+        // queue: Box<[UploadPart]> — dropped automatically, with any `data` a part still owns
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
         let _ = self.vm;
@@ -479,12 +494,8 @@ impl MultiPartUpload {
     }
 
     /// This is the only place we allocate the queue or the parts, this is responsible for the flow of parts and the max allowed concurrency
-    fn get_create_part(
-        &self,
-        chunk: &[u8],
-        allocated_size: usize,
-        needs_clone: bool,
-    ) -> Option<&UploadPart> {
+    /// The bytes are only removed from `buffered` if the queue has a free slot, and then the part owns them.
+    fn get_create_part(&self, bytes: PartBytes) -> Option<&UploadPart> {
         let mut available = self.available.get();
         let Some(index) = available.find_first_set() else {
             // this means that the queue is full and we cannot flush it
@@ -507,8 +518,7 @@ impl MultiPartUpload {
             // zero set just in case
             for _ in 0..queue_size {
                 queue.push(UploadPart {
-                    data: Cell::new(std::ptr::from_ref::<[u8]>(b"" as &[u8])),
-                    allocated_size: Cell::new(0),
+                    data: JsCell::new(None),
                     part_number: Cell::new(0),
                     ctx: self_ref,
                     index: Cell::new(0),
@@ -518,21 +528,16 @@ impl MultiPartUpload {
             }
             self.queue.set(Some(queue.into_boxed_slice()));
         }
-        let (data, allocated_len): (*const [u8], usize) = if needs_clone {
-            let owned = Box::<[u8]>::from(chunk);
-            let len = owned.len();
-            (bun_core::heap::into_raw(owned).cast_const(), len)
-        } else {
-            (std::ptr::from_ref::<[u8]>(chunk), allocated_size)
-        };
-
         let part_number = self.current_part_number.get();
         self.current_part_number.set(part_number + 1);
 
         let queue = self.queue.get().as_deref().expect("queue allocated above");
         let queue_item = &queue[index];
-        queue_item.data.set(data);
-        queue_item.allocated_size.set(allocated_len);
+        let data = match bytes {
+            PartBytes::Whole => self.buffered.take().list,
+            PartBytes::First(len) => self.buffered.get().slice()[..len].to_vec(),
+        };
+        queue_item.data.set(Some(Rc::new(data)));
         queue_item.part_number.set(part_number);
         queue_item.index.set(index as u8); // @truncate
         queue_item.retry.set(self.options.get().retry);
@@ -623,6 +628,16 @@ impl MultiPartUpload {
         Ok(())
     }
 
+    /// `fail` from a task: the caller is a finalizer inside a GC sweep, and `fail` settles promises.
+    pub(crate) fn fail_writer_collected(&self) {
+        self.ref_();
+        self.vm
+            .event_loop_ref()
+            .enqueue_task(bun_event_loop::Task::init(
+                self.root_ptr().cast::<WriterCollected>(),
+            ));
+    }
+
     fn done(&self) -> bun_jsc::JsResult<()> {
         let state = self.state.get();
         if state == State::MultipartCompleted && self.is_queue_empty() {
@@ -674,11 +689,13 @@ impl MultiPartUpload {
         let _guard = unsafe { RefPtr::from_raw(this) };
         // SAFETY: `this` is live for at least the guard's duration.
         let self_ = unsafe { &*this };
-        if self_.state.get() == State::Finished {
-            return Ok(());
-        }
+        // `fail` ran while this request was in flight: an upload the server created is still open.
+        let failed = self_.state.get() == State::Finished;
         match result {
             S3DownloadResult::Failure(err) => {
+                if failed {
+                    return Ok(());
+                }
                 scoped_log!(
                     S3MultiPartUpload,
                     "startMultiPartRequestResult {} failed {}: {}",
@@ -711,6 +728,20 @@ impl MultiPartUpload {
                 if let Some(upload_id) = upload_id {
                     self_.upload_id.set(upload_id);
                 }
+                if failed {
+                    if valid {
+                        scoped_log!(
+                            S3MultiPartUpload,
+                            "startMultiPartRequestResult {} aborting after fail id: {}",
+                            BStr::new(&self_.path),
+                            BStr::new(self_.upload_id.get())
+                        );
+                        // The rollback callback releases this ref.
+                        self_.ref_();
+                        self_.rollback_multi_part_request()?;
+                    }
+                    return Ok(());
+                }
                 if !valid {
                     // Unknown type of response error from AWS
                     scoped_log!(
@@ -735,10 +766,15 @@ impl MultiPartUpload {
                 self_.drain_enqueued_parts(0)
             }
             // this is "unreachable" but we cover in case AWS returns 404
-            S3DownloadResult::NotFound(_) => self_.fail(S3Error {
-                code: b"UnknownError",
-                message: b"Failed to initiate multipart upload",
-            }),
+            S3DownloadResult::NotFound(_) => {
+                if failed {
+                    return Ok(());
+                }
+                self_.fail(S3Error {
+                    code: b"UnknownError",
+                    message: b"Failed to initiate multipart upload",
+                })
+            }
         }
     }
 
@@ -792,7 +828,7 @@ impl MultiPartUpload {
 
     /// We do a best effort to rollback the multipart upload, if it fails we will retry, if it still we just deinit the upload
     pub(crate) fn on_rollback_multi_part_request(
-        result: S3UploadResult,
+        result: S3DeleteResult,
         this: *mut c_void,
     ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
@@ -805,7 +841,7 @@ impl MultiPartUpload {
             BStr::new(self_.upload_id.get())
         );
         match result {
-            S3UploadResult::Failure(_err) => {
+            S3DeleteResult::Failure(_err) => {
                 let mut options = self_.options.get();
                 if options.retry > 0 {
                     options.retry -= 1;
@@ -817,7 +853,8 @@ impl MultiPartUpload {
                 MultiPartUpload::deref_(this);
                 Ok(())
             }
-            S3UploadResult::Success => {
+            // 404: the store no longer has the upload, which is what a rollback is for.
+            S3DeleteResult::Success | S3DeleteResult::NotFound(_) => {
                 MultiPartUpload::deref_(this);
                 Ok(())
             }
@@ -883,18 +920,14 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Upload(Self::on_rollback_multi_part_request),
+            s3_simple_request::S3Callback::Delete(Self::on_rollback_multi_part_request),
             self.as_ctx_ptr(),
         )
     }
 
-    fn enqueue_part(
-        &self,
-        chunk: &[u8],
-        allocated_size: usize,
-        needs_clone: bool,
-    ) -> bun_jsc::JsResult<bool> {
-        let Some(part) = self.get_create_part(chunk, allocated_size, needs_clone) else {
+    /// Returns `Ok(false)` without touching `buffered` if the queue is full. On `Err`, a part owns the bytes.
+    fn enqueue_part(&self, bytes: PartBytes) -> bun_jsc::JsResult<bool> {
+        let Some(part) = self.get_create_part(bytes) else {
             return Ok(false);
         };
 
@@ -958,42 +991,26 @@ impl MultiPartUpload {
             }
             // if is one big chunk we can pass ownership and avoid dupe
             if self.buffered.get().cursor == 0 && self.buffered.get().size() == len {
-                let owned = self.buffered.replace(StreamBuffer::default());
-                // we need to know the allocated size to free the memory later
-                let allocated_size = owned.memory_cost();
-                let slice_len = owned.slice().len();
-
                 // we dont care about the result because we are sending everything
-                if self.enqueue_part(owned.slice(), allocated_size, false)? {
+                if self.enqueue_part(PartBytes::Whole)? {
                     scoped_log!(
                         S3MultiPartUpload,
                         "processMultiPart {} {} full buffer enqueued",
                         BStr::new(&self.path),
-                        slice_len
+                        len
                     );
-                    let _ = core::mem::ManuallyDrop::new(owned);
-                    return Ok(());
+                } else {
+                    scoped_log!(
+                        S3MultiPartUpload,
+                        "processMultiPart {} {} queue full",
+                        BStr::new(&self.path),
+                        len
+                    );
                 }
-                let appended = self.buffered.replace(owned);
-                if appended.is_not_empty() {
-                    self.buffered
-                        .with_mut(|b| b.write(appended.slice()).map(|_| ()))
-                        .unwrap_or(());
-                }
-                scoped_log!(
-                    S3MultiPartUpload,
-                    "processMultiPart {} {} queue full",
-                    BStr::new(&self.path),
-                    slice_len
-                );
-
                 return Ok(());
             }
 
-            let slice_ptr = std::ptr::from_ref::<[u8]>(&self.buffered.get().slice()[..len]);
-            // allocated size is the slice len because we dupe the buffer
-            // SAFETY: slice_ptr points at self.buffered's storage which is not mutated until after enqueue_part dupes it
-            if self.enqueue_part(unsafe { &*slice_ptr }, len, true)? {
+            if self.enqueue_part(PartBytes::First(len))? {
                 scoped_log!(
                     S3MultiPartUpload,
                     "processMultiPart {} {} slice enqueued",
@@ -1200,7 +1217,7 @@ impl MultiPartUpload {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum UploadBackpressure {
+pub(crate) enum UploadBackpressure {
     WantMore,
     Backpressure,
     Done,

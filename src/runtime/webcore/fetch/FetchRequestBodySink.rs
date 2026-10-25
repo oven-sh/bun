@@ -5,8 +5,9 @@ use bun_sys::Error as SysError;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue};
+use crate::webcore::sink::AnyControlledSink;
 use crate::webcore::streams::{
-    SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
+    SourceHandle, Start, StreamError, StreamResult, Writable, WritablePending,
 };
 
 bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
@@ -15,7 +16,7 @@ bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
 /// directly into the locked stream buffer so no intermediate UTF-8 buffer is
 /// allocated.
 #[derive(Clone, Copy)]
-pub enum RequestBodyChunk<'a> {
+pub(crate) enum RequestBodyChunk<'a> {
     Bytes(&'a [u8]),
     Latin1(&'a [u8]),
     Utf16(&'a [u16]),
@@ -23,7 +24,7 @@ pub enum RequestBodyChunk<'a> {
 
 impl<'a> RequestBodyChunk<'a> {
     #[inline]
-    pub fn utf8_len(&self) -> usize {
+    pub(crate) fn utf8_len(&self) -> usize {
         match *self {
             Self::Bytes(b) => b.len(),
             Self::Latin1(b) => bun_simdutf_sys::simdutf::length::utf8::from::latin1(b),
@@ -34,7 +35,7 @@ impl<'a> RequestBodyChunk<'a> {
     }
 
     #[inline]
-    pub fn append_utf8_into(&self, out: &mut Vec<u8>) {
+    pub(crate) fn append_utf8_into(&self, out: &mut Vec<u8>) {
         match *self {
             Self::Bytes(b) => out.extend_from_slice(b),
             Self::Latin1(b) => {
@@ -164,10 +165,6 @@ impl FetchRequestBodySink {
         self.write_chunk(RequestBodyChunk::Utf16(bytemuck::cast_slice(data.slice())))
     }
 
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
-        bun_sys::Result::Ok(())
-    }
-
     pub fn flush_from_js(
         &mut self,
         cx: &bun_jsc::JsThread<'_>,
@@ -271,12 +268,8 @@ impl FetchRequestBodySink {
     }
 }
 
-crate::impl_js_sink_abi!(FetchRequestBodySink, "FetchRequestBodySink");
-
 impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
     const NAME: &'static str = Self::NAME;
-    const HAS_FLUSH_FROM_JS: bool = true;
-    const START_TAG: Option<StartTag> = Some(StartTag::FetchRequestBodySink);
 
     crate::impl_js_sink_forwarders!();
 
@@ -287,7 +280,14 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, cx)
     }
-    fn source(&mut self) -> Option<&mut SourceHandle> {
-        Some(&mut self.source)
+}
+
+impl crate::webcore::sink::ControlledSink for FetchRequestBodySink {
+    fn to_any_sink(this: core::ptr::NonNull<Self>) -> AnyControlledSink {
+        AnyControlledSink::FetchRequestBodySink(this)
+    }
+
+    fn source(&mut self) -> &mut SourceHandle {
+        &mut self.source
     }
 }

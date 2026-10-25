@@ -512,12 +512,9 @@ impl<'p, 's> Checker<'p, 's> {
         self.may_be_in_flight(q) && self.stack.contains(&q)
     }
 
-    /// Runs `check`, which checks the callee or an argument of `call` again, or derives something
-    /// from them, as `getResolvedSignature` runs `resolveSignature`: the resolutions in progress
-    /// below the call are hidden from it (`resolutionStart`), unless the call is being resolved,
-    /// which doesn't reset `resolutionStart` again. `resolveCall` checks the callee and the
-    /// arguments nowhere else, so a cycle that closes through one of them while the call isn't
-    /// being resolved isn't a cycle in TypeScript.
+    /// Runs `check`, a check of the callee or the arguments of `call`, as `getResolvedSignature`
+    /// runs `resolveSignature`: the resolutions below the call are hidden (`resolutionStart`),
+    /// unless the call is being resolved.
     pub(super) fn behind_resolved_signature<T>(
         &mut self,
         file: FileId,

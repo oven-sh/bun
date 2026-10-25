@@ -1707,10 +1707,7 @@ impl<'s> Checker<'_, 's> {
                 {
                     self.serialization_level = serialization_level.max(MAX_SERIALIZATION_LEVEL);
                 }
-                // `resolveCallExpression`, `resolveNewExpression` and
-                // `resolveTaggedTemplateExpression` check the callee and the arguments, behind
-                // `getResolvedSignature`. A part whose type the resolution didn't store is checked
-                // again here, and a cycle through it doesn't reach the resolutions below the call.
+                // `resolveCall` checks the callee and the arguments behind `getResolvedSignature`.
                 self.behind_resolved_signature(file, e, |c| {
                     let callee = hir[call].callee;
                     c.check_expression(file, callee);

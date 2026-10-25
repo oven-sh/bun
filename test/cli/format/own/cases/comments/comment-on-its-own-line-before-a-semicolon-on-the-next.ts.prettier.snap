@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = false;
+
+// c1
+const b = 1;
+const c = false;
+// c2
+const d = 1;
+e();
+
+// c3
+f();
+let g = 1; // c4
+
+h();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = false;
+
+// c1
+const b = 1;
+const c = false;
+// c2
+const d = 1;
+e();
+
+// c3
+f();
+let g = 1; // c4
+
+h();
+
+===================== End =====================

@@ -1,18 +1,8 @@
-// Bind parameters are encoded straight into the connection's write buffer.
-// When a parameter throws while it is encoded (a `toString` that throws, an
-// array with a throwing getter), the query rejects with that error, but the
-// partial Bind message (header with length 0, the portal and statement names,
-// the format codes, the parameters before the bad one) stayed in the buffer.
-// It went out with the next flush, alone or ahead of the next query's bytes.
-// A real server reads the zero length as a protocol violation and drops the
-// connection, so the next query and every query pipelined behind the bad one
-// failed too.
-//
-// The fix records the buffer offset before a Parse/Bind/Execute group is
-// written and truncates back to it when any part of the group fails.
+// A parameter whose conversion (`toString`, `toJSON`) throws rejects its own query and leaves nothing in the write
+// buffer: a real server drops the connection at a partial Bind, which fails every query pipelined behind it.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { describeWithContainer } from "harness";
+import { bunEnv, bunExe, describeWithContainer } from "harness";
 import {
   listeningServer,
   pgAuthenticationOk,
@@ -62,12 +52,45 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect(await sql`SELECT ${"after"}::text AS v`).toEqual([{ v: "after" }]);
   });
 
+  test.each<[string, unknown]>([
+    ["an Error", new Error("boom")],
+    ["a string", "boom"],
+    ["a number", 42],
+    ["null", null],
+    ["undefined", undefined],
+  ])("a parameter whose toJSON throws %s rejects the query with that value", async (_, thrown) => {
+    await container.ready;
+    const sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
+    try {
+      let outcome: unknown = "pending";
+      // The connection is new, so this is the first use of the statement.
+      const bad = sql`SELECT ${{
+        toJSON() {
+          throw thrown;
+        },
+      }}::json AS v`;
+      bad.then(
+        () => (outcome = "resolved"),
+        reason => (outcome = { rejected: reason }),
+      );
+      // This query waits behind `bad`. When it resolves, `bad` is done.
+      const next = await sql`SELECT ${"x"}::text AS v`;
+
+      expect({ outcome, same: Object.is((outcome as { rejected?: unknown })?.rejected, thrown), next }).toEqual({
+        outcome: { rejected: thrown },
+        same: true,
+        next: [{ v: "x" }],
+      });
+    } finally {
+      // close() with no timeout waits for a query that never settles.
+      await sql.close({ timeout: 5 });
+    }
+  });
+
   test("with prepare: false, a throwing parameter does not break the query queued behind it", async () => {
     await container.ready;
     await using sql = new SQL({ url: url(), max: 1, prepare: false, idleTimeout: 5, connectionTimeout: 5 });
 
-    // prepare: false writes Parse, Describe, Bind and Execute as one batch, so
-    // the Parse and Describe have to be discarded together with the partial Bind.
     const bad = sql`SELECT ${"a"}::text AS v, ${throwingToString}::text AS w, ${1}::int AS n`;
     const sibling = sql`SELECT ${"x"}::text AS v`;
 
@@ -81,7 +104,34 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect({ badResult, s }).toEqual({ badResult: "boom from toString", s: [{ v: "x" }] });
   });
 
-  test("a query dispatched from inside a conversion that then fails never gets another query's row", async () => {
+  // The rejected query sends no Bind, so no reply comes back to release the
+  // event loop ref that the query took. The connection must release it itself.
+  test.each([false, true])("a script whose last query was rejected exits on its own (prepare: %p)", async prepare => {
+    await container.ready;
+    const script = `
+      const sql = new Bun.SQL({ url: process.env.DATABASE_URL, max: 1, prepare: ${prepare} });
+      await sql.connect();
+      // A later tick: the idle connection does not hold the process any more.
+      await new Promise(resolve => setImmediate(resolve));
+      const param = { toString() { throw new Error("boom from toString"); } };
+      console.log(await sql\`SELECT \${param}::text AS v\`.then(() => "resolved", e => e.message));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, DATABASE_URL: url() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is here so that a failure shows it. A sanitizer build can write to it.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "boom from toString\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  test("a query dispatched from inside a conversion that then fails gets its own row", async () => {
     await container.ready;
     await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
     const settled = (query: Promise<unknown>) =>
@@ -97,9 +147,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     let nested!: Promise<unknown>;
     const dispatchesThenThrows = {
       toString() {
-        // execute() starts the query synchronously: its frames land inside the
-        // outer query's partial Bind, so the tail of the buffer is not only the
-        // outer query's and must not be discarded.
+        // execute() starts the query synchronously. Nothing of the outer query is written yet.
         const query = sql`SELECT ${"nested value"}::text AS nested`;
         query.execute();
         nested = settled(query);
@@ -111,15 +159,11 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     later.execute();
     const [nestedResult, laterResult] = await Promise.all([nested, settled(later)]);
 
-    // The server rejects the mixed frame and closes the connection. Both queries
-    // were written to it, so both reject. Neither hangs or gets the other's row.
     expect({ outer, nested: nestedResult, later: laterResult }).toEqual({
       outer: "boom after dispatch",
-      nested: "ERR_POSTGRES_CONNECTION_CLOSED",
-      later: "ERR_POSTGRES_CONNECTION_CLOSED",
+      nested: [{ nested: "nested value" }],
+      later: [{ nested: "later value" }],
     });
-    // The pool reconnects.
-    expect(await sql`SELECT ${"after"}::text AS v`).toEqual([{ v: "after" }]);
   });
 });
 
@@ -214,19 +258,14 @@ describe("postgres bind encode failure (mock server)", () => {
     expect(received.filter(m => m.includes("len="))).toEqual([]);
     expect({ outcomes, received }).toEqual({
       outcomes: ["boom from toString", "ok", "ok"],
-      // warm-up: Parse Describe Sync, Bind Execute Flush Sync.
-      // bad: Parse Describe Sync, then nothing (its Bind is discarded).
-      // siblings: Bind Execute Flush Sync, twice.
-      received: [
-        ...["P", "D", "S", "B", "E", "H", "S"],
-        ...["P", "D", "S"],
-        ...["B", "E", "H", "S"],
-        ...["B", "E", "H", "S"],
-      ],
+      // warm-up: Parse Describe Sync, Bind Execute Sync.
+      // bad: Parse Describe Sync, then nothing.
+      // siblings: Bind Execute Sync, twice.
+      received: [...["P", "D", "S", "B", "E", "S"], ...["P", "D", "S"], ...["B", "E", "S"], ...["B", "E", "S"]],
     });
   });
 
-  test("with prepare: false, no Parse, Describe or partial Bind of the rejected query reaches the wire", async () => {
+  test("with prepare: false, no part of the second batch of the rejected query reaches the wire", async () => {
     const { port, server, received } = await mockServer();
     let outcomes: Record<string, string>;
     try {
@@ -252,10 +291,9 @@ describe("postgres bind encode failure (mock server)", () => {
     expect(received.filter(m => m.includes("len="))).toEqual([]);
     expect({ outcomes, received }).toEqual({
       outcomes: { lone: "boom from toString", after: "ok", bad: "boom from toString", queued: "ok" },
-      // prepare: false writes Parse Describe Bind Execute Flush Sync as one
-      // batch. A rejected query writes nothing: a Parse or Describe without its
-      // Sync would leave replies that the next query reads as its own.
-      received: [...["P", "D", "B", "E", "H", "S"], ...["P", "D", "B", "E", "H", "S"]],
+      // An object with a toString asks for the types first: Parse Describe Sync. Its Parse Bind
+      // Execute Sync is never written. The others are one batch.
+      received: [...["P", "D", "S"], ...["P", "D", "B", "E", "S"], ...["P", "D", "S"], ...["P", "D", "B", "E", "S"]],
     });
   });
 });

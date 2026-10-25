@@ -16,13 +16,13 @@
 //! Ported from TypeScript `src/HIR/MergeOverlappingReactiveScopesHIR.ts`.
 
 use std::cmp;
-use std::collections::HashMap;
 
-use crate::collections::IdMap;
+use crate::collections::{IdBitSet, IdMap, sort_slice_by};
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
-use crate::hir::visitors::{each_instruction_lvalue_ids, each_terminal_operand_ids};
-use crate::hir::{EvaluationOrder, HirFunction, IdentifierId, InstructionValue, ScopeId, Type};
+use crate::hir::{
+    EvaluationOrder, HirFunction, IdentifierId, InstructionValue, Place, ScopeId, Type,
+};
 use crate::utils::DisjointSet;
 
 // =============================================================================
@@ -94,18 +94,22 @@ fn is_mutable(env: &Environment, id: EvaluationOrder, identifier_id: IdentifierI
 // =============================================================================
 
 fn collect_scope_info(func: &HirFunction, env: &Environment) -> ScopeInfo {
-    let mut scope_starts_map: HashMap<EvaluationOrder, Vec<ScopeId>> = HashMap::new();
-    let mut scope_ends_map: HashMap<EvaluationOrder, Vec<ScopeId>> = HashMap::new();
+    let mut scope_starts_map: IdMap<EvaluationOrder, Vec<ScopeId>> = IdMap::new();
+    let mut scope_ends_map: IdMap<EvaluationOrder, Vec<ScopeId>> = IdMap::new();
     let mut place_scopes: IdMap<IdentifierId, ScopeId> = IdMap::new();
+    // The TS uses Set<ReactiveScope> which preserves insertion order and deduplicates.
+    // We must NOT sort by ScopeId here — the insertion order determines which scope
+    // becomes the root in the disjoint set union.
+    let mut seen_scopes: IdBitSet<ScopeId> = IdBitSet::new();
 
-    let mut collect_place_scope = |identifier_id: IdentifierId, env: &Environment| {
-        let scope_id = match env.identifiers[identifier_id.0 as usize].scope {
+    let mut collect_place_scope = |place: &Place| {
+        let scope_id = match env.identifiers[place.identifier.0 as usize].scope {
             Some(s) => s,
             None => return,
         };
-        place_scopes.insert(identifier_id, scope_id);
+        place_scopes.insert(place.identifier, scope_id);
         let range = &env.scopes[scope_id.0 as usize].range;
-        if range.start != range.end {
+        if range.start != range.end && seen_scopes.insert(scope_id) {
             scope_starts_map
                 .entry(range.start)
                 .or_default()
@@ -117,40 +121,10 @@ fn collect_scope_info(func: &HirFunction, env: &Environment) -> ScopeInfo {
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
-            // lvalues
-            let lvalue_ids = each_instruction_lvalue_ids(instr);
-            for id in lvalue_ids {
-                collect_place_scope(id, env);
-            }
-            // operands
-            let operand_ids: Vec<IdentifierId> = visitors::each_instruction_operand(instr, env)
-                .into_iter()
-                .map(|p| p.identifier)
-                .collect();
-            for id in operand_ids {
-                collect_place_scope(id, env);
-            }
+            visitors::lvalues(instr).for_each(&mut collect_place_scope);
+            visitors::operands(&instr.value, &env.functions).for_each(&mut collect_place_scope);
         }
-        // terminal operands
-        let terminal_op_ids = each_terminal_operand_ids(&block.terminal);
-        for id in terminal_op_ids {
-            collect_place_scope(id, env);
-        }
-    }
-
-    // Deduplicate scope IDs in each entry, preserving insertion order.
-    // The TS uses Set<ReactiveScope> which preserves insertion order and deduplicates.
-    // We must NOT sort by ScopeId here — the insertion order determines which scope
-    // becomes the root in the disjoint set union.
-    fn dedup_preserve_order(scopes: &mut Vec<ScopeId>) {
-        let mut seen = std::collections::HashSet::new();
-        scopes.retain(|s| seen.insert(*s));
-    }
-    for scopes in scope_starts_map.values_mut() {
-        dedup_preserve_order(scopes);
-    }
-    for scopes in scope_ends_map.values_mut() {
-        dedup_preserve_order(scopes);
+        visitors::terminal_operands(&block.terminal).for_each(&mut collect_place_scope);
     }
 
     // Convert to sorted vecs (descending by id for pop-from-end)
@@ -190,7 +164,7 @@ fn visit_instruction_id(
 
             // Sort scopes by start descending (matching active_scopes order)
             let mut scopes_sorted = scope_end_entry.scopes;
-            scopes_sorted.sort_unstable_by(|a, b| {
+            sort_slice_by(&mut scopes_sorted, |a, b| {
                 let a_start = env.scopes[a.0 as usize].range.start;
                 let b_start = env.scopes[b.0 as usize].range.start;
                 b_start.cmp(&a_start)
@@ -218,7 +192,7 @@ fn visit_instruction_id(
 
             // Sort by end descending
             let mut scopes_sorted = scope_start_entry.scopes;
-            scopes_sorted.sort_unstable_by(|a, b| {
+            sort_slice_by(&mut scopes_sorted, |a, b| {
                 let a_end = env.scopes[a.0 as usize].range.end;
                 let b_end = env.scopes[b.0 as usize].range.end;
                 b_end.cmp(&a_end)
@@ -289,27 +263,25 @@ fn get_overlapping_reactive_scopes(
                 &instr.value,
                 InstructionValue::FunctionExpression { .. } | InstructionValue::ObjectMethod { .. }
             );
-            let operand_ids = each_instruction_operand_ids_with_types(instr, env);
-            for (op_id, type_) in &operand_ids {
-                if is_func_or_method && matches!(type_, Type::Primitive) {
+            for operand in visitors::operands(&instr.value, &env.functions) {
+                let type_ = env.identifiers[operand.identifier.0 as usize].type_;
+                if is_func_or_method && matches!(env.types[type_.0 as usize], Type::Primitive) {
                     continue;
                 }
-                visit_place(instr.id, *op_id, &mut state, env);
+                visit_place(instr.id, operand.identifier, &mut state, env);
             }
 
             // Visit lvalues
-            let lvalue_ids = each_instruction_lvalue_ids(instr);
-            for lvalue_id in lvalue_ids {
-                visit_place(instr.id, lvalue_id, &mut state, env);
+            for lvalue in visitors::lvalues(instr) {
+                visit_place(instr.id, lvalue.identifier, &mut state, env);
             }
         }
 
         let terminal_id = block.terminal.evaluation_order();
         visit_instruction_id(terminal_id, &mut scope_info, &mut state, env);
 
-        let terminal_op_ids = each_terminal_operand_ids(&block.terminal);
-        for op_id in terminal_op_ids {
-            visit_place(terminal_id, op_id, &mut state, env);
+        for operand in visitors::terminal_operands(&block.terminal) {
+            visit_place(terminal_id, operand.identifier, &mut state, env);
         }
     }
 
@@ -325,10 +297,10 @@ fn get_overlapping_reactive_scopes(
 /// Corresponds to TS `mergeOverlappingReactiveScopesHIR(fn: HIRFunction): void`.
 pub(crate) fn merge_overlapping_reactive_scopes_hir(func: &mut HirFunction, env: &mut Environment) {
     // Collect scope info
-    let scope_info = collect_scope_info(func, env);
+    let mut scope_info = collect_scope_info(func, env);
 
     // Save place_scopes before moving scope_info
-    let place_scopes = scope_info.place_scopes.clone();
+    let place_scopes = std::mem::take(&mut scope_info.place_scopes);
 
     // Find overlapping scopes
     let mut joined_scopes = get_overlapping_reactive_scopes(func, env, scope_info);
@@ -347,12 +319,10 @@ pub(crate) fn merge_overlapping_reactive_scopes_hir(func: &mut HirFunction, env:
     // When scope.range is updated, ALL identifiers referencing that range object
     // automatically see the new values. We use MutableRangeId to identify which
     // identifiers share the same logical range as a root scope.
-    let mut original_root_range_ids: IdMap<ScopeId, crate::hir::MutableRangeId> = IdMap::new();
+    let mut roots_by_original_range: IdMap<crate::hir::MutableRangeId, ScopeId> = IdMap::new();
     for (_, root_id) in &scope_groups {
-        if !original_root_range_ids.contains_key(*root_id) {
-            let range_id = env.scopes[root_id.0 as usize].range.id;
-            original_root_range_ids.insert(*root_id, range_id);
-        }
+        let range_id = env.scopes[root_id.0 as usize].range.id;
+        roots_by_original_range.entry(range_id).or_insert(*root_id);
     }
 
     // Update root scope ranges
@@ -368,13 +338,12 @@ pub(crate) fn merge_overlapping_reactive_scopes_hir(func: &mut HirFunction, env:
     // shares the same object reference as scope.range, so when scope.range is
     // updated, all identifiers referencing that range object automatically see
     // the new values. We use MutableRangeId for exact identity matching.
-    for ident in &mut env.identifiers {
-        for (root_id, orig_range_id) in original_root_range_ids.iter() {
-            if ident.mutable_range.id == *orig_range_id {
+    if !roots_by_original_range.is_empty() {
+        for ident in &mut env.identifiers {
+            if let Some(root_id) = roots_by_original_range.get(ident.mutable_range.id) {
                 let new_range = &env.scopes[root_id.0 as usize].range;
                 ident.mutable_range.start = new_range.start;
                 ident.mutable_range.end = new_range.end;
-                break;
             }
         }
     }
@@ -389,24 +358,4 @@ pub(crate) fn merge_overlapping_reactive_scopes_hir(func: &mut HirFunction, env:
             env.identifiers[identifier_id.0 as usize].scope = Some(next_scope);
         }
     }
-}
-
-// =============================================================================
-// Instruction visitor helpers (delegating to canonical visitors)
-// =============================================================================
-
-/// Collect operand IdentifierIds with their types from an instruction value.
-/// Used to check for Primitive type on FunctionExpression/ObjectMethod operands.
-fn each_instruction_operand_ids_with_types(
-    instr: &crate::hir::Instruction,
-    env: &Environment,
-) -> Vec<(IdentifierId, Type)> {
-    visitors::each_instruction_operand(instr, env)
-        .into_iter()
-        .map(|p| {
-            let type_ =
-                env.types[env.identifiers[p.identifier.0 as usize].type_.0 as usize].clone();
-            (p.identifier, type_)
-        })
-        .collect()
 }

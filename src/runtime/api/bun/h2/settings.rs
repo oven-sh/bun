@@ -1,8 +1,6 @@
 //! HTTP/2 SETTINGS (RFC 9113 §6.5). Pure: value semantics, range validation, on-wire packing,
 //! and the INITIAL_WINDOW_SIZE retroactive-window delta. Part of the from-scratch rewrite.
 
-#![allow(dead_code)]
-
 use super::wire::{self, ErrorCode, SettingId};
 
 /// Logical SETTINGS values. Defaults match Node v27 `getDefaultSettings()` exactly

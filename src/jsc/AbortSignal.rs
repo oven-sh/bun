@@ -68,23 +68,9 @@ unsafe extern "C" {
     safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
 }
 
-/// Abort-callback monomorphization for `listen`. Implement on your context type.
-pub trait AbortListener {
-    fn on_abort(&mut self, reason: JSValue);
-}
-
 impl AbortSignal {
-    pub fn listen<C: AbortListener>(&self, ctx: *mut C) -> &AbortSignal {
-        extern "C" fn callback<C: AbortListener>(ptr: *mut c_void, reason: JSValue) {
-            // SAFETY: ptr was registered below as `*mut C`; C++ calls back on
-            // the same thread before `cleanNativeBindings` removes it.
-            let val = unsafe { bun_ptr::callback_ctx::<C>(ptr) };
-            C::on_abort(val, reason);
-        }
-        self.add_listener(ctx.cast::<c_void>(), callback::<C>)
-    }
-
-    pub fn add_listener(
+    /// For [`AbortHandle`](crate::AbortHandle), which removes `ctx` before it moves or drops.
+    pub(crate) fn add_listener(
         &self,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, JSValue),
@@ -96,7 +82,7 @@ impl AbortSignal {
         self
     }
 
-    pub fn clean_native_bindings(&self, ctx: *mut c_void) {
+    pub(crate) fn clean_native_bindings(&self, ctx: *mut c_void) {
         WebCore__AbortSignal__cleanNativeBindings(self, ctx)
     }
 
@@ -286,6 +272,8 @@ pub struct Timeout {
     pub(crate) context: crate::ContextId,
     /// `VirtualMachine::test_isolation_generation` when it did.
     generation: u32,
+    /// `VirtualMachine::hot_reload_counter` when it did.
+    pub hot_reload_counter: u32,
 }
 
 bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
@@ -298,7 +286,7 @@ impl Timeout {
 
         let jsc_vm = VirtualMachine::get();
         // `AbortSignal.timeout()`, a C++ host function, calls this.
-        let context = jsc_vm.context_of_caller_no_frame();
+        let context = jsc_vm.context_of_caller();
         let graph_context = jsc_vm.as_graph_context(context);
         let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
             event_loop_timer: EventLoopTimer {
@@ -315,6 +303,7 @@ impl Timeout {
             flags: TimerFlags::default(),
             context: context.id(),
             generation: VirtualMachine::get().test_isolation_generation,
+            hot_reload_counter: jsc_vm.hot_reload_counter,
         }));
         if let Some(context) = graph_context {
             context.track_timer(this.cast(), crate::ContextTimer::AbortSignal);

@@ -1,11 +1,10 @@
-use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::io::Write as _;
 
 use bstr::BStr;
 use bun_ast::{Expr, Log, Source};
 use bun_collections::{DynamicBitSet, StringHashMap, index_sort};
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{PathSep, escape_control_chars, redacted};
 use bun_core::{FileKind, Global, Output, strings};
 use bun_install::isolated_install::store::entry::fmt_store_key;
 use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
@@ -44,7 +43,7 @@ struct Entry {
 }
 
 /// Lazily-scanned, sorted entry names of `node_modules/.bun/`; `None` until first needed.
-struct BunStore {
+pub(crate) struct BunStore {
     entries: Option<Vec<Box<[u8]>>>,
 }
 
@@ -170,7 +169,7 @@ impl PmLicensesCommand {
             peer: features.peer_dependencies,
             optional_peer: features.peer_dependencies,
             bundled: true,
-            platform: Some((pm.options.cpu, pm.options.os)),
+            platform: Some((pm.options.cpu, pm.options.os, pm.options.libc)),
         };
         let resolutions = lockfile.buffers.resolutions.as_slice();
         let walk = if flags.dev_only {
@@ -206,9 +205,12 @@ impl PmLicensesCommand {
         let buf = lockfile.buffers.string_bytes.as_slice();
 
         let mut log = Log::init();
-        let mut store = BunStore { entries: None };
+        let mut store = BunStore::init();
         let mut disk = DiskIndex { entries: None };
         let mut entries: Vec<Entry> = Vec::new();
+        // Packages whose installed copy is not the version in bun.lock. They are listed under the
+        // version in the installed package.json.
+        let mut other_versions: Vec<Entry> = Vec::new();
         let mut missing: usize = 0;
         let mut checked: usize = 0;
 
@@ -242,15 +244,16 @@ impl PmLicensesCommand {
                 None
             };
 
+            let mut other_version: Option<PackageInfo> = None;
             if info.is_none() {
                 if let Some(location) = &locations[pkg_id] {
                     let segments: [&[u8]; 1] = [location];
                     info = read_package_info_at(&mut path, top_len, &segments, &mut log);
                 }
                 if is_npm {
-                    info = info.filter(|info| match &info.version {
-                        Some(installed) => installed[..] == version[..],
-                        None => true,
+                    other_version = info.take_if(|info| match &info.version {
+                        Some(installed) => installed[..] != version[..],
+                        None => false,
                     });
                 }
             }
@@ -276,12 +279,21 @@ impl PmLicensesCommand {
                 );
             }
 
-            let Some(info) = info else {
-                missing += 1;
-                continue;
+            let (info, list) = match (info, other_version) {
+                (Some(info), _) => (info, &mut entries),
+                (None, Some(info)) => {
+                    if let Some(installed) = &info.version {
+                        version = installed.to_vec();
+                    }
+                    (info, &mut other_versions)
+                }
+                (None, None) => {
+                    missing += 1;
+                    continue;
+                }
             };
 
-            entries.push(Entry {
+            list.push(Entry {
                 license: info.license,
                 name: pkg_names[pkg_id].slice(buf).into(),
                 version: version.into_boxed_slice(),
@@ -292,6 +304,16 @@ impl PmLicensesCommand {
                 description: info.description,
                 dev_only: production.as_ref().is_some_and(|prod| !prod.is_set(pkg_id)),
             });
+        }
+
+        // A copy on disk that is already listed, for the bun.lock package it matches, is not listed
+        // twice. The package it was found for counts as missing.
+        for entry in other_versions {
+            if entries.iter().any(|listed| listed.path == entry.path) {
+                missing += 1;
+            } else {
+                entries.push(entry);
+            }
         }
 
         index_sort::sort_vec_by(&mut entries, |a, b| {
@@ -349,19 +371,6 @@ fn license_order(a: &[u8], b: &[u8]) -> Ordering {
         .then_with(|| a.cmp(b))
 }
 
-fn printable(s: &[u8]) -> Cow<'_, [u8]> {
-    if s.iter().any(u8::is_ascii_control) {
-        Cow::Owned(
-            s.iter()
-                .copied()
-                .filter(|b| !b.is_ascii_control())
-                .collect(),
-        )
-    } else {
-        Cow::Borrowed(s)
-    }
-}
-
 fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
     let len = lockfile.packages.len();
     let mut out: Vec<Option<Box<[u8]>>> = vec![None; len];
@@ -378,10 +387,7 @@ fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
             }
             let relative_path = folder.relative_path.as_bytes();
             let alias = dependencies[dep_id as usize].name.slice(buf);
-            let mut location: Vec<u8> = Vec::with_capacity(relative_path.len() + 1 + alias.len());
-            location.extend_from_slice(relative_path);
-            location.push(bun_paths::SEP);
-            location.extend_from_slice(alias);
+            let location = [relative_path, &[bun_paths::SEP], alias].concat();
             out[pkg_id as usize] = Some(location.into_boxed_slice());
         }
     }
@@ -451,10 +457,10 @@ fn string_field(json: &Expr, key: &[u8]) -> Option<Box<[u8]>> {
 }
 
 fn string_or_type(expr: &Expr) -> Option<Box<[u8]>> {
-    match str_of(expr) {
-        Some(s) => Some(s.into()),
-        None => string_field(expr, b"type").or_else(|| string_field(expr, b"name")),
-    }
+    str_of(expr)
+        .map(Into::into)
+        .or_else(|| string_field(expr, b"type"))
+        .or_else(|| string_field(expr, b"name"))
 }
 
 fn parse_license_field(field: &Expr) -> Option<Box<[u8]>> {
@@ -474,16 +480,8 @@ fn parse_license_field(field: &Expr) -> Option<Box<[u8]>> {
         0 => None,
         1 => collected.pop(),
         _ => {
-            let mut joined: Vec<u8> = Vec::new();
-            joined.push(b'(');
-            for (i, value) in collected.iter().enumerate() {
-                if i > 0 {
-                    joined.extend_from_slice(b" OR ");
-                }
-                joined.extend_from_slice(value);
-            }
-            joined.push(b')');
-            Some(joined.into_boxed_slice())
+            let joined = collected.join(&b" OR "[..]);
+            Some([b"(".as_slice(), &joined, b")"].concat().into_boxed_slice())
         }
     }
 }
@@ -500,10 +498,9 @@ fn license_of(json: &Expr) -> Box<[u8]> {
 
 fn repository_of(json: &Expr) -> Option<Box<[u8]>> {
     let repository = json.get(b"repository")?;
-    match str_of(&repository) {
-        Some(s) => Some(s.into()),
-        None => string_field(&repository, b"url"),
-    }
+    str_of(&repository)
+        .map(Into::into)
+        .or_else(|| string_field(&repository, b"url"))
 }
 
 fn author_of(json: &Expr) -> Option<Box<[u8]>> {
@@ -537,6 +534,10 @@ fn author_of(json: &Expr) -> Option<Box<[u8]>> {
 }
 
 impl BunStore {
+    pub(crate) fn init() -> Self {
+        Self { entries: None }
+    }
+
     fn read_info(
         &mut self,
         path: &mut AutoAbsPath,
@@ -557,7 +558,7 @@ impl BunStore {
         read_package_info_at(path, top_len, &segments, log)
     }
 
-    fn lookup(
+    pub(crate) fn lookup(
         &mut self,
         path: &mut AutoAbsPath,
         top_len: usize,
@@ -565,10 +566,7 @@ impl BunStore {
         resolution: &Resolution,
         buf: &[u8],
     ) -> Option<&[u8]> {
-        if self.entries.is_none() {
-            self.entries = Some(Self::scan(path, top_len));
-        }
-        let entries = self.entries.as_deref()?;
+        let entries = (self.entries).get_or_insert_with(|| Self::scan(path, top_len));
         if entries.is_empty() {
             return None;
         }
@@ -612,11 +610,7 @@ fn list_dir(path: &[u8]) -> Vec<(Box<[u8]>, FileKind)> {
 }
 
 fn disk_key(name: &[u8], version: &[u8]) -> Vec<u8> {
-    let mut key: Vec<u8> = Vec::with_capacity(name.len() + 1 + version.len());
-    key.extend_from_slice(name);
-    key.push(b'@');
-    key.extend_from_slice(version);
-    key
+    [name, b"@", version].concat()
 }
 
 impl DiskIndex {
@@ -718,30 +712,23 @@ fn print_text(entries: &[Entry], long: bool, checked: usize, summary: bool) {
     }
 
     let mut licenses = 0;
-    let mut start = 0;
-    while start < entries.len() {
-        let license = &entries[start].license;
-        let mut end = start + 1;
-        while end < entries.len() && entries[end].license == *license {
-            end += 1;
-        }
-
-        if start > 0 {
+    for group in entries.chunk_by(|a, b| a.license == b.license) {
+        if licenses > 0 {
             Output::print(format_args!("\n"));
         }
         licenses += 1;
         bun_core::prettyln!(
             "<b>{}<r> <d>({})<r>",
-            BStr::new(&printable(license)),
-            end - start
+            escape_control_chars(&group[0].license),
+            group.len()
         );
-        for (i, entry) in entries[start..end].iter().enumerate() {
-            let last = start + i + 1 == end;
+        for (i, entry) in group.iter().enumerate() {
+            let last = i + 1 == group.len();
             bun_core::pretty!(
                 "<d>{}<r> {}<d>@{}<r>",
                 if last { "└──" } else { "├──" },
-                BStr::new(&entry.name),
-                BStr::new(&entry.version)
+                bun_core::fmt::escape_control_chars(&entry.name),
+                bun_core::fmt::for_terminal(BStr::new(&entry.version))
             );
             if entry.dev_only {
                 bun_core::pretty!(" <d>(dev)<r>");
@@ -753,15 +740,13 @@ fn print_text(entries: &[Entry], long: bool, checked: usize, summary: bool) {
                     .flatten()
                 {
                     if last {
-                        bun_core::prettyln!("    <d>{}<r>", BStr::new(&printable(field)));
+                        bun_core::prettyln!("    <d>{}<r>", escape_control_chars(field));
                     } else {
-                        bun_core::prettyln!("<d>│   {}<r>", BStr::new(&printable(field)));
+                        bun_core::prettyln!("<d>│   {}<r>", escape_control_chars(field));
                     }
                 }
             }
         }
-
-        start = end;
     }
 
     if summary {
@@ -797,38 +782,26 @@ fn print_json(entries: &[Entry]) {
     }
 
     out.extend_from_slice(b"{\n");
-    let mut start = 0;
-    while start < entries.len() {
-        let license = &entries[start].license;
-        let mut end = start + 1;
-        while end < entries.len() && entries[end].license == *license {
-            end += 1;
-        }
+    let by_license = entries.chunk_by(|a, b| a.license == b.license);
+    for (license_index, same_license) in by_license.enumerate() {
+        let license = &same_license[0].license;
 
-        if start > 0 {
+        if license_index > 0 {
             out.extend_from_slice(b",\n");
         }
         out.extend_from_slice(b"  ");
         json_string(&mut out, license);
         out.extend_from_slice(b": [");
 
-        let mut group_start = start;
-        let mut first_group = true;
-        while group_start < end {
-            let first = &entries[group_start];
-            let mut group_end = group_start + 1;
-            while group_end < end && entries[group_end].name == first.name {
-                group_end += 1;
-            }
-
-            if !first_group {
+        let by_name = same_license.chunk_by(|a, b| a.name == b.name);
+        for (name_index, same_name) in by_name.enumerate() {
+            if name_index > 0 {
                 out.push(b',');
             }
-            first_group = false;
             out.extend_from_slice(b"\n    {\n      \"name\": ");
-            json_string(&mut out, &first.name);
+            json_string(&mut out, &same_name[0].name);
             let mut kept: Vec<&Entry> = Vec::new();
-            for entry in &entries[group_start..group_end] {
+            for entry in same_name {
                 if kept
                     .last()
                     .is_none_or(|previous| previous.version != entry.version)
@@ -841,7 +814,8 @@ fn print_json(entries: &[Entry]) {
                 if i > 0 {
                     out.extend_from_slice(b", ");
                 }
-                json_string(&mut out, &entry.version);
+                let version = redacted(BStr::new(&entry.version)).to_string();
+                json_string(&mut out, version.as_bytes());
             }
             out.extend_from_slice(b"],\n      \"paths\": [");
             for (i, entry) in kept.iter().enumerate() {
@@ -852,7 +826,7 @@ fn print_json(entries: &[Entry]) {
             }
             out.extend_from_slice(b"],\n      \"license\": ");
             json_string(&mut out, license);
-            let newest = &entries[group_end - 1];
+            let newest = &same_name[same_name.len() - 1];
             let extra: [(&[u8], &Option<Box<[u8]>>); 3] = [
                 (b"author", &newest.author),
                 (b"description", &newest.description),
@@ -867,12 +841,9 @@ fn print_json(entries: &[Entry]) {
                 }
             }
             out.extend_from_slice(b"\n    }");
-
-            group_start = group_end;
         }
 
         out.extend_from_slice(b"\n  ]");
-        start = end;
     }
     out.extend_from_slice(b"\n}\n");
 

@@ -83,7 +83,14 @@ class FakeClient {
     this.started++;
     const error = this.startError?.();
     if (error) throw error;
-    this.state = this.exitDuringStart ? State.Stopped : State.Running;
+    if (this.exitDuringStart) {
+      // Like vscode-languageclient: errorHandler.closed fires from the event loop while Starting.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      this.state = State.Stopped;
+      this.hooks.onClosed();
+      return;
+    }
+    this.state = State.Running;
   }
 
   async stop(): Promise<void> {
@@ -370,6 +377,61 @@ describe("registerLanguageServer", () => {
     expect(vscodeMockState.messages).toHaveLength(0);
   });
 
+  test("starts again for the next qualifying document after the server exits", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, probeVersion } = makeHarness();
+    lsp.registerLanguageServer(context, { createClient, probeVersion });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+    expect(clients).toHaveLength(1);
+    expect(clients[0].state).toBe(State.Running);
+
+    clients[0].state = State.Stopped;
+    clients[0].hooks.onClosed();
+    await settle();
+
+    // Nothing spawns until another supported file is opened.
+    expect(createClient).toHaveBeenCalledTimes(1);
+    expect(getOutputLines("Bun")).toEqual([
+      "The Bun language server exited; it starts again the next time a supported file is opened",
+    ]);
+    expect(vscodeMockState.messages).toHaveLength(0);
+
+    // A second close report for the same client is ignored.
+    clients[0].hooks.onClosed();
+    expect(getOutputLines("Bun")).toHaveLength(1);
+
+    await open(doc(`${WITH_MARKER}/second.ts`));
+
+    expect(createClient).toHaveBeenCalledTimes(2);
+    expect(clients).toHaveLength(2);
+    expect(clients[0].stopped).toBe(0);
+    expect(clients[1].spec.args).toEqual(["fmt", "--no-script", "--lsp"]);
+    expect(clients[1].started).toBe(1);
+    expect(clients[1].state).toBe(State.Running);
+    expect(getOutputLines("Bun")).toHaveLength(1);
+
+    await open(doc(`${OTHER_WITH_MARKER}/third.ts`));
+    expect(createClient).toHaveBeenCalledTimes(2);
+  });
+
+  test("a close during startup keeps the failed-start path and does not start again", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, probeVersion } = makeHarness({ exitDuringStart: true });
+    lsp.registerLanguageServer(context, { createClient, probeVersion });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+    await open(doc(`${WITH_MARKER}/second.ts`));
+
+    expect(createClient).toHaveBeenCalledTimes(1);
+    expect(clients).toHaveLength(1);
+    const lines = getOutputLines("Bun");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toStartWith("Failed to start the Bun language server: ");
+    expect(lines[0]).toContain("exited during startup");
+    expect(vscodeMockState.messages).toHaveLength(0);
+  });
+
   test("restarts with the new command when bun.runtime changes and a document wanted it", async () => {
     const lsp = await loadLsp();
     const { clients, context, createClient, probeVersion } = makeHarness();
@@ -511,5 +573,23 @@ describe("stopLanguageServer", () => {
 
     await lsp.stopLanguageServer();
     expect(clients[0].stopped).toBe(1);
+  });
+
+  test("a close reported after stopLanguageServer logs nothing", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, probeVersion } = makeHarness();
+    lsp.registerLanguageServer(context, { createClient, probeVersion });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+    expect(clients).toHaveLength(1);
+
+    await lsp.stopLanguageServer();
+    expect(clients[0].stopped).toBe(1);
+
+    clients[0].hooks.onClosed();
+    await settle();
+
+    expect(getOutputLines("Bun")).toHaveLength(0);
+    expect(vscodeMockState.messages).toHaveLength(0);
   });
 });

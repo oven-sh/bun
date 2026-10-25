@@ -451,7 +451,9 @@ describe.concurrent.each(commands)("bun %s", command => {
     const hook = join(repo.root, ".git/hooks/pre-commit");
     const words = [bunExe(), ...writing[command], "--staged"].map(it => `'${it}'`).join(" ");
     const runIn = (directory: string) => {
-      writeFileSync(hook, `#!/bin/sh\ncd '${directory}' && exec ${words} '${relative(directory, ".") || "."}'\n`);
+      const inside =
+        directory === "." ? `exec ${words}` : `cd '${directory}' && exec ${words} '${relative(directory, ".")}'`;
+      writeFileSync(hook, `#!/bin/sh\n${inside}\n`);
       chmodSync(hook, 0o755);
     };
     runIn(directory);
@@ -521,16 +523,17 @@ describe.concurrent.each(commands)("bun %s", command => {
       using repo = await hooked();
       const { root } = repo;
       // Git locks that index instead of the real one, and the hook can't tell which. What it stages only reaches the
-      // commit, as before.
+      // commit, as before. An empty index.lock is one that another git command holds, and stays as it is.
       copyFileSync(join(root, ".git/index"), join(root, ".git/alt"));
       write(root, "b.js", before);
       const more = { GIT_INDEX_FILE: join(root, ".git/alt") };
       expect((await run(["git", "add", "b.js"], root, more)).exitCode).toBe(0);
+      writeFileSync(join(root, ".git/index.lock"), "");
       const { stderr, exitCode } = await run(["git", "commit", "-q", "-m", "alt index", "b.js"], root, more);
       expect(stderr).not.toContain("Cannot stage");
       expect(exitCode).toBe(0);
       expect(await git(root, "show", "HEAD:b.js")).toBe(after[command]);
-      expect(existsSync(join(root, ".git/index.lock"))).toBe(false);
+      expect(read(root, ".git/index.lock")).toBe("");
     },
   );
 

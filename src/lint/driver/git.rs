@@ -2,9 +2,8 @@
 //! reads a file's text from git if the index and the disk differ.
 //!
 //! Git runs in the working directory and inherits this process's environment. In a hook, that environment tells git
-//! where the index is. For `git commit <path>` that's a temporary index, and the real one is locked beside it, so
-//! [`Files::stage`] writes both. These calls start no program that `git diff --name-only` wouldn't start itself: no
-//! pager, no external diff, no textconv, no submodule scan, no fetch.
+//! where the index is. These calls start no program that `git diff --name-only` wouldn't start itself: no pager, no
+//! external diff, no textconv, no submodule scan, no fetch.
 
 use crate::args::{UsageError, error};
 use crate::embedded::Framework;
@@ -504,15 +503,9 @@ impl<'e> Files<'e> {
     }
 
     /// In a pre-commit hook for `git commit <path>`, returns the lock file that becomes the real index when the commit
-    /// succeeds. Git builds such a commit from a temporary index, `next-index-<pid>.lock` next to the real one, and
-    /// that's the index `GIT_INDEX_FILE` names in the hook. The real index is already locked, with the named paths as
-    /// they were before the hook ran, and git throws the temporary index away after the commit. So what the hook
-    /// stages is only kept if it's staged into the real index's lock file too.
-    ///
-    /// `None` for every other index: a plain `git commit` names the real index, and `git commit -a` names its lock.
-    /// `GIT_INDEX_FILE=other git commit <path>` locks `other.lock` instead. The hook can't tell that from a commit
-    /// of the real index, so the only guard is that `index.lock` exists and is written: a git command that another
-    /// process runs at the same time holds an empty one while it works.
+    /// succeeds. Git builds such a commit from a temporary index, `next-index-<pid>.lock` next to the real one, which
+    /// is what `GIT_INDEX_FILE` names in the hook, and throws it away afterwards. An empty `index.lock` is one that
+    /// another git command holds while it works.
     fn real_index_lock(&self) -> Option<Vec<u8>> {
         let index = bun_core::getenv_z(&bun_core::ZBox::from_bytes(b"GIT_INDEX_FILE"))?;
         let name = paths::file_name(index);

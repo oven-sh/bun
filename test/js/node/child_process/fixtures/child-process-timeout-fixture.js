@@ -44,7 +44,10 @@ if (mode === "idle") {
     const kill = child.kill;
     child.kill = function (...args) {
       kills++;
-      return kill.apply(this, args);
+      const sent = kill.apply(this, args);
+      // The deadline is over. Staying to reap the child leaves no zombie for the test to take for alive.
+      this.ref();
+      return sent;
     };
     for (const event of ["error", "exit", "close"]) child.on(event, () => events.push(event));
     process.on("exit", () => {

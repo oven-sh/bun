@@ -43,7 +43,7 @@ var StringPrototypeIncludes = String.prototype.includes;
 var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
-// Not the globals, which user code and fake timers replace: https://github.com/nodejs/node/blob/v26.12.1/lib/child_process.js#L76
+// Not the globals, which user code can replace: https://github.com/nodejs/node/blob/v26.12.1/lib/child_process.js#L76
 const setTimeout: typeof globalThis.setTimeout = $newCppFunction("node/NodeTimers.cpp", "functionSetTimeout", 1);
 const clearTimeout: typeof globalThis.clearTimeout = $newCppFunction("node/NodeTimers.cpp", "functionClearTimeout", 1);
 

@@ -1706,11 +1706,12 @@ describe("options.timeout", () => {
   // it started is still there afterwards.
   type Expected = { killed?: boolean; kills: number; events?: string[]; callback?: unknown; alive?: boolean };
   const cases: Record<string, Expected> = {
-    // Only the deadline keeps the parent alive. It waits, signals once, and exits.
-    "spawn": { killed: true, kills: 1, alive: false },
+    // Only the deadline keeps the parent alive. It waits, signals once, and then reaps the child.
+    "spawn": { killed: true, kills: 1, events: ["exit", "close"], alive: false },
+    // Node emits no 'close' once the parent has called disconnect(), so the events are not part of this case.
     "fork": { killed: true, kills: 1, alive: false },
-    "execFile": { killed: true, kills: 1, alive: false },
-    "exec": { killed: true, kills: 1, alive: false },
+    "execFile": { killed: true, kills: 1, events: ["exit", "close"], callback: { killed: true }, alive: false },
+    "exec": { killed: true, kills: 1, events: ["exit", "close"], callback: { killed: true }, alive: false },
     "execFile, pipes open at the deadline": {
       killed: true,
       kills: 1,
@@ -1735,11 +1736,16 @@ describe("options.timeout", () => {
     // The timers are not the globals, which a fake-timers library replaces.
     "spawn, timers replaced after the module loaded": { kills: 0, events: ["exit", "close"] },
     "execFile, timers replaced after the module loaded": { kills: 0, events: ["exit", "close"], callback: "no error" },
-    "timers replaced while the module loads, then restored": { killed: true, kills: 1, alive: false },
+    "timers replaced while the module loads, then restored": {
+      killed: true,
+      kills: 1,
+      events: ["exit", "close"],
+      alive: false,
+    },
     // No timeout, no timer: the parent leaves at once and the child stays.
     "no timeout": { killed: false, kills: 0, events: [], alive: true },
     // The graph ends its child and its timers. No 'close' comes to clear the deadline.
-    "spawn in a Bun.ModuleGraph that is disposed": { killed: false, kills: 0, alive: false },
+    "spawn in a Bun.ModuleGraph that is disposed": { killed: false, kills: 0 },
   };
 
   const isAlive = (pid: number) => {
@@ -1766,12 +1772,7 @@ describe("options.timeout", () => {
     const report = stdout ? JSON.parse(stdout) : {};
     const pid: number | undefined = report.pid;
     try {
-      let alive = pid !== undefined && isAlive(pid);
-      // The parent signals the child and exits. The child dies a moment later.
-      for (let i = 0; alive && expected.alive === false && i < 200; i++) {
-        await Bun.sleep(10);
-        alive = isAlive(pid!);
-      }
+      const alive = pid !== undefined && isAlive(pid);
       const reported = Object.fromEntries(
         Object.keys(expected).map(key => [key, key === "alive" ? alive : report[key]]),
       );

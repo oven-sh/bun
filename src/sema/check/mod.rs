@@ -4037,6 +4037,16 @@ impl<'p, 's> Checker<'p, 's> {
         let from = self.lowest_taint_since(frame.serial);
         let from = (from < self.frames.len()).then_some(from);
         let is_behind_barrier = !flow && from.is_some_and(|from| self.is_behind_barrier(from));
+        // It's resolved again once the cycle has ended, and reports again. So an expression around it that's kept
+        // (`keep_type_of_returned_expression_in_cycle`) doesn't report what this resolution found.
+        if !flow
+            && frame.drops_reported
+            && (from.is_some() || self.cycle_at >= frame.serial || self.rejected_at >= frame.serial)
+            && self.is_resolution(q)
+        {
+            self.reported
+                .truncate((frame.reported_from as usize).min(self.reported.len()));
+        }
         let scope = scope.map(|depth| match from {
             Some(from) if !flow => depth.max(from.saturating_sub(1)),
             _ => depth,

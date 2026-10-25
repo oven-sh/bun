@@ -13,7 +13,8 @@
 //! - If the result is final, they move to `Task::diagnostics`, tagged with the query.
 //! - If the result depends on a cycle, a trial or a rejected query (`drops_reported`), they're
 //!   dropped. The next evaluation reports them again. Under a frame that drops its own, they stay until that frame is
-//!   settled: `keep_type_of_returned_expression_in_cycle` can make it final, and then they're what tsc reports.
+//!   settled: `keep_type_of_returned_expression_in_cycle` can make it final, and then they're what tsc reports. Those of
+//!   a resolution that's resolved again after the cycle don't stay (`cache_provisionally`).
 //! - If the result depends on an incomplete flow-loop type (`taint_from`), they stay and belong to
 //!   the enclosing frame.
 //!

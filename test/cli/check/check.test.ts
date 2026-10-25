@@ -15825,6 +15825,97 @@ export class C { p = flag ? new C().p : list(); }
       }
     });
 
+    // `x30` is resolved three times, one resolution inside the other. The innermost one finds `use` being resolved, so `u`
+    // has no contextual type there. Its result isn't stored, and `return r` in `x20`, which is kept, doesn't report TS7006.
+    test("a returned expression that is kept in a cycle does not report what a resolution inside it found that is resolved again", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["m8.ts"] }),
+        "rpc.ts": `export interface Parser<T> { parse(v: unknown): T }
+export type Out<P> = P extends Parser<infer T> ? T : never;
+export type Flat<T> = { [K in keyof T]: T[K] } & {};
+export class Proc<K extends "query" | "mutation", Ctx, In, R> { constructor(public kind: K, public parser: Parser<In> | undefined, public run: (o: { ctx: Ctx; input: In }) => R) {} }
+export class Builder<Ctx extends object, In = void> {
+  constructor(public parser?: Parser<In>, public steps: Function[] = []) {}
+  input<P extends Parser<any>>(p: P) { return new Builder<Ctx, In extends void ? Out<P> : Flat<In & Out<P>>>(p, this.steps); }
+  use<E extends object>(f: (o: { ctx: Ctx; input: In }) => E | Promise<E>) { return new Builder<Flat<Omit<Ctx, keyof E> & E>, In>(this.parser, [...this.steps, f]); }
+  query<R>(f: (o: { ctx: Ctx; input: In }) => R) { return new Proc("query", this.parser, f); }
+  mutation<R>(f: (o: { ctx: Ctx; input: In }) => R) { return new Proc("mutation", this.parser, f); }
+}
+export type Def = { [k: string]: Proc<any, any, any, any> | Router<any> };
+export class Router<D extends Def> {
+  constructor(public def: D) {}
+  merge<E extends Def>(o: Router<E>) { return new Router({ ...this.def, ...o.def } as Flat<Omit<D, keyof E> & E>); }
+  caller(ctx: object) { return makeCaller(this, ctx); }
+}
+export function router<D extends Def>(d: D) { return new Router(d); }
+export function init<Ctx extends object>() { return { procedure: new Builder<Ctx>(), router, merge: <A extends Def, B extends Def>(a: Router<A>, b: Router<B>) => a.merge(b) }; }
+const mk = <T>(f: (v: unknown) => T) => ({ parse: f });
+export const v = {
+  str: () => mk(x => String(x)), bool: () => mk(x => !!x), lit: <const T>(t: T) => mk(() => t),
+  arr: <P extends Parser<any>>(p: P) => mk(x => (x as unknown[]).map(e => p.parse(e) as Out<P>)), opt: <P extends Parser<any>>(p: P) => mk(x => x === undefined ? undefined : p.parse(x) as Out<P>),
+};
+export interface User { id: number; role: "admin" | "user" } export interface Post { id: number; authorId: number }
+export interface Context { user: User | null; db: { users: User[]; posts: Post[] } }
+export declare const flag: boolean;
+`,
+        "base.ts": `import { init } from "./rpc"; import type { Context } from "./rpc";
+export const t = init<Context>();
+export const pub = t.procedure;
+export const authed = pub.use(({ ctx }) => { if (!ctx.user) throw new Error("no"); return { user: ctx.user }; });
+export const admin = authed.use(async ({ ctx }) => ({ isAdmin: ctx.user.role === "admin", at: 1 }));
+`,
+        "index.ts": `export * from "./gb";
+`,
+        "ga.ts": `export { x30 } from "./m3";
+export * from "./m8";
+`,
+        "gb.ts": `export * from "./m7";
+export { x20, x21 } from "./m2";
+export * from "./m0";
+`,
+        "m0.ts": `import { v, router, flag, Router } from "./rpc"; import { t, authed, admin } from "./base";
+import { x81 as rx81 } from "./ga";
+export const x01 = router({
+  stats: authed.input(v.lit("a")).mutation(({ ctx }) => (flag ? ctx.db.users : rx81())),
+});
+`,
+        "m2.ts": `import { v, flag, Router } from "./rpc"; import { t, admin } from "./base";
+import { x01 } from "./index";
+import * as Nm7 from "./m7";
+export const x20 = async () => { const r = await x01.caller({}).stats(null!); return r; };
+export const x21 = () => { let v = Nm7.x70; for (let i = 0; i < 2; i++) { if (flag) v = x01; } return v; };
+`,
+        "m3.ts": `import { v, Router } from "./rpc"; import { t, authed, admin } from "./base";
+import { x21 as rx21 } from "./m2";
+export const x30 = t.router({
+  list: admin.input(v.lit("a")).use(({ ctx }) => ({ user: ctx.user })).query(({ input }) => { { const _8: never = input; } return input; }),
+  byId: authed.input(v.arr(v.lit("a"))).use(({ ctx }) => ({ extra: rx21() })).query(({ ctx }) => ctx.db.users.map(u => u.nmae)),
+});
+`,
+        "m5.ts": `import { x70 } from "./index";
+import { x01 } from "./index";
+import * as Nm2 from "./m2";
+declare module "./rpc" { interface Context { aug11: typeof x70 } }
+export const x52 = () => x01.nest("x", Nm2.x21());
+`,
+        "m7.ts": `import { v, flag, Router } from "./rpc"; import { t, pub, admin } from "./base";
+import * as Nm2 from "./index";
+export const x70 = t.router({
+  me: pub.input(v.bool()).query(({ ctx }) => (flag ? ctx.db.users : Nm2.x20())),
+});
+`,
+        "m8.ts": `import { x30 } from "./ga";
+import { x52 as rx52 } from "./m5";
+export const x81 = () => x30.caller({}).me(null!).then(r => r.id);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").filter(line => line.startsWith("m3.ts(5,"))).toEqual([
+        "m3.ts(5,122): error TS2339: Property 'nmae' does not exist on type 'User'.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS7022 and TS7023 when `return f()` checks the callee while another resolution is in progress", async () => {
       using dir = project({
         "a.ts": `export function p1() { const a = (x = (b() as any)) => x; function b() { return a(); } }

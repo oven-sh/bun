@@ -902,6 +902,7 @@ struct SendDataOptions {
 }
 
 /// What one `H2FrameParser::send_data` call leaves to its caller.
+#[must_use]
 struct SentData {
     /// The state the close tail settled on (5 = HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = none).
     settled_state: u8,
@@ -1677,11 +1678,13 @@ impl Stream {
         client: &H2FrameParser,
         bytes: &[u8],
         callback: JSValue,
-        end_stream: bool,
+        mut end_stream: bool,
     ) -> StrongOptional {
         let global_this = client.global_this;
 
         if let Some(last_frame) = self.data_frame_queue.peek_last() {
+            // A queued END_STREAM moves to whichever frame ends up last.
+            end_stream |= core::mem::take(&mut last_frame.end_stream);
             if bytes.is_empty() {
                 // just merge the end_stream
                 last_frame.end_stream = end_stream;
@@ -5890,6 +5893,8 @@ impl H2FrameParser {
                 defer_write_callback: defer_callback.to_boolean(),
             },
         );
+        drop(payload);
+        drop(buffer);
         drop(stream);
         if let Some(displaced_callback) = sent.displaced_callback.get() {
             self.dispatch_write_callback(displaced_callback);

@@ -366,6 +366,203 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
+// A workspace install links node_modules/lib to packages/lib. The resolver reaches the package through the link,
+// and the watcher reports the files of the package by their real path. Every case with a link sits next to a
+// control that imports the same directory without one.
+{
+  const throughNodeModulesLink = {
+    how: "through a node_modules link",
+    lib: "lib",
+    symlinks: { "node_modules/lib": "../packages/lib" },
+  };
+  const throughDirectoryLink = {
+    how: "through a directory link",
+    lib: "./linked",
+    symlinks: { linked: "packages/lib" },
+  };
+  const byRelativePath = { how: "by its relative path", lib: "./packages/lib", symlinks: undefined };
+  const indexHtml = emptyHtmlFile({ scripts: ["index.ts"] });
+  const libPackageJson = (fields: object = {}) => JSON.stringify({ name: "lib", version: "1.0.0", ...fields });
+  const importsC = (specifier: string) => ({
+    "index.html": indexHtml,
+    "index.ts": `
+      import { c } from '${specifier}';
+      console.log(c);
+    `,
+    "packages/lib/c.ts": `export const c = "EXPORT_C";`,
+  });
+  const unresolved = (specifier: string) =>
+    `index.ts:1:19: error: Could not resolve: "${specifier}"` +
+    (specifier.startsWith(".") ? "" : '. Maybe you need to "bun install"?');
+  const libExports = ["EXPORT_A", "EXPORT_C", "EXPORT_D"];
+  const clientScriptUrl = (html: string) => /src="([^"]+\.js)"/.exec(html)?.[1];
+  // The exports of packages/lib in the script of "/", or the status of "/" when it serves no script.
+  async function servedLibExports(dev: Dev) {
+    // A watcher event that arrives after a build bundles the route again, and its script gets a new URL.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const page = await dev.fetch("/");
+      const url = clientScriptUrl(await page.text());
+      if (page.status !== 200 || !url) return { status: page.status };
+      const script = await dev.fetch(url).text();
+      const urlAfter = clientScriptUrl(await dev.fetch("/").text());
+      if (urlAfter === url) return libExports.filter(name => script.includes(name));
+    }
+    throw new Error('The script of "/" got a new URL on every attempt');
+  }
+
+  for (const { how, lib, symlinks, dir } of [
+    { ...throughNodeModulesLink, dir: "" },
+    { ...throughDirectoryLink, dir: "" },
+    { ...byRelativePath, dir: "" },
+    { ...throughNodeModulesLink, dir: "sub/" },
+    { ...byRelativePath, dir: "sub/" },
+  ]) {
+    devTest(`renaming a file ${dir ? "in a subdirectory " : ""}of a package imported ${how}`, {
+      skip: [
+        "win32", // unlinkSync is having weird behavior
+      ],
+      symlinks,
+      files: {
+        "index.html": indexHtml,
+        "index.ts": `
+          import { a } from '${lib}/a';
+          import { c } from '${lib}/${dir}c';
+          console.log(a, c);
+        `,
+        "packages/lib/package.json": libPackageJson(),
+        "packages/lib/a.ts": `export const a = "EXPORT_A";`,
+        [`packages/lib/${dir}c.ts`]: `export const c = "EXPORT_C";`,
+      },
+      async test(dev) {
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_C"]);
+        {
+          // Only the rename: an importer saved in the same batch keeps its import of the removed file, with or
+          // without a link.
+          await using batch = await dev.batchChanges();
+          await dev.delete(`packages/lib/${dir}c.ts`);
+          await dev.write(`packages/lib/${dir}c.tsx`, `export const c = "EXPORT_D";`);
+        }
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_D"]);
+        await dev.writeNoChanges("index.ts");
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_D"]);
+      },
+    });
+  }
+
+  for (const { how, lib, symlinks } of [throughNodeModulesLink, byRelativePath]) {
+    devTest(`deleting a file of a package imported ${how}`, {
+      skip: [
+        "win32", // unlinkSync is having weird behavior
+      ],
+      symlinks,
+      files: { ...importsC(`${lib}/c`), "packages/lib/package.json": libPackageJson() },
+      async test(dev) {
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
+        await dev.delete("packages/lib/c.ts");
+        expect(await servedLibExports(dev)).toEqual({ status: 500 });
+        await dev.writeNoChanges("index.ts");
+        expect(await servedLibExports(dev)).toEqual({ status: 500 });
+        await using c = await dev.client("/", { errors: [unresolved(`${lib}/c`)] });
+      },
+    });
+  }
+
+  for (const { how, lib, symlinks } of [throughNodeModulesLink, byRelativePath]) {
+    devTest(`creating then importing a file of a package imported ${how}`, {
+      symlinks,
+      files: {
+        "index.html": indexHtml,
+        "index.ts": `
+          import { a } from '${lib}/a';
+          console.log(a);
+        `,
+        "packages/lib/package.json": libPackageJson(),
+        "packages/lib/a.ts": `export const a = "EXPORT_A";`,
+      },
+      async test(dev) {
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_A"]);
+        await dev.write("packages/lib/d.ts", `export const d = "EXPORT_D";`);
+        await dev.write(
+          "index.ts",
+          `
+            import { a } from '${lib}/a';
+            import { d } from '${lib}/d';
+            console.log(a, d);
+          `,
+        );
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_D"]);
+      },
+    });
+  }
+
+  for (const { how, lib, symlinks } of [throughNodeModulesLink, byRelativePath]) {
+    devTest(`deleting then re-creating a file of a package imported ${how}`, {
+      skip: [
+        "win32", // unlinkSync is having weird behavior
+      ],
+      symlinks,
+      files: { ...importsC(`${lib}/c`), "packages/lib/package.json": libPackageJson() },
+      async test(dev) {
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
+        await dev.delete("packages/lib/c.ts");
+        expect(await servedLibExports(dev)).toEqual({ status: 500 });
+        await using c = await dev.client("/", { errors: [unresolved(`${lib}/c`)] });
+        if (lib.startsWith(".")) {
+          // The dev server watches the directory of a failed relative import and bundles its importer again.
+          await c.expectReload(async () => {
+            await dev.write("packages/lib/c.ts", `export const c = "EXPORT_D";`);
+          });
+        } else {
+          // It does not watch for a failed bare import: the importer keeps its error until it is saved.
+          await dev.write("packages/lib/c.ts", `export const c = "EXPORT_D";`, {
+            errors: [unresolved(`${lib}/c`)],
+          });
+          await c.expectReload(async () => {
+            await dev.writeNoChanges("index.ts");
+          });
+        }
+        await c.expectMessage("EXPORT_D");
+      },
+    });
+  }
+
+  // The importer names the package, and the package.json of the package names c.ts: as its "main", and in its
+  // "exports". "exports" is read for a package that is imported by its name, so that control imports the file.
+  for (const { entry, how, symlinks, specifier, fields } of [
+    { entry: "main", ...throughNodeModulesLink, specifier: "lib", fields: { main: "./c.ts" } },
+    { entry: "main", ...byRelativePath, specifier: "./packages/lib", fields: { main: "./c.ts" } },
+    { entry: "exports", ...throughNodeModulesLink, specifier: "lib/c", fields: { exports: { "./c": "./c.ts" } } },
+    { entry: "exports", ...byRelativePath, specifier: "./packages/lib/c", fields: { exports: { "./c": "./c.ts" } } },
+  ]) {
+    devTest(`deleting then re-creating the "${entry}" file of a package imported ${how}`, {
+      skip: [
+        "win32", // unlinkSync is having weird behavior
+      ],
+      symlinks,
+      files: { ...importsC(specifier), "packages/lib/package.json": libPackageJson(fields) },
+      async test(dev) {
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
+        await dev.delete("packages/lib/c.ts");
+        expect(await servedLibExports(dev)).toEqual({ status: 500 });
+        await using c = await dev.client("/", { errors: [unresolved(specifier)] });
+        if (specifier === "./packages/lib/c") {
+          await c.expectReload(async () => {
+            await dev.write("packages/lib/c.ts", `export const c = "EXPORT_D";`);
+          });
+        } else {
+          // A failed import of the directory is not bundled again when a file appears in the directory.
+          await dev.write("packages/lib/c.ts", `export const c = "EXPORT_D";`, {
+            errors: [unresolved(specifier)],
+          });
+          await c.expectReload(async () => {
+            await dev.writeNoChanges("index.ts");
+          });
+        }
+        await c.expectMessage("EXPORT_D");
+      },
+    });
+  }
+}
 // Without a separate SSR graph, the server bundle keeps a "use client" module
 // and the parser wraps its exported values in `registerClientReference(value,
 // file, name)`. The parser chose `file` by the JSX development flag. A

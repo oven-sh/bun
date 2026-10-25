@@ -866,6 +866,15 @@ impl PinnedArrayBuffer {
         (ptr, byte_len)
     }
 
+    /// Returns true if the value is detached, or is a view that its resized buffer no longer
+    /// covers. Returns false for an attached zero-length value.
+    /// Out of line: inlined into the path parser, it costs every non-empty path an instruction.
+    #[cold]
+    #[inline(never)]
+    pub fn is_out_of_bounds(&self) -> bool {
+        self.live_range().0.is_null()
+    }
+
     /// Like [`slice_mut`](Self::slice_mut), but re-reads the range. For a writer that runs after user JS.
     pub fn live_slice_mut(&mut self) -> &mut [u8] {
         let (ptr, byte_len) = self.live_range();

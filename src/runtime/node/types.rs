@@ -1081,8 +1081,17 @@ impl PathLikeExt for PathLike<'_> {
                 if !buffer.copy_if_freeable_while_pinned(ctx) {
                     return Err(ctx.throw_out_of_memory());
                 }
-                Valid::path_buffer(buffer.slice(), ctx)?;
-                Valid::path_null_bytes(buffer.slice(), ctx)?;
+                let bytes = buffer.slice();
+                if !bytes.is_empty() {
+                    Valid::path_null_bytes(bytes, ctx)?;
+                } else if buffer.is_out_of_bounds() {
+                    // An empty path goes to the system, as "" does. A detached or out-of-bounds
+                    // view also reads as empty, but node's NUL check throws for it:
+                    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L842
+                    return Err(ctx.throw_type_error(format_args!(
+                        "Underlying ArrayBuffer has been detached from the view or out-of-bounds"
+                    )));
+                }
                 arguments.eat();
                 PathLike::Buffer(buffer)
             }
@@ -1230,15 +1239,6 @@ impl Valid {
             arguments.deferred_error = Some(Box::new(err));
         }
         Ok(PathLike::default())
-    }
-
-    pub(crate) fn path_buffer(slice: &[u8], ctx: &JSGlobalObject) -> JsResult<()> {
-        if slice.is_empty() {
-            return Err(
-                ctx.throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty"))
-            );
-        }
-        Ok(())
     }
 
     pub(crate) fn path_null_bytes(slice: &[u8], global: &JSGlobalObject) -> JsResult<()> {

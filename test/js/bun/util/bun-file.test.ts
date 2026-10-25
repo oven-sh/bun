@@ -172,6 +172,30 @@ test("a Uint8Array path can still be transferred after Bun.file()", async () => 
   expect({ byteLength: path.byteLength, text: await file.text() }).toEqual({ byteLength: 0, text: "a" });
 });
 
+test("a zero-length buffer path is the empty path", async () => {
+  const s3 = new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "c" });
+  const code = (e: any) => e.code;
+  const probe = async (path: any) => ({
+    name: Bun.file(path).name,
+    exists: await Bun.file(path).exists().catch(code),
+    text: await Bun.file(path).text().catch(code),
+    write: await Bun.write(path, "x").catch(code),
+    s3: s3.file(path).name,
+  });
+  const expected = { name: "", exists: false, text: "ENOENT", write: "ENOENT", s3: "" };
+  expect({
+    '""': await probe(""),
+    "new Uint8Array(0)": await probe(new Uint8Array(0)),
+    "Buffer.alloc(0)": await probe(Buffer.alloc(0)),
+    "new ArrayBuffer(0)": await probe(new ArrayBuffer(0)),
+  }).toEqual({
+    '""': expected,
+    "new Uint8Array(0)": expected,
+    "Buffer.alloc(0)": expected,
+    "new ArrayBuffer(0)": expected,
+  });
+});
+
 test.concurrent.each([
   "Bun.file(path.slice())",
   "s3.file(path.slice())",

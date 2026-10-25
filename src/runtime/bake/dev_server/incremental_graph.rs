@@ -735,9 +735,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         self.dev_incremental_result()
                             .client_components_added
                             .push(ServerFileIndex::init(file_index.get()));
-                    } else if self.bundled_files.values()[file_index.get() as usize]
-                        .is_client_component_boundary
+                    } else if !is_ssr_graph
+                        && self.bundled_files.values()[file_index.get() as usize]
+                            .is_client_component_boundary
                     {
+                        // The SSR graph imports boundaries as plain modules; not a demotion.
                         // SAFETY: cross-graph access via `owner()`. We hold
                         // `&mut self` (server_graph); `client_graph` and
                         // `directory_watchers` are disjoint sibling fields.

@@ -30,7 +30,7 @@ function expectedFormat(scope: Scope, ext: string): Format {
   return scope === "commonjs" ? "commonjs" : "module";
 }
 
-const expected: Record<Scope, Record<string, Format>> = Object.fromEntries(
+const matrix: Record<Scope, Record<string, Format>> = Object.fromEntries(
   (Object.keys(packageJson) as Scope[]).map(scope => [
     scope,
     Object.fromEntries(extensions.map(ext => [`hello${ext}`, expectedFormat(scope, ext)])),
@@ -56,15 +56,22 @@ const jsxRuntimeStub = {
   "node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });\nexports.Fragment = "Fragment";\n`,
 };
 
+// The files that load every one of `files` in another way than as the entry point.
+function loaders(files: string[]) {
+  return {
+    "static-import.mjs": files.map(file => `import "./${file}";`).join("\n") + "\n",
+    "dynamic-import.mjs": `for (const file of ${JSON.stringify(files)}) await import("./" + file);\n`,
+    "require-all.cjs": files.map(file => `require("./${file}");`).join("\n") + "\n",
+    "empty.mjs": "",
+  };
+}
+
 function scopeDir(scope: Scope) {
   return tempDir(`module-type-${scope}`, {
     "package.json": packageJson[scope],
     ...jsxRuntimeStub,
     ...Object.fromEntries(fixtures.map(file => [file, fixture(file)])),
-    "static-import.mjs": fixtures.map(file => `import "./${file}";`).join("\n") + "\n",
-    "dynamic-import.mjs": `for (const file of ${JSON.stringify(fixtures)}) await import("./" + file);\n`,
-    "require-all.cjs": fixtures.map(file => `require("./${file}");`).join("\n") + "\n",
-    "empty.mjs": "",
+    ...loaders(fixtures),
     // An onLoad plugin that hands back each fixture's own contents.
     "plugin.mjs": `
       import { plugin } from "bun";
@@ -105,6 +112,34 @@ function formats(stdout: string): Record<string, string> {
   );
 }
 
+/**
+ * One test for each way to load `files`. Every way must print `expected`.
+ * `cwd()` has the files and `loaders(files)`.
+ */
+function everyLoadPath(cwd: () => string, files: string[], expected: Record<string, Format>) {
+  test("as the entry point", async () => {
+    const results = await Promise.all(files.map(file => run(cwd(), file)));
+    expect(formats(results.map(r => r.stdout).join(""))).toEqual(expected);
+    expect(results.map(r => r.stderr)).toEqual(files.map(() => ""));
+    expect(results.map(r => r.exitCode)).toEqual(files.map(() => 0));
+  });
+
+  const preloads = files.flatMap(file => ["--require", `./${file}`]);
+  for (const [name, args] of [
+    ["via require()", ["require-all.cjs"]],
+    ["via an import statement", ["static-import.mjs"]],
+    ["via import()", ["dynamic-import.mjs"]],
+    ["via --require", [...preloads, "empty.mjs"]],
+  ] as const) {
+    test(name, async () => {
+      const { stdout, stderr, exitCode } = await run(cwd(), ...args);
+      expect(formats(stdout)).toEqual(expected);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  }
+}
+
 // Not concurrent with the tests below: a Worker starts its own VM, which is
 // slow on a debug build unless it has a CPU to itself.
 test("module format as a Worker's main module", async () => {
@@ -139,41 +174,7 @@ describe.concurrent("module format follows the extension, then the nearest packa
       });
       afterAll(() => dir?.[Symbol.dispose]());
 
-      test("as the entry point", async () => {
-        const results = await Promise.all(fixtures.map(file => run(String(dir), file)));
-        expect(formats(results.map(r => r.stdout).join(""))).toEqual(expected[scope]);
-        expect(results.map(r => r.stderr)).toEqual(fixtures.map(() => ""));
-        expect(results.map(r => r.exitCode)).toEqual(fixtures.map(() => 0));
-      });
-
-      test("via require()", async () => {
-        const { stdout, stderr, exitCode } = await run(String(dir), "require-all.cjs");
-        expect(formats(stdout)).toEqual(expected[scope]);
-        expect(stderr).toBe("");
-        expect(exitCode).toBe(0);
-      });
-
-      test("via an import statement", async () => {
-        const { stdout, stderr, exitCode } = await run(String(dir), "static-import.mjs");
-        expect(formats(stdout)).toEqual(expected[scope]);
-        expect(stderr).toBe("");
-        expect(exitCode).toBe(0);
-      });
-
-      test("via import()", async () => {
-        const { stdout, stderr, exitCode } = await run(String(dir), "dynamic-import.mjs");
-        expect(formats(stdout)).toEqual(expected[scope]);
-        expect(stderr).toBe("");
-        expect(exitCode).toBe(0);
-      });
-
-      test("via --require", async () => {
-        const preloads = fixtures.flatMap(file => ["--require", `./${file}`]);
-        const { stdout, stderr, exitCode } = await run(String(dir), ...preloads, "empty.mjs");
-        expect(formats(stdout)).toEqual(expected[scope]);
-        expect(stderr).toBe("");
-        expect(exitCode).toBe(0);
-      });
+      everyLoadPath(() => String(dir), fixtures, matrix[scope]);
 
       test("source from an onLoad plugin still runs", async () => {
         // The loader evaluates an onLoad plugin's source as an ES module
@@ -186,6 +187,34 @@ describe.concurrent("module format follows the extension, then the nearest packa
       });
     });
   }
+});
+
+describe.concurrent('module syntax in the file decides before the extension and "type"', () => {
+  // `import` makes a file ESM and `module.exports` makes it CommonJS, whatever
+  // its extension and the package.json say. The path decides only for a file
+  // with neither.
+  const withImport = (file: string) => `import * as os from "node:os";\nos;\n${fixture(file)}`;
+  const withExports = (file: string) => `module.exports = {};\n${fixture(file)}`;
+  const expected: Record<string, Format> = {
+    "with-import.cjs": "module",
+    "with-exports.mjs": "commonjs",
+    "commonjs/with-import.js": "module",
+    "module/with-exports.js": "commonjs",
+  };
+  const files = Object.keys(expected);
+
+  let dir: ReturnType<typeof tempDir>;
+  beforeAll(() => {
+    dir = tempDir("module-type-syntax", {
+      "commonjs/package.json": packageJson.commonjs,
+      "module/package.json": packageJson.module,
+      ...Object.fromEntries(files.map(file => [file, (expected[file] === "module" ? withImport : withExports)(file)])),
+      ...loaders(files),
+    });
+  });
+  afterAll(() => dir?.[Symbol.dispose]());
+
+  everyLoadPath(() => String(dir), files, expected);
 });
 
 describe.concurrent("the nearest package.json decides, with or without a name", () => {

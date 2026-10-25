@@ -182,6 +182,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .value
                             .is_some_and(|value| self.is_module_dot_exports_at_parse(value))
                     {
+                        self.has_var_exports_from_module_exports |=
+                            self.var_hoists_to_module_scope();
                         continue;
                     }
                     if !self.var_hoists_to_module_scope() {

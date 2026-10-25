@@ -306,6 +306,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_user_declared_module: bool,
     /// A module-scope `var exports = ...` replaces the CommonJS wrapper value.
     pub(crate) has_user_declared_exports: bool,
+    /// A module-scope `var exports = module.exports`, which keeps the wrapper value if `module` is the wrapper's.
+    pub(crate) has_var_exports_from_module_exports: bool,
 
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
@@ -3348,6 +3350,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"exports")?;
         self.module_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"module")?;
+        if self.has_var_exports_from_module_exports
+            && self
+                .module_scope()
+                .get_member_with_hash(b"module", Scope::get_member_hash(b"module"))
+                .is_some_and(|member| !member.ref_.eql(self.module_ref))
+        {
+            self.has_user_declared_exports = true;
+        }
 
         self.require_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"require")?;
@@ -9739,6 +9749,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_function_merged_with_var: false,
             has_user_declared_module: false,
             has_user_declared_exports: false,
+            has_var_exports_from_module_exports: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,

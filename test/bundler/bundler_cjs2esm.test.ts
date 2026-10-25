@@ -2646,6 +2646,7 @@ describe("bundler", () => {
         import { leak as namedModuleLeak, real as namedModuleReal } from "./named-module.cjs";
         import { kind as forInModuleKind } from "./for-in-module.cjs";
         import { foo as blockShadowFoo } from "./block-shadow.cjs";
+        import { foo as functionModuleFoo } from "./function-module.cjs";
         console.log(
           JSON.stringify({
             lib,
@@ -2664,6 +2665,7 @@ describe("bundler", () => {
             namedModule: [typeof namedModuleLeak, namedModuleReal],
             forInModuleKind,
             blockShadowFoo: typeof blockShadowFoo,
+            functionModuleFoo: typeof functionModuleFoo,
           }),
         );
       `,
@@ -2686,6 +2688,12 @@ describe("bundler", () => {
           let module = { exports: { fake: true } };
           var exports = module.exports;
         }
+        exports.foo = 1;
+      `,
+      "/function-module.cjs": /* js */ `
+        function module() {}
+        module.exports = { fake: true };
+        var exports = module.exports;
         exports.foo = 1;
       `,
       "/destructured.cjs": /* js */ `
@@ -2768,22 +2776,25 @@ describe("bundler", () => {
         "/named-module.cjs",
         "/for-in-module.cjs",
         "/block-shadow.cjs",
+        "/function-module.cjs",
       ],
     },
     run: {
       stdout:
-        '{"lib":{"answer":42,"kind":"boolean"},"fake":{"viaParam":"boolean","id":"user"},"reassigned":{"before":1,"after":"string"},"uninit":{"foo":123,"bar":124},"nested":{"viaParam":"boolean"},"aliasedA":"aliased","chainedB":"chained","destructured":{"kind":"boolean"},"forHeader":{"kind":"boolean"},"forOf":{},"moduleRequire":{"dep":"dep","kind":"boolean"},"ambientOk":1,"namedExports":["undefined",2],"namedModule":["undefined",2],"forInModuleKind":"undefined","blockShadowFoo":"undefined"}',
+        '{"lib":{"answer":42,"kind":"boolean"},"fake":{"viaParam":"boolean","id":"user"},"reassigned":{"before":1,"after":"string"},"uninit":{"foo":123,"bar":124},"nested":{"viaParam":"boolean"},"aliasedA":"aliased","chainedB":"chained","destructured":{"kind":"boolean"},"forHeader":{"kind":"boolean"},"forOf":{},"moduleRequire":{"dep":"dep","kind":"boolean"},"ambientOk":1,"namedExports":["undefined",2],"namedModule":["undefined",2],"forInModuleKind":"undefined","blockShadowFoo":"undefined","functionModuleFoo":"undefined"}',
     },
   });
   // In an unwrapped package `module.exports = require()` becomes `export * from`.
-  // That holds when `module` is the wrapper's: react assigns to its own object
-  // and exports nothing, react-is only has an unused `var exports`.
-  itBundled("cjs2esm/ReactSpecificUnwrappingWithOwnVarModuleKeepsWrapper", {
+  // Not beside a `module` of its own: react assigns to that object and exports
+  // nothing. Not beside an `exports` of its own either: in a lifted file that
+  // `var` is the namespace object, and its initializer would replace it.
+  itBundled("cjs2esm/ReactSpecificUnwrappingWithOwnVarModuleOrExportsKeepsWrapper", {
     files: {
       "/entry.js": /* js */ `
         import { value as ownModule } from "react";
-        import { value as ownExports } from "react-is";
-        console.log(typeof ownModule, ownExports);
+        import * as ownExports from "react-is";
+        const key = "value";
+        console.log(typeof ownModule, ownExports[key]);
       `,
       "/node_modules/react/index.js": /* js */ `
         var module = { exports: {} };
@@ -2800,7 +2811,7 @@ describe("bundler", () => {
         exports.value = "react-is";
       `,
     },
-    cjs2esm: { unhandled: ["/node_modules/react/index.js"] },
+    cjs2esm: { unhandled: ["/node_modules/react/index.js", "/node_modules/react-is/index.js"] },
     run: {
       stdout: "undefined react-is",
     },

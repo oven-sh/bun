@@ -166,10 +166,14 @@ type Operation = (Signature | { overloads: readonly (Signature & { rustName: str
 };
 
 const fd = { fd: Fd };
-const path = { path: PathLike };
-const paths = (from: string, to: string) => ({ [from]: PathLike, [to]: PathLike.deferred });
+const path = { path: PathLike.deferred };
+const paths = (from: string, to: string) => ({ [from]: PathLike.deferred, [to]: PathLike.deferred });
 const times = { atime: TimeLike, mtime: TimeLike };
-const writeFile = { path: PathOrFileDescriptor, data: WriteFileData, options: EncodingOrWriteFileOptions.deferred };
+const writeFile = {
+  path: PathOrFileDescriptor.deferred,
+  data: WriteFileData,
+  options: EncodingOrWriteFileOptions.deferred,
+};
 
 /** What can throw or run code after a path is converted once the path is checked, so the first argument that is wrong is the one reported. */
 const operations: Record<string, Operation> = {
@@ -197,7 +201,7 @@ const operations: Record<string, Operation> = {
   lstat: { args: { ...path, options: StatOptions.default({}).deferred }, length: [1, 1] },
   lutimes: { args: { ...path, ...times }, length: [4, 3] },
   mkdir: { args: { ...path, options: MkdirOptionsOrMode.deferred }, length: [3, 2] },
-  mkdtemp: { args: { prefix: PathLike, options: EncodingOrOptions.deferred }, length: [3, 2] },
+  mkdtemp: { args: { prefix: PathLike.deferred, options: EncodingOrOptions.deferred }, length: [3, 2] },
   open: {
     args: { ...path, flags: FileFlags.nullable.deferred, mode: FileMode.nullable.deferred },
     expected: { mode: ["number"] },
@@ -216,7 +220,10 @@ const operations: Record<string, Operation> = {
     length: [6, 5],
   },
   readdir: { args: { ...path, options: EncodingOrReaddirOptions.deferred }, length: [3, 2] },
-  readFile: { args: { path: PathOrFileDescriptor, options: EncodingOrReadFileOptions.deferred }, length: [3, 2] },
+  readFile: {
+    args: { path: PathOrFileDescriptor.deferred, options: EncodingOrReadFileOptions.deferred },
+    length: [3, 2],
+  },
   readlink: { args: { ...path, options: EncodingOrOptions.deferred }, length: [3, 2] },
   readv: {
     args: { ...fd, buffers: b.jsArray, position },
@@ -231,7 +238,10 @@ const operations: Record<string, Operation> = {
   stat: { args: { ...path, options: StatOptions.default({}).deferred }, length: [1, 1] },
   statfs: { args: { ...path, options: BigIntOptions.default({}).deferred }, length: [2, 2] },
   symlink: { args: { ...paths("target", "path"), type: SymlinkType.deferred }, length: [4, 3] },
-  truncate: { args: { path: PathOrFileDescriptor, len: b.i64.validateInteger().default(0).deferred }, length: [3, 2] },
+  truncate: {
+    args: { path: PathOrFileDescriptor.deferred, len: b.i64.validateInteger().default(0).deferred },
+    length: [3, 2],
+  },
   unlink: { args: path, length: [2, 1] },
   utimes: { args: { ...path, ...times }, length: [4, 3] },
   write: {

@@ -219,10 +219,10 @@ const commands: Record<string, readonly [args: readonly string[], length: number
 };
 
 const argument = (name: string): [string, b.Type] =>
-  name.startsWith("...") ? [name.slice(3), b.rest(RedisArgument)] : [name, RedisArgument];
+  name.startsWith("...") ? [name.slice(3), b.rest(RedisArgument)] : [name, RedisArgument.deferred];
 
 const command = { returns: b.promise, capability: "js", throws: true, passThis: true } as const;
-const key = RedisArgument;
+const key = RedisArgument.deferred;
 /** `ToString` comes after the command has looked at the state of the client. */
 const text = b.string.loose.deferred;
 
@@ -293,7 +293,7 @@ export const RedisClient = b.class({
       ["hset", hashSet] as const,
       ["onclose", eventHandler] as const,
       ["onconnect", eventHandler] as const,
-      ["ping", { ...command, args: { message: RedisArgument }, length: 0 }] as const,
+      ["ping", { ...command, args: { message: RedisArgument.deferred }, length: 0 }] as const,
       [
         "publish",
         {

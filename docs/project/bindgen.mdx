@@ -377,12 +377,14 @@ pub fn send<'a>(&self, cx: &mut JsScope<'a>, command: Deferred<'a, bun_core::Str
 A conversion can run JavaScript, so like everything else that can it takes the `&JSGlobalObject` and returns a
 `JsResult`. `undefined` for a type with a default, or one that is `.optional`, is answered without a call into C++.
 
-Only what JavaScript can see is worth deferring. A union that tells kinds apart and ends in `b.ignored` or `b.opaque`
-runs nothing and refuses nothing, so it is converted with the other arguments and the body throws where it always did.
+A union that tells kinds apart and ends in `b.ignored` or `b.opaque` runs nothing and refuses nothing, so no order asks
+for `.deferred`. The size of the binary can. Each function converts its own arguments, so a union that every method of a
+class takes is converted in every one. Where they all hand it to one helper, as the commands of `RedisClient` and the
+paths of `node:fs` do, `.deferred` leaves one call in each.
 
 `.deferred` is written last, on an argument, and takes `capability: "js"`. The conversion returns before the body goes on, so
 the type cannot borrow from it: a UTF-8 string is `.owned`, and in place of `b.bytes` there is `b.bufferSource`. An
-argument that needs no such order is not deferred: that is one call into C++ fewer.
+argument that needs neither is not deferred: that is one call into C++ fewer.
 
 It is also an alternative of a union, for a kind whose conversion JavaScript can see. The union is chosen with the other
 arguments and the body converts that one alternative:

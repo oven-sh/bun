@@ -403,9 +403,8 @@ template<> struct WebCore::Converter<${type.idlType}> : Bun::DefaultContextConve
     }
 `
   }
-    // Inlined as DefaultTryConverter's is.
     template<Bun::IDLConversionContext Ctx>
-    ALWAYS_INLINE static bool convertInto(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx, ReturnType& result)
+    static bool convertInto(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx, ReturnType& result)
     {
         auto* globalObject = &lexicalGlobalObject;
         auto& vm = JSC::getVM(globalObject);
@@ -1795,7 +1794,8 @@ ${indent(body, 12)}
 function rustForConversion({ symbol, rustName, type, exported, member }: Conversion, scope: RustScope): string {
   const converted = type.rustFromExtern("result.assume_init()", scope);
   const ofUndefined = member ? null : type.rustOfUndefined(scope);
-  const declaration = `fn ${exported ? "convert_" : ""}${rustName}<'a>(cx: &mut bindgen::JsScope<'a>, value: JSValue)`;
+  // Every function that has the argument shares its conversion, as they share the C++ half. One body reads a member.
+  const declaration = `${member ? "" : "#[inline(never)]\n"}fn ${exported ? "convert_" : ""}${rustName}<'a>(cx: &mut bindgen::JsScope<'a>, value: JSValue)`;
   return `${
     exported
       ? `

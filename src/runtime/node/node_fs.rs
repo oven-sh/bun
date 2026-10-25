@@ -2763,25 +2763,26 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            old_path: generated::PathLike<'_>,
+            old_path: Deferred<'_, generated::PathLike<'_>>,
             new_path: Deferred<'_, generated::PathLike<'_>>,
         ) -> JsResult<Self> {
-            let old_path = PathLike::from_js(ctx, old_path, parsing)?.map_err(|value| {
-                ctx.throw_invalid_argument_type_value(
-                    b"oldPath",
-                    b"string or an instance of Buffer or URL",
-                    value.to_js(),
-                )
-            })?;
+            let old_path =
+                PathLike::from_js(ctx, old_path.convert(ctx)?, parsing)?.map_err(|value| {
+                    ctx.throw_invalid_argument_type_value(
+                        b"oldPath",
+                        b"string or an instance of Buffer or URL",
+                        value.to_js(),
+                    )
+                })?;
             // `Drop for PathLike` runs on early return.
-            let new_path = new_path.convert(ctx)?;
-            let new_path = PathLike::from_js(ctx, new_path, parsing)?.map_err(|value| {
-                ctx.throw_invalid_argument_type_value(
-                    b"newPath",
-                    b"string or an instance of Buffer or URL",
-                    value.to_js(),
-                )
-            })?;
+            let new_path =
+                PathLike::from_js(ctx, new_path.convert(ctx)?, parsing)?.map_err(|value| {
+                    ctx.throw_invalid_argument_type_value(
+                        b"newPath",
+                        b"string or an instance of Buffer or URL",
+                        value.to_js(),
+                    )
+                })?;
             Ok(Rename { old_path, new_path })
         }
     }
@@ -2797,12 +2798,13 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathOrFileDescriptor<'_>,
+            path: Deferred<'_, generated::PathOrFileDescriptor<'_>>,
             len: Deferred<'_, i64>,
         ) -> JsResult<Self> {
-            let path = PathOrFileDescriptor::from_js(ctx, path, parsing)?.map_err(|_| {
-                ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
-            })?;
+            let path =
+                PathOrFileDescriptor::from_js(ctx, path.convert(ctx)?, parsing)?.map_err(|_| {
+                    ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
+                })?;
             let len = len.convert(ctx)?.max(0) as u64;
             Ok(Truncate {
                 path,
@@ -2872,13 +2874,13 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             uid: Deferred<'_, i64>,
             gid: Deferred<'_, i64>,
         ) -> JsResult<Self> {
             // `Drop for PathLike` covers every
             // error return below.
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let uid = wrap_to::<UidT>(uid.convert(ctx)?);
             let gid = wrap_to::<GidT>(gid.convert(ctx)?);
             Ok(Chown { path, uid, gid })
@@ -2925,13 +2927,13 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             atime: generated::TimeLike<'_>,
             mtime: generated::TimeLike<'_>,
         ) -> JsResult<Self> {
             // `Drop for PathLike` covers the
             // `time_like_from_js` throws below.
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let atime = node::time_like_from_js(ctx, atime)?.ok_or_else(|| {
                 ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date"))
             })?;
@@ -2950,12 +2952,12 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             mode: Deferred<'_, generated::FileMode<'_>>,
         ) -> JsResult<Self> {
             // `Drop for PathLike` covers the
             // `mode_from_js` throw below.
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let mode = node::mode_from_js(ctx, mode.convert(ctx)?)?;
             Ok(Chmod { path, mode })
         }
@@ -2989,12 +2991,12 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             options: Deferred<'_, generated::BigIntOptions>,
         ) -> JsResult<Self> {
             // `Drop for PathLike` covers the
             // `options` throw below.
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let big_int = options.convert(ctx)?.bigint;
             Ok(StatFS { path, big_int })
         }
@@ -3009,11 +3011,11 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             options: Deferred<'_, generated::StatOptions>,
         ) -> JsResult<Self> {
             // `Drop for PathLike` covers the error returns below.
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let options = options.convert(ctx)?;
             Ok(Stat {
                 path,
@@ -3064,10 +3066,11 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            old_path: generated::PathLike<'_>,
+            old_path: Deferred<'_, generated::PathLike<'_>>,
             new_path: Deferred<'_, generated::PathLike<'_>>,
         ) -> JsResult<Self> {
-            let old_path = PathLike::from_js_required(ctx, old_path, parsing, "oldPath")?;
+            let old_path =
+                PathLike::from_js_required(ctx, old_path.convert(ctx)?, parsing, "oldPath")?;
             // `Drop for PathLike` runs on early return.
             let new_path =
                 PathLike::from_js_required(ctx, new_path.convert(ctx)?, parsing, "newPath")?;
@@ -3096,12 +3099,13 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            target: generated::PathLike<'_>,
+            target: Deferred<'_, generated::PathLike<'_>>,
             path: Deferred<'_, generated::PathLike<'_>>,
             link_type: Deferred<'_, generated::SymlinkType>,
         ) -> JsResult<Self> {
             // `Drop for PathLike` covers the error returns below.
-            let old_path = PathLike::from_js_required(ctx, target, parsing, "target")?;
+            let old_path =
+                PathLike::from_js_required(ctx, target.convert(ctx)?, parsing, "target")?;
             let new_path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             // The type argument is only available on Windows and
             // ignored on other platforms. It can be set to 'dir',
@@ -3155,10 +3159,10 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             options: Deferred<'_, generated::EncodingOrOptions>,
         ) -> JsResult<Self> {
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let encoding = parse_encoding_arg(ctx, options, Encoding::Utf8)?;
             Ok(Readlink { path, encoding })
         }
@@ -3172,10 +3176,10 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             options: Deferred<'_, generated::EncodingOrOptions>,
         ) -> JsResult<Self> {
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let encoding = parse_encoding_arg(ctx, options, Encoding::Utf8)?;
             Ok(Realpath { path, encoding })
         }
@@ -3209,9 +3213,9 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
         ) -> JsResult<Self> {
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             Ok(Unlink { path })
         }
 
@@ -3241,10 +3245,10 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             options: Deferred<'_, generated::RmOptionsArgument>,
         ) -> JsResult<Self> {
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let options = options.convert(ctx)?;
             Ok(Rm(RmDir {
                 path,
@@ -3267,10 +3271,10 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             options: Deferred<'_, generated::RmdirOptions>,
         ) -> JsResult<Self> {
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let options = options.convert(ctx)?;
             Ok(RmDir {
                 path,
@@ -3311,10 +3315,10 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             options: Deferred<'_, generated::MkdirOptionsOrMode<'_>>,
         ) -> JsResult<Self> {
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let mut recursive = false;
             let mut mode: Mode = 0o777;
             match options.convert(ctx)? {
@@ -3348,16 +3352,17 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            prefix: generated::PathLike<'_>,
+            prefix: Deferred<'_, generated::PathLike<'_>>,
             options: Deferred<'_, generated::EncodingOrOptions>,
         ) -> JsResult<Self> {
-            let prefix = PathLike::from_js(ctx, prefix, parsing)?.map_err(|value| {
-                ctx.throw_invalid_argument_type_value(
-                    b"prefix",
-                    b"string, Buffer, or URL",
-                    value.to_js(),
-                )
-            })?;
+            let prefix =
+                PathLike::from_js(ctx, prefix.convert(ctx)?, parsing)?.map_err(|value| {
+                    ctx.throw_invalid_argument_type_value(
+                        b"prefix",
+                        b"string, Buffer, or URL",
+                        value.to_js(),
+                    )
+                })?;
             let encoding = parse_encoding_arg(ctx, options, Encoding::Utf8)?;
             Ok(MkdirTemp { prefix, encoding })
         }
@@ -3387,10 +3392,10 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             options: Deferred<'_, generated::EncodingOrReaddirOptions<'_>>,
         ) -> JsResult<Self> {
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let mut encoding = Encoding::Utf8;
             let mut with_file_types = false;
             let mut recursive = false;
@@ -3438,11 +3443,11 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             flags: Deferred<'_, Option<generated::FileFlags<'_>>>,
             mode: Deferred<'_, Option<generated::FileMode<'_>>>,
         ) -> JsResult<Self> {
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             // Node has no options-object form here: the second argument is
             // always the flags, so `{}` is an invalid flags value.
             let flags =
@@ -3874,16 +3879,17 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathOrFileDescriptor<'_>,
+            path: Deferred<'_, generated::PathOrFileDescriptor<'_>>,
             options: Deferred<'_, generated::EncodingOrReadFileOptions<'_>>,
         ) -> JsResult<Self> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, path, parsing)?.map_err(|_| {
-                ctx.throw_invalid_arguments(format_args!(
-                    "path must be a string or a file descriptor"
-                ))
-            })?;
+            let path =
+                PathOrFileDescriptor::from_js(ctx, path.convert(ctx)?, parsing)?.map_err(|_| {
+                    ctx.throw_invalid_arguments(format_args!(
+                        "path must be a string or a file descriptor"
+                    ))
+                })?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
@@ -3947,7 +3953,7 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathOrFileDescriptor<'_>,
+            path: Deferred<'_, generated::PathOrFileDescriptor<'_>>,
             data: generated::WriteFileData<'_>,
             options: Deferred<'_, generated::EncodingOrWriteFileOptions<'_>>,
         ) -> JsResult<Self> {
@@ -3956,18 +3962,19 @@ pub(crate) mod args {
         pub(crate) fn from_js_with_default_flag(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathOrFileDescriptor<'_>,
+            path: Deferred<'_, generated::PathOrFileDescriptor<'_>>,
             data: generated::WriteFileData<'_>,
             options: Deferred<'_, generated::EncodingOrWriteFileOptions<'_>>,
             default_flag: FileSystemFlags,
         ) -> JsResult<Self> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, path, parsing)?.map_err(|_| {
-                ctx.throw_invalid_arguments(format_args!(
-                    "path must be a string or a file descriptor"
-                ))
-            })?;
+            let path =
+                PathOrFileDescriptor::from_js(ctx, path.convert(ctx)?, parsing)?.map_err(|_| {
+                    ctx.throw_invalid_arguments(format_args!(
+                        "path must be a string or a file descriptor"
+                    ))
+                })?;
             let mut encoding = Encoding::Buffer;
             let mut flag = default_flag;
             let mut mode: Mode = DEFAULT_PERMISSION;
@@ -4058,10 +4065,10 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
         ) -> JsResult<Self> {
             Ok(Exists {
-                path: PathLike::from_js(ctx, path, parsing)?.ok(),
+                path: PathLike::from_js(ctx, path.convert(ctx)?, parsing)?.ok(),
             })
         }
     }
@@ -4074,10 +4081,10 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
             mode: Deferred<'_, Option<f64>>,
         ) -> JsResult<Self> {
-            let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
+            let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let mode = FileSystemFlags::from_js_number_only(
                 ctx,
                 mode.convert(ctx)?,
@@ -4107,11 +4114,11 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            src: generated::PathLike<'_>,
+            src: Deferred<'_, generated::PathLike<'_>>,
             dest: Deferred<'_, generated::PathLike<'_>>,
             mode: Deferred<'_, Option<f64>>,
         ) -> JsResult<Self> {
-            let src = PathLike::from_js_required(ctx, src, parsing, "src")?;
+            let src = PathLike::from_js_required(ctx, src.convert(ctx)?, parsing, "src")?;
             // `Drop for PathLike` runs on early return.
             let dest = PathLike::from_js_required(ctx, dest.convert(ctx)?, parsing, "dest")?;
             let mode = constants::Copyfile::from_raw(
@@ -4142,13 +4149,13 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            src: generated::PathLike<'_>,
+            src: Deferred<'_, generated::PathLike<'_>>,
             dest: Deferred<'_, generated::PathLike<'_>>,
             recursive: bool,
             error_on_exist: bool,
             force: Option<bool>,
         ) -> JsResult<Self> {
-            let src = PathLike::from_js_required(ctx, src, parsing, "src")?;
+            let src = PathLike::from_js_required(ctx, src.convert(ctx)?, parsing, "src")?;
             // `Drop for PathLike` runs on early return.
             let dest = PathLike::from_js_required(ctx, dest.convert(ctx)?, parsing, "dest")?;
             Ok(Cp {

@@ -2360,6 +2360,37 @@ ALWAYS_INLINE void runBodySharedByFeatures(Body&& body)
 
 } // namespace
 
+#if ENABLE(AOT)
+// src/crash_handler/build_id.rs: a note of 16 bytes, then the 16 bytes of the build ID.
+extern "C" const uint8_t Bun__buildIdNote[32];
+
+static String buildIDAsUUID()
+{
+    std::array<Latin1Character, 36> text;
+    size_t length = 0;
+    for (size_t i = 0; i < 16; ++i) {
+        if (i == 4 || i == 6 || i == 8 || i == 10)
+            text[length++] = '-';
+        uint8_t byte = Bun__buildIdNote[16 + i];
+        text[length++] = "0123456789abcdef"[byte >> 4];
+        text[length++] = "0123456789abcdef"[byte & 15];
+    }
+    return String(std::span<const Latin1Character> { text });
+}
+
+// `_debugIds` and `_sentryDebugIds`: error reporting SDKs read them to find the source map of a file. A key is a stack trace
+// whose first frame names the file, and its value is the debug ID in the map.
+JSC_DEFINE_CUSTOM_GETTER(getDebugIDs, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSObject* debugIDs = constructEmptyObject(globalObject);
+    debugIDs->putDirect(vm, Identifier::fromString(vm, makeString("Error\n    at "_s, Zig::externalSourceMapFileURL(), ":1:1"_s)), jsString(vm, buildIDAsUUID()));
+    if (JSObject* holder = JSValue::decode(thisValue).getObject())
+        holder->putDirect(vm, property, debugIDs, PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(debugIDs);
+}
+#endif
+
 void GlobalObject::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -3031,6 +3062,14 @@ void GlobalObject::finishCreation(VM& vm)
     if (!defaultGlobalObject())
         setDefaultGlobalObject(vm, this);
     JSC::AOT::hostDidCreateRealm(this);
+
+#if ENABLE(AOT)
+    if (Zig::hasExternalSourceMap()) [[unlikely]] {
+        auto* debugIDs = JSC::CustomGetterSetter::create(vm, getDebugIDs, nullptr);
+        putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "_debugIds"_s), debugIDs, PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
+        putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "_sentryDebugIds"_s), debugIDs, PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
+    }
+#endif
 
     ASSERT(classInfo());
 }

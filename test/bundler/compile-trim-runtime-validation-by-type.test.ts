@@ -63,8 +63,7 @@ const boundToSomethingElse = {
   "validate-of-its-own.ts": `export default <T,>(value: unknown) => ("a default export given " + value) as T;`,
 };
 
-const refusal =
-  "--trim removed the type checker from this executable, so validate<T>() and JSON.parse<T>() don't work in code loaded at run time";
+const refusal = `This executable doesn't include the type checker, so JSON.parse<T>() from "bun" and validate<T>() don't work in files it loads at run time`;
 const compiledIn = "compiled in: 1 2\ncompiled in: TypeError\n";
 const otherBindings = "other-bindings.ts: its own parse of text its own validate of 1 a default export given 2 3\n";
 const names = [...Object.keys(validating), "other-bindings.ts"];
@@ -85,27 +84,21 @@ describe.skipIf(!canTrim || !!unsupported)("JSON.parse<T> and validate<T> in fil
     return await spawned([join(folder, "program"), ...names], join(folder, "cwd"), bunEnv);
   }
 
-  // TODO: validate<T>() and JSON.parse<T>() validate in code that is compiled. In a file that is only transpiled, as these are, nothing makes the validators yet.
-  const whereNothingIsCompiled = test.todoIf(true);
+  test("a whole executable validates them", async () => {
+    expect(await runs([])).toMatchObject({
+      stdout:
+        compiledIn +
+        Object.keys(validating)
+          .map(name => `${name}: 1 TypeError\n`)
+          .join("") +
+        otherBindings,
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 600_000);
 
-  whereNothingIsCompiled(
-    "a whole executable validates them",
-    async () => {
-      expect(await runs([])).toMatchObject({
-        stdout:
-          compiledIn +
-          Object.keys(validating)
-            .map(name => `${name}: 1 TypeError\n`)
-            .join("") +
-          otherBindings,
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    600_000,
-  );
-
-  whereNothingIsCompiled(
+  // TODO: loading them throws, but the message is the one for a file that Bun can't read types in. It should say that the executable has no type checker.
+  test.todo(
     "a trimmed executable has no type checker: loading them throws, and what was compiled in validates",
     async () => {
       expect(await runs(["--trim"])).toMatchObject({

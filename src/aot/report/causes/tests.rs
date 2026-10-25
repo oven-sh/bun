@@ -821,6 +821,7 @@ fn list_and_json_entries_end_with_ill_typed_cause() {
     assert!(list.ends_with(", 1 access, why external-data"), "{list}");
 
     let IllTypedWording { message, fix, .. } = why(IllTypedCause::OutsideData);
+    let fix = fix.replace('"', "\\\"");
     let url = "https://bun.com/docs/bundler/aot-explain#external-data";
     let member = format!(
         r#""why":{{"reason":"external-data","message":"{message}","fix":"{fix}","url":"{url}"}}}}"#

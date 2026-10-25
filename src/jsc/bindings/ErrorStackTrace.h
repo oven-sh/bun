@@ -192,13 +192,27 @@ private:
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
 bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame);
 
-// The position of a compiled frame was recorded at build time in the original source: no source map applies to it.
+#if ENABLE(AOT)
+// The names and positions of such an executable are in a source map that is not shipped with it.
+inline bool hasExternalSourceMap()
+{
+    const JSC::AOT::Image* image = JSC::AOT::Image::current();
+    return image && image->isObfuscated();
+}
+
+// The file that every compiled frame of such an executable names. The line and column of a frame are a position in the map.
+String externalSourceMapFileURL();
+
+String sourceURL(const JSC::AOT::SourcePosition&);
+#endif
+
+// The position of a compiled frame was recorded at build time, in the original source or in an external source map: no source map applies to it at run time.
 inline bool hasOriginalSourcePosition(const JSC::StackFrame& frame)
 {
 #if ENABLE(AOT)
     if (frame.isCompiledFrame()) [[unlikely]] {
         auto position = frame.compiledPosition();
-        return position && position->source;
+        return position && (position->source || hasExternalSourceMap());
     }
 #else
     UNUSED_PARAM(frame);

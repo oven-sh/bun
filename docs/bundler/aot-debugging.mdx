@@ -98,7 +98,7 @@ note: 1. the value may come from untyped code
    at app.ts:1:17
 
 note: in function 'double'
-note: fix: narrow it first: typeof for a primitive, JSON.parse<T>(text) or validate<T>(value) from "bun:bundle" for an object
+note: fix: narrow it first: typeof for a primitive. For an object, import { JSON } from "bun" and call JSON.parse<T>(text), or import { validate } from "bun:bundle" and call validate<T>(value)
 note: id 772073ca2bba (argument)
 
 7 | console.log((body.visits as number) + 1);
@@ -110,7 +110,7 @@ note: 2. the value may come from untyped code
                                 ^
 note: The type is declared here.
    at app.ts:7:29
-note: fix: narrow it first: typeof for a primitive, JSON.parse<T>(text) or validate<T>(value) from "bun:bundle" for an object
+note: fix: narrow it first: typeof for a primitive. For an object, import { JSON } from "bun" and call JSON.parse<T>(text), or import { validate } from "bun:bundle" and call validate<T>(value)
 note: id 5a3b0741d252 (cast)
 ```
 
@@ -209,7 +209,7 @@ In JSON, each line is an object with `"aot": "type-mismatch"` and the members `i
 
 ## Stack traces
 
-Stack traces have the file, line and column of your source code. You don't need a source map.
+Stack traces have the file, line and column of your source code. You don't need a source map. To keep names and paths out of the executable, [move them into an external source map](#minified-executables-and-external-source-maps).
 
 ```ts repo.ts icon="/icons/typescript.svg"
 class Repo {
@@ -242,11 +242,11 @@ RangeError: bad id -1
 - `Error.captureStackTrace`, `Error.prepareStackTrace`, `Error.stackTraceLimit`, `console.trace`, async frames, `uncaughtException` and `unhandledRejection` work as usual.
 - [Some common error messages](/bundler/aot-compatibility#error-messages) are worded differently.
 
-### Minified and obfuscated executables
+### Minified executables and external source maps
 
-`--minify` shortens the names of functions, classes and variables in stack traces, in error messages and in `name`, and the executable no longer has the names you wrote. It's the same set of names that a bundle renames, but not the same letters. Methods and other properties keep their names, and so does everything that a direct `eval` can see. Paths, lines and columns are still those of your source files. With `--keep-names`, no name changes. `--sourcemap` has no effect on an executable that `bun compile` builds, and the build says so.
+`--minify` shortens the names of functions, classes and variables in stack traces, in error messages and in `name`, and the executable no longer has the names you wrote. It's the same set of names that a bundle renames, but not the same letters. Methods and other properties keep their names, and so does everything that a direct `eval` can see. Paths, lines and columns are still those of your source files. With `--keep-names`, no name changes.
 
-With `--obfuscate`, a frame has two numbers in place of the name, the path, the line and the column.
+With `--sourcemap=external`, the names, paths, lines and columns move out of the executable and into a source map that Bun writes next to it. Every frame names the same file, `compiled.js`, and its line and column are a position in the map. `--obfuscate` is another name for the same option. The other values of `--sourcemap` have no effect on an executable that `bun compile` builds, and the build says so.
 
 ```ts repo.ts icon="/icons/typescript.svg"
 class Repo {
@@ -255,40 +255,52 @@ class Repo {
     return "x";
   }
 }
-try {
-  new Repo().find(-1);
-} catch (error) {
-  console.error((error as Error).stack);
-}
+new Repo().find(-1);
 ```
 
 ```bash terminal icon="terminal"
-bun compile --obfuscate ./repo.ts && ./repo
+bun compile --minify --sourcemap=external ./repo.ts && ./repo
 ```
 
 The numbers differ from one build to the next.
 
 ```txt
 RangeError: bad id -1
-    at <anonymous> (unknown:4:2)
-    at unknown:1:4
+      at <anonymous> (/$bunfs/root/compiled.js:4:2)
+      at /$bunfs/root/compiled.js:1:4
 ```
 
-- **Only `error.stack` and [crash reports](#crashes) have the numbers.** What Bun prints for an uncaught error or an unhandled rejection has no frames, and neither does `console.trace`. Catch the error and log its `stack`.
+- **There is no file `compiled.js`.** The name is there so that tools that read stack traces find a path, a line and a column where they expect them. On Windows it's `B:\~BUN\root\compiled.js`.
 - **The `name` of every function and class is `""`.**
+- **The map has the names as they are in your sources**, with `--minify` too.
 - **Property names, strings and the paths of your modules stay in the executable.** The program needs them when it runs.
 
-Bun writes `repo.map` next to the executable. The program doesn't read that file, so don't ship it. It's a source map. The two numbers of a frame are a line and a column in it, and it leads to the name, the file, the line and the column that a build without `--obfuscate` prints.
+Bun writes two files next to the executable. The program reads neither, so don't ship them.
+
+| File          | What it is                                                                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `repo.map`    | The source map. It leads from the line and column of a frame to the name, the file, the line and the column that a build without it prints |
+| `repo.map.js` | Two comments: the name of the map and its debug ID. Tools that upload source maps expect a JavaScript file next to each map                |
 
 ```json title="repo.map" icon="file-json"
 {
   "version": 3,
   "file": "repo",
+  "debugId": "f6a5af92-9a3e-3006-ba35-90ca7d50177d",
+  "debug_id": "f6a5af92-9a3e-3006-ba35-90ca7d50177d",
   "sources": ["repo.ts"],
+  "sourcesContent": ["class Repo {\n  find(id: number): string {\n …"],
   "names": ["Repo", "find"],
-  "mappings": "AAAA,CAOM,CAPN,CAOa,CAEI,CAAP;AATJA,CAAAA;AACJC,CAAAA;AAAAA,CACwBA"
+  "mappings": "AAAA,CAMI,CANJ,CAMW;AANLA,CAAAA;AACJC,CAAAA;AAAAA,CACwBA",
+  "x_facebook_sources": [[{ "names": ["?", "Repo", "find"], "mappings": "AAA,MCA;ECC;IFK" }]]
 }
 ```
+
+- **`debugId` is the [build ID](#build-id) of the executable**, with the hyphens of a UUID. `debug_id` is the spelling that older tools read.
+- **`sourcesContent` has the text of your files**, so a tool can show the lines around an error.
+- **The name in a mapping is the function that the position is in.**
+- **`x_facebook_sources` has the same names by position in the source file**, in the format of [Metro](https://metrobundler.dev)'s function maps. Sentry takes the function of a frame from it. A function without a name is `?`.
+- **A built-in function such as `Array.prototype.map` has the source `native`**, and a line that means nothing.
 
 Any library that reads source maps can restore a trace. This script uses [`source-map-js`](https://www.npmjs.com/package/source-map-js).
 
@@ -297,7 +309,7 @@ import { SourceMapConsumer } from "source-map-js";
 
 const map = new SourceMapConsumer(await Bun.file(process.argv[2]).json());
 const restore = (text: string) =>
-  text.replace(/at (?:<anonymous> \()?(?:unknown:)?(\d+):(\d+)\)?/g, (frame, line, column) => {
+  text.replace(/at (?:<anonymous> \()?(?:\S*compiled\.js:)?(\d+):(\d+)\)?/g, (frame, line, column) => {
     const found = map.originalPositionFor({ line: Number(line), column: column - 1 });
     if (found.source === null) return frame;
     const place = `${found.source}:${found.line}:${found.column + 1}`;
@@ -310,13 +322,46 @@ console.log(restore(await Bun.stdin.text()));
 ./repo 2>&1 | bun restore.ts repo.map
 ```
 
-It prints what a build without `--obfuscate` prints, without the `/$bunfs/root/` in front of each path.
+It prints what a build without the map prints, without the `/$bunfs/root/` in front of each path.
 
 ```txt
 RangeError: bad id -1
-    at find (repo.ts:3:27)
-    at repo.ts:8:14
+      at find (repo.ts:3:27)
+      at repo.ts:7:12
 ```
+
+### Use with Sentry
+
+An executable with an external source map works with [`@sentry/bun`](https://www.npmjs.com/package/@sentry/bun) and [`@sentry/node`](https://www.npmjs.com/package/@sentry/node) as they are. Sentry shows the files, lines, columns, function names and source lines of your code, and the executable has none of them.
+
+<Steps>
+  <Step title="Build">
+    ```bash terminal icon="terminal"
+    bun compile --minify --sourcemap=external ./src/index.ts --outfile dist/app
+    ```
+  </Step>
+  <Step title="Upload the map">
+    Pass the folder with `app.map` and `app.map.js` to [`sentry-cli`](https://docs.sentry.io/cli/). It skips the executable.
+
+    ```bash terminal icon="terminal"
+    sentry-cli sourcemaps upload --org my-org --project my-project dist
+    ```
+
+    Don't run `sentry-cli sourcemaps inject`. Both files have their debug ID already, and `inject` leaves them as they are.
+
+  </Step>
+  <Step title="Ship the executable alone">
+    Deploy `dist/app` without the two files. Upload the map of every build that you deploy: each build has a debug ID of its own.
+  </Step>
+</Steps>
+
+You don't set a release, a `dist` or a URL prefix, and you don't rewrite frames. Sentry finds the map of an event by its debug ID:
+
+- **The SDK reads `globalThis._debugIds` or `globalThis._sentryDebugIds`**, depending on its version. An executable with an external source map has both. Each has one entry, which pairs `compiled.js` with the debug ID. Bun creates them when something first reads them, and no other executable has them.
+- **Each event has the pair in `debug_meta.images`.**
+- **It works for every error that has a `stack`**: errors that you pass to `Sentry.captureException`, uncaught errors and unhandled rejections.
+
+A [crash of the process](#crashes) isn't a JavaScript error, so no SDK reports it. Its report has the same lines and columns.
 
 ## Crashes
 
@@ -375,6 +420,7 @@ How to read the lines:
 - **Inlined functions have lines of their own**, as in a stack trace.
 - **An `async` function is on the stack while it runs.** The functions that wait for it with `await` aren't on the stack, so they aren't listed.
 - **The report follows 20 frames** of machine code, the frames of Bun included. A deeper stack is cut off at its outer end.
+- **With an [external source map](#minified-executables-and-external-source-maps), a line is only a line and a column in the map**, such as `at 4:2`. The script in that section restores it.
 - **`Segmentation fault at address`** is followed by the address that the program tried to read or write, not by a place in your program.
 
 The lines with your names and paths only go to stderr. The link has offsets into your executable and the first 16 digits of its [build ID](#build-id), and none of your names or paths.

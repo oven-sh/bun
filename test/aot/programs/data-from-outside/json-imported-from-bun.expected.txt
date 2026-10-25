@@ -1,6 +1,6 @@
-JSON {"id":1,"name":"a","more":true} TypeError: id must be int, received number
-with an alias {"name":"b","id":2} TypeError: name must be string, received undefined
-Bun.JSON {"id":3,"name":"c"} TypeError: value must be object, received null
+JSON {"id":1,"name":"a","more":true} TypeError: Expected id to be an integer, received 1.5
+with an alias {"name":"b","id":2} TypeError: Missing required property name
+Bun.JSON {"id":3,"name":"c"} TypeError: Expected value to be an object, received null
 with a reviver {"id":4,"name":"d"}
 invalid JSON SyntaxError
 any {"id":"5"} [6]

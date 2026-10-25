@@ -24,10 +24,6 @@ test.each([
   ],
   ['console.log(Bun.JSON.parse<{ id: symbol }>("{}"));', "JSON.parse<{ id: symbol; }>() cannot validate 'id: symbol'."],
   [
-    'console.log(Bun.JSON.parse<[string, number?]>("[]"));',
-    "JSON.parse<[string, (number | undefined)?]>() cannot validate '[string, (number | undefined)?]'.",
-  ],
-  [
     'console.log(Bun.JSON.parse<Uppercase<string>>("1"));',
     "JSON.parse<Uppercase<string>>() cannot validate 'Uppercase<string>'.",
   ],
@@ -52,7 +48,7 @@ test.each([
   ],
   [
     '// @ts-ignore\nimport type { User } from "./no-such-file";\nconsole.log(Bun.JSON.parse<User[]>("[]"));',
-    "TS100518",
+    "TS100107: JSON.parse<User[]>() cannot validate '[number]: User'.",
   ],
   ['// @ts-expect-error\nconsole.log(Bun.JSON.parse<Missing>("5"));', "TS100518"],
   ['import { validate } from "bun:bundle";\n// @ts-expect-error\nconsole.log(validate<Missing>(5));', "TS100518"],
@@ -117,6 +113,34 @@ test.each([
   },
   120_000,
 );
+
+test("a tuple with an optional element can be validated", async () => {
+  using dir = tempDir("tuple-with-an-optional-element", {
+    "program.ts": `
+      function parse(text: string): string {
+        try {
+          return JSON.stringify(Bun.JSON.parse<[string, number?]>(text));
+        } catch (error) {
+          return "refused at " + JSON.stringify((error as { issues: { path: unknown }[] }).issues[0].path);
+        }
+      }
+      for (const text of ['["a"]', '["a",1]', "[]", '["a","b"]', '["a",null]', '["a",1,2]']) console.log(text, parse(text));
+    `,
+  });
+  const outfile = join(String(dir), "program");
+  const built = await run([bunExe(), "build", "--compile", "--aot", "./program.ts", "--outfile", outfile], String(dir));
+  expect({ said: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ said: "", exitCode: 0 });
+  const { stdout, exitCode } = await run([outfile], String(dir));
+  expect(stdout.trim().split("\n")).toEqual([
+    '["a"] ["a"]',
+    '["a",1] ["a",1]',
+    "[] refused at []",
+    '["a","b"] refused at [1]',
+    '["a",null] refused at [1]',
+    '["a",1,2] refused at []',
+  ]);
+  expect(exitCode).toBe(0);
+}, 120_000);
 
 test("no other function of JSON takes a type argument", async () => {
   using dir = tempDir("type-argument-on-another-function", { "program.ts": "console.log(JSON.stringify<number>(1));" });
@@ -196,7 +220,7 @@ try {
     expect({ said: buildExitCode ? said : "", buildExitCode }).toEqual({ said: "", buildExitCode: 0 });
     const { stdout, exitCode } = await run([executable], String(dir));
     expect({ stdout, exitCode }).toEqual({
-      stdout: "1\nTypeError: value must be number, received string\n",
+      stdout: "1\nTypeError: Expected value to be a number, received string\n",
       exitCode: 0,
     });
   },

@@ -45,6 +45,7 @@ const roadsToBunGlob: Road[] = [
   ["mjs", `import { EventEmitter } from "node:events"; const e = new EventEmitter(); e.on("x", b => console.log(new b.Glob("*.js").match("a.js"))); e.emit("x", Bun);`, undefined, outOfSight],
   ["mjs", `console.log(new (Object.assign(Object.create(null), Bun).Glob)("*.js").match("a.js"));`],
   ["mjs", `const key = process.argv.length > 100 ? "x" : "Glob"; console.log(new Bun[key]("*.js").match("a.js"));`],
+  ["mjs", `const key = "Glob".split("").join(""); console.log(new Bun[key]("*.js").match("a.js"));`, undefined, "the list does not name Bun.Glob: --trim removes the class, and `new` throws ERR_FEATURE_REMOVED"],
   ["mjs", `console.log(Object.getOwnPropertyNames(Bun).filter(n => n === "Glob").map(n => new Bun[n]("*.js").match("a.js"))[0]);`, undefined, outOfSight],
   ["mjs", `class X extends Bun.Glob {} console.log(new X("*.js").match("a.js"));`, "as a class"],
   ["mjs", `console.log(new (Reflect.apply(Reflect.get, null, [Bun, "Glob"]))("*.js").match("a.js"));`, undefined, outOfSight],

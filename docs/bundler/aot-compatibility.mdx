@@ -930,16 +930,16 @@ All of this behaves as in a build without `aot`, and each hook gets the same arg
 
 This differs:
 
-|                                                                               | `bun build --compile`                  | `bun compile`                                                              |
-| ----------------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------- |
-| Files that a [computed path](#dynamic-imports) or `import.meta.resolve` names | Not in the executable, so no hook runs | In the executable, so the hooks run for them                               |
-| One import that a file has twice                                              | `onResolve` runs twice                 | `onResolve` runs once                                                      |
-| One path in two namespaces                                                    | One module                             | Two modules                                                                |
-| `minify`                                                                      | Renames functions and classes          | Shortens the same names in `name`, stack traces and messages               |
-| `sourcemap`                                                                   | A map is one of the outputs            | There's no map. Stack traces have the positions of your sources either way |
-| `metafile`                                                                    | One output for each entry point        | [One output, the executable](#metafile)                                    |
-| `format`, `bytecode`, `--bytecode-depth`, `--bytecode-order`                  | Change what's in the executable        | No effect. Nothing is bundled, and the executable has no bytecode          |
-| `banner` or `footer` with code                                                | Work                                   | The build fails. A `banner` or `footer` that's only comments is fine       |
+|                                                                               | `bun build --compile`                  | `bun compile`                                                          |
+| ----------------------------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------- |
+| Files that a [computed path](#dynamic-imports) or `import.meta.resolve` names | Not in the executable, so no hook runs | In the executable, so the hooks run for them                           |
+| One import that a file has twice                                              | `onResolve` runs twice                 | `onResolve` runs once                                                  |
+| One path in two namespaces                                                    | One module                             | Two modules                                                            |
+| `minify`                                                                      | Renames functions and classes          | Shortens the same names in `name`, stack traces and messages           |
+| `sourcemap`                                                                   | A map is one of the outputs            | Only `external` [writes a map](/bundler/aot-debugging#use-with-sentry) |
+| `metafile`                                                                    | One output for each entry point        | [One output, the executable](#metafile)                                |
+| `format`, `bytecode`, `--bytecode-depth`, `--bytecode-order`                  | Change what's in the executable        | No effect. Nothing is bundled, and the executable has no bytecode      |
+| `banner` or `footer` with code                                                | Work                                   | The build fails. A `banner` or `footer` that's only comments is fine   |
 
 The text that `onLoad` returns is type checked like a file, and its types are what the files that import it see.
 

@@ -21,7 +21,7 @@ pub use resolve::{
     ResolveInput, Resolved, ResolvedBuiltins, SourceDialect, commonjs_variable_builtin,
     find_module_export, resolve_file, resolve_within,
 };
-pub use returned_arguments::returns_first_argument;
+pub use returned_arguments::{find_frozen_value, returns_first_argument};
 pub use runtime_uses::RuntimeUses;
 pub use table::{
     BuiltinEntry, BuiltinKind, DirectiveKind, Intrinsic, IntrinsicPosition, Mutability, Platforms,

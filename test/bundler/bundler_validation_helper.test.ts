@@ -46,7 +46,7 @@ try {
   console.log("${label}", error.message);
 }
 `;
-const printedBy = (label: string) => `${label} 1 2\n${label} id must be number, received string\n`;
+const printedBy = (label: string) => `${label} 1 2\n${label} Expected id to be a number, received string\n`;
 
 const formats = [
   ["bun", "esm"],

@@ -6,11 +6,11 @@
 
 /// <reference path="./imports/declarations.d.ts" />
 
-import { JSON } from "bun"; interface Point {
+interface Point {
   x: number;
 }
 
 export function unannotated(text: string) {
-  const parse = JSON.parse;
+  const parse = Bun.JSON.parse;
   return parse<Point>(text);
 }

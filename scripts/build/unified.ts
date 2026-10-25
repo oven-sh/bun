@@ -58,6 +58,9 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/napi.cpp",
   "src/jsc/bindings/webcore/SerializedScriptValue.cpp",
 
+  // Defines malloc and operator new; nothing else belongs in that translation unit.
+  "src/jsc/bindings/MimallocOverrideDarwin.cpp",
+
   // No longer heavy; kept standalone so webcore bundle composition stays put.
   "src/jsc/bindings/webcore/HTTPParsers.cpp",
 
@@ -68,6 +71,15 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/BunCompiledModules.cpp",
   "src/jsc/bindings/BunCompilers.cpp",
   "src/jsc/bindings/RemovedFeature.cpp",
+
+  // Bun.Validator: standalone for the same reason.
+  "src/jsc/bindings/BunValidator.cpp",
+  "src/jsc/bindings/JSONSchemaFormats.cpp",
+  "src/jsc/bindings/JSONSchemaNodes.cpp",
+  "src/jsc/bindings/JSONSchemaValidator.cpp",
+  "src/jsc/bindings/ValidationPlanText.cpp",
+  "src/jsc/bindings/ValidationReport.cpp",
+  "src/jsc/bindings/ValidatorInput.cpp",
 
   // Duplicates static MIME-parsing helpers from JSMIMEParams.cpp verbatim;
   // both end up in the same bundle. TODO: extract helpers to a shared header.

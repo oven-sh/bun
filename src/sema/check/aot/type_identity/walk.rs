@@ -1,5 +1,5 @@
 use super::description::{
-    Description, Key, Tag, class_description, constraint_key, leaf, leaf_bytes, leaf_word,
+    Description, Key, Tag, class_description, constraint_description, leaf, leaf_bytes, leaf_word,
     member_name_key,
 };
 use super::{ObjectOrigin, TypeIdentity};
@@ -429,14 +429,19 @@ impl Walk {
         &mut self,
         queries: &mut Queries<'_, '_, '_>,
         base: TypeId,
-        constraints: &[SchemaConstraint],
+        constraints: &[SchemaConstraint<'_>],
     ) -> Result<Key, GaveUp> {
         let mut description = Description::new(Tag::Constrained);
         description.written(self.describe_part(queries, base)?);
-        let mut keys: Vec<Key> = constraints
-            .iter()
-            .map(|&constraint| constraint_key(queries, constraint))
-            .collect();
+        let mut keys: Vec<Key> = Vec::with_capacity(constraints.len());
+        for &constraint in constraints {
+            let mut of_constraint = constraint_description(queries, constraint);
+            constraint.for_each_type(|ty| -> Result<(), GaveUp> {
+                of_constraint.written(self.describe_part(queries, ty)?);
+                Ok(())
+            })?;
+            keys.push(of_constraint.finish());
+        }
         keys.sort_unstable();
         description.keys(&keys);
         Ok(description.finish())

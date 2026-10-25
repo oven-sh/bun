@@ -276,6 +276,21 @@ fn only_runtime_modules_are_import_targets() {
     }
 }
 
+#[test]
+fn bun_is_an_import_target_without_builtin_modules() {
+    let bun = |kind| {
+        SiteResolution::Constant(CodeResolution::External {
+            specifier: b"bun",
+            kind,
+        })
+    };
+    assert_eq!(
+        target_module(bun(ExternalKind::HostValue)),
+        Some(RuntimeModule::Bun)
+    );
+    assert_eq!(target_module(bun(ExternalKind::UncompiledCode)), None);
+}
+
 const NO_CANDIDATES: ComputedResolution<'static> = ComputedResolution::Candidates {
     candidates: &[],
     spellings: &[],

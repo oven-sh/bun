@@ -5,7 +5,11 @@ export type Cost = { instructions?: number; peakBytes: number };
 
 const killAfterMilliseconds = 60_000;
 
-function openInstructionCounter(pid: number) {
+/**
+ * Counts the instructions that a process and everything it starts execute in user mode. The process must be stopped in front of an exec.
+ * Call the result once to read the total and close the counter; `readNow()` reads the total so far and leaves the counter open.
+ */
+export function openInstructionCounter(pid: number) {
   const { syscall, read, close } = dlopen("libc.so.6", {
     syscall: { args: [FFIType.i64, FFIType.ptr, FFIType.i64, FFIType.i64, FFIType.i64, FFIType.u64], returns: FFIType.i64 },
     read: { args: [FFIType.i32, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
@@ -26,12 +30,16 @@ function openInstructionCounter(pid: number) {
   attr[5] = disabled | inherit | exclude_kernel | exclude_hv | enable_on_exec;
   const counter = Number(syscall(SYS_perf_event_open, ptr(attr), pid, -1, -1, 0));
   if (counter < 0) return undefined;
-  return () => {
+  const readNow = () => {
     const value = new BigUint64Array(1);
-    const bytesRead = Number(read(counter, ptr(value), 8));
-    close(counter);
-    return bytesRead === 8 ? Number(value[0]) : undefined;
+    return Number(read(counter, ptr(value), 8)) === 8 ? Number(value[0]) : undefined;
   };
+  const readAndClose = () => {
+    const instructions = readNow();
+    close(counter);
+    return instructions;
+  };
+  return Object.assign(readAndClose, { readNow });
 }
 
 export const measureCheck = (cwd: string, args: string[]) => measureCommand(cwd, [bunExe(), "check", "--aot", ...args]);

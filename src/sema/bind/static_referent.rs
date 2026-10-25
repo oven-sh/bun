@@ -48,6 +48,15 @@ pub struct ResolvedReferent<B, M> {
     pub certainty: ReferentCertainty,
 }
 
+// The expression whose value a name has for as long as the program runs.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct StaticInitializer {
+    pub file: FileId,
+    pub expr: ExprId,
+    // The binding that the expression initializes. `None`: the expression was asked about itself.
+    pub holder: Option<Sym>,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum LinkedBinding<B, M> {
     Binding(Sym),
@@ -102,6 +111,14 @@ pub fn static_referent<'s, C: ReferentContext<'s>>(
     expr: ExprId,
 ) -> ResolvedReferent<C::Builtin, C::Module> {
     walk::ReferentWalk::new(context).resolve_expression(file, expr)
+}
+
+pub fn static_initializer<'s, C: ReferentContext<'s>>(
+    context: &C,
+    file: FileId,
+    expr: ExprId,
+) -> Option<StaticInitializer> {
+    walk::ReferentWalk::new(context).resolve_initializer(file, expr)
 }
 
 pub fn export_referent<'s, C: ReferentContext<'s>>(

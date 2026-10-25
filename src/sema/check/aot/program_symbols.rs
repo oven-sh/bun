@@ -26,10 +26,23 @@ pub(super) enum SchemaAlias {
     Default,
     Strict,
     DeepStrict,
+    UniqueItems,
+    Contains,
+    Not,
+    If,
+    OneOf,
+    AllOf,
+    PatternProperties,
+    PropertyNames,
+    MinProperties,
+    MaxProperties,
+    DependentRequired,
+    DependentSchemas,
+    Refused,
 }
 
 impl SchemaAlias {
-    pub(super) const COUNT: usize = 16;
+    pub(super) const COUNT: usize = 29;
     pub(super) const ALL: [SchemaAlias; SchemaAlias::COUNT] = [
         SchemaAlias::Int,
         SchemaAlias::Min,
@@ -47,6 +60,19 @@ impl SchemaAlias {
         SchemaAlias::Default,
         SchemaAlias::Strict,
         SchemaAlias::DeepStrict,
+        SchemaAlias::UniqueItems,
+        SchemaAlias::Contains,
+        SchemaAlias::Not,
+        SchemaAlias::If,
+        SchemaAlias::OneOf,
+        SchemaAlias::AllOf,
+        SchemaAlias::PatternProperties,
+        SchemaAlias::PropertyNames,
+        SchemaAlias::MinProperties,
+        SchemaAlias::MaxProperties,
+        SchemaAlias::DependentRequired,
+        SchemaAlias::DependentSchemas,
+        SchemaAlias::Refused,
     ];
     pub(super) const NAMES: [&'static [u8]; SchemaAlias::COUNT] = [
         b"Int",
@@ -65,7 +91,61 @@ impl SchemaAlias {
         b"Default",
         b"Strict",
         b"DeepStrict",
+        b"UniqueItems",
+        b"Contains",
+        b"Not",
+        b"If",
+        b"OneOf",
+        b"AllOf",
+        b"PatternProperties",
+        b"PropertyNames",
+        b"MinProperties",
+        b"MaxProperties",
+        b"DependentRequired",
+        b"DependentSchemas",
+        b"Refused",
     ];
+
+    pub(super) fn name(self) -> &'static [u8] {
+        SchemaAlias::NAMES[self as usize]
+    }
+}
+
+/// The key of the one member of the type literal of `int32` and of each alias of `Schema`. `Strict` and `DeepStrict` share theirs.
+pub const BRAND_KEYS: [&[u8]; SchemaAlias::COUNT] = [
+    b"bun.int32",
+    b"bun.int",
+    b"bun.min",
+    b"bun.max",
+    b"bun.above",
+    b"bun.below",
+    b"bun.multipleOf",
+    b"bun.minLength",
+    b"bun.maxLength",
+    b"bun.minItems",
+    b"bun.maxItems",
+    b"bun.pattern",
+    b"bun.format",
+    b"bun.message",
+    b"bun.default",
+    b"bun.strict",
+    b"bun.uniqueItems",
+    b"bun.contains",
+    b"bun.not",
+    b"bun.if",
+    b"bun.oneOf",
+    b"bun.allOf",
+    b"bun.patternProperties",
+    b"bun.propertyNames",
+    b"bun.minProperties",
+    b"bun.maxProperties",
+    b"bun.dependentRequired",
+    b"bun.dependentSchemas",
+    b"bun.refused",
+];
+
+pub(super) fn is_brand_key(name: &[u8]) -> bool {
+    BRAND_KEYS.contains(&name)
 }
 
 pub(in crate::check) struct ProgramSymbols {
@@ -73,6 +153,7 @@ pub(in crate::check) struct ProgramSymbols {
     int32: Option<Sym>,
     int32_tag: Option<(FileId, TypeNodeId)>,
     schema_aliases: [Option<Sym>; SchemaAlias::COUNT],
+    from_json_schema: Option<Sym>,
 }
 
 impl ProgramSymbols {
@@ -83,6 +164,7 @@ impl ProgramSymbols {
             int32: None,
             int32_tag: None,
             schema_aliases: [None; SchemaAlias::COUNT],
+            from_json_schema: None,
         };
         let bun_module = files
             .atoms
@@ -101,12 +183,18 @@ impl ProgramSymbols {
             for (alias, name) in symbols.schema_aliases.iter_mut().zip(SchemaAlias::NAMES) {
                 *alias = find_type_alias(files, schema, name, declared_in);
             }
+            symbols.from_json_schema =
+                find_type_alias(files, schema, b"FromJSONSchema", declared_in);
         }
         symbols
     }
 
     pub(super) fn int32_alias(&self) -> Option<Sym> {
         self.int32
+    }
+
+    pub(super) fn from_json_schema(&self) -> Option<Sym> {
+        self.from_json_schema
     }
 
     pub(super) fn is_compiler_known_alias(&self, alias: Sym) -> bool {
@@ -200,7 +288,7 @@ impl<'s> Program<'s> {
 
 #[cfg(test)]
 mod tests {
-    use super::SchemaAlias;
+    use super::{BRAND_KEYS, SchemaAlias, is_brand_key};
 
     #[test]
     fn names_match_variants() {
@@ -208,6 +296,44 @@ mod tests {
         for (index, (alias, name)) in SchemaAlias::ALL.iter().zip(SchemaAlias::NAMES).enumerate() {
             assert_eq!(*alias as usize, index);
             assert_eq!(format!("{alias:?}").as_bytes(), name);
+        }
+    }
+
+    #[test]
+    fn every_alias_has_its_brand_key() {
+        for alias in SchemaAlias::ALL {
+            let name = match alias == SchemaAlias::DeepStrict {
+                true => SchemaAlias::Strict.name(),
+                false => alias.name(),
+            };
+            let mut key = b"bun.".to_vec();
+            key.push(name[0].to_ascii_lowercase());
+            key.extend_from_slice(&name[1..]);
+            assert!(is_brand_key(&key), "{alias:?}");
+        }
+        assert!(is_brand_key(b"bun.int32"));
+    }
+
+    #[test]
+    fn no_brand_key_is_listed_twice() {
+        let mut keys = BRAND_KEYS.to_vec();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), BRAND_KEYS.len());
+    }
+
+    #[test]
+    fn a_brand_key_is_known_by_its_whole_name() {
+        let others: [&[u8]; 6] = [
+            b"bun.",
+            b"bun.deepStrict",
+            b"bun.Strict",
+            b"bun.strict ",
+            b"bun.minimum",
+            b"strict",
+        ];
+        for other in others {
+            assert!(!is_brand_key(other));
         }
     }
 }

@@ -171,6 +171,8 @@ const plainConstantsOfTheFrontEnd: Record<string, number> = {
   "aot/modules/requests.rs": 1,
   "aot/modules/commonjs_exports/text.rs": 1,
   "aot/lower/positions.rs": 1,
+  "aot/lower/validate/json_schema.rs": 3,
+  "aot/lower/validate/written_value.rs": 2,
   "aot/lower/convert/supertypes.rs": 3,
   "aot/lower/data/values.rs": 1,
   "aot/lower/positions/sites.rs": 1,

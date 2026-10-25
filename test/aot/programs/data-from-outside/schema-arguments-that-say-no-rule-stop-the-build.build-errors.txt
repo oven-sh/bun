@@ -1,3 +1,3 @@
-error: TS100107: JSON.parse<Unbounded>() cannot validate 'Unbounded'. Only types that JSON can represent can be validated.
-error: TS100107: JSON.parse<Negative>() cannot validate 'Negative'. Only types that JSON can represent can be validated.
-error: TS100107: JSON.parse<Either>() cannot validate 'Either'. Only types that JSON can represent can be validated.
+error: TS100115: JSON.parse() cannot check 'value: Min', so it cannot validate this type. A rule that cannot be checked is never skipped.
+error: TS100115: JSON.parse() cannot check 'value: MinLength', so it cannot validate this type. A rule that cannot be checked is never skipped.
+error: TS100115: JSON.parse() cannot check 'value: Format', so it cannot validate this type. A rule that cannot be checked is never skipped.

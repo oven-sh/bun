@@ -115,7 +115,7 @@ note: 1 untyped operator
 note: about 100% of the time in untyped operations, by how often the compiler expects each to run
 note: types: 'Item'
 note: why (external-data): The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).
-note: fix: validate it where it enters typed code (JSON.parse<T>, validate<T>), or build a new object of this type from it.
+note: fix: validate it where it enters typed code: import { JSON } from "bun" for JSON.parse<T>(text), or import { validate } from "bun:bundle" for validate<T>(value). Or build a new object of this type from it.
 note: https://bun.com/docs/bundler/aot-explain#unknown-object
 ```
 
@@ -264,7 +264,7 @@ bun check --aot ./main.ts --explain=json
   "inDependency": false,
   "source": "const saved: any = JSON.parse('{ \"sku\": \"B-2\", \"price\": 10 }');",
   "message": "An object from untyped code is used as this type here, so it can have any shape.",
-  "fix": "validate it where it enters typed code (JSON.parse<T>, validate<T>), or build a new object of this type from it.",
+  "fix": "validate it where it enters typed code: import { JSON } from \"bun\" for JSON.parse<T>(text), or import { validate } from \"bun:bundle\" for validate<T>(value). Or build a new object of this type from it.",
   "url": "https://bun.com/docs/bundler/aot-explain#unknown-object",
   "accesses": 1,
   "dependencyAccesses": 0,
@@ -278,7 +278,7 @@ bun check --aot ./main.ts --explain=json
   "why": {
     "reason": "external-data",
     "message": "The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).",
-    "fix": "parse it with JSON.parse<T>(text), or check it with validate<T>(value).",
+    "fix": "import { JSON } from \"bun\" and parse it with JSON.parse<T>(text), or import { validate } from \"bun:bundle\" and check it with validate<T>(value).",
     "url": "https://bun.com/docs/bundler/aot-explain#external-data"
   }
 }
@@ -896,7 +896,7 @@ const order: Order = await response.json(); // [!code --]
 const order = JSON.parse<Order>(await response.text()); // [!code ++]
 ```
 
-Parse it with `JSON.parse<T>(text)`, or check it with `validate<T>(value)`.
+Import `JSON` from `"bun"` and parse it with `JSON.parse<T>(text)`, or import `validate` from `"bun:bundle"` and check it with `validate<T>(value)`.
 
 ### unexpected-shape
 

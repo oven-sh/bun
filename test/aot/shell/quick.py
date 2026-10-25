@@ -155,6 +155,13 @@ def run_program(program):
     needed = re.search(r"^AOT: the program needs the host's (.*), and this realm has no host$", output, re.M)
     if needed:
         return "skipped: it needs the host's " + needed.group(1)
+    # The shell answers "bun" with the `Bun` of prelude.js, and has no other module of Bun's.
+    needed = re.search(r"^Exception: SyntaxError: Export named '(.*)' not found in module 'bun'\.$", output, re.M)
+    if needed:
+        return "skipped: it needs the host's Bun." + needed.group(1)
+    needed = re.search(r"^Exception: Error: Cannot find module '((?:bun|node):.*)'$", output, re.M)
+    if needed:
+        return "skipped: it needs the host's " + needed.group(1)
     # The images here are built without the engine's library, so its functions run as text, which a program that sets crashIfInterpreterIsUsed forbids. A function of the program has a path in front of the colon.
     text = re.search(r"^crashIfInterpreterIsUsed: Function (\S+) at :1$", output, re.M)
     if text:

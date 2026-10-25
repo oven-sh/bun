@@ -42,7 +42,7 @@ bun_aot_interface::define_linked_functions! {
     fn bun_aot_write_untyped_note(_statistics: &Statistics, _out: &mut Vec<u8>) { absent() }
     fn bun_aot_collect_report_entries(_input: &ReportInput<'_>, _kinds: ExplainSet) -> Vec<ReportEntry> { absent() }
     fn bun_aot_report_entries_to_messages(_texts: &SourceTexts, _entries: &[ReportEntry]) -> Vec<ReportMessage> { absent() }
-    fn bun_aot_write_obfuscation_map(_engine: &EngineResult, _names: &ProgramNames, _texts: &SourceTexts, _file_name: &[u8]) -> Vec<u8> { absent() }
+    fn bun_aot_write_obfuscation_map(_engine: &EngineResult, _names: &ProgramNames, _texts: &SourceTexts, _file_name: &[u8], _debug_id: Option<&[u8]>) -> Vec<u8> { absent() }
     fn bun_aot_write_build_report(_input: &ReportInput<'_>, _detail: ReportDetail, _build_id: Option<&[u8]>) -> Vec<u8> { absent() }
     fn bun_aot_write_registry() -> Vec<u8> { absent() }
     fn bun_aot_unlinked_named_values<'a, 's>(_files: &'a Files<'s>, _atoms: &Interner<'s>) -> Box<dyn NamedValues + 'a> { absent() }

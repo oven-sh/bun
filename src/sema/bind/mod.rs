@@ -21,8 +21,8 @@ pub use runtime::{
 };
 pub use static_referent::{
     LinkedBinding, LoadedValue, NamespaceReferent, ReferentCertainty, ReferentContext,
-    ResolvedReferent, StaticReferent, UnknownReferent, export_referent, static_referent,
-    symbol_referent,
+    ResolvedReferent, StaticInitializer, StaticReferent, UnknownReferent, export_referent,
+    static_initializer, static_referent, symbol_referent,
 };
 
 use crate::atom::{Atom, known};

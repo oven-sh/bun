@@ -1,4 +1,4 @@
-validate: 773 a value, 4324 refused, 21 thrown: EvalError, 23 thrown: RangeError, 25 thrown: TypeError; values that are refused when validated again: 0
+validate: 753 a value, 4344 refused, 21 thrown: EvalError, 23 thrown: RangeError, 25 thrown: TypeError; values that are refused when validated again: 0
 a reviver that changes nothing: a value
 a reviver that drops everything: refused
 a reviver that throws at once: thrown: RangeError
@@ -13,5 +13,5 @@ a reviver that parses again: a value
 a reviver that parses again with a reviver: a value
 a reviver that validates the holder: a value
 a reviver that returns the holder: a value
-revivers that put something in: 202 a value, 600 refused, 4 thrown: EvalError, 4 thrown: RangeError, 10 thrown: TypeError
+revivers that put something in: 199 a value, 603 refused, 4 thrown: EvalError, 4 thrown: RangeError, 10 thrown: TypeError
 afterwards: {"name":"n","point":{"x":1,"y":2},"tags":["t","u"],"extra":{"deep":[1,{"x":1,"y":2}]}} {"x":1,"y":2}

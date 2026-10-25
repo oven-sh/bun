@@ -48,10 +48,10 @@ bun run user.ts
 
 ```txt
 7 Ada [ "id", "name", "role" ]
-TypeError: id must be number, received string (and 2 more)
-[ "id" ] invalid_type must be number, received string
-[ "name" ] invalid_type must be string, received undefined
-[ "tags", 1 ] invalid_type must be string, received number
+TypeError: Expected id to be a number, received string (and 2 more)
+[ "id" ] invalid_type Expected id to be a number, received string
+[ "name" ] invalid_type Missing required property name
+[ "tags", 1 ] invalid_type Expected tags[1] to be a string, received number
 ```
 
 | Call                    | The text is a `T` | The text is JSON, but not a `T`                | The text isn't JSON    |
@@ -116,7 +116,7 @@ bun run login.ts
 ```
 
 ```txt
-TypeError: password must have >=8 characters
+TypeError: Expected password to have at least 8 characters
 ```
 
 `validate` throws the same `TypeError` as `JSON.parse<T>`. If the value matches, it returns a copy. Bun copies the objects and arrays that `T` describes, with all of their keys in the same order, and never changes the value you passed in. Keys that are symbols aren't copied, and a type with `Schema.Strict` rejects an object that has one.
@@ -165,7 +165,7 @@ Bun.serve({
 | `expected`, `received` | `"number"`, `"string"`                                                                                                                               |
 | `message`              | `"must be number, received string"`                                                                                                                  |
 
-The codes are those of zod 4. The message of the `TypeError` is the path of the first issue followed by its message, and it counts the rest: `items[0].sku must be string, received number (and 2 more)`. When the value itself is the mismatch, there's no path, and the message says `value`. A message of your own, from [`Schema.Message`](#rules-that-a-type-cant-express), comes first and the path follows it: `Order at least one (at quantity)`. `issues` lists the mismatches, up to the first 100.
+The codes are those of zod 4. The message of the `TypeError` is the message of the first issue, and it counts the rest: `Expected items[0].sku to be a string, received number (and 2 more)`. When the value itself is the mismatch, there's no path, and the message says `value`. A message of your own, from [`Schema.Message`](#rules-that-a-type-cant-express), comes first and the path follows it: `Order at least one (at quantity)`. `issues` lists the mismatches, up to the first 100.
 
 ## Rules that a type can't express
 
@@ -296,7 +296,7 @@ TypeError: JSON.parse() from "bun" has no type to validate against here, so it p
 
 You can't assign to `JSON.parse` or to `Bun.JSON`, or delete them.
 
-**A file that an executable loads at run time isn't compiled.** Calls that Bun compiled into the executable validate. A TypeScript file that the executable loads from disk is treated as under `bun run`.
+**A file that an executable loads at run time isn't compiled.** Calls that Bun compiled into the executable validate. Loading a TypeScript file from disk that calls `JSON.parse<T>` or `validate<T>` is an error.
 
 ## In a compiled executable
 

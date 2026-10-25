@@ -686,7 +686,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--trim-locales <STR>...          With --trim: keep only these locales, such as en,de-AT"
         ),
         parse_param!(
-            "--obfuscate                      With --aot: strip function names and source locations from the executable and write them to \\<outfile\\>.map"
+            "--obfuscate                      With --aot: strip function names and source locations from the executable and write them to \\<outfile\\>.map. Same as --sourcemap=external"
         ),
         parse_param!(
             "--compile-inspector              With --aot: let a debugger attach to the executable (BUN_INSPECT, --inspect). Makes it larger and slower"

@@ -24,4 +24,10 @@ for (const [label, flags] of [
 // Windows: process.cwd() spelled a folder of the executable with `/` where `__dirname` has `\`.
 programsBuiltWith("modules", "in-every-run", [], {}, 1, 1, ["the-working-directory-is-a-folder-of-the-executable"]);
 // Windows: `path.join(__dirname) + "/a.js"` spells the folder with `\` and the rest with `/`. The executable took that for the path of another file.
-programsBuiltWith("static-modules", "in-every-run", [], {}, 1, 1, ["five-names/path-join-replaced"]);
+// Windows: `path.join(__dirname, name)` spells `.\lib` what the build knows as `./lib`. `require()` finds the file under a name that is computed too.
+programsBuiltWith("static-modules", "in-every-run", [], {}, 1, 1, [
+  "five-names/path-join-replaced",
+  "five-names/path-join-slashes",
+]);
+// Windows on x64: a catch clause gets what code of the program throws inside an operation of the run time.
+programsBuiltWith("errors", "in-every-run", [], {}, 1, 1, ["what-is-thrown-inside-an-operation-is-what-is-caught"]);

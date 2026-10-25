@@ -49,6 +49,25 @@ impl JsonWriter {
         self.bytes.push(b']');
     }
 
+    pub(super) fn optional_strings<'a>(
+        &mut self,
+        key: &str,
+        values: impl Iterator<Item = Option<&'a [u8]>>,
+    ) {
+        self.write_key(key);
+        self.bytes.push(b'[');
+        for (index, value) in values.enumerate() {
+            if index > 0 {
+                self.bytes.push(b',');
+            }
+            match value {
+                Some(value) => json_stringify(value, &mut self.bytes),
+                None => self.bytes.extend_from_slice(b"null"),
+            }
+        }
+        self.bytes.push(b']');
+    }
+
     pub(super) fn null(&mut self, key: &str) {
         self.write_key(key);
         self.bytes.extend_from_slice(b"null");
@@ -99,6 +118,14 @@ impl JsonWriter {
             self.bytes.push(b',');
         }
         self.bytes.push(b'{');
+        self.needs_comma = false;
+    }
+
+    pub(super) fn begin_array_element(&mut self) {
+        if self.needs_comma {
+            self.bytes.push(b',');
+        }
+        self.bytes.push(b'[');
         self.needs_comma = false;
     }
 
@@ -224,6 +251,33 @@ mod tests {
             json.number("next", 1);
         });
         assert_eq!(object, r#"{"types":["Item","\"a\"",""],"next":1}"#);
+    }
+
+    #[test]
+    fn absent_strings_are_null_in_array() {
+        let values: [Option<&[u8]>; 3] = [Some(b"a"), None, Some(b"")];
+        let object = object_with(|json| {
+            json.optional_strings("texts", values.into_iter());
+            json.number("next", 1);
+        });
+        assert_eq!(object, r#"{"texts":["a",null,""],"next":1}"#);
+    }
+
+    #[test]
+    fn arrays_nest() {
+        let object = object_with(|json| {
+            json.begin_array("lists");
+            json.begin_array_element();
+            json.begin_element();
+            json.number("a", 1);
+            json.end_object();
+            json.end_array();
+            json.begin_array_element();
+            json.end_array();
+            json.end_array();
+            json.number("next", 2);
+        });
+        assert_eq!(object, r#"{"lists":[[{"a":1}],[]],"next":2}"#);
     }
 
     #[test]

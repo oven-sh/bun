@@ -1,23 +1,30 @@
 mod expected_result;
+mod json_schema;
 mod misuse;
 mod nodes;
 mod plans;
 mod rules;
+mod schema_type_argument;
 mod unsupported;
+mod write_json_schema;
+mod written_value;
 
 use std::rc::Rc;
 
 use bun_sema::atom::Atom;
-use bun_sema::check::aot::{GaveUp, Queries, WrittenPlace};
+use bun_sema::check::aot::{GaveUp, NamedValues, Queries, WrittenPlace};
 use bun_sema::hir::{self, ExprId};
+use bun_sema::program::Files;
 use rustc_hash::FxHashMap;
 
 use super::{CheckerTypeId, FileLowering, FunctionLowering};
 use crate::diagnostic_codes::Code;
+use crate::diagnostics::Span;
 use crate::ir::generated::{LimitId, ValidationNode};
 use crate::ir::{ExpectedResultId, LayoutId, PropertyKeyId, StringId, TypeId};
 
 pub use self::plans::{PlanInputs, PlannedCall, PlannedFile, plan_validated_calls};
+pub use self::write_json_schema::write_json_schema;
 
 #[derive(Default)]
 pub(crate) struct ValidationState {
@@ -28,6 +35,7 @@ pub(crate) struct ValidationState {
 pub(crate) enum ValidationError {
     TypeParameter { text: Vec<u8> },
     Unsupported { described: Vec<u8> },
+    Refused { described: Vec<u8> },
     TooLarge,
     GaveUp(GaveUp),
 }
@@ -36,6 +44,9 @@ pub(crate) enum ValidationError {
 pub(crate) trait ValidatedFile<'c, 'p: 'c, 's: 'p> {
     fn queries(&mut self) -> &mut Queries<'c, 'p, 's>;
     fn hir(&self) -> &'p hir::File<'s>;
+    fn files(&self) -> &'p Files<'s>;
+    fn named_values(&self) -> &dyn NamedValues;
+    fn atom_bytes(&self, atom: Atom) -> &'p [u8];
     fn limit(&self, limit: LimitId) -> u64;
     fn gave_up(&mut self, limit: LimitId, position: u32);
     fn validation(&mut self) -> &mut ValidationState;
@@ -48,6 +59,8 @@ pub(crate) trait ValidatedFile<'c, 'p: 'c, 's: 'p> {
     fn find_field(&mut self, layout: LayoutId, key: PropertyKeyId) -> Option<u32>;
     fn calls_parse_of_bun(&self, callee: ExprId) -> bool;
     fn report_at(&mut self, expression: ExprId, code: Code, arguments: &[&[u8]]);
+    /// What is wrong with `call` is written at `span`, which may lie in another file.
+    fn report_for_call(&mut self, call: ExprId, span: Span, code: Code, arguments: &[&[u8]]);
     fn add_expected_result(
         &mut self,
         call: ExprId,
@@ -63,6 +76,18 @@ impl<'c, 'p: 'c, 's: 'p> ValidatedFile<'c, 'p, 's> for FileLowering<'_, 'c, 'p, 
 
     fn hir(&self) -> &'p hir::File<'s> {
         self.hir
+    }
+
+    fn files(&self) -> &'p Files<'s> {
+        self.queries.files()
+    }
+
+    fn named_values(&self) -> &dyn NamedValues {
+        self.inputs.named_values
+    }
+
+    fn atom_bytes(&self, atom: Atom) -> &'p [u8] {
+        self.queries.atom_bytes(atom)
     }
 
     fn limit(&self, limit: LimitId) -> u64 {
@@ -107,6 +132,10 @@ impl<'c, 'p: 'c, 's: 'p> ValidatedFile<'c, 'p, 's> for FileLowering<'_, 'c, 'p, 
 
     fn report_at(&mut self, expression: ExprId, code: Code, arguments: &[&[u8]]) {
         FileLowering::report_at(self, expression, code, arguments);
+    }
+
+    fn report_for_call(&mut self, _: ExprId, span: Span, code: Code, arguments: &[&[u8]]) {
+        self.diagnostics.report(code, span, arguments);
     }
 
     fn add_expected_result(

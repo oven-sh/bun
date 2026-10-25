@@ -194,8 +194,63 @@ describe.concurrent("--obfuscate", () => {
         expect(readdirSync(join(folder, "dist")).sort()).toEqual([
           executableName("app"),
           executableName("app") + ".map",
+          executableName("app") + ".map.js",
         ]);
         expect(existsSync(join(folder, executableName("app") + ".map"))).toBe(false);
+      }),
+    buildLimit,
+  );
+
+  test(
+    "--sourcemap=external builds what --obfuscate builds",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-obfuscate-sourcemap-external", program);
+        const folder = String(dir);
+        const obfuscated = await compile(folder, "first/app", buildFlags.obfuscate);
+        const withMap = await compile(folder, "second/app", "--sourcemap=external");
+        expect(readFileSync(withMap + ".map", "utf8")).toBe(readFileSync(obfuscated + ".map", "utf8"));
+        expect(readFileSync(withMap).equals(readFileSync(obfuscated))).toBe(true);
+      }),
+    buildLimit,
+  );
+
+  test(
+    "with --minify the map has the names as they are written",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-obfuscate-minify", program);
+        const executable = await compile(String(dir), "app", "--minify", "--sourcemap=external");
+        expect(readMap(executable).names).toEqual(expect.arrayContaining(functionNames));
+      }),
+    buildLimit,
+  );
+
+  test(
+    "an uncaught error and console.trace print frames that the map resolves",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-obfuscate-uncaught", {
+          "app.ts": `function outermostCaller(depth: number): number {
+  console.trace("traced");
+  if (depth > 0) throw new Error("too deep");
+  return depth;
+}
+outermostCaller(process.argv.length);
+`,
+        });
+        const folder = String(dir);
+        const executable = await compile(folder, "app", buildFlags.obfuscate);
+        const { stdout, stderr, exitCode } = await spawned([executable], folder, env);
+        expect(exitCode).toBe(1);
+        expect(stdout + stderr).not.toMatch(/outermostCaller|app\.ts/);
+        const frames = decodeMappings(readMap(executable));
+        expect(framesOf(stdout + stderr).map(frame => frames.get(`${frame.line}:${frame.column}`))).toEqual([
+          { name: "outermostCaller", file: "app.ts", line: 2, column: 11 },
+          { name: "", file: "app.ts", line: 6, column: 1 },
+          { name: "outermostCaller", file: "app.ts", line: 3, column: 28 },
+          { name: "", file: "app.ts", line: 6, column: 1 },
+        ]);
       }),
     buildLimit,
   );
@@ -230,6 +285,22 @@ describe.concurrent("--obfuscate", () => {
           expect.arrayContaining(["app.ts", "concealed-module.ts"]),
         );
         expect(map.names).toEqual(expect.arrayContaining(functionNames));
+      }),
+    buildLimit,
+  );
+
+  test(
+    'Bun.build writes the map for sourcemap: "external"',
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-obfuscate-api-sourcemap", program);
+        const outfile = join(String(dir), "api", "app");
+        await Bun.build({
+          entrypoints: [join(String(dir), "app.ts")],
+          sourcemap: "external",
+          compile: { outfile, aot: true },
+        });
+        expect(readMap(executableName(outfile)).names).toEqual(expect.arrayContaining(functionNames));
       }),
     buildLimit,
   );

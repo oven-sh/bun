@@ -20,17 +20,12 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSONObject.h>
-#include <JavaScriptCore/Completion.h>
-#include <JavaScriptCore/SourceCode.h>
-#if ENABLE(AOT)
-#include <JavaScriptCore/AOTRuntimeTable.h>
-#endif
-#include <wtf/text/SymbolImpl.h>
 #include "wtf/SIMDUTF.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
 #include "BunObject.h"
+#include "BunValidator.h"
 #include "webcore/streams/BunStreamConsumers.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
@@ -124,65 +119,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionParseWithoutType, (JSGlobalObject * globalObj
     return {};
 }
 
-struct BunAOTLibraryText {
-    const uint8_t* pointer;
-    size_t length;
-};
-extern "C" BunAOTLibraryText Bun__AOT__validationLibrary();
-
-static SymbolImpl::StaticSymbolImpl validatorOfPlanPrivateName { "validatorOfPlan", SymbolImpl::s_flagIsPrivate };
-
-// (kind, plan) => validator, of the library that validates by a plan. It is made when the first plan comes.
-static JSValue ensureValidatorOfPlan(JSGlobalObject* globalObject, JSObject* holder)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    PropertyName name(&static_cast<SymbolImpl&>(validatorOfPlanPrivateName));
-    if (JSValue known = holder->getDirect(vm, name))
-        return known;
-
-#if ENABLE(AOT)
-    BunAOTLibraryText text = JSC::callRemovable<Bun::Feature::AotCompiler, JSC::RemovedFeatureStub::ReturnDefault, Bun__AOT__validationLibrary>();
-#else
-    BunAOTLibraryText text { nullptr, 0 };
-#endif
-    if (!text.length) {
-        throwTypeError(globalObject, scope, "This build of Bun can't validate by a type"_s);
-        return {};
-    }
-
-#if ENABLE(AOT)
-    NakedPtr<JSC::Exception> exception;
-    SourceCode source = makeSource(String::fromUTF8(std::span { text.pointer, text.length }), SourceOrigin(), SourceTaintedOrigin::Untainted, "bun:validation"_s);
-    JSValue library = JSC::evaluate(globalObject, source, globalObject->globalThis(), exception);
-    if (exception) [[unlikely]] {
-        throwException(globalObject, scope, exception.get());
-        return {};
-    }
-    MarkedArgumentBuffer arguments;
-    arguments.append(JSC::AOT::createPreparedPlans(globalObject));
-    JSValue validatorOfPlan = JSC::call(globalObject, library, arguments, "The library that validates by a plan is a function"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    holder->putDirect(vm, name, validatorOfPlan, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
-    return validatorOfPlan;
-#else
-    return {};
-#endif
-}
-
-// What Bun's transpiler writes in the place of JSON.parse<T> and validate<T> calls this once for each call site.
-static JSC_DECLARE_HOST_FUNCTION(jsFunctionValidatorOfPlan);
-JSC_DEFINE_HOST_FUNCTION(jsFunctionValidatorOfPlan, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue validatorOfPlan = ensureValidatorOfPlan(globalObject, callFrame->jsCallee());
-    RETURN_IF_EXCEPTION(scope, {});
-    MarkedArgumentBuffer arguments;
-    arguments.append(callFrame->argument(0));
-    arguments.append(callFrame->argument(1));
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, validatorOfPlan, arguments, "The library that validates by a plan is a function"_s)));
-}
-
 // Bun compiles each JSON.parse<T>(text) that it sees into a parser for T, so only a call without a type reaches `parse` of this object.
 static JSValue constructJSONObject(VM& vm, JSObject* bunObject)
 {
@@ -190,7 +126,6 @@ static JSValue constructJSONObject(VM& vm, JSObject* bunObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* object = constructEmptyObject(globalObject);
     object->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "parse"_s), 2, jsFunctionParseWithoutType, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
-    object->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "validatorOfPlan"_s), 2, jsFunctionValidatorOfPlan, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
     JSValue global = globalObject->get(globalObject, Identifier::fromString(vm, "JSON"_s));
     if (scope.exception()) [[unlikely]]
         scope.clearException();
@@ -1084,6 +1019,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     markdown                                       Bun::Bindgen::Generated::MarkdownObject::createMarkdown             DontDelete|PropertyCallback
     TOML                                           Bun::Bindgen::Generated::TOMLObject::createTOML                     DontDelete|PropertyCallback
     XML                                            Bun::Bindgen::Generated::XMLObject::createXML                       DontDelete|PropertyCallback
+    Validator                                      Bun::constructValidatorConstructor                                  ReadOnly|DontDelete|PropertyCallback
     YAML                                           Bun::Bindgen::Generated::YAMLObject::createYAML                     DontDelete|PropertyCallback
     Transpiler                                     Bun::Bindgen::Generated::Transpiler::getTranspilerConstructor       DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_lazyPropCb_wrap_embeddedFiles                             DontDelete|PropertyCallback

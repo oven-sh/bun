@@ -504,7 +504,12 @@ fn begins_program_at_each_entry_point(options: &Options<'_>) -> bool {
 fn can_have_several_programs(options: &Options<'_>) -> bool {
     let aot = options.aot;
     // A hardened run time executes only what the loader of the system has mapped to be executed, and that is the code of one image.
-    !cfg!(bun_hardened) && !aot.checks_only && !aot.runs_in_place && !aot.runs_tests
+    // One source map describes the frames of one image.
+    !cfg!(bun_hardened)
+        && !aot.checks_only
+        && !aot.runs_in_place
+        && !aot.runs_tests
+        && !aot.obfuscates
 }
 
 fn options_with_entry_points<'a>(options: &Options<'a>, entry_points: &[usize]) -> Options<'a> {

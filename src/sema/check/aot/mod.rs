@@ -26,6 +26,7 @@ mod prototype_links;
 pub mod queries;
 pub mod query_writer;
 mod schema_constraints;
+mod schema_type_uses;
 pub mod trust;
 mod type_arguments;
 pub mod type_identity;
@@ -33,6 +34,7 @@ mod type_relations;
 pub mod type_shape;
 mod written_type;
 pub mod written_union_order;
+mod written_value;
 
 pub use answers::{
     CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
@@ -51,10 +53,11 @@ pub use diagnostic_subject::{DiagnosticSubject, containers_completed_by_bun_type
 pub(crate) use kept_answers::KeptAnswers;
 pub use kept_answers::KeptFact;
 pub use left_out_bodies::LeftOutBodies;
-pub use program_symbols::COMPILER_DECLARATIONS_PATH;
+pub use program_symbols::{BRAND_KEYS, COMPILER_DECLARATIONS_PATH};
 pub use prototype_links::{NamedValue, NamedValues, PrototypeOperation};
 pub use queries::{Queries, QueryInputs};
 pub use query_writer::write_queries;
+pub use schema_type_uses::{SchemaTypeUse, SchemaTypeUses};
 pub use trust::Trust;
 pub use type_identity::{ObjectOrigin, TypeIdentity};
 pub use type_relations::MemberPresence;
@@ -64,6 +67,7 @@ pub use type_shape::{
 };
 pub use written_type::declares_type_alone;
 pub use written_union_order::{WrittenPlace, WrittenUnionOrders};
+pub use written_value::WrittenValue;
 
 pub(in crate::check) use class_stores::StoreIndex;
 pub(in crate::check) use dead_code::DeadCodeRanges;

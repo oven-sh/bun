@@ -1413,7 +1413,7 @@ interface CompileBuildOptions {
   functionSource?: boolean; // With aot: embed function source code, so that fn.toString() returns it (default: true)
   allowCodeFromDisk?: boolean; // With aot: let import() and require() load code that isn't in the executable from disk (default: false)
   inspector?: boolean; // With aot: let a debugger attach to the executable (default: false)
-  obfuscate?: boolean; // With aot: strip function names and file names, and write a source map next to the executable (default: false)
+  obfuscate?: boolean; // With aot: strip function names and file names, and write a source map next to the executable. Same as sourcemap: "external" (default: false)
   trim?:
     boolean | { allow?: Bun.Build.TrimFeature[]; remove?: Bun.Build.TrimFeature[]; locales?: string[]; log?: boolean }; // Remove the Bun and Node.js APIs your code never calls (default: false)
   disallowCodeGenerationFromStrings?: boolean | "strict"; // eval() and new Function() throw in the executable (default: false)

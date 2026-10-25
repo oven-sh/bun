@@ -180,10 +180,33 @@ impl Writer<'_, '_, '_, '_> {
         }
     }
 
-    fn constraint_text(&self, constraint: SchemaConstraint) -> Vec<u8> {
+    fn quoted_atom_text(&self, text: Atom) -> Vec<u8> {
+        string_literal_text(self.queries.atom_bytes(text))
+    }
+
+    fn schema_entries_text(&mut self, entries: &[(Atom, TypeId)]) -> Vec<u8> {
+        let mut parts = Vec::with_capacity(entries.len());
+        for &(key, ty) in entries {
+            let key = self.quoted_atom_text(key);
+            parts.push([key, b": ".to_vec(), self.queries.type_text(ty)].concat());
+        }
+        parts.join(&b", "[..])
+    }
+
+    fn schema_dependencies_text(&self, dependencies: &[(Atom, &[Atom])]) -> Vec<u8> {
+        let mut parts = Vec::with_capacity(dependencies.len());
+        for &(key, names) in dependencies {
+            let names = names.iter().map(|&name| self.quoted_atom_text(name));
+            let names: Vec<Vec<u8>> = names.collect();
+            let key = self.quoted_atom_text(key);
+            parts.push([&key[..], b": [", &names.join(&b", "[..])[..], b"]"].concat());
+        }
+        parts.join(&b", "[..])
+    }
+
+    fn constraint_text(&mut self, constraint: SchemaConstraint<'_>) -> Vec<u8> {
         let number = |name, value| wrapped(name, &number_to_string(value));
         let integer = |name, value: u32| wrapped(name, value.to_string().as_bytes());
-        let atom = |name, text| wrapped(name, &string_literal_text(self.queries.atom_bytes(text)));
         match constraint {
             SchemaConstraint::Int32 => b"Int32".to_vec(),
             SchemaConstraint::Int => b"Int".to_vec(),
@@ -196,18 +219,67 @@ impl Writer<'_, '_, '_, '_> {
             SchemaConstraint::MaxLength(value) => integer("MaxLength", value),
             SchemaConstraint::MinItems(value) => integer("MinItems", value),
             SchemaConstraint::MaxItems(value) => integer("MaxItems", value),
-            SchemaConstraint::Pattern(text) => atom("Pattern", text),
+            SchemaConstraint::Pattern { source, is_unicode } => {
+                let flag: &[u8] = if is_unicode { b", unicode" } else { b"" };
+                let source = self.quoted_atom_text(source);
+                wrapped("Pattern", &[&source[..], flag].concat())
+            }
             SchemaConstraint::Format(format) => format!("Format({format:?})").into_bytes(),
-            SchemaConstraint::Message(text) => atom("Message", text),
+            SchemaConstraint::Message(text) => wrapped("Message", &self.quoted_atom_text(text)),
             SchemaConstraint::Default(value) => {
                 wrapped("Default", &self.schema_default_text(value))
             }
             SchemaConstraint::Strict => b"Strict".to_vec(),
             SchemaConstraint::DeepStrict => b"DeepStrict".to_vec(),
+            SchemaConstraint::UniqueItems => b"UniqueItems".to_vec(),
+            SchemaConstraint::Contains {
+                ty,
+                minimum,
+                maximum,
+            } => {
+                let maximum = match maximum {
+                    Some(maximum) => maximum.to_string().into_bytes(),
+                    None => b"none".to_vec(),
+                };
+                let minimum = minimum.to_string().into_bytes();
+                let inner = [self.queries.type_text(ty), minimum, maximum];
+                wrapped("Contains", &inner.join(&b", "[..]))
+            }
+            SchemaConstraint::Not { ty } => wrapped("Not", &self.queries.type_text(ty)),
+            SchemaConstraint::If {
+                condition,
+                then,
+                otherwise,
+            } => wrapped(
+                "If",
+                &self.type_list_text(&[condition, then, otherwise], b", "),
+            ),
+            SchemaConstraint::OneOf { arms } => wrapped("OneOf", &self.type_list_text(arms, b", ")),
+            SchemaConstraint::AllOf { parts } => {
+                wrapped("AllOf", &self.type_list_text(parts, b", "))
+            }
+            SchemaConstraint::PatternProperties { table, others } => {
+                let table = self.schema_entries_text(table);
+                let inner = [table, b"; ".to_vec(), self.queries.type_text(others)];
+                wrapped("PatternProperties", &inner.concat())
+            }
+            SchemaConstraint::PropertyNames { ty } => {
+                wrapped("PropertyNames", &self.queries.type_text(ty))
+            }
+            SchemaConstraint::MinProperties(value) => integer("MinProperties", value),
+            SchemaConstraint::MaxProperties(value) => integer("MaxProperties", value),
+            SchemaConstraint::DependentRequired(dependencies) => wrapped(
+                "DependentRequired",
+                &self.schema_dependencies_text(dependencies),
+            ),
+            SchemaConstraint::DependentSchemas(entries) => {
+                wrapped("DependentSchemas", &self.schema_entries_text(entries))
+            }
+            SchemaConstraint::Refused(text) => wrapped("Refused", &self.quoted_atom_text(text)),
         }
     }
 
-    fn constrained_text(&mut self, base: TypeId, constraints: &[SchemaConstraint]) -> Vec<u8> {
+    fn constrained_text(&mut self, base: TypeId, constraints: &[SchemaConstraint<'_>]) -> Vec<u8> {
         let texts = constraints
             .iter()
             .map(|&constraint| self.constraint_text(constraint));

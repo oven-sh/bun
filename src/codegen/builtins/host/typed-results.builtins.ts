@@ -30,8 +30,6 @@ export default b.declarations(
       uses: { text: b.inspected, reviver: b.inspected },
       implementation: b.generic,
     },
-    // For a file that Bun transpiles and does not compile: it makes the validator of the plan that stands in the text of the file.
-    validatorOfPlan: b.otherwise,
   }),
   ["stringify", "rawJSON", "isRawJSON"].flatMap(name => b.same(`Bun.JSON.${name}`, `JSON.${name}`)),
   b.fn("Bun.sql", queriesRows),

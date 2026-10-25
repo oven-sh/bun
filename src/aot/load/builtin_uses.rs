@@ -3,7 +3,9 @@ mod tests;
 
 use bun_sema::import_sites::{ImportSite, ImportSiteKind};
 use bun_sema::program::HostModuleId;
-use bun_sema::resolve::{CodeResolution, FinishedFile, HostResolution, SiteResolution};
+use bun_sema::resolve::{
+    CodeResolution, ExternalKind, FinishedFile, HostResolution, SiteResolution,
+};
 use bun_sema::util::SharedSort;
 
 use crate::builtins::{
@@ -113,6 +115,11 @@ fn target_module(resolution: SiteResolution<'_>) -> Option<RuntimeModule> {
     let id = match resolution {
         SiteResolution::Constant(CodeResolution::HostModule(id)) => id,
         SiteResolution::Constant(CodeResolution::File(file)) => file.host_module?,
+        // With --no-builtin-modules. The exports of "bun" are the members of the global `Bun`, which needs no module.
+        SiteResolution::Constant(CodeResolution::External {
+            specifier: b"bun",
+            kind: ExternalKind::HostValue,
+        }) => return Some(RuntimeModule::Bun),
         SiteResolution::Constant(
             CodeResolution::External { .. } | CodeResolution::Erased | CodeResolution::NotFound(_),
         )

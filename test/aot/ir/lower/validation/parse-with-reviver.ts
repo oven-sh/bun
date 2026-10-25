@@ -6,8 +6,8 @@
 
 /// <reference path="./imports/declarations.d.ts" />
 
-import { JSON } from "bun"; type Reviver = (this: unknown, key: string, value: unknown) => unknown;
+type Reviver = (this: unknown, key: string, value: unknown) => unknown;
 
 export function read(text: string, reviver: Reviver) {
-  return JSON.parse<{ a: number }>(text, reviver);
+  return Bun.JSON.parse<{ a: number }>(text, reviver);
 }

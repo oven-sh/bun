@@ -1,6 +1,6 @@
 ////: typed-parse-calls
 import { JSON as Typed } from "bun";
-
+declare global { interface JSON { parse<T>(text: string, reviver?: (this: any, key: string, value: any) => any): T } }
 type Row = { a: number };
 const original = JSON.parse;
 const spell = JSON.stringify;
@@ -40,10 +40,10 @@ for (const text of ['{"a":1}', '{"a":"text"}', "[]"]) all(text);
 for (const text of ['{"a":1}', '{"a":"text"}', "[]"]) all(text);
 console.log("the function that was put in ran", calls, "times");
 //// json-parse-by-type-with-a-spread-argument.ts
-// JSON.parse<T>(text) validates what the call returns, whoever is called and however the arguments are written. `parse` of the global JSON is what stands there when the call runs, `parse` of the JSON of "bun" is always the engine's. Nothing is put in the place of JSON.parse.
+// `parse` of the JSON of "bun" validates however the arguments are written, and is always the engine's. The type argument of the global JSON.parse is one that the program declares: the call runs what stands there and checks nothing. Nothing is put in the place of JSON.parse.
 ////= typed-parse-calls
 //// json-parse-by-type-behind-a-function-of-the-program-stored-into-json-parse.ts
-// JSON.parse<T>(text) validates what the call returns, whoever is called and however the arguments are written. `parse` of the global JSON is what stands there when the call runs, `parse` of the JSON of "bun" is always the engine's. A function of the program is stored into JSON.parse.
+// `parse` of the JSON of "bun" validates however the arguments are written, and is always the engine's. The type argument of the global JSON.parse is one that the program declares: the call runs what stands there and checks nothing. A function of the program is stored into JSON.parse.
 ////= typed-parse-calls
 JSON.parse = function (text: string, reviver?: any) {
   calls++;
@@ -51,17 +51,17 @@ JSON.parse = function (text: string, reviver?: any) {
 } as typeof JSON.parse;
 ////= typed-parse-calls-again
 //// json-parse-by-type-behind-a-getter-defined-for-json-parse.ts
-// JSON.parse<T>(text) validates what the call returns, whoever is called and however the arguments are written. `parse` of the global JSON is what stands there when the call runs, `parse` of the JSON of "bun" is always the engine's. JSON.parse becomes a getter.
+// `parse` of the JSON of "bun" validates however the arguments are written, and is always the engine's. The type argument of the global JSON.parse is one that the program declares: the call runs what stands there and checks nothing. JSON.parse becomes a getter.
 ////= typed-parse-calls
 Object.defineProperty(JSON, "parse", { get: () => (text: string) => (calls++, original(text)) });
 ////= typed-parse-calls-again
 //// json-parse-by-type-behind-a-store-into-json-parse-by-text-that-is-run.ts
-// JSON.parse<T>(text) validates what the call returns, whoever is called and however the arguments are written. `parse` of the global JSON is what stands there when the call runs, `parse` of the JSON of "bun" is always the engine's. Text that is run stores into JSON.parse.
+// `parse` of the JSON of "bun" validates however the arguments are written, and is always the engine's. The type argument of the global JSON.parse is one that the program declares: the call runs what stands there and checks nothing. Text that is run stores into JSON.parse.
 ////= typed-parse-calls
 new Function("original", "count", "JSON.parse = text => (count(), original(text));")(original, () => calls++);
 ////= typed-parse-calls-again
 //// json-parse-by-type-behind-a-function-that-returns-something-else-stored-into-json-parse.ts
-// JSON.parse<T>(text) validates what the call returns, whoever is called and however the arguments are written. `parse` of the global JSON is what stands there when the call runs, `parse` of the JSON of "bun" is always the engine's. What is stored into JSON.parse returns a list whatever the text says.
+// `parse` of the JSON of "bun" validates however the arguments are written, and is always the engine's. The type argument of the global JSON.parse is one that the program declares: the call runs what stands there and checks nothing. What is stored into JSON.parse returns a list whatever the text says.
 ////= typed-parse-calls
 JSON.parse = (() => (calls++, [1])) as typeof JSON.parse;
 ////= typed-parse-calls-again

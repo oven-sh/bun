@@ -206,7 +206,8 @@ fn write_product(
     }
     if options.obfuscates {
         let (directory, path) = executable_location(settings.root_dir, outfile);
-        reports::write_obfuscation_map(build, directory, path)?;
+        let build_id = written.details.as_ref().and_then(|it| it.build_id.as_ref());
+        reports::write_obfuscation_map(build, directory, path, build_id)?;
     }
     let mut details = written.details;
     // Nobody asked for what every executable leaves out, so the build says nothing about it.

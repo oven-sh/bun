@@ -1,0 +1,1 @@
+It prints "true object object" where plain Bun prints "false number number". The compiler treats `self` as the global object unless the program stores to it by name, and it does not know that this setter defines `self` on the global object whatever its receiver is.

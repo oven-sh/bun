@@ -11,8 +11,9 @@ provide("performance", partOf("performance", { now: () => preciseTime() * 1000 }
 provide("console", partOf("console", { log: (...values) => print(values.map(value => Object.is(value, -0) ? "-0" : String(value)).join(" ")) }));
 // Compiled code takes a global of Bun that the program never stores to for present, so `typeof process` or `typeof Bun` is no test for the shell: without these the program reads a null pointer.
 provide("process", partOf("process", { argv: ["jsc", "program"] }));
-// Compiled code calls Bun.gc as the native function that it is in Bun, so it is one here.
-provide("Bun", partOf("Bun", { gc }));
+// Compiled code calls Bun.gc as the native function that it is in Bun, so it is one here. The compiler replaces each Bun.JSON.parse<T>(text), so only a call without a type gets here, and it throws as in Bun.
+const parseWithoutType = () => { throw new TypeError('JSON.parse() from "bun" has no type to validate against here, so it parsed nothing'); };
+provide("Bun", partOf("Bun", { gc, JSON: partOf("Bun.JSON", { parse: parseWithoutType, stringify: JSON.stringify, rawJSON: JSON.rawJSON, isRawJSON: JSON.isRawJSON, [Symbol.toStringTag]: "JSON" }) }));
 // The shell's setTimeout only takes a JSFunction.
 { const original = globalThis.setTimeout; provide("setTimeout", (callback, delay) => original(() => callback(), delay)); }
 // An unhandled promise rejection is reported the way Bun reports it.

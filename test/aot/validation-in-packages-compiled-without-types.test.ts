@@ -78,8 +78,7 @@ for (const [name, { files, warns }] of Object.entries(packages)) {
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: expected, exitCode: 0 });
   }, 120_000);
 
-  // TODO: only an ahead-of-time build makes the validators today. Under `bun run`, "bun:bundle" has no export named `validate`.
-  test.todo(`bun run validates in a TypeScript package ${name}`, async () => {
+  test(`bun run validates in a TypeScript package ${name}`, async () => {
     using dir = tempDir("aot-validation-in-packages", {
       "main.ts": main,
       "node_modules/loose/package.json": `{ "name": "loose", "version": "1.0.0", "main": "index.ts" }`,

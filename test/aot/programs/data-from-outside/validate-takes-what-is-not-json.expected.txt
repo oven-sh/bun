@@ -21,7 +21,7 @@ a member that is not enumerable TypeError y invalid_type number undefined
 no prototype {x:1,y:2} true
 a Date for an object type {}
 a Map for an object type {}
-a function for an object type {}
+a function for an object type TypeError  invalid_type object function
 an array for an object type TypeError  invalid_type object array
 an object for an array type TypeError  invalid_type array object
 under unknown, any, object true true true true true true

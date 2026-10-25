@@ -54,8 +54,8 @@ const wrong = nested(20, null);
 const behindAnAccessor = { get left() { return (right as any).left; }, v: "text" }; // prettier-ignore
 timed("a value", () => validate<L20>(right));
 timed("a value behind an accessor", () => validate<L20>(behindAnAccessor));
-timed("a text", () => JSON.parse<L20>(JSON.stringify(right)));
-timed("a text with a name spelled by an escape", () => JSON.parse<L20>(JSON.stringify(right).replace('"left"', '"\\u006ceft"')));
+timed("a text", () => Bun.JSON.parse<L20>(JSON.stringify(right)));
+timed("a text with a name spelled by an escape", () => Bun.JSON.parse<L20>(JSON.stringify(right).replace('"left"', '"\\u006ceft"')));
 timed("a value that is wrong at its deepest place", () => validate<L20>(wrong));
-timed("a text that is wrong at its deepest place", () => JSON.parse<L20>(JSON.stringify(wrong)));
+timed("a text that is wrong at its deepest place", () => Bun.JSON.parse<L20>(JSON.stringify(wrong)));
 timed("a list of a hundred", () => (validate<L20[]>(Array.from({ length: 100 }, () => right)) as unknown[])[99]);

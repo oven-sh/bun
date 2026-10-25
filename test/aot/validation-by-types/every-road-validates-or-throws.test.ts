@@ -349,7 +349,7 @@ test("a bundle with bytecode validates", async () => {
   const built = await run([bunExe(), "build", "./program.ts", ...flags], String(dir));
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const { stdout, stderr, exitCode } = await run([bunExe(), "run", "./out/program.js"], String(dir));
-  expect(stderr).toContain("TypeError: id must be number, received string");
+  expect(stderr).toContain("TypeError: Expected id to be a number, received string");
   expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
 });
 
@@ -361,7 +361,7 @@ test("bun -e validates", async () => {
   using dir = tempDir("text-on-the-command-line", { "row.ts": `export interface Row { id: number }` });
   const text = `import { JSON } from "bun";\nimport type { Row } from "./row";\nJSON.parse<Row>('{"id":"7"}');`;
   const { stdout, stderr, exitCode } = await run([bunExe(), "-e", text], String(dir));
-  expect(stderr).toContain("TypeError: id must be number, received string");
+  expect(stderr).toContain("TypeError: Expected id to be a number, received string");
   expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
 });
 

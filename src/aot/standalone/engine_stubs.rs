@@ -34,7 +34,6 @@ functions_of_no_engine! {
         *const c_void,
         *const c_void
     ) -> *mut c_void;
-    fn Bun__AOT__writeValidationPlans(Bytes) -> *mut c_void;
     fn Bun__AOT__resultSection(*const c_void, u32) -> Bytes;
     fn Bun__AOT__freeResult(*mut c_void);
     fn Bun__AOT__imageAlignment() -> usize;

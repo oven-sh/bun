@@ -9,16 +9,16 @@
 
 /// <reference path="./imports/declarations.d.ts" />
 
-import { JSON } from "bun"; type Sized = { a: number };
+type Sized = { a: number };
 
 export function sizedFirst(text: string) {
-  return JSON.parse<Sized | Record<string, number>>(text);
+  return Bun.JSON.parse<Sized | Record<string, number>>(text);
 }
 
 export function tableFirst(text: string) {
-  return JSON.parse<Record<string, number> | Sized>(text);
+  return Bun.JSON.parse<Record<string, number> | Sized>(text);
 }
 
 export function primitives(text: string) {
-  return JSON.parse<"b" | null | "a">(text);
+  return Bun.JSON.parse<"b" | null | "a">(text);
 }

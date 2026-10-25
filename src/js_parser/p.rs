@@ -13,7 +13,7 @@ use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
 use bun_core::Output;
 use bun_core::strings;
 use bun_options_types::validation_plans::{
-    ValidatingFunction, ValidationPlans, skip_blanks_and_comments,
+    Json, ValidatingFunction, ValidationPlans, skip_blanks_and_comments,
 };
 use bun_wyhash::Wyhash;
 
@@ -7254,7 +7254,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let type_arguments = with_type_arguments.find(|(name, _)| *name == member);
         let message: &[u8] = match type_arguments {
             Some(&(_, type_arguments)) if is_call_target => {
-                return self.validator_of(member, type_arguments, ValidatingFunction::Parse);
+                return self.create_validator_method(
+                    member,
+                    type_arguments,
+                    ValidatingFunction::Parse,
+                );
             }
             Some(_) => {
                 b"JSON.parse<T> from \"bun\" can only be called: JSON.parse<User>(text). It can't be assigned or passed as an argument"
@@ -7336,7 +7340,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let text: &[u8] = &self.source.contents;
         let type_arguments = skip_blanks_and_comments(text, name_end as u32);
         if text.get(type_arguments as usize) == Some(&b'<') {
-            return self.validator_of(callee.loc, type_arguments, ValidatingFunction::Validate);
+            return self.create_validator_method(
+                callee.loc,
+                type_arguments,
+                ValidatingFunction::Validate,
+            );
         }
         self.log().add_error(
             Some(self.source),
@@ -7365,10 +7373,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.validation_plans.as_ref()?.as_ref()
     }
 
-    /// `(validator ??= globalThis.Bun.JSON.validatorOfPlan(kind, plan))`: the plan of `T` stands in the text of
-    /// the module, and the validator is made of it when the call is first reached. `None`, behind an error:
-    /// nobody knows `T`.
-    fn validator_of(
+    /// Returns `(validator ??= new Bun.Validator(schema)).parse`, or `.validate`: the callee that replaces
+    /// `JSON.parse<T>` or `validate<T>`. `schema` is the JSON Schema of `T`. `validator` is a variable of the
+    /// module, so the validator is created when the call first runs. Returns `None` after logging an error.
+    fn create_validator_method(
         &mut self,
         loc: bun_ast::Loc,
         type_arguments: u32,
@@ -7384,12 +7392,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let errors_before = self.log().errors;
         let type_argument = skip_blanks_and_comments(&self.source.contents, type_arguments + 1);
-        let arena = self.arena;
-        let plan: Option<&'a [u8]> = (self.ensure_validation_plans())
+        let schema: Option<Json> = (self.ensure_validation_plans())
             .and_then(|plans| plans.find(type_argument))
             .filter(|call| call.function == function)
-            .map(|call| &*arena.alloc_slice_copy(&call.plan));
-        let Some(plan) = plan else {
+            .map(|call| call.schema.clone());
+        let Some(schema) = schema else {
             // One error for the file is enough where it says what is wrong with this call.
             if self.log().errors == errors_before && !self.has_refused_validation() {
                 self.log().add_error(
@@ -7400,6 +7407,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             return None;
         };
+        let bun = self.find_bun_object(loc)?;
 
         let name: &'a [u8] = if self.will_use_renamer() {
             b"validator"
@@ -7414,48 +7422,117 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.validator_variables.push(variable);
         self.record_usage(variable);
 
-        let global = self.find_symbol(loc, b"globalThis").ok()?.r#ref;
-        let mut maker = Expr::init_identifier(global, loc);
-        for name in [&b"Bun"[..], b"JSON", b"validatorOfPlan"] {
-            maker = self.new_expr(
-                E::Dot {
-                    target: maker,
-                    name: name.into(),
-                    name_loc: loc,
-                    ..Default::default()
-                },
-                loc,
-            );
-        }
-        let kind = match function {
-            ValidatingFunction::Parse => 0.0,
-            ValidatingFunction::Validate => 1.0,
-        };
-        let kind = self.new_expr(E::Number::new(kind), loc);
-        let plan = self.new_expr(
-            E::String {
-                data: plan.into(),
+        let class = self.new_dot(bun, b"Validator", loc);
+        let schema = self.json_to_expr(&schema, loc);
+        let created = self.new_expr(
+            E::New {
+                target: class,
+                args: ExprNodeList::init_one(schema),
                 ..Default::default()
             },
             loc,
         );
-        let args = ExprNodeList::from_arena_slice(self.arena.alloc_slice_copy(&[kind, plan]));
-        let made = self.new_expr(
-            E::Call {
-                target: maker,
-                args,
-                ..Default::default()
-            },
-            loc,
-        );
-        Some(self.new_expr(
+        let validator = self.new_expr(
             E::Binary {
                 op: js_ast::op::Code::BinNullishCoalescingAssign,
                 left: Expr::init_identifier(variable, loc),
-                right: made,
+                right: created,
             },
             loc,
-        ))
+        );
+        let method: &'static [u8] = match function {
+            ValidatingFunction::Parse => b"parse",
+            ValidatingFunction::Validate => b"validate",
+        };
+        Some(self.new_dot(validator, method, loc))
+    }
+
+    fn new_dot(&mut self, target: Expr, name: &'static [u8], loc: bun_ast::Loc) -> Expr {
+        self.new_expr(
+            E::Dot {
+                target,
+                name: name.into(),
+                name_loc: loc,
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// True if `name` refers to the global here: no declaration and no `with` statement can shadow it.
+    fn is_global_name(&mut self, loc: bun_ast::Loc, name: &'a [u8]) -> bool {
+        let Ok(found) = self.find_symbol_with_record_usage::<false>(loc, name) else {
+            return false;
+        };
+        let symbol = found.r#ref;
+        !found.is_inside_with_scope
+            && (symbol.is_empty()
+                || self.symbols[symbol.inner_index() as usize].kind
+                    == js_ast::symbol::Kind::Unbound)
+    }
+
+    /// Returns `Bun`, or `globalThis.Bun` where the file shadows `Bun`. Returns `None` after logging an error.
+    fn find_bun_object(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
+        if self.is_global_name(loc, b"Bun") {
+            let bun = self.find_symbol(loc, b"Bun").ok()?.r#ref;
+            return Some(Expr::init_identifier(bun, loc));
+        }
+        if self.is_global_name(loc, b"globalThis") {
+            let global = self.find_symbol(loc, b"globalThis").ok()?.r#ref;
+            return Some(self.new_dot(Expr::init_identifier(global, loc), b"Bun", loc));
+        }
+        self.log().add_error(
+            Some(self.source),
+            loc,
+            b"JSON.parse<T>() from \"bun\" and validate<T>() need the global \"Bun\", but \"Bun\" and \"globalThis\" are both shadowed here",
+        );
+        None
+    }
+
+    fn json_string_to_expr(&mut self, text: &[u8], loc: bun_ast::Loc) -> Expr {
+        let string = if strings::is_all_ascii(text) {
+            E::String::init(self.arena.alloc_slice_copy(text))
+        } else {
+            // UTF-16 keeps lone surrogates.
+            E::String::init_utf16(self.arena.alloc_slice_copy(&strings::wtf8_to_utf16(text)))
+        };
+        self.new_expr(string, loc)
+    }
+
+    /// The nesting of `value` is bounded by whoever made it.
+    fn json_to_expr(&mut self, value: &Json, loc: bun_ast::Loc) -> Expr {
+        match value {
+            Json::Null => self.new_expr(E::Null {}, loc),
+            Json::Boolean(value) => self.new_expr(E::Boolean { value: *value }, loc),
+            Json::Number(value) => self.new_expr(E::Number::new(*value), loc),
+            Json::String(text) => self.json_string_to_expr(text, loc),
+            Json::Array(values) => {
+                let mut items = ExprNodeList::init_capacity(values.len());
+                for value in values {
+                    items.append_assume_capacity(self.json_to_expr(value, loc));
+                }
+                self.new_expr(
+                    E::Array {
+                        items,
+                        is_single_line: true,
+                        ..Default::default()
+                    },
+                    loc,
+                )
+            }
+            Json::Object(members) => {
+                let mut object = E::Object {
+                    is_single_line: true,
+                    ..Default::default()
+                };
+                for (key, value) in members {
+                    let key = self.json_string_to_expr(key, loc);
+                    // This writes `["__proto__"]: value`, which defines a property like any other key.
+                    object.append_property(key, self.json_to_expr(value, loc));
+                }
+                self.new_expr(object, loc)
+            }
+        }
     }
 
     fn has_refused_validation(&self) -> bool {

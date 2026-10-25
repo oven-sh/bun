@@ -10,62 +10,62 @@ JSON of bun takes {"a":1}
 Bun.JSON takes {"a":1}
 JSON of bun, a spread of a literal takes {"a":1}
 JSON of bun, a spread of a list that is kept takes {"a":1}
-JSON refuses with TypeError
-globalThis.JSON refuses with TypeError
-an optional call refuses with TypeError
-a key in brackets refuses with TypeError
-a reviver refuses with TypeError
-in tail position refuses with TypeError
-a spread of a literal refuses with TypeError
-a spread of a list that is kept refuses with TypeError
+JSON takes {"a":"text"}
+globalThis.JSON takes {"a":"text"}
+an optional call takes {"a":"text"}
+a key in brackets takes {"a":"text"}
+a reviver takes {"a":"text"}
+in tail position takes {"a":"text"}
+a spread of a literal takes {"a":"text"}
+a spread of a list that is kept takes {"a":"text"}
 JSON of bun refuses with TypeError
 Bun.JSON refuses with TypeError
 JSON of bun, a spread of a literal refuses with TypeError
 JSON of bun, a spread of a list that is kept refuses with TypeError
-JSON refuses with TypeError
-globalThis.JSON refuses with TypeError
-an optional call refuses with TypeError
-a key in brackets refuses with TypeError
-a reviver refuses with TypeError
-in tail position refuses with TypeError
-a spread of a literal refuses with TypeError
-a spread of a list that is kept refuses with TypeError
+JSON takes []
+globalThis.JSON takes []
+an optional call takes []
+a key in brackets takes []
+a reviver takes []
+in tail position takes []
+a spread of a literal takes []
+a spread of a list that is kept takes []
 JSON of bun refuses with TypeError
 Bun.JSON refuses with TypeError
 JSON of bun, a spread of a literal refuses with TypeError
 JSON of bun, a spread of a list that is kept refuses with TypeError
-JSON refuses with TypeError
-globalThis.JSON refuses with TypeError
-an optional call refuses with TypeError
-a key in brackets refuses with TypeError
-a reviver refuses with TypeError
-in tail position refuses with TypeError
-a spread of a literal refuses with TypeError
-a spread of a list that is kept refuses with TypeError
+JSON takes [1]
+globalThis.JSON takes [1]
+an optional call takes [1]
+a key in brackets takes [1]
+a reviver takes [1]
+in tail position takes [1]
+a spread of a literal takes [1]
+a spread of a list that is kept takes [1]
 JSON of bun takes {"a":1}
 Bun.JSON takes {"a":1}
 JSON of bun, a spread of a literal takes {"a":1}
 JSON of bun, a spread of a list that is kept takes {"a":1}
-JSON refuses with TypeError
-globalThis.JSON refuses with TypeError
-an optional call refuses with TypeError
-a key in brackets refuses with TypeError
-a reviver refuses with TypeError
-in tail position refuses with TypeError
-a spread of a literal refuses with TypeError
-a spread of a list that is kept refuses with TypeError
+JSON takes [1]
+globalThis.JSON takes [1]
+an optional call takes [1]
+a key in brackets takes [1]
+a reviver takes [1]
+in tail position takes [1]
+a spread of a literal takes [1]
+a spread of a list that is kept takes [1]
 JSON of bun refuses with TypeError
 Bun.JSON refuses with TypeError
 JSON of bun, a spread of a literal refuses with TypeError
 JSON of bun, a spread of a list that is kept refuses with TypeError
-JSON refuses with TypeError
-globalThis.JSON refuses with TypeError
-an optional call refuses with TypeError
-a key in brackets refuses with TypeError
-a reviver refuses with TypeError
-in tail position refuses with TypeError
-a spread of a literal refuses with TypeError
-a spread of a list that is kept refuses with TypeError
+JSON takes [1]
+globalThis.JSON takes [1]
+an optional call takes [1]
+a key in brackets takes [1]
+a reviver takes [1]
+in tail position takes [1]
+a spread of a literal takes [1]
+a spread of a list that is kept takes [1]
 JSON of bun refuses with TypeError
 Bun.JSON refuses with TypeError
 JSON of bun, a spread of a literal refuses with TypeError

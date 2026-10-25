@@ -54,7 +54,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--sourcemap" type="string" default="none">
-  Generate source maps. One of <code>linked</code>, <code>inline</code>, <code>external</code>, or <code>none</code>
+  Generate source maps. One of <code>linked</code>, <code>inline</code>, <code>external</code>, or <code>none</code>.
+  With <code>--aot</code>, only <code>external</code> has an effect: it's the same as <code>--obfuscate</code>
 </ParamField>
 
 <ParamField path="--banner" type="string">
@@ -250,7 +251,7 @@ bun build <entry points>
 
 <ParamField path="--obfuscate" type="boolean">
   With <code>--aot</code>: strip function names and source locations from the executable and write them to{" "}
-  <code>&lt;outfile&gt;.map</code>
+  <code>&lt;outfile&gt;.map</code>. Same as <code>--sourcemap=external</code>
 </ParamField>
 
 <ParamField path="--trim" type="boolean">

@@ -412,7 +412,8 @@ class Judge {
   readToEnd(copy: any): void { if (isObject(copy) && this.unread.has(copy)) for (let i = copy.length, length = this.lengthOf(copy); i < length; i++) this.read(copy, i); }
   held(holder: any, key: any, d: D): any {
     const value = holder[key];
-    if (!isObject(value) || this.copies.has(value) || (!describesClass(d, true) && !describesClass(d, false))) return value;
+    // A function is no plain object: no type that describes members takes it, so it is not copied.
+    if (!isObject(value) || typeof value === "function" || this.copies.has(value) || (!describesClass(d, true) && !describesClass(d, false))) return value;
     const isArray = Array.isArray(value);
     if (!describesClass(d, isArray)) return value;
     const copy = isArray ? [] : spread(value);
@@ -455,12 +456,12 @@ class Judge {
         return true;
       }
       case "record": {
-        if (!isObject(value) || Array.isArray(value)) return false;
+        if (!isObject(value) || typeof value === "function" || Array.isArray(value)) return false;
         for (const name of Object.keys(value)) if (!this.accepts(d.e, value, name)) return false;
         return true;
       }
       case "object": {
-        if (!isObject(value) || Array.isArray(value)) return false;
+        if (!isObject(value) || typeof value === "function" || Array.isArray(value)) return false;
         for (const { key: name, optional, d: held } of d.ms) {
           const has = Object.prototype.hasOwnProperty.call(value, name);
           if (!has && !optional) return false;

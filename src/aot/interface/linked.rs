@@ -60,7 +60,7 @@ linked_functions! {
     pub fn bun_aot_write_untyped_note(statistics: &Statistics, out: &mut Vec<u8>);
     pub fn bun_aot_collect_report_entries(input: &ReportInput<'_>, kinds: ExplainSet) -> Vec<ReportEntry>;
     pub fn bun_aot_report_entries_to_messages(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<ReportMessage>;
-    pub fn bun_aot_write_obfuscation_map(engine: &EngineResult, names: &ProgramNames, texts: &SourceTexts, file_name: &[u8]) -> Vec<u8>;
+    pub fn bun_aot_write_obfuscation_map(engine: &EngineResult, names: &ProgramNames, texts: &SourceTexts, file_name: &[u8], debug_id: Option<&[u8]>) -> Vec<u8>;
     pub fn bun_aot_write_build_report(input: &ReportInput<'_>, detail: ReportDetail, build_id: Option<&[u8]>) -> Vec<u8>;
     pub fn bun_aot_write_registry() -> Vec<u8>;
     pub fn bun_aot_unlinked_named_values<'a, 's>(files: &'a Files<'s>, atoms: &Interner<'s>) -> Box<dyn NamedValues + 'a>;

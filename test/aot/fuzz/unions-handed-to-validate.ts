@@ -10,7 +10,7 @@
 //
 // The program judges each answer by the value itself. It has a predicate, written from the documentation, that looks at the value and copies nothing, and it prints a line for each answer that does not hold:
 //   the value is accepted if and only if the predicate says so   .   what comes back has, wherever the accepting member describes it, new objects and lists with the members of the value in their order
-//   wherever it does not, the very object that went in   .   no new object is in two places   .   no member, element or length is read twice in one place   .   nothing but a TypeError with issues or a RangeError is thrown
+//   wherever it does not, the very object that went in   .   no new object is in two places   .   no member, element or length is read twice in one place   .   nothing but a TypeError with issues is thrown, or a RangeError for a very long list
 // and a last line with the totals.
 //
 //   bun test/aot/fuzz/unions-handed-to-validate.ts <seed> <number of types>     prints the program; the program takes [values for each type] [seed of the values] [only this type]
@@ -303,7 +303,7 @@ function accepts(described: D, v: any): boolean {
   const d = resolve(described);
   switch (d.k) {
     case "unknown": return true;
-    case "anyobject": return isObject(v);
+    case "anyobject": if (typeof v === "function") throw new Unsure(); return isObject(v);
     case "undefined": return v === undefined;
     case "null": return v === null;
     case "boolean": return typeof v === "boolean";
@@ -547,6 +547,11 @@ function newPartsAreInOnePlace(r: any, parts: Set<object>, seen: Set<object>): b
   seen.add(r);
   return Reflect.ownKeys(r).every(key => key === "length" || newPartsAreInOnePlace(r[key], parts, seen));
 }
+function holdsLongList(v: any, seen: Set<object>): boolean {
+  if (!isObject(v) || seen.has(v)) return false;
+  seen.add(v);
+  return isLong(v) || (isOrdinary(v) && Object.keys(v).some(key => holdsLongList(v[key], seen)));
+}
 function judge(one: Case, seed: number, way: string, v: any, verdict: boolean | undefined, run: () => any, image: Image, parts: Set<object>, reads?: Map<string, number>): void {
   pairs++;
   let result: any, threw: any, isAccepted = false;
@@ -557,7 +562,7 @@ function judge(one: Case, seed: number, way: string, v: any, verdict: boolean | 
   if (performance.now() - started > 5000) fail("an answer within five seconds", one, seed, way, v, Math.round(performance.now() - started) + " ms");
   if (!isAccepted) {
     refused++;
-    if (threw instanceof RangeError) return;
+    if (threw instanceof RangeError) return holdsLongList(v, new Set()) ? undefined : fail("only a value with a very long list gets a RangeError", one, seed, way, v, "threw " + String(threw));
     if (!(threw instanceof TypeError) || !Array.isArray((threw as any).issues) || (threw as any).issues.length === 0) return fail("a refusal is a TypeError with issues", one, seed, way, v, "threw " + String(threw));
     if (verdict === true) fail("a value of the type is accepted", one, seed, way, v, "refused: " + threw.message);
     return;
@@ -596,6 +601,12 @@ for (const one of cases) {
     const original = make(one.d, seed);
     let verdict: boolean | undefined;
     try { verdict = accepts(one.d, original); } catch (e) { if (!(e instanceof Unsure) && !(e instanceof RangeError)) throw e; unsure++; }
+    if (isText(original, new Set())) {
+      const text = JSON.stringify(original);
+      judge(one, seed, "text", original, verdict, () => one.parse(text), undefined, new Set());
+      judge(one, seed, "text with escaped names", original, verdict, () => one.parse(escaped(text)), undefined, new Set());
+      judge(one, seed, "text with spaces", original, verdict, () => one.parse(JSON.stringify(original, null, 1)), undefined, new Set());
+    }
     for (const way of ways) {
       const twin = make(one.d, seed);
       state = seed ^ 0x5bd1e995;
@@ -605,12 +616,6 @@ for (const one of cases) {
       if (everyObjectHasASymbol) try { verdictSo = accepts(one.d, original); } catch (e) { if (!(e instanceof Unsure) && !(e instanceof RangeError)) throw e; verdictSo = undefined; }
       judge(one, seed, way.name, original, verdictSo, () => one.take(dressed.value), dressed.image, dressed.parts, dressed.reads);
       everyObjectHasASymbol = false;
-    }
-    if (isText(original, new Set())) {
-      const text = JSON.stringify(original);
-      judge(one, seed, "text", original, verdict, () => one.parse(text), undefined, new Set());
-      judge(one, seed, "text with escaped names", original, verdict, () => one.parse(escaped(text)), undefined, new Set());
-      judge(one, seed, "text with spaces", original, verdict, () => one.parse(JSON.stringify(original, null, 1)), undefined, new Set());
     }
   }
 }

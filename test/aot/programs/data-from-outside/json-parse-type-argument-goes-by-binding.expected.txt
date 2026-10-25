@@ -1,4 +1,4 @@
-global "TypeError"
+of bun "TypeError"
 no argument {"id":"one"}
 cast {"id":"one"}
 annotation {"id":"one"}
@@ -7,6 +7,6 @@ unknown {"id":"one"}
 parameter "theirs {\"id\":\"one\"}"
 variable "mine {\"id\":\"one\"}"
 parameter, an object {"theirs":"{\"id\":\"one\"}"}
-value "TypeError with issues"
+value {"id":"one"}
 globalThis {"id":"one"}
 own object {"id":"one"}

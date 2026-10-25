@@ -10,14 +10,14 @@ use super::interop::{ImportPhase, RequireResult};
 use crate::builtins::table::MemberLookup;
 use crate::builtins::{
     BuiltinId, BuiltinNames, Intrinsic, ModuleExport, Platforms, Resolved, RuntimeModule,
-    find_module_export, named_value_of, prototype_operation_of, table,
+    find_frozen_value, find_module_export, named_value_of, prototype_operation_of, table,
 };
 use crate::load::Sources;
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Bound, LinkedBinding, LoadedValue, NamespaceReferent, ReferentContext, StaticReferent,
-    SymbolId, export_referent, static_referent,
+    Bound, LinkedBinding, LoadedValue, NamespaceReferent, ReferentContext, StaticInitializer,
+    StaticReferent, SymbolId, export_referent, static_initializer, static_referent,
 };
 use bun_sema::check::aot::{ClassDeclaration, NamedValue, NamedValues, PrototypeOperation};
 use bun_sema::hir::{ExprId, ExprKind, File};
@@ -136,6 +136,14 @@ impl NamedValues for LinkedProject<'_, '_> {
     fn find_library_export(&self, specifier: Atom, name: Atom) -> Option<ClassDeclaration> {
         let module = table::module_by_specifier(self.files.atoms.bytes(specifier))?;
         self.library?.find_declaration(module, Some(name))
+    }
+
+    fn find_initializer(&self, file: FileId, expression: ExprId) -> Option<StaticInitializer> {
+        static_initializer(self, file, expression)
+    }
+
+    fn find_frozen_value(&self, file: FileId, expression: ExprId) -> Option<ExprId> {
+        find_frozen_value(self, file, expression)
     }
 }
 

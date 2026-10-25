@@ -1,21 +1,21 @@
-n must be number, received string | must be number, received string
-value must be number, received string | must be number, received string
-[0] must be number, received string | must be number, received string
-["a-b"][0].c must be number, received string | must be number, received string
-n must be number, received string (and 1 more) | must be number, received string
-n must be >=1 | must be >=1
-n must be <=1 | must be <=1
-s must have >=2 characters | must have >=2 characters
-s must have <=1 items | must have <=1 items
-s must match pattern /^a+$/ | must match pattern /^a+$/
-s must be email | must be email
-n must be a multiple of 2 | must be a multiple of 2
+Expected n to be a number, received string | Expected n to be a number, received string
+Expected value to be a number, received string | Expected value to be a number, received string
+Expected [0] to be a number, received string | Expected [0] to be a number, received string
+Expected ["a-b"][0].c to be a number, received string | Expected ["a-b"][0].c to be a number, received string
+Expected n to be a number, received string (and 1 more) | Expected n to be a number, received string
+Expected n to be at least 1 | Expected n to be at least 1
+Expected n to be at most 1 | Expected n to be at most 1
+Expected s to have at least 2 characters | Expected s to have at least 2 characters
+Expected s to have at most 1 item | Expected s to have at most 1 item
+Expected s to match /^a+$/ | Expected s to match /^a+$/
+Expected s to be a valid email address | Expected s to be a valid email address
+Expected n to be a multiple of 2 | Expected n to be a multiple of 2
 my own words (at n) | my own words
 must be my own words (at n) | must be my own words
 n: my own words (at n) | n: my own words
 my own words (at n, and 1 more) | my own words
-value must not have key "b" | must not have key "b"
-o must not have key "b" | must not have key "b"
+Unknown property b | Unknown property b
+Unknown property o.b | Unknown property o.b
 my own words | my own words
 my own words (and 1 more) | my own words
 accepted {"n":1}

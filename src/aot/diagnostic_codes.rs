@@ -38,6 +38,10 @@ diagnostic_codes! {
     LegacyValidation 100107..=100107 {
         UnsupportedValidationType = 100107, Error, "{0}<{1}>() cannot validate '{2}'. Only types that JSON can represent can be validated.";
     }
+    Validation 100115..=100119 {
+        RefusedValidationRule = 100115, Error, "{0}() cannot check '{1}', so it cannot validate this type. A rule that cannot be checked is never skipped.";
+        RuleBesideNullish = 100116, Error, "'{0}' does not accept null or undefined, because a rule of Schema cannot stand beside them in an intersection. Write them outside of it: (string & Schema.MinLength<1>) | null";
+    }
     Build 100050..=100099 {
         UnsupportedOption = 100050, Error, "--aot does not support {0}";
         MacroArgumentNotConstant = 100051, Error, "This macro argument isn't known at build time";
@@ -106,8 +110,10 @@ diagnostic_codes! {
         JsxKeyIgnored = 100510, Warning, "\"key\" prop ignored. Must be a string, number or symbol.";
         JsxKeyAfterSpread = 100511, Warning, "\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.";
         JsonFromBunIsExported = 100512, Error, "JSON from \"bun\" can't be exported. Import it in each file that uses it";
-        TypedParseCalleeIsNotResolved = 100514, Warning, "This call has the type of JSON.parse<T>(), but the compiler can't see what it calls. If that's parse of the JSON from \"bun\", the call throws at run time. Name that JSON in this file and call JSON.parse<T>(text) on it";
+        TypedParseCalleeIsNotResolved = 100514, Warning, "This call is declared as JSON.parse from \"bun\", but the compiler can't tell which function it calls. If it's that one, the call throws at run time. If it's another function, its result is validated. Import JSON from \"bun\" in this file and call JSON.parse<User>(text) directly";
         InvalidRegExpFlags = 100515, Error, "Invalid flags \"{0}\" in regular expression";
+        ValidatorSchemaIsNotRead = 100516, Error, "{0} is compiled from its schema, and the build can't read {1} here. Write the schema as a literal, a const that holds one, or an imported JSON file";
+        ValidatorSchemaIsNotCompiled = 100517, Error, "{0} can't compile this schema: {1}";
         ValidationTypeIsAny = 100518, Error, "'{0}' is any here, so there is no type to validate against. To skip validation, write any itself";
         TypedParseReviverWithDefault = 100520, Error, "JSON.parse<{0}>() can't take a second argument, because {0} uses Schema.Default. What a reviver returns is returned as it is, so nothing would be filled in. Write validate<{0}>(JSON.parse(text, reviver))";
         TypedParseIsNotCalled = 100521, Error, "JSON.parse<{0}> only validates where it is called: JSON.parse<{0}>(text). Kept in a variable or passed on, it would parse without validating";

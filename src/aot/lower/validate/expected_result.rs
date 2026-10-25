@@ -6,6 +6,7 @@ use bun_sema::util::SharedSort;
 
 use super::nodes::validation_nodes;
 use super::rules::has_default;
+use super::schema_type_argument::shows_schemas_of_type_argument;
 use super::{ValidatedFile, ValidationError};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, BuiltinName, MemberLookup};
@@ -144,6 +145,12 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn calls_parse_of_bun(&self, callee: ExprId) -> bool {
         let callee = self.skip_type_syntax(callee);
         self.builtins.builtin_of_expression(callee) == Some(BuiltinId::BunJSONParse)
+    }
+
+    pub(in crate::lower) fn calls_validating_function(&self, callee: ExprId) -> bool {
+        let callee = self.skip_type_syntax(callee);
+        let resolved = self.builtins.builtin_of_expression(callee);
+        resolved.and_then(find_validating_function).is_some()
     }
 
     pub(super) fn result_type(&mut self, ty: CheckerTypeId, position: u32) -> TypeId {
@@ -297,8 +304,17 @@ pub(super) trait FindsValidatedResults<'c, 'p: 'c, 's: 'p>:
             return None;
         }
         let position = self.hir()[call].pos;
-        let written = self.hir().ids(self.hir().list_at(site.type_args)).next()?;
-        let expected = match validation_nodes(self, ty, written, position) {
+        let written = self.hir().ids(self.hir().list_at(site.type_args)).next();
+        let nodes = match written {
+            Some(written) => validation_nodes(self, ty, written, position),
+            None => Err(ValidationError::GaveUp(GaveUp::Unresolved)),
+        };
+        if let (Ok(_), Some(written)) = (&nodes, written)
+            && !shows_schemas_of_type_argument(self, call, written, function)
+        {
+            return None;
+        }
+        let expected = match nodes {
             // What a reviver returns is handed on as it is, and a member that is left out would stay left out.
             Ok(nodes)
                 if function == ValidatingFunction::Parse
@@ -380,6 +396,11 @@ pub(super) trait FindsValidatedResults<'c, 'p: 'c, 's: 'p>:
             ValidationError::GaveUp(GaveUp::ErrorType) => {
                 let written = self.find_type_text(call, None);
                 self.report_at(call, Code::ValidationTypeIsAny, &[written.as_slice()]);
+                return;
+            }
+            ValidationError::Refused { described } => {
+                let arguments = [callee_text(function), described.as_slice()];
+                self.report_at(call, Code::RefusedValidationRule, &arguments);
                 return;
             }
             ValidationError::Unsupported { described } => Some(described.as_slice()),

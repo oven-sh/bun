@@ -1,6 +1,7 @@
 use super::{AnythingReason, ShapeKind, TupleElement, TupleElementKind, TypeShape};
 use crate::check::aot::answers::GaveUp;
 use crate::check::aot::queries::Queries;
+use crate::check::aot::schema_constraints::SchemaPart;
 use crate::check::aot::trust::Trust;
 use crate::program::Sym;
 use crate::types::{ElemFlags, EnumValue, Intrinsic, TypeData, TypeId, UniqueSymbolDeclaration};
@@ -130,11 +131,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             TypeData::Tuple {
                 flags, readonly, ..
             } => self.shape_of_tuple(ty, flags, *readonly),
-            // `{} & Schema.Strict` is `Schema.Strict` to the checker.
-            TypeData::Anon { .. } if self.is_schema_part(ty) => {
-                return self.walk_intersection(ty, &[ty]);
-            }
-            TypeData::Anon { origin, .. } => self.shape_of_anonymous_type(ty, *origin),
+            TypeData::Anon { origin, .. } => match self.schema_part(ty)? {
+                SchemaPart::NotSchema | SchemaPart::Int32Tag => {
+                    self.shape_of_anonymous_type(ty, *origin)
+                }
+                SchemaPart::Alias(alias, constraint) => {
+                    self.shape_of_aliases_alone(alias, &[constraint])?
+                }
+            },
             TypeData::Fns { .. } | TypeData::Synth(_) | TypeData::ReverseMapped { .. } => {
                 self.shape_of_object_type(ty)
             }

@@ -2,12 +2,15 @@
 pub(super) mod tests;
 
 use bun_sema::bind::{Binding, Parent, SymbolId};
-use bun_sema::hir::{ExportSpecId, ExprId, ExprKind, NodeData};
+use bun_sema::check::aot::ShapeKind;
+use bun_sema::hir::{ExportSpecId, ExprId, ExprKind, NodeData, TypeNodeId, TypeNodeKind};
+use smallvec::SmallVec;
 
 use super::expected_result::{ValidatingFunction, find_validating_function};
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
-use crate::lower::FileLowering;
+use crate::diagnostics::Span;
+use crate::lower::{CheckerTypeId, FileLowering};
 use crate::modules::ImportBinding;
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -23,6 +26,48 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         if mentions(BuiltinId::BunJSONParse) {
             self.report_parsers_that_are_not_called();
+        }
+        self.report_rules_beside_nullish();
+        if mentions(BuiltinId::JSONParse) || mentions(BuiltinId::BunJSONParse) {
+            self.report_parsers_that_are_not_called();
+        }
+    }
+
+    fn admits_nullish(&mut self, ty: CheckerTypeId) -> bool {
+        self.queries.without_nullish(ty) != Ok(ty)
+    }
+
+    fn says_rule(&mut self, ty: CheckerTypeId) -> bool {
+        let shape = self.queries.type_shape(ty).map(|shape| shape.kind);
+        matches!(shape, Ok(ShapeKind::Constrained { .. }))
+    }
+
+    // `(null | "") & Schema.Message<"..">` is `"" & Schema.Message<"..">` to the checker, for which `null` beside an object type is `never`. A validator would refuse the `null` that is
+    // written, and accept it under `Schema.Not`. Only the written type still has it.
+    fn report_rules_beside_nullish(&mut self) {
+        let hir = self.hir;
+        for node in (0..hir.types.len() as u32).map(TypeNodeId) {
+            let TypeNodeKind::Intersection(parts) = hir[node].kind else {
+                continue;
+            };
+            let mut types: SmallVec<[CheckerTypeId; 4]> = SmallVec::new();
+            for part in hir.ids(parts) {
+                types.extend(self.queries.written_type(part).written());
+            }
+            let has_nullish = types.iter().any(|&ty| self.admits_nullish(ty));
+            if !has_nullish || !types.iter().any(|&ty| self.says_rule(ty)) {
+                continue;
+            }
+            let (start, end) = (hir[node].pos, hir[node].end);
+            let text = hir.text.get(start as usize..end as usize);
+            let span = Span {
+                file: self.file,
+                start,
+                end,
+            };
+            let arguments = [text.unwrap_or_default()];
+            self.diagnostics
+                .report(Code::RuleBesideNullish, span, &arguments);
         }
     }
 

@@ -273,7 +273,8 @@
               "/bundler/aot-debugging",
               "/bundler/aot-size",
               "/bundler/aot-libraries",
-              "/bundler/aot-troubleshooting"
+              "/bundler/aot-troubleshooting",
+              "/bundler/aot-internals"
             ]
           },
           {

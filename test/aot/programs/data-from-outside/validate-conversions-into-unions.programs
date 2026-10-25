@@ -1467,7 +1467,6 @@ interface Named {
   home: string & Schema.Format<"url">;
   tag: `id-${bigint}`;
   size: `${number}px`;
-  code: number & Schema.Pattern<"^(1)(2)$">;
   either:
     | (string & Schema.Pattern<"^(e+)$">)
     | (string & Schema.Pattern<"^(f+)$">)
@@ -1496,7 +1495,6 @@ function createValid(): any {
     home: "https://example.com/",
     tag: "id-12",
     size: "4px",
-    code: 12,
     either: "ff",
   };
 }
@@ -1528,7 +1526,6 @@ const changes: [string, (value: any) => any][] = [
   ["first", value => ({ ...value, first: "zz" })],
   ["mail", value => ({ ...value, mail: "nobody" })],
   ["tag", value => ({ ...value, tag: "id-x" })],
-  ["code", value => ({ ...value, code: 13 })],
   ["either", value => ({ ...value, either: "gg" })],
   ["deep", value => ({ ...value, either: { deep: "00000000-0000-0000-0000-000000000000" } })],
   ["deep refused", value => ({ ...value, either: { deep: "0" } })],

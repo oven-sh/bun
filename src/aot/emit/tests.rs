@@ -14,7 +14,7 @@ use crate::ir::generated::{
     FunctionFlags, FunctionVisibility, Header, HostRead, ImportPhase, Layout, LayoutKind, LimitId,
     MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest, ModuleRequestKind, ProgramList,
     RequiredName, RuntimeFunctionEntry, SCHEMA_HASH, StaticField, SyntheticExport, TemplatePart,
-    TemplatePlaceholder, TypeSite, TypeSiteKind, UndeclaredMembers, ValidatedPrimitive,
+    TemplatePlaceholder, TextFormat, TypeSite, TypeSiteKind, UndeclaredMembers, ValidatedPrimitive,
     ValidationMember, ValidationNode, ValidationRule, ValidationShape, Variable, WebAssemblyModule,
 };
 use crate::ir::testing::{build_function, function_with_parameters};
@@ -103,21 +103,75 @@ fn create_expected_result(names: &Names) -> ExpectedResult {
             primitive: ValidatedPrimitive::String,
         },
         ty: TypeTable::STRING,
-        rules: vec![template, ValidationRule::MinimumLength { length: 1 }],
+        rules: vec![
+            template,
+            ValidationRule::MinimumLength { length: 1 },
+            ValidationRule::Pattern {
+                source: names.text,
+                is_unicode: true,
+            },
+            ValidationRule::Pattern {
+                source: names.name,
+                is_unicode: false,
+            },
+        ],
         text: None,
     };
     let tuple = ValidationNode {
         shape: ValidationShape::Tuple {
             elements: vec![0, 1],
+            required: 1,
+            rest: Some(1),
         },
         ty: TypeTable::ARRAY,
-        ..ValidationNode::default()
+        rules: vec![
+            ValidationRule::UniqueItems,
+            ValidationRule::Contains {
+                node: 1,
+                minimum: 1,
+                maximum: Some(2),
+            },
+        ],
+        text: None,
+    };
+    let unknown = ValidationNode {
+        shape: ValidationShape::Unknown,
+        ty: TypeTable::ANYTHING,
+        rules: vec![
+            ValidationRule::Not { node: 1 },
+            ValidationRule::If {
+                condition: 0,
+                then: 1,
+                otherwise: 2,
+            },
+            ValidationRule::ExactlyOne { nodes: vec![0, 1] },
+            ValidationRule::Every { nodes: vec![1, 2] },
+            ValidationRule::PatternMembers {
+                sources: vec![names.text, names.name],
+                nodes: vec![1, 2],
+            },
+            ValidationRule::MemberNames { node: 1 },
+            ValidationRule::MinimumMembers { count: 1 },
+            ValidationRule::MaximumMembers { count: 2 },
+            ValidationRule::DependentMembers {
+                key: names.name,
+                names: vec![names.text],
+            },
+            ValidationRule::DependentNode {
+                key: names.text,
+                node: 0,
+            },
+            ValidationRule::Format {
+                format: TextFormat::RelativeJsonPointer,
+            },
+        ],
+        text: None,
     };
     ExpectedResult {
         ty: names.object,
         layouts: vec![LAYOUT],
         site: Some(SITE),
-        validation: vec![object, string, tuple],
+        validation: vec![object, string, tuple, unknown],
     }
 }
 

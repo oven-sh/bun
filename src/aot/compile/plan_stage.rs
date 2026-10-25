@@ -3,15 +3,13 @@ use super::load_stage::{find_defined_string, max_computed_candidates};
 use crate::builtins::unlinked_files::UnlinkedFiles;
 use crate::builtins::{BuiltinNames, BuiltinValuePaths, builtin_type_paths};
 use crate::diagnostics::{Diagnostic, LoadMessages, Severity};
-use crate::emit::emit;
-use crate::engine;
-use crate::ir::{Id, run_serially};
+use crate::ir::Id;
 use crate::load::fold_inputs::create_application_fold_inputs;
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::sources::parsed_source;
 use crate::load::typed_packages::TypedPackages;
-use crate::lower::{PlanInputs, PlannedFile, plan_validated_calls};
+use crate::lower::{PlanInputs, PlannedFile, plan_validated_calls, write_json_schema};
 use crate::statistics::{LimitId, Stage};
 use crate::validation_plans::{PlannedValidation, RefusedValidation, ValidationPlans};
 use bun_builtin_sources::Archive;
@@ -138,26 +136,17 @@ impl Build<'_> {
             calls,
             diagnostics,
         } = planned;
-        let texts = match calls.is_empty() {
-            true => Vec::new(),
-            false => {
-                let bytes = emit(program, &run_serially).map_err(|_| Stage::LinkAndEmit)?;
-                engine::write_validation_plans(&bytes)
-            }
-        };
         let mut plans = ValidationPlans {
             calls: Vec::with_capacity(calls.len()),
             refused: diagnostics.iter().filter_map(refuse).collect(),
         };
         for call in calls {
-            // A call without a text is in neither list.
-            if let Some(plan) = texts.get(call.expected.index()) {
-                plans.calls.push(PlannedValidation {
-                    type_argument: call.type_argument,
-                    function: call.function,
-                    plan: plan.clone(),
-                });
-            }
+            let nodes = &program.expected_results[call.expected.index()].validation;
+            plans.calls.push(PlannedValidation {
+                type_argument: call.type_argument,
+                function: call.function,
+                schema: write_json_schema(&program.strings, &program.property_keys, nodes),
+            });
         }
         plans.calls.sort_by_key(|call| call.type_argument);
         Ok(plans)

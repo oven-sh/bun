@@ -1,0 +1,1887 @@
+---
+title: "How bun compile works"
+sidebarTitle: "Internals"
+description: "The compiler behind bun compile, stage by stage: what it asks the type checker, what it may believe about a type, its IR, effects, built-ins, objects, code generation and run time"
+---
+
+import {
+  Pipeline,
+  FactAndPrediction,
+  DeclaredType,
+  Guard,
+  GenericVersion,
+  OperationJourney,
+  EffectsExample,
+  SummaryAtCallSite,
+  BuiltinCall,
+  ValueFlow,
+  ObjectLayout,
+  PropertyCache,
+  ImageAndStart,
+  HeapCage,
+  Trimming,
+} from "/snippets/aot-internals.jsx";
+
+<Warning>
+  Ahead-of-time compilation is experimental. This page describes the implementation, which changes faster than the
+  behavior that the other pages describe.
+</Warning>
+
+This page is for people who want to read the compiler, change it, or find out why it made the code it made. To use [`bun compile`](/bundler/aot), you need none of it.
+
+The compiler lives in two repositories. Paths that start with `src/`, `test/` or `docs/` are in [oven-sh/bun](https://github.com/oven-sh/bun). Paths that start with `aot/` are short for `Source/JavaScriptCore/aot/` in [oven-sh/WebKit](https://github.com/oven-sh/WebKit), Bun's fork of JavaScriptCore.
+
+## The example
+
+One program runs through most of this page.
+
+```ts dot.ts icon="/icons/typescript.svg"
+interface Vec {
+  x: number;
+  y: number;
+}
+
+function dot(a: Vec, b: Vec): number {
+  return a.x * b.x + a.y * b.y;
+}
+
+const unit: Vec = { x: 1, y: 0.5 };
+const message = JSON.parse(process.argv[2] ?? '{"vec":{"x":3,"y":4}}');
+
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += dot(unit, message.vec);
+console.log(sum);
+```
+
+```bash terminal icon="terminal"
+bun compile ./dot.ts && ./dot
+```
+
+```txt
+5000
+```
+
+`dot` takes two `Vec`s. The program makes the first one itself. The second comes out of `JSON.parse`, so TypeScript calls it `any` and lets it through. Those two arguments are the two cases that the whole design turns on.
+
+## The pipeline
+
+<Frame caption="Bun's front end turns source files into one program in IR. JavaScriptCore turns that program into an image. Bun puts the image into a copy of itself.">
+  <Pipeline />
+</Frame>
+
+Nothing is bundled. Each module stays a module, and no JavaScript text is printed at any point. The program goes from syntax trees to IR to machine code.
+
+`src/aot/compile.rs` drives the front end. `run_front_end_for_each_program()` is the order of its stages, and each stage has a file in `src/aot/compile/`.
+
+**Load** (`src/aot/load`). Bun walks the imports from the entry points with the resolver, loaders, macros and `Bun.build` plugins that `bun build` uses, and parses each file once. The tree is the type checker's own, so there's no second parser and no conversion between trees. A build has two projects, `ProjectId::Application` and `ProjectId::Runtime`. The second one is Bun itself: the `node:*` and `bun:*` modules that are written in TypeScript in `src/js`. They're compiled with your program, from source, and only the ones that your program reaches.
+
+**Bind modules** (`src/aot/modules`, `src/sema/fold`). This stage links each ES import to the variable it names, works out which names a CommonJS file exports, and fixes the order of evaluation. It also folds what is known about the target, such as `process.platform` and `--define` values. A branch that folding kills is dropped, and a file that only such a branch loads is never checked or compiled.
+
+**Check and lower** (`src/sema`, `src/aot/lower`). Each thread has a type checker of its own and takes one file at a time. It checks the file, then walks the same tree again and writes IR, asking the checker questions as it goes. A type error stops the build. [How it uses the type checker](#how-it-uses-the-type-checker) has the questions.
+
+**Link** (`src/aot/link`). Every file was lowered alone, with its own numbering. Link unites what the files have in common (types, layouts, property keys, strings) and numbers everything once for the whole program.
+
+**Emit** (`src/aot/emit`). The program is written as one block of bytes: a header and a list of sections. The header carries a hash of the schema that both sides were generated from. The engine's reader rejects a program whose hash is not its own, so a front end and an engine from different commits can't misread each other.
+
+The front end then calls `Bun__AOT__compile()`, which is `AOT::compileProgram()` in `aot/image/AOTCompile.h`. It's a function call in the same process, on the same thread pool. `Pipeline::runAllStages()` in `aot/pipeline/AOTPipeline.cpp` is the order from here on.
+
+**Read, type, verify** (`aot/ir`). The reader decodes the bytes. `TypeValues` gives every value a type from the engine's own rules, without taking the front end's word for anything. Each declared type arrives as a request, and a request that the rules can't answer becomes a `Check`. Then the verifier compares every operand and every stored value with the type of the place it goes to.
+
+**Flow** (`aot/valueflow`). One analysis over the whole program finds which allocation sites, closures, built-ins and constants can reach each position. It answers most checks, finds the callees of most calls, and finds what escapes. See [Whole-program value flow](#whole-program-value-flow).
+
+**Optimize** (`aot/passes`, `aot/analysis`). Function passes run on all threads, with whole-program passes between them. This is where a remaining check becomes a test with a slow path, a lookup by name becomes a load from a slot, a call becomes direct and is perhaps inlined, and an allocation that nobody needs goes away.
+
+**Slots and selection** (`aot/place`, `aot/select`). `PlanSlots` decides where each field of each layout lies and in which form. `Select` replaces groups of operations by the forms that the code generator has code for.
+
+**Number and place** (`aot/place`). Layouts get their shape numbers. Everything that compiled code finds by index gets its index: cache slots, statics, table entries, constants.
+
+**Represent** (`aot/represent`). Each value gets a machine representation: `Int32`, `Double`, `Boolean`, `Cell`, `JSValue` and a few more. Conversions go in where a value passes from one to another.
+
+**Generate code** (`aot/codegen`, `aot/stubs`, `b3/`). Each function is translated to B3, JavaScriptCore's low-level SSA IR, and goes from there through Air to machine code. What many functions need, such as a lookup by name, is emitted once as a stub.
+
+**Image** (`aot/image`). Code is laid out, calls are linked, repeated cold sequences are outlined and identical functions are merged. Strings and tables are written as read-only data. The result is an image, and `aot/image/AOTImageFormat.h` says what that is.
+
+**Write the executable** (`src/bundler/aot`, `src/exe_format`, `src/trim`). The executable is a copy of the running `bun`, without the parts that a compiled program can't reach, plus the image in a section of its own. No linker and no toolchain is involved. See [Trimming](#trimming).
+
+## How it uses the type checker
+
+The checker is the one behind [`bun check`](/runtime/check), in `src/sema`. It reports TypeScript's errors, it's written in Rust, and it runs in the same process as the compiler. That's what makes the rest of this section affordable: the compiler asks it something at nearly every expression.
+
+### One producer of types
+
+Only the checker says what a type is. The front end has no inference of its own. It never works out whether two object types are the same, what a generic call returns, or which overload was picked. `src/aot/lower` is a translation directed by syntax, and wherever it needs a type, it asks.
+
+The reason is practical. Two engines that answer the same question about the same value disagree somewhere, and here a disagreement is either a slow path that nobody can explain or a miscompile.
+
+The engine's flow analysis is not a second producer. It doesn't invent types. It takes the positions and types that the checker named, and finds out which of them hold.
+
+### What the front end asks
+
+The interface is `Queries` in `src/sema/check/aot/queries.rs`. These are most of the questions.
+
+| Question                                                                           | For                                                               |
+| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `expression_type`, `parameter_type`, `binding_type`, `return_type`, `written_type` | The type at a position                                            |
+| `type_shape`                                                                       | What a type looks like to a compiler: a `ShapeKind` and a `Trust` |
+| `class_shape`, `object_members`, `index_signatures`                                | The fields of a layout                                            |
+| `member_access`                                                                    | Which declaration `a.b` finds                                     |
+| `resolved_call`                                                                    | Which function and signature a call has                           |
+| `is_assignable`, `can_be_asserted`                                                 | Whether a value can be ill-typed at this edge                     |
+| `predicted_expression_type`                                                        | The checker's best guess where the type says nothing              |
+| `type_identity`, `object_origin`                                                   | Whether two spellings are one type, and where it was written      |
+
+`type_shape` does the heavy lifting. TypeScript's type language is large: conditional types, mapped types, template literals, intersections, `keyof`. The IR's is small. A type in the IR is a set of primitives, an integer range, a set of literal strings, a set of layouts, a set of built-in classes with their contents, and a set of functions. That's `record Type` in `aot/ir/schema/types.def`. The checker evaluates a type all the way down to one of about 25 shapes, and `map_shape()` in `src/aot/lower/types/shape_table.rs` maps the shape. What has no counterpart becomes `anything`, which is always correct.
+
+An answer can also be `GaveUp`: the type is too deep, or its evaluation ran into a limit. The front end then lowers that position as `anything`. A question without an answer costs speed and nothing else.
+
+### Trust
+
+Every shape comes with a `Trust`, from `src/sema/check/aot/trust.rs`. It depends on the file that the declaration is in, not on the type.
+
+```rust src/sema/program/code_graph.rs
+match hir.kind {
+    FileKind::Declaration => FileRole::TypesOnly,
+    FileKind::Json => FileRole::Inferred,
+    FileKind::Ts | FileKind::Tsx if hir.is_js => FileRole::Inferred,
+    FileKind::Ts | FileKind::Tsx => FileRole::Checked,
+}
+```
+
+| The declaration is in                   | Role        | The compiler treats its types as                                                                        |
+| --------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
+| A `.ts` or `.tsx` file that is compiled | `Checked`   | Positions that hold. Every value that arrives is proven to fit, or tested                               |
+| A `.js` file                            | `Inferred`  | Hints. The checker infers types as it does for an editor, and nothing has checked the code against them |
+| A `.d.ts` file                          | `TypesOnly` | Hints. Nothing has checked the file against the code it describes                                       |
+
+In the IR, the difference is one flag on a declared type: `IsExpected`. The last lines of `map_shape()` set it.
+
+```rust src/aot/lower/types/shape_table.rs
+if !shape.trust.is_trusted() {
+    mapped = Mapped::expected(mapped.ty);
+}
+```
+
+A package can move from the third row to the first by shipping typed source that `bun compile` compiles in place of its JavaScript. [Publish a library for `bun compile`](/bundler/aot-libraries) says how.
+
+### What each kind of type becomes
+
+| You write                                                              | The front end sends                                                                                                       |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `number`, `string`, `boolean`, `bigint`, literal types, unions of them | The same sets of primitives                                                                                               |
+| A class, an interface, an object type, an object literal               | A layout: a list of fields, each with a key, a declared type and flags. Object types with the same names share one layout |
+| `T[]`, `Map<K, V>`, `Set<T>`, `Promise<T>`                             | A built-in class with the types of its contents                                                                           |
+| A function type                                                        | A signature. The functions that the program converts to that type are its family                                          |
+| `A \| B` of object types                                               | Both layouts                                                                                                              |
+| `any`, `unknown`, `object`, `{}`, `Function`                           | `anything`, or any object, or any function. These are the loose types, `is_loose()` in `src/aot/lower/convert/edges.rs`   |
+| `T` in `first<T>(list: T[]): T`                                        | One body. `T` is a family of layouts: every type argument that the program passes for it, anywhere                        |
+| `x as T`                                                               | A request for `T` at that point, marked as an assertion. No conversion                                                    |
+| `satisfies`, `as const`, `as any`                                      | Nothing at run time                                                                                                       |
+| `value is T`, a narrowing by `typeof` or `in`                          | The narrowed type as a request. The engine proves it from the test, or tests it                                           |
+
+A type that holds a reference also allows `undefined` and `null`, whatever `strictNullChecks` says. TypeScript lets them in through too many doors (`x!`, an index out of bounds, an uninitialized field) for a test against them to pay.
+
+A _family_ is the closed-world reading of a structural type. An interface doesn't say which objects implement it. But the build sees every conversion that the program performs, so it knows which layouts ever flow into a position of that type. Those layouts are the family, and a test for the type is a test for membership.
+
+Where the type says nothing, `predicted_expression_type` may still say something. In `dot.ts`, `message` is an `any`. The checker sees `message.vec` and predicts an object with a property `vec`. A prediction of this kind only ever sets an expected type, so a wrong one costs a failed guard.
+
+### Decide by binding, never by a name's text
+
+The compiler never concludes anything from what an identifier is called.
+
+```ts
+const JSON = { parse: (text: string) => text.length };
+JSON.parse("[1, 2]"); // 6. Not the built-in
+```
+
+`JSON` here is a `const` of the module. The checker has bound the identifier to that declaration, and the front end asks for the binding. Only an identifier that the checker binds to the global declaration of the built-in is the built-in. The same rule holds for `require`, `module`, `exports`, `eval` and `process`. It holds in minified code, where every variable is called `e`, and for the helpers that a transpiler leaves behind.
+
+It works in the other direction too. `src/aot/builtins/resolve` follows a built-in through the bindings of a file.
+
+```ts
+const { floor } = Math;
+const push = Array.prototype.push;
+push.call(list, floor(2.5)); // compiles to the inline forms of Math.floor and Array.prototype.push
+```
+
+What can't be followed through bindings, the flow analysis follows as a value.
+
+## Soundness: facts and predictions
+
+TypeScript is unsound on purpose. `any`, `as`, `!`, index signatures, `JSON.parse`, bivariant methods and declaration files all let a program call something a `number` when it isn't. A compiler that believed every annotation would read a raw double out of a string. A compiler that believed none would be an interpreter with extra steps.
+
+The rule:
+
+- **A type is a fact about what the program makes.** An object literal, a `new`, the sum of two numbers, the result of a validating parse.
+- **A type is a prediction about what the program receives.** An argument from a caller that the build can't see, data from outside, the result of a function that only has a declaration, an element of a container that untyped code can write.
+
+A fact needs no code. A prediction is tested once, where the value arrives. After a test that passes, the prediction is a fact too.
+
+<Frame caption="The two arguments of dot(unit, message.vec). IR text writes the type of a value as proven ~ expected.">
+  <FactAndPrediction />
+</Frame>
+
+Three promises follow, and every design decision is held against them.
+
+1. A program that runs under `bun run` does the same thing compiled.
+2. Nothing throws, converts or copies at run time because of a type.
+3. What the compiler newly rejects, it rejects at build time, with a message. The exceptions are few and listed in [Compatibility](/bundler/aot-compatibility). The main one is that [built-in objects are locked](#why-built-in-objects-are-locked).
+
+### Two types per value
+
+Every value in the IR has two types (`aot/ir/AOTValue.h`): `type`, which is proven, and `expected`, which is a guess. IR text writes them `proven ~ expected` and leaves out the second where it adds nothing.
+
+The proven type comes from the operation, by the result rule that the schema gives it. The front end has no say in it.
+
+| Operation                       | Result rule in `operations.def` | Proven type                                                  |
+| ------------------------------- | ------------------------------- | ------------------------------------------------------------ |
+| `NewObject layout=L0`           | `allocation(layout)`            | `L0`                                                         |
+| `Double number=0.5`             | `constant`                      | That number                                                  |
+| `Mul a, b`                      | `natural(Arithmetic)`           | `number` if both operands are numbers, else `number\|bigint` |
+| `TypeOf v`                      | `natural(string)`               | `string`                                                     |
+| `PropGet v key="x"`             | `unknown => declared(key)`      | `anything`. Expected: the type of the field                  |
+| `Call f, ..`                    | `unknown`                       | `anything`                                                   |
+| `GetModuleVariable variable=g0` | `declared(variable)`            | What the variable is declared to hold                        |
+
+The last row is how facts travel. A typed variable, parameter, result or slot is a _position_. Nothing is written to a position without a proof that it fits, and the verifier checks that. So whoever reads the position gets the type for free.
+
+### From a declared type to a test
+
+This is `dot` as the front end sends it, with some attributes left out. `L0` is the layout of `Vec`, and `@93` is a position in the source.
+
+```txt
+layout L0 name="Vec" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+
+function f1 name="dot" parameters=[{type=undefined|null|L0 site=w2}, {type=undefined|null|L0 site=w3}] results=[{type=number site=w4}] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    Jump -> next b1() @45
+  b1():
+    v2 = PropGet v0 key="x" @93
+    v3 = PropGet v1 key="x" @99
+    v4 = Mul v2, v3 @93
+    v5 = PropGet v0 key="y" @105
+    v6 = PropGet v1 key="y" @111
+    v7 = Mul v5, v6 @105
+    v8 = Add v4, v7 @93
+    v9 = Convert v8 declared={type=number site=w4} @93
+    Return v9 @93
+}
+```
+
+It's a plain translation. `a.x` is a `PropGet`, the same operation that untyped code gets. The types are on the signature and in one `Convert`: a request that the value have the declared type of the result.
+
+The first passes of the engine spell the requests out. Anybody may call a function by value with anything, so `CheckTypesAtEntry` turns the parameters into expectations and puts a `Check` at the entry. `TypeValues` then types every value bottom-up.
+
+```txt
+  b0(v0: anything ~ undefined|null|L0, v1: anything ~ undefined|null|L0):
+    v10: undefined|null|L0 = Check v0 castType=undefined|null|L0 site=w2 @58
+    v11: undefined|null|L0 = Check v1 castType=undefined|null|L0 site=w3 @66
+    Jump -> next b1() @45
+  b1():
+    v2: anything ~ number = PropGet v10 key="x" @93
+    v3: anything ~ number = PropGet v11 key="x" @99
+    v4: number|bigint ~ number = Mul v2, v3 @93
+    ..
+    v8: number|string|bigint ~ number = Add v4, v7 @93
+    v9: number = Check v8 castType=number site=w4 @93
+    Return v9 @93
+```
+
+At this point the engine believes almost nothing. Even `v10.x` is `anything`, although `v10` is a `Vec` and `x` is declared `number`: some code somewhere might delete `x`, or store a string in it through an `any`. This is the sound starting point. Everything after it removes doubt by proof.
+
+<Frame caption="The life of a declared type. Only the amber box in the bottom row costs anything at run time.">
+  <DeclaredType />
+</Frame>
+
+### Flow answers most checks
+
+The flow analysis follows values through the whole program. For each `Check` it knows what can arrive. After `ApplyFlowResults`:
+
+```txt
+  b0(v0: L0, v1: anything ~ undefined|null|L0):
+    v10: L0 = AssumeType v0 castType=undefined|null|L0 @58
+    v11: undefined|null|L0 = Check v1 castType=undefined|null|L0 site=w3 @66
+    Jump -> next b1() @45
+  b1():
+    v2: int[-2147483643, 2147483647] = PropGet v10 key="x" accessSite=10 receivers=[L0] @93
+    v3: int[-2147483643, 2147483647] = PropGet v11 key="x" accessSite=11 @99
+    v4: int|whole = Mul v2, v3 @93
+    v5: fractional = PropGet v10 key="y" accessSite=12 receivers=[L0] @105
+    ..
+    v9: number = AssumeType v8 castType=number @93
+```
+
+- **`a` is proven.** The only call of `dot` passes `unit`, and the only thing that reaches `unit` is the object literal. The check has become an `AssumeType`, which is no code. The parameter is now declared `L0`, without `undefined` and `null`.
+- **`b` is not.** What `message.vec` yields is data from outside. The check stays.
+- **The fields are proven.** No code in the program deletes `x` or `y` of a `Vec`, redefines them, or stores anything but a number. So a read of `x` from an `L0` is a number.
+- **The fields are narrower than declared.** The only `x` that's ever stored is `1`, so `x` is an integer and gets a four-byte slot. That's safe for the same reason: the build has seen every store, and an object that passes the test for `L0` was made by this program.
+- **The result is proven.** Numbers times numbers plus numbers is a number.
+
+Flow has three answers for a check. The third one is the least obvious. Say it sees a value arrive that doesn't fit, like the direct result of `JSON.parse` at a parameter of type `Vec`. A test there would fail in ordinary runs and send every call down the slow path. So the check is dropped and the value continues untyped.
+
+### The guard, the fast path, the slow path
+
+`SplitBehindEntryChecks` and `AddGenericVersion` make three functions of `dot`.
+
+```txt
+function f1 name="dot" role=EntryChecks {
+  b0(v0: L0, v1: anything):
+    v2: boolean = TypeTest v1 testedType=L0 @45
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @45
+  b1(v3: L0):
+    v4: number = CallDirect v0, v3 function=f1240 @45
+    ReturnCall v4 requirement=Allowed @45
+  b2(v5: anything) frequency=Unlikely:
+    v6: number = CallDirect v0, v1 function=f1241 @45
+    ReturnCall v6 requirement=Allowed @45
+}
+function f1240 name="dot" {
+  b0(v0: L0, v1: L0):
+    v2: int[-2147483643, 2147483647] = PropGet v0 key="x" accessSite=10 receivers=[L0] @93
+    v3: int[-2147483643, 2147483647] = PropGet v1 key="x" accessSite=11 @99
+    ..
+}
+function f1241 name="dot" role=GenericVersion {
+  b0(v0: L0, v1: anything ~ undefined|null|L0) frequency=Unlikely:
+    v2: int[-2147483643, 2147483647] = PropGet v0 key="x" accessSite=10 receivers=[L0] @93
+    v3: anything ~ int[-2147483643, 2147483647] = PropGet v1 key="x" accessSite=11 @99
+    v4: number ~ int|whole = Mul v2, v3 @93
+    ..
+}
+```
+
+- **The head** holds the tests and nothing else. It's small, so it's inlined into callers. A caller that has proven its arguments skips it and calls the typed body directly.
+- **The typed body** has no tests. Its parameters are facts.
+- **The generic version** is the same source function with the failed assumption taken out. `b` is `anything` there. `a` is still an `L0`, because that was proven, not tested. The fallback is per value: one ill-typed argument doesn't make the other one slow.
+
+By the end of the pipeline, the head and the typed body have been inlined into the loop. `unit` has dissolved into the constants `1` and `0.5`. `PropGet` on a proven `L0` has become `GetSlot`.
+
+<Frame caption="The loop of dot.ts as testaot print and objdump show it, lightly trimmed. Linux x64.">
+  <Guard />
+</Frame>
+
+The guard is four instructions: is it a cell, and is the 32-bit word at offset 12 the number of the layout. The two reads are two loads, folded into the arithmetic as memory operands. There's no hidden class to compare, no inline cache and no unboxing.
+
+The slow path is an ordinary call.
+
+```txt
+<dot>:                                   ; the generic version
+  mov      edx, dword ptr [rdi + 0x18]   ; a.x: a is proven, so one load
+  mov      rax, rsi
+  mov      r10d, 0x6f3                   ; the number of the key "x"
+  call     GetById(%rax)                 ; b.x: a lookup by name, in a shared stub
+  cvtsi2sd xmm0, edx
+  mov      rsi, rax
+  mov      edx, 0x5
+  call     BinaryWithDouble.Mul          ; a double times anything
+  ..
+```
+
+`BinaryWithDouble.Mul` multiplies a double by a boxed value. If the value is a number, it multiplies. If it's a string or an object, it does what the specification says, `valueOf` and all.
+
+### What happens in this program
+
+The guard fails on all 1000 turns. `message.vec` is an object that `JSON.parse` made, and it doesn't have the layout of `Vec`, even though it has the right properties with the right types. A guard compares the shape word and doesn't look inside. The program prints `5000` anyway, through the generic version.
+
+`--aot-log-type-mismatches` builds an executable that says so.
+
+```bash terminal icon="terminal"
+bun compile --aot-log-type-mismatches ./dot.ts && ./dot
+```
+
+```txt
+[aot] type-mismatch b00255316568 argument dot.ts:6:22 (dot): expected Vec, got untyped object; continued; count 1; from dot.ts:14
+```
+
+That's the honest cost of the design. A prediction that's wrong in shape is slow, even when it's right in spirit. The fix is to turn the prediction into a fact where the data comes in, and [Validation at the boundary](#validation-at-the-boundary) picks the example up again.
+
+### A guard in the middle of a function
+
+Not every check is at an entry. The result of a call through an unknown callee, an element of an array, a field that untyped code can write and an `as` from a loose type are all checked where the value appears.
+
+<Frame caption="What AddGenericVersion does. Its test, aot/tests/passes/add-generic-version.ir, is a good first file to read.">
+  <GenericVersion />
+</Frame>
+
+The failing edge of such a test jumps into a copy of the rest of the function. What has already run isn't run again: the copy takes over the live values as they are. In the copy, a check and an assumed type say nothing, so each operation is compiled in its generic form.
+
+The copy returns to the typed code where every live value passes a test for the type it has there. In a loop, that's normally the next iteration. One odd element in an array of a million costs one slow iteration.
+
+A function has one generic version, however many checks it has. In code that the compiler considers cold, it makes none at all: each use of the unproven value gets a small guard of its own. That's slower per use and much smaller.
+
+The interpreter is never the slow path. Falling back doesn't mean leaving compiled code, rebuilding an interpreter frame or throwing code away, as it does in a JIT. Both paths were compiled at build time, and both stay valid for as long as the process runs.
+
+### Where the tests go
+
+`PlaceTypeTests` handles expected types, the ones that no position enforces. It looks for a stretch of uses of one receiver, puts one test in front of the stretch, and lets all the uses take their fast form under that one proof.
+
+A proof has a lifetime, and the schema says which.
+
+```txt aot/ir/AOTSchema.def
+enum Proof (lasts: ProofLifetime, readsOnlySubject: Bool) {
+    | engine None(Forever, false) TestedType(Forever, false) Truthiness(Forever, false) Equality(Forever, false) IntegerBound(Forever, false)
+    ExactFunction(Forever, false) CaseValue(Forever, false) NotNullish(Forever, false)
+    Shape(Stretch, true) SlotFilled(Stretch, true) NoExtraProperties(Stretch, true) NoFieldOutsideSlot(Stretch, true) BirthFieldsFilled(Stretch, true) NotFrozen(Stretch, true) OwnInstance(Stretch, true)
+    Pristine(Stretch, true) ArrayStorage(Stretch, true) InBounds(Stretch, true) NotThenable(Stretch, false) MemberUnchanged(Stretch, false)
+    ..
+}
+```
+
+`Forever` means that the proof is about the value itself. A value that was a number is a number, and an object never loses its layout. `Stretch` means that the proof is about state that something can change: whether a slot is filled, whether an index is in bounds, whether the object is frozen. Such a proof lasts until an operation whose [effects](#effects) can write that state.
+
+Then the passes that remove tests get to work. `EliminateGuards` folds a test whose condition holds on every path to it. `HoistTestsIntoPredecessors` and `HoistLoopInvariantReads` move work out of loops. `SkipAnsweredEntryChecks` sends a caller straight to the typed body. `TestNarrowerTypesFirst` orders what is left.
+
+### Lies, and what really happens
+
+**A cast.** `as` never converts and never throws. It's a request like any other, marked `illTypedCause=Assertion`.
+
+```ts lie-cast.ts icon="/icons/typescript.svg"
+interface User {
+  id: number;
+  name: string;
+}
+
+const user = JSON.parse('{"id":"7"}') as User;
+console.log(user.id + 1, user.name);
+```
+
+```bash terminal icon="terminal"
+bun compile ./lie-cast.ts && ./lie-cast
+```
+
+```txt
+71 undefined
+```
+
+The object keeps the shape that `JSON.parse` gave it. `user.id` is looked up by name and yields the string. `+` sees a string and concatenates.
+
+**A store behind the type's back.** An object with a fixed layout is still a JavaScript object.
+
+```ts lie-field.ts icon="/icons/typescript.svg"
+class Point {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+}
+
+function lengthSquared(p: Point): number {
+  return p.x * p.x + p.y * p.y;
+}
+
+const p = new Point(3, 4);
+console.log(lengthSquared(p));
+
+(p as any).x = "3";
+(p as any).z = 5;
+delete (p as any).y;
+console.log(lengthSquared(p), Object.keys(p), p instanceof Point);
+```
+
+```bash terminal icon="terminal"
+bun compile ./lie-field.ts && ./lie-field
+```
+
+```txt
+25
+NaN [ "x", "z" ] true
+```
+
+The slot of `x` holds a raw number and can't hold a string. So the store moves the property `x` of this one object out of its slot, into a side table of extra properties, and marks the object's header. `z` goes to the same table. The object keeps its layout and its identity.
+
+The build saw those three statements. So in this program, `lengthSquared` starts with one test of the header that covers all four reads, and has a second path that reads by name. In a program without such statements, the reads are bare loads. [The object model](#the-object-model) has the details.
+
+**A wrong declaration file.**
+
+```js size.js icon="/icons/javascript.svg"
+export function size(path) {
+  return path.length > 3 ? "big" : 1;
+}
+```
+
+```ts size.d.ts icon="/icons/typescript.svg"
+export function size(path: string): number;
+```
+
+```ts lie-dts.ts icon="/icons/typescript.svg"
+import { size } from "./size.js";
+
+function twice(n: number): number {
+  return n * 2;
+}
+
+console.log(twice(size("a")), twice(size("abcdef")));
+```
+
+```bash terminal icon="terminal"
+bun compile ./lie-dts.ts && ./lie-dts
+```
+
+```txt
+2 NaN
+```
+
+The declaration is `TypesOnly`, so `number` is only what the result of `size` is expected to be. The second call returns a string, the guard at the entry of `twice` fails, and the generic version multiplies `"big"` by 2.
+
+### Why this is sound
+
+The argument has four parts.
+
+1. **Proven types come from operations.** The rule for each operation is in the schema, and it says only what the operation guarantees.
+2. **Positions are closed.** Every write to a typed position is proven or tested. The verifier checks that where the form of the IR changes, and after every pass with `--aot-verify-each-pass`.
+3. **Flow over-approximates.** It starts from every entry point and follows every edge that it models. What it doesn't model counts as unknown code, which may hold, call and change everything that reaches it.
+4. **The world is closed, and the run time enforces that.** A proof by flow holds while only the code in the image runs. An executable in which the build found no call of `eval` throws on one at run time. [What opens the world](#what-opens-the-world) has the rules.
+
+There's one check on all four. With `--aot-validate`, compiled code tests every fact that it relies on at run time and stops on a miss. The test suite runs its programs that way too: see [How it's tested](#how-its-tested).
+
+## The IR
+
+The IR is SSA with block parameters instead of phi functions. A function is a list of blocks, a block is a list of values and one terminator, and an edge passes arguments to the parameters of its target. An edge out of a test can also pass a _proof_: `taken b1(| 0)` hands the tested value on under its narrowed type.
+
+It has a text form with a parser and a printer, which is what you've been reading. Only the test tools link them.
+
+### One schema, two languages
+
+The front end is Rust and the engine is C++, in two repositories. Everything that both have to agree on is written once, in `aot/ir/AOTSchema.def` and the 22 files of `aot/ir/schema/`. A generator in TypeScript, `aot/ir/generator/`, reads them and writes both sides. None of its output is checked in.
+
+| Generated for the engine, in C++                     | Generated for the front end, in Rust                                      |
+| ---------------------------------------------------- | ------------------------------------------------------------------------- |
+| Enums, records, opcodes and typed accessors          | Enums, records and ids                                                    |
+| The reader of program bytes                          | The writer of program bytes                                               |
+| The printer and parser of IR text                    | The printer and parser of IR text                                         |
+| Declared effects and result rules of every operation | A typed builder with one method per operation                             |
+| The per-operation half of the verifier               | Checks of what the builder is handed                                      |
+| Signatures of the run-time operations                | The records of the compile call: options, limits, statistics, diagnostics |
+
+This is the whole definition of a property read by name.
+
+```txt aot/ir/schema/operations.def
+operation PropGet (object: Any/inspects, key: PropertyKey, with AccessStamp) [isFreeName isForTypeOf] -> unknown => declared(key) ; unknownCode by Access ; access = Read ; receiver = object ; interpreted = Read ; accessClass = ByName ; runtime = GetByIdAndCache ; siteCaches = 1 ; flow = Copies
+```
+
+| Part                          | Meaning                                                                                                                                  |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `object: Any/inspects`        | An operand of any type. The operation looks at it and doesn't keep it, return it or call it                                              |
+| `key: PropertyKey`            | A payload: a constant that's part of the operation                                                                                       |
+| `with AccessStamp`            | Payloads that only the engine has. Flow stamps its results on them: `accessSite`, `receivers`, and from form `Placed` on, `siteCache`    |
+| `[isFreeName isForTypeOf]`    | Flags                                                                                                                                    |
+| `-> unknown => declared(key)` | The result rule. Proven: nothing. Expected: what the field under that key is declared to hold                                            |
+| `unknownCode by Access`       | The effects. At worst it runs arbitrary code, because of getters and proxies. The rule `Access` narrows that by the type of the receiver |
+| `runtime = GetByIdAndCache`   | The run-time operation behind its slowest path                                                                                           |
+| `flow = Copies`               | How the flow analysis reads it: the result is a copy of something that was stored                                                        |
+
+A `|` followed by `engine` in a list splits it. What comes before it is on the wire. What comes after it exists only in the engine, so the front end can't even spell it.
+
+The schema has about 400 operations. The ones that the front end may send are close to the language: `PropGet`, `Call`, `Add`, `Await`, `NewClass`. The rest are forms that the engine's passes lower to.
+
+### Four forms
+
+```txt aot/ir/AOTSchema.def
+enum IRForm { | engine AsRead Prepared Selected Placed }
+```
+
+Each operation says in which forms it may appear, as in `family SlotAccess Prepared..Placed`. An operation that has to be gone by some form names the pass that removes it: `AsRead..AsRead ; removedBy = TypeValues`. An operation that replaces others lists them: `replaces = PropGet, PrivateGet`.
+
+| Form       | The program                                                                                                           | Ends with          |
+| ---------- | --------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| `AsRead`   | As the front end wrote it, then typed                                                                                 | `ApplyFlowResults` |
+| `Prepared` | Every pass of the optimizer works here. Guards, slot accesses, direct calls and resolved built-ins exist from here on | `Select`           |
+| `Selected` | Operations have the forms that the code generator has code for: `Add form=Numbers`, `TestAndBranch`, `CallInline`     | `NumberAndEncode`  |
+| `Placed`   | Everything that's found by a number has its number: `fieldAccess=0`, `siteCache=1`, `allocation=2`                    | Code generation    |
+
+<Frame caption="b.x from dot.ts, from the source to the instruction. The IR lines are abridged tool output.">
+  <OperationJourney />
+</Frame>
+
+### Passes are a table
+
+`aot/pipeline/AOTPipeline.cpp` has one descriptor per pass: whether it works on a function or on the program, the form it runs on, the program-wide results it needs, the ones it produces and the ones it invalidates. Function passes are grouped into schedules (`Type`, `Prepare`, `Resolve`, `Optimize`, `Select`, `Represent`, and `Simplify`, which the others include). A schedule is a constant array with nested fixpoints.
+
+```cpp aot/pipeline/AOTPipeline.cpp
+constexpr std::array simplifySteps {
+    ScheduleStep::beginFixpoint(),
+        ScheduleStep::beginFixpoint(),
+            ScheduleStep::run(FoldConstants),
+            ScheduleStep::run(SimplifyControlFlow),
+            ScheduleStep::run(RemoveTrivialParameters),
+            ScheduleStep::run(PropagateBranchConditions),
+            ScheduleStep::run(HoistTestsIntoPredecessors),
+            ScheduleStep::run(ThreadJumps),
+            ScheduleStep::run(EliminateDeadCode),
+        ScheduleStep::endFixpoint(),
+        ScheduleStep::run(EliminateRedundantReads),
+        ScheduleStep::run(RetypeValues),
+    ScheduleStep::endFixpoint(),
+    ScheduleStep::run(RetypeValues),
+    ScheduleStep::run(CompactBlocks),
+};
+```
+
+A schedule runs over all functions on all threads. Whole-program passes run between schedules, on one thread or with parallel loops of their own. The tables are `constexpr`, and `static_assert`s check them: that a pass runs in a form it accepts, that what it reads has been produced.
+
+Because a pass is a row, every pass can be switched off by name (`--aot-disable=pass:SinkAllocations`). `test/aot/tools/bisect.ts` uses that to find the pass behind a wrong answer.
+
+The output doesn't depend on the number of threads or on their timing. One program builds to one executable, byte for byte, and `test/aot/repeated-builds` holds the compiler to that.
+
+### The verifier
+
+The verifier (`aot/ir/AOTVerifier*.cpp`, plus a generated half) runs where the form changes. With `--aot-verify-each-pass`, it runs after every pass. It checks the usual things: dominance, edges, arities, that each operation is allowed in the current form. And it checks the things that soundness rests on:
+
+- Every operand fits the kind that the schema declares for it.
+- Every value that's stored to a position fits the type of the position.
+- An operation that `relies` on a proof either has a receiver whose type carries the proof, or takes a guard value that provides it, and that guard dominates it.
+
+The last point is how a load stays behind its test. `GetSlot` is declared `relies = Shape, SlotFilled ; guarded = object`. A guard is an SSA value of the opaque type `Guard`, which only the passing edge of a test defines. `GetSlot v0, v2` can't be scheduled above the test that defines `v2`, for the same reason that an addition can't be scheduled above its operand.
+
+### Limits are losses, not errors
+
+Every analysis has budgets, all listed in `aot/ir/schema/limits.def`: members of a value set, rounds of a fixpoint, nodes of a type. Running into one doesn't fail the build and doesn't change what the program does. The analysis gives the weaker answer and counts a loss, and `--explain` can name the limit as the cause of a slow access. Only the limits of the format itself, such as the size of a table in the image, can stop a build.
+
+## Effects
+
+Nearly every optimization asks the same question: may this operation move past that one, or go away? The answer comes from one record.
+
+```cpp aot/ir/AOTEffects.h
+struct Effects {
+    LocationMasks reads { LocationMasks::top() };
+    LocationMasks writes { LocationMasks::top() };
+    ThrowEffect mayThrow { true };
+    bool mayCollect : 1 { true };
+    bool mayCallUnknownCode : 1 { true };
+    bool maySuspend : 1 { true };
+    bool mayBeTerminated : 1 { true };
+    ..
+};
+```
+
+The defaults are the point. An `Effects` that nobody filled in reads everything, writes everything, throws, collects and runs arbitrary code. Forgetting to describe something costs speed, never correctness.
+
+| Effect               | Means                                                                                             | Who cares                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `reads`, `writes`    | Sets of abstract memory locations                                                                 | Removing and moving reads and stores, the lifetime of proofs |
+| `mayThrow`           | Control may leave sideways. Kept apart: by a rule of the language, or only for lack of memory     | Dead code, code motion, whether a `try` needs its handler    |
+| `mayCollect`         | A garbage collection may run                                                                      | Write barriers, objects that are still being initialized     |
+| `mayCallUnknownCode` | JavaScript that the operation doesn't name may run: a getter, `valueOf`, a proxy trap, a callback | Everything. See below                                        |
+| `maySuspend`         | `await` or `yield`: other code runs before the next operation                                     | Frame allocation, values that live across the suspension     |
+| `mayBeTerminated`    | A loop's poll, where a Worker can be stopped                                                      | Whether an unused loop may be removed                        |
+
+### Abstract heaps
+
+Memory is divided by what it is, not by where it is.
+
+```txt aot/ir/AOTSchema.def
+heap ModuleVariables[Variable] observable ordered holdsValues oneValuePerLocation
+heap EnvironmentFields[Layout, Field] observable ordered holdsValues perObject oneValuePerLocation
+heap ObjectFields[PropertyKey] observable ordered holdsValues perObject oneValuePerLocation
+heap ShapeWords[LayoutSet] observable ordered perObject
+heap OrderWords observable ordered perObject
+heap MemberGuards[Layout] ordered
+heap PrototypeLinks observable ordered holdsValues perObject
+heap NamedProperties[PropertyKey] observable ordered holdsValues perObject oneValuePerLocation
+heap Elements[ElementBase] observable ordered holdsValues perObject
+heap ArrayStorage observable ordered perObject
+..
+heap AllocatorState
+heap RuntimeState ordered
+```
+
+A heap in brackets is split further. `ObjectFields[PropertyKey]` means that a store to `.count` and a read of `.limit` don't touch the same location, whatever the objects are. `perObject` means that two accesses through references that are proven different don't interfere either. A heap that isn't `observable` can be written by an operation that's removed when nobody uses its result. An allocation writes `AllocatorState`, and that's why an unused allocation is dead code.
+
+Common combinations have names.
+
+```txt aot/ir/AOTSchema.def
+effects Allocates = reads(AllocatorState) writes(AllocatorState) collects
+effects ResolvesRopes = reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
+effects GrowsArray = reads(ArrayStorage, Elements[Array], AllocatorState) writes(ArrayStorage, Elements[Array], AllocatorState, RuntimeState) throws collects
+```
+
+### A declared bound, then a rule
+
+What the schema declares for an operation is an upper bound. Most interesting operations also name a rule that computes something tighter from the operands at hand.
+
+```txt aot/ir/schema/operations.def
+operation GetModuleVariable (variable: Variable) .. ; reads(ModuleVariables[variable])
+operation Add (left: Any/Converted, right: Any/Converted, ..) -> natural(Addition) ; CreatesString by Operator
+operation PropGet (object: Any/inspects, key: PropertyKey, ..) .. ; unknownCode by Access
+operation CallDirect (function: Function(Call), ..) .. ; unknownCode by Call
+```
+
+| Rule                | File in `aot/ir/`           | Narrows by                                                                                                                               |
+| ------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `Declared`          |                             | Nothing. The bound is exact                                                                                                              |
+| `Operator`          | `AOTEffectsOfOperators.cpp` | The types of the operands. `Add` of two numbers has no effects at all. `Add` of two strings allocates. `Add` of an object runs `valueOf` |
+| `Access`            | `AOTEffectsOfAccesses.cpp`  | What the receiver can be. No getter, no proxy and no exotic object among its layouts: the read reads one location and does nothing else  |
+| `Call`              | `AOTEffectsOfCalls.cpp`     | The summaries of the possible callees                                                                                                    |
+| `Builtin`, `Inline` | `AOTEffectsOfBuiltins.cpp`  | The row of the overload in the table of built-ins                                                                                        |
+
+So effects get better as types get better, and types get better as effects let more proofs survive. That's why the optimizer's schedules are fixpoints.
+
+### What each operand is used for
+
+The second half of the description is per operand. `object: Any/inspects` says what happens to the reference itself: the operation looks at it. Other uses say that the operation keeps the reference, returns it or calls it.
+
+```txt aot/ir/AOTSchema.def
+flags OperandUse {
+    Inspects .. Returns Calls CallsPerElement CallsRepeatedly ReadsContents WritesContents RetainsContents MovesElements StoresByKey DeletesByKey
+    AssignsFrom DefinesName TakesDescriptor ChangesIntegrity ChangesPrototype BecomesPrototype PassesToUserCode AppliesTransitively AppliesToContents
+}
+flags Protocol { OwnKeys OwnValues ToPrimitive Thenable Iterate Species ToJSON HasInstance PrototypeChain Named CallsNamed }
+
+uses Converted = inspects+runs(ToPrimitive)
+uses Iterated = inspects+retainsContents+runs(Iterate)
+```
+
+The use for keeping takes an argument. A store declares that its value is kept, and that it's kept in the object that's stored to. Escape analysis reads this directly. An object that's only ever `inspect`ed, or kept in objects that don't escape themselves, never needs to exist on the heap.
+
+`runs(ToPrimitive)` names a _protocol_: a place where the language calls back into the program by a well-known name. `aot/ir/AOTEffectsOfProtocols.cpp` looks at what the operand can be and finds out whether anything would answer. A `Vec` has no `valueOf`, no `toString` and no `Symbol.toPrimitive` of its own, and `Object.prototype` is locked, so converting one runs known code.
+
+### An example
+
+`bump` adds one to a field. `run` reads two fields, calls `bump`, reads both again, calls something unknown, and reads one of them a third time. This is IR text, as the engine's tests are written.
+
+```txt effects.ir
+function f0 name="bump" parameters=[{type=L0}] results=[{type=undefined}] {
+    v1 = GetSlot v0 key="count" receivers=[L0] level=Proven
+    v2 = Increment v1
+    PutSlot v0, -, v2 key="count" receivers=[L0] level=Proven
+    Return
+}
+function f1 name="run" parameters=[{type=L0}, {type=anything}] results=[{type=number}] {
+    v2 = GetSlot v0 key="limit" receivers=[L0] level=Proven
+    v3 = GetSlot v0 key="count" receivers=[L0] level=Proven
+    v4 = CallDirect v0 function=f0
+    v5 = GetSlot v0 key="limit" receivers=[L0] level=Proven
+    v6 = GetSlot v0 key="count" receivers=[L0] level=Proven
+    v7 = Call v1
+    v8 = GetSlot v0 key="limit" receivers=[L0] level=Proven
+    ..
+}
+```
+
+`testaot` prints the effects that it computes (`RUN: effects summaries`). `ObjectFields/1` is one key out of that heap.
+
+```txt
+f0 return: reads(ObjectFields/1) throw: none p0: [Inspects] writes(ObjectFields/1)
+function f1
+v2 GetSlot: reads(ObjectFields/1)
+v3 GetSlot: reads(ObjectFields/1)
+v4 CallDirect: reads(ObjectFields/1) writes(ObjectFields/1)
+v7 Call: reads(all) writes(ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ..)
+```
+
+And this is `run` after `EliminateRedundantReads`.
+
+```txt
+    v2: number = GetSlot v0 key="limit" receivers=[L0] level=Proven
+    v3: number = GetSlot v0 key="count" receivers=[L0] level=Proven
+    v4: undefined = CallDirect v0 function=f0
+    v5: number = Upcast v2 castType=number
+    v6: number = GetSlot v0 key="count" receivers=[L0] level=Proven
+    v7: anything = Call v1
+    v8: number = GetSlot v0 key="limit" receivers=[L0] level=Proven
+```
+
+<Frame caption="The same three reads of limit. The call of bump lets the value through, the unknown call doesn't.">
+  <EffectsExample />
+</Frame>
+
+### Summaries
+
+`v4` got its effects from a summary of `bump`. `ComputeEffectSummaries` makes one for each function, bottom-up over the call graph, with a fixpoint for recursion (`aot/ir/AOTEffectSummaries*.cpp`).
+
+```cpp aot/ir/AOTEffectSummaries.h
+struct FunctionSummary {
+    EffectsOnEdges elsewhere { EffectsOnEdges::unknownCode() };
+    OperandMemory throughParameters;
+    Vector<ParameterSummary> parameters;
+    UnknownCodeWitness unknownCodeWitness;
+    ..
+};
+```
+
+A summary is relational. It doesn't say "writes some `count` somewhere". It says "writes `count` of whatever parameter 0 is, only looks at parameter 0, and touches nothing else". The caller puts its own arguments in.
+
+<Frame caption="A summary is stated in terms of the callee's parameters and applied to the caller's arguments.">
+  <SummaryAtCallSite />
+</Frame>
+
+`elsewhere` has two halves, one for the edge on which the call returns and one for the edge on which it throws. `unknownCodeWitness` names the operation that made a function count as running unknown code. That's how `--explain` can point to a line, not only to a function.
+
+### What a call of unknown code does
+
+`Effects::unknownCode()` reads and writes every observable heap, throws, collects and may be terminated. After such a call:
+
+- Every proof with the lifetime `Stretch` about an object that the unknown code can reach is gone.
+- Every value read from such an object has to be read again.
+- Every object that was passed to it has escaped, and so has everything that can be reached from those objects.
+
+What survives is what the code can't reach. A fresh object that hasn't been stored anywhere is untouched. `Forever` proofs hold, because unknown code can't turn a number into a string or take a layout away from an object. And flow's proofs about fields hold, because "unknown" here means that this pass can't tell which function of the program runs. It doesn't mean code from outside the program. That's a different and much rarer event: see [What opens the world](#what-opens-the-world).
+
+### Who uses them
+
+| Pass                                                          | Asks                                                                                                            |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `EliminateDeadCode`                                           | `isRemovableWhenUnused()`: writes nothing that anybody sees, can't throw by rule, always completes              |
+| `EliminateRedundantReads`, `HoistLoopInvariantReads`          | Does anything between the two points, or in the loop, write what this reads?                                    |
+| `EliminateGuards`, `PlaceTypeTests`                           | How far does a `Stretch` proof reach? Up to the first write to the heaps that its test reads                    |
+| `SinkAllocations`, `AllocateInFrames`, `AllocateInnerObjects` | The operand uses: is the object kept, and where?                                                                |
+| `RemoveRedundantHandlers`                                     | Can the block throw? One that can't loses its handler                                                           |
+| `RemoveRedundantBarriers`                                     | Can a collection have run since the object was allocated? If not, a store into it needs no write barrier        |
+| `SplitCoroutines`                                             | What is live across an operation that suspends?                                                                 |
+| Code generation                                               | `aot/codegen/AOTHeaps.cpp` maps the IR's heaps to B3's heap ranges, so B3's own passes work from the same facts |
+
+### Effects are checked
+
+A wrong effect is a miscompile, so effects aren't taken on faith.
+
+- The generator checks the schema against itself. A run-time operation that's called as a leaf, without a frame that the collector or the unwinder could walk, may not be declared to throw, collect or call unknown code.
+- An operation that `replaces` others may do no more than they do. `aot/tests/ir/effects/check-replacement*.ir` has the cases.
+- `checkDeclaredEffects()` and `checkEffectSummaries()` compare what the rules compute with the declared bounds in a validating build.
+- With `--aot-validate`, a call of native code that's declared not to collect, not to throw, not to write a heap or not to keep an operand is checked at run time. These are some of the failures it can report, from `aot/ir/schema/runtime-records.def`: `NativeCallChangedOperand`, `NativeCallWroteHeap`, `NativeCallRanCode`, `NativeCallThrew`, `NativeCallCollected`, `NativeCallKeptOperand`, `BarrierWasNeeded`.
+
+## Built-ins
+
+A JavaScript program spends much of its time in `push`, `get`, `slice`, `charCodeAt` and `JSON.parse`. A compiler that treats those as calls of unknown functions has lost before it starts. Not only are the calls slow: each one wipes out everything that's known around it.
+
+### One table
+
+One table says what every built-in takes, returns, reads, writes and may call back. It covers the language (`Array.prototype.push`), the web (`Response.json`), Node.js (`fs.readFileSync`) and Bun (`Bun.serve`).
+
+The rows for the language are TypeScript files next to the engine's code, `aot/builtins/*.builtins.ts`. This is `Array.prototype.push`.
+
+```ts aot/builtins/array.builtins.ts
+push: [
+  {
+    this: arrayWithPristineStorage,
+    args: { items: b.any.rest },
+    returns: arrayLength,
+    ...nativeEffects,
+    uses: { this: [b.readsContents(), b.writesContents()], items: [b.storedIn(element)] },
+    length: 1,
+    boxedCallStub: "ArrayPush",
+    nativeSymbols: ["arrayProtoFuncPush"],
+    implementation: b.inline("ArrayPush", { otherwise: b.hostCall }),
+  },
+  {
+    this: arrayLike,
+    args: { items: b.any.rest },
+    returns: b.length,
+    ...propertyStoreEffects,
+    uses: {
+      this: [...readsArrayLike, b.storedByKey(b.indexKeys, b.operand("items")), storesLength],
+      items: b.inspected,
+    },
+    implementation: b.hostCall,
+  },
+],
+```
+
+An entry is a list of overloads, most specific first.
+
+The first one is for a real array whose storage is ordinary. It returns an integer between 0 and 2^32 - 1. Its effects are `{ capability: "heap", throws: true }`: it may allocate, and it runs no JavaScript. The pushed items end up in the elements of `this` and nowhere else. It has an inline form, and a call of the native function as the fallback.
+
+The second one is what the specification really says: `push` works on anything that's like an array. It reads `length` through the prototype chain, converts it, and stores by key, which can run setters. `capability: "js"` with `runsOnlyOperandCode` says that it runs JavaScript, but only code that's reachable from its operands.
+
+| `capability` | The native code                                     | Effects                                                     |
+| ------------ | --------------------------------------------------- | ----------------------------------------------------------- |
+| `"none"`     | Computes. `Math.imul`                               | None but the heaps it lists                                 |
+| `"heap"`     | May allocate, so it may collect. Runs no JavaScript | `Allocates`, plus the heaps it lists                        |
+| `"js"`       | May run JavaScript. The default                     | `unknownCode`, narrowed by `uses` and `runsOnlyOperandCode` |
+
+An entry that nobody has described is `"js"` with every operand kept. Again the default is the safe one.
+
+A result type can refer to the operands. `b.slot("this", "element")` is "whatever this array holds", so `pop()` on a `Vec[]` is a `Vec` or `undefined`. `.fresh` says that the result is a new object that nothing else refers to. `b.operand("this")` says that the method returns its receiver. These feed the flow analysis and the result rules from one description.
+
+```ts aot/builtins/map-set.builtins.ts
+get: {
+  args: { key: b.any },
+  returns: b.union(value, b.undefined),
+  capability: "heap",
+  throws: b.propagated,
+  uses: { this: [b.readsContents()], key: b.inspected },
+  writes: [storage],
+  ..
+  implementation: b.inline("MapGet"),
+},
+```
+
+### Where the rows come from
+
+`src/codegen/builtins/index.ts` builds the table when Bun is built.
+
+| Source                                                   | Gives                                                                                            |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `aot/builtins/*.builtins.ts`                             | The language's built-ins                                                                         |
+| `src/codegen/builtins/host/*.builtins.ts`                | Hand-written rows for Bun, Node.js and web APIs: `console`, `process`, `Buffer`, the web classes |
+| The static property tables in the engine's and Bun's C++ | Which members exist, with which attributes                                                       |
+| Bun's binding generator (`*.bind.ts`)                    | The members of native classes and functions, with the types of their arguments and results       |
+| `src/js`, Bun's modules in TypeScript                    | Which native functions each module calls                                                         |
+
+The generator cross-checks its sources (`check*.ts` in the same folder), and lists the native functions whose results nobody has described.
+
+It emits Rust for the front end (ids, names, the paths by which the checker's symbols map to entries) and C++ for the engine (types, overload trees, effects, bindings to native symbols). Bun compiles that C++, and the engine finds the table through extern symbols. So a change to one of Bun's native classes needs no new build of WebKit.
+
+### From a call to an instruction
+
+<Frame caption="list.push(x): five steps, each of which can stop and leave a correct, slower form behind.">
+  <BuiltinCall />
+</Frame>
+
+**1. Bind.** The front end resolves names [by binding](#decide-by-binding-never-by-a-names-text). `JSON` becomes the constant `Builtin builtin=JSON`. A member stays an ordinary read, with an expected type.
+
+```txt
+v4 = Builtin builtin=JSON @171
+v5 = PropGet v4 key="parse" @171
+v6 = Convert v5 declared={type=builtin(JSONParse) flags=[IsExpected]} @171
+..
+v20 = Call v6, v4, v19 calleeKey="parse" calleeName="JSON.parse" @176
+```
+
+The front end asserts nothing. It says: this is a read of `parse` from the object `JSON`, and I expect to find the built-in there.
+
+**2. Prove the callee.** `ResolveBuiltins` turns the read into a constant if every location that the lookup passes through is constant. For `JSON.parse` that's one location, and it's constant by a lock. For `list.push` the lookup goes through the array itself and then `Array.prototype`. So the pass needs to know that `list` is an array, that it has no property `push` of its own, that its prototype is still `Array.prototype`, and that `Array.prototype.push` is still the original. The last one is a lock. The others are what the IR calls _pristine_, and they come from the type (`Array<number, pristine[Storage, Names]>`), from flow, or from an `IsPristine` test that `PlaceTypeTests` puts in front.
+
+**3. Pick the overload.** Each entry has a decision tree over the types of its operands. The call becomes `CallBuiltin overload=ArrayPrototypePush/0`. When later passes narrow the operands, the call moves to a better overload. In `dot.ts`, `console.log(sum)` takes `ConsoleLog/0`, the overload for primitives, which runs no JavaScript. `console.log(list)` takes `ConsoleLog/1`, which may run code of what it prints, such as getters.
+
+**4. Simplify.** `SimplifyBuiltinCalls` knows identities. `Array.isArray` of a proven array is `true`. `Boolean(x)` is a truthiness test. `s.charCodeAt(i)` is a read of a code unit. `ReduceIntegerDivisions` turns `Math.floor(a / b)` of two integers into an integer division.
+
+**5. Implement.** The `implementation` column says how.
+
+| Implementation   | Becomes                                                                                                                                  | Examples                                                                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `b.inline(..)`   | `CallInline inlineBuiltin=MathFloor`. An emitter in `aot/builtins/*Emitter.cpp` writes B3 for it, often one or two instructions          | `Math.floor`, `charCodeAt`, `push`, `Map.prototype.get`, typed array reads                                                                                    |
+| An IR operation  | The call is replaced by operations that every pass understands                                                                           | `new Promise`, `Object.keys` on a layout, string concatenation                                                                                                |
+| `b.compiled(..)` | `CallDirect` to a function that's written in JavaScript or TypeScript and compiled with the program. It can be inlined, callback and all | `map`, `filter`, `forEach`, `find`. JavaScriptCore writes these in JavaScript itself (`builtins/ArrayPrototype.js`). `src/aot/prelude` adds some of Bun's own |
+| `b.hostCall`     | A call of the native function, through a stub that skips the boxing of arguments where the row allows                                    | `JSON.parse`, `console.log`, `fs.readFileSync`                                                                                                                |
+
+The third row matters most for ordinary code. `list.map(v => v.x)` is a direct call of a function with a loop in it. Once that's inlined, the arrow function is inlined into the loop too, and what's left is a loop over an array with a load in it.
+
+A built-in that calls back says how. This is the row behind `forEach`, `map`, `filter` and `find`.
+
+```ts aot/builtins/array-callbacks.builtins.ts
+callback: [
+  b.called({
+    afterwards: "TouchesOnlyWhatRowNames",
+    times: "PerElement",
+    this: b.operand("thisArg"),
+    args: [receiver.element, b.length, self],
+    result: outcome.result,
+    resultTo: outcome.resultTo,
+  }),
+],
+```
+
+The callback is called once per element, with an element of the receiver, an index and the receiver itself. For `map`, its result is stored in the elements of the result. Flow reads that row and connects the array's contents to the arrow function's first parameter, so `v` in `v => v.x` is a proven `Vec` even where the call isn't inlined.
+
+These are the last lines of a program that calls `floor` and `push` through aliases.
+
+```txt
+v14: int|whole @Double = CallInline -, v13 inlineBuiltin=MathFloor overload=MathFloor/0
+v15: int[0, 4294967295] @Int64 = CallInline v2, v14 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+```
+
+### Why built-in objects are locked
+
+Step 2 needs `Array.prototype.push` to be the original. A JIT handles that with a watchpoint: it assumes that nobody replaces `push`, and throws the compiled code away if somebody does. Code that's compiled ahead of time can't be thrown away. There are three ways out.
+
+- **Test at every call.** That's a load and a compare per call, and the slow path has to be kept as code everywhere. Worse, the merge after the slow path knows nothing.
+- **Prove it by flow.** That works for a store that the build can see. It can't work for `object[key] = value` with an unknown object and an unknown key, which a large program always has somewhere.
+- **Make it true.** In an executable, the existing members of built-in objects can't be replaced, redefined or deleted.
+
+`bun compile` does the third. `CheckLockedBuiltinWrites` reports the stores that flow can see: an error for one that always runs, a warning for one that may run. At run time, such a store throws a `TypeError`, in sloppy mode too.
+
+It's the one place where the compiler breaks its promise of introducing errors only at build time. The lock is as narrow as it can be. Adding a method to `Array.prototype` works. `Object.prototype`, `RegExp.prototype`, `Promise.prototype` and the generator prototypes can't be changed at all, because the language itself looks names up there: `toString`, `exec`, `then`, `next`. [Built-in objects are read-only](/bundler/aot-compatibility#built-in-objects-are-read-only) has the table, object by object.
+
+`bun run --aot` and `bun test --aot` run your program from source with the same locks, so that you find out before you ship.
+
+What isn't locked is still followed. `console`, `process`, `fetch` and most of `Bun` can be patched, which tracing libraries do. Flow watches the stores. If your program never assigns `console.log`, it's a constant. If it does, calls of `console.log` are calls by value.
+
+### Bun's own modules
+
+Much of `node:fs`, `node:stream`, `node:events` and `node:http` is TypeScript in `src/js`. Under `bun compile`, it's source code of the program.
+
+So there's no boundary between your code and Node's API. `emitter.emit("data", chunk)` can be resolved, inlined and specialized like a call of your own function. Flow sees which listeners are registered under which names. And a module of `src/js` that your program doesn't reach isn't in the executable.
+
+Those modules use private intrinsics, written `$isCallable(x)` or `$putByIdDirect(..)`. The table lists them like any other built-in (`src/codegen/builtins/host/bun-syntax.builtins.ts`, `aot/builtins/engine-syntax.builtins.ts`).
+
+## Whole-program value flow
+
+`aot/valueflow` is the largest part of the engine's half. It answers one question for every position in the program: what can be here?
+
+### The model
+
+It's an inclusion-based analysis over a graph, in the family of Andersen's points-to analysis.
+
+- A **node** is a position: a variable, a parameter, a result, a field of an abstract object, the elements of an array, the values of a `Map`.
+- A **value set** holds abstract values: objects by allocation site, closures by function, built-ins by table entry, literal strings and numbers, and kinds of primitives.
+- An **edge** says that whatever is in one node is also in another. An assignment, an argument and a return are edges.
+- A **statement** makes new edges as sets grow. A read `o.x` adds an edge from field `x` of each object that reaches `o`. A call adds edges to the parameters of each function that reaches the callee.
+- A **mask** on an edge lets only part of a set through. A `Check` is a mask: behind it there's only what passes.
+
+The solver (`AOTValueFlowSolver.cpp`) works in rounds, on all threads, until nothing grows. A function's body only takes part once something calls it, so the analysis also computes what's reachable. What it never enters isn't compiled.
+
+<Frame caption="Objects are followed from the site that makes them to the positions they reach.">
+  <ValueFlow />
+</Frame>
+
+Each operation says in the schema how flow reads it.
+
+```txt aot/ir/AOTSchema.def
+enum ValueFlowEdgeClass { | engine Unsound Allocates Copies TableProves Checks }
+```
+
+| `flow =`      | Operations                                       | Flow does                                       |
+| ------------- | ------------------------------------------------ | ----------------------------------------------- |
+| `Allocates`   | `NewObject`, `NewArray`, `NewClosure`            | Makes a new abstract object for the site        |
+| `Copies`      | `PropGet`, `PutModuleVariable`, `Call`, `Upcast` | Adds edges                                      |
+| `TableProves` | `Add`, `TypeOf`, constants                       | Takes the result type from the operation's rule |
+| `Checks`      | `Check`, `TypeTest`, `RequireObject`             | Adds a masked edge                              |
+| `Unsound`     | `Convert` with a cause                           | See below                                       |
+
+### Where TypeScript's holes are
+
+The front end doesn't only send types. For each conversion it says whether the checker can vouch for it, and if not, why not.
+
+```txt aot/ir/schema/types.def
+enum IllTypedCause abi {
+    None Unclassified FromLooseType Assertion SuppressedError DeclarationWithoutBody OutsideData LayoutOutsideFamily MemberWithoutSlot
+    StoreOutsideFieldType ComputedKeyStore UnprovenReceiverStore NativeWritesOperand StateChanged UnseenWriter UnseenCaller UnprovenCallee
+    OtherThis CalledByEngine ContainerWriterUnseen ElementMayBeAbsent ScopeOpenedByEval ReadBeforeInitialized LookupMayChange
+}
+```
+
+`find_cause()` in `src/aot/lower/convert/edges.rs` picks the first few. The source is `any` or a bare type parameter: `FromLooseType`. It's an `as` or a `!`: `Assertion`. The checker reported an error there and a `@ts-ignore` hid it: `SuppressedError`. It's the result of a function that only has a declaration: `DeclarationWithoutBody`. It was read out of a container: `ContainerWriterUnseen`, because arrays are covariant in TypeScript and nothing says what's really in one.
+
+`None` means that the value has a type, the position has a type, and the checker has shown that one is assignable to the other.
+
+The distinction matters when flow loses track. Its sets are bounded. A set that outgrows its budget is replaced by a placeholder, the **untracked object**, which means "some objects of this program, I no longer know which". Behind an edge that the checker vouches for, the untracked object can only be a member of the family of the declared type, so the type still holds. Behind an unsound edge it could be anything, and nothing is proven.
+
+This is the precise sense in which types are used. Flow alone proves small programs, typed or not. In a large program, it's the annotations that keep a proof alive across the places where the analysis has to give up precision.
+
+### Two placeholders
+
+|                 | The untracked object                                                    | The unknown object                                                                                                           |
+| --------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Represents      | Objects and functions of the program, too many to list                  | Something from outside: parsed data, the result of an undescribed native function, a value from code that isn't in the image |
+| Calling it      | Enters the program's functions that were lost this way. Nothing escapes | Its arguments escape. Functions among them are entered with unknown operands                                                 |
+| Reading from it | Answers by name: whatever the program stores under that name anywhere   | Unknown                                                                                                                      |
+| Storing to it   | Found again by a read of that name                                      | The stored value escapes                                                                                                     |
+| Costs           | Precision                                                               | Proofs about everything it reaches                                                                                           |
+
+The tests in `aot/tests/valueflow/placeholders/` are a specification of the two, one behavior per file.
+
+`ValueFlowUnknownSource` in `aot/valueflow/AOTValueFlow.h` lists where the unknown object comes from: `UndescribedNativeResult`, `UnseenCode`, `DataFromOutside`, `ThrownByRunTime`, `ParameterOfEscapedFunction`, `ContentsOfEscapedObject`, `ResultOfUnknownCallee` and a few more. `--explain` reports the source with each access that isn't proven.
+
+### What escapes
+
+An object escapes when it's handed to something that flow can't see into. From then on:
+
+- Unknown code may read everything that can be reached from it.
+- Functions that can be reached from it may be called with any arguments, so their entry checks stay.
+- It's still read-only until something says that unknown code may _write_. An object that the host only reads keeps what's proven about its fields.
+
+Escape is per object. Two literals of one layout are told apart, and if one of them is passed to an undescribed native function, only what can be reached from that one is in unknown hands.
+
+There are two kinds of loss, and they spread differently. What _arrives_ is a loss per position: a parsed object that ends up in one array slows down the reads from that array, and reads of the same type elsewhere stay proven. What's _done to_ an object is recorded per layout. A `delete`, a redefinition or a store of another type, by the program or by unknown code that may write, counts for every object of that layout, because any of them could be the one that changed.
+
+The table of built-ins is what keeps escape rare. `JSON.stringify(vec)` isn't an escape. Its row says that it runs only code that's reachable from its operands, and which protocols it runs on them. Flow finds no `toJSON` and no getter on a `Vec`, so `vec` is only read.
+
+### Context
+
+One node per parameter, shared by all callers, is cheap and often too coarse. `identity(a)` and `identity(b)` would both return `a` or `b`. Cloning every function per call site is precise and doesn't scale. Flow is selective.
+
+- **A function that returns a parameter gives each caller its own argument back.** The result of a call is stated as a relation to the operands, not as the union over all callers.
+- **A method sees only the receivers that find it.** With `shape.area()` over circles and squares, `Circle.prototype.area` gets only circles as `this`.
+- **A function that uses a parameter as a key is followed once per constant.** `on(table, "request", f)` and `emit(table, "request", x)` are matched by name, so an event emitter doesn't connect every listener to every event.
+- **What a callee does to each argument is part of its summary.** It reads it, writes these fields, keeps it, or passes it on. The caller keeps every proof that the summary doesn't kill.
+
+### What flow hands on
+
+`ApplyFlowResults` writes the results into the IR, so that no later pass has to ask the analysis. `enum FlowResultKind` in `aot/ir/schema/passes.def` lists them.
+
+| Result                                                                           | Used for                                                                            |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `ProvenLayoutSets`, `NarrowedTypes`, `RemovedNullish`, `LiteralValues`           | Types of values and positions. Checks become `AssumeType`                           |
+| `ReceiverSets`, `CalleeSets`, `ExactFunctions`                                   | `receivers=[L0]` on an access, `callees` on a call: slots and direct calls          |
+| `ProvenContents`, `ArrayStorageKinds`, `PristineInstances`                       | What arrays, maps and sets hold, and that nobody has tampered with them             |
+| `HolderMutations`, `AppendedFields`, `OwnNames`, `StoreCounts`, `Initialization` | Per field: never deleted, never redefined, always filled, stored once               |
+| `ConstantBuiltinLocations`                                                       | Members of unlocked built-ins that the program never assigns                        |
+| `ClassBases`, `ClassEvaluations`, `ConstructorFieldOrders`                       | A class is evaluated once, its parent is known, its fields are created in one order |
+| `ObjectUses`, `OperandSummaries`                                                 | Escape, for allocation in frames and sinking                                        |
+| `ReachedFunctions`, `ExecutionCounts`                                            | What to compile, and what runs at most once                                         |
+
+Each kind can be switched off by name (`--aot-disable=flow:CalleeSets`). The test suite runs its programs with no flow results at all. They have to print the same.
+
+### What opens the world
+
+Everything above assumes that the image is all the code there is. Some programs do run other code. The rules:
+
+**Only a call opens anything.** Importing `node:vm`, holding `eval` in a variable or passing `Function` around costs nothing. The event is raised where control flow that flow found reachable _applies_ a function that the table marks. `eval` and `Function` are marked in the engine's rows (`aot/builtins/global.builtins.ts`). The rows in `src/codegen/builtins/host/` list Bun's: text evaluators (`vm.Script`, `vm.compileFunction`, `ShadowRealm.prototype.evaluate`), module loaders (`Bun.plugin`, `Module._load`, `require` used as a value) and one heap enumerator.
+
+**What opens is that call's scope.**
+
+| Call                                    | What that code can reach                                                                                                                                                                                                                                                                       |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Direct `eval(text)`                     | The variables of the enclosing scopes, `this`, the globals. The front end sends a record of every binding in scope and where it lives (`record EvalScope` in `program-records.def`). Those variables stay in environments on the heap and lose their types. The function itself stays compiled |
+| `(0, eval)(text)`, `new Function(text)` | The global scope, what's later passed to the result, and what it returns. Not your modules: nothing in the global scope leads to what a file exports                                                                                                                                           |
+| `bun:ffi`, `process.dlopen`             | What it's passed. It's machine code, not JavaScript that nobody has seen                                                                                                                                                                                                                       |
+| `new Worker(file)`                      | Nothing. A Worker has a heap of its own, and starts at an entry point of the build                                                                                                                                                                                                             |
+| `import(computed)`, `require(computed)` | The files in the image that match the constant parts of the path, and the entry points                                                                                                                                                                                                         |
+
+An object that never reaches such a call keeps every proof. zod 4 and ajv build validators with `new Function`, so real programs have these calls, and an all-or-nothing rule would give up exactly the programs that matter.
+
+**Constant text is compiled.** `new Function("a", "b", "return a + b")` with literal arguments is compiled at build time like any other function (`src/aot/load/evaluated_texts.rs`).
+
+**The run time enforces the result.** The image's header records what the build assumed.
+
+```cpp aot/image/AOTImageFormat.h
+enum class ImageFlag : uint32_t {
+    IsObfuscated = 1 << 0,
+    AdmitsUnknownJavaScript = 1 << 1,
+    LoadsModulesByName = 1 << 2,
+    AdmitsLibraryText = 1 << 3,
+    ShowsWaysBetweenModuleObjects = 1 << 4,
+    LoadsCodeOutsideImage = 1 << 5,
+};
+```
+
+In an image without `AdmitsUnknownJavaScript`, a call that does reach `eval`, by a path that flow couldn't follow such as `globalThis[name](code)`, throws an `EvalError`. The proofs are never silently wrong. [Code from strings](/bundler/aot-compatibility#code-from-strings) has the user's view.
+
+## The object model
+
+### A compiled object
+
+A class, an interface, an object type and an object literal each get a _layout_: the list of their fields, fixed at build time. An object with a layout is an `AOT::Object` (`aot/object/AOTObject.h`).
+
+<Frame caption="The Vec of dot.ts: 32 bytes. An ordinary JSObject with the same two properties holds boxed values, and finds them through its Structure.">
+  <ObjectLayout />
+</Frame>
+
+```cpp aot/object/AOTCellFormat.h
+static constexpr uint32_t offsetOfOrderWord = 8;
+static constexpr ptrdiff_t offsetOfShapeWord = 12;
+static constexpr uint32_t offsetOfFirstField = 16;
+static constexpr uint32_t shapeWordOf(uint32_t shape) { return 0 - shape; }
+```
+
+**The header** is JavaScriptCore's eight-byte `JSCell`: a `StructureID`, the cell's type, flags and the collector's state. To the rest of the engine, a compiled object is a `JSObject` whose class overrides the method table. `Object.keys`, `JSON.stringify`, spread, `for...in`, proxies, the inspector and heap snapshots all work through that.
+
+**The shape word** is the number of the layout, negated. It sits where an ordinary `JSObject` has the upper half of its butterfly pointer, which never has its top bit set. So one 32-bit compare answers "is this a compiled object of layout L", and no other cell can pass by accident. `static_assert`s in `AOTCellFormat.h` pin that down.
+
+An object never loses its layout. Whatever happens to it, the shape word stays. This is what makes `TestedType` a `Forever` proof: a shape test that has passed holds for the life of the object.
+
+**The order word** is where JavaScript's dynamism goes.
+
+| Bits       | Meaning                                                                                                            |
+| ---------- | ------------------------------------------------------------------------------------------------------------------ |
+| 0 to 14    | The number of the key order: in which order the properties were created, which is what `Object.keys` has to return |
+| 15 to 26   | How many fields exist so far                                                                                       |
+| 27         | Some field lies outside its slot                                                                                   |
+| 28         | The object has extra properties                                                                                    |
+| 29, 30, 31 | Frozen, sealed, not extensible                                                                                     |
+
+### Slots
+
+`PlanSlots` chooses a representation for each field from what flow says is ever stored there.
+
+```txt aot/ir/schema/runtime-records.def
+enum SlotRepresentation {
+    | engine JSValue Cell Cell32 OptionalCell32 Int32 Uint32 Int64 OptionalInt64 OptionalInt32 Double OptionalDouble Float Boolean OptionalBoolean Uint8 Int8
+    Uint16 Int16 LiteralString LiteralString32 DeferredClosure
+}
+```
+
+- A `number` field is a raw `Double`. If only integers in range are stored, it's an `Int32`, or narrower.
+- A reference to another object is a `Cell32`: [32 bits](#32-bit-references).
+- A field whose type is a union of string literals is a `LiteralString`: a small number, so `shape.kind === "circle"` compares integers.
+- A method that's assigned as a field, like `this.onClick = () => ..`, can be a `DeferredClosure`. The closure isn't allocated until somebody reads the field as a value.
+- An `Optional` form reserves bit patterns for absent, `undefined` and `null`. Among doubles they're three particular NaNs.
+- `JSValue` holds anything, boxed. It's the fallback.
+
+Wider slots come first. In `Vec`, `y` (eight bytes) lies in front of `x` (four).
+
+Optional fields that few objects have don't take room in every object. They go to an _extension_, a second cell that holds only the eight-byte granules that are in use, with a bit mask that says which.
+
+### When an object leaves its layout
+
+A slot enforces its type physically. A `Double` slot can't hold a string. So there has to be somewhere else for the property to go.
+
+```cpp aot/object/AOTObject.h
+enum class SlotExitReason : uint8_t { Delete, Redefinition, StoreOfOtherType };
+```
+
+Each compiled object can have a side object for _extra properties_, which is an ordinary `JSObject`. It holds:
+
+- properties that the layout doesn't declare, like `(p as any).z = 5`;
+- fields that have left their slots: a value that the slot can't hold was stored, or `Object.defineProperty` turned the field into an accessor or changed its attributes.
+
+Bits 27 and 28 of the order word say so. Leaving costs that one property of that one object. Its other fields stay in their slots.
+
+What compiled code has to test depends on what the program does, and flow knows that. These flags are per field.
+
+| Flow says                                                                     | A read of the field is                                                                       |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Always filled, never deleted, never redefined, never stored with another type | One load                                                                                     |
+| May be absent                                                                 | One load and a compare with the marker for absent                                            |
+| May have left its slot                                                        | One test of the header bit, which covers all reads of that object in the stretch, then loads |
+| The receiver isn't proven                                                     | A shape test first                                                                           |
+
+In `lie-field.ts`, the test was `HasBirthFieldsFilled`, and it covered all four reads of the source.
+
+```txt
+  b0(v0: L0 @Cell):
+    v1: boolean @Boolean = HasBirthFieldsFilled v0
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard @Void):
+    v3: int @Int64 = GetSlot v0, v2 key="x" receivers=[L0] level=Expected fieldAccess=0 [holdsDeclaredType]
+    ..
+    v5: int[-2147483643, 2147483647] @Int32 = GetSlot v0, v2 key="y" receivers=[L0] level=Expected fieldAccess=1 [holdsDeclaredType]
+  b2() frequency=Rare:
+    v19: undefined @Void = PropGetPair v0 key="x" secondKey="x" ..
+```
+
+### Families and shape numbers
+
+A position of type `Shape` takes circles and squares. A test for it has to ask "is the layout one of these". `NumberAndEncode` hands out shape numbers so that the members of a family are neighbors wherever possible.
+
+```cpp aot/object/AOTLayoutData.h
+// Passes the shapes from last - count + 1 to last or, with a bit set, those of them whose distance from last is in the set.
+struct ShapeTestData {
+    uint32_t last;
+    uint32_t count;
+    uint32_t bitSetOffset;
+};
+```
+
+So a test for a class with all its subclasses is a subtraction and an unsigned compare. A family that can't be made contiguous, because its members belong to several families, takes a lookup in a bit set.
+
+Layouts are also split. If one constructor makes objects that a tag tells apart, as in a syntax tree where `new Node(kind)` is later cast to `Identifier` or `IfStatement` by its `kind`, `AllocateTaggedLayouts` gives each tag a layout of its own. The constructor picks the layout from the tag. Each kind of node then only has room for its own fields.
+
+### Classes and methods
+
+Methods aren't stored in objects. A call `shape.area()` is resolved at build time in one of four ways.
+
+| What's known                                   | The call is                                                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| One layout, and nobody replaces the method     | `CallDirect`, which can be inlined                                                               |
+| A few layouts                                  | `SplitUnions` makes a test and a direct call for each                                            |
+| A family with different methods under one name | `CallTable`: an indexed load from the method table and an indirect call, like a C++ virtual call |
+| Nothing                                        | A lookup by name, then a call by value                                                           |
+
+"Nobody replaces the method" needs care, because your own classes aren't locked. `Db.prototype.query = traced` has to work. If flow sees no such store, it's a fact. Otherwise a _member guard_ covers it: one bit per class and member, set while the member is as the class declared it (`aot/object/AOTMemberGuards.h`). Compiled code tests the bit with `AreMembersUnchanged`. The store clears it, and a bit that was cleared stays clear. Entries of the method table that depend on the bit are redirected to the lookup by name.
+
+A prototype object exists as a real object only once something asks for it. Until then, a stand-in answers lookups from the class's record in the image.
+
+### Closures and environments
+
+```txt aot/ir/schema/operations.def
+enum ClosureForm { | engine Full Slim Deferred Singleton }
+```
+
+| Form        | When                                                            | What it is                                                                                                  |
+| ----------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `Singleton` | The function captures nothing and is created once               | One cell per thread, made on first use. A top-level function that's only ever called directly never has one |
+| `Slim`      | Nobody has stored a property on it or asked for its `prototype` | A header, one word that names the function and its entry point, and the captures                            |
+| `Full`      | Everything else                                                 | A `JSFunction`                                                                                              |
+| `Deferred`  | It's stored in a field and perhaps never read as a value        | Nothing, until it's read                                                                                    |
+
+Captured variables live in an `Environment`, a cell with typed slots like an object's. An environment that exists only once, such as that of a module body or a CommonJS file, isn't an object at all: `PromoteEnvironmentsToVariables` turns its fields into variables at fixed places in the instance.
+
+### Allocation that doesn't happen
+
+Four passes work on allocations, in order of preference.
+
+1. **`SinkAllocations`** dissolves an object that's only read and written locally into SSA values. It's built only on the paths that need a real cell. That's what happened to `unit` on the fast path of `dot.ts`.
+2. **`AllocateInFrames`** puts an object that doesn't outlive its activation into the machine frame: `NewObject .. storage=Frame`. That's what happened to `unit` for the slow path, which needs a real object to pass to the generic version.
+3. **`AllocateInnerObjects`** puts an object that's always created with its owner, and held by one of its fields, into the owner's cell. The field is then an address computation, not a load.
+4. Everything else is allocated from the free list of its size class, inline in hot code and through a stub in cold code.
+
+Whether an object "doesn't outlive its activation" comes from the operand uses of every operation that it reaches, and from the summaries of the functions that it's passed to.
+
+### Arrays, maps and strings
+
+These are JavaScriptCore's own. An array is a `JSArray` with a butterfly, in one of the engine's storage kinds (`Int32`, `Double`, `Contiguous`). A string is a `JSString`, possibly a rope. What the compiler adds is knowledge. A type like `Array<L0, proven, pristine[Storage, Names]>` says that the elements are proven `Vec`s, and that nobody has added a property, changed the prototype or made the storage exotic. Element reads under that proof are a bounds check and a load.
+
+`Map` and `Set` have a compact table of the compiler's own behind the same JavaScript interface (`aot/runtime/AOTCompactTable.h`).
+
+### Property access without a JIT
+
+A JIT makes a lookup by name fast by patching machine code: the first execution finds the property, and the inline cache is rewritten to test for that Structure and load from that offset. An executable with read-only code can't do that. Its caches are data.
+
+<Frame caption="A read by name. The code is shared and never changes. Only the tables do, and each thread has its own.">
+  <PropertyCache />
+</Frame>
+
+Every name in the program has a number, by rank of use. An access passes that number to a stub in a register: `mov r10d, 0x6f3` in the listing above. `aot/stubs/AOTStubsProperty*.cpp` generates the stubs, and `aot/runtime/AOTPropertyCaches*.h` has the tables.
+
+1. **The site cache.** A hot access has 16 bytes of its own in the thread's instance: a `StructureID`, a kind and a payload. The stub `GetByIdAtSite` compares the receiver's `StructureID` with it. On a hit for a plain value, it loads and returns. `PlaceSiteCaches` hands these out by heat, up to a limit.
+2. **The table of fields.** For a compiled object, the image has a read-only table from layout and name to the slot. It needs no warming up.
+3. **The front table.** Rows are Structures, columns are names, compressed by row displacement as in a classic selector table. One indexed load and one compare of a tag.
+4. **The hashed table.** Four-way associative, keyed by `StructureID` and name. It serves the names whose numbers are too high for a column.
+5. **The search.** The stub walks the Structure's own property table, in assembly, and then the prototype chain.
+6. **The operation.** C++ code handles the rest (getters, proxies, exotic objects) and files the answer in the tables above.
+
+An entry can say more than "own value at offset n": absent, found on a prototype, a getter, a field in a typed slot. Each kind has a handler, and the stub jumps to it through a table. An entry that depends on objects further up the prototype chain is registered with them, and a change to one of them drops it (`aot/runtime/AOTChainDependents.h`).
+
+A hit in the site cache costs a call, a load, a compare, a load and a return. That's more than a JIT's inline cache, which has no call and has the constants in the instruction stream. On untyped code that's all lookups, a warm JIT wins. It's the main reason for the losses that [What to expect](/bundler/aot#what-to-expect) lists.
+
+## Code generation
+
+### B3 and Air
+
+The back end is JavaScriptCore's own. B3 is the SSA IR that the FTL and the WebAssembly compiler use, and Air is the machine-level IR below it, where registers are allocated. `aot/codegen` translates one IR function to one `B3::Procedure`.
+
+The division of labor is deliberate. The AOT IR knows about JavaScript: types, shapes, effects on abstract heaps, allocation, calls. B3 knows about machines: strength reduction, address modes, constant materialization, instruction selection, register allocation. No scalar optimization is written twice. An IR pass never bothers to turn `x * 2` into a shift.
+
+A `B3::Procedure` carries a `B3::Policy` (`b3/B3Policy.h`, `b3/air/AirPolicy.h`): named switches, all off by default. Only `aot/codegen/AOTB3Policy.cpp` turns them on, so the JIT tiers in plain `bun` compile as before. What the compiler asks for differs from what a JIT wants.
+
+- **Position-independent code.** No absolute address appears in an instruction. Data is found relative to the code or through the instance register.
+- **Relocations instead of patching.** A call to another function or to a stub is a record that the image linker resolves.
+- **Pinned registers.** One register holds the instance and one holds the base of the heap cage (`r13` and `r14` on x64, `aot/stubs/AOTStubRegisters.h`). Constants that would take a ten-byte immediate, such as the tag masks, are memory operands at small offsets from the instance.
+- **Size counts.** A JIT compiles the hot part of a program. This compiles everything, and most of it runs once or never.
+- **Scaling.** A function can be very large after inlining, and a large program has hundreds of thousands of them. Some shared algorithms, among them the greedy register allocator, were replaced to keep build time down on very large functions.
+
+### Representations
+
+`ChooseRepresentations` runs before B3 and decides in which form each value lives.
+
+```txt aot/ir/AOTSchema.def
+enum Representation { | engine Unchosen Void Boolean Int32 Int64 Double OptionalInt64 OptionalDouble Cell Cell32 JSValue LiteralString RawWord }
+```
+
+A value's type bounds the choice and its uses decide it. An `int` that's only added to doubles is best kept as a `Double`. A `number` that's passed to a generic operation has to be a `JSValue` at that point. The pass puts conversions where they run least often. A guard is `Void`: it exists for ordering and costs no register.
+
+`OptionalDouble` and `OptionalInt64` hold a number or `undefined`, in a register, unboxed. They're why `sum += list[i]` doesn't need a branch for an index out of bounds. The marker for `undefined` is a NaN, and `NaN` is what the addition has to produce anyway.
+
+### The calling convention
+
+Compiled code has a convention of its own (`aot/stubs/AOTConvention.h`), with two kinds of entry.
+
+|                              | A direct call                                                                                             | A call by value                                                         |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Used when                    | The callee is known                                                                                       | The callee is a closure                                                 |
+| Arguments                    | In registers, in their chosen representations: a raw double in an FP register, an `Int32`, a cell pointer | Boxed, with `this`, an argument count and the callee in fixed registers |
+| Missing or surplus arguments | Can't happen                                                                                              | The entry point deals with them                                         |
+| Result                       | In its representation. Several results in several registers                                               | Boxed                                                                   |
+
+`CreateEntrypoints` makes the generic entry point of a function only if something can call it by value. `ChooseCallingConventions`, `RemoveUnusedParameters`, `RemoveUnusedResults` and `PromoteAggregateParameters` reshape signatures. A function whose callers are all known can take the two fields of an object in two registers and never see the object.
+
+A compiled frame has no `CodeBlock` and often no frame pointer. Stack walkers find the function by its return address, in a table of the image. Adapter stubs sit at the boundary with JavaScriptCore's own convention, which native functions and the interpreter use.
+
+### Stubs
+
+What many places need is emitted once. `aot/stubs` has the generators, and an image contains the stubs that its code calls. You've seen a few: `GetByIdAtSite`, `GetById(%rax)`, `BinaryWithDouble.Mul`, `AllocateCell.Header.n3`, `BoxNumber.Double`.
+
+A stub is specialized by a key: which register holds the receiver, how many words to initialize, which operator. Many stubs preserve the registers that they don't need, so a call of one costs the caller few spills. That's why the generic version of `dot` is so short.
+
+`CallOperationPreservingRegisters.. to operationAOTToString` is the last resort: a trampoline that saves registers and calls a C++ function. Those functions are declared in the schema too, with their signatures and effects.
+
+```txt aot/ir/schema/runtime-operations.def
+runtime PrivateGet, PrivateHas : EncodedJSValue (EncodedJSValue object, JSCell* token, uint32_t field) ; reads(all) throws
+```
+
+### Heat without a profile
+
+There's no profile. The compiler never sees the program run, and a build takes no input but the source. What's hot is estimated from the structure of the program (`aot/passes/AOTHeat.h`).
+
+- Each function gets an estimate of how often it's entered, propagated down the call graph from the entry points.
+- A loop multiplies. A branch divides. A block that ends in a `throw`, the failing edge of a guard and a `catch` are unlikely or rare.
+- Flow's execution counts feed in. A module body runs once, and so does what only it calls outside of loops.
+- Callbacks count. A function that's passed to `Bun.serve` as a handler, or to `forEach`, is entered many times. The table of built-ins says `times: "PerElement"` or `"Repeatedly"`.
+
+The estimate is then held against a budget: `MaxHotCodeValues` and `MaxWarmCodeValues` in `limits.def`. The hottest code up to the first limit is hot, the next part is warm, and the rest is cold. In a small program, everything fits and everything is hot. In a very large one, most code is cold.
+
+|                                    | Hot                            | Cold                              |
+| ---------------------------------- | ------------------------------ | --------------------------------- |
+| A failed check                     | A generic version to fall into | A guard at each use               |
+| Calls                              | Inlined by benefit             | Mostly left as calls              |
+| By-name accesses                   | A site cache                   | The shared stub alone             |
+| Operations with a long inline form | Inline                         | A call of a stub                  |
+| Equal cold sites                   |                                | Outlined into one shared function |
+
+This is the weakest part of the design, and it's weak on purpose. A profile would make builds depend on a run, on the machine and on the input. The cost is real. `test/aot/perf/idioms-against-the-jit.ts` compiles each of its 1,814 idioms as a small program, and again the way it would be compiled inside a very large one. Against the warm JIT of the same Bun, the median idiom takes 0.94 times the instructions in the first setting and 1.44 times in the second.
+
+### Inlining
+
+`InlineCalls` runs inside the optimizer's fixpoint, because inlining is what feeds the other passes. An argument that's a fresh object can be sunk, a callback that's a known closure becomes a direct call, and a check that the caller has answered disappears. `SummarizeForInlining` works out in advance, for each function, which of its tests, branches and switch arms a call site would decide by what it passes. So the cost of a copy is the size of what would be left of it, not the size of the callee.
+
+`InlineHeads` is a later and cheaper pass. It copies only the start of a callee, the entry checks or an early return, and leaves the rest as a call.
+
+### Making it smaller
+
+The code of a large program is tens of megabytes, and every page of it that's touched is a page fault. So size is also speed.
+
+| Step                                                                      | Where                              | What                                                                                                |
+| ------------------------------------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `RemoveUnreachableFunctions`, `RemoveUnreadFields`, `RemoveUnreadExports` | IR                                 | What nothing reaches isn't compiled                                                                 |
+| `OutlineColdOperations`                                                   | IR                                 | Equal cold sites, such as "throw a TypeError with this message", share one function                 |
+| Identical code folding                                                    | `aot/image/AOTFunctionMerging.cpp` | Functions with the same machine code become one                                                     |
+| Machine outlining                                                         | `aot/image/AOTOutliner.cpp`        | Instruction sequences that repeat become calls, where the bytes saved are worth a call and a return |
+
+## The run time
+
+### The image
+
+<Frame caption="An executable, and what starting it touches. Nothing at start is proportional to the size of the program.">
+  <ImageAndStart />
+</Frame>
+
+An image is a header, 27 sections of tables, and a code part. `FOR_EACH_AOT_IMAGE_SECTION` in `aot/image/AOTImageFormat.h` lists the sections.
+
+| Sections                                                                            | Hold                                                                                                                            |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `Functions`, `FunctionStarts`, `CodeGranules`, `InnerEntries`                       | From an address to its function, and back                                                                                       |
+| `Frames`, `FrameMaps`, `Positions`, `SideTables`, `FaultSites`                      | Per function: how to unwind it, its handlers, its inlined frames, source positions, which words of a saved frame are references |
+| `Strings`, `LongStrings`, `Text`, `Identifiers`, `StringConstants`, `StringHeaders` | Every string and name of the program                                                                                            |
+| `ProgramTables`                                                                     | Layouts, fields, classes, modules, key orders, allocation records                                                               |
+| `RegExps`, `RegExpHashes`, `RegExpDetails`                                          | Compiled regular expressions                                                                                                    |
+| `StubAddresses`, `SlotHandlers`, `MethodLookups`, `MethodTable`                     | Dispatch tables                                                                                                                 |
+
+Two rules shape all of it.
+
+**The image holds read-only data only.** A Worker is a second VM in the same process that runs the same image. Whatever the program writes (module variables, statics, caches, the state of module evaluation) has to exist once per VM. So it lives in the _instance_ (`aot/runtime/AOTInstance.h`), a block of zeroed pages that each VM reserves. The image is mapped from the file, never written, and shared between the threads of a process and between processes.
+
+**No loop over the image at start.** Startup must not grow with the program. What's known at build time is stored in the form in which the run time reads it, and what has to be made is made at the first use of that one thing.
+
+- A name is a `StringImpl` header that already lies in the image, with its hash computed. The name with the number n is at `programIdentifiers + n`. Nothing is interned at start.
+- A string constant becomes a `JSString` cell the first time that code asks for it.
+- A class is created when its definition runs. A top-level function's closure is made when something needs it as a value.
+- A Structure is made for a layout when the first object of that layout is allocated.
+- The property tables are reserved address space. Pages appear when they're written.
+
+`test/aot/startup-scaling` holds the compiler to this. It builds one program beside 100 and beside 20,000 unused things of several kinds (functions, classes, literals, strings, modules) and compares the instructions that each takes to get ready.
+
+### Loading
+
+`useImage()` in `aot/image/AOTImageLoading.cpp` is all there is. It checks the header (magic, format version, a stamp that covers the CPU features the code assumes, the identity of the runtime it was linked for) and checks that each part lies in a segment with the right protection. Then it maps the code.
+
+The operating system's loader has already mapped the executable, so the code could run where it is. On Linux it's mapped a second time, from the file, at an address of its own that the kernel picks. That keeps the distance between the code of the program and the code of the runtime random. Position-independent code makes it free.
+
+From then on, the process needs no new executable memory. On Linux 6.7 and later the executable calls `prctl(PR_SET_MDWE)`, after which the kernel denies any.
+
+### Modules
+
+Linking happened at build time. An `import { x } from "./a"` is a direct reference to a module variable, `GetModuleVariable variable=g12`, or, for a function, a direct call. A namespace object is only made where the program uses one as a value.
+
+What's left for the run time is the order of evaluation. `CallModules` turns that into code where it can: to evaluate a module that reaches no top-level `await` is to call its body, which first calls the bodies of what it imports, each behind a flag that says whether it has run. Modules with top-level `await`, and cycles through them, go through a table-driven version of the specification's algorithm (`aot/runtime/AOTModuleEvaluation.cpp`).
+
+`DeferDefinitions` and `DeferInitializers` take work out of module bodies. A variable that's stored once, with a closure that captures nothing, is born as that function: the module body neither makes the closure nor stores it.
+
+**A CommonJS file is a function.** It is lowered as a function of `exports`, `require`, `module`, `__filename` and `__dirname`. `require("./a")` with a constant path is a call that runs the file's function once and returns `module.exports`. `src/aot/modules/commonjs_exports` works out which names the file exports, and flow follows `module.exports` like any other object. So `const { parse } = require("./parser")` normally ends up as a direct reference too.
+
+A module in the image runs at most once and isn't in `require.cache`.
+
+### The collector
+
+The collector is JavaScriptCore's: generational, mostly concurrent, non-moving mark and sweep, with conservative scanning of the stack. The compiler is designed around those properties.
+
+**Non-moving** means that a pointer in a register stays valid across a collection. Compiled code needs no stack maps for running frames, no safepoint bookkeeping at calls and no reloads after them. It's also why an address computed into the middle of a cell, for an inner object, is fine.
+
+**Conservative stack scanning** means that any word on the stack that looks like a pointer to a cell keeps that cell alive. B3 can keep references in any register or spill slot. The cost is that a stale word can keep garbage alive, and that the collector can't compact.
+
+What the compiler adds:
+
+- **Typed visiting.** A compiled object's references are where the layout says, so marking reads a short list of offsets from the Structure. The marking loop visits the common kinds of cells inline (`heap/InlineCellVisits.h`).
+- **Fewer barriers.** A generational collector needs a write barrier when an old object is made to point to a new one. `RemoveRedundantBarriers` drops the barrier on a store into an object that was allocated since the last point where a collection could have run, and on stores of values that aren't cells.
+- **Polls.** A loop without calls has to give the collector, and `worker.terminate()`, a chance to stop it. `LoopHint` is one load from a page in the instance: `mov r11d, [r13 - 0x100000]`. To stop the thread, the run time protects the page. The load faults, and the fault handler finds the site in the image's `FaultSites` table.
+- **Objects in frames** are never marked or swept. Their header has a cell state that no barrier takes for a marked cell's. A validating build checks that no reference to one outlives the frame.
+
+### 32-bit references
+
+With `useAOT`, each VM takes its `MarkedBlock`s from one reservation of address space, the cage (`heap/MarkedBlockCage.h`).
+
+```cpp heap/MarkedBlockCage.h
+static constexpr unsigned shift = 3;
+static constexpr uint64_t maxSize = 1ull << (32 + shift);
+static uint32_t encode(uintptr_t base, const void* cell) { .. return static_cast<uint32_t>(bits >> shift); }
+static JSCell* decode(uintptr_t base, uint32_t index) { return std::bit_cast<JSCell*>(base + (static_cast<uintptr_t>(index) << shift)); }
+```
+
+<Frame caption="A reference in a field is the cell's address, shifted right by three, in 32 bits. One register holds the base of the cage.">
+  <HeapCage />
+</Frame>
+
+Cells are aligned to at least eight bytes, so 32 bits reach 32 GB. The cage is aligned to its size, so encoding is a shift and a truncation. Decoding is one instruction on both architectures: an address mode with a scaled index on x64, an add with a shifted register on arm64.
+
+A field that holds an object takes four bytes, not eight. On programs that are mostly graphs of small objects, such as a compiler's syntax tree, that's a large part of the memory saved. References in registers, on the stack and in `JSValue` slots are full pointers.
+
+The operating system picks the cage's address, and each Worker has a cage of its own. `--aot-huge-heap` compiles with 64-bit references and no limit.
+
+### Exceptions and stack traces
+
+A `try` costs nothing on the path that doesn't throw. Blocks in the IR name their handler (`b0(..) handler=b2()`), and that ends up as rows in the function's side table. There's no check after a call from compiled code to compiled code.
+
+A `throw` calls the run time. `unwindCompiledFrames()` (`aot/runtime/AOTUnwinding.h`) walks the frames by return address, looks each one up in the image, and finds the innermost handler that covers the call site. It restores the callee-saved registers that the frames in between had saved, and jumps.
+
+A stack trace is the same walk. Each return address maps to a function and a source position, and if the call site was inlined, to the chain of inlined frames. So `error.stack` lists functions that no longer exist as functions. Positions refer to your original TypeScript. No source map is involved, because no JavaScript was ever generated.
+
+Null checks are often free as well. A load from `undefined` or `null`, read as a pointer, hits the lowest pages of the address space, which the process keeps unmapped. The fault handler looks the instruction up in `FaultSites` and continues at the code that throws the `TypeError`.
+
+### Async functions and generators
+
+The usual way to compile a coroutine is a state machine, with every local variable that lives across an `await` moved to an object on the heap. This compiler saves the machine frame.
+
+`SplitCoroutines` splits an async function into a _ramp_, which keeps the signature and makes the promise, and a _body_. The body is ordinary code. Its locals are in registers and stack slots, in their unboxed representations. At an `await` that really has to wait, a stub copies the live part of the frame into a `SavedFrame` cell on the heap and returns to the event loop. Resuming copies it back and jumps to the address after the `await`. The `FrameMaps` section says which of the saved words are references, so the collector visits a saved frame precisely.
+
+Three passes avoid even that.
+
+| Pass                         | Case                                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `ResolveAwaitedCalls`        | `await f()` with a known async `f` enters the body of `f` directly, without a promise in between        |
+| `FuseGeneratorLoops`         | `for (const x of gen())` with a known generator merges the generator into the loop. A `yield` is a jump |
+| `StartGeneratorsAtFirstStep` | A generator that nobody looks at before its first `next()` isn't started at its creation                |
+
+### Workers
+
+A Worker is a new VM with a new heap, a new cage and a new instance, on the same image. Because the image is read-only and everything mutable is reached through the instance register, nothing needs a lock.
+
+What the compiler proves holds for one global object. So the file that a Worker starts with can begin a program of its own in the build, with its own flow analysis and its own image in the same executable. `src/aot/compile/load_stage.rs` decides when entry points are compiled as one program and when as several.
+
+### Code that arrives as text
+
+`eval`, `new Function` and `node:vm` run in JavaScriptCore's interpreter, LLInt, in the same process and on the same objects. There's no JIT tier above it, however hot that code gets.
+
+With `useAOT`, LLInt uses the handlers of `llint/LowLevelInterpreterAOT.asm`. They read and write compiled objects through the same tables as the stubs, and they keep no profiles, since nothing would read them.
+
+Interpreted and compiled code call each other through adapter stubs. A compiled function that's called from interpreted text is entered at its generic entry point, with its entry checks, like any call by value.
+
+A `RegExp` literal is compiled into the image by a second back end of the engine's regular expression compiler (`yarr/YarrCodeGenerator.cpp`). A `RegExp` that's built from a string at run time runs in a matcher without generated code (`yarr/YarrFlatProgram*`). A `.wasm` file that the program imports is compiled at build time by OMG, the engine's optimizing WebAssembly compiler. Any other WebAssembly module is interpreted.
+
+The interpreter is never a fallback for code that the build saw. A function that the compiler can't compile is a bug in the compiler, and it's reported as a build error.
+
+## Trimming
+
+A `bun build --compile` executable is a copy of `bun` with a program attached. It contains a package manager, a test runner, a bundler, a type checker and several JIT compilers. A compiled program can call none of them.
+
+<Frame caption="The build knows which built-ins the program can reach. Bun knows, from its own link, which bytes only those built-ins need.">
+  <Trimming />
+</Frame>
+
+### What the program uses
+
+The flow analysis already computes which built-ins are reached, and how. The engine returns that with the image.
+
+```txt aot/ir/schema/compile-call.def
+flags BuiltinUse { Tested Read Called Constructed Written Escaped }
+record BuiltinUseRecord abi { builtin: Builtin uses: BuiltinUse witness: Witness }
+record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witness kind: FeatureUseKind }
+```
+
+A row of the table of built-ins can name the feature that it needs: `usesFeature: "RareArrayMethods"`, `usesFeature: "WeakReferences"`. The `witness` is the place in your source that uses it, which is what `--explain=trim` prints.
+
+An open-ended use doesn't mean that everything is used. `Bun[name]` with an unknown `name` makes every member of `Bun` readable. It doesn't make every member _called_.
+
+### What can be removed
+
+You can't delete code from a linked binary after the fact, because a feature's functions are scattered all through `.text`. So the work is done when `bun` itself is linked (`scripts/build/trim/`).
+
+1. `bun` is linked once. The reference graph is read out of the relocations in the object files, for C++, C and Rust alike.
+2. `src/trim/features/*.def` names the features and the functions that you have to pass through to reach each one.
+3. The graph is partitioned: which sections can only be reached through the entry points of which features.
+4. `bun` is linked again, with the removable sections grouped into page-aligned ranges of their own. A table of those ranges goes into `bun`.
+
+```txt src/trim/features/bun.def
+feature Sqlite "bun:sqlite and node:sqlite"
+  exports
+  minimum 30000
+```
+
+After that, `bun compile` needs no linker. `src/trim` decides which features go. `src/exe_format` writes a copy of `bun` in which those ranges have no bytes in the file and aren't mapped. Nothing that stays moves, so no address in the remaining code changes.
+
+The tools (the command line, the checker, the compiler itself, the JITs) are always left out of a compiled executable. `--trim` adds the APIs.
+
+### It removes implementations, never names
+
+`typeof Bun.sql`, `"sqlite" in features` and `x instanceof HTMLRewriter` answer as they do in an untrimmed executable. Every global, class and property of a removed feature is still there. Only a call into one fails: it throws `ERR_FEATURE_REMOVED` and says which flag keeps the feature.
+
+Feature detection is everywhere in npm packages. A name that disappears changes which branch they take, which makes the trimmed program a different program. `test/aot/trimmed-against-whole` builds each of its programs both ways and compares what they print.
+
+[Smaller executables](/bundler/aot-size) has the list of features and the numbers.
+
+## Validation at the boundary
+
+Back to `dot.ts`. Its guard failed 1000 times, because `JSON.parse` makes ordinary objects and a guard asks for the layout of `Vec`. The types were right. The objects were made by the wrong allocator.
+
+`JSON.parse<T>(text)`, with `JSON` imported from `"bun"`, closes that gap. It checks the data against `T` while it parses, and it makes objects with the layouts of `T`. `validate<T>(value)` from `"bun:bundle"` does the same for a value that already exists. [Validate data by its type](/bundler/validate) is the user's guide.
+
+```ts dot-checked.ts icon="/icons/typescript.svg"
+import { JSON } from "bun";
+
+interface Vec {
+  x: number;
+  y: number;
+}
+
+function dot(a: Vec, b: Vec): number {
+  return a.x * b.x + a.y * b.y;
+}
+
+const unit: Vec = { x: 1, y: 0.5 };
+const message = JSON.parse<{ vec: Vec }>(process.argv[2] ?? '{"vec":{"x":3,"y":4}}');
+
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += dot(unit, message.vec);
+console.log(sum);
+```
+
+```bash terminal icon="terminal"
+bun compile --aot-log-type-mismatches ./dot-checked.ts && ./dot-checked
+```
+
+```txt
+5000
+```
+
+No mismatch is logged. The object under `vec` is a `Vec` now, and the loop takes its fast path.
+
+### A type as data
+
+The checker evaluates `T`, and the front end sends the result with the call, as a small tree.
+
+```txt
+expectedresult x0 type=L1 layouts=[L0, L1] site=w6 validation=[
+  {shape=Object{layout=L1 members=[{key="vec" node=1 field=0}]} type=L1},
+  {shape=Object{layout=L0 members=[{key="x" node=2 field=0}, {key="y" node=2 field=1}]} type=L0 text="Vec"},
+  {shape=Primitive{primitive=Number} type=number}]
+```
+
+`variant ValidationShape` and `variant ValidationRule` in `aot/ir/schema/types.def` define the nodes: objects, arrays, tuples, dictionaries, unions, literals, and rules that a type can't express, such as a minimum or a pattern. Each object node names the layout to allocate and the field that each member goes to.
+
+### A parser per type
+
+`SelectTypedResults` replaces the call by a parser that's derived from that tree. It's written in the same IR as everything else, as a function with `role=ValidatingParser`, so the same passes optimize it and the same back end compiles it.
+
+```txt
+function f1506 role=ValidatingParser parameters=[{type=cursor}] results=[{type=int[0, 2]}, {type=undefined|L1}, {type=cursor}] {
+  b1():
+    v2: int[0, 255] @Int32 = JSONGetByte v0
+    v3: 123 @Int32 = Integer integer=123
+    v4: boolean @Boolean = StrictEq v2, v3 form=Integers
+    TestAndBranch v4 -> taken b2(), notTaken b37()
+  b2():
+    v5: cursor @RawWord = JSONSkipByte v0
+    v6: cursor @RawWord = JSONSkipWhitespace v5
+    v9: keyorder @RawWord = JSONObjectBegin layout=L1
+    v10: boolean @Boolean = JSONStartsWith v6 string="\"vec\":" [isLikely]
+    TestAndBranch v10 -> taken b3(| 0), notTaken b12()
+  b3(v11: guard @Void):
+    v12: cursor @RawWord = JSONAdvance v6, v11 string="\"vec\":"
+    v13: cursor @RawWord = JSONSkipWhitespace v12
+    v14: undefined @Void = CallDirect v13 function=f1507
+    ..
+```
+
+It reads the bytes of the text through a cursor that lives in a register. It expects `{`, then guesses that the next key is the first declared one and compares the text with `"vec":` in one step. Then it calls the parser for `Vec`, which returns three values in registers: a status, the object and the new cursor. No intermediate tree of boxed values is built, and on this path no property name is hashed or looked up.
+
+Keys in another order, undeclared keys, escapes in strings and anything else unusual leave for slower paths. The slowest one parses with the ordinary `JSON.parse` and then validates the result against the same tree.
+
+### From a prediction to a fact
+
+The result rule of the fast path is an allocation: `NewObject layout=L1`. So its type is proven the way that a literal's is. That's the whole trick. A validated value isn't trusted because it was checked. It's trusted because the program made it.
+
+Today, the slowest path can still hand back an object that doesn't have the layout of `T` for some valid texts. So one test stays behind the call, and the accesses behind it count as `tested`, not as `free`. The test passes for ordinary input, which is what the log above shows.
+
+These two calls do throw on a mismatch. That doesn't break the second promise of [Soundness](#soundness-facts-and-predictions). Nothing throws because of a type that you declared somewhere. It throws because you called a function whose job is to check.
+
+## How it's tested
+
+A compiler that's wrong is worse than one that's slow, and this one has a large surface: all of JavaScript, all of TypeScript's types and all of Bun's API. Most of the lines that the compiler adds to the two repositories are tests. `test/aot/README.md` lists every group with the command that runs it.
+
+### Three runs have to agree
+
+The backbone is `test/aot/programs`: tens of thousands of small programs, plus generators in `test/aot/generate` that write more when the tests run. Each program runs three ways.
+
+| Run                               | Shows                              |
+| --------------------------------- | ---------------------------------- |
+| `bun run`                         | What the program does              |
+| Compiled                          | That the compiler didn't change it |
+| Compiled with `--aot-erase-types` | That types only ever change speed  |
+
+All three have to print the same and exit the same. The third column is the direct test of the first promise. If erasing every annotation changes the output, some type was believed that shouldn't have been.
+
+`test/aot/programs/nothing-throws-because-of-a-type` and `test/aot/values-against-their-types` go after the second promise. They put values that don't fit into every place where a type can be written.
+
+### The same programs, compiled differently
+
+A test program is small, so by default it only meets the compiler's forms for hot code. The `variant()` rows of `test/aot/parts.mts` compile the programs again in other ways.
+
+| Variant                                                                   | Finds                                                                                      |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Every function hot, every function cold                                   | Bugs in the forms that small programs never get                                            |
+| No inlining, no flow results                                              | Passes that only work because an earlier one cleaned up                                    |
+| Every prediction fails, or every second one, or every seventh             | The slow paths, the generic versions and the ways back, which ordinary input rarely enters |
+| The verifier after every pass                                             | The pass that broke the IR, not the one that tripped over it                               |
+| 64-bit references                                                         | Assumptions about the cage                                                                 |
+| Another code layout                                                       | Dependence on addresses and distances                                                      |
+| A collection at every third slow-path allocation, freed cells overwritten | Values that compiled code holds and the collector can't see                                |
+| `--trim`                                                                  | Features that were removed and are needed                                                  |
+
+### Validating builds
+
+`--aot-validate` compiles a program so that it checks its own assumptions. Every fact that the code relies on and doesn't test (an `AssumeType`, a proven receiver, a field that's never deleted, a call that doesn't collect, a barrier that was removed, a cache hit) gets a run-time check that ends the process with a name.
+
+```txt aot/ir/schema/runtime-records.def
+enum ValidationFailureKind (disable: Text) {
+    ValueType("") UnreachableValue("") FrameCellEscaped("") SavedFrameRootMissing("") VisitedCellsDiffer("") OperationEnteredVM("") OperationCollected("")
+    CacheHitDiffers("") CacheEntryDropped("") ImpossibleMutation("") TypeTestsDiffer("") BarrierWasNeeded("") BuiltinNotImmutable("")
+    ArrayNotPristine("flow:PristineInstances") ShapeWordInvalid("") StackTraceDiffers("") FastPathResultDiffers("") OperationPreconditionBroken("")
+    ..
+}
+```
+
+A wrong fact usually doesn't crash. It gives a right answer by luck, until it doesn't. Validation turns "the analysis concluded something false" into a failure at the first run, with the id of the function and the value.
+
+The checks are tested too. `aot/tests/validation/` has one deliberate lie per producer of facts: a program in which one thing that typed code relies on is false. The validating build has to catch each one. `--aot-sabotage` leaves one thing that's needed out of an executable, to see whether the suites notice.
+
+### Tests of the parts
+
+|                                         |                                                                                                                                                                           |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aot/tests/`, run by `testaot`          | IR text tests for every pass, analysis, selection rule and flow rule, and native tests of the run time. A test is a small program in IR text, a command and `CHECK` lines |
+| `test/aot/ir/`                          | The same idea for the front end: a few lines of TypeScript, and the IR that they have to lower to                                                                         |
+| `test/aot/shell/expectations.py`        | Expectations inside programs, such as `// IR=` and `// CALLS-`. These are the positive and negative tests of the optimizations                                            |
+| `b3/testb3_bun*`, `b3/air/testair_bun*` | The new and changed phases of the back end                                                                                                                                |
+| `test/aot/perf`                         | Instructions per iteration of everyday idioms, pinned, and compared with the JIT                                                                                          |
+
+### Other people's tests
+
+`test/aot/other-suites` compiles test262, JavaScriptCore's own tests, Node's tests and Bun's `test/js`, each file as an executable, and compares it with plain Bun on the same file. Of test262's 47,536 files, 33,467 can run as module code, and 31,231 of those pass. Most of the rest try to change a built-in.
+
+`test/aot/frameworks` builds and serves apps on Next, Nuxt, Astro, SvelteKit, Angular and React Router. `test/aot/servers` asks thirteen HTTP servers for every route and compares the bytes.
+
+### Scaling
+
+Three groups guard the shape of the curves, not the numbers: `analysis-scaling`, `build-scaling` and `startup-scaling`. Build time can't grow faster than the program, and startup can't grow with it at all.
+
+### One program, one output
+
+Builds are deterministic: the same sources give the same executable, byte for byte, whatever the number of threads and however they're scheduled. `test/aot/repeated-builds` builds programs again and again and compares the files. Checking modes must not leak into the code either, so another test builds with and without the verifier and expects the same executable.
+
+Determinism is also a tool. A change to the compiler that's meant to be a refactoring can be held to that: compile a set of programs before and after, and compare the machine code.
+
+### Fuzzing
+
+`test/aot/fuzz` has generators of typed and untyped programs, and mutators of the existing ones. They run against the shipping build, a build with assertions and AddressSanitizer, and the validating build, under collector stress. The oracle is always the same: plain Bun on the same file.
+
+Fuzzers still find programs that it compiles wrong. Known failures are `todo`s in `test/aot`, with the reason next to each.
+
+## What it deliberately doesn't do
+
+**No JIT, not even for text that arrives at run time.** All machine code is in the file. That's what makes startup flat and memory low. It lets pages be shared between processes, and it lets the process give up the right to create executable memory. A JIT for `eval`ed code would bring back the compiler threads, the profiling and the writable code, for every program, to speed up a few. The price is real: libraries that generate their hot code with `new Function` are slower compiled.
+
+**No interpreter fallback.** An escape hatch would be used. Every hard construct would go to the interpreter "for now", and a program's performance would depend on which of its functions fell through. One compiler handles the whole language. Where it knows nothing, it degrades the types, not the tier.
+
+**No profile.** A build is a function of the source. There's no training run to set up, keep representative and store. Two people who build the same commit get the same executable. The price is the guessing described under [Heat without a profile](#heat-without-a-profile).
+
+**No evaluation at build time and no heap snapshot.** None of your program runs during the build, except macros, which ask for it. A snapshot of an initialized heap would start faster. But it bakes in whatever the build machine's environment, clock, locale and file system said, and it's mutable data that every Worker would need a copy of. The compiler makes initialization cheap and lazy instead.
+
+**No moving collector.** Compaction and bump allocation in a nursery are attractive. But they need precise stack maps at every point where a collection can happen, in compiled code, in stubs and in all of Bun's native code, which holds raw pointers to cells. JavaScriptCore is non-moving on purpose, and the compiler takes the benefits: no maps, no reloads, interior pointers.
+
+**No new language.** There are no annotations, no pragmas, no restricted subset and no "strict mode for performance". `int32` is the one addition, and to TypeScript it's `number`. Whatever speeds up your program under `bun compile` is ordinary TypeScript that any other tool accepts.
+
+**No errors at run time that `bun run` doesn't have**, apart from the listed exceptions. The alternative, throwing a `TypeError` where a value doesn't fit its declared type, is simpler and faster. It also turns every unsound cast in every dependency into a crash in production.
+
+**No cache between builds.** A cache hides a slow compiler, and it's one more way for two builds of one commit to differ. The work goes into the fresh build.
+
+**No cross-compilation.** This one isn't a principle. The build makes code for the platform that it runs on, and nothing else has been done yet.
+
+## A map of the source
+
+### In oven-sh/bun
+
+| Path                                     | What                                                                                                     |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `src/aot/compile.rs`, `src/aot/compile/` | The driver, one file per stage. Start here                                                               |
+| `src/aot/load/`                          | From entry points to parsed files: resolver, loaders, macros, plugins, typed packages, Bun's own modules |
+| `src/aot/modules/`                       | The module graph: ES links, CommonJS exports, interop, order of evaluation                               |
+| `src/aot/lower/`                         | Syntax tree and types to IR. `convert/` and `layouts/` are where types turn into IR                      |
+| `src/aot/builtins/`                      | The front end's half of the table, and the resolution of names to built-ins                              |
+| `src/aot/ir/`                            | The IR in Rust: builder, SSA construction, types, text form                                              |
+| `src/aot/link/`, `src/aot/emit/`         | From files to one program, and to bytes                                                                  |
+| `src/aot/engine.rs`                      | The call into JavaScriptCore                                                                             |
+| `src/aot/report/`                        | `--explain`: from the engine's records to messages                                                       |
+| `src/aot/prelude/`                       | Library functions in TypeScript that are compiled with every program that uses them                      |
+| `src/sema/`                              | The type checker. `check/aot/` is the compiler's interface to it, `fold/` is constant folding            |
+| `src/codegen/builtins/`                  | The generator of the table of built-ins, and the rows for Bun, Node.js and the web                       |
+| `src/bundler/aot/`, `src/exe_format/`    | Options, assets and plugins. The writers of ELF, Mach-O and PE executables                               |
+| `src/trim/`, `scripts/build/trim/`       | Trimming: at build time of your program, and at link time of `bun`                                       |
+| `src/js/`                                | Bun's `node:*` and `bun:*` modules, which are compiled with your program                                 |
+| `test/aot/`                              | The tests. `README.md` is the index                                                                      |
+
+### In oven-sh/WebKit, under `Source/JavaScriptCore/`
+
+| Path                                                  | What                                                                                        |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `aot/ir/AOTSchema.def`, `aot/ir/schema/`              | The contract. Read `operations.def` and `types.def` first                                   |
+| `aot/ir/generator/`                                   | From the schema to C++ and Rust                                                             |
+| `aot/ir/`                                             | Types, effects, result rules, the reader, the verifier                                      |
+| `aot/pipeline/`                                       | The pass table, the schedules and the order of stages                                       |
+| `aot/valueflow/`                                      | The whole-program flow analysis                                                             |
+| `aot/analysis/`                                       | Analyses of one function: CFG, dominators, liveness, escape, guards, the call graph         |
+| `aot/passes/`                                         | The optimizer, one file or a few per pass                                                   |
+| `aot/builtins/`                                       | Rows for the language's built-ins, their resolution, and the emitters of their inline forms |
+| `aot/place/`, `aot/select/`, `aot/represent/`         | Slots and numbers, selection rules, machine representations                                 |
+| `aot/codegen/`                                        | IR to B3                                                                                    |
+| `aot/stubs/`                                          | Shared machine code, and the calling convention                                             |
+| `aot/image/`                                          | The image: layout, linking, outlining, format, loading                                      |
+| `aot/object/`                                         | Objects, closures, environments, classes                                                    |
+| `aot/runtime/`                                        | Operations, caches, modules, coroutines, unwinding, stack traces                            |
+| `aot/tests/`                                          | `testaot`. `README.md` explains the test format                                             |
+| `b3/`, `b3/air/`                                      | The back end, shared with the JIT tiers, steered by `B3Policy.h`                            |
+| `heap/MarkedBlockCage.h`, `heap/InlineCellVisits.h`   | The cage, and the marking loop                                                              |
+| `llint/LowLevelInterpreterAOT.asm`                    | The interpreter's handlers in a process with an image                                       |
+| `yarr/YarrCodeGenerator.cpp`, `yarr/YarrFlatProgram*` | Regular expressions at build time and at run time                                           |
+
+### Tools for looking inside
+
+These flags have no entry in `--help`. They exist for working on the compiler.
+
+| Command                                                                               | Shows                                                                                  |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `bun compile --aot-out program.bin app.ts`                                            | Writes the program bytes that the front end sends                                      |
+| `testaot print program.bin --wire`                                                    | Those bytes as IR text                                                                 |
+| `testaot print program.bin --until=<PassID> --aotFunctionToDump=<name>`               | One function after any pass                                                            |
+| `testaot list passes`, `options`, `limits`, `statistics`, `diagnostics`               | What there is                                                                          |
+| `bun compile --aot-symbols app.ts`, then `objdump -d`                                 | Machine code with the names of your functions and of the stubs                         |
+| `bun compile --aot-disable=pass:<PassID>`, `--aot-disable=flow:<FlowResultKind>`      | The program without one optimization                                                   |
+| `bun compile --aot-verify-each-pass`, `--aot-validate`                                | The two checking modes                                                                 |
+| `bun compile --explain`, `--explain=guards`, `--explain=trim`, `--explain=statistics` | The compiler's own account: see [Get more of your program typed](/bundler/aot-explain) |
+
+`testaot` is built with the engine (`aot/tests/README.md`). It isn't part of `bun`.
+
+## Glossary
+
+| Term                                  | Meaning                                                                                                                     |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Access, `free` / `tested` / `by name` | The three states of a property access in the build's summary: one load, a test and a load, a lookup                         |
+| Cage                                  | The 32 GB reservation that holds the cells of one VM, so that a reference fits in 32 bits                                   |
+| Check                                 | An IR operation that asks for a value to have a type. Flow answers it, or it becomes a type test                            |
+| Closed world                          | The assumption that the image is all the code that will ever run in the process                                             |
+| Effects                               | What an operation may read, write, throw, collect, call, suspend                                                            |
+| Escape                                | An object is handed to code that the analysis can't see into                                                                |
+| Expected type                         | The second type of a value: a guess, which nothing may rely on without a test                                               |
+| Extra properties                      | The side object of a compiled object, for what its layout has no slot for                                                   |
+| Family                                | The layouts that the program converts to a type. The closed-world meaning of a structural type                              |
+| Form                                  | One of four stages of the IR: `AsRead`, `Prepared`, `Selected`, `Placed`                                                    |
+| Generic version                       | A copy of a function, or of the rest of one, in which the failed assumptions are dropped                                    |
+| Guard                                 | A run-time test that protects typed code. In the IR, also the SSA value that its passing edge defines                       |
+| Head                                  | The part of a function that holds only its entry checks                                                                     |
+| Image                                 | The compiler's output: machine code and read-only tables                                                                    |
+| Instance                              | The per-VM block of memory with everything that the program writes outside the heap                                         |
+| Layout                                | The fixed list of fields of a class, interface, object type or literal                                                      |
+| Locked                                | Of a built-in: its existing members can't be replaced in an executable                                                      |
+| Member guard                          | A bit that's set while a method of one of your classes is as the class declared it                                          |
+| Order word                            | 32 bits in each compiled object: key order, number of fields, and flags for everything irregular                            |
+| Position                              | A typed place that values are stored in: a variable, parameter, result, field or element                                    |
+| Pristine                              | Of an array, `Map` or other built-in object: nobody has shadowed a method, changed the prototype or made the storage exotic |
+| Proof, `Forever` / `Stretch`          | What a passed test establishes, and for how long                                                                            |
+| Proven type                           | The first type of a value: what its operation guarantees                                                                    |
+| Protocol                              | A place where the language calls back by a well-known name: `valueOf`, `then`, `Symbol.iterator`, `toJSON`                  |
+| Shape word                            | 32 bits in each compiled object: the number of its layout, negated. It never changes                                        |
+| Site cache                            | 16 bytes of per-thread data that remember what one hot access found last                                                    |
+| Slot                                  | The place of a field in an object, with a fixed offset and representation                                                   |
+| Stub                                  | Machine code that many functions share                                                                                      |
+| Summary                               | What a function does, stated in terms of its parameters                                                                     |
+| Trust                                 | Whether a declaration comes from a file that the checker has checked against its code                                       |
+| Unknown object                        | Flow's placeholder for a value from outside the program                                                                     |
+| Untracked object                      | Flow's placeholder for "some objects of this program, too many to list"                                                     |
+| Unsound edge                          | A conversion that the checker can't vouch for. It carries an `IllTypedCause`                                                |

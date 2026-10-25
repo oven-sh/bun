@@ -419,20 +419,6 @@ extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::
     return result;
 }
 
-// The plans are the text of the result.
-extern "C" BunAOTResult* Bun__AOT__writeValidationPlans(BunAOTBytes program)
-{
-    // The first thread that WTF meets has to be the one that it takes for the main thread. A bundler that has not started JavaScriptCore by now may still do so, on another thread.
-    WTF::initializeMainThread();
-    ensureHostBindings();
-
-    Wire::CompileOptions options;
-    Bun__AOT__initializeOptions(&options);
-    auto* result = new BunAOTResult;
-    result->text = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::writeValidationPlans>(std::span { program.ptr, program.len }, options);
-    return result;
-}
-
 extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t* description, size_t size, uint8_t* message, size_t capacity)
 {
     std::optional<JSC::AOT::RuntimeDifference> difference = JSC::AOT::findDifferenceFromThisRuntime({ description, size });

@@ -6,14 +6,14 @@ use std::rc::Rc;
 
 use bun_sema::atom::Atom;
 use bun_sema::check::aot::{
-    AnythingReason, GaveUp, IndexKey, MemberName, ObjectMember, ObjectMemberKind, SchemaConstraint,
-    ShapeKind, TupleElement, TupleElementKind, TypeShape, WrittenUnionOrders,
+    AnythingReason, BRAND_KEYS, GaveUp, IndexKey, MemberName, ObjectMember, ObjectMemberKind,
+    SchemaConstraint, ShapeKind, TupleElement, TupleElementKind, TypeShape, WrittenUnionOrders,
 };
 use bun_sema::hir::TypeNodeId;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use super::rules::AppliesConstraints;
+use super::rules::{apply_constraints, find_refused_rule};
 use super::unsupported::{DescribesUnsupported, Origin, Step};
 use super::{ValidatedFile, ValidationError};
 use crate::ir::LayoutId;
@@ -27,15 +27,15 @@ const ROOT: u32 = 0;
 const MAX_NESTED_CONSTRAINT_LISTS: usize = 8;
 
 #[derive(Copy, Clone)]
-struct Source<'c> {
+pub(super) struct Source<'c> {
     node: u32,
     ty: CheckerTypeId,
     shape: TypeShape<'c>,
     is_deep_strict: bool,
 }
 
-struct NodeBuilder<'f, 'c, F> {
-    file: &'f mut F,
+pub(super) struct NodeBuilder<'f, 'c, F> {
+    pub(super) file: &'f mut F,
     nodes: Vec<ValidationNode>,
     origins: Vec<Option<Origin>>,
     ids: FxHashMap<(CheckerTypeId, bool), u32>,
@@ -54,6 +54,7 @@ pub(super) fn validation_nodes<'c, 'p: 'c, 's: 'p>(
     if let Some(nodes) = file.validation().nodes_by_type.get(&key) {
         return Ok(Rc::clone(nodes));
     }
+    let limits_hit = file.queries().count_limits_hit();
     let max_declarations = file.limit(LimitId::MaxValidationNodes) as usize;
     let orders = (file.queries()).written_union_orders(written, max_declarations);
     let mut builder = NodeBuilder {
@@ -68,6 +69,13 @@ pub(super) fn validation_nodes<'c, 'p: 'c, 's: 'p>(
     builder.ensure(ty, false, None)?;
     while let Some(source) = builder.pending.pop_front() {
         builder.fill(source)?;
+    }
+    // At a limit the checker goes on with the error type, which a conditional type swallows: the nodes would be those of another type.
+    if builder.file.queries().count_limits_hit() != limits_hit {
+        return Err(ValidationError::GaveUp(GaveUp::ErrorType));
+    }
+    if let Some(node) = find_node_tested_against_itself(&builder.nodes) {
+        return Err(builder.refuse_at(node, b"a type that is tested against itself"));
     }
     let nodes: Rc<[ValidationNode]> = builder.nodes.into();
     let memo = &mut file.validation().nodes_by_type;
@@ -110,7 +118,7 @@ fn placeholder_of(kind: ShapeKind<'_>) -> Option<TemplatePlaceholder> {
     }
 }
 
-fn is_default(constraint: &SchemaConstraint) -> bool {
+fn is_default(constraint: &SchemaConstraint<'_>) -> bool {
     matches!(constraint, SchemaConstraint::Default(_))
 }
 
@@ -145,8 +153,104 @@ fn primitive_shape(primitive: ValidatedPrimitive) -> ValidationShape {
     ValidationShape::Primitive { primitive }
 }
 
+/// The nodes that test the very value that `node` tests. The others test a part of it, which is smaller.
+fn nodes_of_same_value(node: &ValidationNode) -> SmallVec<[u32; 8]> {
+    let mut found: SmallVec<[u32; 8]> = SmallVec::new();
+    match &node.shape {
+        ValidationShape::Union { arms } => found.extend_from_slice(arms),
+        ValidationShape::Unknown
+        | ValidationShape::Never
+        | ValidationShape::Undefined
+        | ValidationShape::Null
+        | ValidationShape::AnyObject
+        | ValidationShape::Primitive { .. }
+        | ValidationShape::BooleanLiteral { .. }
+        | ValidationShape::NumberLiteral { .. }
+        | ValidationShape::StringLiteral { .. }
+        | ValidationShape::Array { .. }
+        | ValidationShape::Tuple { .. }
+        | ValidationShape::Dictionary { .. }
+        | ValidationShape::Object { .. } => {}
+    }
+    for rule in &node.rules {
+        match rule {
+            ValidationRule::Not { node } | ValidationRule::DependentNode { node, .. } => {
+                found.push(*node);
+            }
+            ValidationRule::If {
+                condition,
+                then,
+                otherwise,
+            } => found.extend([*condition, *then, *otherwise]),
+            ValidationRule::ExactlyOne { nodes } | ValidationRule::Every { nodes } => {
+                found.extend_from_slice(nodes);
+            }
+            ValidationRule::Integer
+            | ValidationRule::Minimum { .. }
+            | ValidationRule::Maximum { .. }
+            | ValidationRule::ExclusiveMinimum { .. }
+            | ValidationRule::ExclusiveMaximum { .. }
+            | ValidationRule::MultipleOf { .. }
+            | ValidationRule::MinimumLength { .. }
+            | ValidationRule::MaximumLength { .. }
+            | ValidationRule::Pattern { .. }
+            | ValidationRule::Format { .. }
+            | ValidationRule::Template { .. }
+            | ValidationRule::Message { .. }
+            | ValidationRule::DefaultNull
+            | ValidationRule::DefaultBoolean { .. }
+            | ValidationRule::DefaultNumber { .. }
+            | ValidationRule::DefaultString { .. }
+            | ValidationRule::UniqueItems
+            | ValidationRule::Contains { .. }
+            | ValidationRule::PatternMembers { .. }
+            | ValidationRule::MemberNames { .. }
+            | ValidationRule::MinimumMembers { .. }
+            | ValidationRule::MaximumMembers { .. }
+            | ValidationRule::DependentMembers { .. } => {}
+        }
+    }
+    found
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Visit {
+    Unseen,
+    Open,
+    Closed,
+}
+
+/// Such a test never ends: `type Loop = Schema.Not<Loop>`.
+fn find_node_tested_against_itself(nodes: &[ValidationNode]) -> Option<u32> {
+    let mut visits = vec![Visit::Unseen; nodes.len()];
+    let mut open: Vec<(u32, SmallVec<[u32; 8]>)> = Vec::new();
+    for start in 0..nodes.len() as u32 {
+        if visits[start as usize] != Visit::Unseen {
+            continue;
+        }
+        visits[start as usize] = Visit::Open;
+        open.push((start, nodes_of_same_value(&nodes[start as usize])));
+        while let Some((node, rest)) = open.last_mut() {
+            let Some(next) = rest.pop() else {
+                visits[*node as usize] = Visit::Closed;
+                open.pop();
+                continue;
+            };
+            match visits[next as usize] {
+                Visit::Open => return Some(next),
+                Visit::Closed => {}
+                Visit::Unseen => {
+                    visits[next as usize] = Visit::Open;
+                    open.push((next, nodes_of_same_value(&nodes[next as usize])));
+                }
+            }
+        }
+    }
+    None
+}
+
 impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> NodeBuilder<'_, 'c, F> {
-    fn shape_of(&mut self, ty: CheckerTypeId) -> Result<TypeShape<'c>, ValidationError> {
+    pub(super) fn shape_of(&mut self, ty: CheckerTypeId) -> Result<TypeShape<'c>, ValidationError> {
         let shape = self.file.queries().type_shape(ty);
         shape.map_err(ValidationError::GaveUp)
     }
@@ -157,7 +261,16 @@ impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> NodeBuilder<'_, 'c, F> {
         is_deep_strict: bool,
         origin: Option<Origin>,
     ) -> Result<u32, ValidationError> {
-        let shape = self.shape_of(ty)?;
+        let shape = match self.file.queries().type_shape(ty) {
+            Ok(shape) => shape,
+            Err(GaveUp::ErrorType) => {
+                return Err(self.file.describe_unsupported(&self.origins, origin, ty));
+            }
+            Err(
+                reason
+                @ (GaveUp::Unresolved | GaveUp::FlowAnalysisDisabled | GaveUp::UnreachedNode),
+            ) => return Err(ValidationError::GaveUp(reason)),
+        };
         let key = if matches!(shape.kind, ShapeKind::Undefined) {
             (CheckerTypeId::UNDEFINED, false)
         } else {
@@ -191,6 +304,34 @@ impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> NodeBuilder<'_, 'c, F> {
         self.ensure(ty, source.is_deep_strict, Some(origin))
     }
 
+    /// A type argument of a rule is a type of its own: it is as strict as it is written. Under `Schema.Not`, a stricter one would accept more.
+    pub(super) fn ensure_operand(
+        &mut self,
+        source: Source<'c>,
+        ty: CheckerTypeId,
+        alias: &'static str,
+    ) -> Result<u32, ValidationError> {
+        let origin = Origin {
+            parent: source.node,
+            step: Step::RuleOperand(alias),
+        };
+        self.ensure(ty, false, Some(origin))
+    }
+
+    /// A type argument that says what a part of the value holds, and that no other node tests: `Schema.DeepStrict` reaches it as it reaches a member.
+    pub(super) fn ensure_part(
+        &mut self,
+        source: Source<'c>,
+        ty: CheckerTypeId,
+        alias: &'static str,
+    ) -> Result<u32, ValidationError> {
+        self.ensure_child(source, ty, Step::RuleOperand(alias))
+    }
+
+    pub(super) fn node_mut(&mut self, source: Source<'c>) -> &mut ValidationNode {
+        &mut self.nodes[source.node as usize]
+    }
+
     fn add_node(
         &mut self,
         ty: CheckerTypeId,
@@ -214,7 +355,7 @@ impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> NodeBuilder<'_, 'c, F> {
     }
 
     fn fill(&mut self, mut source: Source<'c>) -> Result<(), ValidationError> {
-        let mut constraint_lists: SmallVec<[&'c [SchemaConstraint]; 1]> = SmallVec::new();
+        let mut constraint_lists: SmallVec<[&'c [SchemaConstraint<'c>]; 1]> = SmallVec::new();
         let mut visited: SmallVec<[CheckerTypeId; 2]> = SmallVec::new();
         while let ShapeKind::Constrained { base, constraints } = source.shape.kind {
             if visited.contains(&source.ty) {
@@ -226,15 +367,12 @@ impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> NodeBuilder<'_, 'c, F> {
             source.ty = base;
             source.shape = self.shape_of(base)?;
         }
+        if let Some(rule) = find_refused_rule(&constraint_lists) {
+            return Err(self.refuse_atom(source, rule));
+        }
         let shape = self.compute_shape(source)?;
         self.nodes[source.node as usize].shape = shape;
-        for constraints in constraint_lists.into_iter().rev() {
-            for &constraint in constraints {
-                let node = &mut self.nodes[source.node as usize];
-                self.file.apply_constraint(node, constraint);
-            }
-        }
-        Ok(())
+        apply_constraints(self, source, &constraint_lists)
     }
 
     fn compute_shape(&mut self, source: Source<'c>) -> Result<ValidationShape, ValidationError> {
@@ -297,7 +435,14 @@ impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> NodeBuilder<'_, 'c, F> {
             ShapeKind::Constrained { .. } => {
                 unreachable!("fill reads the base of a constrained type")
             }
-            _ => Err(self.unsupported(source)),
+            ShapeKind::Anything(AnythingReason::Void)
+            | ShapeKind::TypeVariable { .. }
+            | ShapeKind::BigIntLiteral { .. }
+            | ShapeKind::Symbol
+            | ShapeKind::Function(_)
+            | ShapeKind::ClassConstructor(_)
+            | ShapeKind::Builtin { .. }
+            | ShapeKind::Class(_) => Err(self.unsupported(source)),
         }
     }
 
@@ -389,16 +534,76 @@ impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> NodeBuilder<'_, 'c, F> {
         elements: &[TupleElement],
     ) -> Result<ValidationShape, ValidationError> {
         let mut nodes = Vec::with_capacity(elements.len());
+        let mut required: u32 = 0;
+        let mut rest = None;
         for (index, element) in elements.iter().enumerate() {
+            if rest.is_some() {
+                return Err(self.unsupported(source));
+            }
+            let step = Step::TupleElement(index as u32);
             match element.kind {
-                TupleElementKind::Required => {
-                    let step = Step::TupleElement(index as u32);
+                TupleElementKind::Required if required as usize == index => {
+                    required += 1;
                     nodes.push(self.ensure_child(source, element.ty, step)?);
                 }
-                _ => return Err(self.unsupported(source)),
+                TupleElementKind::Optional => {
+                    nodes.push(self.ensure_optional_element(source, element.ty, step)?);
+                }
+                TupleElementKind::Rest => {
+                    rest = Some(self.ensure_child(source, element.ty, Step::ArrayElement)?);
+                }
+                TupleElementKind::Required | TupleElementKind::Variadic => {
+                    return Err(self.unsupported(source));
+                }
             }
         }
-        Ok(ValidationShape::Tuple { elements: nodes })
+        Ok(ValidationShape::Tuple {
+            elements: nodes,
+            required,
+            rest,
+        })
+    }
+
+    /// The checker adds `undefined` to the type of `B?`. An element that is there is a `B`: an array that ends early says that it is not.
+    fn ensure_optional_element(
+        &mut self,
+        source: Source<'c>,
+        ty: CheckerTypeId,
+        step: Step,
+    ) -> Result<u32, ValidationError> {
+        let shape = self.shape_of(ty)?;
+        let ShapeKind::Union(arms) = shape.kind else {
+            return self.ensure_child(source, ty, step);
+        };
+        let mut present: SmallVec<[CheckerTypeId; 8]> = SmallVec::new();
+        for &arm in arms {
+            if !matches!(self.shape_of(arm)?.kind, ShapeKind::Undefined) {
+                present.push(arm);
+            }
+        }
+        if present.len() == arms.len() {
+            return self.ensure_child(source, ty, step);
+        }
+        if let [only] = present[..] {
+            return self.ensure_child(source, only, step);
+        }
+        let origin = Origin {
+            parent: source.node,
+            step,
+        };
+        let node = self.add_node(ty, Some(origin))?;
+        let union = Source {
+            node,
+            ty,
+            shape,
+            is_deep_strict: source.is_deep_strict,
+        };
+        let mut nodes = Vec::with_capacity(present.len());
+        for arm in self.order_arms(ty, &present)? {
+            nodes.push(self.ensure_child(union, arm, Step::UnionArm)?);
+        }
+        self.nodes[node as usize].shape = ValidationShape::Union { arms: nodes };
+        Ok(node)
     }
 
     fn compute_object_shape(
@@ -454,8 +659,9 @@ impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> NodeBuilder<'_, 'c, F> {
                 return Err(self.unsupported(source));
             }
         };
-        if self.file.queries().is_schema_key(name) {
-            return Err(self.unsupported(source));
+        // The checker turns an alias of `Schema` into a constraint. A mapped type over one gives its key to an object type, with whatever modifiers, and the rule would be skipped.
+        if BRAND_KEYS.contains(&self.file.queries().atom_bytes(name)) {
+            return Err(self.refuse_atom(source, name));
         }
         let key = self.file.name_key(name);
         let origin = Origin {
@@ -494,5 +700,19 @@ impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> NodeBuilder<'_, 'c, F> {
         let origin = self.origins[source.node as usize];
         self.file
             .describe_unsupported(&self.origins, origin, source.ty)
+    }
+
+    pub(super) fn refuse(&mut self, source: Source<'c>, rule: &[u8]) -> ValidationError {
+        self.refuse_at(source.node, rule)
+    }
+
+    pub(super) fn refuse_atom(&mut self, source: Source<'c>, rule: Atom) -> ValidationError {
+        let rule = self.file.atom_bytes(rule);
+        self.refuse_at(source.node, rule)
+    }
+
+    fn refuse_at(&mut self, node: u32, rule: &[u8]) -> ValidationError {
+        let origin = self.origins[node as usize];
+        self.file.describe_refused(&self.origins, origin, rule)
     }
 }

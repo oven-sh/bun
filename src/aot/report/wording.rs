@@ -73,7 +73,7 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
         ),
         UnprovenCause::UnknownObject => (
             "An object from untyped code is used as this type here, so it can have any shape.",
-            "validate it where it enters typed code (JSON.parse<T>, validate<T>), or build a new object of this type from it.",
+            "validate it where it enters typed code: import { JSON } from \"bun\" for JSON.parse<T>(text), or import { validate } from \"bun:bundle\" for validate<T>(value). Or build a new object of this type from it.",
         ),
         UnprovenCause::NonLayoutObject => (
             "An array, a function or a built-in object is used as this type here.",
@@ -169,7 +169,7 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
         ),
         UnprovenCause::DataFromOutside => (
             "The value comes from outside the program (JSON.parse, response.json(), a file loaded at run time).",
-            "parse it with JSON.parse<T>(text), or check it with validate<T>(value).",
+            "import { JSON } from \"bun\" and parse it with JSON.parse<T>(text), or import { validate } from \"bun:bundle\" and check it with validate<T>(value).",
         ),
         UnprovenCause::ThrownByRunTime => (
             "The value was caught, and anything can be thrown.",
@@ -213,7 +213,7 @@ pub(super) fn check_wording(cause: CheckCause) -> CheckWording {
         CheckCause::UnknownObject => CheckWording {
             counted_as: "on a value from untyped code",
             headline: "the value may come from untyped code",
-            fix: "narrow it first: typeof for a primitive, JSON.parse<T>(text) or validate<T>(value) from \"bun:bundle\" for an object",
+            fix: "narrow it first: typeof for a primitive. For an object, import { JSON } from \"bun\" and call JSON.parse<T>(text), or import { validate } from \"bun:bundle\" and call validate<T>(value)",
         },
         CheckCause::UnknownCallee => CheckWording {
             counted_as: "on the result of an unknown callee",
@@ -279,7 +279,7 @@ pub(super) fn ill_typed_cause_wording(cause: IllTypedCause) -> Option<IllTypedWo
         IllTypedCause::OutsideData => (
             "external-data",
             "The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).",
-            "parse it with JSON.parse<T>(text), or check it with validate<T>(value).",
+            "import { JSON } from \"bun\" and parse it with JSON.parse<T>(text), or import { validate } from \"bun:bundle\" and check it with validate<T>(value).",
         ),
         IllTypedCause::LayoutOutsideFamily => (
             "unexpected-shape",
@@ -619,6 +619,18 @@ pub(super) fn interpreted_cause_sentence(reason: u32) -> Option<&'static str> {
         }
         InterpretedCause::FieldTypeIsNotTestable => {
             Some("a field's proven type can't be checked at run time")
+        }
+        InterpretedCause::RuleNamesNodes => {
+            Some("a rule tests the value by another type, and no code is generated for that yet")
+        }
+        InterpretedCause::RuleReadsGivenValue => {
+            Some("a rule reads the whole array or object, also what the type does not describe")
+        }
+        InterpretedCause::TupleLengthVaries => {
+            Some("the tuple has optional or rest elements, and no code is generated for that yet")
+        }
+        InterpretedCause::UniqueItemsAreRecursive => {
+            Some("the items that must be unique hold arrays of the same type")
         }
     }
 }

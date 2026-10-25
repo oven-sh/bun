@@ -1,6 +1,7 @@
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{
-    Bound, LinkedBinding, LoadedValue, ReferentContext, SymbolId, static_referent,
+    Bound, LinkedBinding, LoadedValue, ReferentContext, StaticInitializer, SymbolId,
+    static_initializer, static_referent,
 };
 use bun_sema::check::aot::{NamedValue, NamedValues};
 use bun_sema::hir::{ExprId, File};
@@ -9,7 +10,7 @@ use bun_sema::program::{FileId, Files};
 use super::table::{self, MemberLookup};
 use super::{
     BuiltinId, BuiltinNames, ImportTargets, Platforms, ResolveInput, ResolvedBuiltins,
-    SourceDialect, named_value_of, resolve_file,
+    SourceDialect, find_frozen_value, named_value_of, resolve_file,
 };
 
 const PLATFORM: Platforms = Platforms::LINUX;
@@ -94,5 +95,13 @@ impl<'s> ReferentContext<'s> for UnlinkedFiles<'_, 's> {
 impl NamedValues for UnlinkedFiles<'_, '_> {
     fn find_named_value(&self, file: FileId, expression: ExprId) -> Option<NamedValue> {
         named_value_of(static_referent(self, file, expression).referent)
+    }
+
+    fn find_initializer(&self, file: FileId, expression: ExprId) -> Option<StaticInitializer> {
+        static_initializer(self, file, expression)
+    }
+
+    fn find_frozen_value(&self, file: FileId, expression: ExprId) -> Option<ExprId> {
+        find_frozen_value(self, file, expression)
     }
 }

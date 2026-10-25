@@ -253,27 +253,6 @@ pub fn compile(program: ProgramBytes, options: &EngineOptions) -> EngineResult {
     }
 }
 
-/// The plan of each expected result of a program that holds nothing but those, in their order. Empty: the engine cannot read the program.
-pub fn write_validation_plans(program: &ProgramBytes) -> Vec<Box<[u8]>> {
-    let bytes = BunAOTBytes::from_slice(program.as_slice());
-    // SAFETY: the engine reads the program only until it returns, and its result has no other owner.
-    let result = unsafe {
-        let result = Bun__AOT__writeValidationPlans(bytes);
-        EngineResult::new(
-            NonNull::new(result).expect("Bun__AOT__writeValidationPlans returned null"),
-        )
-    };
-    // Each text stands behind its length.
-    let mut rest = result.elements::<u8>(ResultSection::Text);
-    let mut plans = Vec::new();
-    while let Some((length, after)) = rest.split_first_chunk::<4>() {
-        let (plan, after) = after.split_at(u32::from_le_bytes(*length) as usize);
-        plans.push(Box::from(plan));
-        rest = after;
-    }
-    plans
-}
-
 struct ProgramOwner {
     program: Option<ProgramBytes>,
     frees_on_pool_thread: bool,
@@ -419,7 +398,6 @@ unsafe extern "C" {
         options: *const CompileOptions,
         thread_pool: *const HostThreadPool,
     ) -> *mut BunAOTResult;
-    fn Bun__AOT__writeValidationPlans(program: BunAOTBytes) -> *mut BunAOTResult;
     fn Bun__AOT__resultSection(result: *const BunAOTResult, section: u32) -> BunAOTBytes;
     fn Bun__AOT__freeResult(result: *mut BunAOTResult);
     safe fn Bun__AOT__operationCount() -> usize;

@@ -503,7 +503,11 @@ pub(crate) mod js_bundler {
             Ok(())
         }
 
-        fn compile_flags<'a>(&'a self, compile: &'a CompileOptions) -> CompileFlags<'a> {
+        fn compile_flags<'a>(
+            &'a self,
+            compile: &'a CompileOptions,
+            source_map: options::SourceMapOption,
+        ) -> CompileFlags<'a> {
             CompileFlags {
                 is_executable: true,
                 aot: self.aot,
@@ -514,6 +518,7 @@ pub(crate) mod js_bundler {
                 is_in_place: false,
                 omits_function_source: self.omits_function_source,
                 obfuscates: self.obfuscates,
+                has_external_source_map: source_map == options::SourceMapOption::External,
                 admits_inspector: self.admits_inspector,
                 allows_code_from_disk: self.allows_code_from_disk,
                 trim: TrimFlags {
@@ -1605,8 +1610,9 @@ pub(crate) mod js_bundler {
                 this.compile.as_ref().map(|c| c.compile_target),
             )? {
                 let compile = this.compile.insert(compile);
-                let settings = compile_options::resolve(&raw.compile_flags(compile))
-                    .map_err(|error| throw_option_error(global_this, error))?;
+                let settings =
+                    compile_options::resolve(&raw.compile_flags(compile, this.source_map))
+                        .map_err(|error| throw_option_error(global_this, error))?;
                 compile.aot = settings.aot;
                 compile.trim = settings.trim;
                 if compile.aot.is_some() {

@@ -1352,7 +1352,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // `var validator, validator2;`: see `P::validator_of`.
+        // `var validator, validator2;`: see `P::create_validator_method`.
         if !p.validator_variables.is_empty() {
             let count = p.validator_variables.len();
             let mut declared_symbols =

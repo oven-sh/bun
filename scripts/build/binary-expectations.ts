@@ -18,6 +18,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import {
+  overridesDarwinAllocator,
+  replacedLibcAllocationSymbols,
+  replacedOperatorNewSymbols,
+} from "./deps/mimalloc.ts";
 import { versionScriptPath } from "./flags.ts";
 
 export type BinaryFormat = "elf" | "macho" | "pe";
@@ -315,6 +320,12 @@ function forbiddenImports(cfg: Config): string[] {
     // unwinder entry must not be imported either.
     forbidden.push("_Unwind_Resume");
   }
+  if (overridesDarwinAllocator(cfg)) {
+    // Everything linked into the executable allocates from mimalloc
+    // (MimallocOverrideDarwin.cpp). An import of one of these is code that
+    // reached the system allocator around it.
+    forbidden.push(...replacedLibcAllocationSymbols, ...replacedOperatorNewSymbols);
+  }
   if (cfg.linux && cfg.abi !== "musl") {
     // …nor the function-local-static guards (musl/FreeBSD/macOS take them
     // from the shared libstdc++/libc++ legitimately).
@@ -530,7 +541,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     case "macho":
       return {
         format,
-        exports: { symbolList: src("symbols.txt"), exact: [], patterns: [] },
+        exports: {
+          symbolList: src("symbols.txt"),
+          exact: overridesDarwinAllocator(cfg) ? replacedOperatorNewSymbols.map(name => `_${name}`) : [],
+          patterns: [],
+        },
         neededLibs: {
           names: [
             "/usr/lib/libSystem.B.dylib",

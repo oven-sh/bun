@@ -14,7 +14,7 @@ mod tests {
     use crate::load::project::ProjectId;
 
     const BUN_TYPES: &[u8] = include_bytes!("../../../packages/bun-types/bun.d.ts");
-    const TAGGED_ALIAS_COUNT: usize = 17;
+    const TAGGED_ALIAS_COUNT: usize = 29;
     const PROGRAM_WITH_OTHER_DECLARATIONS: [(&str, &str); 3] = [
         (
             "main.ts",

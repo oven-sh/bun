@@ -138,8 +138,9 @@ interface::define_linked_functions! {
         report::to_messages(texts.0.get(), &entries)
     }
 
-    fn bun_aot_write_obfuscation_map(engine: &interface::engine::EngineResult, names: &interface::link::ProgramNames, texts: &interface::report::SourceTexts, file_name: &[u8]) -> Vec<u8> {
-        report::obfuscation_map::write(engine.0.get(), names.0.get(), texts.0.get(), file_name)
+    fn bun_aot_write_obfuscation_map(engine: &interface::engine::EngineResult, names: &interface::link::ProgramNames, texts: &interface::report::SourceTexts, file_name: &[u8], debug_id: Option<&[u8]>) -> Vec<u8> {
+        let executable = report::obfuscation_map::Executable { file_name, debug_id };
+        report::obfuscation_map::write(engine.0.get(), names.0.get(), texts.0.get(), executable)
     }
 
     fn bun_aot_write_build_report(input: &interface::report::ReportInput<'_>, detail: ReportDetail, build_id: Option<&[u8]>) -> Vec<u8> {

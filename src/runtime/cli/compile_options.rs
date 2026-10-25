@@ -115,6 +115,7 @@ pub(crate) enum OptionName {
     InPlace,
     FunctionSource,
     Obfuscate,
+    ExternalSourceMap,
     Inspector,
     CodeFromDisk,
     ExecArgv,
@@ -153,6 +154,8 @@ pub(crate) struct CompileFlags<'a> {
     pub is_in_place: bool,
     pub omits_function_source: bool,
     pub obfuscates: bool,
+    /// `--sourcemap=external`. With `--aot` it means what `--obfuscate` means.
+    pub has_external_source_map: bool,
     pub admits_inspector: bool,
     pub allows_code_from_disk: bool,
     pub trim: TrimFlags<'a>,
@@ -215,6 +218,8 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
         (Name::TrimLocales, BuildApi) => "compile.trim.locales",
         (Name::Obfuscate, BuildFlag | CompileCommand) => "--obfuscate",
         (Name::Obfuscate, BuildApi) => "compile.obfuscate",
+        (Name::ExternalSourceMap, BuildFlag | CompileCommand) => "--sourcemap=external",
+        (Name::ExternalSourceMap, BuildApi) => "sourcemap: \"external\"",
         (Name::FunctionSource, BuildFlag | CompileCommand) => "--no-compile-function-source",
         (Name::FunctionSource, BuildApi) => "compile.functionSource: false",
         (Name::Inspector, BuildFlag | CompileCommand) => "--compile-inspector",
@@ -340,8 +345,9 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
         return Ok(CompileSettings { aot: None, trim });
     }
     let embedded = read_exec_argv(flags.exec_argv);
+    let obfuscates = flags.obfuscates || flags.has_external_source_map;
     // The source text has every name that an obfuscated build leaves out.
-    let embeds_function_source = !flags.omits_function_source && !flags.obfuscates;
+    let embeds_function_source = !flags.omits_function_source && !obfuscates;
     let admits_inspector = flags.admits_inspector || embedded.admits_inspector();
     if (!embeds_function_source || !admits_inspector)
         && let Some(option) = embedded.first_that_loads_code()
@@ -350,6 +356,8 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
             OptionName::FunctionSource
         } else if flags.obfuscates {
             OptionName::Obfuscate
+        } else if flags.has_external_source_map {
+            OptionName::ExternalSourceMap
         } else {
             OptionName::Aot
         };
@@ -368,7 +376,7 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
         explain,
         trim,
         reports_type_mismatches: flags.logs_type_mismatches,
-        obfuscates: flags.obfuscates,
+        obfuscates,
         forbids_text_evaluation: embedded.forbids_text_evaluation,
         admits_inspector,
         loads_code_from_disk: flags.allows_code_from_disk,
@@ -790,6 +798,7 @@ fn read_build_flags<'c>(
         is_in_place: args.flag(b"--compile-in-place"),
         omits_function_source: args.flag(b"--no-compile-function-source"),
         obfuscates: args.flag(b"--obfuscate"),
+        has_external_source_map: args.option(b"--sourcemap") == Some(b"external"),
         admits_inspector: args.flag(b"--compile-inspector"),
         allows_code_from_disk: args.flag(b"--aot-allow-code-from-disk"),
         trim: TrimFlags {
@@ -849,10 +858,10 @@ pub(crate) fn parse_build_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Co
     if settings.aot.is_some() {
         if args
             .option(b"--sourcemap")
-            .is_some_and(|setting| setting != b"none")
+            .is_some_and(|setting| setting != b"none" && setting != b"external")
         {
             bun_core::note!(
-                "--sourcemap has no effect with --aot: a compiled program reports the positions of its sources already"
+                "only --sourcemap=external has an effect with --aot: a compiled program reports the positions of its sources already"
             );
         }
         options.bytecode = false;

@@ -420,6 +420,25 @@ String sourceURL(JSC::CodeBlock* codeBlock)
     return Zig::sourceURL(*codeBlock);
 }
 
+#if ENABLE(AOT)
+String externalSourceMapFileURL()
+{
+#if OS(WINDOWS)
+    static const auto url = MAKE_STATIC_STRING_IMPL("B:\\~BUN\\root\\compiled.js");
+#else
+    static const auto url = MAKE_STATIC_STRING_IMPL("/$bunfs/root/compiled.js");
+#endif
+    return String(url);
+}
+
+String sourceURL(const JSC::AOT::SourcePosition& position)
+{
+    if (position.source)
+        return JSC::AOT::sourceURLOf(position.source);
+    return hasExternalSourceMap() ? externalSourceMapFileURL() : String();
+}
+#endif
+
 String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
 {
     if (frame.isWasmFrame()) {
@@ -433,7 +452,7 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
 #if ENABLE(AOT)
     if (frame.isCompiledFrame()) [[unlikely]] {
         auto position = frame.compiledPosition();
-        return position && position->source ? JSC::AOT::sourceURLOf(position->source) : String();
+        return position ? sourceURL(*position) : String();
     }
 #endif
 
@@ -449,7 +468,7 @@ String sourceURL(JSC::StackVisitor& visitor)
     case JSC::StackVisitor::Frame::Global: {
 #if ENABLE(AOT)
         if (visitor->isCompiledFrame())
-            return visitor->compiledFrame().sourceURL();
+            return hasExternalSourceMap() ? externalSourceMapFileURL() : visitor->compiledFrame().sourceURL();
 #endif
         return sourceURL(visitor->codeBlock());
     }

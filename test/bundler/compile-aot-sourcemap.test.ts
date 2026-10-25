@@ -30,7 +30,7 @@ try {
     },
   }),
 };
-const note = "note: --sourcemap has no effect with --aot";
+const note = "note: only --sourcemap=external has an effect with --aot";
 
 async function built(flags: string[]) {
   using folder = tempDir("compile-aot-sourcemap", files);
@@ -50,7 +50,7 @@ async function built(flags: string[]) {
   return { said, stdout };
 }
 
-test.each(["--sourcemap", "--sourcemap=inline", "--sourcemap=external", "--sourcemap=linked"])(
+test.each(["--sourcemap", "--sourcemap=inline", "--sourcemap=linked"])(
   "--aot %s: the build says that the positions are the sources' already",
   async flag => {
     const { said, stdout } = await built(["--aot", flag]);
@@ -58,6 +58,14 @@ test.each(["--sourcemap", "--sourcemap=inline", "--sourcemap=external", "--sourc
     expect(stdout).toBe(`Error: failed\n    at fail (${root}app.ts:3:13)\n    at ${root}app.ts:6:3\n`);
   },
 );
+
+test("--aot --sourcemap=external: the positions are in the map", async () => {
+  const { said, stdout } = await built(["--aot", "--sourcemap=external"]);
+  expect(said).not.toContain(note);
+  expect(stdout.replace(/\d+/g, "N")).toBe(
+    `Error: failed\n    at <anonymous> (${root}compiled.js:N:N)\n    at ${root}compiled.js:N:N\n`,
+  );
+});
 
 test.each([[["--aot"]], [["--aot", "--sourcemap=none"]], [["--sourcemap=external"]]])(
   "%p: prints no note",

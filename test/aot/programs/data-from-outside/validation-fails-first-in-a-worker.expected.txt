@@ -1,2 +1,2 @@
-main thread: n must be number, received string
-worker: n must be number, received boolean, n must be number, received array | main thread again: n must be number, received null
+main thread: Expected n to be a number, received string
+worker: Expected n to be a number, received boolean, Expected n to be a number, received array | main thread again: Expected n to be a number, received null

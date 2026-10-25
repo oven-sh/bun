@@ -30,6 +30,7 @@ const stopped: Record<string, string[]> = {
     "array-from-a-length-without-a-mapper/walked-by-its-iterators",
     "array-from-a-length-without-a-mapper/with-void-0-written-as-the-mapper",
     "arrays-of-the-greatest-length-are-read-and-stored-into",
+    "concat-called-on-a-primitive-wraps-it-in-an-object",
     "names-and-a-length-come-to-the-object-that-a-species-constructor-answers",
     "push-grows-long-arrays",
   ],

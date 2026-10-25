@@ -271,7 +271,7 @@ Private memory is the peak over 400,000 requests. By requests per second on one 
 What it costs:
 
 - **The build takes longer.** Bun type checks the whole program and compiles every function that can be reached, and there's no cache between builds. The TypeScript 6 compiler builds in 8.2 s on a machine with many cores, with 121 s of CPU time and 1.5 GB of memory.
-- **The machine code is part of the file.** That's a few megabytes for a small server and tens of megabytes for a large application. The executable is still smaller than with `bun build --compile`, because `bun compile` leaves out the `bun` command line and the JIT compilers: the todo server at the top of this page is 68 MB instead of 139 MB. [`bun compile --trim`](/bundler/aot-size) also removes the Bun APIs that your program doesn't use.
+- **The machine code is part of the file.** That's a few megabytes for a small server and tens of megabytes for a large application. The executable is still smaller than with `bun build --compile`, because `bun compile` leaves out the `bun` command line and the JIT compilers: the todo server at the top of this page is 69 MB instead of 140 MB. [`bun compile --trim`](/bundler/aot-size) also removes the Bun APIs that your program doesn't use.
 
 ## Compare on your application
 
@@ -325,5 +325,6 @@ Use routes that do what your application does in production. A route that return
 - [Smaller executables](/bundler/aot-size): remove the Bun APIs that your program doesn't use.
 - [Publish a library for `bun compile`](/bundler/aot-libraries): ship a package that keeps its types, or add types to one you don't maintain.
 - [Troubleshooting](/bundler/aot-troubleshooting): the errors you're most likely to hit first, with the cause and the fix.
+- [How `bun compile` works](/bundler/aot-internals): the compiler from the inside, for people who want to read or change it.
 
 <Compile />

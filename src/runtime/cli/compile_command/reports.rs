@@ -120,15 +120,30 @@ pub(super) fn write_obfuscation_map(
     build: &AotBuild,
     root_dir: Fd,
     outfile: &[u8],
+    build_id: Option<&[u8; 16]>,
 ) -> Result<(), CompileFailure> {
+    let debug_id = build_id.map(bun_crash_handler::build_id::write_uuid);
+    let debug_id = debug_id.as_ref().map(|id| &id[..]);
     let bytes = report::obfuscation_map::write(
         &build.engine,
         &build.names,
         &build.texts,
         bun_paths::basename(outfile),
+        debug_id,
     );
-    let path = [outfile, b".map".as_slice()].concat();
-    write_file(root_dir, &path, &bytes)
+    let map_path = [outfile, b".map".as_slice()].concat();
+    write_file(root_dir, &map_path, &bytes)?;
+    let stub = source_map_stub(bun_paths::basename(&map_path), debug_id);
+    write_file(root_dir, &[&map_path[..], b".js"].concat(), &stub)
+}
+
+/// Tools that upload source maps expect a JavaScript file beside each map. The executable has no JavaScript text, so this one only names the map.
+fn source_map_stub(map_file_name: &[u8], debug_id: Option<&[u8]>) -> Vec<u8> {
+    let mut stub = [b"//# sourceMappingURL=", map_file_name, b"\n"].concat();
+    if let Some(debug_id) = debug_id {
+        stub.extend_from_slice(&[b"//# debugId=", debug_id, b"\n"].concat());
+    }
+    stub
 }
 
 /// `None`: the build asks for no metafile.

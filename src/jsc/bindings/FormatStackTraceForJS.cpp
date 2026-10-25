@@ -349,7 +349,8 @@ WTF::String formatStackTrace(
                     sourceURLs[i] = position->source == previousCompiledModule ? sourceURLs[previousCompiledFrame] : JSC::AOT::sourceURLOf(position->source);
                     previousCompiledModule = position->source;
                     previousCompiledFrame = i;
-                }
+                } else
+                    sourceURLs[i] = Zig::sourceURL(*position);
             }
             continue;
         }

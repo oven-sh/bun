@@ -1364,14 +1364,14 @@ let v16: { a: 1 } & Schema.DeepStrict;
 let v17: number & Schema.Min<1> & Schema.Max<9>;
 export {};
 //// schema-constraints/invalid-arguments.queries.txt
-# A `Schema` alias with an invalid argument says no rule. The type has no shape, so nothing is validated by less than what was written.
-invalid-arguments.ts:3 shape `number & Schema.Min<number>` = gave up: Unresolved
-invalid-arguments.ts:4 shape `string & Schema.MinLength<-1>` = gave up: Unresolved
-invalid-arguments.ts:5 shape `string & Schema.MinLength<1.5>` = gave up: Unresolved
-invalid-arguments.ts:6 shape `string & Schema.Format<"email" | "uuid">` = gave up: Unresolved
-invalid-arguments.ts:7 shape `number & Schema.Int & Schema.Min<number>` = gave up: Unresolved
+# A `Schema` alias with an invalid argument becomes a refused rule that names the alias, so the build error can name it and nothing is validated by less than what was written.
+invalid-arguments.ts:3 shape `number & Schema.Min<number>` = Constrained(number; Refused("Min"))
+invalid-arguments.ts:4 shape `string & Schema.MinLength<-1>` = Constrained(string; Refused("MinLength"))
+invalid-arguments.ts:5 shape `string & Schema.MinLength<1.5>` = Constrained(string; Refused("MinLength"))
+invalid-arguments.ts:6 shape `string & Schema.Format<"email" | "uuid">` = Constrained(string; Refused("Format"))
+invalid-arguments.ts:7 shape `number & Schema.Int & Schema.Min<number>` = Constrained(number; Int, Refused("Min"))
 //// schema-constraints/invalid-arguments.ts
-// A `Schema` alias with an invalid argument says no rule. The type has no shape, so nothing is validated by less than what was written.
+// A `Schema` alias with an invalid argument becomes a refused rule that names the alias, so the build error can name it and nothing is validated by less than what was written.
 import type { Schema } from "bun";
 let v1: number & Schema.Min<number>;
 let v2: string & Schema.MinLength<-1>;

@@ -11,6 +11,8 @@ pub(super) enum Step {
     TupleElement(u32),
     IndexSignatureValue,
     UnionArm,
+    /// A type argument of the alias of `Schema` that has this name.
+    RuleOperand(&'static str),
 }
 
 #[derive(Copy, Clone)]
@@ -28,6 +30,23 @@ pub(super) trait DescribesUnsupported<'c, 'p: 'c, 's: 'p>:
         origin: Option<Origin>,
         ty: CheckerTypeId,
     ) -> ValidationError {
+        let mut described = self.describe_place(origins, origin);
+        described.extend_from_slice(&self.queries().type_text(ty));
+        ValidationError::Unsupported { described }
+    }
+
+    fn describe_refused(
+        &mut self,
+        origins: &[Option<Origin>],
+        origin: Option<Origin>,
+        rule: &[u8],
+    ) -> ValidationError {
+        let mut described = self.describe_place(origins, origin);
+        described.extend_from_slice(rule);
+        ValidationError::Refused { described }
+    }
+
+    fn describe_place(&mut self, origins: &[Option<Origin>], origin: Option<Origin>) -> Vec<u8> {
         let mut steps: SmallVec<[Step; 8]> = SmallVec::new();
         let mut next = origin;
         while let Some(Origin { parent, step }) = next {
@@ -41,8 +60,7 @@ pub(super) trait DescribesUnsupported<'c, 'p: 'c, 's: 'p>:
         if !described.is_empty() {
             described.extend_from_slice(b": ");
         }
-        described.extend_from_slice(&self.queries().type_text(ty));
-        ValidationError::Unsupported { described }
+        described
     }
 
     fn write_step(&mut self, described: &mut Vec<u8>, step: Step) {
@@ -59,6 +77,9 @@ pub(super) trait DescribesUnsupported<'c, 'p: 'c, 's: 'p>:
             }
             Step::IndexSignatureValue => described.extend_from_slice(b"[string]"),
             Step::UnionArm => {}
+            Step::RuleOperand(alias) => {
+                described.extend_from_slice(format!("<Schema.{alias}>").as_bytes());
+            }
         }
     }
 }

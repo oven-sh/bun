@@ -491,13 +491,15 @@ group("Bun, process and other holders", () => {
 });
 
 group("parts of Bun that run code the compiler does not see", () => {
-  test.each([
+  eachRow([
     ["process.dlopen", `process.dlopen({ exports: {} }, "./addon.node");`, "process.dlopen"],
     ["process.dlopen of an alias of the global object", `const everything: any = globalThis;\neverything.process.dlopen({ exports: {} }, "./addon.node");`, "process.dlopen"],
     ["process.dlopen out of a pattern", `const { dlopen } = process;\ndlopen({ exports: {} }, "./addon.node");`, "process.dlopen"],
     ["process.dlopen that Reflect.apply calls", `Reflect.apply(process.dlopen, process, [{ exports: {} }, "./addon.node"]);`, "process.dlopen"],
     ["process.dlopen that call() calls", `process.dlopen.call(process, { exports: {} }, "./addon.node");`, "process.dlopen"],
     ["process.dlopen as a callback", `[{ exports: {} }].forEach(process.dlopen);`, "process.dlopen"],
+    gap("the report is closed", ["process.dlopen that bind() binds", `process.dlopen.bind(process)({ exports: {} }, "./addon.node");`, "process.dlopen"]),
+    gap("the report is closed", ["process.dlopen that is bound first and called later", `const load = process.dlopen.bind(process);\nload({ exports: {} }, "./addon.node");`, "process.dlopen"]),
     ["cc of bun:ffi, which compiles C", `import { cc } from "bun:ffi";\nconsole.log(cc({ source: "./a.c", symbols: {} }));`, "bun:ffi.cc"],
     ["dlopen of bun:ffi", `import { dlopen } from "bun:ffi";\nconsole.log(dlopen("libc.so.6", {}));`, "bun:ffi.dlopen"],
     ["dlopen of what require gives for bun:ffi", `console.log(require("bun:ffi").dlopen("libc.so.6", {}));`, "bun:ffi.dlopen"],

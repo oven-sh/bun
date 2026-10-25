@@ -1042,13 +1042,13 @@ check("the first has 300", text => JSON.parse<F18>(text), 18, 300);
 check("the first has 1000", text => JSON.parse<F19>(text), 19, 1000);
 check("the first has 1100", text => JSON.parse<F20>(text), 20, 1100);
 //// json-parse-type-argument-goes-by-binding.ts
-// A type argument validates where the function that is called is the global's JSON.parse, under whatever name and type the program holds it. Written on globalThis.JSON.parse it is a type error: that function takes none.
-// On any other function a type argument is a type somebody wrote for the result: a claim, which nothing tests.
-interface User { id: number }
+// A type argument validates where the function that is called is `parse` of the JSON of "bun".
+// On any other function, the global JSON.parse under a type of the program's own among them, a type argument is a type somebody wrote for the result: a claim, which nothing tests.
+import { JSON as Typed } from "bun"; interface User { id: number }
 const misfit = '{"id":"one"}';
-function viaGlobal(): unknown {
+function viaBun(): unknown {
   try {
-    return JSON.parse<User>(misfit);
+    return Typed.parse<User>(misfit);
   } catch (error: any) {
     return error.constructor.name;
   }
@@ -1056,8 +1056,8 @@ function viaGlobal(): unknown {
 function withoutArgument(): unknown { return JSON.parse(misfit); }
 function withCast(): unknown { return JSON.parse(misfit) as User; }
 function withAnnotation(): unknown { const user: User = JSON.parse(misfit); return user; }
-function withAny(): unknown { return JSON.parse<any>(misfit); }
-function withUnknown(): unknown { return JSON.parse<unknown>(misfit); }
+function withAny(): unknown { return Typed.parse<any>(misfit); }
+function withUnknown(): unknown { return Typed.parse<unknown>(misfit); }
 function nameOfError(run: () => unknown): unknown {
   try {
     return run();
@@ -1078,7 +1078,7 @@ function heldAsValue(): unknown {
 function throughGlobalThis(): unknown { return globalThis.JSON.parse(misfit) as User; }
 const own = { parse<T>(text: string): T { return globalThis.JSON.parse(text); } };
 for (const [name, result] of [
-  ["global", viaGlobal()],
+  ["of bun", viaBun()],
   ["no argument", withoutArgument()],
   ["cast", withCast()],
   ["annotation", withAnnotation()],

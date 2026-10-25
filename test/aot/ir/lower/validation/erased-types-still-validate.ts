@@ -7,10 +7,10 @@
 
 /// <reference path="./imports/declarations.d.ts" />
 
-import { JSON } from "bun"; interface Point {
+interface Point {
   x: number;
 }
 
 export function read(text: string) {
-  return JSON.parse<Point>(text);
+  return Bun.JSON.parse<Point>(text);
 }

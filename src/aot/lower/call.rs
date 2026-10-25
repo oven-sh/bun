@@ -239,8 +239,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if may_parse && self.file.calls_parse_of_bun(site.callee) {
             callee.function = self.builder.builtin(BuiltinId::JSONParse);
         }
-        // `JSON.parse<T>(...list)`: an ordinary call, and `validate<T>()` of what it returns.
-        if is_validated && matches!(arguments, Arguments::List(_)) {
+        // `JSON.parse<T>(...list)`, or a callee that isn't resolved: an ordinary call, and `validate<T>()` of what it returns.
+        let is_resolved = self.file.calls_validating_function(site.callee);
+        if is_validated && (matches!(arguments, Arguments::List(_)) || !is_resolved) {
             let unchecked = CallOptions {
                 expected_result: None,
                 ..options

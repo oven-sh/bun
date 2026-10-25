@@ -47,7 +47,7 @@ const supported: Record<string, { files: Record<string, string>; stdout: string;
 console.log(shown(() => validate<User>({ id: 1, name: "a", more: true })));
 console.log(shown(() => validate<User>({ id: "1", name: "a" })));`,
     },
-    stdout: `{"id":1,"name":"a","more":true}\nTypeError: id must be number, received string\n`,
+    stdout: `{"id":1,"name":"a","more":true}\nTypeError: Expected id to be a number, received string\n`,
   },
   "validate with an alias, imported next to feature": {
     files: {
@@ -55,7 +55,7 @@ console.log(shown(() => validate<User>({ id: "1", name: "a" })));`,
 if (feature("NOTHING")) console.log("never");
 console.log(shown(() => check<User>({ id: 1, name: "a" })), shown(() => check<number>("1")));`,
     },
-    stdout: `{"id":1,"name":"a"} TypeError: value must be number, received string\n`,
+    stdout: `{"id":1,"name":"a"} TypeError: Expected value to be a number, received string\n`,
   },
   "a call above the import statement": {
     files: {
@@ -64,7 +64,7 @@ const check = (value: unknown) => validate<User>(value);
 import { validate } from "bun:bundle";
 console.log(shown(() => check({ id: 1, name: "a" })), shown(() => check(null)));`,
     },
-    stdout: `{"id":1,"name":"a"} TypeError: value must be object, received null\n`,
+    stdout: `{"id":1,"name":"a"} TypeError: Expected value to be an object, received null\n`,
   },
   "two files that import validate": {
     files: {
@@ -72,7 +72,7 @@ console.log(shown(() => check({ id: 1, name: "a" })), shown(() => check(null)));
 console.log(shown(() => validate<number>(1)), shown(() => other("1")));`,
       "other.ts": `import { validate } from "bun:bundle";\nexport const other = (value: unknown) => validate<number>(value);`,
     },
-    stdout: `1 TypeError: value must be number, received string\n`,
+    stdout: `1 TypeError: Expected value to be a number, received string\n`,
   },
   "other bindings named validate are left alone": {
     files: {
@@ -87,7 +87,7 @@ function withLocal() {
 console.log(validate<number>("text"), withParameter(<T,>(value: unknown) => ("given " + value) as T), withLocal(), shown(() => checked<number>("text")));`,
       "own.ts": `export const validate = <T,>(value: unknown) => ("its own given " + value) as T;`,
     },
-    stdout: `its own given text given a parameter a local given text TypeError: value must be number, received string\n`,
+    stdout: `its own given text given a parameter a local given text TypeError: Expected value to be a number, received string\n`,
   },
   "JSON from bun": {
     files: {
@@ -98,7 +98,7 @@ console.log(shown(() => JSON.parse<User>('{"id":')).split(":")[0]);
 console.log(JSON === globalThis.JSON, JSON.stringify({ a: 1 }), ["1", "2"].map(text => JSON.parse<any>(text)).join(), typeof JSON.parse);
 console.log(shown(() => ["[1]"].map(JSON.parse)).slice(0, 37), (codec => codec.stringify([2]))(JSON));`,
     },
-    stdout: `{"id":1,"name":"a","more":true}\nTypeError: id must be number, received string\nSyntaxError\nfalse {"a":1} 1,2 function\nTypeError: JSON.parse() from "bun" ha [2]\n`,
+    stdout: `{"id":1,"name":"a","more":true}\nTypeError: Expected id to be a number, received string\nSyntaxError\nfalse {"a":1} 1,2 function\nTypeError: JSON.parse() from "bun" ha [2]\n`,
   },
   "JSON from bun with an alias, and Bun.JSON": {
     files: {
@@ -106,7 +106,7 @@ console.log(shown(() => ["[1]"].map(JSON.parse)).slice(0, 37), (codec => codec.s
 console.log(shown(() => Codec.parse<User>('{"id":"1","name":"a"}')), Codec === Bun.JSON, Codec.stringify([1]), typeof inspect);
 console.log(shown(() => Bun.JSON.parse<User>('{"id":"1","name":"a"}')), Bun.JSON === JSON);`,
     },
-    stdout: `TypeError: id must be number, received string true [1] function\nTypeError: id must be number, received string false\n`,
+    stdout: `TypeError: Expected id to be a number, received string true [1] function\nTypeError: Expected id to be a number, received string false\n`,
     needsBun: true,
   },
   "a parameter with the alias of JSON is left alone": {
@@ -117,7 +117,7 @@ function withParameter(Codec: { parse<T>(text: string): T }) {
 }
 console.log(withParameter({ parse: <T,>(text: string) => ("theirs given " + text) as T }), shown(() => Codec.parse<number>('"text"')));`,
     },
-    stdout: `theirs given text TypeError: value must be number, received string\n`,
+    stdout: `theirs given text TypeError: Expected value to be a number, received string\n`,
   },
 };
 
@@ -331,7 +331,7 @@ notYet.each(["bun run", "bun build"])(
 
 // However the file names the `JSON` of "bun", the text is held against `T`. The global `JSON` is left as it was: a program may have declared
 // `interface JSON { parse<T>(text: string): T }` itself.
-const isNoUser = `TypeError: id must be number, received string`;
+const isNoUser = `TypeError: Expected id to be a number, received string`;
 const text = `'{"id":"1"}'`;
 const namesOfTheJSONOfBun: Record<string, string> = {
   "JSON imported from bun": `import { JSON } from "bun";\nconsole.log(JSON.parse<User>(${text}));`,
@@ -492,7 +492,7 @@ for (const name of process.argv.slice(2)) {
         join(String(dir), "later"),
       ),
     ).toEqual({
-      stdout: `compiled in: 1\nimported.ts caught value must be number, received string\nof-the-bun-object.ts caught value must be number, received string\nglobal.ts 4\n`,
+      stdout: `compiled in: 1\nimported.ts caught Expected value to be a number, received string\nof-the-bun-object.ts caught Expected value to be a number, received string\nglobal.ts 4\n`,
       stderr: "",
       exitCode: 0,
     });

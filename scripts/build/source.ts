@@ -352,9 +352,9 @@ export interface ForbidUndefined {
 }
 
 /**
- * The C library's heap entry points, for `DirectBuild.forbidUndefined`. Only
- * Linux redirects these to mimalloc globally (deps/mimalloc.ts); on Windows
- * and macOS a dep reaches mimalloc only through its own allocator hooks, and
+ * The C library's heap entry points, for `DirectBuild.forbidUndefined`. Linux
+ * and macOS redirect these to mimalloc for the whole link (deps/mimalloc.ts);
+ * on Windows a dep reaches mimalloc only through its own allocator hooks, and
  * a stray malloc() lands on the C runtime heap without anything failing, so
  * the objects are the one place this is checkable.
  */

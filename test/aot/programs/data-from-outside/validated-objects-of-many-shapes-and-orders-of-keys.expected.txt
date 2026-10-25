@@ -70,8 +70,8 @@
 0 StrictPoint deleted and added again -> {y:2,label:"l",x:5} | in:y,label,x | json:{"y":2,"label":"l","x":5}
 0 Point an array -> TypeError :invalid_type
 0 StrictPoint an array -> TypeError :invalid_type
-0 Point a function -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
-0 StrictPoint a function -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point a function -> TypeError :invalid_type
+0 StrictPoint a function -> TypeError :invalid_type
 0 Point a proxy -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
 0 StrictPoint a proxy -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
 0 Point a Map -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
@@ -172,8 +172,8 @@
 1 StrictPoint deleted and added again -> {y:2,label:"l",x:5} | in:y,label,x | json:{"y":2,"label":"l","x":5}
 1 Point an array -> TypeError :invalid_type
 1 StrictPoint an array -> TypeError :invalid_type
-1 Point a function -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
-1 StrictPoint a function -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point a function -> TypeError :invalid_type
+1 StrictPoint a function -> TypeError :invalid_type
 1 Point a proxy -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
 1 StrictPoint a proxy -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
 1 Point a Map -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
@@ -274,8 +274,8 @@
 2 StrictPoint deleted and added again -> {y:2,label:"l",x:5} | in:y,label,x | json:{"y":2,"label":"l","x":5}
 2 Point an array -> TypeError :invalid_type
 2 StrictPoint an array -> TypeError :invalid_type
-2 Point a function -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
-2 StrictPoint a function -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point a function -> TypeError :invalid_type
+2 StrictPoint a function -> TypeError :invalid_type
 2 Point a proxy -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
 2 StrictPoint a proxy -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
 2 Point a Map -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}

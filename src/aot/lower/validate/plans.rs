@@ -1,8 +1,8 @@
 use bun_sema::atom::Atom;
 use bun_sema::check::Checker;
-use bun_sema::check::aot::{Queries, QueryInputs};
+use bun_sema::check::aot::{NamedValues, Queries, QueryInputs};
 use bun_sema::hir::{self, ExprId, ExprKind, NodeData};
-use bun_sema::program::FileId;
+use bun_sema::program::{FileId, Files};
 use rustc_hash::FxHashMap;
 
 use super::expected_result::{FindsValidatedResults, ValidatingFunction};
@@ -68,6 +68,18 @@ impl<'c, 'p: 'c, 's: 'p> ValidatedFile<'c, 'p, 's> for FileToPlan<'_, 'c, 'p, 's
         self.hir
     }
 
+    fn files(&self) -> &'p Files<'s> {
+        self.queries.files()
+    }
+
+    fn named_values(&self) -> &dyn NamedValues {
+        self.inputs.queries.named_values
+    }
+
+    fn atom_bytes(&self, atom: Atom) -> &'p [u8] {
+        self.queries.atom_bytes(atom)
+    }
+
     fn limit(&self, limit: LimitId) -> u64 {
         self.inputs.limits.get(limit)
     }
@@ -116,6 +128,14 @@ impl<'c, 'p: 'c, 's: 'p> ValidatedFile<'c, 'p, 's> for FileToPlan<'_, 'c, 'p, 's
     fn report_at(&mut self, expression: ExprId, code: Code, arguments: &[&[u8]]) {
         let span = Span::of_node(self.hir, self.file, NodeData::Expr(expression));
         self.diagnostics.report(code, span, arguments);
+    }
+
+    // Whoever asked for the plans has the text of this file alone.
+    fn report_for_call(&mut self, call: ExprId, span: Span, code: Code, arguments: &[&[u8]]) {
+        match span.file == self.file {
+            true => self.diagnostics.report(code, span, arguments),
+            false => self.report_at(call, code, arguments),
+        }
     }
 
     fn add_expected_result(

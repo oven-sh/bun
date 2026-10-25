@@ -102,6 +102,8 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "These imports mean a toolchain feature bun builds without has crept into some object",
     "(C++ exceptions / RTTI runtime, emulated TLS, libatomic calls). Find the object that",
     "references the symbol (llvm-nm -A over the link inputs) and fix its compile flags.",
+    "malloc, free, operator new and their relatives on macOS: MimallocOverrideDarwin.cpp defines",
+    "them for the whole link, so an import means it lacks the one that is listed. Add it there.",
   ],
   "static initializers": [
     "A static initializer runs before main() on every start of every bun process, in",

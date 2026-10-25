@@ -1,6 +1,6 @@
 3 2 box
 3 2 box
-TypeError: size.height must be number, received undefined | TypeError: size.height must be number, received undefined | TypeError: size.height must be number, received undefined
-TypeError: size.height must be number, received string (and 1 more) | TypeError: size.height must be number, received string (and 1 more) | TypeError: size.height must be number, received string (and 1 more)
+TypeError: Missing required property size.height | TypeError: Missing required property size.height | TypeError: Missing required property size.height
+TypeError: Expected size.height to be a number, received string (and 1 more) | TypeError: Expected size.height to be a number, received string (and 1 more) | TypeError: Expected size.height to be a number, received string (and 1 more)
 SyntaxError: JSON Parse error: Unexpected EOF | SyntaxError: JSON Parse error: Unexpected EOF | SyntaxError: JSON Parse error: Unexpected EOF
-TypeError: value must be object, received null | TypeError: value must be object, received null | TypeError: value must be object, received null
+TypeError: Expected value to be an object, received null | TypeError: Expected value to be an object, received null | TypeError: Expected value to be an object, received null

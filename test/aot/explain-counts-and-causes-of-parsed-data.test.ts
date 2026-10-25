@@ -55,7 +55,7 @@ describe.concurrent("an object that JSON.parse has made reaches a type", () => {
       "note: 1. unknown-object: An object from untyped code is used as this type here, so it can have any shape.",
       "   at main.ts:7:25",
       "note: why (external-data): The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).",
-      "note: fix: validate it where it enters typed code (JSON.parse<T>, validate<T>), or build a new object of this type from it.",
+      'note: fix: validate it where it enters typed code: import { JSON } from "bun" for JSON.parse<T>(text), or import { validate } from "bun:bundle" for validate<T>(value). Or build a new object of this type from it.',
       "note: https://bun.com/docs/bundler/aot-explain#unknown-object",
     ]);
   });

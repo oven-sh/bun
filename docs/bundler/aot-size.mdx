@@ -13,7 +13,7 @@ A standalone executable is a copy of `bun` with your program attached. So a ten-
 
 ```txt
  [108ms]  bundle  1 modules
- [129ms] compile  server  32.1 MB (106.6 MB of unused Bun APIs removed)
+ [129ms] compile  server  33.4 MB (106.1 MB of unused Bun APIs removed)
 ```
 
 [`bun compile`](/bundler/aot) is short for `bun build --compile --aot`, which takes `--trim` too. So does `bun build --compile` without `--aot`, where it removes less. In `Bun.build`, it's [`compile: { trim: true }`](/bundler/executables#api-reference).
@@ -22,15 +22,15 @@ Here's the todo server from [Ahead-of-time compilation](/bundler/aot#build-an-ex
 
 | Command                                                      | Linux x64 |
 | ------------------------------------------------------------ | --------: |
-| `bun compile --no-aot`                                       |    139 MB |
-| `bun compile`                                                |     68 MB |
-| `bun compile --no-aot --trim`                                |     84 MB |
-| `bun compile --trim`                                         |     32 MB |
-| `bun compile --trim --disallow-code-generation-from-strings` |     32 MB |
+| `bun compile --no-aot`                                       |    140 MB |
+| `bun compile`                                                |     69 MB |
+| `bun compile --no-aot --trim`                                |     86 MB |
+| `bun compile --trim`                                         |     33 MB |
+| `bun compile --trim --disallow-code-generation-from-strings` |     33 MB |
 
 All five answer every route the same way. Your program behaves the same with and without `--trim`, apart from the exceptions in [What a trimmed executable does not do](#what-a-trimmed-executable-does-not-do). Any other difference is a bug in Bun. The flag in the last row is different: it changes what a program can do. It saves nothing here, because nothing in this program calls `eval` or `new Function`. See [Turn off code from strings](#turn-off-code-from-strings).
 
-Compressed with `gzip`, as in a container image, the executable of `bun compile` is 33 MB. With `--trim` it's 13 MB.
+Compressed with `gzip`, as in a container image, the executable of `bun compile` is 33 MB. With `--trim` it's 14 MB.
 
 A trimmed executable starts as fast as an untrimmed one and uses as much memory.
 
@@ -48,7 +48,7 @@ Every size on this page is for Linux x64.
 
 ### Tools
 
-`bun install`, `bun test`, `bun build` and the rest of the command line are only in an executable because the executable is a copy of `bun`. Nothing in JavaScript calls them, and a compiled executable never starts the JIT compilers. So `bun compile` leaves both out of every executable, with or without `--trim`: 139 MB becomes 68 MB. That doesn't depend on your program. With `--no-aot` the executable is a whole copy of `bun`, and `--trim` removes the command line but keeps the JIT compilers: 84 MB.
+`bun install`, `bun test`, `bun build` and the rest of the command line are only in an executable because the executable is a copy of `bun`. Nothing in JavaScript calls them, and a compiled executable never starts the JIT compilers. So `bun compile` leaves both out of every executable, with or without `--trim`: 140 MB becomes 69 MB. That doesn't depend on your program. With `--no-aot` the executable is a whole copy of `bun`, and `--trim` removes the command line but keeps the JIT compilers: 86 MB.
 
 Two things do use the tools: `BUN_BE_BUN=1`, and `Bun.build` with `check` or `compile.aot`. With `BUN_BE_BUN=1` the executable tells you to run `bun` instead, and exits with code `70`. A program that calls `Bun.build` keeps the type checker, the compiler and the JIT compilers, unless you pass `--trim`. `install.auto` in `bunfig.toml` has no effect, because the package manager is part of the command line.
 
@@ -62,7 +62,7 @@ The bundler and the transpiler are features too. The executable includes the bun
 
 With `--no-aot`, Bun doesn't analyze your program, so it only removes the tools.
 
-This step takes the todo server from 68 MB to 32 MB. It relies on the compiler seeing every API your program will ever use (a closed-world assumption, like GraalVM Native Image). [What blocks `--trim`](#what-blocks---trim) lists what gets in the way.
+This step takes the todo server from 69 MB to 33 MB. It relies on the compiler seeing every API your program will ever use (a closed-world assumption, like GraalVM Native Image). [What blocks `--trim`](#what-blocks---trim) lists what gets in the way.
 
 ### Code from strings
 
@@ -240,10 +240,10 @@ The flag doesn't need `--trim`. In `Bun.build`, the option is `compile: { disall
 
 | Program, with `--trim`             | Without the flag | With the flag |
 | ---------------------------------- | ---------------: | ------------: |
-| `probe.ts`                         |            36 MB |         28 MB |
+| `probe.ts`                         |            40 MB |         29 MB |
 | A script that validates with zod 4 |            37 MB |         34 MB |
 | A Hono server                      |            40 MB |         40 MB |
-| The todo server                    |            32 MB |         32 MB |
+| The todo server                    |            33 MB |         33 MB |
 
 The flag changes what your program does, with or without `--trim`. It's also a flag of `bun` itself, so you can find out what breaks before you build.
 

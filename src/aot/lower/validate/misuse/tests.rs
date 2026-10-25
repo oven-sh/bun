@@ -4,6 +4,7 @@ use bun_core::strings::split;
 use crate::compile::testing::{default_settings, lower_program_with_settings};
 use crate::diagnostic_codes::Code;
 use crate::lower::LoweredFile;
+use bun_sema::check::aot::BRAND_KEYS;
 
 const BUN_TYPES: &str = r#"declare module "bun" {
   type int32 = number & { readonly "bun.int32"?: true };
@@ -18,12 +19,25 @@ const BUN_TYPES: &str = r#"declare module "bun" {
     type MaxLength<N extends number> = { readonly "bun.maxLength"?: N };
     type MinItems<N extends number> = { readonly "bun.minItems"?: N };
     type MaxItems<N extends number> = { readonly "bun.maxItems"?: N };
-    type Pattern<S extends string> = { readonly "bun.pattern"?: S };
-    type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = { readonly "bun.format"?: S };
+    type Pattern<P extends string, Flags extends "" | "u" = ""> = { readonly "bun.pattern"?: [P, Flags] };
+    type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url" | "time" | "duration" | "hostname" | "uri" | "uri-reference" | "regex" | "json-pointer" | "relative-json-pointer"> = { readonly "bun.format"?: S };
     type Message<S extends string> = { readonly "bun.message"?: S };
     type Default<V extends string | number | boolean | null> = { readonly "bun.default"?: V };
     type Strict = { readonly "bun.strict"?: true };
     type DeepStrict = { readonly "bun.strict"?: "deep" };
+    type UniqueItems = { readonly "bun.uniqueItems"?: true };
+    type Contains<T, Min extends number = 1, Max extends number = never> = { readonly "bun.contains"?: [T, Min, Max] };
+    type Not<T> = { readonly "bun.not"?: [T] };
+    type If<C, T = unknown, E = unknown> = { readonly "bun.if"?: [C, T, E] };
+    type OneOf<A extends unknown[]> = { readonly "bun.oneOf"?: A };
+    type AllOf<A extends unknown[]> = { readonly "bun.allOf"?: A };
+    type PatternProperties<P extends Record<string, unknown>, Others = unknown> = { readonly "bun.patternProperties"?: [P, Others] };
+    type PropertyNames<T> = { readonly "bun.propertyNames"?: [T] };
+    type MinProperties<N extends number> = { readonly "bun.minProperties"?: N };
+    type MaxProperties<N extends number> = { readonly "bun.maxProperties"?: N };
+    type DependentRequired<D extends Record<string, string[]>> = { readonly "bun.dependentRequired"?: D };
+    type DependentSchemas<D extends Record<string, unknown>> = { readonly "bun.dependentSchemas"?: D };
+    type Refused<K extends string> = { readonly "bun.refused"?: K };
   }
   const JSON: JSON;
   interface JSON extends globalThis.JSON {
@@ -87,25 +101,21 @@ fn lower_misuse(line: &str) -> LoweredFile {
     lower_main(&format!("{HEADER}{MISUSE_DECLARATIONS}{line}\n"))
 }
 
-/// The lines of a text. A type alias that the formatter spread over lines stands on one, as it is written above.
-fn joined_lines(text: &[u8]) -> Vec<Vec<u8>> {
-    let mut lines: Vec<Vec<u8>> = Vec::new();
-    let mut is_open = false;
-    for line in split(text, b"\n").map(<[u8]>::trim_ascii) {
-        if is_open {
-            let alias = lines.last_mut().unwrap();
-            if line == b"};" && alias.ends_with(b";") {
-                alias.pop();
-            }
-            alias.push(b' ');
-            alias.extend_from_slice(line);
-            is_open = line != b"};";
-        } else {
-            lines.push(line.to_vec());
-            is_open = line.starts_with(b"type ") && line.ends_with(b"{");
+/// A text without its white space, and without what the formatter adds where it spreads an alias over lines.
+fn squeeze(text: &[u8]) -> Vec<u8> {
+    let mut squeezed: Vec<u8> = Vec::with_capacity(text.len());
+    for &byte in text.iter().filter(|byte| !byte.is_ascii_whitespace()) {
+        if byte == b'|' && squeezed.ends_with(b"extends") {
+            continue;
         }
+        let closes_list = byte == b'>' && squeezed.ends_with(b",");
+        let closes_members = byte == b'}' && squeezed.ends_with(b";");
+        if closes_list || closes_members {
+            squeezed.pop();
+        }
+        squeezed.push(byte);
     }
-    lines
+    squeezed
 }
 
 #[test]
@@ -115,15 +125,111 @@ fn declarations_match_bun_types() {
         include_bytes!("../../../../../packages/bun-types/globals.d.ts"),
         include_bytes!("../../../../../packages/bun-types/bundle.d.ts"),
     ];
-    let published_lines: Vec<Vec<u8>> = published.into_iter().flat_map(joined_lines).collect();
+    let published = published.map(squeeze);
     let declarations: Vec<&[u8]> = split(BUN_TYPES.as_bytes(), b"\n")
         .map(<[u8]>::trim_ascii)
         .filter(|line| line.ends_with(b";"))
         .collect();
-    assert_eq!(declarations.len(), 21);
+    assert_eq!(declarations.len(), 34);
     for declaration in declarations {
-        let is_published = published_lines.iter().any(|line| line == declaration);
+        // The last `;` of a block is one that `squeeze` drops.
+        let squeezed = squeeze(declaration.strip_suffix(b";").unwrap_or(declaration));
+        let is_published = published
+            .iter()
+            .any(|text| text.windows(squeezed.len()).any(|part| part == squeezed));
         assert!(is_published, "not published: {}", BStr::new(declaration));
+    }
+}
+
+#[test]
+fn every_brand_key_of_the_declarations_is_known() {
+    let mut declared: Vec<&BStr> = split(BUN_TYPES.as_bytes(), b"\"")
+        .filter(|text| text.starts_with(b"bun."))
+        .map(BStr::new)
+        .collect();
+    declared.sort_unstable();
+    declared.dedup();
+    let mut known: Vec<&BStr> = BRAND_KEYS.iter().copied().map(BStr::new).collect();
+    known.sort_unstable();
+    assert_eq!(declared, known);
+}
+
+#[test]
+fn rule_beside_null_or_undefined_is_reported() {
+    let lost = [
+        r#"type Lost = (null | "") & Schema.Message<"must not be empty">;"#,
+        r#"type Lost = null & Schema.Message<"never">;"#,
+        "type Lost = (string | undefined) & Schema.MinLength<1>;",
+        "type Lost = Schema.MinLength<1> & (string | null);",
+        "type Maybe = string | null;\ntype Lost = Maybe & Schema.MinLength<1>;",
+        "type Short = string & Schema.MaxLength<3>;\ntype Lost = (string | null) & Short;",
+        "type Lost = ({ a: number } | null) & Schema.Strict;",
+        "type Lost = string & Schema.Not<(null | \"\") & Schema.Message<\"empty\">>;\nvalidate<Lost>(v);",
+        "type Lost = string & Schema.If<null & Schema.Message<\"none\">, never>;\nvalidate<Lost>(v);",
+    ];
+    for line in lost {
+        assert_eq!(
+            reported_codes(&lower_misuse(line)),
+            [Code::RuleBesideNullish],
+            "{line}"
+        );
+    }
+    let found = collect_diagnostics(&lower_misuse(
+        r#"type Lost = null & Schema.Message<"never">;"#,
+    ));
+    let text = BString::from(r#"null & Schema.Message<"never">"#);
+    assert_eq!(found, [(Code::RuleBesideNullish, vec![text])]);
+}
+
+#[test]
+fn null_and_undefined_outside_the_intersection_are_accepted() {
+    let kept = [
+        "type Kept = (string & Schema.MinLength<1>) | null;",
+        "type Kept = { a: string | null; b?: number } & Schema.Strict;",
+        "type Kept = string & Schema.MinLength<1> & Schema.MaxLength<3>;",
+        "type Kept = (string | null) & {};",
+        "type Kept = ({ a: number } | null) & { b: number };",
+        "validate<(string & Schema.MinLength<1>) | null | undefined>(v);",
+    ];
+    for line in kept {
+        let codes = reported_codes(&lower_misuse(line));
+        assert!(codes.is_empty(), "{line}: {codes:?}");
+    }
+}
+
+#[test]
+fn error_type_behind_a_type_argument_is_reported() {
+    let hidden = [
+        (
+            "// @ts-expect-error\nvalidate<Missing>(v);",
+            Code::ValidationTypeIsAny,
+            vec!["Missing"],
+        ),
+        (
+            "// @ts-expect-error\nvalidate<{ id: number; owner: Missing }>(v);",
+            Code::ValidationTypeIsAny,
+            vec!["{ id: number; owner: Missing }"],
+        ),
+        (
+            "// @ts-expect-error\nJSON.parse<Missing[]>(\"[]\");",
+            Code::UnsupportedValidationType,
+            vec!["JSON.parse", "Missing[]", "[number]: Missing"],
+        ),
+        (
+            "// @ts-expect-error\ntype Name = string & Schema.Not<Banned>;\nvalidate<Name>(v);",
+            Code::RefusedValidationRule,
+            vec!["validate", "Not"],
+        ),
+    ];
+    for (lines, code, arguments) in hidden {
+        let lowered = lower_misuse(lines);
+        assert!(lowered.fragment.expected_results.is_empty(), "{lines}");
+        let arguments = arguments.into_iter().map(BString::from).collect();
+        assert_eq!(
+            collect_diagnostics(&lowered),
+            [(code, arguments)],
+            "{lines}"
+        );
     }
 }
 
@@ -212,9 +318,9 @@ fn unsupported_type_names_member() {
         unsupported_arguments(r#"JSON.parse<{ id: symbol }>("{}");"#),
         ["JSON.parse", "{ id: symbol; }", "id: symbol"]
     );
-    let tuple = unsupported_arguments(r#"JSON.parse<[string, number?]>("[]");"#);
-    assert_eq!(tuple[1], "[string, (number | undefined)?]");
-    assert_eq!(tuple[2], "[string, (number | undefined)?]");
+    let tuple = unsupported_arguments(r#"JSON.parse<[...string[], number]>("[]");"#);
+    assert_eq!(tuple[1], "[...string[], number]");
+    assert_eq!(tuple[2], "[...string[], number]");
     assert_eq!(
         unsupported_arguments("validate<{ run: () => void }>({});"),
         ["validate", "{ run: () => void; }", "run: () => void"]

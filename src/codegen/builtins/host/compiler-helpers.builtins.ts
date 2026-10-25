@@ -59,19 +59,16 @@ const keyList = [b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive"
 const comparedWithNumbers = keyList;
 const serialized = [b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToJSON", "ToPrimitive")];
 const textMethods = b.calls("startsWith", "endsWith", "indexOf", "slice");
-const validated = [
-  b.returned,
-  b.reachableValuesStoredIn(b.result),
-  b.runsTransitively(
-    "OwnKeys",
-    "OwnValues",
-    "Iterate",
-    "PrototypeChain",
-    "ToPrimitive",
-    b.named("length"),
-    textMethods,
-  ),
-];
+const readToAnyDepth = b.runsTransitively(
+  "OwnKeys",
+  "OwnValues",
+  "Iterate",
+  "PrototypeChain",
+  "ToPrimitive",
+  b.named("length"),
+  textMethods,
+);
+const validated = [b.returned, b.reachableValuesStoredIn(b.result), readToAnyDepth];
 const copied = (...protocols: readonly b.ProtocolSpec[]) => [b.runs(...protocols), b.contentsStoredIn(b.result)];
 
 // These files reach built-ins through intrinsics and locked members, which a program cannot replace.
@@ -429,7 +426,7 @@ export default b.declarations(
       b.bool,
       {
         holdsRule: {
-          value: [b.runs("ToPrimitive", b.named("length"), textMethods)],
+          value: [readToAnyDepth],
           rule: b.inspected,
           prepared: b.inspected,
         },

@@ -152,7 +152,7 @@ impl<'p, 's> Checker<'p, 's> {
         answer
     }
 
-    fn count_limits_hit(&self) -> u64 {
+    pub(super) fn count_limits_hit(&self) -> u64 {
         self.cuts() + self.instantiation_limit_hits
     }
 
@@ -178,6 +178,10 @@ impl Drop for Queries<'_, '_, '_> {
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn is_discarded(&self) -> bool {
         self.c.was_discarded()
+    }
+
+    pub fn count_limits_hit(&self) -> u64 {
+        self.c.count_limits_hit()
     }
 
     pub fn note_idle(&mut self) {

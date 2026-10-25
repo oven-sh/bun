@@ -40,6 +40,6 @@ test("without --aot validate validates too", async () => {
     "program.ts": `import { validate } from "bun:bundle"; console.log(validate<number>(1)); validate<number>("1");`,
   });
   const { stdout, stderr, exitCode } = await run([bunExe(), "run", "./program.ts"], String(dir));
-  expect(stderr).toContain(`TypeError: value must be number, received string`);
+  expect(stderr).toContain(`TypeError: Expected value to be a number, received string`);
   expect({ stdout, exitCode }).toEqual({ stdout: "1\n", exitCode: 1 });
 });

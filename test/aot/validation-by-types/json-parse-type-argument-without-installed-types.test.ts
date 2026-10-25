@@ -36,10 +36,10 @@ console.log(shown(() => globalThis.JSON.parse('{"x":-1}')), shown(() => globalTh
 `;
 
 const expected = `{"x":1,"y":2.5,"z":"kept"}
-TypeError: x must be >=0 (and 1 more) [x,y]
-TypeError: y must be number, received undefined [y]
+TypeError: Expected x to be at least 0 (and 1 more) [x,y]
+TypeError: Missing required property y [y]
 SyntaxError: JSON Parse error: Expected '}'
-{"name":"ab","at":{"x":1,"y":2}} TypeError: name must have >=2 characters [name]
+{"name":"ab","at":{"x":1,"y":2}} TypeError: Expected name to have at least 2 characters [name]
 {"x":-1} {"x":-1}
 `;
 

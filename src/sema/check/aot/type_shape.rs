@@ -94,7 +94,7 @@ pub enum ShapeKind<'c> {
     Union(&'c [TypeId]),
     Constrained {
         base: TypeId,
-        constraints: &'c [SchemaConstraint],
+        constraints: &'c [SchemaConstraint<'c>],
     },
 }
 

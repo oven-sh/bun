@@ -1,4 +1,4 @@
-use bstr::BString;
+use bstr::{BString, ByteSlice};
 use bun_base64::vlq::decode;
 
 use super::*;
@@ -101,7 +101,11 @@ fn map_of(records: &[ObfuscatedSiteRecord], text: &[u8]) -> BString {
         obfuscated_sites: records,
         ..ResultRecords::default()
     });
-    let map = fixture.with_input(|input| write(input.engine, input.names, input.texts, b"app"));
+    let executable = Executable {
+        file_name: b"app",
+        debug_id: None,
+    };
+    let map = fixture.with_input(|input| write(input.engine, input.names, input.texts, executable));
     BString::from(map)
 }
 
@@ -205,10 +209,11 @@ fn names_and_sources_are_listed_in_order_of_first_use() {
     assert_eq!(indexes, [0, 1, 0, 2, 1]);
     assert_eq!(names.keys(), [&b"render"[..], b"main", b"add"]);
 
-    let mut sources: ArrayHashMap<ModuleId, ()> = ArrayHashMap::default();
-    let indexes = [5, 2, 5].map(|module| intern(&mut sources, ModuleId::from_word(module)));
+    let module = |word| Source::Module(ModuleId::from_word(word));
+    let mut sources: ArrayHashMap<Source, ()> = ArrayHashMap::default();
+    let indexes = [module(5), Source::Native, module(5)].map(|source| intern(&mut sources, source));
     assert_eq!(indexes, [0, 1, 0]);
-    assert_eq!(sources.keys(), [5, 2].map(ModuleId::from_word));
+    assert_eq!(sources.keys(), [module(5), Source::Native]);
 }
 
 #[test]
@@ -268,7 +273,10 @@ fn record_without_text_is_not_located() {
 fn map_without_sites_has_empty_lists() {
     assert_eq!(
         map_of(&[], b""),
-        r#"{"version":3,"file":"app","sources":[],"names":[],"mappings":""}"#
+        concat!(
+            r#"{"version":3,"file":"app","sources":[],"sourcesContent":[],"names":[],"mappings":"","#,
+            r#""x_facebook_sources":[]}"#,
+        )
     );
 }
 
@@ -284,7 +292,137 @@ fn map_lists_sources_names_and_mappings() {
         map_of(&records, b"double"),
         concat!(
             r#"{"version":3,"file":"app","sources":["src/a.ts","node_modules/b/b.js"],"#,
-            r#""names":["double"],"mappings":"AAAIA,G,EACSA;;CCDb"}"#,
+            r#""sourcesContent":["let first = 1;\nlet second = first.size;\nexport {};\n","module.exports = {};\n"],"#,
+            r#""names":["double"],"mappings":"AAAIA,G,EACSA;;CCDb","#,
+            r#""x_facebook_sources":[[{"names":["double"],"mappings":"IAA"}],[{"names":["?"],"mappings":"AAA"}]]}"#,
         )
     );
+}
+
+#[test]
+fn named_function_without_text_has_a_line_of_its_own() {
+    let records = [
+        named(record(0, 0, PROGRAM, LINE_1_COLUMN_5), 0, 6),
+        named(record(0, 1, ABSENT_WORD, 0), 6, 3),
+        named(record(0, 2, RUNTIME, 9), 9, 8),
+        record(0, 3, ABSENT_WORD, 0),
+    ];
+    let map = map_of(&records, b"doublemapreadFile");
+    assert!(
+        map.contains_str(r#""sources":["src/a.ts","native","node:fs"],"#),
+        "{map}"
+    );
+    assert!(map.contains_str(r#"export {};\n",null,null],"#), "{map}");
+    assert!(
+        map.contains_str(
+            r#""names":["double","map","readFile"],"mappings":"AAAIA,CCCJC,CCCAC,C","#
+        ),
+        "{map}"
+    );
+    assert!(
+        map.ends_with(
+            concat!(
+                r#"[{"names":["double"],"mappings":"IAA"}],[{"names":["map"],"mappings":"AAC"}],"#,
+                r#"[{"names":["readFile"],"mappings":"AAE"}]]}"#,
+            )
+            .as_bytes()
+        ),
+        "{map}"
+    );
+}
+
+#[test]
+fn map_has_the_debug_id_in_both_spellings() {
+    let fixture = ReportFixture::new(ResultRecords::default());
+    let executable = Executable {
+        file_name: b"app",
+        debug_id: Some(b"5f0c2a9e-41d7-b386-0e9d-4c17a2f3b658"),
+    };
+    let map = fixture.with_input(|input| write(input.engine, input.names, input.texts, executable));
+    assert!(
+        BString::from(map).starts_with(
+            concat!(
+                r#"{"version":3,"file":"app","debugId":"5f0c2a9e-41d7-b386-0e9d-4c17a2f3b658","#,
+                r#""debug_id":"5f0c2a9e-41d7-b386-0e9d-4c17a2f3b658","sources":"#,
+            )
+            .as_bytes()
+        )
+    );
+}
+
+fn start(line: u32, column: u32, name: Option<u32>) -> FunctionStart {
+    FunctionStart { line, column, name }
+}
+
+fn function_mappings(starts: &[FunctionStart]) -> BString {
+    let mut out = Vec::new();
+    write_function_mappings(starts, &mut out, |name| name.unwrap_or(0));
+    BString::from(out)
+}
+
+// As Metro's reader does it: lines count from one, and a `;` sets the column back to zero.
+fn decode_function_mappings(mappings: &[u8]) -> Vec<[i32; 3]> {
+    let (mut line, mut name) = (1, 0);
+    let mut starts = Vec::new();
+    for group in bun_core::strings::split(mappings, b";") {
+        let mut column = 0;
+        for segment in bun_core::strings::split(group, b",") {
+            let deltas = decode_fields(segment);
+            column += deltas[0];
+            name += deltas[1];
+            line += deltas[2];
+            starts.push([line, column, name]);
+        }
+    }
+    starts
+}
+
+#[test]
+fn function_starts_keep_only_name_changes() {
+    let mut starts = vec![
+        start(4, 2, Some(1)),
+        start(0, 0, None),
+        start(2, 8, Some(0)),
+        start(2, 4, Some(0)),
+        start(3, 0, Some(0)),
+        start(9, 0, None),
+    ];
+    keep_name_changes(&mut starts);
+    assert_eq!(
+        starts,
+        [
+            start(0, 0, None),
+            start(2, 4, Some(0)),
+            start(4, 2, Some(1)),
+            start(9, 0, None),
+        ]
+    );
+}
+
+#[test]
+fn name_wins_over_none_at_one_place() {
+    let mut starts = vec![start(1, 3, None), start(1, 3, Some(2)), start(0, 0, None)];
+    keep_name_changes(&mut starts);
+    assert_eq!(starts, [start(0, 0, None), start(1, 3, Some(2))]);
+}
+
+#[test]
+fn function_mappings_decode_to_starts() {
+    let starts = [
+        start(0, 4, Some(0)),
+        start(0, 30, Some(2)),
+        start(6, 2, Some(1)),
+        start(6, 9, Some(0)),
+        start(400, 0, Some(3)),
+    ];
+    assert_eq!(function_mappings(&starts), "IAA,0BEA;EDM,ODA;AG0Y");
+    assert_eq!(
+        decode_function_mappings(&function_mappings(&starts)),
+        [[1, 4, 0], [1, 30, 2], [7, 2, 1], [7, 9, 0], [401, 0, 3]]
+    );
+}
+
+#[test]
+fn source_without_sites_has_no_function_mappings() {
+    assert_eq!(function_mappings(&[]), "");
 }

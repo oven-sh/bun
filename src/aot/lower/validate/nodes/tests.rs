@@ -1,7 +1,7 @@
 use bstr::{BStr, BString};
 use bun_sema::check::aot::{AnythingReason, ShapeKind};
 
-use super::{ROOT, placeholder_of};
+use super::{ROOT, find_node_tested_against_itself, placeholder_of};
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::{
     ExpectedResult, TemplatePart, TemplatePlaceholder, TextFormat, UndeclaredMembers,
@@ -47,6 +47,18 @@ fn unsupported_part(declarations: &str, ty: &str) -> BString {
     arguments.remove(2)
 }
 
+fn refused_rule(declarations: &str, ty: &str) -> BString {
+    let lowered = lower_probe(declarations, ty);
+    assert!(lowered.fragment.expected_results.is_empty(), "{ty}");
+    let mut found = collect_diagnostics(&lowered);
+    assert_eq!(found.len(), 1, "{ty}: {found:?}");
+    let (code, mut arguments) = found.remove(0);
+    assert_eq!(code, Code::RefusedValidationRule, "{ty}");
+    assert_eq!(arguments.len(), 2, "{ty}");
+    assert_eq!(arguments[0], "JSON.parse", "{ty}");
+    arguments.remove(1)
+}
+
 fn text_of(fragment: &Fragment, id: StringId) -> &BStr {
     BStr::new(fragment.strings.get(id))
 }
@@ -88,6 +100,14 @@ fn find_member(
     let mut members = members_of(nodes, node).iter();
     let found = members.find(|member| key_text(fragment, member.key) == name);
     *found.unwrap_or_else(|| panic!("node {node} has no member {name}"))
+}
+
+fn rules_of_member<'n>(
+    fragment: &Fragment,
+    nodes: &'n [ValidationNode],
+    name: &str,
+) -> &'n [ValidationRule] {
+    &nodes[find_member(fragment, nodes, ROOT, name).node as usize].rules
 }
 
 fn primitive(primitive: ValidatedPrimitive) -> ValidationShape {
@@ -232,6 +252,7 @@ fn constraints_become_rules() {
             sized: string & Schema.MinLength<1> & Schema.MaxLength<8>;
             listed: string[] & Schema.MinItems<1> & Schema.MaxItems<3>;
             matched: string & Schema.Pattern<"^a">;
+            single: string & Schema.Pattern<"^.$", "u">;
             formatted: string & Schema.Format<"uuid">;
             explained: number & Schema.Min<1> & Schema.Message<"too small">;
             port: number & Schema.Default<8080>;
@@ -251,6 +272,11 @@ fn constraints_become_rules() {
     ];
     let pattern = ValidationRule::Pattern {
         source: string("^a"),
+        is_unicode: false,
+    };
+    let unicode_pattern = ValidationRule::Pattern {
+        source: string("^.$"),
+        is_unicode: true,
     };
     let format = ValidationRule::Format {
         format: TextFormat::Uuid,
@@ -275,6 +301,7 @@ fn constraints_become_rules() {
         ("sized", vec![minimum_length(1), maximum_length(8)]),
         ("listed", vec![minimum_length(1), maximum_length(3)]),
         ("matched", vec![pattern]),
+        ("single", vec![unicode_pattern]),
         ("formatted", vec![format]),
         ("explained", vec![minimum(1.0), message]),
         (
@@ -293,17 +320,40 @@ fn constraints_become_rules() {
 
 #[test]
 fn invalid_schema_arguments_are_refused_and_counted() {
-    let types = [
-        "number & Schema.Min<number>",
-        "string & Schema.MinLength<-1>",
-        r#"string & Schema.Format<"email" | "uuid">"#,
-        "number & Schema.Int & Schema.Max<number>",
+    let refused = [
+        (
+            "{ unbounded: number & Schema.Min<number> }",
+            "unbounded: Min",
+        ),
+        (
+            "{ negative: string & Schema.MinLength<-1> }",
+            "negative: MinLength",
+        ),
+        (
+            r#"{ ambiguous: string & Schema.Format<"email" | "uuid"> }"#,
+            "ambiguous: Format",
+        ),
+        (
+            "{ whole: number & Schema.Int & Schema.Max<number> }",
+            "whole: Max",
+        ),
+        (
+            "{ held: unknown[] & Schema.Contains<string, -1> }",
+            "held: Contains",
+        ),
+        (
+            "{ held: unknown[] & Schema.Contains<string, 1, number> }",
+            "held: Contains",
+        ),
+        (
+            r#"{ matched: string & Schema.Pattern<"^a", "" | "u"> }"#,
+            "matched: Pattern",
+        ),
     ];
-    for ty in types {
-        let declarations = format!("interface Rules {{ member: {ty} }}");
-        let lowered = lower_probe(&declarations, "Rules");
+    for (ty, rule) in refused {
+        assert_eq!(refused_rule("", ty), rule, "{ty}");
+        let lowered = lower_probe("", ty);
         assert_eq!(lowered.queries.invalid_schema_arguments, 1, "{ty}");
-        assert_is_refused(&lowered, ty);
     }
 }
 
@@ -312,7 +362,7 @@ fn assert_is_refused(lowered: &LoweredFile, ty: &str) {
         .into_iter()
         .map(|(code, _)| code)
         .collect();
-    assert_eq!(codes, [Code::UnsupportedValidationType], "{ty}");
+    assert_eq!(codes, [Code::RefusedValidationRule], "{ty}");
     assert!(lowered.fragment.expected_results.is_empty(), "{ty}");
 }
 
@@ -412,6 +462,89 @@ fn deep_strict_reaches_nested_objects() {
 }
 
 #[test]
+fn strict_alone_is_closed_object_without_members() {
+    for ty in [
+        "Schema.Strict",
+        "Schema.DeepStrict",
+        "{} & Schema.Strict",
+        "{} & Schema.DeepStrict",
+    ] {
+        let (_, nodes) = nodes_of("", ty);
+        assert_eq!(
+            nodes[0].shape,
+            ValidationShape::Object {
+                layout: None,
+                members: Vec::new(),
+                undeclared: UndeclaredMembers::Rejected,
+                undeclared_value: None,
+            },
+            "{ty}"
+        );
+        assert!(nodes[0].rules.is_empty(), "{ty}");
+    }
+}
+
+#[test]
+fn strict_on_shape_without_members_is_refused() {
+    let refused = [
+        ("{ a: object & Schema.Strict }", "a: Strict"),
+        ("{ a: unknown[] & Schema.Strict }", "a: Strict"),
+        ("{ a: [number] & Schema.Strict }", "a: Strict"),
+        ("{ a: string & Schema.Strict }", "a: Strict"),
+        ("{ a: 1 & Schema.Strict }", "a: Strict"),
+        ("{ a: object & Schema.DeepStrict }", "a: DeepStrict"),
+        ("{ a: number & Schema.DeepStrict }", "a: DeepStrict"),
+        (r#"{ a: "x" & Schema.DeepStrict }"#, "a: DeepStrict"),
+        (
+            "{ a: ({ b: number } | string) & Schema.DeepStrict }",
+            "a: DeepStrict",
+        ),
+    ];
+    for (ty, rule) in refused {
+        assert_eq!(refused_rule("", ty), rule, "{ty}");
+    }
+}
+
+#[test]
+fn every_key_of_dictionary_is_declared() {
+    for ty in [
+        "Record<string, number> & Schema.Strict",
+        "Record<string, number> & Schema.DeepStrict",
+    ] {
+        let (_, nodes) = nodes_of("", ty);
+        assert!(
+            matches!(nodes[0].shape, ValidationShape::Dictionary { .. }),
+            "{ty}"
+        );
+        assert!(nodes[0].rules.is_empty(), "{ty}");
+    }
+}
+
+#[test]
+fn deep_strict_reaches_elements() {
+    let (_, nodes) = nodes_of("", "{ a: number }[] & Schema.DeepStrict");
+    let ValidationShape::Array { element } = nodes[0].shape else {
+        panic!("{:?}", nodes[0].shape);
+    };
+    assert_eq!(undeclared_of(&nodes, element), UndeclaredMembers::Rejected);
+
+    let (_, nodes) = nodes_of("", "[{ a: 1 }, ...{ b: 2 }[]] & Schema.DeepStrict");
+    let ValidationShape::Tuple {
+        ref elements,
+        required: 1,
+        rest: Some(rest),
+    } = nodes[0].shape
+    else {
+        panic!("{:?}", nodes[0].shape);
+    };
+    assert_eq!(
+        undeclared_of(&nodes, elements[0]),
+        UndeclaredMembers::Rejected
+    );
+    assert_eq!(undeclared_of(&nodes, rest), UndeclaredMembers::Rejected);
+}
+
+#[test]
 fn index_signature_is_dictionary() {
     for ty in ["{ [key: string]: number }", "Record<string, number>"] {
         let (_, nodes) = nodes_of("", ty);
@@ -459,12 +592,100 @@ fn other_index_signatures_are_unsupported() {
 #[test]
 fn tuple_names_each_element() {
     let (_, nodes) = nodes_of("", "[string, number]");
-    let ValidationShape::Tuple { elements } = &nodes[0].shape else {
-        panic!("{:?}", nodes[0].shape);
-    };
-    assert_eq!(elements[..], [1, 2]);
+    assert_eq!(
+        nodes[0].shape,
+        ValidationShape::Tuple {
+            elements: vec![1, 2],
+            required: 2,
+            rest: None,
+        }
+    );
     assert_eq!(nodes[1].shape, primitive(ValidatedPrimitive::String));
     assert_eq!(nodes[2].shape, primitive(ValidatedPrimitive::Number));
+}
+
+#[test]
+fn tuple_counts_required_elements_and_names_rest() {
+    let (_, nodes) = nodes_of("", "[string, number?, ...boolean[]]");
+    assert_eq!(
+        nodes[0].shape,
+        ValidationShape::Tuple {
+            elements: vec![1, 2],
+            required: 1,
+            rest: Some(3),
+        }
+    );
+    assert_eq!(nodes[1].shape, primitive(ValidatedPrimitive::String));
+    assert_eq!(nodes[2].shape, primitive(ValidatedPrimitive::Number));
+    assert_eq!(nodes[3].shape, primitive(ValidatedPrimitive::Boolean));
+
+    let (_, nodes) = nodes_of("", "[...string[]]");
+    assert_eq!(nodes[0].shape, ValidationShape::Array { element: 1 });
+}
+
+#[test]
+fn optional_element_has_node_of_its_written_type() {
+    for ty in [
+        "[number, string?]",
+        "[number, (string | undefined)?]",
+        "string & Schema.Not<[number, string?]>",
+    ] {
+        let (_, nodes) = nodes_of("", ty);
+        let tuple = nodes.iter().find_map(|node| {
+            if let ValidationShape::Tuple {
+                elements,
+                required: 1,
+                rest: None,
+            } = &node.shape
+            {
+                Some(elements)
+            } else {
+                None
+            }
+        });
+        let [_, optional] = tuple.expect("the type holds a tuple")[..] else {
+            panic!("{ty}: {tuple:?}");
+        };
+        let string = primitive(ValidatedPrimitive::String);
+        assert_eq!(*shape_of(&nodes, optional), string, "{ty}");
+        let has_undefined = nodes
+            .iter()
+            .any(|node| node.shape == ValidationShape::Undefined);
+        assert!(!has_undefined, "{ty}");
+    }
+}
+
+#[test]
+fn optional_element_that_is_there_is_not_undefined() {
+    for ty in ["[(string | null)?]", "[(string | number)?]"] {
+        let (_, nodes) = nodes_of("", ty);
+        let ValidationShape::Tuple {
+            elements,
+            required: 0,
+            rest: None,
+        } = &nodes[0].shape
+        else {
+            panic!("{ty}: {:?}", nodes[0].shape);
+        };
+        let ValidationShape::Union { arms } = shape_of(&nodes, elements[0]) else {
+            panic!("{ty}: {:?}", shape_of(&nodes, elements[0]));
+        };
+        assert_eq!(arms.len(), 2, "{ty}");
+        let has_undefined = nodes
+            .iter()
+            .any(|node| node.shape == ValidationShape::Undefined);
+        assert!(!has_undefined, "{ty}");
+    }
+}
+
+#[test]
+fn elements_after_rest_are_unsupported() {
+    let after_rest = unsupported_part("", "{ a: [string, ...number[], boolean] }");
+    assert!(after_rest.starts_with(b"a: ["), "{after_rest}");
+    let variadic = "function probe<T extends unknown[]>(text: string) {\n\
+        return JSON.parse<{ a: [string, ...T] }>(text);\n\
+        }\n";
+    assert!(unsupported_arguments(variadic)[2].starts_with(b"a: ["));
 }
 
 #[test]
@@ -784,4 +1005,639 @@ fn type_over_node_limit_is_reported() {
         panic!("the call has one expected result");
     };
     assert_eq!(expected.validation.len() as u64, limit);
+}
+
+#[test]
+fn type_cut_short_by_limit_of_checker_has_no_nodes_of_another_type() {
+    let declarations = r#"type Wrap<N extends unknown[]> = N["length"] extends 150 ? string : [Wrap<[...N, 0]>][0];
+        type Table = { [K in "a"]: Wrap<[]> extends string ? 1 : 2 };"#;
+    let lowered = lower_probe(declarations, "Table");
+    let Some(expected) = lowered.fragment.expected_results.first() else {
+        let found = collect_diagnostics(&lowered);
+        let codes: Vec<Code> = found.into_iter().map(|(code, _)| code).collect();
+        assert_eq!(codes, [Code::UnsupportedValidationType]);
+        return;
+    };
+    let a = find_member(&lowered.fragment, &expected.validation, ROOT, "a");
+    assert_eq!(
+        *shape_of(&expected.validation, a.node),
+        ValidationShape::NumberLiteral { value: 1.0 }
+    );
+}
+
+#[test]
+fn rules_without_type_arguments() {
+    let declarations = r#"interface Rules {
+            distinct: number[] & Schema.UniqueItems;
+            sized: Record<string, number> & Schema.MinProperties<1> & Schema.MaxProperties<3>;
+            paid: { card?: string; street?: string; city?: string; name?: string } & Schema.DependentRequired<{
+                card: ["street", "city"];
+                street: ["city"];
+            }>;
+        }"#;
+    let (fragment, nodes) = nodes_of(declarations, "Rules");
+    let string = |text: &str| find_string(&fragment, text);
+    assert_eq!(
+        rules_of_member(&fragment, &nodes, "distinct"),
+        [ValidationRule::UniqueItems]
+    );
+    assert_eq!(
+        rules_of_member(&fragment, &nodes, "sized"),
+        [
+            ValidationRule::MinimumMembers { count: 1 },
+            ValidationRule::MaximumMembers { count: 3 },
+        ]
+    );
+    assert_eq!(
+        rules_of_member(&fragment, &nodes, "paid"),
+        [
+            ValidationRule::DependentMembers {
+                key: string("card"),
+                names: vec![string("street"), string("city")],
+            },
+            ValidationRule::DependentMembers {
+                key: string("street"),
+                names: vec![string("city")],
+            },
+        ]
+    );
+}
+
+#[test]
+fn rules_name_nodes_of_type_arguments() {
+    let declarations = r#"interface Rules {
+            holds: unknown[] & Schema.Contains<string>;
+            bounded: unknown[] & Schema.Contains<string, 2, 4>;
+            other: string & Schema.Not<"x">;
+            chosen: unknown[] & Schema.If<string[], unknown[] & Schema.MinItems<1>, number[]>;
+            half: unknown[] & Schema.If<string[], unknown[] & Schema.MinItems<1>>;
+            single: number & Schema.OneOf<[number & Schema.Min<1>, number & Schema.Max<9>]>;
+            both: number & Schema.AllOf<[number & Schema.Min<1>, number & Schema.Max<9>]>;
+            keyed: Record<string, unknown> & Schema.PropertyNames<string & Schema.MaxLength<3>>;
+            billed: { card?: string } & Schema.DependentSchemas<{ card: { street: string } }>;
+        }"#;
+    let (fragment, nodes) = nodes_of(declarations, "Rules");
+    let rules = |name: &str| rules_of_member(&fragment, &nodes, name);
+    let string = primitive(ValidatedPrimitive::String);
+    let minimum = [ValidationRule::Minimum { bound: 1.0 }];
+    let maximum = [ValidationRule::Maximum { bound: 9.0 }];
+    let element_of = |node: u32| match *shape_of(&nodes, node) {
+        ValidationShape::Array { element } => shape_of(&nodes, element).clone(),
+        ref shape => panic!("node {node} is {shape:?}"),
+    };
+
+    let [
+        ValidationRule::Contains {
+            node,
+            minimum: 1,
+            maximum: None,
+        },
+    ] = *rules("holds")
+    else {
+        panic!("{:?}", rules("holds"));
+    };
+    assert_eq!(*shape_of(&nodes, node), string);
+    assert_eq!(
+        rules("bounded"),
+        [ValidationRule::Contains {
+            node,
+            minimum: 2,
+            maximum: Some(4),
+        }]
+    );
+
+    let [ValidationRule::Not { node }] = *rules("other") else {
+        panic!("{:?}", rules("other"));
+    };
+    let literal = ValidationShape::StringLiteral {
+        value: find_string(&fragment, "x"),
+    };
+    assert_eq!(*shape_of(&nodes, node), literal);
+
+    let [
+        ValidationRule::If {
+            condition,
+            then,
+            otherwise,
+        },
+    ] = *rules("chosen")
+    else {
+        panic!("{:?}", rules("chosen"));
+    };
+    assert_eq!(element_of(condition), string);
+    assert_eq!(element_of(then), ValidationShape::Unknown);
+    assert_eq!(
+        nodes[then as usize].rules,
+        [ValidationRule::MinimumLength { length: 1 }]
+    );
+    assert_eq!(element_of(otherwise), primitive(ValidatedPrimitive::Number));
+
+    let [ValidationRule::If { otherwise, .. }] = *rules("half") else {
+        panic!("{:?}", rules("half"));
+    };
+    assert_eq!(*shape_of(&nodes, otherwise), ValidationShape::Unknown);
+    assert!(nodes[otherwise as usize].rules.is_empty());
+
+    let [ValidationRule::ExactlyOne { nodes: arms }] = rules("single") else {
+        panic!("{:?}", rules("single"));
+    };
+    let [ValidationRule::Every { nodes: parts }] = rules("both") else {
+        panic!("{:?}", rules("both"));
+    };
+    assert_eq!(arms, parts);
+    let [first, second] = arms[..] else {
+        panic!("{arms:?}");
+    };
+    assert_eq!(nodes[first as usize].rules, minimum);
+    assert_eq!(nodes[second as usize].rules, maximum);
+
+    let [ValidationRule::MemberNames { node }] = *rules("keyed") else {
+        panic!("{:?}", rules("keyed"));
+    };
+    assert_eq!(*shape_of(&nodes, node), string);
+    assert_eq!(
+        nodes[node as usize].rules,
+        [ValidationRule::MaximumLength { length: 3 }]
+    );
+
+    let [ValidationRule::DependentNode { key, node }] = *rules("billed") else {
+        panic!("{:?}", rules("billed"));
+    };
+    assert_eq!(text_of(&fragment, key), "card");
+    let street = find_member(&fragment, &nodes, node, "street");
+    assert_eq!(*shape_of(&nodes, street.node), string);
+}
+
+#[test]
+fn rule_with_nothing_beside_it_is_refused() {
+    let refused = [
+        ("Schema.Not<string>", "Not"),
+        ("unknown & Schema.Not<string>", "Not"),
+        ("{} & Schema.Not<string>", "Not"),
+        ("{ a: {} & Schema.MinProperties<1> }", "a: MinProperties"),
+        (r#"{ a: unknown & Schema.Format<"ipv4"> }"#, "a: Format"),
+        (
+            r#"{ a: {} & Schema.PatternProperties<{ "^x-": string }> }"#,
+            "a: PatternProperties",
+        ),
+        (r#"{ a: Schema.Message<"no"> }"#, "a: Message"),
+        ("{ a?: Schema.Default<1> }", "a: Default"),
+        ("{ a: Schema.UniqueItems[] }", "a[number]: UniqueItems"),
+        (
+            "{ a: string & Schema.Not<Schema.Not<string>> }",
+            "a<Schema.Not>: Not",
+        ),
+    ];
+    for (ty, rule) in refused {
+        assert_eq!(refused_rule("", ty), rule, "{ty}");
+    }
+}
+
+#[test]
+fn rule_that_reads_one_kind_of_value_needs_shape_of_that_kind() {
+    let refused = [
+        ("Schema.MinItems<1>", "MinItems"),
+        ("{ a: unknown & Schema.Min<1> }", "a: Min"),
+        ("{ a: string & Schema.Min<1> }", "a: Min"),
+        ("{ a: string & Schema.MaxItems<1> }", "a: MaxItems"),
+        ("{ a: number[] & Schema.MinLength<1> }", "a: MinLength"),
+        ("{ a: number & Schema.Pattern<\"x\"> }", "a: Pattern"),
+        ("{ a: boolean & Schema.Int }", "a: Int"),
+        (
+            "{ a: string & Schema.Not<Schema.MaxLength<1>> }",
+            "a<Schema.Not>: MaxLength",
+        ),
+    ];
+    for (ty, rule) in refused {
+        assert_eq!(refused_rule("", ty), rule, "{ty}");
+    }
+}
+
+#[test]
+fn patterns_stand_beside_their_nodes() {
+    let ty = r#"{ a: boolean } & Schema.Strict & Schema.PatternProperties<{ "^x-": string; "\\d$": number }>"#;
+    let (fragment, nodes) = nodes_of("", ty);
+    assert_eq!(undeclared_of(&nodes, ROOT), UndeclaredMembers::Rejected);
+    let [
+        ValidationRule::PatternMembers {
+            sources,
+            nodes: tested,
+        },
+    ] = &nodes[0].rules[..]
+    else {
+        panic!("{:?}", nodes[0].rules);
+    };
+    let mut pairs: Vec<(&BStr, &ValidationShape)> = sources
+        .iter()
+        .zip(tested)
+        .map(|(&source, &node)| (text_of(&fragment, source), shape_of(&nodes, node)))
+        .collect();
+    pairs.sort_by_key(|&(source, _)| source);
+    assert_eq!(sources.len(), tested.len());
+    assert_eq!(
+        pairs,
+        [
+            (BStr::new("\\d$"), &primitive(ValidatedPrimitive::Number)),
+            (BStr::new("^x-"), &primitive(ValidatedPrimitive::String)),
+        ]
+    );
+}
+
+fn undeclared_members_of(ty: &str) -> (UndeclaredMembers, Option<ValidationShape>) {
+    let (_, nodes) = nodes_of("", ty);
+    let ValidationShape::Object {
+        undeclared,
+        undeclared_value,
+        ..
+    } = nodes[0].shape
+    else {
+        panic!("{ty}: {:?}", nodes[0].shape);
+    };
+    let value = undeclared_value.map(|value| shape_of(&nodes, value).clone());
+    (undeclared, value)
+}
+
+#[test]
+fn second_argument_of_patterns_says_what_other_keys_hold() {
+    let number = primitive(ValidatedPrimitive::Number);
+    let expected = [
+        (
+            r#"{ a: boolean } & Schema.PatternProperties<{ "^x-": string }>"#,
+            (UndeclaredMembers::Allowed, None),
+        ),
+        (
+            r#"{ a: boolean } & Schema.PatternProperties<{ "^x-": string }, unknown>"#,
+            (UndeclaredMembers::Allowed, None),
+        ),
+        (
+            r#"{ a: boolean } & Schema.PatternProperties<{ "^x-": string }, never>"#,
+            (UndeclaredMembers::Rejected, None),
+        ),
+        (
+            r#"{ a: boolean } & Schema.PatternProperties<{ "^x-": string }, number>"#,
+            (UndeclaredMembers::Validated, Some(number.clone())),
+        ),
+        (
+            r#"{ a: boolean } & Schema.PatternProperties<{ "^x-": string }, number> & Schema.Strict"#,
+            (UndeclaredMembers::Rejected, None),
+        ),
+        (
+            r#"{ a: boolean } & Schema.Strict & Schema.PatternProperties<{ "^x-": string }, number>"#,
+            (UndeclaredMembers::Rejected, None),
+        ),
+        (
+            r#"{ a: boolean } & Schema.DeepStrict & Schema.PatternProperties<{ "^x-": string }, number>"#,
+            (UndeclaredMembers::Rejected, None),
+        ),
+        (
+            "{ a: boolean } & Schema.PatternProperties<{}, number>",
+            (UndeclaredMembers::Validated, Some(number)),
+        ),
+    ];
+    for (ty, undeclared) in expected {
+        assert_eq!(undeclared_members_of(ty), undeclared, "{ty}");
+    }
+    let (_, nodes) = nodes_of("", "{ a: boolean } & Schema.PatternProperties<{}, number>");
+    assert!(nodes[0].rules.is_empty());
+}
+
+#[test]
+fn patterns_beside_anything_but_listed_members_are_refused() {
+    let refused = [
+        r#"Record<string, number> & Schema.PatternProperties<{ "^x-": string }>"#,
+        r#"Record<string, string> & Schema.PatternProperties<{ "^x-": string }>"#,
+        r#"{ a: string; [key: string]: string } & Schema.PatternProperties<{ "^x-": string }>"#,
+        "Record<string, number> & Schema.PatternProperties<{}>",
+        r#"object & Schema.PatternProperties<{ "^x-": string }>"#,
+        r#"string[] & Schema.PatternProperties<{ "^x-": string }>"#,
+        r#"string & Schema.PatternProperties<{ "^x-": string }>"#,
+        "{ a: 1 } & Schema.PatternProperties<{ x: 1 }> & Schema.PatternProperties<{ y: 2 }>",
+        "{ a: 1 } & Schema.PatternProperties<{}, never> & Schema.PatternProperties<{ y: 2 }>",
+    ];
+    for ty in refused {
+        assert_eq!(refused_rule("", ty), "PatternProperties", "{ty}");
+    }
+}
+
+#[test]
+fn deep_strict_reaches_what_patterns_name() {
+    let tested_by = |ty: &str| {
+        let (_, nodes) = nodes_of("", ty);
+        let [ValidationRule::PatternMembers { nodes: tested, .. }] = &nodes[0].rules[..] else {
+            panic!("{ty}: {:?}", nodes[0].rules);
+        };
+        undeclared_of(&nodes, tested[0])
+    };
+    assert_eq!(
+        tested_by(
+            r#"{ id: number } & Schema.DeepStrict & Schema.PatternProperties<{ "^x-": { a: number } }>"#
+        ),
+        UndeclaredMembers::Rejected
+    );
+    assert_eq!(
+        tested_by(
+            r#"{ id: number } & Schema.PatternProperties<{ "^x-": { a: number } }> & Schema.DeepStrict"#
+        ),
+        UndeclaredMembers::Rejected
+    );
+    assert_eq!(
+        tested_by(
+            r#"{ id: number } & Schema.Strict & Schema.PatternProperties<{ "^x-": { a: number } }>"#
+        ),
+        UndeclaredMembers::Allowed
+    );
+
+    let ty = r#"{ outer: { id: number } & Schema.PatternProperties<{ "^x-": string }, { a: number }> } & Schema.DeepStrict"#;
+    let (fragment, nodes) = nodes_of("", ty);
+    let outer = find_member(&fragment, &nodes, ROOT, "outer");
+    assert_eq!(
+        undeclared_of(&nodes, outer.node),
+        UndeclaredMembers::Rejected
+    );
+}
+
+#[test]
+fn type_arguments_of_rules_are_as_strict_as_written() {
+    let ty = "{ a: number } & Schema.DeepStrict & Schema.Not<{ b: number }> \
+        & Schema.AllOf<[{ c: number } & Schema.Strict]>";
+    let (_, nodes) = nodes_of("", ty);
+    assert_eq!(undeclared_of(&nodes, ROOT), UndeclaredMembers::Rejected);
+    let [
+        ValidationRule::Not { node: loose },
+        ValidationRule::Every { nodes: parts },
+    ] = &nodes[0].rules[..]
+    else {
+        panic!("{:?}", nodes[0].rules);
+    };
+    assert_eq!(undeclared_of(&nodes, *loose), UndeclaredMembers::Allowed);
+    assert_eq!(undeclared_of(&nodes, parts[0]), UndeclaredMembers::Rejected);
+
+    let ty = "{ a?: number } & Schema.DeepStrict & Schema.If<{ b: number }, { c: number }, { d: number }> \
+        & Schema.OneOf<[{ e: number }]> & Schema.DependentSchemas<{ a: { f: number } }>";
+    let (_, nodes) = nodes_of("", ty);
+    let [
+        ValidationRule::If {
+            condition,
+            then,
+            otherwise,
+        },
+        ValidationRule::ExactlyOne { nodes: arms },
+        ValidationRule::DependentNode { node, .. },
+    ] = &nodes[0].rules[..]
+    else {
+        panic!("{:?}", nodes[0].rules);
+    };
+    for operand in [*condition, *then, *otherwise, arms[0], *node] {
+        assert_eq!(undeclared_of(&nodes, operand), UndeclaredMembers::Allowed);
+    }
+
+    let ty = "{ a: number }[] & Schema.DeepStrict & Schema.Contains<{ a: 1 }>";
+    let (_, nodes) = nodes_of("", ty);
+    let [ValidationRule::Contains { node, .. }] = nodes[0].rules[..] else {
+        panic!("{:?}", nodes[0].rules);
+    };
+    assert_eq!(undeclared_of(&nodes, node), UndeclaredMembers::Allowed);
+}
+
+#[test]
+fn every_format_has_rule() {
+    let formats = [
+        ("email", TextFormat::Email),
+        ("uuid", TextFormat::Uuid),
+        ("ipv4", TextFormat::Ipv4),
+        ("ipv6", TextFormat::Ipv6),
+        ("date", TextFormat::Date),
+        ("date-time", TextFormat::DateTime),
+        ("url", TextFormat::Url),
+        ("time", TextFormat::Time),
+        ("duration", TextFormat::Duration),
+        ("hostname", TextFormat::Hostname),
+        ("uri", TextFormat::Uri),
+        ("uri-reference", TextFormat::UriReference),
+        ("regex", TextFormat::Regex),
+        ("json-pointer", TextFormat::JsonPointer),
+        ("relative-json-pointer", TextFormat::RelativeJsonPointer),
+    ];
+    for (name, format) in formats {
+        let (_, nodes) = nodes_of("", &format!("string & Schema.Format<\"{name}\">"));
+        assert_eq!(
+            nodes[0].rules,
+            [ValidationRule::Format { format }],
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn refused_keyword_is_reported_with_its_place() {
+    let refused = [
+        (
+            r#"Schema.Refused<"unevaluatedProperties">"#,
+            "unevaluatedProperties",
+        ),
+        (
+            r#"{ a: string & Schema.Refused<"$dynamicRef"> }"#,
+            "a: $dynamicRef",
+        ),
+        (
+            r#"{ a: (string | number) & Schema.Refused<"$id"> }"#,
+            "a: $id",
+        ),
+        (
+            r#"{ a: unknown[] & Schema.Contains<Schema.Refused<"$anchor">> }"#,
+            "a<Schema.Contains>: $anchor",
+        ),
+        (
+            r#"{ a: [string, (string & Schema.Not<Schema.Refused<"$anchor">>)?] }"#,
+            "a[1]<Schema.Not>: $anchor",
+        ),
+        (
+            r#"{ a: { b: 1 } & Schema.PatternProperties<{ x: Schema.Refused<"$id"> }> }"#,
+            "a<Schema.PatternProperties>: $id",
+        ),
+        (
+            r#"{ a: { b: 1 } & Schema.PatternProperties<{ x: 1 }, Schema.Refused<"$id">> }"#,
+            "a<Schema.PatternProperties>: $id",
+        ),
+        (r#"{ a: symbol & Schema.Refused<"$id"> }"#, "a: $id"),
+        (
+            r#"{ a: string & Schema.Min<1> & Schema.Refused<"$id"> }"#,
+            "a: $id",
+        ),
+        ("{ a: number & Schema.OneOf<[]> }", "a: OneOf"),
+        ("{ a: number & Schema.AllOf<[]> }", "a: AllOf"),
+    ];
+    for (ty, rule) in refused {
+        assert_eq!(refused_rule("", ty), rule, "{ty}");
+    }
+}
+
+#[test]
+fn unsupported_type_argument_is_reported_with_its_place() {
+    assert_eq!(
+        unsupported_part("", "{ a: string & Schema.Not<void> }"),
+        "a<Schema.Not>: void"
+    );
+}
+
+#[test]
+fn key_of_rule_as_member_is_refused_whatever_its_modifiers() {
+    let declarations = "type Writable<T> = { -readonly [K in keyof T]: T[K] };\n\
+        interface Closed extends Schema.Strict { id: number }";
+    let refused = [
+        (
+            "Writable<{ readonly id: number } & Schema.Strict>",
+            "bun.strict",
+        ),
+        (
+            r#"Writable<{ readonly name: string } & Schema.Not<{ name: "root" }>>"#,
+            "bun.not",
+        ),
+        (
+            "Required<{ a?: string } & Schema.MaxProperties<1>>",
+            "bun.maxProperties",
+        ),
+        ("Partial<{ a: string } & Schema.Strict>", "bun.strict"),
+        ("Readonly<{ a: string } & Schema.Strict>", "bun.strict"),
+        ("Closed", "bun.strict"),
+        (r#"{ a: { "bun.minLength": 8 } }"#, "a: bun.minLength"),
+        (
+            r#"{ a: { readonly "bun.minLength"?: 8; b: 1 } }"#,
+            "a: bun.minLength",
+        ),
+        (r#"{ a: { "bun.int32"?: true; b: 1 } }"#, "a: bun.int32"),
+    ];
+    for (ty, key) in refused {
+        assert_eq!(refused_rule(declarations, ty), key, "{ty}");
+    }
+}
+
+#[test]
+fn other_keys_that_begin_alike_are_members() {
+    let ty = r#"{ "bun.lock": string; readonly "bun.future"?: true; "bun.Strict": 1; bun: 2 }"#;
+    let (fragment, nodes) = nodes_of("", ty);
+    let shape = |name: &str| shape_of(&nodes, find_member(&fragment, &nodes, ROOT, name).node);
+    assert_eq!(*shape("bun.lock"), primitive(ValidatedPrimitive::String));
+    assert_eq!(
+        *shape("bun.future"),
+        ValidationShape::BooleanLiteral { value: true }
+    );
+    assert_eq!(
+        *shape("bun.Strict"),
+        ValidationShape::NumberLiteral { value: 1.0 }
+    );
+    assert_eq!(*shape("bun"), ValidationShape::NumberLiteral { value: 2.0 });
+}
+
+#[test]
+fn types_that_say_more_than_their_shape_are_unsupported() {
+    let declarations = "enum Color { Red, Blue }\nnamespace Units { export const meter = 1; }";
+    let unsupported = [
+        ("{ a: Uppercase<string> }", "a: Uppercase<string>"),
+        (
+            "{ a: `id-${Lowercase<string>}` }",
+            "a: `id-${Lowercase<string>}`",
+        ),
+        (
+            "Record<string, number> & Schema.PropertyNames<Uppercase<string>>",
+            "<Schema.PropertyNames>: Uppercase<string>",
+        ),
+        (
+            "{ a: 1 } & Schema.PatternProperties<{ x: Capitalize<string> }>",
+            "<Schema.PatternProperties>: Capitalize<string>",
+        ),
+        (
+            "unknown[] & Schema.Contains<Uncapitalize<string>>",
+            "<Schema.Contains>: Uncapitalize<string>",
+        ),
+        ("{ a: typeof Color }", "a: typeof Color"),
+        ("{ a: typeof Units }", "a: typeof Units"),
+        ("{ a: typeof globalThis }", "a: typeof globalThis"),
+    ];
+    for (ty, part) in unsupported {
+        assert_eq!(unsupported_part(declarations, ty), part, "{ty}");
+    }
+}
+
+fn unknown_with(rules: Vec<ValidationRule>) -> ValidationNode {
+    ValidationNode {
+        shape: ValidationShape::Unknown,
+        rules,
+        ..ValidationNode::default()
+    }
+}
+
+#[test]
+fn test_of_same_value_that_returns_to_its_node_is_found() {
+    let plain = || unknown_with(Vec::new());
+    let returning = [
+        vec![unknown_with(vec![ValidationRule::Not { node: 0 }])],
+        vec![unknown_with(vec![ValidationRule::Every { nodes: vec![0] }])],
+        vec![
+            plain(),
+            unknown_with(vec![ValidationRule::ExactlyOne { nodes: vec![0, 2] }]),
+            unknown_with(vec![ValidationRule::If {
+                condition: 0,
+                then: 0,
+                otherwise: 3,
+            }]),
+            ValidationNode {
+                shape: ValidationShape::Union { arms: vec![0, 1] },
+                ..ValidationNode::default()
+            },
+        ],
+    ];
+    for nodes in returning {
+        assert!(
+            find_node_tested_against_itself(&nodes).is_some(),
+            "{nodes:?}"
+        );
+    }
+
+    let ending = [
+        vec![
+            unknown_with(vec![
+                ValidationRule::Not { node: 1 },
+                ValidationRule::Every { nodes: vec![1, 1] },
+            ]),
+            plain(),
+        ],
+        vec![unknown_with(vec![
+            ValidationRule::Contains {
+                node: 0,
+                minimum: 1,
+                maximum: None,
+            },
+            ValidationRule::MemberNames { node: 0 },
+            ValidationRule::PatternMembers {
+                sources: Vec::new(),
+                nodes: vec![0],
+            },
+        ])],
+        vec![ValidationNode {
+            shape: ValidationShape::Array { element: 0 },
+            ..ValidationNode::default()
+        }],
+    ];
+    for nodes in ending {
+        assert_eq!(find_node_tested_against_itself(&nodes), None, "{nodes:?}");
+    }
+}
+
+#[test]
+fn type_tested_against_itself_is_refused() {
+    assert_eq!(
+        refused_rule("type Loop = string & Schema.AllOf<[Loop]>;", "Loop"),
+        "a type that is tested against itself"
+    );
+    let declarations = "interface Tree { children: Tree[] & Schema.Contains<Tree> }";
+    let (fragment, nodes) = nodes_of(declarations, "Tree");
+    assert_eq!(
+        rules_of_member(&fragment, &nodes, "children"),
+        [ValidationRule::Contains {
+            node: ROOT,
+            minimum: 1,
+            maximum: None,
+        }]
+    );
 }

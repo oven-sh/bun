@@ -6,6 +6,7 @@ use crate::check::aot::answers::{
 use crate::check::aot::program_symbols::SchemaAlias;
 use crate::check::aot::queries::Queries;
 use crate::program::{FileId, Sym};
+use crate::types::TypeId;
 use std::hash::Hasher;
 
 pub(super) type Key = [u64; 2];
@@ -193,7 +194,7 @@ pub(super) fn member_name_key<'p>(queries: &Queries<'_, 'p, '_>, name: MemberNam
     }
 }
 
-fn constraint_description(alias: Option<SchemaAlias>) -> Description {
+fn alias_description(alias: Option<SchemaAlias>) -> Description {
     let mut description = Description::new(Tag::Constrained);
     match alias {
         None => description.word(0),
@@ -206,7 +207,7 @@ fn constraint_description(alias: Option<SchemaAlias>) -> Description {
 }
 
 fn default_description(queries: &Queries<'_, '_, '_>, default: SchemaDefault) -> Description {
-    let mut description = constraint_description(Some(SchemaAlias::Default));
+    let mut description = alias_description(Some(SchemaAlias::Default));
     match default {
         SchemaDefault::Null => description.word(0),
         SchemaDefault::Boolean(value) => {
@@ -225,20 +226,31 @@ fn default_description(queries: &Queries<'_, '_, '_>, default: SchemaDefault) ->
     description
 }
 
-pub(super) fn constraint_key(queries: &Queries<'_, '_, '_>, constraint: SchemaConstraint) -> Key {
+/// All of a constraint but its types, which `SchemaConstraint::for_each_type` lists.
+pub(super) fn constraint_description(
+    queries: &Queries<'_, '_, '_>,
+    constraint: SchemaConstraint<'_>,
+) -> Description {
     let with_word = |alias: SchemaAlias, word: u64| {
-        let mut description = constraint_description(Some(alias));
+        let mut description = alias_description(Some(alias));
         description.word(word);
         description
     };
     let with_text = |alias: SchemaAlias, text: Atom| {
-        let mut description = constraint_description(Some(alias));
+        let mut description = alias_description(Some(alias));
         description.bytes(queries.atom_bytes(text));
         description
     };
-    let description = match constraint {
-        SchemaConstraint::Int32 => constraint_description(None),
-        SchemaConstraint::Int => constraint_description(Some(SchemaAlias::Int)),
+    let with_keys = |alias: SchemaAlias, entries: &[(Atom, TypeId)]| {
+        let mut description = with_word(alias, entries.len() as u64);
+        for &(key, _) in entries {
+            description.bytes(queries.atom_bytes(key));
+        }
+        description
+    };
+    match constraint {
+        SchemaConstraint::Int32 => alias_description(None),
+        SchemaConstraint::Int => alias_description(Some(SchemaAlias::Int)),
         SchemaConstraint::Min(value) => with_word(SchemaAlias::Min, value.to_bits()),
         SchemaConstraint::Max(value) => with_word(SchemaAlias::Max, value.to_bits()),
         SchemaConstraint::Above(value) => with_word(SchemaAlias::Above, value.to_bits()),
@@ -248,14 +260,58 @@ pub(super) fn constraint_key(queries: &Queries<'_, '_, '_>, constraint: SchemaCo
         SchemaConstraint::MaxLength(count) => with_word(SchemaAlias::MaxLength, u64::from(count)),
         SchemaConstraint::MinItems(count) => with_word(SchemaAlias::MinItems, u64::from(count)),
         SchemaConstraint::MaxItems(count) => with_word(SchemaAlias::MaxItems, u64::from(count)),
-        SchemaConstraint::Pattern(text) => with_text(SchemaAlias::Pattern, text),
+        SchemaConstraint::Pattern { source, is_unicode } => {
+            let mut description = with_text(SchemaAlias::Pattern, source);
+            description.word(u64::from(is_unicode));
+            description
+        }
         SchemaConstraint::Format(format) => with_word(SchemaAlias::Format, format as u64),
         SchemaConstraint::Message(text) => with_text(SchemaAlias::Message, text),
         SchemaConstraint::Default(default) => default_description(queries, default),
-        SchemaConstraint::Strict => constraint_description(Some(SchemaAlias::Strict)),
-        SchemaConstraint::DeepStrict => constraint_description(Some(SchemaAlias::DeepStrict)),
-    };
-    description.finish()
+        SchemaConstraint::Strict => alias_description(Some(SchemaAlias::Strict)),
+        SchemaConstraint::DeepStrict => alias_description(Some(SchemaAlias::DeepStrict)),
+        SchemaConstraint::UniqueItems => alias_description(Some(SchemaAlias::UniqueItems)),
+        SchemaConstraint::Contains {
+            minimum, maximum, ..
+        } => {
+            let mut description = with_word(SchemaAlias::Contains, u64::from(minimum));
+            description.word(u64::from(maximum.is_some()));
+            description.word(u64::from(maximum.unwrap_or(0)));
+            description
+        }
+        SchemaConstraint::Not { .. } => alias_description(Some(SchemaAlias::Not)),
+        SchemaConstraint::If { .. } => alias_description(Some(SchemaAlias::If)),
+        SchemaConstraint::OneOf { arms } => with_word(SchemaAlias::OneOf, arms.len() as u64),
+        SchemaConstraint::AllOf { parts } => with_word(SchemaAlias::AllOf, parts.len() as u64),
+        SchemaConstraint::PatternProperties { table, .. } => {
+            with_keys(SchemaAlias::PatternProperties, table)
+        }
+        SchemaConstraint::PropertyNames { .. } => {
+            alias_description(Some(SchemaAlias::PropertyNames))
+        }
+        SchemaConstraint::MinProperties(count) => {
+            with_word(SchemaAlias::MinProperties, u64::from(count))
+        }
+        SchemaConstraint::MaxProperties(count) => {
+            with_word(SchemaAlias::MaxProperties, u64::from(count))
+        }
+        SchemaConstraint::DependentRequired(dependencies) => {
+            let count = dependencies.len() as u64;
+            let mut description = with_word(SchemaAlias::DependentRequired, count);
+            for &(key, names) in dependencies {
+                description.bytes(queries.atom_bytes(key));
+                description.word(names.len() as u64);
+                for &name in names {
+                    description.bytes(queries.atom_bytes(name));
+                }
+            }
+            description
+        }
+        SchemaConstraint::DependentSchemas(entries) => {
+            with_keys(SchemaAlias::DependentSchemas, entries)
+        }
+        SchemaConstraint::Refused(keyword) => with_text(SchemaAlias::Refused, keyword),
+    }
 }
 
 pub(super) fn describe_untyped_members<'a>(

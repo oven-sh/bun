@@ -1,6 +1,6 @@
 /**
  * mimalloc — Microsoft's memory allocator. Bun's global malloc replacement
- * on Linux, and the JS heap allocator everywhere.
+ * on Linux and macOS, and the JS heap allocator everywhere.
  *
  * DirectBuild: compiles only `src/static.c`, mimalloc's unity TU that
  * #includes every other source. The cmake build also produced a per-file
@@ -10,9 +10,56 @@
  * to duplicate, so the old object-vs-archive workaround is gone.
  */
 
+import type { Config } from "../config.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 
 const MIMALLOC_COMMIT = "92ef6587c57b262f6e6abf513f7776a2f8d12aeb";
+
+/**
+ * macOS: src/jsc/bindings/MimallocOverrideDarwin.cpp defines the C allocation
+ * functions and operator new/delete on top of mimalloc. ASAN has to see the
+ * real ones.
+ */
+export const overridesDarwinAllocator = (cfg: Pick<Config, "darwin" | "asan">): boolean => cfg.darwin && !cfg.asan;
+
+/**
+ * The C allocation functions that file defines. They stay local to the
+ * executable, which therefore imports none of them. Spelled as in C.
+ */
+export const replacedLibcAllocationSymbols: readonly string[] = [
+  "malloc",
+  "calloc",
+  "realloc",
+  "reallocf",
+  "free",
+  "valloc",
+  "aligned_alloc",
+  "posix_memalign",
+  "strdup",
+  "strndup",
+];
+
+/**
+ * Every replaceable form of operator new and operator delete, as the Itanium
+ * ABI mangles it. The macOS executable exports them: libc++.1.dylib allocates
+ * and releases std::string buffers that inlined code in bun also allocates and
+ * releases, and dyld binds an image to the executable's operators only if they
+ * are exported.
+ */
+export const replacedOperatorNewSymbols: readonly string[] = ["w", "a"].flatMap(form => [
+  `_Zn${form}m`,
+  `_Zn${form}mRKSt9nothrow_t`,
+  `_Zn${form}mSt11align_val_t`,
+  `_Zn${form}mSt11align_val_tRKSt9nothrow_t`,
+  ...[`_Zd${form === "w" ? "l" : "a"}Pv`].flatMap(del => [
+    del,
+    `${del}m`,
+    `${del}RKSt9nothrow_t`,
+    `${del}St11align_val_t`,
+    `${del}mSt11align_val_t`,
+    `${del}St11align_val_tRKSt9nothrow_t`,
+  ]),
+]);
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -39,8 +86,10 @@ export const mimalloc: Dependency = {
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
     //   ASAN:    OFF — ASAN interceptors must see the real malloc.
-    //   macOS:   OFF — overriding via zone/interpose breaks NAPI addons and
-    //            system frameworks (SecureTransport etc.).
+    //   macOS:   OFF here — mimalloc's own override replaces the default
+    //            malloc zone or interposes, which also changes the allocator
+    //            under NAPI addons and system frameworks. bun's override
+    //            (overridesDarwinAllocator above) covers the executable only.
     //   Linux:   ON — the main win. All malloc/free routes through mimalloc,
     //            including WebKit's bmalloc when it falls back to system malloc.
     //   Windows: OFF — Bun links the static CRT and calls mi_* directly;
@@ -128,9 +177,9 @@ export const mimalloc: Dependency = {
       cflags.push(cfg.abi === "musl" ? "-ftls-model=local-dynamic" : "-ftls-model=initial-exec");
     }
 
-    if (override) {
-      cflags.push("-fno-builtin-malloc");
-      // mimalloc also implements `operator new` here. See patches/mimalloc/new-oom-hook.patch.
+    if (override) cflags.push("-fno-builtin-malloc");
+    if (override || overridesDarwinAllocator(cfg)) {
+      // `operator new` ends in mi_new here. See patches/mimalloc/new-oom-hook.patch.
       // The value is a function name, and a `defines` entry would quote it.
       cflags.push("-DMI_NEW_OOM=Bun__outOfMemory");
     }

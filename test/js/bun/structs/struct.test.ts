@@ -80,6 +80,26 @@ describe("struct", () => {
     expect(() => S.prototype.get.call({ v: 1 })).toThrow(TypeError);
   });
 
+  test("methods reject an object that only inherits from the prototype", () => {
+    struct S {
+      v;
+      get() {
+        return this.v;
+      }
+    }
+    const s = new S();
+    expect(s.get()).toBeUndefined();
+    const fake = Object.create(S.prototype);
+    fake.v = 1;
+    expect(() => S.prototype.get.call(fake)).toThrow(TypeError);
+    expect(() => (fake as any).get()).toThrow(TypeError);
+    struct T extends S {
+      w;
+    }
+    expect(new T().get()).toBeUndefined();
+    expect(() => S.prototype.get.call(Object.create(T.prototype))).toThrow(TypeError);
+  });
+
   test("prototype and constructor are locked down", () => {
     struct S {
       v;

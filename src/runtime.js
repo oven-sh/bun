@@ -370,6 +370,9 @@ export var __exportCjs = /* @__PURE__ */ (target, getters, setters) => {
 var __structInfo = /* @__PURE__ */ new WeakMap();
 var __structLayout = /* @__PURE__ */ new WeakMap();
 var __structLocked = /* @__PURE__ */ new WeakSet();
+// Every constructed unshared struct instance: the brand that struct methods check, which a prototype check alone cannot give
+// (`Object.create(S.prototype)` has the prototype but was never constructed).
+var __structInstances = /* @__PURE__ */ new WeakSet();
 
 var __structSharedInstances = /* @__PURE__ */ new WeakSet();
 var __structSharedInstances = /* @__PURE__ */ new WeakSet();
@@ -382,7 +385,12 @@ var __structBrandMethods = proto => {
     var desc = Object.getOwnPropertyDescriptor(proto, key);
     var wrap = fn => {
       var wrapped = function (...args) {
-        if (this === null || (typeof this !== "object" && typeof this !== "function") || !proto.isPrototypeOf(this))
+        if (
+          this === null ||
+          (typeof this !== "object" && typeof this !== "function") ||
+          !__structInstances.has(this) ||
+          !proto.isPrototypeOf(this)
+        )
           throw new TypeError("Method called on an incompatible receiver; struct methods are not generic");
         return Reflect.apply(fn, this, args);
       };
@@ -488,6 +496,7 @@ export var __structBase = (parent, fields, shared) => {
             })(name);
           }
         } else {
+          __structInstances.add(self);
           for (var name of layout.names)
             __defProp(self, name, { value: undefined, writable: true, enumerable: true, configurable: false });
         }

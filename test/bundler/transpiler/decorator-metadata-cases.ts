@@ -1363,6 +1363,10 @@ const scopes: Case[] = [
     `namespace NS { export class K {} }\nnamespace NS { class C { @d a: K; @d b: NS.K; } }`,
   ),
   program(
+    "scope/namespace, exported from another block, a type and then a value",
+    `namespace NS { export class K { v = 7; } }\nnamespace NS { class C { @d m(k: K) {} } export const k = new K(); }\nshow(NS.k.v);`,
+  ),
+  program(
     "scope/namespace, exported enum from another block",
     `namespace NS { export enum E { A } }\nnamespace NS { class C { @d a: E; @d b: E.A; } }`,
   ),

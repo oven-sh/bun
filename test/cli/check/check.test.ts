@@ -9211,6 +9211,108 @@ export const z = {  object: <S extends Shape>(s: S) => new ZObject(s)
       expect(exitCode).toBe(1);
     });
 
+    // The initializer of `x11` calls `x00()`. Its check inside the cycle is the first to ask for the return type of `x00`,
+    // while `x60` is `any`. So `x00().next().value` in m3.ts is `any`, and `w35` has no error.
+    test("a return type that the check of an initializer asked for inside the cycle stays", async () => {
+      using dir = project({
+        "m0.ts": ` import type { Req, Reply, Mw, Handler, RoutesOf, CtxOf, Tables, User } from "./mw";
+import { x10Rows } from "./m1";
+import { x60 } from "./m6";
+export function* x00() { yield x10Rows(); return x60; }
+export const x01: Mw<{ }> = () => ({ });
+
+`,
+        "m1.ts": `import { App, client, compose, Q, from, flag, verify } from "./mw";
+import { x32 } from "./m3";
+import { x60 } from "./m6";
+import { x00, x01 } from "./m0";
+export const x10 = from("posts").where("id", "=", true).where("id", "=", null);
+export async function x10Rows() { }
+export const x11 = x32
+  .mount(x60)
+  .decorate("d3", x00());
+export const x12 = async ({}) => { }`,
+        "m2.ts": `import { App, client, compose, Q, from, flag, verify } from "./mw";
+`,
+        "m3.ts": `import { App, client, compose, Q, from, flag, verify } from "./mw";
+import { x51 } from "./m5";
+import { x71 } from "./m7";
+import { x00 } from "./m0";
+import { x11 } from "./m1";
+export const x31 = compose(x51, x71);
+const w35: { zz: 1 } = x00().next().value;
+export const x32 = new App()
+  .post("/", { }, async ({ body, params }) => params.id)
+  .mount(x11);
+`,
+        "m4.ts": `import { App, client, compose, Q, from, flag, verify } from "./mw";
+import { x10, x11 } from "./m1";
+import {} from "./m0";export const x41 = new App()
+  .mount(x11)
+`,
+        "m5.ts": `import { App, client, compose, Q, from, flag, verify } from "./m2";
+
+import { x12 } from "./m1";
+import { x31, x32 } from "./m3";
+export const x51 = compose(x12, x31);
+`,
+        "m6.ts": `import { App, client, compose, Q, from, flag, verify } from "./mw";
+
+import { x41 } from "./m4";
+export const x60 = new App()
+  .mount(x41);
+export const x62 = async ({}) => { }`,
+        "m7.ts": `
+
+export const x71 = () => ({ });
+`,
+        "mw.ts": `export interface Req { }
+export interface Reply { }
+export type Mw<I, O = I> = (ctx: I & { }) => O | Promise<O> | void;
+export type Handler<C, P extends string, R> = (ctx: C & { }) => R | Promise<R>;
+export class App<C = {}, Routes = {}> {
+  decorate<K extends string, V>(k: K, v: V): App<C & {}> { }
+  post<P extends string, B, R>(p: P, o: { }, h: Handler<C & { }, P, R>): App<C, Routes & { }> { }
+  mount<C2, R2>(o: App<C2, R2>): App<C & C2, Routes & R2> {}
+}
+export type RoutesOf<A> = A extends App<any, infer R> ? R : never; export type CtxOf<A> = A extends App<infer C, any> ? C : never;
+export declare function client<A extends App<any, any>>(): { }
+export declare function compose<A, B, C>(a: Mw<A, B>, b: Mw<A & B, C>): Mw<A, B & C>;
+export interface Tables { }
+export class Q<T extends keyof Tables, Sel = Tables[T], One extends boolean = false> { }
+export const from = <T extends keyof Tables>(t: T) => new Q(t);
+export interface User { } export declare const flag: boolean; export declare function verify(t: string | undefined): User | null;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          `m1.ts(5,25): error TS2345: Argument of type '"posts"' is not assignable to parameter of type 'never'.`,
+          `m1.ts(5,34): error TS2339: Property 'where' does not exist on type 'Q<never, never, false>'.`,
+          `m1.ts(7,14): error TS7022: 'x11' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.`,
+          `m3.ts(6,14): error TS7022: 'x31' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.`,
+          `m3.ts(8,14): error TS7022: 'x32' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.`,
+          `m3.ts(9,28): error TS2339: Property 'body' does not exist on type '{}'.`,
+          `m3.ts(9,34): error TS2339: Property 'params' does not exist on type '{}'.`,
+          `m4.ts(3,36): error TS7022: 'x41' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.`,
+          `m5.ts(1,10): error TS2459: Module '"./m2"' declares 'App' locally, but it is not exported.`,
+          `m5.ts(1,15): error TS2459: Module '"./m2"' declares 'client' locally, but it is not exported.`,
+          `m5.ts(1,23): error TS2459: Module '"./m2"' declares 'compose' locally, but it is not exported.`,
+          `m5.ts(1,32): error TS2459: Module '"./m2"' declares 'Q' locally, but it is not exported.`,
+          `m5.ts(1,35): error TS2459: Module '"./m2"' declares 'from' locally, but it is not exported.`,
+          `m5.ts(1,41): error TS2459: Module '"./m2"' declares 'flag' locally, but it is not exported.`,
+          `m5.ts(1,47): error TS2459: Module '"./m2"' declares 'verify' locally, but it is not exported.`,
+          `m5.ts(5,14): error TS7022: 'x51' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.`,
+          `m6.ts(4,14): error TS7022: 'x60' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.`,
+          `mw.ts(6,46): error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.`,
+          `mw.ts(7,74): error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.`,
+          `mw.ts(8,34): error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.`,
+          `mw.ts(15,61): error TS2554: Expected 0 arguments, but got 1.`,
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // The argument of `router` in m1.ts is first checked in the mode that skips generic functions. The callee of
     // `keys()` leads to `c11` again, and that resolution of `keys()` finds `p` to be `any` and assigns its signature.
     test("a call keeps the signature that a resolution inside the check of its callee assigned", async () => {

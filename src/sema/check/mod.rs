@@ -181,6 +181,8 @@ struct InitializerCheckedInside {
     signature: Option<call::ResolvedCall>,
     /// What `resolveCall` reported for that signature.
     call_errors: Option<Vec<Reported>>,
+    /// `resolvedReturnType` of the signatures whose return type the check was the first to ask for.
+    return_types: Vec<((FileId, FnId), TypeId)>,
     reported: Vec<Reported>,
 }
 

@@ -616,7 +616,18 @@ impl<'p, 's> Checker<'p, 's> {
                 && self.stack[at - 1] == self.stack[self.stack.len() - 2]
                 && !(self.initializers_checked_inside.iter()).any(|it| it.quick_type_frame == at)
             {
+                let serial = returned.serial;
                 let reported = self.take_reported_from(from);
+                // Bits 1 and 16: it depends on nothing but cycles.
+                let return_types = self.provisional.iter().filter_map(|(&q, it)| match q {
+                    Query::Return(of, func)
+                        if it.own_serial > serial && it.event_bits & !17 == 0 =>
+                    {
+                        Some(((of, func), TypeId(it.raw as u32)))
+                    }
+                    _ => None,
+                });
+                let return_types = return_types.collect();
                 let signature = self.provisional(Query::Call(file, e));
                 let call_errors = self.errors_of_provisional_call.take();
                 self.initializers_checked_inside
@@ -626,6 +637,7 @@ impl<'p, 's> Checker<'p, 's> {
                         call_errors: call_errors
                             .filter(|it| (it.0, it.1) == (file, e))
                             .map(|it| it.2),
+                        return_types,
                         reported,
                     });
             }

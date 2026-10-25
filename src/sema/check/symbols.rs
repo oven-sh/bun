@@ -2884,6 +2884,9 @@ impl<'p, 's> Checker<'p, 's> {
                 match self.leave(Query::Expr(file, e)) {
                     Ok(stored) => {
                         (self.p.expr_types).rewrite(&self.task, (file, e), TypeId::ANY, stored);
+                        for (key, ty) in checked_inside.return_types {
+                            (self.p.fn_return_types).insert(&self.task, key, (ty, false), stored);
+                        }
                         if let Some(signature) = checked_inside.signature {
                             if let Some(reported) = checked_inside.call_errors {
                                 (self.p.call_diagnostics).insert_ref(

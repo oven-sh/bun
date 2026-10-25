@@ -1770,7 +1770,8 @@ describe("options.timeout", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([parent.stdout.text(), parent.stderr.text(), parent.exited]);
     const report = stdout ? JSON.parse(stdout) : {};
-    const pid: number | undefined = report.pid;
+    // A child whose 'exit' the parent saw is reaped, and its pid can be another process by now.
+    const pid: number | undefined = report.events?.includes("exit") ? undefined : report.pid;
     try {
       const alive = pid !== undefined && isAlive(pid);
       const reported = Object.fromEntries(

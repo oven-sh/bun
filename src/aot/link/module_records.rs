@@ -576,8 +576,12 @@ fn collect_web_assembly_modules(input: &RecordInput<'_, '_>) -> Vec<WebAssemblyM
             project: ProjectId::Application,
             file,
         };
-        let index = input.modules.index_of(ProgramModule::File(program_file)) as usize;
-        let module = input.numbering.modules[index].expect("every module has an id");
+        // Each entry point is linked by itself, and another one may be the only one that imports the file.
+        let Some(&index) = (input.modules.index_by_module).get(&ProgramModule::File(program_file))
+        else {
+            continue;
+        };
+        let module = input.numbering.modules[index as usize].expect("every module has an id");
         let source = parsed_source(files, file).expect("every loaded tree has a payload");
         let bytes = source.web_assembly.clone();
         modules.push(WebAssemblyModule {

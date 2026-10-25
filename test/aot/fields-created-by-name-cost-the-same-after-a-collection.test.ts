@@ -13,7 +13,7 @@ const files = {
     const shelfKey = process.env.SHELF || "shelf";
     const shelf = globalThis;
     function hide(x) { shelf[shelfKey] = x; return shelf[shelfKey]; }
-    // Objects of many kinds have the name: instances of classes and of constructor functions, and literals. The stores below have one guard for all of them, and only the classes are ever stored to:
+    // Objects of many kinds have the name: instances of classes and of constructor functions, and literals. The stores below have one guard for all of them, and only a class is ever stored to:
     // the guard stays clear and the stores go by name.
     class A { constructor(a) { this.a = a; } }
     class B { constructor(a) { this.a = a; this.x = 1; } }
@@ -33,7 +33,8 @@ const files = {
     function store(o, v) { o.late = v; }
     const rounds = Number(process.argv[2]), collectsLast = process.argv[3] === "last", warm = 4096;
     const list = [];
-    for (let i = 0; i < rounds + warm; i++) list.push(hide(make(i)));
+    // One class: the filters have a place for each Structure by its address, and two classes that share a place would be measured instead of the collection.
+    for (let i = 0; i < rounds + warm; i++) list.push(hide(new A(i)));
     Bun.gc(true);
     if (!collectsLast) Bun.gc(true);
     for (let i = rounds; i < rounds + warm; i++) store(list[i], i);

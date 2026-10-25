@@ -25,3 +25,9 @@ objects/own-accessors-whose-getters-nobody-can-list    hot    TODO: in the shell
 objects/own-accessors-whose-getters-nobody-can-list    cold    TODO: in the shell it ends with "TypeError: undefined is not a function"; an executable built at that heat answers as plain Bun does
 untyped-stress/builtin-method-results-in-conditions    hot    hot code takes an object for true and does not ask whether it masquerades as undefined: only the shell's makeMasquerader() makes such an object
 collector/eval-constants-at-heap-limit    both    fills a small heap to the brim, and its counts are tuned for the default build
+collector/large-constants-at-heap-limit    both    fills a small heap to the brim, and its counts are tuned for the default build
+collector/bigint-literal-at-heap-limit    both    fills a small heap to the brim, and its counts are tuned for the default build
+calls/deep-tail-recursion-through-call-and-apply    cold    cold code calls `call` and `apply` as it finds them: Bun's are compiled with the program and pass the call on as a tail call, the shell's are native and keep a frame
+untyped-code/for-of-untyped-values    cold    cold code walks a generator by its `next`: Bun's is compiled with the program, the shell's knows no compiled generator
+untyped-code/what-a-field-holds-is-asked-for-many-names-by-many-functions    both    keeps `console` beside objects of its own; the shell's console is a plain object, which compiled code takes for the program's object
+structural-types/built-in-objects-with-members-of-their-own-are-used-through-interfaces-that-extend-their-types    cold    cold code walks a generator by its `next`: Bun's is compiled with the program, the shell's knows no compiled generator

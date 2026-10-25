@@ -60,3 +60,49 @@ test("onResolve runs ahead of what other plugins have queued", async () => {
   expect(textsDoneAtResolve).toBeGreaterThanOrEqual(0);
   expect(textsDoneAtResolve).toBeLessThan(textCount);
 });
+
+test("a chain of plugin requests lets setImmediate callbacks run", async () => {
+  // Every module imports the next one, and each import goes to the plugin and back.
+  const chainLength = 100;
+  using dir = tempDir("plugin-requests-chain", { "entry.js": `import "chain:0";` });
+
+  let requestsInARow = 0;
+  let mostRequestsInARow = 0;
+  const countRequest = () => {
+    mostRequestsInARow = Math.max(mostRequestsInARow, ++requestsInARow);
+    // Keeps this thread busy once the answer is on its way: the next request is there before this thread looks for it.
+    queueMicrotask(() => {
+      const end = performance.now() + 1;
+      while (performance.now() < end);
+    });
+  };
+  let building = true;
+  (function onImmediate() {
+    requestsInARow = 0;
+    if (building) setImmediate(onImmediate);
+  })();
+
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.js")],
+    plugins: [
+      {
+        name: "chain",
+        setup(build) {
+          build.onResolve({ filter: /^chain:/ }, args => {
+            countRequest();
+            return { path: args.path.slice("chain:".length), namespace: "chain" };
+          });
+          build.onLoad({ filter: /.*/, namespace: "chain" }, args => {
+            countRequest();
+            const next = Number(args.path) + 1;
+            return { loader: "js", contents: next < chainLength ? `import "chain:${next}";` : "" };
+          });
+        },
+      },
+    ],
+  });
+  building = false;
+
+  expect(result.success).toBe(true);
+  expect(mostRequestsInARow).toBeLessThanOrEqual(16);
+});

@@ -331,7 +331,10 @@ group("the global object", () => {
     ["a value defined on the global object", `Object.defineProperty(globalThis, "mine", { value: 1 }); console.log((globalThis as any).mine);`],
     ["a value defined under a computed name", `let name = "mine"; name = process.argv[2]; Object.defineProperty(globalThis, name, { value: 1 });`],
   ])("names are asked for and no member is used, so the report stays closed with %s", async (_, text) => {
-    expect(completeness(await of(text))).toEqual(closed);
+    const use = await of(text);
+    // No machine that runs one of these lanes can be asked afterwards.
+    if (completeness(use).escaped.length) console.error(use.lines.join("\n"));
+    expect(completeness(use)).toEqual(closed);
   });
 
   test.each([

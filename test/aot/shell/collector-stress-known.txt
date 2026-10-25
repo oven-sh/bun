@@ -57,3 +57,4 @@ typed-objects/arrow-fields-of-open-classes-that-only-untyped-code-extends    cou
 typed-objects/arrow-fields-that-lie-in-the-plain-this-from-its-creation    counts calls into the runtime
 typed-objects/open-classes-with-many-fields-that-only-untyped-code-extends    counts calls into the runtime
 data-from-outside/json-parse-recursive-union-retry    says so when a parse takes over a second
+data-from-outside/json-parse-type-argument-texts-broken-far-below-take-linear-time    gives each text one second, which collections all the time use up

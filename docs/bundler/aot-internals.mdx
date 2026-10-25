@@ -687,6 +687,8 @@ The slot of `x` holds a raw number and can't hold a string. So the store moves t
 
 The build saw those three statements. So in this program, `lengthSquared` starts with one test of the header that covers all four reads, and has a second path that reads by name. In a program without such statements, the reads are bare loads. [The object model](#the-object-model) has the details.
 
+A slot for objects works the same way. The store looks at the layout of the object, and an object of a layout that the field's type doesn't list goes to the side table. An ordinary object, like the result of `Object.create`, has no layout to look at. So where the type of a field also lists ordinary objects, the store lets any object into the slot, and a read of that slot is proven to be an object and nothing more. The declared type is still what the compiler expects there, so that's what it tests for first.
+
 **A wrong declaration file.**
 
 ```js size.js icon="/icons/javascript.svg"

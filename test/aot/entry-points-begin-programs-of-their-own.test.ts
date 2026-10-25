@@ -179,6 +179,73 @@ describe("compile/aot/entry points begin programs of their own", () => {
     });
   }, 600_000);
 
+  test("each runs the compiled code of the WebAssembly modules that it imports", async () => {
+    // (module (memory <pages>)
+    //   (func (export "load") (param i32) (result i32) local.get 0 i32.load)
+    //   (func (export "divide") (param i32 i32) (result i32) local.get 0 local.get 1 i32.div_s))
+    // prettier-ignore
+    const moduleWithMemory = (pages: number) => new Uint8Array([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+      0x01, 0x0c, 0x02, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f,
+      0x03, 0x03, 0x02, 0x00, 0x01,
+      0x05, 0x03, 0x01, 0x00, pages,
+      0x07, 0x11, 0x02, 0x04, 0x6c, 0x6f, 0x61, 0x64, 0x00, 0x00, 0x06, 0x64, 0x69, 0x76, 0x69, 0x64, 0x65, 0x00, 0x01,
+      0x0a, 0x11, 0x02, 0x07, 0x00, 0x20, 0x00, 0x28, 0x02, 0x00, 0x0b, 0x07, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6d, 0x0b,
+    ]);
+    const declaresFiles = `declare module "*.wasm" {\n  const path: string;\n  export default path;\n}\n`;
+    const tryTraps = `type Exports = { load(at: number): number; divide(a: number, b: number): number };
+export async function tryTraps(where: string, path: string): Promise<string[]> {
+  const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
+  const { load, divide } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports as Exports;
+  const outcomeOf = (run: () => number) => {
+    try {
+      return String(run());
+    } catch (error) {
+      const kind = error instanceof WebAssembly.RuntimeError ? "WebAssembly.RuntimeError" : (error as Error).name;
+      return kind + ": " + (error as Error).message.split(" (evaluating")[0];
+    }
+  };
+  return [
+    () => load(16),
+    () => load(70000),
+    () => load(200000),
+    () => load(-4),
+    () => divide(12, 4),
+    () => divide(12, 0),
+    () => divide(-2147483648, -1),
+  ].map((run, index) => where + " " + index + ": " + outcomeOf(run));
+}
+`;
+    const importsModule = (file: string) =>
+      `/// <reference path="./wasm-files.d.ts" />\nimport path from "./${file}";\nimport { tryTraps } from "./try-traps.ts";\n`;
+    const folder = write(join(root, "webassembly"), {
+      "wasm-files.d.ts": declaresFiles,
+      "try-traps.ts": tryTraps,
+      "main.ts": `${importsModule("one-page.wasm")}console.log((await tryTraps("before", path)).join("\\n"));
+const worker = new Worker("./worker.ts");
+worker.onmessage = async event => {
+  console.log(event.data.join("\\n"));
+  console.log((await tryTraps("after", path)).join("\\n"));
+  worker.terminate();
+};
+`,
+      "worker.ts": `${importsModule("two-pages.wasm")}postMessage(await tryTraps("worker", path));\n`,
+    });
+    writeFileSync(join(folder, "one-page.wasm"), moduleWithMemory(1));
+    writeFileSync(join(folder, "two-pages.wasm"), moduleWithMemory(2));
+    const executable = await build(folder, ["./main.ts", "./worker.ts"], "webassembly");
+    expect(existsSync(join(folder, "webassembly.ir.1"))).toBe(true);
+    const plain = await spawned([bunExe(), "run", "main.ts"], folder, bunEnv);
+    expect(plain.stdout).toContain("worker 1: 0\nworker 2: WebAssembly.RuntimeError: Out of bounds memory access\n");
+    const ran = await spawned([executable], root, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+    expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+      stdout: plain.stdout,
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  }, 600_000);
+
   // The host loads what `preload` names into the global of the Worker, so there the entry points meet. No other option does that.
   test("only the option preload brings entry points together", async () => {
     const withOptions = (options: string) =>

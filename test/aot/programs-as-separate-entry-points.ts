@@ -8,7 +8,7 @@
 //
 // Left out: a program that is built with flags, entry points or an environment of its own; one whose build is meant to fail; one below a tsconfig.json of its own, because the first entry
 // point's governs a build; one that declares types for everybody (`declare global`, a declaration file); one with "alone" in its <program>.json; one that starts itself again as a
-// child process; and one whose <program>.json says in "mainThread" why a Worker does not print what the main thread prints.
+// child process; one whose <program>.json sets BUN_OPTIONS; and one whose <program>.json says in "mainThread" why a Worker does not print what the main thread prints.
 //
 //   TEST_PART=aot/every-program-alone-3 bun test test/aot/parts.test.ts   one part
 //   AOT_SHARE=all TEST_PART=aot/every-program-alone bun test ..        every program
@@ -86,8 +86,10 @@ function canBeOneOfMany(path: string): boolean {
   const beside = besideOf(path);
   if (familiesAlone.some(family => family.test(nameOf(path)))) return false;
   if (existsSync(beside + ".todo.txt") || existsSync(beside + ".build-errors.txt")) return false;
-  const { build, entryPoints, buildEnv, reference, alone, skipWithASAN, todoOn } = optionsOf(path);
+  const { build, entryPoints, buildEnv, env, reference, alone, skipWithASAN, todoOn } = optionsOf(path);
   if (build?.length || entryPoints?.length || buildEnv || reference || alone || (isASAN && skipWithASAN) || todoOn?.[process.platform]) return false;
+  // Only a process reads BUN_OPTIONS, when it starts. A Worker never does.
+  if (env?.BUN_OPTIONS) return false;
   return !hasProjectOfItsOwn(path) && !declaresForEverybody(path);
 }
 

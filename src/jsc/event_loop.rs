@@ -77,6 +77,8 @@ pub struct EventLoop {
     /// See `TaskTag::is_plugin_request`: as other threads post them, and as this thread has taken them.
     concurrent_plugin_requests: ConcurrentQueue,
     plugin_requests: Queue,
+    /// How many more times this `tick()` takes what other threads posted to `concurrent_plugin_requests`.
+    plugin_request_refills_left: u32,
     /// Set only on Bun.spawnSync's isolated loop: how other threads reach *this*
     /// loop's queue (the VM's handle names only the VM's own two loops).
     pub(crate) isolated_poster: Option<std::sync::Arc<crate::vm_handle::IsolatedPosterInner>>,
@@ -129,6 +131,7 @@ impl Default for EventLoop {
             concurrent_tasks: ConcurrentQueue::default(),
             concurrent_plugin_requests: ConcurrentQueue::default(),
             plugin_requests: Queue::init(),
+            plugin_request_refills_left: Self::CONCURRENT_REFILLS_PER_TICK,
             isolated_poster: None,
             global: None,
             virtual_machine: None,
@@ -789,9 +792,15 @@ impl EventLoop {
         }
     }
 
-    /// The task that the drain of the queue runs next.
+    /// The task that the drain of the queue runs next. Plugin requests go first. Like every other
+    /// task that another thread posts, they cannot keep `tick()` from returning: it takes new ones
+    /// `CONCURRENT_REFILLS_PER_TICK` times in a row, and again after each other task.
     pub fn next_task(&mut self) -> Option<Task> {
-        if !self.concurrent_plugin_requests.is_empty() {
+        if self.plugin_requests.readable_length() == 0
+            && self.plugin_request_refills_left > 0
+            && !self.concurrent_plugin_requests.is_empty()
+        {
+            self.plugin_request_refills_left -= 1;
             let batch = self.concurrent_plugin_requests.pop_batch();
             Self::take_concurrent_tasks(&mut self.plugin_requests, batch);
         }
@@ -799,7 +808,10 @@ impl EventLoop {
             self.plugin_requests.reset_head_if_empty();
             return Some(request);
         }
-        self.tasks.read_item()
+        let task = self.tasks.read_item()?;
+        self.plugin_request_refills_left =
+            (self.plugin_request_refills_left + 1).min(Self::CONCURRENT_REFILLS_PER_TICK);
+        Some(task)
     }
 
     pub fn tick(&mut self) {
@@ -813,6 +825,7 @@ impl EventLoop {
 
     fn tick_turn(&mut self, scope: &mut crate::TopExceptionScope) -> Result<(), Stopped> {
         let ctx = self.vm();
+        self.plugin_request_refills_left = Self::CONCURRENT_REFILLS_PER_TICK;
         self.tick_concurrent();
         self.process_gc_timer();
 
@@ -869,6 +882,7 @@ impl EventLoop {
 
     /// Tick the task queue without draining microtasks afterward.
     pub fn tick_tasks_only(&mut self) {
+        self.plugin_request_refills_left = Self::CONCURRENT_REFILLS_PER_TICK;
         self.tick_concurrent();
 
         let vm = self.vm();
@@ -955,6 +969,8 @@ impl EventLoop {
         self.closed_for_tasks = true;
         let batch = self.concurrent_tasks.pop_batch();
         Self::take_concurrent_tasks(&mut self.tasks, batch);
+        let batch = self.concurrent_plugin_requests.pop_batch();
+        Self::take_concurrent_tasks(&mut self.plugin_requests, batch);
         let _ = self.promote_yield_tasks();
         while let Some(task) = self.next_task() {
             // SAFETY: JS thread, heap alive; `task` just left the queue.

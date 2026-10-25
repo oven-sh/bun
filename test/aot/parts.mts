@@ -129,7 +129,15 @@ export const rows: Row[] = [
     6,
     [[["collector/flags-kept-out-of-line-are-read-by-the-last-holder-of-their-object-in-a-loop-that-makes-texts"]]],
   ),
-  variant("every-function-cold", ["--aot-heat=everything-is-cold"]),
+  variant("every-function-cold", ["--aot-heat=everything-is-cold"], {}, 3, [
+    [
+      [
+        "objects/a-field-that-names-a-class-gets-a-record-by-a-key-in-brackets",
+        "objects/a-field-that-names-a-class-holds-a-function",
+        "objects/a-field-that-names-three-classes-gets-a-record",
+      ],
+    ],
+  ]),
   variant("every-function-hot", ["--aot-heat=everything-is-hot"]),
   variant("every-function-neither-hot-nor-cold", ["--aot-heat=nothing-is-hottest"]),
   variant("flow-fixpoint", ["--aot-check=flow-fixpoint"]),

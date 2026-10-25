@@ -22,11 +22,13 @@ function attempt(act: () => unknown): string {
   }
 }`;
 
-function scene(random: Random, index: number): string {
+function scene(random: Random, index: number, sameKeys = false): string {
   const n = String(index);
-  const member = random.pick(["get", "get", "at", "read", "size", "name"]);
+  const drawnMember = random.pick(["get", "get", "at", "read", "size", "name"]);
+  const member = !sameKeys ? drawnMember : index === 0 ? random.pick(["name", "get", "at"]) : "read";
   const count = random.pick(["count", "length", "width"]);
-  const memberKind = random.weighted([[5, "method"], [1, "field"], [1, "getter"], [1, "above"]] as const); // prettier-ignore
+  const drawnMemberKind = random.weighted([[5, "method"], [1, "field"], [1, "getter"], [1, "above"]] as const); // prettier-ignore
+  const memberKind = sameKeys ? random.pick(["field", "field", "method"] as const) : drawnMemberKind;
   const countKind = random.pick(["field", "field", "getter", "prototype"] as const);
   const method = `${member}(i: number): string {\n    return this.words[i % this.words.length] + this.${count};\n  }`;
   const above =
@@ -50,7 +52,8 @@ class Alike${n} {
   }
 }`; // prettier-ignore
 
-  const holderKind = random.weighted([[4, "record"], [2, "instance"], [1, "list"], [1, "map"], [1, "parameter"], [1, "optional"], [1, "union"]] as const); // prettier-ignore
+  const drawnHolderKind = random.weighted([[4, "record"], [2, "instance"], [1, "list"], [1, "map"], [1, "parameter"], [1, "optional"], [1, "union"]] as const); // prettier-ignore
+  const holderKind = sameKeys ? random.pick(["record", "record", "optional", "union"] as const) : drawnHolderKind;
   const partType = holderKind === "union" ? `Part${n} | Alike${n}` : `Part${n}`;
   const holderType =
     holderKind === "instance" ? `class Holder${n} {\n  id: number = ${index};\n  part: ${partType} = new Part${n}();\n}`
@@ -98,7 +101,7 @@ class Alike${n} {
 
   const fields = ["port: 80", "secure: true", `host: "h"`, "weight: 1.5", "tags: [1]", "open: null"];
   const record = (k: number) => {
-    const others = random.shuffled(fields).slice(0, random.between(0, 4));
+    const others = random.shuffled(fields).slice(0, sameKeys ? 4 : random.between(0, 4));
     const own = random.pick([
       `${member}(i: number) {\n    return "r${k}-" + i;\n  }`,
       `${member}: (i: number) => "r${k}-" + i`,
@@ -107,8 +110,11 @@ class Alike${n} {
     const at = random.between(0, others.length);
     return `{ ${[...others.slice(0, at), own, ...others.slice(at), random.chance(0.7) ? `${count}: ${k}` : ""].filter(one => one !== "").join(", ")} }`;
   };
-  const records = Array.from({ length: random.between(1, 6) }, (_, k) => `const record${n}_${k} = ${record(k)};`);
-  const strangers = [
+  const records = Array.from(
+    { length: sameKeys ? 1 : random.between(1, 6) },
+    (_, k) => `const record${n}_${k} = ${record(k)};`,
+  );
+  const everyStranger = [
     ...records.map((_, k) => `record${n}_${k}`),
     `new Below${n}()`,
     `new Alike${n}()`,
@@ -131,16 +137,34 @@ class Alike${n} {
     `"text"`,
     "7",
   ];
+  // With the same keys: one holder meets a single record besides its own classes, the others meet what has no layout of its own.
+  const oneRecord = `record${n}_0`;
+  const strangers = !sameKeys
+    ? everyStranger
+    : index === 0
+      ? [oneRecord, oneRecord, `new Below${n}()`, `new Part${n}()`]
+      : [
+          `{ ${member}: 5 }`,
+          `Object.create(record${n}_0)`,
+          `new Part${n}()`,
+          `Object.assign(Object.create(null), { ${count}: 1 })`,
+        ];
   const key = holderKind === "list" ? `"0"` : `"part"`;
   const store = (value: string) =>
-    holderKind === "map"
-      ? `(holder${n} as Map<string, any>).set(pass("part"), ${value});`
-      : random.weighted([
-          [4, `put(holder${n}, pass(${key}), ${value});`],
-          [2, `(holder${n} as any)[${key}] = ${value};`],
-          [1, `Object.assign(holder${n}, { [${key}]: ${value} });`],
-          [1, `put(holder${n}, pass(${key}), pass(${value}));`],
-        ] as const);
+    sameKeys
+      ? value.startsWith("record")
+        ? `(holder${n} as any)[${key}] = ${value};`
+        : value.startsWith("{")
+          ? `Object.assign(holder${n}, { [${key}]: ${value} });`
+          : `put(holder${n}, pass(${key}), ${value});`
+      : holderKind === "map"
+        ? `(holder${n} as Map<string, any>).set(pass("part"), ${value});`
+        : random.weighted([
+            [4, `put(holder${n}, pass(${key}), ${value});`],
+            [2, `(holder${n} as any)[${key}] = ${value};`],
+            [1, `Object.assign(holder${n}, { [${key}]: ${value} });`],
+            [1, `put(holder${n}, pass(${key}), pass(${value}));`],
+          ] as const);
   const turns = () => random.pick(["3", "40", "2000", "2000", "5000"]);
   const told = (label: string) => `console.log("${n} ${label}", attempt(() => walk${n}(holder${n}, ${turns()})));`;
   const owner = above ? `Above${n}` : `Part${n}`;
@@ -166,7 +190,9 @@ class Alike${n} {
     walk,
     ...records,
     `const elsewhere${n}: Record<string, unknown> = {};`,
-    ...records.filter(() => random.chance(0.6)).map((_, k) => `put(elsewhere${n}, pass("k${k}"), record${n}_${k});`),
+    ...records
+      .filter(() => !sameKeys && random.chance(0.6))
+      .map((_, k) => `put(elsewhere${n}, pass("k${k}"), record${n}_${k});`),
     `const holder${n}: Holder${n} = ${made};`,
     told("first"),
   ];
@@ -191,6 +217,12 @@ class Alike${n} {
     }
   }
   return lines.join("\n");
+}
+
+// Two or three holders with the same keys whose parts are of different classes.
+export function generateWithTheSameKeys(random: Random): string {
+  const scenes = Array.from({ length: random.between(2, 3) }, (_, index) => scene(random, index, true));
+  return [prelude, ...scenes, "export {};"].join("\n") + "\n";
 }
 
 export function generate(random: Random): string {

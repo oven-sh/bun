@@ -1,6 +1,6 @@
 // Programs of three to seven files in which ES modules and CommonJS modules need each other, in cycles too. Each is run by plain Bun and as an executable, and both have to print the same.
 //
-//   bun modules-of-both-kinds-that-need-each-other.ts --bun <bun> --work <folder> --out <folder> [--seconds 300] [--jobs 8] [--seed 1] [--flags "<flags of the build>"] [--node <node>] [--print <seed>]
+//   bun modules-of-both-kinds-that-need-each-other.ts --bun <bun> --work <folder> --out <folder> [--seconds 300] [--jobs 8] [--seed 1] [--flags "<flags of the build>"] [--node <node>] [--awaits] [--print <seed>]
 //
 //   a module      .mjs, .cjs, .js that is read as one or the other by what it holds, .ts with imports (not type-checked: what it reads of the others has no declared type)
 //   an ES module  takes the default, names, the namespace, or nothing; hands names on (`export { a } from`, `export * from`); imports by `import()` at the top or in a function that runs at the end
@@ -8,6 +8,10 @@
 //   module        a function or a class, defines a getter, marks itself `__esModule`, or throws half-way
 //   an edge       goes to any module: on (a tree), back (a cycle), to the module itself, to the entry point
 //   what is read  at once, while the modules are still being evaluated: the kind of the value, its keys, a name; and again at the end, when all of them are through
+//
+//   --awaits      half of the ES modules await at their top, one to three times: a value, a settled promise, a thenable, a microtask, a tick, a timer, `for await`, an await that is never reached.
+//                 A CommonJS module that requires such a module gets it or an error, as in plain Bun. A program with `import()` at the top of a module is passed over: how soon a file
+//                 is loaded is not specified, and beside an await it shows. A graph that prints something else without its awaits too is counted and is no finding
 //
 // Every read stands in a try, and an error prints its name alone: the words of an error are not compared.
 //
@@ -48,7 +52,7 @@ globalThis.tell ??= (label, read) => {
 globalThis.atTheEnd ??= [];
 `;
 
-export function program(seed: number): { entry: string; files: Record<string, string>; notes: string } {
+export function program(seed: number, awaits = false): { entry: string; files: Record<string, string>; notes: string } {
   const random = new Random(seed);
   const count = random.between(3, 7);
   const modules: Module[] = [];
@@ -72,12 +76,49 @@ export function program(seed: number): { entry: string; files: Record<string, st
   const files: Record<string, string> = { "show.cjs": show };
   for (const module of modules) files[module.file] = module.kind === "es" ? esModule(random, module, modules) : commonJSModule(random, module, modules);
   const entry = modules[0];
-  // No module awaits at its top: whether such a module may be required is another question than who sees what of whom.
+  // Without --awaits no module awaits at its top: whether such a module may be required is another question than who sees what of whom.
+  if (awaits) {
+    const other = new Random(seed + 77);
+    for (const module of modules) if (module.kind === "es" && other.chance(0.5)) files[module.file] = withAwaits(other, module.name, files[module.file]);
+  }
   files[entry.file] += `setTimeout(async () => {\n  for (const late of globalThis.atTheEnd.splice(0)) await late();\n  say("the end");\n}, 1);\n`;
   return { entry: entry.file, files, notes: modules.map(each => `${each.file} > ${each.needs.map(to => modules[to].name).join(" ") || "-"}`).join(" . ") };
 }
 
 const ownNames = ["first", "second", "count"];
+
+// Puts one to three awaits between the statements of an ES module, behind its imports.
+function withAwaits(random: Random, name: string, text: string): string {
+  const lines = text.split("\n");
+  // A statement begins where a line is not indented and does not close something.
+  const begins = lines.map((line, at) => (/^[a-zA-Z]/.test(line) && !/^(import|export) .* from |^import "/.test(line) ? at : -1)).filter(at => at > 0);
+  const first = lines.findIndex(line => line.startsWith(`say("${name} begins")`) || line.startsWith("export "));
+  const places = begins.filter(at => at >= first);
+  for (let more = random.between(1, 3), n = 0; more > 0 && places.length; more--, n++) {
+    const at = random.pick(places);
+    lines[at] =
+      random.pick([
+        `await 0;`,
+        `await undefined;`,
+        `await null;\nawait null;`,
+        `await Promise.resolve("${name}");`,
+        `say("${name} awaited", await Promise.resolve(${n}));`,
+        `say("${name} awaited", await ${n});`,
+        `await { then(done) { done(3); } };`,
+        `await new Promise(done => queueMicrotask(done));`,
+        `await new Promise(done => process.nextTick(done));`,
+        `await new Promise(done => setTimeout(done, 0));`,
+        `for await (const each of [1, Promise.resolve(2)]) say("${name} each", each);`,
+        `if (globalThis.neverSet) await 0;`,
+        `try {\n  await Promise.reject(new Error("no"));\n} catch (error) {\n  say("${name} caught", error.message);\n}`,
+        `export const late${n} = await Promise.resolve("${name}.late${n}");`,
+        `export const late${n} = await "${name}.late${n}";`,
+      ]) +
+      "\n" +
+      lines[at];
+  }
+  return lines.join("\n");
+}
 
 function esModule(random: Random, module: Module, modules: Module[]): string {
   const { name } = module;
@@ -160,7 +201,7 @@ function commonJSModule(random: Random, module: Module, modules: Module[]): stri
 
 if (import.meta.main) {
   if (process.argv.includes("--print")) {
-    const drawn = program(Number(argument("print")));
+    const drawn = program(Number(argument("print")), process.argv.includes("--awaits"));
     console.log(`// ${drawn.notes}\n// entry: ${drawn.entry}`);
     for (const [file, text] of Object.entries(drawn.files)) if (file !== "show.cjs") console.log(`// ---- ${file}\n${text}`);
     process.exit(0);
@@ -172,6 +213,7 @@ if (import.meta.main) {
   const firstSeed = Number(argument("seed", "1"));
   const flags = argument("flags", "").split(/\s+/).filter(Boolean);
   const node = argument("node", "");
+  const awaits = process.argv.includes("--awaits");
 
   type Ended = { text: string; out: string; code: number | null; signal: string | number | null; late: boolean };
   const run = async (command: string[], cwd: string, seconds: number, environment: Record<string, string> = {}): Promise<Ended> => {
@@ -199,11 +241,27 @@ if (import.meta.main) {
     writeFileSync(join(target, "finding.txt"), `${kind}\nseed ${seed}\nflags ${flags.join(" ")}\n${notes}\n\n${said.slice(0, 6000)}\n`);
   }
 
+  // Whether the same graph without its awaits prints what plain Bun prints.
+  async function agreesWithoutAwaits(seed: number, job: number): Promise<boolean> {
+    const folder = join(work, `job-${job}-without`);
+    rmSync(folder, { recursive: true, force: true });
+    mkdirSync(folder, { recursive: true });
+    const { entry, files } = program(seed);
+    for (const [file, text] of Object.entries(files)) writeFileSync(join(folder, file), text);
+    const plain = await run([bun, "--no-install", entry], folder, 30, { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" });
+    const build = await run([bun, "build", "--compile", "--aot", "--aot-threads=1", ...flags, `./${entry}`, "--outfile", "app"], folder, 200);
+    const compiled = build.code === 0 ? await run(["./app"], folder, 200) : undefined;
+    rmSync(folder, { recursive: true, force: true });
+    return compiled !== undefined && compiled.out === plain.out && compiled.code === plain.code;
+  }
+
   async function one(seed: number, job: number) {
     const folder = join(work, "job-" + job);
     rmSync(folder, { recursive: true, force: true });
     mkdirSync(folder, { recursive: true });
-    const { entry, files, notes } = program(seed);
+    const { entry, files, notes } = program(seed, awaits);
+    if (awaits && Object.values(files).some(text => /^import\(/m.test(text))) return void count("passed over: import() at the top of a module");
+    if (awaits && !Object.values(files).some(text => /^(.* )?(for )?await /m.test(text.split("setTimeout(async")[0]))) return void count("passed over: no module awaits");
     for (const [file, text] of Object.entries(files)) writeFileSync(join(folder, file), text);
     // The reference transpiles on one thread: the texts are read in the order in which they are asked for.
     const plain = await run([bun, "--no-install", entry], folder, 30, { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" });
@@ -224,6 +282,7 @@ if (import.meta.main) {
     if (compiled.late) return finding("the executable hangs", folder, seed, notes, compiled.text);
     if (compiled.out === plain.out && compiled.code === plain.code) return void count("as plain");
     if (node && !Object.keys(files).some(file => file.endsWith(".ts")) && (await run([node, entry], folder, 30)).out === compiled.out) return void count("plain Bun is by itself: the executable prints what Node prints");
+    if (awaits && !(await agreesWithoutAwaits(seed, job))) return void count("prints something else without its awaits too");
     const [expected, got] = [plain.out.split("\n"), compiled.out.split("\n")];
     const at = expected.findIndex((line, index) => line !== got[index]);
     finding("the executable prints something else", folder, seed, notes, `exit codes ${plain.code} ${compiled.code}\nline ${at + 1}\nplain:    ${expected[at]}\ncompiled: ${got[at]}\n\n== plain\n${plain.text}\n== compiled\n${compiled.text}`, `${expected[at] ?? "the end"} | ${got[at] ?? "the end"}`);

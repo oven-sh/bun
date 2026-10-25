@@ -1198,6 +1198,39 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
     timeout,
   );
 
+  // A thread that frees its engine at the end reports the throw like one that keeps it. The child
+  // that keeps its engine frees nothing at exit, so it opts out of the leak check.
+  const keepsEngine = {
+    BUN_DESTRUCT_VM_ON_EXIT: "0",
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+  };
+  test.each([
+    ["0", keepsEngine],
+    ["1", { BUN_DESTRUCT_VM_ON_EXIT: "1" }],
+  ])(
+    "a throw from a plugin's exit handler is reported (BUN_DESTRUCT_VM_ON_EXIT=%s)",
+    async (_, variables) => {
+      const plugin = `
+      process.on("exit", () => { throw new Error("boom"); });
+      process.on("exit", () => console.log("the second exit handler"));
+      export default { meta: { name: "none" }, rules: { reports: { create: () => ({}) } } };`;
+      const { stdout, stderr, exitCode } = await lint(
+        {
+          ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "none/reports": "error" } }),
+          "plugin.mjs": plugin,
+          "a.js": "1;\n",
+        },
+        ["-f", "unix", "--threads", "1"],
+        [],
+        variables,
+      );
+      expect(stdout).toBe("the second exit handler");
+      expect(stderr).toContain("error: boom");
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test(
     "each file gets a new sourceCode and context, so a plugin's caches keyed by them don't leak between files",
     async () => {

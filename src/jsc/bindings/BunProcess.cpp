@@ -3826,8 +3826,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     zigGlobal->processObject()->m_isExiting = true;
     Bun__Process__exit(zigGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
-    // WebWorker exit path it called requests JSC termination (guarded so it's a
-    // no-op when re-entered from a process.on('exit') handler).
+    // WebWorker exit path it called requests JSC termination.
     throwScope.release();
     return JSC::JSValue::encode(jsUndefined());
 }

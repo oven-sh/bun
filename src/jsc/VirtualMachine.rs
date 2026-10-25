@@ -254,7 +254,7 @@ pub struct VirtualMachine {
     pub(crate) hide_bun_stackframes: bool,
 
     pub is_shutting_down: bool,
-    /// Set once `on_exit()` is past `RareData::cleanup_hooks`, run or not
+    /// Set once `finish_exit()` is past `RareData::cleanup_hooks`, run or not
     /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
     /// pushed after this (a finalizer deferred from the final collection) would only leak.
     pub(crate) has_run_cleanup_hooks: bool,
@@ -500,6 +500,7 @@ unsafe extern "C" {
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Bun__GlobalObject__clearExceptionsForExit(global: &JSGlobalObject);
     safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
@@ -825,9 +826,15 @@ impl ExitHandler {
     /// reference instead; the body re-enters JS so no `&mut` is held.
     pub(crate) fn dispatch_on_exit(vm: &VirtualMachine) {
         let exit_code = vm.exit_handler.exit_code;
-        // `process.on('exit')` handlers are user script (see `on_exit`).
+        // `process.on('exit')` handlers are user script (see `run_exit_handlers`).
         if vm.script_allowed() && !vm.exit_handler.skip_exit_listeners {
-            Process__dispatchOnExit(vm.global(), exit_code);
+            debug_assert!(vm.worker_ref().is_none_or(|w| w.is_published()));
+            let global = vm.global();
+            if let Err(err) = jsc::from_js_host_call_generic(global, || {
+                Process__dispatchOnExit(global, exit_code)
+            }) {
+                let _ = crate::task::report_error_or_terminate(global, err);
+            }
         }
         if vm.worker.is_none() {
             Bun__WebView__closeAllForTermination();
@@ -1100,7 +1107,7 @@ impl VirtualMachine {
     /// May native code enter user JavaScript right now? `true` in normal
     /// operation and while the exit handlers run; `false` once teardown has
     /// forbidden execution — the start of [`teardown`](Self::teardown), or
-    /// already in `on_exit` for a worker its parent terminated. Node's
+    /// for a worker from its stop request or the end of its exit handlers. Node's
     /// `can_call_into_js()`. JS thread.
     ///
     /// This is **not** something callers of `JSValue::call` consult: once
@@ -2303,32 +2310,29 @@ impl VirtualMachine {
     }
 
     pub fn on_exit(&mut self) {
-        // Decide once whether the exit sequence may run script. It can be
+        self.run_exit_handlers();
+        self.finish_exit();
+    }
+
+    /// The part of the exit sequence that runs script: the 'exit' handlers.
+    fn run_exit_handlers(&mut self) {
+        // A stopped VM runs none of them. The exit sequence can be
         // entered with an exception pending: `process.exit()` from inside a
         // throwing/catching callback (an ordinary exception — cleared here, as
         // Node's EmitProcessExit does under a TryCatch), or after
         // `worker.terminate()` / a termination request (script must not run at
         // all: no 'exit' handlers or close events for a forcefully terminated
         // worker, matching Node and WebCore's terminate()).
-        {
-            unsafe extern "C" {
-                safe fn Bun__GlobalObject__clearExceptionsForExit(global: &JSGlobalObject);
-            }
-            Bun__GlobalObject__clearExceptionsForExit(self.global());
-            // A worker stopped by its parent (worker.terminate()) runs no exit
-            // handlers. A worker exiting on its own — process.exit(), or an
-            // uncaught exception — does, even though Bun stops its script with
-            // the same trap.
-            if self.worker_ref().is_some_and(|w| w.stopped_by_parent()) {
-                self.forbid_script();
-            }
-        }
+        Bun__GlobalObject__clearExceptionsForExit(self.global());
 
         // Write profiles before any shutdown begins.
         self.write_profiles();
 
         ExitHandler::dispatch_on_exit(self);
+    }
 
+    /// The rest of the exit sequence: the flushes, then the cleanup hooks.
+    fn finish_exit(&mut self) {
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
             self.is_inside_deferred_task_queue.set(true);
@@ -2360,7 +2364,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Whether `on_exit()` runs `RareData::cleanup_hooks`, i.e. `NapiEnv::cleanup` for
+    /// Whether `finish_exit()` runs `RareData::cleanup_hooks`, i.e. `NapiEnv::cleanup` for
     /// each addon. Node does this when it frees an environment: a worker's on any exit,
     /// the main thread's only once its loop ran dry (`process.exit()` and a fatal error
     /// call `exit()` instead). `BUN_DESTRUCT_VM_ON_EXIT` destroys the main thread's VM
@@ -2417,12 +2421,25 @@ impl VirtualMachine {
     ///
     /// # Safety
     /// `this` is this thread's VM, made without a caller's `log`; this thread holds
-    /// its API lock and abandons it; nothing else can reach the VM.
+    /// its API lock and abandons it; other threads reach the VM only through its handle.
     pub unsafe fn exit_and_free(this: *mut Self) -> u8 {
         // SAFETY: fn contract (statement-scoped exclusive access: the handlers run script).
         let exit_code = unsafe {
+            let worker = (*this).worker_ref();
+            // A stopped worker runs no exit handlers: terminate() publishes its flag before it closes the gate.
+            if worker.is_some_and(|w| w.has_requested_terminate()) {
+                (*this).handle.stop();
+            }
+            (*this).run_exit_handlers();
+            // After the handlers, so that process.exit() and the parent's terminate() can stop them.
+            if let Some(worker) = worker {
+                worker.unpublish();
+                if worker.stopped_by_parent() {
+                    (*this).forbid_script();
+                }
+            }
             (*this).is_shutting_down = true;
-            (*this).on_exit();
+            (*this).finish_exit();
             (*this).exit_handler.exit_code
         };
         // SAFETY: fn contract.
@@ -2457,7 +2474,7 @@ impl VirtualMachine {
 
     /// Tear down this thread's VM: the one sequence both a finished worker
     /// thread and the exiting main thread (under `BUN_DESTRUCT_VM_ON_EXIT`) run.
-    /// The exit handlers ran before this (`on_exit`); nothing below enters script.
+    /// The exit handlers ran before this (`run_exit_handlers`); nothing below enters script.
     ///
     ///  A. stop — script forbidden (microtasks/modules cleared, termination
     ///     requested), WebCore stop phase (child workers asked to terminate;
@@ -2491,7 +2508,7 @@ impl VirtualMachine {
         let hooks = runtime_hooks();
 
         // ---- A. no more script; stop phase ------------------------------------
-        // The user's last word was the exit handlers (`on_exit`, before this).
+        // The user's last word was the exit handlers (`run_exit_handlers`, before this).
         // Everything below closes natively and dispatches nothing into JS —
         // Node runs its environment cleanup under a DisallowJavascriptExecution
         // scope, WebCore's ActiveDOMObject::stop() runs no script — so no

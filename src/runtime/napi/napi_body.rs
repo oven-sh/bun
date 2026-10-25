@@ -5461,7 +5461,7 @@ impl NapiFinalizerTask {
 
         if vm.is_shutting_down() {
             if vm.has_run_cleanup_hooks() {
-                // `on_exit()` already drained cleanup hooks; we are inside the
+                // `finish_exit()` already drained cleanup hooks; we are inside the
                 // final `collectNow()` (Heap::sweepArrayBuffers) and the JSC
                 // VM is being torn down. The cleanup-hook list will never be
                 // walked again, and running the user finalizer here (mid-GC,

@@ -18,7 +18,7 @@
 //!   2. `spin()`      — 'online', load the entry point, `workerGlobalScopeStarted`, run the
 //!                      event loop until it drains or termination is requested,
 //!                      `beforeExit` on a natural drain.
-//!   3. `shutdown()`  — 'exit' handlers, stop phase, join own children, JSC VM
+//!   3. `shutdown()`  — 'exit' handlers, unpublish, stop phase, join own children, JSC VM
 //!                      teardown, free per-thread state, `workerGlobalScopeDestroyed`.
 //!   Then the thread drops its self-ref and returns; the parent joins it.
 //!
@@ -93,7 +93,7 @@ pub struct WebWorker {
     requested_terminate: AtomicBool,
     /// The worker VM's uncounted handle: how the parent (or an exiting
     /// ancestor) asks it to terminate. `None` before `start_vm()` publishes it
-    /// and after `shutdown()` unpublishes it.
+    /// and after `unpublish()`.
     vm_handle: bun_threading::Guarded<Option<crate::VmHandle>>,
 
     // ---- Parent-thread only ---------------------------------------------------
@@ -107,7 +107,7 @@ pub struct WebWorker {
     // Mutated only on the worker thread, but through `&self` because other
     // threads hold `&WebWorker` concurrently; hence the cells.
     /// The worker's `VirtualMachine`; null before `start_vm()` and after
-    /// `shutdown()`.
+    /// `unpublish()`.
     vm: Cell<*mut VirtualMachine>,
     status: Cell<Status>,
     // The VM's allocator IS this arena.
@@ -146,7 +146,7 @@ pub enum Status {
     Starting,
     /// `workerGlobalScopeStarted` has fired; event loop is running.
     Running,
-    /// `shutdown()` has begun; no further JS will run.
+    /// `shutdown()` has begun: the 'exit' handlers, then teardown.
     Terminated,
 }
 
@@ -731,7 +731,7 @@ impl WebWorker {
         //     so teardownJSCVM/vm.deinit() run and the just-built JSC::VM
         //     heap is not leaked.
         // We do NOT call shutdown() directly from here: shutdown() with a
-        // non-null vm runs vm.onExit() (JS), which requires holdAPILock.
+        // non-null vm runs the exit handlers (JS), which requires holdAPILock.
         // Instead we return; threadMain enters holdAPILock(spin) and spin()'s
         // first check observes requested_terminate.
         self.vm.set(vm);
@@ -876,6 +876,9 @@ impl WebWorker {
                 }
                 self.flush_logs(vm);
                 WebWorker__entrySettled(vm.global());
+                // The failed load is this worker's one 'error': an 'exit' handler's throw is not a second.
+                vm.as_mut().on_unhandled_rejection =
+                    VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
                 return self.shutdown();
             }
         };
@@ -1004,10 +1007,7 @@ impl WebWorker {
         self.shutdown();
     }
 
-    /// Phase 3: unpublish the VM's handle (a racing `requestTermination` now
-    /// finds none), run the user 'exit' handlers, then the shared
-    /// [`VirtualMachine::teardown`] (stop → forbid script → ~VM → loops →
-    /// destroy), free the thread's remaining state, and last of all report
+    /// Phase 3: [`VirtualMachine::exit_and_free`], free the thread's remaining state, and last of all report
     /// `workerGlobalScopeDestroyed` — the parent joins this thread from that
     /// task, so nothing after it may touch the parent.
     fn shutdown(&self) {
@@ -1020,11 +1020,8 @@ impl WebWorker {
         let mut arena = self.arena.replace(None);
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
 
-        // ---- 1. Unpublish vm ------------------------------------------------
-        drop(self.vm_handle.lock().take());
-        let vm_ptr = self.vm.replace(core::ptr::null_mut());
-
-        // ---- 2–5. User exit handlers; stop, forbid script, wait, ~VM, loops, destroy
+        // ---- 1–5. User exit handlers; unpublish; stop, forbid script, wait, ~VM, loops, destroy
+        let vm_ptr = self.vm_ptr();
         let mut exit_code: i32 = 0;
         if !vm_ptr.is_null() {
             // SAFETY: this thread's VM, whose API lock `thread_main` took; no other
@@ -1073,6 +1070,19 @@ impl WebWorker {
             && !self.exit_called.load(Ordering::Relaxed)
     }
 
+    /// Whether the parent can still reach this worker's VM. Worker thread.
+    pub(crate) fn is_published(&self) -> bool {
+        !self.vm_ptr().is_null()
+    }
+
+    /// The parent can no longer stop this VM, so the VM runs no more script. Worker thread.
+    pub(crate) fn unpublish(&self) {
+        if let Some(handle) = self.vm_handle.lock().take() {
+            handle.stop();
+        }
+        self.vm.set(core::ptr::null_mut());
+    }
+
     /// process.exit() inside the worker. Worker-thread only.
     ///
     /// Takes `&self` (not `&mut self`) because `request_termination` /
@@ -1081,9 +1091,7 @@ impl WebWorker {
     pub fn exit(&self) {
         self.exit_called.store(true, Ordering::Relaxed);
         let _ = self.set_requested_terminate();
-        // Stop subsequent JS at the next safepoint. `this.vm` is null during
-        // `vm.onExit()` (shutdown nulls it first), so a re-entrant
-        // process.exit() from an exit handler does not re-arm the trap.
+        // Stop subsequent JS at the next safepoint. `this.vm` is null only after `unpublish()`.
         let vm_ptr = self.vm_ptr();
         if !vm_ptr.is_null() {
             // From an immediate this runs before the turn's poll; the wake is what ends it.

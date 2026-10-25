@@ -531,7 +531,7 @@ public:
         // shutdown case: once is_shutting_down() it either pushes a cleanup hook
         // (if those haven't run yet) or drops the task (if they have). Running a
         // non-EXPERIMENTAL finalizer immediately during the final collectNow() is
-        // never safe — by then on_exit() has already run cleanup hooks (including
+        // never safe — by then finish_exit() has already run cleanup hooks (including
         // the napi_set_instance_data finalizer that frees per-addon state the
         // object finalizer reads), the heap is sweeping (no allocation, no handle
         // scope), and napi_call_function returns the termination exception.
@@ -540,7 +540,7 @@ public:
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
 
-    // Node's env->can_call_into_js(). False for the whole of cleanup(): on_exit() stops the handle first.
+    // Node's env->can_call_into_js(). False for the whole of cleanup(): finish_exit() stops the handle first.
     // And while a completion runs for a Bun.ModuleGraph context that has stopped (see below).
     inline bool canCallIntoJS() const
     {

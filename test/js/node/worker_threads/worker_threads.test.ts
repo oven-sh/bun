@@ -2766,6 +2766,43 @@ describe("a worker that stops itself from an immediate exits right away", () => 
   });
 });
 
+// As in Node, a worker's 'exit' listeners run while its parent can still reach it: process.exit()
+// and terminate() stop a listener, and a listener's throw is the worker's uncaught error. Nothing
+// that a stopped listener queued runs, and the flush after the listeners runs no script. After a
+// throw the worker exits 1, where Node keeps the code. The fixture writes a line to stderr from
+// anything that must not run.
+describe("a worker's 'exit' listeners can be stopped and report their errors", () => {
+  test.concurrent.each([
+    ["process.exit(5)", "exit 5\n"],
+    ["process.reallyExit(5)", "exit 5\n"],
+    ["process.exit() with process.exitCode = 5", "exit 5\n"],
+    ["a listener added in 'beforeExit'", "exit 5\n"],
+    ["a preload fails to load", "error\nexit 5\n"],
+    // Passes without the change too: the failed load stays the worker's only 'error'.
+    ["a preload fails to load, then a throw", "error\nexit 1\n"],
+    ["terminate()", "exit 1\nterminate 1\n"],
+    ["await using", "exit 1\ndisposed\n"],
+    ["the parent worker is terminated", "exit 1\n"],
+    ["a throw", "error boom\nexit 1\n"],
+    ["process.emit('error') without a listener", "error boom\nexit 1\n"],
+    ["a throw with an 'uncaughtException' listener", "uncaughtException boom\nexit 0\n"],
+    ["a write queued for the flush after the listeners", "in 'exit' 0, answered true\nexit 0\n"],
+    ["Worker: process.exit(5)", "close 5\n"],
+    ["Worker: terminate()", "in 'exit'\nclose 0\n"],
+    ["Worker: a throw", "error boom\nclose 1\n"],
+  ])("%s", async (row, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "worker-exit-listeners-fixture.js"), row],
+      // How long a listener waits for its stop before it reports that none came.
+      env: { ...bunEnv, PARK_MS: String(isDebug ? 20_000 : 5_000) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+  });
+});
+
 // Node's setupPortReferencing: the parent side of parentPort keeps the parent
 // alive while the Worker has 'message' listeners, independently of unref().
 test("an unref'ed worker with a 'message' listener still delivers to the parent", async () => {

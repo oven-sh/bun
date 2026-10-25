@@ -4732,8 +4732,9 @@ impl<'p, 's> Checker<'p, 's> {
             | TypeNodeKind::NumberLit(_)
             | TypeNodeKind::BigIntLit { .. }
             | TypeNodeKind::BoolLit(_) => return,
-            // FOR SPEED: with nothing in resolution, the rest can wait for the walk.
-            _ => !self.stack.iter().any(|&q| self.is_resolution(q)),
+            // Not only with something in resolution: the message of an error prints types, which resolves what the
+            // statement around the expression asks for next, like the return type of the function it's in.
+            _ => false,
         };
         if only_needs_type {
             self.resolve_type_queries_within(file, node);

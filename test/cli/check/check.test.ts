@@ -8943,6 +8943,29 @@ export function f1<T>(x: T) { switch (n) { case 2: return f0(); default: return 
       expect(exitCode).toBe(1);
     });
 
+    // `checkReturnStatement` checks the expression first. `checkAssertion` checks the type node, and the message of the
+    // TS2344 prints the constraint, so it's the first to ask for the return type of `v20`. That checks the expression
+    // again and prints the message again, while the return type is being resolved.
+    test("the message of an error in the type of an assertion can be the first to ask for the function's return type", async () => {
+      using dir = project({
+        "m0.ts": `import { v20 } from "./m2";
+export function v00<T>(x?: T) { return x ?? v20; }
+`,
+        "m1.ts": `import { v00 } from "./m0";
+export type T10<T extends () => typeof v00 = any> = T;
+`,
+        "m2.ts": `import type { T10 } from "./m1";
+export async function v20() { return null! as Partial<T10<{}>>; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").filter(line => line.includes("error TS"))).toEqual([
+        "m2.ts(2,23): error TS7023: 'v20' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+        "m2.ts(2,59): error TS2344: Type '{}' does not satisfy the constraint '() => <T>(x?: T | undefined) => (() => any) | NonNullable<T>'.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("TS7053 prints an aliased intersection with a class by its members", async () => {
       using dir = project({
         "a.ts": `class User { id = 1 }

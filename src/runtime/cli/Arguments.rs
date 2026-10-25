@@ -2032,10 +2032,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let default_factory: &[u8] = b"";
         let default_fragment: &[u8] = b"";
         let default_import_source: &[u8] = b"";
-        let runtime_pair = if let Some(runtime) = jsx_runtime {
-            Some(resolve_jsx_runtime(runtime))
-        } else {
-            None
+        let runtime_pair = match jsx_runtime {
+            None => None,
+            Some(runtime) => {
+                let runtime = resolve_jsx_runtime(runtime);
+                Some(runtime)
+            }
         };
         if opts.jsx.is_none() {
             opts.jsx = Some(api::Jsx {

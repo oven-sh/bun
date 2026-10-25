@@ -141,6 +141,7 @@ impl DefineExt for Define {
     ) -> Result<(), bun_alloc::AllocError> {
         let key = global[global.len() - 1];
         let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
+        debug_assert!(key.is_ascii());
         self.dots_filter.insert(key);
         if let Some(existing) = self.dots.get_mut(key) {
             existing.push(DotDefine {

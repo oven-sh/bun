@@ -531,6 +531,11 @@ pub mod defines {
         pub fn insert(&mut self, name: &[u8]) {
             let bit = Self::bit(name);
             self.bits[bit / 64] |= 1 << (bit % 64);
+        }
+
+        /// `insert` for a name from the user, which can hold non-ASCII text. The global table cannot.
+        pub fn insert_user_name(&mut self, name: &[u8]) {
+            self.insert(name);
             self.has_non_ascii |= strings::first_non_ascii(name).is_some();
         }
 
@@ -640,7 +645,7 @@ pub mod defines {
 
             // e.g. process.env.NODE_ENV
             let tail: &[u8] = &parts[parts.len() - 1];
-            self.dots_filter.insert(tail);
+            self.dots_filter.insert_user_name(tail);
             let existing = self.dots.get_or_put(tail)?.value_ptr;
             for part in existing.iter_mut() {
                 if are_parts_equal(&part.parts, &parts) {

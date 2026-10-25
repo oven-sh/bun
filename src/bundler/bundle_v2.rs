@@ -105,6 +105,8 @@ pub struct BundleV2<'a> {
     /// In-memory files that can be used as entrypoints or imported.
     /// This is a pointer to the FileMap in the completion config.
     pub file_map: Option<&'a FileMap>,
+    /// For each key of `file_map` that an import named: whether it is also a file on disk.
+    pub(crate) file_map_keys_on_disk: StringHashMap<bool>,
     pub(crate) source_code_length: usize,
 
     /// There is a race condition where an onResolve plugin may schedule a task
@@ -965,7 +967,7 @@ pub mod bv2_impl {
                 /// `bun_resolver::Result`'s `Path<'static>` borrows arena memory
                 /// (lives for the entire build pass) instead of the map's key
                 /// storage.
-                pub(crate) fn resolve(
+                fn lookup(
                     &self,
                     arena: &bun_alloc::Arena,
                     source_file: &[u8],
@@ -1059,8 +1061,60 @@ pub mod bv2_impl {
                     None
                 }
 
+                /// `lookup`, for in-memory files only: `None` for a key that is also a file on disk. The resolver then resolves the import as without the key, and the parse task reads the contents from the map.
+                pub(crate) fn resolve(
+                    &self,
+                    arena: &bun_alloc::Arena,
+                    keys_on_disk: &mut bun_collections::StringHashMap<bool>,
+                    resolver: &mut bun_resolver::Resolver<'_>,
+                    source_file: &[u8],
+                    specifier: &[u8],
+                ) -> Option<bun_resolver::Result> {
+                    let in_memory = self.lookup(arena, source_file, specifier)?;
+                    let key = in_memory.path_pair.primary.text;
+                    let on_disk = keys_on_disk.get_or_put(key).expect("oom");
+                    if !on_disk.found_existing {
+                        *on_disk.value_ptr = Self::is_file_on_disk(resolver, key);
+                    }
+                    (!*on_disk.value_ptr).then_some(in_memory)
+                }
+
+                /// Whether the resolver has a file on disk under the bytes of `key`.
+                fn is_file_on_disk(resolver: &mut bun_resolver::Resolver<'_>, key: &[u8]) -> bool {
+                    if !bun_paths::is_absolute(key) || bun_core::strings::contains_char(key, 0) {
+                        return false;
+                    }
+                    #[cfg(windows)]
+                    let mut native = bun_paths::path_buffer_pool::get();
+                    #[cfg(windows)]
+                    let path: &[u8] = {
+                        if key.len() > native.len() {
+                            return false;
+                        }
+                        let path = &mut native[..key.len()];
+                        path.copy_from_slice(key);
+                        bun_paths::resolve_path::posix_to_platform_in_place::<u8>(path);
+                        path
+                    };
+                    #[cfg(not(windows))]
+                    let path = key;
+                    // The resolver keeps a directory that it did not find for the whole process, and a plugin can create it later.
+                    if !bun_sys::exists(path) {
+                        return false;
+                    }
+                    let Some(dir) = bun_paths::dirname(path) else {
+                        return false;
+                    };
+                    // `external` is about an import. The resolver skips it for an entry point, so this answer is about the file.
+                    let Ok(file) = resolver.resolve(dir, path, ImportKind::EntryPointBuild) else {
+                        return false;
+                    };
+                    // The resolver names another path for a symlink or a directory. An import then reaches the key only by its text.
+                    file.path_pair.primary.text == path
+                }
+
                 /// Build a `bun_resolver::Result` for a matched key. `key` must
-                /// already satisfy `'static` — see [`resolve`], which copies the
+                /// already satisfy `'static` — see [`lookup`], which copies the
                 /// map-owned key into the build's bump arena before calling here so
                 /// the resulting `Path<'static>` borrows arena memory rather than
                 /// forging a `'static` from a map borrow.
@@ -2695,6 +2749,9 @@ pub mod bv2_impl {
             if let Some(file_map) = self.file_map {
                 if let Some(_file_map_result) = file_map.resolve(
                     self.arena(),
+                    &mut self.file_map_keys_on_disk,
+                    // SAFETY: see `transpiler` note above.
+                    unsafe { &mut (*transpiler).resolver },
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
@@ -3304,6 +3361,7 @@ pub mod bv2_impl {
                 plugin_context: bun_event_loop::ContextId::NONE,
                 dev_server: None,
                 file_map: None,
+                file_map_keys_on_disk: bun_collections::StringHashMap::default(),
                 source_code_length: 0,
                 thread_lock: bun_core::ThreadLock::init_locked(),
                 resolve_tasks_waiting_for_import_source_index: ArrayHashMap::new(),
@@ -3588,8 +3646,13 @@ pub mod bv2_impl {
 
                 // Check FileMap first for in-memory entry points
                 if let Some(file_map) = self.file_map {
-                    if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point)
-                    {
+                    if let Some(file_map_result) = file_map.resolve(
+                        self.arena(),
+                        &mut self.file_map_keys_on_disk,
+                        &mut self.transpiler.resolver,
+                        b"",
+                        entry_point,
+                    ) {
                         let _ = self.enqueue_entry_item(
                             &mut { file_map_result },
                             true,
@@ -6899,9 +6962,13 @@ pub mod bv2_impl {
 
                 // Check the FileMap first for in-memory files
                 if let Some(file_map) = self.file_map {
-                    if let Some(_file_map_result) =
-                        file_map.resolve(self.arena(), source.path.text, import_record.path.text)
-                    {
+                    if let Some(_file_map_result) = file_map.resolve(
+                        self.arena(),
+                        &mut self.file_map_keys_on_disk,
+                        &mut transpiler.resolver,
+                        source.path.text,
+                        import_record.path.text,
+                    ) {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { transformSync } from "esbuild";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
@@ -265,6 +267,22 @@ describe("bundler", () => {
       },
     });
 
+    itBundled("jsx/PreserveUnicodeNames", {
+      files: {
+        "/in.tsx": `export const element = <x-étiquette résumé="😺">你好</x-étiquette>;`,
+      },
+      jsx: { runtime: "preserve" },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain('<x-étiquette résumé="😺">');
+        expect(out).toContain("</x-étiquette>");
+        const { code } = transformSync(out, { loader: "jsx", charset: "utf8" });
+        expect(code).toContain('"x-étiquette"');
+        expect(code).toContain('résumé: "😺"');
+        expect(code).toContain('"你好"');
+      },
+    });
+
     itBundled("jsx/PreserveCommaExpressions", {
       files: {
         "/in.tsx": `
@@ -469,6 +487,33 @@ describe("bundler", () => {
       },
     });
 
+    describe.each([false, true])("shared components, minifyIdentifiers=%s", minifyIdentifiers => {
+      itBundled(`jsx/PreserveSharedComponent-${minifyIdentifiers}`, {
+        files: {
+          "/a.tsx": `import { component as Component } from "./component"; console.log(<Component />);`,
+          "/b.tsx": `import { component as Component } from "./component"; console.log(<Component />);`,
+          "/component.ts": `export class component {}`,
+        },
+        entryPoints: ["/a.tsx", "/b.tsx"],
+        outdir: "/out",
+        splitting: true,
+        jsx: { runtime: "preserve" },
+        minifyIdentifiers,
+        onAfterBundle(api) {
+          for (const file of ["/out/a.js", "/out/b.js"]) {
+            const out = api.readFile(file);
+            expect(out).toMatch(/<[A-Z][\w$]*\/>/);
+            const { code } = transformSync(out, { loader: "jsx", jsxFactory: "typeOfComponent" });
+            api.writeFile(file, `const typeOfComponent = type => typeof type;\n${code}`);
+          }
+        },
+        run: [
+          { file: "/out/a.js", stdout: "function" },
+          { file: "/out/b.js", stdout: "function" },
+        ],
+      });
+    });
+
     itBundled("jsx/PreserveKeyAfterSpreadDoesNotLower", {
       files: {
         "/in.tsx": `
@@ -492,6 +537,114 @@ describe("bundler", () => {
         expect(out).not.toContain("jsx-runtime");
       },
     });
+
+    itBundled("jsx/PreserveDownstreamTransform", {
+      files: {
+        "/in.tsx": `
+          const props = { title: "spread", key: "spread-key" };
+          function Component() { return null; }
+          console.log(JSON.stringify(<>
+            <Component {...props} key="explicit" data-value={"'\\\"\`&"} />
+            <div title="&quot;'\`&amp;">first
+              second &lt;&amp;&gt;{'third'}{"fourth"}<span />last</div>
+            <div>{""}{" "}</div>
+            <div title="&#55296;A">&#55296;A</div>
+            <div title={"rope" + "value"}>{"rope" + "child"}</div>
+          </>));
+        `,
+        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve"}}`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      minifyIdentifiers: true,
+      minifyWhitespace: true,
+      minifySyntax: true,
+      bundleWarnings: {},
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("<>");
+        expect(out).not.toContain("jsx-runtime");
+        const { code } = transformSync(out, {
+          loader: "jsx",
+          jsxFactory: "h",
+          jsxFragment: "Fragment",
+        });
+        api.writeFile(
+          "/out.js",
+          `const h = (type, props, ...children) => ({ type, props, children });\nconst Fragment = "fragment";\n${code}`,
+        );
+      },
+      run: {
+        stdout: JSON.stringify({
+          type: "fragment",
+          props: null,
+          children: [
+            { props: { title: "spread", key: "explicit", "data-value": "'\"`&" }, children: [] },
+            {
+              type: "div",
+              props: { title: "\"'`&" },
+              children: ["first second <&>", "third", "fourth", { type: "span", props: null, children: [] }, "last"],
+            },
+            { type: "div", props: null, children: ["", " "] },
+            { type: "div", props: { title: "\uD800A" }, children: ["\uD800A"] },
+            { type: "div", props: { title: "ropevalue" }, children: ["ropechild"] },
+          ],
+        }),
+      },
+    });
+  });
+
+  describe.each(["cli", "api"] as const)("key after spread (%s)", backend => {
+    describe.each([
+      ["automatic", "classic", false],
+      ["classic", "automatic", true],
+      ["automatic", "preserve", false],
+      ["preserve", "automatic", true],
+      ["preserve", "classic", false],
+    ] as const)("configured %s, pragma %s", (runtime, pragma, warns) => {
+      describe.each(["before", "after"])("pragma %s JSX", position => {
+        const jsx = `export const el = <div {...first} key="k" {...last} />;`;
+        const comment = `/** @jsxRuntime ${pragma} */`;
+        itBundled(`jsx/KeyAfterSpread-${backend}-${runtime}-${pragma}-${position}`, {
+          files: { "/in.jsx": position === "before" ? `${comment}\n${jsx}` : `${jsx}\n${comment}` },
+          backend,
+          jsx: { runtime },
+          external: ["react", "react/*"],
+          bundleWarnings: warns
+            ? {
+                "/in.jsx": ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.'],
+              }
+            : {},
+          onAfterBundle(api) {
+            const out = api.readFile("/out.js");
+            if (pragma === "preserve") {
+              expect(out).toContain('<div {...first} key="k" {...last}/>');
+              expect(out).not.toContain("createElement");
+              return;
+            }
+            expect(out).toContain("createElement(");
+            expect(out).not.toContain("<div");
+          },
+        });
+      });
+    });
+  });
+
+  test("key after spread warns once at the original spread before the key", async () => {
+    const source = `export const el = <div {...first} key="k" {...last} />;
+      export const other = <div {...second} key="k" />;`;
+    using dir = tempDir("jsx-key-after-spread-location", { "index.jsx": source });
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "index.jsx")],
+      external: ["react", "react/*"],
+    });
+    expect(build.logs.map(({ message, position }) => ({ message, offset: position?.offset }))).toEqual([
+      {
+        message: '"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.',
+        offset: source.indexOf("first"),
+      },
+    ]);
+    expect(build.success).toBe(true);
   });
 
   itBundledDevAndProd("jsx/Automatic", {

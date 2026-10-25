@@ -456,6 +456,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break 'tagger p.jsx_import(JSXImport::Fragment, expr.loc);
                 };
 
+                let is_key_after_spread = e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
+                if runtime == options::JSX::Runtime::Automatic
+                    && is_key_after_spread
+                    && !p.has_classic_runtime_warned
+                {
+                    // Capturing the location before visiting; visiting can replace the spread expression.
+                    let spread_loc = e_
+                        .properties
+                        .slice()
+                        .iter()
+                        .take(e_.key_prop_index as usize)
+                        .rev()
+                        .find(|property| property.kind == G::PropertyKind::Spread)
+                        .and_then(|property| property.value)
+                        .map_or(expr.loc, |value| value.loc);
+                    p.log().add_warning(
+                        Some(p.source),
+                        spread_loc,
+                        b"\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.",
+                    );
+                    p.has_classic_runtime_warned = true;
+                }
+
                 for property in e_.properties.slice_mut() {
                     if property.kind != G::PropertyKind::Spread {
                         p.visit_expr(property.key.as_mut().expect("infallible: prop has key"));
@@ -470,7 +493,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                let is_key_after_spread = e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
                 let children_count = e_.children.len_u32();
 
                 // TODO: maybe we should split these into two different AST Nodes

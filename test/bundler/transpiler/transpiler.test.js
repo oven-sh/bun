@@ -2869,6 +2869,54 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  describe("JSX key after spread pragmas", () => {
+    const jsx = `export const el = <div {...obj} key="after" />;`;
+
+    it.each([
+      ["before", `/** @jsxRuntime classic */\n${jsx}`],
+      ["after", `${jsx}\n/** @jsxRuntime classic */`],
+    ])("does not warn with a classic pragma %s JSX", (_, input) => {
+      const transpiler = new Bun.Transpiler({ loader: "jsx" });
+      const out = transpiler.transformSync(input);
+      expect(out).toContain("React.createElement(");
+      expect(transpiler.scan(input)).toEqual({ exports: ["el"], imports: [] });
+    });
+
+    it.each([
+      ["before", `/** @jsxRuntime preserve */\n${jsx}`],
+      ["after", `${jsx}\n/** @jsxRuntime preserve */`],
+    ])("does not warn or lower with a preserve pragma %s JSX", (_, input) => {
+      const transpiler = new Bun.Transpiler({ loader: "jsx" });
+      const out = transpiler.transformSync(input);
+      expect(out).toContain('<div {...obj} key="after"/>');
+      expect(out).not.toContain("createElement");
+      expect(transpiler.scan(input)).toEqual({ exports: ["el"], imports: [] });
+    });
+
+    it.each([
+      ["before", `/** @jsxRuntime automatic */\n${jsx}`],
+      ["after", `${jsx}\n/** @jsxRuntime automatic */`],
+    ])("warns with an automatic pragma %s JSX overriding classic", (_, input) => {
+      const transpiler = new Bun.Transpiler({
+        loader: "jsx",
+        tsconfig: { compilerOptions: { jsx: "react" } },
+      });
+      const warning = /"key" prop after a \{\.\.\.spread\} is deprecated in JSX/;
+      expect(() => transpiler.transformSync(input)).toThrow(warning);
+      expect(() => transpiler.scan(input)).toThrow(warning);
+    });
+
+    it.each([
+      ["automatic", `import { obj } from "./obj";\n${jsx}`],
+      ["classic pragma", `/** @jsxRuntime classic */\nimport { obj } from "./obj";\n${jsx}`],
+      ["preserve pragma", `${jsx}\nimport { obj } from "./obj";\n/** @jsxRuntime preserve */`],
+    ])("scanImports does not warn with %s", (_, input) => {
+      const transpiler = new Bun.Transpiler({ loader: "jsx" });
+      const imports = transpiler.scanImports(input);
+      expect(imports).toContainEqual({ kind: "import-statement", path: "./obj" });
+    });
+  });
+
   // Non-bundle transpile without `minify.identifiers` uses NoOpRenamer
   // (prints symbol.original_name verbatim), so the `generatedSymbolName`
   // hash suffix on the automatic JSX runtime import is the sole collision

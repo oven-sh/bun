@@ -30,6 +30,7 @@ export interface ClientHooks {
 
 export interface LanguageServerOptions {
   createClient?: (server: ServerSpec, hooks: ClientHooks) => LanguageClientLike;
+  probeVersion?: (runtime: string) => Promise<string>;
 }
 
 let output: vscode.OutputChannel | undefined;
@@ -38,6 +39,7 @@ let starting: Promise<void> | undefined;
 let wanted = false;
 let failed = false;
 const markerCache = new Map<string, Promise<boolean>>();
+let versionProbe: { runtime: string; result: Promise<string> } | undefined;
 
 function getOutput(): vscode.OutputChannel {
   return (output ??= vscode.window.createOutputChannel("Bun"));
@@ -50,6 +52,39 @@ function getRuntime(): string {
 
 function isEnabled(): boolean {
   return vscode.workspace.getConfiguration("bun").get<boolean>("lsp.enable", true);
+}
+
+function defaultProbeVersion(runtime: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(runtime, ["--version"], { timeout: 5000 }, (error, stdout) => {
+      if (error) return reject(error);
+      resolve(String(stdout).trim());
+    });
+  });
+}
+
+function probeVersion(runtime: string, options: LanguageServerOptions): Promise<string> {
+  if (!versionProbe || versionProbe.runtime !== runtime) {
+    const result = (options.probeVersion ?? defaultProbeVersion)(runtime);
+    versionProbe = { runtime, result };
+    // A failed probe is not cached: the next start tries again.
+    result.catch(() => {
+      if (versionProbe?.result === result) versionProbe = undefined;
+    });
+  }
+  return versionProbe.result;
+}
+
+function parseVersion(text: string): number[] | undefined {
+  const match = /(\d+)\.(\d+)\.(\d+)/.exec(text);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
+}
+
+function isAtLeast(actual: number[], minimum: number[]): boolean {
+  for (let i = 0; i < minimum.length; i++) {
+    if (actual[i] !== minimum[i]) return actual[i] > minimum[i];
+  }
+  return true;
 }
 
 // vscode-languageclient forces a popup when start() fails, even with
@@ -110,6 +145,15 @@ async function startLanguageServer(options: LanguageServerOptions): Promise<void
     cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
   };
   try {
+    const version = await probeVersion(runtime, options);
+    const actual = parseVersion(version);
+    if (!actual || !isAtLeast(actual, parseVersion(MIN_BUN_VERSION)!)) {
+      failed = true;
+      getOutput().appendLine(
+        `Bun ${version} does not have bun fmt --lsp; the Bun language server needs Bun ${MIN_BUN_VERSION} or later`,
+      );
+      return;
+    }
     let next: LanguageClientLike | undefined;
     const hooks: ClientHooks = {
       // vscode-languageclient calls errorHandler.closed after a Running server exits,
@@ -197,7 +241,10 @@ export function registerLanguageServer(context: vscode.ExtensionContext, options
         await stopLanguageServer();
         return;
       }
-      if (runtimeChanged) await stopLanguageServer();
+      if (runtimeChanged) {
+        await stopLanguageServer();
+        versionProbe = undefined;
+      }
       failed = false;
       if (wanted) {
         await ensureStarted(options);

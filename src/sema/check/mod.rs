@@ -1664,7 +1664,8 @@ pub struct Checker<'p, 's> {
     /// Only in a task that commits. The comparisons that succeed because a nested comparison was `TernaryMaybe`, for
     /// two deeply nested types or at 100 levels. Another task may get a different result, and in `Program::relations`
     /// the first result would win for every task. See `known_relation`. It lives as long as the task, like
-    /// everything the task has derived from it. Also the comparisons that replace a failure that's published already.
+    /// everything the task has derived from it. Also the comparisons that replace a failure that's published already,
+    /// and in every task those that got the error type from a circular type resolution.
     relations_of_this_task: FxHashMap<relate::Key, u8>,
     /// True if `insert_relation` stores in `relations_of_this_task`.
     stores_relations_per_task: bool,

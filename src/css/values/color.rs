@@ -990,16 +990,30 @@ impl ColorFallbackKind {
         self | ColorFallbackKind::from_bits_truncate(self.bits() - 1)
     }
 
-    pub(crate) fn supports_condition(self) -> css::SupportsCondition {
-        let s: &'static [u8] = match self.bits() {
+    /// The `color` value that the `@supports` condition of this kind tests.
+    pub(crate) fn supports_condition_value(self) -> &'static [u8] {
+        match self.bits() {
             b if b == ColorFallbackKind::P3.bits() => b"color(display-p3 0 0 0)",
             b if b == ColorFallbackKind::LAB.bits() => b"lab(0% 0 0)",
             _ => unreachable!("Expected P3 or LAB. This is a bug in Bun."),
-        };
+        }
+    }
 
+    /// The features of `supports_condition_value`, so a rule that bun generates needs no parse for them.
+    pub(crate) fn supports_condition_features(self) -> targets::Features {
+        match self.bits() {
+            b if b == ColorFallbackKind::P3.bits() => {
+                targets::Features::COLOR_FUNCTION | targets::Features::P3_COLORS
+            }
+            b if b == ColorFallbackKind::LAB.bits() => targets::Features::LAB_COLORS,
+            _ => unreachable!("Expected P3 or LAB. This is a bug in Bun."),
+        }
+    }
+
+    pub(crate) fn supports_condition(self) -> css::SupportsCondition {
         css::SupportsCondition::Declaration(css::css_rules::supports::Declaration {
             property_id: css::PropertyId::Color,
-            value: s,
+            value: self.supports_condition_value(),
         })
     }
 }

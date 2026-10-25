@@ -2,6 +2,7 @@ use crate as css;
 use crate::css_rules::{CssRuleList, Location, MinifyContext};
 use crate::error::MinifyErr;
 use crate::properties::PropertyId;
+use crate::values::color::ColorFallbackKind;
 use crate::{PrintErr, Printer};
 use bun_alloc::ArenaPtr;
 use bun_core::strings;
@@ -67,6 +68,19 @@ impl Declaration {
         ) {
             return css::Features::empty();
         }
+        if matches!(self.property_id, PropertyId::Color) {
+            for kind in [ColorFallbackKind::P3, ColorFallbackKind::LAB] {
+                if self.value == kind.supports_condition_value() {
+                    let features = kind.supports_condition_features();
+                    debug_assert_eq!(features, self.parsed_features(arena));
+                    return features;
+                }
+            }
+        }
+        self.parsed_features(arena)
+    }
+
+    fn parsed_features(&self, arena: &bun_alloc::Arena) -> css::Features {
         css::parse_utility::parse_string(arena, self.value, |parser| {
             css::TokenList::parse(parser, &css::ParserOptions::default(None), 0)
         })

@@ -847,7 +847,16 @@ impl TokenList {
                 TokenOrValue::UnresolvedColor(UnresolvedColor::LightDark { light, dark }) => {
                     light.get_features()? | dark.get_features()?
                 }
-                TokenOrValue::Function(f) => f.arguments.get_features()?,
+                TokenOrValue::Function(f) => {
+                    // `TokenList::parse` makes `Var` and `Env` of the lowercase names only.
+                    let name = f.name.v();
+                    if strings::eql_case_insensitive_ascii_check_length(name, b"var")
+                        || strings::eql_case_insensitive_ascii_check_length(name, b"env")
+                    {
+                        return None;
+                    }
+                    f.arguments.get_features()?
+                }
                 TokenOrValue::Var(_) | TokenOrValue::Env(_) => return None,
                 _ => Features::empty(),
             };

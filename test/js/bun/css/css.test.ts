@@ -8332,6 +8332,24 @@ describe("css tests", () => {
           color: lab(40% 56.6 39);
         }
       }
+
+      @supports (color: VAR(--foo, lab(0% 0 0))) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (color: ENV(--foo, lab(0% 0 0))) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (color: light-dark(red, var(--foo))) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
     `,
       `
       @supports (color: var(--foo, lab(0% 0 0))) {
@@ -8349,6 +8367,27 @@ describe("css tests", () => {
       }
 
       @supports (--foo: lab(0% 0 0)) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (color: VAR(--foo, lab(0% 0 0))) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (color: ENV(--foo, lab(0% 0 0))) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (color: light-dark(red, var(--foo))) {
         .foo {
           color: #b32323;
           color: lab(40% 56.6 39);
@@ -8424,6 +8463,90 @@ describe("css tests", () => {
       { chrome: Some(90 << 16) },
     );
 
+    // The condition removes only the fallbacks for what it tests for.
+    prefix_test(
+      `
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          color: oklab(59.686% .1009 .1192);
+        }
+      }
+
+      @supports (color: color(display-p3 0 0 0)) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          box-shadow: 2s oklch(60% .2 30);
+        }
+      }
+    `,
+      `
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          color: lab(52.2319% 40.1449 59.9171);
+        }
+      }
+
+      @supports (color: color(display-p3 0 0 0)) {
+        .foo {
+          color: color(display-p3 .643308 .192455 .167712);
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          box-shadow: 2s lab(51.6908% 61.9679 48.0969);
+        }
+      }
+    `,
+      { chrome: Some(90 << 16), safari: Some(14 << 16) },
+    );
+
+    // A rule that is split for an incompatible selector keeps the scope on its
+    // copy of the block. The @media merge minifies both copies again.
+    prefix_test(
+      `
+      @media (min-width: 1px) {
+        .a, .b:focus-visible {
+          @supports (color: lab(0% 0 0)) {
+            box-shadow: 2s lab(40% 56.6 39);
+          }
+        }
+      }
+
+      @media (min-width: 1px) {
+        .c {
+          color: red;
+        }
+      }
+    `,
+      `
+      @media (min-width: 1px) {
+        @supports (color: lab(0% 0 0)) {
+          .b:focus-visible {
+            box-shadow: 2s lab(40% 56.6 39);
+          }
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .a {
+            box-shadow: 2s lab(40% 56.6 39);
+          }
+        }
+
+        .c {
+          color: red;
+        }
+      }
+    `,
+      { chrome: Some(80 << 16), safari: Some(14 << 16) },
+    );
+
     // The printer lowers the space separated notation. The condition turns
     // that off inside the block only. A condition with var() tests for nothing.
     prefix_test(
@@ -8441,6 +8564,12 @@ describe("css tests", () => {
       }
 
       @supports (color: rgb(0 0 0 / var(--a))) {
+        .foo {
+          color: rgb(1 2 3 / var(--a));
+        }
+      }
+
+      @supports (color: rgb(0 0 0 / VAR(--a))) {
         .foo {
           color: rgb(1 2 3 / var(--a));
         }
@@ -8464,6 +8593,12 @@ describe("css tests", () => {
       }
 
       @supports (color: rgb(0 0 0 / var(--a))) {
+        .foo {
+          color: rgba(1, 2, 3, var(--a));
+        }
+      }
+
+      @supports (color: rgb(0 0 0 / VAR(--a))) {
         .foo {
           color: rgba(1, 2, 3, var(--a));
         }

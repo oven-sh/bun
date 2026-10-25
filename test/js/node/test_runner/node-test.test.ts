@@ -539,10 +539,14 @@ describe("node:test and a failure that is a thenable", () => {
         "(fail) calls done() with a promise",
         "(fail) has a subtest that throws a promise",
         "(pass) has a todo subtest that throws a promise",
-        "(fail) a beforeEach hook that throws a promise > fails the test",
+        "(fail) has a subtest that throws a rejected promise, and then waits",
+        "(pass) passes after the test whose subtest threw a rejected promise",
+        "(fail) a beforeEach hook that throws a rejected promise > fails the test",
         "(fail) an afterEach hook that throws a thenable > fails the test",
         "(fail) has a before hook that throws a promise",
         "(fail) has an after hook that throws a promise",
+        "(pass) has a suite whose async callback rejects with a promise that never settles",
+        "(pass) has a suite whose async callback rejects with a rejected promise",
         "(fail) fails an assertion while Error.prototype.then exists",
         "(fail) times out while Error.prototype.then exists",
         "(fail) has a failing subtest while Error.prototype.then exists",
@@ -550,6 +554,8 @@ describe("node:test and a failure that is a thenable", () => {
       // The error of a test is the value that it threw, and the cause of "1 subtest failed" is the error of the subtest.
       expect(stderr).toContain("error\nPromise { <resolved> }\n(fail) throws a promise");
       expect(stderr).toContain("cause: Promise { <resolved> }");
+      // A thrown promise is the error of its test. Its rejection is not one more error.
+      expect(stderr).not.toMatch(/^error: the reason of a thrown promise/m);
       expect(exitCode).toBe(1);
     },
     30_000,

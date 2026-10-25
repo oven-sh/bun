@@ -8,6 +8,8 @@ const thenable = () => ({
     resolve();
   },
 });
+const rejected = () => Promise.reject(new Error("the reason of a thrown promise"));
+const nextImmediate = () => new Promise(resolve => setImmediate(resolve));
 
 test("throws a promise", () => {
   throw Promise.resolve();
@@ -22,7 +24,7 @@ test("rejects with a thenable", async () => {
 });
 
 test("throws a rejected promise", () => {
-  throw Promise.reject(new Error("the reason of the thrown promise"));
+  throw rejected();
 });
 
 test("calls done() with a promise", (t, done) => {
@@ -41,9 +43,20 @@ test("has a todo subtest that throws a promise", async t => {
   });
 });
 
-describe("a beforeEach hook that throws a promise", () => {
+test("has a subtest that throws a rejected promise, and then waits", async t => {
+  await t.test("subtest", () => {
+    throw rejected();
+  });
+  await nextImmediate();
+});
+
+test("passes after the test whose subtest threw a rejected promise", async () => {
+  await nextImmediate();
+});
+
+describe("a beforeEach hook that throws a rejected promise", () => {
   beforeEach(() => {
-    throw Promise.resolve();
+    throw rejected();
   });
   it("fails the test", () => {});
 });
@@ -64,6 +77,19 @@ test("has a before hook that throws a promise", async t => {
 test("has an after hook that throws a promise", t => {
   t.after(() => {
     throw Promise.resolve();
+  });
+});
+
+// `todo` keeps the failure of each suite below away from its test.
+test("has a suite whose async callback rejects with a promise that never settles", async () => {
+  await describe("suite", { todo: true }, async () => {
+    throw new Promise(() => {});
+  });
+});
+
+test("has a suite whose async callback rejects with a rejected promise", async () => {
+  await describe("suite", { todo: true }, async () => {
+    throw rejected();
   });
 });
 

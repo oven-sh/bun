@@ -2143,6 +2143,11 @@ function invokeTestFn(fn: Function, arg: unknown) {
   return fn(arg);
 }
 
+// A promise that a test throws is the error of the test, so its own rejection is not reported.
+function markThrownPromiseAsHandled(err: unknown) {
+  if ($isPromise(err)) $pokePromiseAsHandled(err);
+}
+
 // A single timeout armed once per test and raced against both the body and
 // plan.check(), matching Node's stopTest()/stopPromise. `promise` never
 // resolves; it only rejects with the timeout error. Callers must dispose().
@@ -2219,6 +2224,7 @@ async function runHook(hook: Hook, owner: TestNode, arg: unknown) {
       await raceWithTimeoutAndSignal(run, timeout, signal);
     }
   } catch (err) {
+    markThrownPromiseAsHandled(err);
     // A hook that throws a nullish value must still fail the owning test.
     throw err ?? makeTestFailure("hook failed");
   }
@@ -2309,6 +2315,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<TestOutcome>
       try {
         await (stop === undefined ? runBody() : Promise.race([stop.promise, runBody()]));
       } catch (err) {
+        markThrownPromiseAsHandled(err);
         // A body that throws or rejects with a nullish value must still fail.
         failure = err ?? makeTestFailure("test failed");
       }
@@ -2426,6 +2433,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
 }
 
 function recordSuiteFailure(suite: TestNode, err: unknown) {
+  markThrownPromiseAsHandled(err);
   suite.failedSubtests++;
   suite.firstSubtestError ??= err ?? makeTestFailure("suite failed");
 }
@@ -2713,7 +2721,8 @@ function addSuite(
     if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
       // Attach a handler now: the real await happens when the suite's turn
       // comes, which can be many ticks later (no unhandled rejection).
-      (build as Promise<unknown>).then(gate.resolve, gate.resolve);
+      const openGate = () => gate.resolve();
+      (build as Promise<unknown>).then(openGate, openGate);
     } else {
       gate.resolve();
       build = undefined;

@@ -7120,12 +7120,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .this
                     .as_ref()
                     .is_some_and(|this| core::ptr::eq(this, define_data));
-                return self.instantiate_define_member_chain(
-                    loc,
-                    original_name,
-                    opts,
-                    is_this_define,
-                );
+                // The chain is new, also on the revisit after a single-use value is inlined: count its uses
+                let is_revisit = core::mem::replace(&mut self.is_revisit_for_substitution, false);
+                let chain =
+                    self.instantiate_define_member_chain(loc, original_name, opts, is_this_define);
+                self.is_revisit_for_substitution = is_revisit;
+                return chain;
             }
             js_ast::ExprData::EString(str_) => {
                 return self.new_expr(&*str_, loc);

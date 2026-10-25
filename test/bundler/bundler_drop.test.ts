@@ -47,6 +47,23 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("console");
     },
   });
+  itBundled("drop/KeepsBareRead", {
+    // Only a call of a dropped name is removed. A bare read of it stays, and throws here.
+    files: {
+      "/a.js": `
+        try {
+          ASSERT;
+          logger.debug;
+          console.log("no throw");
+        } catch {
+          console.log("threw");
+        }
+      `,
+    },
+    run: { stdout: "threw" },
+    drop: ["ASSERT", "logger.debug"],
+    backend: "api",
+  });
   itBundled("drop/RemovesSideEffects", {
     files: {
       "/a.js": `console.log(alert());`,

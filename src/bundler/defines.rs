@@ -441,7 +441,11 @@ impl DefineDataExt for DefineData {
 
         // Special-case undefined, it's not an identifier here: https://github.com/evanw/esbuild/issues/1407
         if value_is_undefined || value_str == b"undefined" {
-            return Ok(finish(ExprData::EUndefined(bun_ast::E::Undefined), true));
+            // A `--drop` name has no value: a bare read of it stays, and throws when the name is not defined
+            return Ok(finish(
+                ExprData::EUndefined(bun_ast::E::Undefined),
+                !value_is_undefined,
+            ));
         }
 
         // The parser builds the chain from `original_name` when it substitutes the define

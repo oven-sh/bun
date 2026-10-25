@@ -383,6 +383,26 @@ describe.concurrent("define values are symbols, not text", () => {
     expect(run).toEqual({ stdout: "import\n", stderr: "", exitCode: 0 });
   });
 
+  test("a define behind an inlined single-use value keeps the import that its value names", async () => {
+    // `e` is used one time, so the minifier puts `process.env` in its place and visits `process.env.API` again
+    const { run } = await bundleAndRun(
+      {
+        "entry.js": `
+          import { config } from "./settings.js";
+          function read() {
+            const e = process.env;
+            return e.API + "!";
+          }
+          console.log(read());
+        `,
+        "settings.js": `export const config = { url: "import" };`,
+        "globals.js": `globalThis.config = { url: "global" };`,
+      },
+      { define: { "process.env.API": "config.url" }, minify: { syntax: true } },
+    );
+    expect(run).toEqual({ stdout: "import!\n", stderr: "", exitCode: 0 });
+  });
+
   // The parser builds a define value at its use site. So the bundle must be
   // the one that the same files give with the value written there.
   test.each([

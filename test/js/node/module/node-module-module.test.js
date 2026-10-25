@@ -1494,6 +1494,16 @@ console.log("survived", require("./late.js"));`,
     `;
     const invalid = received =>
       `TypeError ERR_INVALID_ARG_TYPE The "paths[0]" argument must be of type string. Received ${received}\n`;
+    const mains = {
+      "main.cjs": `console.log("main ran", require.main === module);`,
+      "main.mjs": `console.log("main ran", import.meta.main);`,
+    };
+    const failing = {
+      "throws.cjs": `console.log("throws.cjs started");\nthrow new Error("from throws.cjs");`,
+      "throws.mjs": `console.log("throws.mjs started");\nthrow new Error("from throws.mjs");`,
+      "rejects.mjs": `console.log("rejects.mjs started");\nawait Promise.reject(new Error("from rejects.mjs"));`,
+    };
+    const reported = stderr => stderr.split(/\r?\n/).filter(line => line.startsWith("error: "));
 
     // https://github.com/oven-sh/bun/issues/31773
     test.each([
@@ -1554,6 +1564,28 @@ console.log("survived", require("./late.js"));`,
       });
     });
 
+    const launcher = { "launcher.cjs": `process.argv[1] = ${target};\n${call}` };
+    test.each(Object.keys(failing))("started by a launcher, %s runs until it fails", async script => {
+      const { stdout } = await run(["launcher.cjs", `./${script}`], { ...failing, ...launcher });
+      expect(stdout).toBe(`${script} started\n`);
+    });
+
+    // Node prints the error and exits with code 1. Bun prints nothing and exits with code 0.
+    // https://github.com/oven-sh/bun/pull/45358 reports the failure.
+    test.failing.each(Object.keys(failing))("started by a launcher, %s that fails is reported", async script => {
+      const { stderr, exitCode } = await run(["launcher.cjs", `./${script}`], { ...failing, ...launcher });
+      expect({ reported: reported(stderr), exitCode }).toEqual({ reported: [`error: from ${script}`], exitCode: 1 });
+    });
+
+    // Node prints "main ran true". Bun prints "main ran false": the script is not the main module.
+    test.failing.each(Object.keys(mains))("started by a launcher, %s is the main module", async main => {
+      expect(await run(["launcher.cjs", `./${main}`], { ...mains, ...launcher })).toEqual({
+        stdout: "main ran true\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test("does not read a process global that the program replaced", async () => {
       const wrapper = `globalThis.process = { argv: [process.argv[0], ${target}] };\n${call}`;
       expect(await run(["wrapper.cjs", "./target.cjs"], { "wrapper.cjs": wrapper })).toEqual({
@@ -1608,10 +1640,6 @@ console.log("survived", require("./late.js"));`,
       });
     });
 
-    const mains = {
-      "main.cjs": `console.log("main ran", require.main === module);`,
-      "main.mjs": `console.log("main ran", import.meta.main);`,
-    };
     test.each([
       ["once", "main.cjs", `() => original()`],
       ["once", "main.mjs", `() => original()`],
@@ -1627,6 +1655,23 @@ console.log("survived", require("./late.js"));`,
         stdout: "main ran true\n",
         stderr: "",
         exitCode: 0,
+      });
+    });
+
+    test.each(["throws.cjs", "throws.mjs"])("called by a preload's replacement, reports %s that fails", async main => {
+      const preload = `
+        const Module = require("node:module");
+        const original = Module.runMain;
+        Module.runMain = () => original();
+      `;
+      const { stdout, stderr, exitCode } = await run(["--require", "./preload.cjs", main], {
+        ...failing,
+        "preload.cjs": preload,
+      });
+      expect({ stdout, reported: reported(stderr), exitCode }).toEqual({
+        stdout: `${main} started\n`,
+        reported: [`error: from ${main}`],
+        exitCode: 1,
       });
     });
 

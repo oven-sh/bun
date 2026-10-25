@@ -138,6 +138,8 @@ use bun_event_loop::ConcurrentTask;
 type BlobSizeType = u64;
 /// `maxInt(u52)` == 2^52 - 1.
 const BLOB_SIZE_MAX: u64 = (1u64 << 52) - 1;
+/// The most that `readFile` reserves for a file before it reads it.
+const READ_FILE_RESERVE_MAX: u64 = 1024 * 1024 * 1024 * 8;
 
 /// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer.
 /// Backed by `bun_ptr::ExternalShared<AbortSignal>` (alias re-exported
@@ -7085,24 +7087,28 @@ impl NodeFS {
         if !webcore::blob::read_file::slice_reads_with_pread(is_regular, size, args.offset) {
             return None;
         }
-        let max_size = args.max_size.unwrap_or(BLOB_SIZE_MAX);
         let in_file = size.saturating_sub(args.offset);
+        // Like the other buffer of `read_file_with_options`: 16 bytes past `st_size`, and one cap.
+        let limit = args
+            .max_size
+            .unwrap_or(BLOB_SIZE_MAX)
+            .min(in_file.saturating_add(16))
+            .min(READ_FILE_RESERVE_MAX) as usize;
         let mut bytes: Vec<u8> = Vec::new();
-        // `st_size` sizes the buffer. The read ends at the end of the file or of the slice.
-        let mut reserve = in_file.saturating_add(16).min(max_size) as usize;
+        if bytes.try_reserve_exact(limit).is_err() {
+            return Some(Err(with_path_like(
+                sys::Error::from_code(E::ENOMEM, sys::Tag::read),
+                &args.path,
+            )));
+        }
         loop {
-            if bytes.try_reserve(reserve).is_err() {
-                return Some(Err(with_path_like(
-                    sys::Error::from_code(E::ENOMEM, sys::Tag::read),
-                    &args.path,
-                )));
-            }
-            let read = bytes.len() as u64;
-            let left = (max_size - read).min(usize::MAX as u64) as usize;
+            let read = bytes.len();
             // SAFETY: write-only until `commit_spare` exposes the bytes `pread` wrote.
             let spare = unsafe { bun_core::vec::spare_bytes_mut(&mut bytes) };
-            let want = spare.len().min(left);
-            match Syscall::pread(fd, &mut spare[..want], (args.offset + read) as i64) {
+            let want = spare.len().min(limit - read);
+            match Syscall::pread(fd, &mut spare[..want], (args.offset + read as u64) as i64) {
+                // A file with no offsets: the caller reads it in order, as it reads a pipe.
+                Err(err) if read == 0 && err.get_errno() == E::ESPIPE => return None,
                 Err(err) => {
                     return Some(Err(sys::Error {
                         syscall: sys::Tag::read,
@@ -7113,11 +7119,9 @@ impl NodeFS {
                 // SAFETY: `pread` filled the first `n` bytes of the spare capacity.
                 Ok(n) => unsafe { bun_core::vec::commit_spare(&mut bytes, n) },
             }
-            if bytes.len() as u64 >= max_size {
+            if bytes.len() >= limit {
                 break;
             }
-            let full = bytes.len() == bytes.capacity();
-            reserve = if full { 8192 } else { 0 };
         }
         if bytes.is_empty() {
             return Some(Ok(ret::ReadFileWithOptions::Buffer(Buffer::EMPTY)));
@@ -7373,7 +7377,7 @@ impl NodeFS {
             .max(size)
             .saturating_add(16)
             .min(max_size)
-            .min(1024 * 1024 * 1024 * 8) as usize;
+            .min(READ_FILE_RESERVE_MAX) as usize;
         if buf.try_reserve_exact(initial_cap).is_err() {
             return Err(with_path_like(
                 sys::Error::from_code(E::ENOMEM, sys::Tag::read),

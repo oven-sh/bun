@@ -278,11 +278,7 @@ impl ReadFile {
 
 /// Whether a Blob slice that starts at `offset` is read with `pread`, so the descriptor stays put.
 #[cfg(not(windows))]
-pub(crate) fn slice_reads_with_pread(
-    is_regular: bool,
-    st_size: SizeType,
-    offset: SizeType,
-) -> bool {
+pub(crate) fn slice_reads_with_pread(is_regular: bool, st_size: u64, offset: u64) -> bool {
     // Past the end `lseek` can fail, and that read then starts at the descriptor's position.
     is_regular && offset > 0 && offset <= st_size
 }
@@ -581,12 +577,16 @@ impl ReadFile {
             }
             if self.uses_pread {
                 let position = (self.offset + already_read) as i64;
-                break 'brk bun_sys::pread(self.opened_fd, buf, position).map_err(|err| {
-                    bun_sys::Error {
-                        syscall: bun_sys::Tag::read,
-                        ..err
+                match bun_sys::pread(self.opened_fd, buf, position) {
+                    // A file with no offsets is read in order, as a pipe is.
+                    Err(err) if err.get_errno() == bun_sys::E::ESPIPE => self.uses_pread = false,
+                    result => {
+                        break 'brk result.map_err(|err| bun_sys::Error {
+                            syscall: bun_sys::Tag::read,
+                            ..err
+                        });
                     }
-                });
+                }
             }
             break 'brk bun_sys::read(self.opened_fd, buf);
         };

@@ -65,7 +65,7 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
         .split("\r\n")[0];
     }
 
-    test("inside the file does not move the descriptor", async () => {
+    test.concurrent("inside the file does not move the descriptor", async () => {
       using dir = tempDir("bun-file-fd-read", { "fd-position.txt": content });
       const path = join(String(dir), "fd-position.txt");
       await using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
@@ -119,7 +119,7 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
       });
     });
 
-    test("above 2 GiB does not move the descriptor", async () => {
+    test.concurrent("above 2 GiB does not move the descriptor", async () => {
       using dir = tempDir("bun-file-fd-read", {});
       const path = join(String(dir), "fd-sparse.bin");
       // A write past the end leaves a hole, so the file takes no space for its first 2 GiB.
@@ -136,7 +136,7 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
       });
     });
 
-    test("leaves the next write where the descriptor was", async () => {
+    test.concurrent("leaves the next write where the descriptor was", async () => {
       using dir = tempDir("bun-file-fd-read", { "fd-read-write.txt": content });
       const readWrite = join(String(dir), "fd-read-write.txt");
       const result: Record<string, unknown> = {};
@@ -185,7 +185,7 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
       });
     });
 
-    test("gets its own bytes when other reads of the descriptor run", async () => {
+    test.concurrent("gets its own bytes when other reads of the descriptor run", async () => {
       const records = Array.from({ length: 400 }, (_, i) => "r" + String(i).padStart(7, "0"));
       using dir = tempDir("bun-file-fd-read", { "fd-records.txt": records.join("") });
       const path = join(String(dir), "fd-records.txt");
@@ -205,7 +205,7 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
       });
     });
 
-    test("of Bun.stdin does not move a stdin that the parent shares", async () => {
+    test.concurrent("of Bun.stdin does not move a stdin that the parent shares", async () => {
       using dir = tempDir("bun-file-fd-read", { "stdin.txt": content });
       await withFd(join(String(dir), "stdin.txt"), async fd => {
         readSync(fd, Buffer.alloc(5));
@@ -227,7 +227,7 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
       });
     });
 
-    test("at byte 0 starts at the position of the descriptor", async () => {
+    test.concurrent("at byte 0 starts at the position of the descriptor", async () => {
       using dir = tempDir("bun-file-fd-read", { "fd-byte-0.txt": content });
       const path = join(String(dir), "fd-byte-0.txt");
 
@@ -243,8 +243,6 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
     test("past the end, or of a file that is not regular, seeks", async () => {
       using dir = tempDir("bun-file-fd-read", { "fd-seek.txt": content });
       const path = join(String(dir), "fd-seek.txt");
-      await using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
-      const fetchBody = async (slice: Blob) => (await fetch(server.url, { method: "POST", body: slice })).text();
 
       // A FIFO that holds "hello world". It has no offsets, so the seek fails and the read is in order.
       async function fromFifo(name: string, read: (file: Blob) => Promise<string>) {
@@ -258,8 +256,6 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
           closeSync(fd);
         }
       }
-      // procfs reports a size of 0 for its files.
-      const ostype = process.platform === "linux" ? Bun.file("/proc/sys/kernel/ostype") : undefined;
 
       expect({
         "slice(30, 40).text()": await atByte5(path, file => file.slice(30, 40).text()),
@@ -268,9 +264,6 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
         "/dev/zero slice(2, 6) as a FormData part": await formDataPart(Bun.file("/dev/zero").slice(2, 6)),
         "a FIFO slice(2, 6).text()": await fromFifo("fifo-text", file => file.slice(2, 6).text()),
         "a FIFO slice(2, 6) as a FormData part": await fromFifo("fifo-part", file => formDataPart(file.slice(2, 6))),
-        "procfs slice(2, 5).text()": ostype ? await ostype.slice(2, 5).text() : "nux",
-        "procfs slice(2, 5) as a FormData part": ostype ? await formDataPart(ostype.slice(2, 5)) : "nux",
-        "procfs slice(2, 5) as a fetch() body": ostype ? await fetchBody(ostype.slice(2, 5)) : "nux",
       }).toEqual({
         "slice(30, 40).text()": { bytes: "", next: "" },
         "slice(30, 40) as a FormData part": { bytes: "", next: "" },
@@ -278,9 +271,22 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
         "/dev/zero slice(2, 6) as a FormData part": "\0\0\0\0",
         "a FIFO slice(2, 6).text()": "hell",
         "a FIFO slice(2, 6) as a FormData part": "hell",
-        "procfs slice(2, 5).text()": "nux",
-        "procfs slice(2, 5) as a FormData part": "nux",
-        "procfs slice(2, 5) as a fetch() body": "nux",
+      });
+    });
+
+    // procfs reports a size of 0 for its files, so every start is past the end.
+    test.skipIf(process.platform !== "linux")("of a procfs file seeks", async () => {
+      await using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+      const ostype = Bun.file("/proc/sys/kernel/ostype").slice(2, 5);
+
+      expect({
+        "text()": await ostype.text(),
+        "a FormData part": await formDataPart(ostype),
+        "a fetch() body": await (await fetch(server.url, { method: "POST", body: ostype })).text(),
+      }).toEqual({
+        "text()": "nux",
+        "a FormData part": "nux",
+        "a fetch() body": "nux",
       });
     });
   });

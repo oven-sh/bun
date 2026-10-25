@@ -109,6 +109,9 @@ impl FormatCommand {
             crate::cli::command::tag_print_help(Tag::FormatCommand, options.all);
             Global::exit(0);
         }
+        if let Some(message) = options.lsp_conflict_error() {
+            usage_error("fmt", &message);
+        }
         if options.lsp {
             serve_editor(b"fmt", &args);
         }

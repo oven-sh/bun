@@ -6,7 +6,7 @@ use crate::configs::{Flavor, Loader};
 use crate::inferred::Inferred;
 use crate::lint::Context;
 use crate::results::FileResult;
-use crate::run::{Environment, Fatal, Pool, Run, Timing};
+use crate::run::{Environment, Fatal, Linted, NotBuiltIn, Pool, Run, Sinks, Timing};
 use crate::{Linter, discover, paths};
 use bun_lint::js_plugin::Host;
 use bun_lint::linter::Registry;
@@ -36,6 +36,8 @@ pub(crate) struct Session<'s> {
     pool: &'s Pool,
     js_plugins: &'s Host<'s>,
     loader: &'s Loader<'s>,
+    /// What the last lint left to tell, until [`Session::notes`] takes it.
+    sinks: &'s Sinks,
 }
 
 /// Calls `then` with a session for `environment.cwd`.
@@ -75,6 +77,7 @@ pub(crate) fn with_session<R>(
             .concat(),
         );
     }
+    let sinks = Sinks::default();
     then(&Session {
         options,
         environment,
@@ -82,6 +85,7 @@ pub(crate) fn with_session<R>(
         pool: &pool,
         js_plugins: &js_plugins,
         loader: &loader,
+        sinks: &sinks,
     })
 }
 
@@ -115,18 +119,15 @@ impl Session<'_> {
             && linted.config.has_enabled(|it| it.triggers_type_check())
     }
 
-    /// `None`: the file at `path` is not one to lint.
-    pub(crate) fn lint(
-        &self,
-        path: &[u8],
-        text: Vec<u8>,
-        how: How,
-    ) -> Result<Option<FileResult>, Fatal> {
+    /// Lints the text of the file at `path`. `files == 0`: it is not one to lint, and `results` is empty. What the
+    /// lint leaves to tell the user is in [`Session::notes`] after this.
+    pub(crate) fn lint(&self, path: &[u8], text: Vec<u8>, how: How) -> Result<Linted, Fatal> {
         let (environment, loader, pool) = (self.environment, self.loader, self.pool);
-        let (linter, js_plugins) = (self.linter, self.js_plugins);
+        let (linter, js_plugins, sinks) = (self.linter, self.js_plugins, self.sinks);
         let options = &Options {
             stdin: true,
             stdin_filename: Some(paths::to_native(path.to_vec())),
+            fix: false,
             fix_dry_run: how.fixes,
             warn_ignored: false,
             ..self.options.clone()
@@ -143,12 +144,6 @@ impl Session<'_> {
         let names = [bun_sema::session::Session::new()];
         let atoms = bun_sema::atom::InternerPerThread::new_in(&names);
         let memory = bun_sema::session::Session::new();
-        let (skipped_in_comments, out_of_stack) =
-            (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
-        let (without_include, needs_eslint) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
-        let (broken_fixes, handed_back) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
-        let (unread, invalid_tsconfigs) =
-            (Guarded::new(Vec::new()), Guarded::new(Default::default()));
         let formatter =
             crate::fmt::ForRules::new(environment, options.bun_format_defaults.as_deref());
         let by_options = options.infer_globals.is_none() && options.infers_globals_by_options;
@@ -156,14 +151,14 @@ impl Session<'_> {
             .then(|| Inferred::new(environment, pool.threads(), by_options));
         let timing = Timing::default();
         let context = Context {
-            skipped_in_comments: &skipped_in_comments,
-            out_of_stack: &out_of_stack,
-            without_include: &without_include,
-            broken_fixes: &broken_fixes,
-            handed_back: &handed_back,
-            unread: &unread,
-            needs_eslint: &needs_eslint,
-            invalid_tsconfigs: &invalid_tsconfigs,
+            skipped_in_comments: &sinks.skipped_in_comments,
+            out_of_stack: &sinks.out_of_stack,
+            without_include: &sinks.without_include,
+            broken_fixes: &sinks.broken_fixes,
+            handed_back: &sinks.handed_back,
+            unread: &sinks.unread,
+            needs_eslint: &sinks.needs_eslint,
+            invalid_tsconfigs: &sinks.invalid_tsconfigs,
             memory: &memory,
             atoms: &atoms,
             linter,
@@ -185,19 +180,27 @@ impl Session<'_> {
             timing: &timing,
         };
         let run = Run::new(options, environment);
-        let mut results = run
-            .lint_text(loader, &context, text, how.with_types)?
-            .results;
+        let linted = run.lint_text(loader, &context, text, how.with_types);
+        // Told the way the one-shot tells them, through the loader, which `notes` reads.
+        sinks.report(
+            loader,
+            options,
+            &environment.cwd,
+            of_cwd.as_ref().map(|it| it.flavor),
+            &mut NotBuiltIn::default(),
+            &mut |text| loader.warn(&[text]),
+        );
+        let mut linted = linted?;
         // Rules that look at several files now revisit the text, as `Run::execute` does with the files.
         let again = modules.complete(&|count, work| pool.for_each(count, 1, work));
-        for result in &mut results {
+        for result in &mut linted.results {
             if again.contains(&paths::from_native(&result.path)) {
                 context.lint_again(result)?;
             }
         }
-        match results.iter_mut().find_map(|it| it.thrown.take()) {
+        match linted.results.iter_mut().find_map(|it| it.thrown.take()) {
             Some(thrown) => Err(Fatal(thrown)),
-            None => Ok(results.pop()),
+            None => Ok(linted),
         }
     }
 }

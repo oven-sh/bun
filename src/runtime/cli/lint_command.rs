@@ -595,7 +595,7 @@ pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
                 // On Windows fd 1 still carries what a plugin prints, so no plugin runs there.
                 engines: &|| {
                     (!cfg!(windows))
-                        .then(|| Box::new(super::lint_js::Engines::default()) as Box<dyn Realms>)
+                        .then(|| Box::new(super::lint_js::Engines::for_editor()) as Box<dyn Realms>)
                 },
                 exit: &|code| Global::exit(u32::from(code)),
                 features,
@@ -653,6 +653,11 @@ impl LintCommand {
         if options.help {
             crate::cli::command::tag_print_help(Tag::LintCommand, options.all);
             Global::exit(0);
+        }
+        if let Some(message) = options.lsp_conflict_error() {
+            run_and_exit(b"lint", None, |environment| {
+                bun_lint_driver::reject_command_line(&message, environment)
+            })
         }
         if options.lsp {
             serve_editor(b"lint", &args);

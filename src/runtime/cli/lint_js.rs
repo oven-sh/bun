@@ -1018,6 +1018,13 @@ impl Crew {
 pub(crate) struct Engines(Arc<Crew>);
 
 impl Engines {
+    /// The engines of an editor session, which has one or two VMs at a time. Says so before the first VM starts, since
+    /// that one freezes JSC's options for the process.
+    pub(crate) fn for_editor() -> Self {
+        START.is_for_few.store(true, Ordering::Relaxed);
+        Self::default()
+    }
+
     /// Runs the `exit` handlers of every VM. Nothing is being linted anymore.
     pub(crate) fn end_all(&self) {
         self.0.end_all();

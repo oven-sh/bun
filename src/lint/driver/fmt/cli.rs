@@ -634,6 +634,28 @@ impl Options {
         })
     }
 
+    /// The error message if `--lsp` comes with a flag or a file that asks for a one-shot run.
+    pub fn lsp_conflict_error(&self) -> Option<Vec<u8>> {
+        if !self.lsp {
+            return None;
+        }
+        let conflicts: [(bool, &[u8]); 11] = [
+            (self.init, b"--init"),
+            (self.version, b"--version"),
+            (self.find_config_path.is_some(), b"--find-config-path"),
+            (self.doctor, b"--doctor"),
+            (self.list_files, b"--list-files"),
+            (self.write, b"--write"),
+            (self.check, b"--check"),
+            (self.list_different, b"--list-different"),
+            (self.debug_check, b"--debug-check"),
+            (self.stdin_filepath.is_some(), b"--stdin-filepath"),
+            (!self.patterns.is_empty(), b"Files"),
+        ];
+        let (_, what) = conflicts.into_iter().find(|(is_on, _)| *is_on)?;
+        Some([what, b" cannot be used with --lsp"].concat())
+    }
+
     /// `args` is everything after `format` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         Options::default().with(args)

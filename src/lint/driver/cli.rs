@@ -1022,6 +1022,33 @@ impl Options {
         )
     }
 
+    /// The error message if `--lsp` comes with a flag or a file that asks for a one-shot run.
+    pub fn lsp_conflict_error(&self) -> Option<Vec<u8>> {
+        if !self.lsp {
+            return None;
+        }
+        let conflicts: [(bool, &[u8]); 16] = [
+            (self.init, b"--init"),
+            (self.version, b"--version"),
+            (self.doctor, b"--doctor"),
+            (self.rules, b"--rules"),
+            (self.explain.is_some(), b"--explain"),
+            (self.print_config.is_some(), b"--print-config"),
+            (self.stdin, b"--stdin"),
+            (self.stdin_filename.is_some(), b"--stdin-filename"),
+            (self.fix_safely, b"--fix"),
+            (self.fix_dry_run, b"--fix-dry-run"),
+            (self.fix_type.is_some(), b"--fix-type"),
+            (self.fix_suggestions, b"--fix-suggestions"),
+            (self.fix_dangerously, b"--fix-dangerously"),
+            (self.list_files, b"--list-files"),
+            (self.output_file.is_some(), b"--output-file"),
+            (!self.patterns.is_empty(), b"Files"),
+        ];
+        let (_, what) = conflicts.into_iter().find(|(is_on, _)| *is_on)?;
+        Some([what, b" cannot be used with --lsp"].concat())
+    }
+
     /// `args` is everything after `lint` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         Options::default().with(args)

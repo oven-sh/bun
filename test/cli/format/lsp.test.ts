@@ -1,7 +1,7 @@
 // `bun fmt --no-script --lsp`: the language server over standard input and output, as an editor uses it.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 
@@ -609,6 +609,31 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
       const { exitCode, garbage, rest } = await client.end();
       expect([garbage, rest]).toEqual([[], ""]);
       expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test.each([
+    ["--init", "--init"],
+    ["--write", "--write"],
+    ["a.js", "Files"],
+  ])(
+    "refuses %s with --lsp, and writes nothing",
+    async (arg, named) => {
+      using dir = tempDir("bun-fmt-lsp", { "a.js": "a ;\n" });
+      await using proc = spawn({
+        cmd: [...command, arg],
+        env: bunEnv,
+        cwd: String(dir),
+        stdin: "ignore",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain(`${named} cannot be used with --lsp`);
+      expect(existsSync(join(String(dir), "bunfig.toml"))).toBe(false);
+      expect(readFileSync(join(String(dir), "a.js"), "utf8")).toBe("a ;\n");
+      expect(exitCode).toBe(2);
     },
     timeout,
   );

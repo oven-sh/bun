@@ -151,10 +151,12 @@ pub(crate) struct QuicStream {
     headers_received: Cell<bool>,
     headers_sent: Cell<bool>,
     headers_refused: Cell<bool>,
+    /// Set on a bidirectional HTTP/3 stream until lsquic accepts the initial header block of its message. The body and its end wait for it.
+    awaiting_initial: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
     priority: Cell<(u8, bool)>,
-    /// (nul-joined pairs, pair count, eos, frameless).
-    pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool, bool)>>,
+    /// (nul-joined pairs, pair count, eos, frameless, initial).
+    pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool, bool, bool)>>,
     trailers_requested: Cell<bool>,
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
@@ -202,6 +204,7 @@ impl QuicStream {
             headers_received: Cell::new(false),
             headers_sent: Cell::new(false),
             headers_refused: Cell::new(false),
+            awaiting_initial: Cell::new(false),
             priority: Cell::new(DEFAULT_PRIORITY),
             pending_headers: JsCell::new(Vec::new()),
             trailers_requested: Cell::new(false),
@@ -282,6 +285,8 @@ impl QuicStream {
         if (urgency, incremental) != DEFAULT_PRIORITY {
             let _ = s.set_http_prio(urgency, incremental);
         }
+        self.awaiting_initial
+            .set(!uni && self.session_ref().is_some_and(QuicSession::is_http));
         let want_write = self.send_pending_headers(s);
         // Not on HTTP/3, where either frame would get ahead of the stream's header blocks.
         if !self.session_ref().is_some_and(QuicSession::is_http) {
@@ -303,7 +308,8 @@ impl QuicStream {
         } else {
             s.want_read(true);
         }
-        if want_write || self.outbound.get().started {
+        // send_headers() asks for the write event of a body that waits for its header block.
+        if want_write || (self.outbound.get().started && !self.awaiting_initial.get()) {
             self.request_write(s);
         }
     }
@@ -333,6 +339,7 @@ impl QuicStream {
         count: c_int,
         eos: bool,
         frameless: bool,
+        initial: bool,
     ) -> bool {
         // lsquic resets a request stream whose FIN arrives before a header block, so skipping trailers needs one sent.
         if frameless
@@ -343,9 +350,16 @@ impl QuicStream {
             return true;
         }
         let accepted = s.send_headers(bytes, count, eos) == 0;
-        self.headers_refused.set(!accepted);
+        // The body belongs to the final response, so a refused interim block doesn't fail the message.
+        if accepted || initial || eos {
+            self.headers_refused.set(!accepted);
+        }
         if accepted {
             self.headers_sent.set(true);
+            // As in Node, a 1xx block doesn't start the body: https://github.com/nodejs/node/blob/v26.3.0/src/quic/http3.cc#L582-L590
+            if initial {
+                self.awaiting_initial.set(false);
+            }
         }
         accepted
     }
@@ -358,13 +372,13 @@ impl QuicStream {
     /// Sends the queued header blocks in order. Returns true if the stream needs a write event, to flush a block or to get credit for the next one.
     fn send_pending_headers(&self, s: lsquic::Stream) -> bool {
         let mut want_write = false;
-        while let Some(&(_, _, _, frameless)) = self.pending_headers.get().first() {
+        while let Some(&(_, _, _, frameless, initial)) = self.pending_headers.get().first() {
             if self.must_wait_for_credit(s, frameless) {
                 return true;
             }
-            let (bytes, count, eos, _) = self.pending_headers.with_mut(|q| q.remove(0));
+            let (bytes, count, eos, ..) = self.pending_headers.with_mut(|q| q.remove(0));
             self.wrote_to_lsquic.set(true);
-            if self.put_header_block(s, &bytes, count, eos, frameless) {
+            if self.put_header_block(s, &bytes, count, eos, frameless, initial) {
                 if eos {
                     self.with_state(|st| {
                         st.fin_sent = 1;
@@ -678,6 +692,12 @@ impl QuicStream {
         }
         self.send_pending_headers(s);
         if !self.pending_headers.get().is_empty() {
+            return;
+        }
+        if self.awaiting_initial.get() {
+            // lsquic resets an HTTP/3 stream whose write side ends before its first header block. sendHeaders() asks for the next write event.
+            s.want_write(false);
+            s.flush();
             return;
         }
         while !self.outbound.get().data.is_empty() {
@@ -1185,20 +1205,25 @@ impl QuicStream {
         let eos = kind == QUIC_STREAM_HEADERS_KIND_TRAILING
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
         // Node sends no HEADERS frame for hints or trailers without fields, and an ls-qpack peer closes the connection on one.
-        let frameless = header_count == 0 && kind != QUIC_STREAM_HEADERS_KIND_INITIAL;
+        let initial = kind == QUIC_STREAM_HEADERS_KIND_INITIAL;
+        let frameless = header_count == 0 && !initial;
         let open = self.ls();
+        // Nothing can follow the end of the write side. lsquic still takes a block for a stream that was reset.
+        if open.is_some() && self.with_state(|s| s.write_ended != 0) {
+            return Ok(JSValue::js_boolean(false));
+        }
         let ready = open.filter(|&s| {
             self.pending_headers.get().is_empty() && !self.must_wait_for_credit(s, frameless)
         });
         let Some(s) = ready else {
-            // Nothing can follow the end of the write side, whether it's sent or still queued.
-            let ended = open.is_some() && self.with_state(|s| s.write_ended != 0);
+            // As in Node, only a stream that isn't open yet queues the block: https://github.com/nodejs/node/blob/v26.3.0/src/quic/streams.cc#L464-L470
+            let closed = open.is_none() && !self.is_pending();
             let queued = self.pending_headers.get();
-            if ended || queued.last().is_some_and(|&(_, _, eos, _)| eos) {
+            if closed || queued.last().is_some_and(|&(_, _, eos, ..)| eos) {
                 return Ok(JSValue::js_boolean(false));
             }
             self.pending_headers
-                .with_mut(|q| q.push((bytes, header_count, eos, frameless)));
+                .with_mut(|q| q.push((bytes, header_count, eos, frameless, initial)));
             self.with_state(|s| s.has_outbound = 1);
             if open.is_some() {
                 self.note_write_blocked();
@@ -1206,7 +1231,7 @@ impl QuicStream {
             }
             return Ok(JSValue::js_boolean(true));
         };
-        if self.put_header_block(s, &bytes, header_count, eos, frameless) {
+        if self.put_header_block(s, &bytes, header_count, eos, frameless, initial) {
             self.wrote_to_lsquic.set(true);
             self.with_state(|s| s.has_outbound = 1);
             if eos {

@@ -433,7 +433,7 @@ macro_rules! bufs {
     };
 }
 
-/// The loader's rule for the real path of a directory entry. `finalize_result`, `dir_info_uncached` and `loader_key_of_existing_file` share it.
+/// The loader's rule for the real path of a directory entry. `finalize_result` has the same two tests inline.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RealPath {
     /// The entry is a link, or the loader stored its real path at the entry before.
@@ -456,7 +456,7 @@ impl RealPath {
     }
 
     /// The entry `base` below the real path of its directory.
-    #[inline]
+    #[inline(always)]
     fn below_link<'b>(
         dir_real_path: &[u8],
         base: &[u8],
@@ -1708,8 +1708,7 @@ impl<'a> Resolver<'a> {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
                 let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
-                let real_path = RealPath::of_entry(symlink_path, dir.abs_real_path);
-                if real_path == RealPath::LinkTarget {
+                if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
                         result.file_fd = query.entry().cache().fd;
@@ -1722,7 +1721,7 @@ impl<'a> Resolver<'a> {
                             bstr::BStr::new(symlink_path)
                         ));
                     }
-                } else if real_path == RealPath::BelowLink
+                } else if !dir.abs_real_path.is_empty()
                     // When the directory is a symlink, we don't need to call getFdPath.
                     && let mut buf = bun_paths::path_buffer_pool::get()
                     && let Some(out_len) =
@@ -1981,29 +1980,33 @@ impl<'a> Resolver<'a> {
         );
 
         // The loader stats an entry that it did not stat yet, and reads a listing again that does not have the file.
-        let mut link_buf = bun_paths::path_buffer_pool::get();
+        let mut link_buf;
         let (kind, link_target, from_cache): (EntryKind, &[u8], bool) = match cached {
             CachedEntry::Known(kind, symlink) => (kind, symlink, true),
-            // SAFETY: `rfs_ptr` points at the process-global RealFS. `stat_entry` only makes system calls.
-            _ => match unsafe { &mut *self.rfs_ptr() }.stat_entry(
-                dir,
-                name,
-                FD::INVALID,
-                false,
-                &mut link_buf,
-            ) {
-                Ok((kind, _, target)) => (kind, target, false),
-                Err(_) => return LoaderKey::NotAFile,
-            },
+            _ => {
+                link_buf = bun_paths::path_buffer_pool::get();
+                // SAFETY: `rfs_ptr` points at the process-global RealFS. `stat_entry` only makes system calls.
+                match unsafe { &mut *self.rfs_ptr() }.stat_entry(
+                    dir,
+                    name,
+                    FD::INVALID,
+                    false,
+                    &mut link_buf,
+                ) {
+                    Ok((kind, _, target)) => (kind, target, false),
+                    Err(_) => return LoaderKey::NotAFile,
+                }
+            }
         };
         if kind != EntryKind::File {
             return LoaderKey::NotAFile;
         }
 
-        let mut dir_buf = bun_paths::path_buffer_pool::get();
+        let mut dir_buf;
         let dir_real_path: &[u8] = if !link_target.is_empty() || has_dir_info {
             cached_real_path
         } else {
+            dir_buf = bun_paths::path_buffer_pool::get();
             self.real_path_of_unread_dir(dir, &mut dir_buf)
         };
 

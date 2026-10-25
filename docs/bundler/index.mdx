@@ -1406,6 +1406,8 @@ The bundler always loads `export *` re-exports (it never defers them) to avoid c
 
 **Plugins:** Resolve and load plugins work with barrel optimization. Deferred submodules go through the plugin pipeline when they are eventually loaded.
 
+**Which `package.json` counts:** for a file that the resolver finds on disk, the bundler reads `sideEffects` from the nearest `package.json` above the file that has a `name` or a `sideEffects` field. An import by the package name, by a subpath or by a relative path gets the same answer. A nested `package.json` with neither field, such as `{ "type": "module" }`, does not hide the one above it. The lookup uses the path before symlinks are followed. `optimizeImports` matches the `name` of the nearest `package.json` above the file that has one.
+
 ### Re-exported namespaces
 
 Property reads on an import that turns out to be a module namespace are linked straight to the export they name, the same as a named import. This covers namespaces reached indirectly:

@@ -1594,50 +1594,14 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // Only the path that `Result::path()` returns takes attributes.
+            // Only the path that `Result::path()` returns takes attributes. They depend on
+            // that path as resolved, before the symlink rewrite, and not on the import route.
             if primary {
-                let mut needs_side_effects = true;
-                // if we don't have it here, they might put it in a sideEfffects
-                // map of the parent package.json
-                // TODO: check if webpack also does this parent lookup
-                if let Some(existing) = Result::deref_package_json(result.package_json) {
-                    use crate::package_json::SideEffects as PJSideEffects;
-                    let nameless = existing.name.is_empty();
-                    // A nameless package.json decides only for files in its own directory.
-                    if !nameless
-                        || existing
-                            .source
-                            .path
-                            .text
-                            .strip_suffix(b"package.json")
-                            .is_some_and(|own_dir| path.text().starts_with(own_dir))
-                    {
-                        needs_side_effects = matches!(
-                            existing.side_effects,
-                            PJSideEffects::Unspecified
-                                | PJSideEffects::Glob(_)
-                                | PJSideEffects::Mixed(_)
-                        );
-
-                        result.primary_side_effects_data =
-                            primary_side_effects(&existing.side_effects, path.text());
-                    }
-
-                    if nameless || self.care_about_bin_folder {
-                        result.package_json = None;
-                    }
+                if let Some(pkg) = dir.package_json_for_side_effects {
+                    result.primary_side_effects_data =
+                        primary_side_effects(&pkg.side_effects, path.text());
                 }
-
-                result.package_json = result
-                    .package_json
-                    .or_else(|| dir.enclosing_package_json.map(std::ptr::from_ref));
-
-                if needs_side_effects {
-                    if let Some(package_json) = Result::deref_package_json(result.package_json) {
-                        result.primary_side_effects_data =
-                            primary_side_effects(&package_json.side_effects, path.text());
-                    }
-                }
+                result.package_json = dir.enclosing_package_json.map(std::ptr::from_ref);
             }
 
             if primary && let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
@@ -6509,6 +6473,10 @@ impl<'a> Resolver<'a> {
         info.package_json_for_module_type = info
             .package_json()
             .or_else(|| parent.and_then(|parent_| parent_.package_json_for_module_type));
+        info.package_json_for_side_effects = info
+            .package_json()
+            .filter(|pkg| pkg.decides_side_effects())
+            .or_else(|| parent.and_then(|parent_| parent_.package_json_for_side_effects));
 
         // Record if this directory has a tsconfig.json or jsconfig.json file
         if self.opts.load_tsconfig_json {

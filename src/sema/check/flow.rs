@@ -228,6 +228,9 @@ pub(super) struct FlowMemo {
     /// The expressions whose stored type follows from a walk that ended with an incomplete type.
     /// See `check_expression_again`.
     checked_with_incomplete_walk: crate::util::FxHashSet<(FileId, ExprId)>,
+    /// A file other than the task's in which a walk ended with an incomplete type, and the height of `stack` below
+    /// the first query in that file. See `keep_incomplete_walk_in_other_file_to_itself`.
+    walked_in_other_file: Option<(FileId, usize)>,
 }
 
 /// Not in tsgo. The rows of a file's flow graph. A row is a chain of assignments, declarations,
@@ -5833,6 +5836,11 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::ERROR;
         }
         self.flow_invocation_count += 1;
+        if let Some((other, height)) = self.flow_memo.walked_in_other_file
+            && self.stack.len() <= height
+        {
+            self.forget_walks_in_other_file(other);
+        }
         let outer = std::mem::replace(&mut self.walk_declared, declared);
         let evolved = self.flow_type(walk, flow);
         self.walk_declared = outer;
@@ -5841,6 +5849,9 @@ impl<'p, 's> Checker<'p, 's> {
         // different type. Results derived from this walk's type stay in `flowTypeCache`, or are
         // stored for the check in progress only.
         let depth = self.flow_type_cache_depth;
+        if evolved.incomplete && self.task.file != Some(file) {
+            self.keep_incomplete_walk_in_other_file_to_itself(file);
+        }
         if evolved.incomplete && depth == usize::MAX {
             for at in (0..self.stack.len()).rev() {
                 match self.stack[at] {
@@ -8467,6 +8478,44 @@ impl<'p, 's> Checker<'p, 's> {
     /// `checkExpression` computes the type again.
     fn type_of_expr_outside_loops(&mut self, file: FileId, e: ExprId) -> TypeId {
         self.outside_flow_loops(|c| c.check_expression_again(file, e))
+    }
+
+    /// Call after a walk in `file`, which isn't the task's file, ended with an incomplete type. What the next check of
+    /// an expression around it finds depends on `flowLoopCache` and on `checked_with_incomplete_walk`, which no other
+    /// task sees. So nothing that's computed in `file` on the way here is stored, and the task that checks `file` makes
+    /// every walk itself, in tsc's order.
+    #[cold]
+    fn keep_incomplete_walk_in_other_file_to_itself(&mut self, file: FileId) {
+        let is_in_file = |q: &Query| match *q {
+            Query::Expr(of, _)
+            | Query::Call(of, _)
+            | Query::Return(of, _)
+            | Query::ReturnAtFirstLook(of, _)
+            | Query::Pat(of, _)
+            | Query::ParameterSymbol(of, _)
+            | Query::LiteralProp(of, _) => of == file,
+            Query::Symbol(symbol) => symbol.file == file,
+            _ => false,
+        };
+        if let Some(from) = self.stack.iter().position(is_in_file) {
+            self.mark_tainted_from(from);
+            let height = match self.flow_memo.walked_in_other_file {
+                Some((other, height)) if other == file => height.min(from),
+                _ => from,
+            };
+            self.flow_memo.walked_in_other_file = Some((file, height));
+        }
+    }
+
+    /// The queries that `keep_incomplete_walk_in_other_file_to_itself` marked have ended. The next ones start like
+    /// the first.
+    #[cold]
+    fn forget_walks_in_other_file(&mut self, file: FileId) {
+        self.flow_memo.walked_in_other_file = None;
+        self.flow_memo
+            .flow_loop_cache
+            .retain(|key, _| key.0 != file);
+        (self.flow_memo.checked_with_incomplete_walk).retain(|checked| checked.0 != file);
     }
 
     pub(super) fn note_checked_with_incomplete_walk(&mut self, file: FileId, e: ExprId) {

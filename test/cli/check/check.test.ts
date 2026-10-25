@@ -9009,6 +9009,50 @@ function f() { return merge(merge(f(), [1]), f()); }
       expect(exitCode).toBe(1);
     });
 
+    // b.ts is checked first. The message about `num(c0)` prints the return type of `go`, which resolves `num(c1())` a
+    // second time inside its first resolution, without constraint checks. Nothing is circular there, so that signature
+    // is final until the outer resolution fails and replaces it.
+    test("the signature of a call that fails replaces one that a resolution inside its resolution assigned without a cycle", async () => {
+      using dir = project({
+        "a.ts": `import { c0, num } from "./b";
+export async function c1() { return c2(); }
+export function c2(a = num(c0)) { return a; }
+`,
+        "b.ts": `import { c1 } from "./a";
+export declare function tap<T>(x: T): T;
+export declare function num<T extends number>(x: T): { n: T };
+export declare function str<T extends string>(x: T): T[];
+export const c0 = tap({ go() { return str(num(c1())); } });
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+      expect(stdout).toBe(
+        [
+          "a.ts(3,28): error TS2345: Argument of type '{ go(): { n: Promise<{ n: number; }>; }[]; }' is not assignable to parameter of type 'number'.",
+          "b.ts(5,43): error TS2345: Argument of type '{ n: number; }' is not assignable to parameter of type 'string'.",
+          "b.ts(5,47): error TS2345: Argument of type 'Promise<{ n: number; }>' is not assignable to parameter of type 'number'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("a callback in the initializer of a parameter in a cycle is checked with the parameter type that tsc assigns", async () => {
+      using dir = project({
+        "a.ts": `declare function tap<T>(x: T, f?: (x: T) => void): T;
+function c0(a = tap(c0(), x => { const p: never = x; })) { return a; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(2,10): error TS7023: 'c0' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "a.ts(2,13): error TS7022: 'a' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "a.ts(2,40): error TS2322: Type 'any' is not assignable to type 'never'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // m3.ts is checked first. The declaration of `g` prints the constraint of `T`, which is the first to ask for the
     // type of `b`. The errors of a missing property and of a type that isn't iterable are deferred to the end of a
     // file's check, and that of m3.ts is over by then.

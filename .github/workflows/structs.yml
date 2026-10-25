@@ -15,6 +15,7 @@ on:
       - "src/js_parser/**"
       - "src/runtime.js"
       - "test/js/bun/structs/**"
+      - "examples/structs/**"
       - ".github/workflows/structs.yml"
 
 concurrency:
@@ -83,6 +84,13 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun scripts/build.ts --profile=release
+
+      - name: Install example dependencies
+        run: |
+          bun_bin="$(ls build/release/bun-profile build/release/bun 2>/dev/null | head -1)"
+          for example in react angular; do
+            (cd "examples/structs/$example" && "$PWD/../../../$bun_bin" install)
+          done
 
       - name: Test
         run: |

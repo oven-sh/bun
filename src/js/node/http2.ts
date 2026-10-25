@@ -2461,7 +2461,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       if (ObjectKeys(headers).length === 0) {
         session[bunHTTP2Native]?.noTrailers(this.#id);
       } else {
-        session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
+        const wireHeaders = toWireHeaders(headers);
+        session[bunHTTP2Native]?.sendTrailers(this.#id, wireHeaders, sensitiveNames);
       }
     } catch (error) {
       this.#sentTrailers = undefined;
@@ -3296,10 +3297,6 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_PUSH_DISABLED();
     }
     const session = this[bunHTTP2Session];
-    const parser = session?.[bunHTTP2Native];
-    if (!parser) {
-      throw $ERR_HTTP2_INVALID_STREAM();
-    }
     headers = { ...headers };
     assertNoConnectionHeaders(headers);
     // Thrown synchronously like node, before a promised stream id is reserved.
@@ -3322,6 +3319,12 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[HTTP2_HEADER_AUTHORITY] === undefined && parentRequestHeaders) {
       headers[HTTP2_HEADER_AUTHORITY] = parentRequestHeaders[HTTP2_HEADER_AUTHORITY];
     }
+    const wireHeaders = toWireHeaders(headers);
+    // Looked up after the last user code above, which may have destroyed the session.
+    const parser = session[bunHTTP2Native];
+    if (!parser) {
+      throw $ERR_HTTP2_INVALID_STREAM();
+    }
     const pushId = parser.getNextStream();
     if (pushId === -1) {
       process.nextTick(callback, $ERR_HTTP2_OUT_OF_STREAMS());
@@ -3341,7 +3344,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
     let pushResult;
     try {
-      pushResult = parser.pushPromise(this.id, pushId, headers, sensitiveNames);
+      pushResult = parser.pushPromise(this.id, pushId, wireHeaders, sensitiveNames);
     } catch (err) {
       // pushPromise() throws synchronously on an invalid header block. The pushed stream was
       // already created by getNextStream's streamStart; tear it down without an error so the
@@ -3555,13 +3558,14 @@ class ServerHttp2Stream extends Http2Stream {
     }
     const session = this[bunHTTP2Session];
     assertSession(session);
+    const wireHeaders = toWireHeaders(headers);
     if (!this[kInfoHeaders]) {
       this[kInfoHeaders] = [headers];
     } else {
       ArrayPrototypePush.$call(this[kInfoHeaders], headers);
     }
 
-    session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
+    session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames);
   }
   respond(headers?: HeadersObject | any[] | null, options?: any) {
     if (this.destroyed || this.session === undefined) {
@@ -3573,6 +3577,11 @@ class ServerHttp2Stream extends Http2Stream {
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
     if (this.sentTrailers) {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
+    }
+
+    // Like request(): user getters run now, not after the native side encoded the header block.
+    if ($isObject(options)) {
+      options = { ...options };
     }
 
     // Raw (flat [name, value, ...] array) headers form: the pairs are encoded
@@ -3692,7 +3701,7 @@ class ServerHttp2Stream extends Http2Stream {
       }
     }
 
-    const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
+    const wireHeaders = toWireHeaders(rawHeadersList !== null ? rawHeadersList : headers);
     if (typeof options === "undefined") {
       session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames);
     } else {
@@ -3933,6 +3942,35 @@ function buildSensitiveNames(headers, sensitives): Record<string, boolean> {
     }
   }
   return map;
+}
+
+// null and undefined are left for the native validator.
+function stringifyHeaderValue(value) {
+  return value == null ? value : `${value}`;
+}
+
+function stringifyHeaderValues(values: any[]): any[] {
+  const length = values.length;
+  const wire = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) {
+    $putByValDirect(wire, i, stringifyHeaderValue(values[i]));
+  }
+  return wire;
+}
+
+// The block the native encoder walks: a private copy that holds only strings, like the list
+// node's buildNgHeaderString() builds. HPACK blocks must reach the peer in the order they were
+// encoded, so no toString() may run (and send another block) once a stream id is taken.
+function toWireHeaders(headers) {
+  if ($isArray(headers)) return stringifyHeaderValues(headers);
+  const wire = { __proto__: null };
+  const names = ObjectKeys(headers);
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    const value = headers[name];
+    wire[name] = $isArray(value) ? stringifyHeaderValues(value) : stringifyHeaderValue(value);
+  }
+  return wire;
 }
 
 function toHeaderObject(headers, sensitiveHeadersValue) {
@@ -6261,6 +6299,8 @@ class ClientHttp2Session extends Http2Session {
         return req;
       }
 
+      const wireHeaders = toWireHeaders(rawHeadersList !== null ? rawHeadersList : headers);
+
       // Like Node, a request whose signal is already aborted never touches the
       // wire: the stream is created without an id and destroyed synchronously
       // with an AbortError (_destroy skips the RST for id-less streams).
@@ -6309,7 +6349,7 @@ class ClientHttp2Session extends Http2Session {
         this.#pendingRequests.push({
           req,
           headers,
-          wireHeaders: rawHeadersList !== null ? rawHeadersList : headers,
+          wireHeaders,
           sensitiveNames,
           options,
         });
@@ -6334,7 +6374,6 @@ class ClientHttp2Session extends Http2Session {
       if (onClientStreamCreatedChannel.hasSubscribers) {
         onClientStreamCreatedChannel.publish({ stream: req, headers });
       }
-      const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
       this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });

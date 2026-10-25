@@ -1357,9 +1357,9 @@ describe("inbound stream lifecycle", () => {
     }
   });
 
-  // A header-value `toString` runs user JS while sendTrailers holds the native `&mut Stream`;
-  // feeding the stream's own RST_STREAM (then another read) back into the parser from that
-  // callback must not free the Stream out from under the caller (use-after-free under ASAN).
+  // Feeding the stream's own RST_STREAM (then another read) back into the parser from a trailer
+  // value's `toString` must not free the Stream out from under the 'wantTrailers' dispatch that
+  // sendTrailers was called from (use-after-free under ASAN).
   test("re-entrant read() from a trailer-value toString does not free the in-use stream", async () => {
     const fixture = String.raw`
       const http2 = require("node:http2");
@@ -2687,6 +2687,357 @@ describe("received field values (RFC 9113 §8.2.1, §8.3)", () => {
       ["headers", { ":status": 199 }],
       ["response", { ":status": 999 }],
     ]);
+  });
+});
+
+// One HPACK encoder serves every stream of a session, and its blocks must reach the peer in the
+// order they were encoded. Each nested block below repeats a field of the block around it.
+describe("user code run by a sent header value (RFC 9113 §4.3, §5.1.1)", () => {
+  const noDate = { sendDate: false };
+  const shared = { "x-shared": "same" };
+
+  /** A header value that runs `act` when it is turned into a string. */
+  const acting = (value: string, act: () => void) => ({
+    toString() {
+      act();
+      return value;
+    },
+  });
+
+  const boom = acting("v", () => {
+    throw new RangeError("boom");
+  });
+
+  const picked = (headers: http2.IncomingHttpHeaders = {}) =>
+    Object.fromEntries(Object.entries(headers).filter(([name]) => /^(x-|:path$|:status$)/.test(name)));
+
+  /** A fresh server and a client of it. `seen` lists the requests in the order they arrived. */
+  async function connect(onStream: (stream: http2.ServerHttp2Stream, path: string) => void) {
+    const seen: [number, Record<string, unknown>][] = [];
+    const srv = http2.createServer();
+    srv.on("stream", (stream, headers) => {
+      seen.push([stream.id!, picked(headers)]);
+      onStream(stream, headers[":path"]!);
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(srv.address() as net.AddressInfo).port}`);
+    const sessionErrors: unknown[] = [];
+    client.on("error", err => sessionErrors.push(err));
+    return {
+      client,
+      seen,
+      sessionErrors,
+      [Symbol.dispose]() {
+        client.destroy();
+        srv.close();
+      },
+    };
+  }
+
+  function ok(stream: http2.ServerHttp2Stream) {
+    stream.respond({ ":status": 200 }, noDate);
+    stream.end();
+  }
+
+  /** Every header block a client stream received, once it has closed. */
+  function received(req: http2.ClientHttp2Stream) {
+    const blocks: [string, Record<string, unknown>][] = [];
+    for (const event of ["headers", "response", "push", "trailers"]) {
+      req.on(event, headers => blocks.push([event, picked(headers)]));
+    }
+    const { promise, resolve, reject } = Promise.withResolvers<typeof blocks>();
+    req.on("error", reject);
+    req.on("close", () => resolve(blocks));
+    req.resume();
+    return promise;
+  }
+
+  const answered = [["response", { ":status": 200 }]];
+
+  describe.each([
+    ["an object", (path: string, value: unknown) => ({ ":path": path, ...shared, "x-value": value, "x-last": "z" })],
+    [
+      "an array",
+      (path: string, value: unknown) => ({ ":path": path, ...shared, "x-value": ["a", value], "x-last": "z" }),
+    ],
+    [
+      "a raw list",
+      (path: string, value: unknown) => [":path", path, "x-shared", "same", "x-value", value, "x-last", "z"],
+    ],
+  ])("request() from a value in %s", (form, headers: (path: string, value: unknown) => any) => {
+    const value = form === "an array" ? "a, v" : "v";
+    const inner = { ":path": "/inner", ...shared };
+    const outer = { ":path": "/outer", ...shared, "x-value": value, "x-last": "z" };
+
+    test("is sent first and both are answered", async () => {
+      using pair = await connect(ok);
+      await once(pair.client, "connect");
+      for (let round = 0; round < 3; round++) {
+        const nested: Promise<unknown>[] = [];
+        const req = pair.client.request(
+          headers(
+            "/outer",
+            acting("v", () => nested.push(received(pair.client.request(inner)))),
+          ),
+        );
+        expect(await Promise.all([received(req), ...nested])).toEqual([answered, answered]);
+      }
+      expect(pair.seen).toEqual([
+        [1, inner],
+        [3, outer],
+        [5, inner],
+        [7, outer],
+        [9, inner],
+        [11, outer],
+      ]);
+      expect(pair.sessionErrors).toEqual([]);
+      expect(pair.client.destroyed).toBe(false);
+    });
+
+    test("is queued first while the session connects", async () => {
+      using pair = await connect(ok);
+      const order: string[] = [];
+      const nested: Promise<unknown>[] = [];
+      const req = pair.client.request(
+        headers(
+          "/outer",
+          acting("v", () => {
+            order.push("toString");
+            nested.push(received(pair.client.request(inner)));
+          }),
+        ),
+      );
+      order.push("returned");
+      expect(await Promise.all([received(req), ...nested])).toEqual([answered, answered]);
+      expect(order).toEqual(["toString", "returned"]);
+      expect(pair.seen).toEqual([
+        [1, inner],
+        [3, outer],
+      ]);
+      expect(pair.sessionErrors).toEqual([]);
+    });
+
+    test("a value that throws leaves nothing behind in the encoder", async () => {
+      using pair = await connect(ok);
+      expect(() => pair.client.request(headers("/thrown", boom))).toThrow(new RangeError("boom"));
+      await once(pair.client, "connect");
+      expect(() => pair.client.request(headers("/thrown", boom))).toThrow(new RangeError("boom"));
+      for (let round = 0; round < 2; round++) {
+        expect(await received(pair.client.request(headers("/outer", "v")))).toEqual(answered);
+      }
+      expect(pair.seen).toEqual([
+        [1, outer],
+        [3, outer],
+      ]);
+      expect(pair.sessionErrors).toEqual([]);
+    });
+  });
+
+  test("a queued request sends the headers it was made with", async () => {
+    using pair = await connect(ok);
+    let calls = 0;
+    const value = acting("v", () => calls++);
+    const list = ["a", value];
+    const req = pair.client.request({ ":path": "/object", "x-value": value, "x-list": list, "x-number": 1 });
+    expect(req.sentHeaders["x-value"]).toBe(value as any);
+    expect(req.sentHeaders["x-list"]).toBe(list as any);
+    expect(req.sentHeaders["x-number"]).toBe(1);
+    list.push("late");
+    const plain = pair.client.request({ ":path": "/plain", "x-value": "v" });
+    plain.sentHeaders["x-value"] = "edited";
+    plain.sentHeaders["x-late"] = "late";
+    const raw = [":method", "GET", ":scheme", "http", ":authority", "localhost", ":path", "/raw", "x-value", "v"];
+    const rawReq = pair.client.request(raw as any);
+    raw[raw.length - 1] = "edited";
+    expect(await Promise.all([req, plain, rawReq].map(received))).toEqual([answered, answered, answered]);
+    expect(pair.seen).toEqual([
+      [1, { ":path": "/object", "x-value": "v", "x-list": "a, v", "x-number": "1" }],
+      [3, { ":path": "/plain", "x-value": "v" }],
+      [5, { ":path": "/raw", "x-value": "v" }],
+    ]);
+    expect(calls).toBe(2);
+  });
+
+  test("a value that aborts the signal of its own request leaves the session open", async () => {
+    using pair = await connect(ok);
+    await once(pair.client, "connect");
+    const controller = new AbortController();
+    const req = pair.client.request(
+      { ":path": "/aborted", ...shared, "x-value": acting("v", () => controller.abort()) as any },
+      { signal: controller.signal },
+    );
+    expect(await received(req).catch(err => err.name)).toBe("AbortError");
+    expect(await received(pair.client.request({ ":path": "/next", ...shared }))).toEqual(answered);
+    expect(pair.seen).toEqual([[1, { ":path": "/next", ...shared }]]);
+    expect(pair.sessionErrors).toEqual([]);
+  });
+
+  // Node sends the description of the symbol.
+  test("a symbol is refused before anything is encoded", async () => {
+    using pair = await connect(ok);
+    await once(pair.client, "connect");
+    for (const value of [Symbol("s"), ["a", Symbol("s")]]) {
+      expect(() => pair.client.request({ ":path": "/symbol", ...shared, "x-value": value as any })).toThrow(TypeError);
+    }
+    expect(await received(pair.client.request({ ":path": "/next", ...shared }))).toEqual(answered);
+    expect(pair.seen).toEqual([[1, { ":path": "/next", ...shared }]]);
+    expect(pair.sessionErrors).toEqual([]);
+  });
+
+  type Value = string | { toString(): string };
+  type When = (stream: http2.ServerHttp2Stream, act: () => void) => void;
+  const direct: When = (_, act) => act();
+
+  /** `call` sends a header block that holds `value`. `when` runs it once the stream can take that block. */
+  describe.each<[string, When, (stream: http2.ServerHttp2Stream, value: Value) => void, unknown]>([
+    [
+      "respond()",
+      direct,
+      (stream, value) => stream.respond({ ":status": 200, ...shared, "x-value": value as any }, noDate),
+      [["response", { ":status": 200, ...shared, "x-value": "v" }]],
+    ],
+    [
+      "respond() with a raw list",
+      direct,
+      (stream, value) => stream.respond([":status", 200, "x-shared", "same", "x-value", value] as any, noDate),
+      [["response", { ":status": 200, ...shared, "x-value": "v" }]],
+    ],
+    [
+      "an option getter of respond()",
+      direct,
+      (stream, value) =>
+        stream.respond(
+          { ":status": 200, ...shared },
+          {
+            ...noDate,
+            get waitForTrailers() {
+              return `${value}` !== "v";
+            },
+          },
+        ),
+      [["response", { ":status": 200, ...shared }]],
+    ],
+    [
+      "additionalHeaders()",
+      (stream, act) => {
+        act();
+        stream.respond({ ":status": 200 }, noDate);
+      },
+      (stream, value) => stream.additionalHeaders({ ":status": 103, ...shared, "x-value": value as any }),
+      [
+        ["headers", { ":status": 103, ...shared, "x-value": "v" }],
+        ["response", { ":status": 200 }],
+      ],
+    ],
+    [
+      "sendTrailers()",
+      (stream, act) => {
+        stream.on("wantTrailers", act);
+        stream.respond({ ":status": 200 }, { ...noDate, waitForTrailers: true });
+      },
+      (stream, value) => stream.sendTrailers({ ...shared, "x-value": value as any }),
+      [
+        ["response", { ":status": 200 }],
+        ["trailers", { ...shared, "x-value": "v" }],
+      ],
+    ],
+  ])("%s", (_, when, call, expected) => {
+    // The first request of a round is left open. The second one answers it from inside `call`.
+    test("another stream's respond() from a value is sent first", async () => {
+      let held: http2.ServerHttp2Stream;
+      using pair = await connect((stream, path) => {
+        if (path === "/held") {
+          held = stream;
+          return;
+        }
+        const value = acting("v", () => {
+          if (held.headersSent) return;
+          held.respond({ ":status": 200, ...shared }, noDate);
+          held.end();
+        });
+        when(stream, () => call(stream, value));
+        stream.end();
+      });
+      for (let round = 0; round < 3; round++) {
+        const first = received(pair.client.request({ ":path": "/held" }));
+        const second = received(pair.client.request({ ":path": "/acting" }));
+        expect(await Promise.all([first, second])).toEqual([[["response", { ":status": 200, ...shared }]], expected]);
+      }
+      expect(pair.sessionErrors).toEqual([]);
+    });
+
+    test("a value that throws leaves nothing behind in the encoder", async () => {
+      const thrown: unknown[] = [];
+      using pair = await connect(stream => {
+        when(stream, () => {
+          try {
+            call(stream, boom);
+          } catch (err) {
+            thrown.push(err);
+          }
+          call(stream, "v");
+        });
+        stream.end();
+      });
+      for (let round = 0; round < 2; round++) {
+        expect(await received(pair.client.request({ ":path": "/" }))).toEqual(expected);
+      }
+      expect(thrown).toEqual([new RangeError("boom"), new RangeError("boom")]);
+      expect(pair.sessionErrors).toEqual([]);
+    });
+  });
+
+  test("pushStream() from a pushStream() value is promised first", async () => {
+    const thrown: unknown[] = [];
+    using pair = await connect(stream => {
+      const push = (headers: http2.OutgoingHttpHeaders) =>
+        stream.pushStream(headers, (err, pushed) => {
+          if (err) throw err;
+          ok(pushed);
+        });
+      try {
+        push({ ":path": "/thrown", ...shared, "x-value": boom as any });
+      } catch (err) {
+        thrown.push(err);
+      }
+      push({
+        ":path": "/outer",
+        ...shared,
+        "x-value": acting("v", () => push({ ":path": "/inner", ...shared })) as any,
+      });
+      ok(stream);
+    });
+    const promised: [number, Record<string, unknown>][] = [];
+    const pushes: Promise<unknown>[] = [];
+    pair.client.on("stream", (pushed, headers) => {
+      promised.push([pushed.id!, picked(headers)]);
+      pushes.push(received(pushed));
+    });
+    expect(await received(pair.client.request({ ":path": "/" }))).toEqual(answered);
+    expect(await Promise.all(pushes)).toEqual([[["push", { ":status": 200 }]], [["push", { ":status": 200 }]]]);
+    expect(promised).toEqual([
+      [2, { ":path": "/inner", ...shared }],
+      [4, { ":path": "/outer", ...shared, "x-value": "v" }],
+    ]);
+    expect(thrown).toEqual([new RangeError("boom")]);
+    expect(pair.sessionErrors).toEqual([]);
+  });
+
+  test("pushStream() throws when a value destroys the session", async () => {
+    const thrown: unknown[] = [];
+    const calls: unknown[][] = [];
+    using pair = await connect(stream => {
+      const value = acting("v", () => stream.session!.destroy());
+      try {
+        stream.pushStream({ ":path": "/pushed", "x-value": value as any }, (...args) => calls.push(args));
+      } catch (err) {
+        thrown.push(err);
+      }
+    });
+    await received(pair.client.request({ ":path": "/" })).catch(() => {});
+    expect(thrown.map(err => err instanceof Error)).toEqual([true]);
+    expect(calls).toEqual([]);
   });
 });
 

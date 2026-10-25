@@ -695,6 +695,45 @@ module.exports = { scope };
     }
   });
 
+  // `S<N>` and `T<N>` never end, so a comparison is cut off at the fourth level and counts as true there, unless the
+  // checker already knows that it fails. `late.ts` knows that for six zeros once it has compared `N5`. The task of
+  // `early.ts` compares `N5` first. Its failure for six zeros waits for a commit, because the comparison resolved `Bad`.
+  test("finds a failed comparison wherever it finds what another file's task derived from it", async () => {
+    const plain = (name: string, length: number) =>
+      Array.from({ length }, (_, i) => `export const ${name}${i} = [1, 2].map(v => ({ v, i: ${i} })).length;\n`).join(
+        "",
+      );
+    using dir = project({
+      "t.d.ts": `export interface S<N extends 0[]> { v: N["length"] extends 6 ? Bad : "ok"; next: S<[...N, 0]> }
+export interface T<N extends 0[]> { v: "ok"; next: T<[...N, 0]> }
+export type Bad = "bad";
+export type Q<X, Y> = [X extends Y ? 1 : 2];
+export type N3 = [0, 0, 0];
+export type N4 = [0, 0, 0, 0];
+export type N5 = [0, 0, 0, 0, 0];
+`,
+      "early.ts": `import type { N4, N5, Q, S, T } from "./t";
+export const a: Q<S<N4>, T<N4>> = [1];
+export const b: Q<S<N5>, T<N5>> = [1];
+${plain("x", 600)}`,
+      "late.ts": `import type { N3, N5, Q, S, T } from "./t";
+${plain("y", 200)}export const c: Q<S<N5>, T<N5>> = [1];
+export const d: Q<S<N3>, T<N3>> = [1];
+`,
+    });
+    // Without the rule, a release build loses the last error in 93 % of the runs. Three runs catch that in 99.97 %
+    // of the cases (1 - 0.07 ** 3).
+    const threads = isDebug || isASAN ? [2, 8, 16] : [1, 2, 2, 8, 8, 16, 16];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(
+        ["early.ts(2,36)", "early.ts(3,36)", "late.ts(202,36)", "late.ts(203,36)"]
+          .map(at => `${at}: error TS2322: Type '1' is not assignable to type '2'.`)
+          .join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
   // By the variances of `Extract`, `Declared<T>` isn't related to `Indexed<T>`. `U` is invariant, so where TypeScript
   // reports that, it continues and compares the two conditional types structurally. That succeeds and replaces the
   // failure: `run(name)` has no error, and what's checked later finds the two related. The task of `b.ts` gets to the

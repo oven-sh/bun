@@ -701,10 +701,6 @@ impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
     }
 }
 
-/// See `ByKey::get_with_origin`.
-#[derive(Copy, Clone)]
-pub struct IsPublished(pub bool);
-
 /// A memo table for keys that are more than a single id.
 pub struct ByKey<K, V, P: Policy = Frozen, A: Alloc = Global> {
     published: WindowedMap<K, V, A>,
@@ -1503,15 +1499,25 @@ where
         (task.buffer().typed(&self.slot)?.get(spread, key)).copied()
     }
 
-    /// `get`, and whether the entry is published.
+    /// `get`, for a table where a task that doesn't find an entry can compute something else than the task that has it.
+    /// If the entry isn't published and `is_missed` returns true for it, whatever the task is evaluating waits for a
+    /// commit too (`Task::hold_back`), and the commit stores it after the entry.
     #[inline]
-    pub fn get_with_origin(&self, task: &Task<'s>, key: &K) -> Option<(V, IsPublished)> {
+    pub fn get_and_hold_back_if(
+        &self,
+        task: &Task<'s>,
+        key: &K,
+        is_missed: impl FnOnce(V) -> bool,
+    ) -> Option<V> {
         let spread = spread_in_window(key);
         if let Some(value) = self.published(task, spread, key) {
-            return Some((value, IsPublished(true)));
+            return Some(value);
         }
-        let own = task.buffer().typed(&self.slot)?.get(spread, key)?;
-        Some((*own, IsPublished(false)))
+        let own = *task.buffer().typed(&self.slot)?.get(spread, key)?;
+        if is_missed(own) {
+            task.hold_back();
+        }
+        Some(own)
     }
 
     #[inline]

@@ -2494,7 +2494,19 @@ impl<'p, 's> Checker<'p, 's> {
     #[cold]
     #[inline(never)]
     fn position_in_progress(&self, q: Query, from: usize) -> Option<usize> {
-        self.stack[from..].iter().rposition(|x| *x == q)
+        let at = self.stack[from..].iter().rposition(|x| *x == q);
+        // A resolution that's in progress below `resolution_start` begins again and reports nothing. If the checker had
+        // entered the ring at a resolution above it, it would come back around to that one.
+        if at.is_none()
+            && self.is_resolution(q)
+            && let Some(hidden) = self.stack[..from].iter().rposition(|x| *x == q)
+        {
+            self.task.hold_back();
+            let members = self.stack[hidden..].iter().map(crate::util::fx_hash);
+            (self.task)
+                .enter_ring_silently(|| self.is_reachable_only_by_importers(hidden), members);
+        }
+        at
     }
 
     /// The slow path of the first test in `enter`. Returns false if `q` isn't rejected.

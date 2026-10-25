@@ -300,6 +300,23 @@ impl<'s> Task<'s> {
         }
     }
 
+    /// Like `close_cycle`, for a ring that reports nothing from where the task entered it. A task that's trusted about it
+    /// goes on as if there were no ring.
+    pub(super) fn enter_ring_silently(
+        &self,
+        is_reachable_only_by_importers: impl FnOnce() -> bool,
+        members: impl Iterator<Item = u64>,
+    ) {
+        if !self.was_discarded()
+            && !self.is_first_in_order.get()
+            && !self.is_trusted
+            && !(self.is_first_in_component.get() && is_reachable_only_by_importers())
+        {
+            self.cycle_members.borrow_mut().extend(members);
+            self.discard_until_recheck();
+        }
+    }
+
     /// True if `member` is in a cycle that `close_cycle` got since the task's last commit.
     pub(super) fn has_closed_cycle_with(&self, member: u64) -> bool {
         self.cycle_members.borrow().contains(&member)

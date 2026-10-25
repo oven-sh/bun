@@ -1035,6 +1035,75 @@ const u: { zz: 1 } = first();
     }
   });
 
+  // `x00`, `X00A` and `x11` lead to each other. m3.ts asks for `x00` through the namespace import. The call of `get` begins
+  // a new resolution stack, so above it `x00` is resolved a second time, and from there nothing is circular.
+  test("reports a cycle on every thread count if it's silent where a resolution begins again above a call", async () => {
+    using dir = project({
+      "app.ts": ` import type { Handler, Mw, Method, Params } from "./http";
+export type Route<M extends Method, P extends string, R> = { }
+type Join<A extends string, B extends string> = A extends "/" ? B : \`\${A}\${B}\`;
+export class App<V extends object = {}, Rs extends Route<any, any, any> = never, Base extends string = ""> {
+
+  constructor(public base: Base, public mws: Function[] = []) {}
+  get<P extends string, R>(path: P, h: Handler<V, Join<Base, P>, R>): App<V, Rs | Route<"get", Join<Base, P>, R>, Base>;
+  group<B extends string>(b: B) { return new App<V, never, Join<Base, B>>((this.base + b) as Join<Base, B>, this.mws); }
+}
+export function app() { return new App("");}`,
+      "http.ts": `export type Params<P extends string> = P extends \`\${infer _A}:\${infer N}/\${infer R}\` ? { } : {}
+export type Handler<V extends object, P extends string, R> = (c: Ctx<V, P>) => R | Promise<R>;`,
+      "m0.ts": `
+import "./spec";
+import { x11 as rx11 } from "./m1";
+export type X00A = ReturnType<typeof rx11>;
+export const x00 = (a: X00A) => [a];
+`,
+      "m1.ts": `import { app, mw, client, call, App } from "./app";
+import { x00, x01 } from "./m0";
+
+export const x11 = app().group("/v1")
+  .get("/posts", c => c.json(x00))
+
+`,
+      "m3.ts": `
+import { x11 } from "./m1";import { x40 } from "./m4";
+import * as Nm0 from "./m0"; let y = x40(1); 
+export const u15 = Nm0.x00;
+export const x32 = () => x11.list().map(l => ({ }));
+`,
+      "m4.ts": `
+import { x32 } from "./m3";export function x40(p: number, q = x32()) { }
+`,
+      "spec.ts": `
+
+
+
+import { } from "./m3";
+
+`,
+    });
+    const threads = [1, 2, 2, 2, 2, 8, 8, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(
+        [
+          `app.ts(1,25): error TS2305: Module '"./http"' has no exported member 'Mw'.`,
+          `app.ts(1,29): error TS2305: Module '"./http"' has no exported member 'Method'.`,
+          `app.ts(8,3): error TS2389: Function implementation name must be 'get'.`,
+          `http.ts(2,66): error TS2304: Cannot find name 'Ctx'.`,
+          `m0.ts(4,13): error TS2456: Type alias 'X00A' circularly references itself.`,
+          `m0.ts(5,14): error TS7022: 'x00' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.`,
+          `m1.ts(1,15): error TS2305: Module '"./app"' has no exported member 'mw'.`,
+          `m1.ts(1,19): error TS2305: Module '"./app"' has no exported member 'client'.`,
+          `m1.ts(1,27): error TS2305: Module '"./app"' has no exported member 'call'.`,
+          `m1.ts(2,15): error TS2305: Module '"./m0"' has no exported member 'x01'.`,
+          `m1.ts(4,14): error TS7022: 'x11' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.`,
+          `m1.ts(5,18): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.`,
+          `m3.ts(5,41): error TS7006: Parameter 'l' implicitly has an 'any' type.`,
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
   // An error message prints a type, which infers a return type, which reports an error whose message prints a type, and so
   // on. TypeScript discards an error that is created two messages deep. A missing property is reported at the end of the
   // file's check, when nothing is being printed.

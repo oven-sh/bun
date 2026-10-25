@@ -475,9 +475,9 @@ describe("bundler files option", () => {
     expect(output).not.toContain("disk-shared");
   });
 
-  test("an absolute key overrides the file that a relative import names", async () => {
+  test("relative files keys override relative import specifier", async () => {
     // Create a temp directory with a real entry file and a config file on disk
-    using dir = tempDir("bundler-files-absolute-key", {
+    using dir = tempDir("bundler-files-relative-keys", {
       "entry.js": `
         import { config } from "./config.js";
         console.log(config);
@@ -489,11 +489,12 @@ describe("bundler files option", () => {
 
     const entryPath = `${dir}/entry.js`;
 
-    // The key is the path that "./config.js" resolves to from the entry point
+    // Bundle with a relative key in files map that matches the import specifier
+    // The key should be resolved relative to the entry point
     const result = await Bun.build({
       entrypoints: [entryPath],
       files: {
-        [`${dir}/config.js`]: `export const config = "from memory";`,
+        [`${dir}/config.js`]: `export const config = "from memory via relative key";`,
       },
     });
 
@@ -502,7 +503,7 @@ describe("bundler files option", () => {
 
     const output = await result.outputs[0].text();
     // The in-memory file should override the disk file
-    expect(output).toContain("from memory");
+    expect(output).toContain("from memory via relative key");
     expect(output).not.toContain("from disk");
   });
 

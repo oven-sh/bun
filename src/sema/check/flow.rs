@@ -8751,8 +8751,11 @@ impl<'p, 's> Checker<'p, 's> {
             return cached_predicate;
         }
         // `sig.resolvedTypePredicate = c.noTypePredicate // avoid infinite loop`. A condition
-        // evaluated below may call this function.
-        if self.is_inferring_predicate(file, func) {
+        // evaluated below may call this function. A resolution in between would have been circular
+        // if the checker had started there.
+        let mut in_progress = self.flow_memo.type_predicates_in_progress.iter();
+        if let Some(inferring) = in_progress.find(|it| it.file == file && it.func == func) {
+            self.close_cycle_above(inferring.from);
             return None;
         }
         let from = self.stack.len();

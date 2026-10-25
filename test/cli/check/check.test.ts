@@ -1300,6 +1300,44 @@ export const api = { f1 };
     }
   });
 
+  // The walk back from `Box` in `typeof Box` passes `same(1)` and infers whether `same` is a type guard. That needs `a`,
+  // `Made` and `made`, whose own walk back from `make.of` finds the inference in progress and gets no type guard. So a
+  // checker that starts at `box` finds no cycle, and one that starts anywhere else in `dep.ts` does. `user.ts` is larger
+  // and is checked first, and what it finds must not reach the check of `dep.ts`.
+  test("a cycle that ends at a type guard being inferred is entered from the first file", async () => {
+    const filler = (prefix: string, lines: number) =>
+      Array.from(
+        { length: lines },
+        (_, i) => `const ${prefix}${i} = [${i}, "${i}"].map(it => typeof it).join("");\n`,
+      ).join("");
+    using dir = project({
+      "big.ts": filler("b", 400) + "export {};\n",
+      "lib.ts": `export class Box {}\nexport const make = { of: <T>(v: T) => ({ v }) };\n`,
+      "dep.ts": `import { Box, make } from "./lib";
+export type Made = typeof made;
+function same(a: Made) { return a; }
+same(1);
+export const box: typeof Box = null!;
+class Svc { constructor(public other = made) {} size = 1; }
+export const made = make.of(new Svc().size);
+`,
+      "user.ts":
+        `import { box, made } from "./dep";\nexport const b = box;\nexport const n: never = made;\n` + filler("u", 60),
+    });
+    const threads = [1, 2, 2, 2, 3, 3, 3, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(
+        [
+          "dep.ts(2,13): error TS2456: Type alias 'Made' circularly references itself.",
+          "dep.ts(3,15): error TS2502: 'a' is referenced directly or indirectly in its own type annotation.",
+          "dep.ts(7,14): error TS7022: 'made' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "user.ts(3,14): error TS2322: Type 'any' is not assignable to type 'never'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
   // Nothing in `base.js` needs the type of `args`. `x.js` does, and since the two import each other it comes before
   // `base.js` in program order, so tsc reports the error. `u.js` needs it too, but it comes later, where tsc ignores
   // the error. `u.js` is larger, so it's checked first, and `x.js` must not reuse its result.

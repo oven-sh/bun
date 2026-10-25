@@ -335,7 +335,6 @@ impl Lookup {
             name
         };
 
-        // Copied: script that runs before a frame is printed can free the map.
         Some(bun_core::String::clone_utf8(display))
     }
 

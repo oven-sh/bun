@@ -11,7 +11,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
@@ -489,13 +489,13 @@ impl Debugger {
         } = init;
 
         if !from_env.is_empty() {
-            let url = BunString::borrow_utf8(from_env);
+            let url = StringView::borrow_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
             Bun__startJSDebuggerThread(global, ctx_id, &url, 1, is_connect, false);
         }
 
         if let Some(path_or_port) = path_or_port {
-            let url = BunString::borrow_utf8(path_or_port);
+            let url = StringView::borrow_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
             Bun__startJSDebuggerThread(global, ctx_id, &url, 0, is_connect, is_node_inspector);
         }

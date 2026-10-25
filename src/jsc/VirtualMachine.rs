@@ -3680,13 +3680,13 @@ impl VirtualMachine {
             }
             p
         } else if !self.transpiler.options.disable_transpilation {
-            let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
+            let name = bun_core::StringView::borrow_utf8(MAIN_FILE_NAME);
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
                 .map(NonNull::as_ptr)
                 .ok_or(crate::CrateError::JSError)?
         } else {
             let main = (self.main()).expect("a file entry point has a path");
-            let main_str = bun_core::String::from_bytes(main);
+            let main_str = bun_core::StringView::from_bytes(main);
             jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
                 .map(NonNull::as_ptr)
                 .ok_or(crate::CrateError::JSError)?
@@ -5084,12 +5084,13 @@ impl VirtualMachine {
                 // external-string finalizer (`free_ref_string`) is called by
                 // WTF on the JS thread when the impl refcount hits zero, with
                 // `ref_` as ctx.
-                let s = bun_core::String::create_external::<*mut RefString>(
-                    unsafe { bun_core::ffi::slice(ptr, len) },
-                    true,
-                    ref_.as_ptr(),
-                    free_ref_string,
-                );
+                let s = unsafe {
+                    bun_core::String::create_external::<*mut RefString>(
+                        bun_core::ffi::slice(ptr, len),
+                        ref_.as_ptr(),
+                        free_ref_string,
+                    )
+                };
                 if s.tag() == bun_core::Tag::Dead {
                     // `create_external` already freed `ref_`.
                     return Err(StringTooLong);
@@ -5531,7 +5532,7 @@ impl VirtualMachine {
                     if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
                         specifier.clone()
                     } else {
-                        bun_core::String::from_bytes(hardcoded.path.as_bytes())
+                        bun_core::String::from_static_bytes(hardcoded.path.as_bytes())
                     },
                 ));
             }
@@ -5549,7 +5550,7 @@ impl VirtualMachine {
                 if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
                     specifier.clone()
                 } else {
-                    bun_core::String::from_bytes(hardcoded.path.as_bytes())
+                    bun_core::String::from_static_bytes(hardcoded.path.as_bytes())
                 },
             ));
         }
@@ -5832,7 +5833,7 @@ impl VirtualMachine {
         // Note: reshaped for borrowck.
         let global = self.global;
         let main = (self.main()).expect("set to the test file above");
-        let main_str = bun_core::String::from_bytes(main);
+        let main_str = bun_core::StringView::from_bytes(main);
         let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
             global, &main_str,
         ) {
@@ -6168,7 +6169,7 @@ impl VirtualMachine {
         &mut self,
         entry_path: &[u8],
     ) -> Option<*mut JSInternalPromise> {
-        let path_str = bun_core::String::from_bytes(entry_path);
+        let path_str = bun_core::StringView::from_bytes(entry_path);
         let promise =
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, &path_str)?.as_ptr();
         let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
@@ -6593,7 +6594,6 @@ impl VirtualMachine {
         error_instance: JSValue,
         exception_list: Option<&mut ExceptionList>,
         must_reset_parser_arena_later: &mut bool,
-        source_code_slice: &mut Option<bun_core::Utf8Bytes<'static>>,
         allow_source_code_preview: bool,
     ) {
         // `global()` returns `&'static`, so the borrow detaches from `&self`
@@ -6618,7 +6618,6 @@ impl VirtualMachine {
             exception: *mut ZigException,
             exception_list: Option<&'a mut ExceptionList>,
             enable_source_code_preview: &'a Cell<bool>,
-            source_code_slice: *const Option<bun_core::Utf8Bytes<'static>>,
         }
         impl Drop for Tail<'_> {
             fn drop(&mut self) {
@@ -6631,13 +6630,6 @@ impl VirtualMachine {
                 #[cfg(debug_assertions)]
                 {
                     let preview = self.enable_source_code_preview.get();
-                    // SAFETY: stack-local raw ptr; live for guard scope.
-                    let slice = unsafe { &*self.source_code_slice };
-                    if !preview && slice.is_some() {
-                        bun_core::Output::panic(format_args!(
-                            "Do not collect source code when we don't need to"
-                        ));
-                    }
                     // SAFETY: `source_lines_numbers[0]` is always valid —
                     // `Holder` backs it with a `[i32; SOURCE_LINES_COUNT]`.
                     if !preview && unsafe { *exception.stack.source_lines_numbers } != -1 {
@@ -6648,7 +6640,7 @@ impl VirtualMachine {
                 }
                 #[cfg(not(debug_assertions))]
                 {
-                    let _ = (self.enable_source_code_preview, self.source_code_slice);
+                    let _ = self.enable_source_code_preview;
                 }
                 if let Some(list) = self.exception_list.take() {
                     let origin = this.is_from_devserver.then_some(&this.origin);
@@ -6661,15 +6653,10 @@ impl VirtualMachine {
             exception,
             exception_list,
             enable_source_code_preview: &enable_source_code_preview,
-            source_code_slice,
         };
         // SAFETY: re-borrow through the guard's raw ptrs; `_tail` does not
         // touch them until Drop, so no aliasing during the body.
         let exception: &mut ZigException = unsafe { &mut *_tail.exception };
-        // SAFETY: as above — re-borrow through the guard's raw ptr; `_tail`
-        // does not touch `source_code_slice` until Drop.
-        let source_code_slice: &mut Option<bun_core::Utf8Bytes<'static>> =
-            unsafe { &mut *_tail.source_code_slice.cast_mut() };
 
         fn is_noisy_builtin(name: &bun_core::String) -> bool {
             name.eq_ascii(b"asyncModuleEvaluation")
@@ -6875,18 +6862,11 @@ impl VirtualMachine {
                 let take = lines.len().min(N);
                 let mut current_line_number = last_line;
                 for (i, line) in lines[..take].iter().enumerate() {
-                    // To minimize duplicate allocations, we use the same slice
-                    // as above — it should virtually always be UTF-8 and thus
-                    // not cloned.
-                    source_lines[i] = bun_core::String::from_bytes(line);
+                    source_lines[i] = bun_core::String::clone_utf8(line);
                     source_line_numbers[i] = current_line_number;
                     current_line_number -= 1;
                 }
                 exception.stack.source_lines_len = take as u8;
-            }
-
-            if !code.slice().is_empty() {
-                *source_code_slice = Some(code);
             }
         } else if enable_source_code_preview.get() {
             exception.collect_source_lines(error_instance, global);
@@ -7017,7 +6997,6 @@ impl VirtualMachine {
         // `need_to_clear_parser_arena_on_deinit` disjointly. Route through a
         // raw pointer (the holder is heap-pinned for the call).
         let exception: *mut ZigException = exception_holder.zig_exception();
-        let mut source_code_slice: Option<bun_core::Utf8Bytes<'static>> = None;
 
         self.remap_zig_exception(
             // SAFETY: `exception` points into stack-local `exception_holder`.
@@ -7025,7 +7004,6 @@ impl VirtualMachine {
             error_instance,
             exception_list,
             &mut exception_holder.need_to_clear_parser_arena_on_deinit,
-            &mut source_code_slice,
             formatter.error_display_level != crate::console_object::ErrorDisplayLevel::Warn,
         );
         error_instance.ensure_still_alive();
@@ -7047,7 +7025,6 @@ impl VirtualMachine {
             formatter.visited_remove(error_instance);
         }
 
-        drop(source_code_slice);
         exception_holder.deinit(self);
         result
     }
@@ -7942,9 +7919,9 @@ fn run_on_resolve(
         None => &importer[..],
     };
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
-        &bun_core::String::from_bytes(if namespace == b"file" { b"" } else { namespace }),
-        &bun_core::String::borrow_utf8(path),
-        &bun_core::String::borrow_utf8(importer),
+        &bun_core::StringView::from_bytes(if namespace == b"file" { b"" } else { namespace }),
+        &bun_core::StringView::borrow_utf8(path),
+        &bun_core::StringView::borrow_utf8(importer),
     )?
     else {
         return Ok(None);

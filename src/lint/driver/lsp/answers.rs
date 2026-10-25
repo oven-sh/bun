@@ -7,7 +7,8 @@ use crate::format::oxlint::Offsets;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::fix::Fix;
-use bun_lint::linter::{LintMessage, RuleId};
+use bun_lint::js_plugin::Route;
+use bun_lint::linter::{LintMessage, ResolvedConfig, RuleId};
 use bun_lint::options::Json;
 use bun_lint::rule::{Meta, Plugin};
 use bun_lint::source::LineBreaks;
@@ -15,6 +16,67 @@ use bun_lint::source::LineBreaks;
 pub(crate) const QUICK_FIX: &[u8] = b"quickfix";
 pub(crate) const FIX_ALL: &[u8] = b"source.fixAll.bun";
 const FIX_ALL_TITLE: &[u8] = b"Fix all auto-fixable problems";
+
+/// How a comment that turns a rule off is written in a document's language.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) struct Directives {
+    /// `eslint` or `oxlint`: the tool whose configuration it is.
+    pub(crate) tool: &'static [u8],
+    pub(crate) comments: Comments,
+}
+
+/// The comments of a language that the linter reads directives from.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Comments {
+    /// `// ..` and `/* .. */`: JavaScript, JSONC and JSON5.
+    Slashes,
+    /// `<!-- .. -->`: Markdown.
+    Html,
+}
+
+impl Directives {
+    /// The form for the file at `path` with `config`. `None`: its language has no comments, as JSON, or Bun does not
+    /// lint the file itself.
+    pub(crate) fn of(config: &ResolvedConfig, path: &[u8]) -> Option<Directives> {
+        let comments = match config.route(path) {
+            Route::Native => Comments::Slashes,
+            Route::Eslint if config.is_javascript() => Comments::Slashes,
+            Route::Language => {
+                let name = config.language_name.as_deref().unwrap_or_default();
+                let name = strings::split_once_char(name, b'/').map_or(name, |it| it.1);
+                match (config.dialect.as_ref()?.language.plugin(), name) {
+                    (Plugin::Json, b"jsonc" | b"json5") => Comments::Slashes,
+                    (Plugin::Markdown, _) => Comments::Html,
+                    _ => return None,
+                }
+            }
+            Route::Eslint | Route::Processor | Route::Unsupported => return None,
+        };
+        let tool: &[u8] = match config.language.is_oxlint {
+            true => b"oxlint",
+            false => b"eslint",
+        };
+        Some(Directives { tool, comments })
+    }
+
+    /// `// eslint-disable-next-line ` or `<!-- eslint-disable-next-line `, and what closes the comment.
+    fn for_line(self) -> (Vec<u8>, &'static [u8]) {
+        let (open, close): (&[u8], &[u8]) = match self.comments {
+            Comments::Slashes => (b"// ", b""),
+            Comments::Html => (b"<!-- ", b" -->"),
+        };
+        ([open, self.tool, b"-disable-next-line "].concat(), close)
+    }
+
+    /// `/* eslint-disable ` or `<!-- eslint-disable `, and what closes the comment.
+    fn for_file(self) -> (Vec<u8>, &'static [u8]) {
+        let (open, close): (&[u8], &[u8]) = match self.comments {
+            Comments::Slashes => (b"/* ", b" */"),
+            Comments::Html => (b"<!-- ", b" -->"),
+        };
+        ([open, self.tool, b"-disable "].concat(), close)
+    }
+}
 
 /// Whether a client that asks for the kinds `only` wants `kind`: `source` is for `source.fixAll.bun` too. `None`: it wants what
 /// goes with a place in the text.
@@ -192,26 +254,31 @@ impl<'t> Places<'t> {
     }
 
     /// A comment above the line of `message` that turns `rule` off for it. One that is there already gets one more rule.
-    fn disable_for_line(&self, message: &LintMessage, rule: &[u8], tool: &[u8]) -> Json {
+    fn disable_for_line(&self, message: &LintMessage, rule: &[u8], directives: Directives) -> Json {
         let line = self.range_of(message).0.line;
         let (start, end) = self.lines.line(line);
-        let comment = [b"// ", tool, b"-disable-next-line "].concat();
+        let (comment, close) = directives.for_line();
         if let Some(above) = line.checked_sub(1) {
             let (_, end) = self.lines.line(above);
             let written = self.text[self.lines.line(above).0..end].trim_ascii();
-            if written.starts_with(&comment) && !strings::contains(written, b" -- ") {
-                let end = end - (self.text[..end].len() - self.text[..end].trim_ascii_end().len());
+            if written.starts_with(&comment)
+                && written.ends_with(close)
+                && !strings::contains(written, b" -- ")
+            {
+                let end = end
+                    - (self.text[..end].len() - self.text[..end].trim_ascii_end().len())
+                    - close.len();
                 return self.edit((end, end), &[b", ", rule].concat());
             }
         }
         let content = &self.text[start..end];
         let indentation = &content[..content.len() - content.trim_ascii_start().len()];
-        let new = [indentation, &comment, rule, self.lines.line_break()].concat();
+        let new = [indentation, &comment, rule, close, self.lines.line_break()].concat();
         self.edit((start, start), &new)
     }
 
     /// A comment at the top that turns `rule` off.
-    fn disable_for_file(&self, rule: &[u8], tool: &[u8]) -> Json {
+    fn disable_for_file(&self, rule: &[u8], directives: Directives) -> Json {
         let after_mark = self.text.len() - strings::without_utf8_bom(self.text).len();
         let at = match self.text[after_mark..].starts_with(b"#!") {
             true => self.lines.line(1).0,
@@ -224,24 +291,25 @@ impl<'t> Places<'t> {
                 true => line_break,
                 false => b"",
             };
-        let new = [before, b"/* ", tool, b"-disable ", rule, b" */", line_break].concat();
+        let (comment, close) = directives.for_file();
+        let new = [before, &comment, rule, close, line_break].concat();
         self.edit((at, at), &new)
     }
 
-    /// The quick fixes for those of `messages` that touch `range`. `is_oxlint`: the configuration is one of oxlint.
+    /// The quick fixes for those of `messages` that touch `range`. `directives`: how a comment turns a rule off in
+    /// the document's language, if one can.
     pub(crate) fn quick_fixes(
         &self,
         messages: &[LintMessage],
         range: Range,
-        is_oxlint: bool,
+        directives: Option<Directives>,
     ) -> Vec<Json> {
-        let tool: &[u8] = if is_oxlint { b"oxlint" } else { b"eslint" };
         let touches = |it: &&LintMessage| {
             let (start, end) = self.range_of(it);
             start <= range.1 && range.0 <= end
         };
         // In a component a script's comment is not one everywhere.
-        let takes_comments = Framework::of(self.path).is_none();
+        let directives = directives.filter(|_| Framework::of(self.path).is_none());
         let mut actions = Vec::new();
         // The rules that are turned off for a line, and for the file.
         let (mut for_line, mut for_file) = (Vec::new(), Vec::new());
@@ -263,21 +331,24 @@ impl<'t> Places<'t> {
                 let edits = vec![self.edit_of(&suggestion.fix)];
                 actions.push(self.action(&suggestion.message, QUICK_FIX, Some(message), edits));
             }
-            let Some(rule) = rule.filter(|_| takes_comments) else {
+            let Some((rule, directives)) = rule.zip(directives) else {
                 continue;
             };
             let line = (self.range_of(message).0.line, rule);
             if !for_line.contains(&line) {
                 let title = [b"Disable ", &line.1[..], b" for this line"].concat();
-                let edits = vec![self.disable_for_line(message, &line.1, tool)];
+                let edits = vec![self.disable_for_line(message, &line.1, directives)];
                 for_line.push(line);
                 actions.push(self.action(&title, QUICK_FIX, Some(message), edits));
             }
         }
+        let Some(directives) = directives else {
+            return actions;
+        };
         for (_, rule) in for_line {
             if !for_file.contains(&rule) {
                 let title = [b"Disable ", &rule[..], b" for this file"].concat();
-                let edits = vec![self.disable_for_file(&rule, tool)];
+                let edits = vec![self.disable_for_file(&rule, directives)];
                 actions.push(self.action(&title, QUICK_FIX, None, edits));
                 for_file.push(rule);
             }

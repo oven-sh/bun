@@ -266,9 +266,17 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
           rules: Object.fromEntries(${JSON.stringify(rules)}.map(name => [name, rule])),
         };`;
       using dir = tempDir("bun-lint-lsp", {
-        "node_modules/@eslint/markdown/package.json": JSON.stringify({ name: "@eslint/markdown", version: "8.0.3" }),
+        "node_modules/@eslint/markdown/package.json": JSON.stringify({
+          name: "@eslint/markdown",
+          version: "8.0.3",
+          main: "index.js",
+        }),
         "node_modules/@eslint/markdown/index.js": standIn("@eslint/markdown", ["commonmark", "gfm"], ["no-html"]),
-        "node_modules/@eslint/json/package.json": JSON.stringify({ name: "@eslint/json", version: "2.1.1" }),
+        "node_modules/@eslint/json/package.json": JSON.stringify({
+          name: "@eslint/json",
+          version: "2.1.1",
+          main: "index.js",
+        }),
         "node_modules/@eslint/json/index.js": standIn("@eslint/json", ["json", "jsonc"], ["no-duplicate-keys"]),
         "eslint.config.mjs": `
           import markdown from "@eslint/markdown";

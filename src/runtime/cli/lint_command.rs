@@ -137,10 +137,8 @@ fn read_bunfig_text(
     Err(cannot_use(&shown, &[&message]))
 }
 
-/// As [`read_bunfigs`], for a thread that serves `directory` as its working directory: the editor's server. It reads
-/// the files itself, so it touches nothing of the process and doesn't end it. A relative `--config` path is relative
-/// to `directory`, not to the process's working directory, and `--cwd` doesn't apply. A file that can't be read is
-/// skipped, unless `--config` names it. `Err` says why a file that's needed can't be used.
+/// As [`read_bunfigs`] with `directory` as the working directory, for the editor's server: it touches nothing of
+/// the process and doesn't end it. `Err` says why a file that's needed, or that `--config` names, can't be used.
 pub(crate) fn read_bunfigs_in(
     directory: &[u8],
     command: &[u8],
@@ -558,8 +556,7 @@ pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
             },
         ),
     };
-    // The messages go to a private copy of fd 1, and fd 1 becomes stderr: what else prints in this process, like
-    // `console.log` in a plugin, does not get between them.
+    // Only the messages go to the client: fd 1 becomes stderr for the rest, like a plugin's `console.log`.
     #[cfg(unix)]
     let to_client = bun_sys::dup(bun_core::Fd::stdout())
         .and_then(|own| bun_sys::dup2(bun_core::Fd::stderr(), bun_core::Fd::stdout()).map(|_| own))
@@ -574,8 +571,7 @@ pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
             &Process {
                 read: &|buffer| from_client.read(buffer).unwrap_or(0),
                 write: &|message| _ = to_client.write_all(message),
-                // A folder's plugins run in VMs of its own. On Windows fd 1 still carries what a plugin prints, so
-                // no plugin runs there.
+                // On Windows fd 1 still carries what a plugin prints, so no plugin runs there.
                 engines: &|| {
                     (!cfg!(windows))
                         .then(|| Box::new(super::lint_js::Engines::default()) as Box<dyn Realms>)

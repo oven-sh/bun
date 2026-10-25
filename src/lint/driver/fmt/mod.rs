@@ -2473,8 +2473,7 @@ fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules
 /// `bun fmt --stdin-filepath`. For a caller that has the text, such as the language server.
 pub fn format_text(options: &Options, environment: &Environment, text: Vec<u8>) -> Formatted {
     let (mut options, loaded) = loaded(options, environment);
-    // The editor wants the text, never a verdict: with these on, an already formatted document would come back
-    // empty, or as the name of standard input.
+    // A verdict (`--check`, `-l`, `--debug-check`) is no text.
     options.check = false;
     options.list_different = false;
     options.debug_check = false;

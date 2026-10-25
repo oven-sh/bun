@@ -80,6 +80,65 @@ devTest('uses "development" condition', {
     await dev.fetch("/").equals("Environment: development");
   },
 });
+// A macro runs in Bun while the dev server bundles the file that imports it. So its import resolves for Bun, with the
+// "macro" condition, in the graph of the server and in the graph of the client. "development" applies in both.
+{
+  const which = (file: string) => `export function which() {\n  return ${JSON.stringify(file)};\n}\n`;
+  const macroPackages = {
+    "node_modules/macro-key/package.json": JSON.stringify({
+      name: "macro-key",
+      exports: { macro: "./macro.js", default: "./index.js" },
+    }),
+    "node_modules/macro-key/macro.js": which("macro.js"),
+    "node_modules/macro-key/index.js": which("index.js"),
+    "node_modules/by-environment/package.json": JSON.stringify({
+      name: "by-environment",
+      exports: { browser: "./browser.js", development: "./development.js", default: "./production.js" },
+    }),
+    "node_modules/by-environment/browser.js": which("browser.js"),
+    "node_modules/by-environment/development.js": which("development.js"),
+    "node_modules/by-environment/production.js": which("production.js"),
+  };
+  const macroImports = `
+    import { which as macroKey } from 'macro-key' with { type: "macro" };
+    import { which as byEnvironment } from 'by-environment' with { type: "macro" };
+  `;
+  devTest("a macro import in a route resolves for Bun", {
+    framework: minimalFramework,
+    files: {
+      ...macroPackages,
+      "routes/index.ts": `
+        ${macroImports}
+        export default function (req, meta) {
+          return new Response('first bundle: ' + macroKey() + ' ' + byEnvironment());
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("first bundle: macro.js development.js");
+      await dev.patch("routes/index.ts", { find: "first bundle", replace: "second bundle" });
+      await dev.fetch("/").equals("second bundle: macro.js development.js");
+    },
+  });
+  devTest("a macro import in a page resolves for Bun", {
+    files: {
+      ...macroPackages,
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": `
+        ${macroImports}
+        console.log('first bundle: ' + macroKey() + ' ' + byEnvironment());
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("first bundle: macro.js development.js");
+      await c.expectReload(async () => {
+        await dev.patch("index.ts", { find: "first bundle", replace: "second bundle" });
+      });
+      await c.expectMessage("second bundle: macro.js development.js");
+    },
+  });
+}
 // A route is server code: it takes the "main" file of a package that also has a string "browser".
 // That does not depend on which reads the package first, the server graph or a preload.
 for (const [reader, bunfig] of [

@@ -97,7 +97,7 @@ const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
     // (b"/blob:", b""),
 ];
 
-fn default_wildcard_patterns() -> Vec<WildcardPattern> {
+pub(crate) fn default_wildcard_patterns() -> Vec<WildcardPattern> {
     DEFAULT_WILDCARD_PATTERNS
         .iter()
         .map(|(p, s)| WildcardPattern {

@@ -101,7 +101,7 @@ impl<'a> Transpiler<'a> {
         // The lazily-created `Box<bun_js_parser_jsc::Macro::MacroContext>` is
         // process-lifetime by default, but
         // worker VMs run `destroy()` on thread exit and would otherwise strand
-        // one box per worker. The box only owns a `MacroMap` and an optional
+        // one box per worker. The box only owns a `MacroMap`, a `Resolver` and an optional
         // `bun_alloc::Arena` — no JSC handles — so freeing it from either
         // worker section-5 teardown or main-thread `global_exit` is safe.
         if let Some(ctx) = self.macro_context.take() {
@@ -1071,7 +1071,104 @@ fn resolver_bundle_options_subset(
     }
 }
 
+/// The options of a resolver for the imports of macros, from the options of the resolver of the importing build.
+#[cold]
+#[inline(never)]
+fn macro_resolver_options(
+    from: &resolver::options::BundleOptions,
+    transform: &api::TransformOptions,
+) -> crate::Result<resolver::options::BundleOptions> {
+    use crate::options_impl::{Target, TargetExt};
+    use resolver::options as ropts;
+
+    // As in `from_api`: the defaults of the target, `node-addons`, then the user's `--conditions`.
+    let user_conditions: Vec<&[u8]> = transform.conditions.iter().map(|s| &**s).collect();
+    let mut conditions = options::ESMConditions::init(
+        Target::default_conditions_map()[Target::BunMacro],
+        transform.allow_addons.unwrap_or(true),
+        &user_conditions,
+    )?;
+    // "development" says how the build runs, not what it is for: a macro import has it when the importing resolver has it.
+    if from.conditions.import.contains(b"development") {
+        conditions.append_slice(&[b"development"])?;
+    }
+    // As in `from_api`: `--main-fields` replaces the list of the target.
+    let main_fields = if transform.main_fields.is_empty() {
+        ropts::owned_string_list(Target::default_main_fields_map()[Target::BunMacro])
+    } else {
+        transform.main_fields.iter().cloned().collect()
+    };
+
+    Ok(ropts::BundleOptions {
+        // A macro runs in Bun: what the target decides is as in Bun's runtime, with "macro", without the build's externals.
+        target: Target::BunMacro,
+        conditions: ropts::Conditions {
+            import: conditions.import,
+            require: conditions.require,
+            style: conditions.style,
+        },
+        main_fields,
+        main_fields_is_default: transform.main_fields.is_empty(),
+        external: ropts::ExternalModules {
+            patterns: options::default_wildcard_patterns(),
+            ..Default::default()
+        },
+        packages: ropts::Packages::Bundle,
+        mark_builtins_as_external: false,
+        polyfill_node_globals: false,
+        framework: None,
+
+        // The rest is not about the target. It stays as the importing resolver has it.
+        jsx: from.jsx.clone(),
+        extra_cjs_extensions: from.extra_cjs_extensions.clone(),
+        global_cache: from.global_cache,
+        install: from.install,
+        load_package_json: from.load_package_json,
+        load_tsconfig_json: from.load_tsconfig_json,
+        main_field_extension_order: from.main_field_extension_order.clone(),
+        install_preference: from.install_preference,
+        preserve_symlinks: from.preserve_symlinks,
+        rewrite_jest_for_tests: from.rewrite_jest_for_tests,
+        tsconfig_override: from.tsconfig_override.clone(),
+        tsconfig_override_json: from.tsconfig_override_json.clone(),
+        production: from.production,
+        force_node_env: from.force_node_env,
+        output_dir: from.output_dir.clone(),
+        root_dir: from.root_dir.clone(),
+        public_path: from.public_path.clone(),
+        compile: from.compile,
+        supports_multiple_outputs: from.supports_multiple_outputs,
+        tree_shaking: from.tree_shaking,
+        allow_runtime: from.allow_runtime,
+        // A macro import is an `import` statement: it reads the `esm` extension lists, which no target changes.
+        extension_order: ropts::ExtensionOrder {
+            default: ropts::ExtensionOrderGroup {
+                default: from.extension_order.default.default.clone(),
+                esm: from.extension_order.default.esm.clone(),
+            },
+            node_modules: ropts::ExtensionOrderGroup {
+                default: from.extension_order.node_modules.default.clone(),
+                esm: from.extension_order.node_modules.esm.clone(),
+            },
+            css: from.extension_order.css.clone(),
+        },
+    })
+}
+
 impl<'a> Transpiler<'a> {
+    /// A resolver for the imports of macros, made from the resolver of the build that imports them.
+    pub fn macro_resolver(
+        importer: &Resolver<'a>,
+        transform: &api::TransformOptions,
+    ) -> crate::Result<Box<Resolver<'a>>> {
+        let opts = macro_resolver_options(&importer.opts, transform)?;
+        // SAFETY: the new resolver has the lifetime of `importer`, so what `importer` borrows outlives it.
+        let mut resolver = Box::new(unsafe { Resolver::for_target(importer, importer.log, opts) });
+        // Bun's runtime takes "main" before "module".
+        resolver.prefer_module_field = false;
+        Ok(resolver)
+    }
+
     /// Called by [`init_runtime_state`](../runtime/jsc_hooks.rs)
     /// to write `vm.transpiler`. Builds on:
     ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`

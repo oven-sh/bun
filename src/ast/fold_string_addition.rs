@@ -1,83 +1,19 @@
 use crate::expr::{Data, PrimitiveType, data};
-use crate::{E, Expr, StoreRef, e};
+use crate::{E, Expr, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
-#[inline]
-fn store_append_string(s: E::EString) -> StoreRef<E::EString> {
-    data::Store::append(s)
-}
-
-/// Deep-copy the `next` chain into fresh Store nodes so mutating the result
-/// can't alias an inlined-enum's string.
-fn clone_rope_nodes(s: &E::EString) -> E::EString {
-    let mut root = s.shallow_clone();
-    if let Some(first) = root.next {
-        // Clone the first link, then walk the freshly-cloned chain via
-        // `StoreRef` (safe `Deref`/`DerefMut`) instead of a raw `*mut`
-        // cursor. Each cloned node's `next` still points at the original
-        // chain (shallow clone), so re-clone link-by-link.
-        let mut tail: StoreRef<E::EString> = store_append_string(first.get().shallow_clone());
-        root.next = Some(tail);
-        while let Some(next) = tail.next {
-            let cloned = store_append_string(next.get().shallow_clone());
-            tail.next = Some(cloned);
-            tail = cloned;
-        }
-        root.end = Some(tail);
-    }
-    root
-}
-
-/// Concatenate two `E::String`s, mutating BOTH inputs
-/// unless `has_inlined_enum_poison` is set.
-///
-/// Currently inlined enum poison refers to where mutation would cause output
-/// bugs due to inlined enum values sharing `E::String`s. If a new use case
-/// besides inlined enums comes up to set this to true, please rename the
-/// variable and document it.
-fn join_strings(
-    left: &E::EString,
-    right: &E::EString,
-    has_inlined_enum_poison: bool,
-    bump: &Arena,
-) -> Option<E::EString> {
+/// Links both ropes into the result (see `EString::push`); sound because shared strings are never ropes.
+/// `None` when a UTF-16 operand makes the join a copy over the cap (see `EString::can_join`).
+fn join_strings(left: &E::EString, right: &E::EString, bump: &Arena) -> Option<E::EString> {
     if !E::EString::can_join(&[left, right]) {
         return None;
     }
 
-    let mut new = if has_inlined_enum_poison {
-        // Inlined enums can be shared by multiple call sites. In
-        // this case, we need to ensure that the ENTIRE rope is
-        // cloned. In other situations, the lhs doesn't have any
-        // other owner, so it is fine to mutate `lhs.data.end.next`.
-        //
-        // Consider the following case:
-        //   const enum A {
-        //     B = "a" + "b",
-        //     D = B + "d",
-        //   };
-        //   console.log(A.B, A.D);
-        clone_rope_nodes(left)
-    } else {
-        left.shallow_clone()
-    };
+    let mut new = left.shallow_clone();
+    let mut rhs = data::Store::append(right.shallow_clone());
 
-    // Similarly, the right side has to be cloned for an enum rope too.
-    //
-    // Consider the following case:
-    //   const enum A {
-    //     B = "1" + "2",
-    //     C = ("3" + B) + "4",
-    //   };
-    //   console.log(A.B, A.C);
-    let mut rhs_clone = store_append_string(if has_inlined_enum_poison {
-        clone_rope_nodes(right)
-    } else {
-        right.shallow_clone()
-    });
-
-    new.append(&mut rhs_clone, bump);
-    new.prefer_template = new.prefer_template || rhs_clone.get().prefer_template;
+    new.append(&mut *rhs, bump);
+    new.prefer_template = new.prefer_template || right.prefer_template;
 
     Some(new)
 }
@@ -149,24 +85,14 @@ pub fn fold_string_addition(
             match rhs.data {
                 // "bar" + "baz" => "barbaz"
                 Data::EString(right) => {
-                    let has_inlined_enum_poison = matches!(l.data, Data::EInlinedEnum(_))
-                        || matches!(r.data, Data::EInlinedEnum(_));
-
-                    if let Some(joined) =
-                        join_strings(left.get(), right.get(), has_inlined_enum_poison, bump)
-                    {
+                    if let Some(joined) = join_strings(left.get(), right.get(), bump) {
                         return Some(Expr::init(joined, lhs.loc));
                     }
                 }
                 // "bar" + `baz${bar}` => `barbaz${bar}`
                 Data::ETemplate(right) => {
                     if let (None, e::TemplateContents::Cooked(head)) = (&right.tag, &right.head)
-                        && let Some(joined) = join_strings(
-                            left.get(),
-                            head,
-                            matches!(l.data, Data::EInlinedEnum(_)),
-                            bump,
-                        )
+                        && let Some(joined) = join_strings(left.get(), head, bump)
                     {
                         return Some(Expr::init(
                             E::Template {
@@ -205,12 +131,7 @@ pub fn fold_string_addition(
                 match rhs.data {
                     // `foo${bar}` + "baz" => `foo${bar}baz`
                     Data::EString(right) => {
-                        if let Some(joined) = join_strings(
-                            last,
-                            right.get(),
-                            matches!(r.data, Data::EInlinedEnum(_)),
-                            bump,
-                        ) {
+                        if let Some(joined) = join_strings(last, right.get(), bump) {
                             *last = joined;
                             return Some(lhs);
                         }
@@ -219,12 +140,7 @@ pub fn fold_string_addition(
                     Data::ETemplate(right) => {
                         if let (None, e::TemplateContents::Cooked(right_head)) =
                             (&right.tag, &right.head)
-                            && let Some(joined) = join_strings(
-                                last,
-                                right_head,
-                                matches!(r.data, Data::EInlinedEnum(_)),
-                                bump,
-                            )
+                            && let Some(joined) = join_strings(last, right_head, bump)
                         {
                             *last = joined;
                             if !right.parts().is_empty() {

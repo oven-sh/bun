@@ -6,6 +6,7 @@
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
 pub mod error;
+pub mod function_identities;
 pub use error::Error;
 pub use error::Result as CrateResult;
 
@@ -75,8 +76,8 @@ pub mod Macro {
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
         /// Opaque pointer to the higher-tier macro-runner state
-        /// (resolver/env/macros/remap/bump). Allocated by `init` and leaked
-        /// (process lifetime); `bun_js_parser` never dereferences it.
+        /// (resolver/env/macros/remap/bump). Allocated by `init`, freed by
+        /// `deinit`; `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
     }
     impl Default for MacroContext {
@@ -179,10 +180,9 @@ pub mod Macro {
                 )
             }
         }
-        /// Free the boxed higher-tier state behind `data`. Only call when the
-        /// owning `Transpiler` is a short-lived bytewise clone (e.g. the
-        /// off-thread `RuntimeTranspilerStore` worker) — the long-lived
-        /// `vm.transpiler` instance leaks it intentionally (process-lifetime).
+        /// Free the boxed higher-tier state behind `data`. Its arena backs the
+        /// strings of every `Expr` its macros returned, so only call once the
+        /// ASTs that hold them are printed.
         #[inline]
         pub fn deinit(self) {
             // SAFETY: `self.data` is either null (callee no-ops) or the exact

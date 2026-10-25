@@ -9,7 +9,8 @@ afterAll(endChildren);
 
 const command = [bunExe(), "fmt", "--no-script", "--lsp"];
 
-// A Prettier plugin runs in a VM, which takes seconds to start in a debug build.
+// Each test spawns a debug build and waits for initialize, a format and exit, which is seconds under ASAN; a Prettier
+// plugin runs in a VM, which takes seconds more to start.
 const timeout = isDebug || isASAN ? 120_000 : 10_000;
 
 type Message = {
@@ -176,133 +177,149 @@ function applyEdits(text: string, edits: TextEdit[]) {
 }
 
 describe.concurrent("bun fmt --lsp", () => {
-  test("answers initialize with the capabilities of a formatter, and not those of a linter", async () => {
-    using dir = tempDir("bun-fmt-lsp", { "a.js": "a;\n" });
-    await using client = new Client(String(dir));
-    const { result, error } = await initialize(client, [String(dir)], {
-      capabilities: { general: { positionEncodings: ["utf-8", "utf-16"] } },
-    });
-    expect(error).toBeUndefined();
-    expect(result.serverInfo.name).toBe("bun");
-    expect(result.serverInfo.version).toMatch(/^\d+\.\d+\.\d+/);
-    const { capabilities } = result;
-    expect(capabilities.positionEncoding).toBe("utf-8");
-    expect(capabilities.textDocumentSync).toEqual({ openClose: true, change: 2, save: true });
-    expect(capabilities.documentFormattingProvider).toBe(true);
-    expect(capabilities.documentRangeFormattingProvider).toBe(true);
-    expect(capabilities.workspace.workspaceFolders).toEqual({ supported: true, changeNotifications: true });
-    expect(capabilities.codeActionProvider).toBe(false);
-    client.notify("initialized");
-    open(client, join(String(dir), "a.js"), "debugger;\n");
-    expect((await format(client, join(String(dir), "a.js"))).result).toEqual([]);
-    expect((await client.request("shutdown")).result).toBeNull();
-    client.notify("exit");
-    const { exitCode, garbage, rest } = await client.end();
-    // Nothing is linted.
-    const diagnostics = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
-    expect(diagnostics.filter(it => it.params.diagnostics.length > 0)).toEqual([]);
-    expect([garbage, rest]).toEqual([[], ""]);
-    expect(exitCode).toBe(0);
-  });
+  test(
+    "answers initialize with the capabilities of a formatter, and not those of a linter",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", { "a.js": "a;\n" });
+      await using client = new Client(String(dir));
+      const { result, error } = await initialize(client, [String(dir)], {
+        capabilities: { general: { positionEncodings: ["utf-8", "utf-16"] } },
+      });
+      expect(error).toBeUndefined();
+      expect(result.serverInfo.name).toBe("bun");
+      expect(result.serverInfo.version).toMatch(/^\d+\.\d+\.\d+/);
+      const { capabilities } = result;
+      expect(capabilities.positionEncoding).toBe("utf-8");
+      expect(capabilities.textDocumentSync).toEqual({ openClose: true, change: 2, save: true });
+      expect(capabilities.documentFormattingProvider).toBe(true);
+      expect(capabilities.documentRangeFormattingProvider).toBe(true);
+      expect(capabilities.workspace.workspaceFolders).toEqual({ supported: true, changeNotifications: true });
+      expect(capabilities.codeActionProvider).toBe(false);
+      client.notify("initialized");
+      open(client, join(String(dir), "a.js"), "debugger;\n");
+      expect((await format(client, join(String(dir), "a.js"))).result).toEqual([]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      // Nothing is linted.
+      const diagnostics = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
+      expect(diagnostics.filter(it => it.params.diagnostics.length > 0)).toEqual([]);
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
 
-  test("turns formatting off with the initialization options, and defaults to UTF-16 positions", async () => {
-    using dir = tempDir("bun-fmt-lsp", { "a.js": "a;\n" });
-    await using client = new Client(String(dir));
-    const { result } = await initialize(client, [String(dir)], {
-      initializationOptions: { format: { enable: false } },
-    });
-    expect(result.capabilities.positionEncoding).toBe("utf-16");
-    expect(result.capabilities.documentFormattingProvider).toBe(false);
-    expect(result.capabilities.documentRangeFormattingProvider).toBe(false);
-    client.notify("initialized");
-    open(client, join(String(dir), "a.js"), "a  ;\n");
-    expect((await format(client, join(String(dir), "a.js"))).result).toBeNull();
-    expect((await client.request("shutdown")).result).toBeNull();
-    client.notify("exit");
-    const { exitCode, garbage, rest } = await client.end();
-    expect([garbage, rest]).toEqual([[], ""]);
-    expect(exitCode).toBe(0);
-  });
+  test(
+    "turns formatting off with the initialization options, and defaults to UTF-16 positions",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", { "a.js": "a;\n" });
+      await using client = new Client(String(dir));
+      const { result } = await initialize(client, [String(dir)], {
+        initializationOptions: { format: { enable: false } },
+      });
+      expect(result.capabilities.positionEncoding).toBe("utf-16");
+      expect(result.capabilities.documentFormattingProvider).toBe(false);
+      expect(result.capabilities.documentRangeFormattingProvider).toBe(false);
+      client.notify("initialized");
+      open(client, join(String(dir), "a.js"), "a  ;\n");
+      expect((await format(client, join(String(dir), "a.js"))).result).toBeNull();
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
 
-  test("formats each document with the bunfig.toml of its workspace folder, or of a directory above it", async () => {
-    using dir = tempDir("bun-fmt-lsp", {
-      "bunfig.toml": "[fmt]\nsingleQuote = true\n",
-      "a/bunfig.toml": "[fmt]\nsemi = false\n",
-      "a/x.js": "",
-      "c/y.js": "",
-    });
-    const a = join(String(dir), "a");
-    const c = join(String(dir), "c");
-    await using client = new Client(String(dir));
-    expect((await initialize(client, [a, c])).error).toBeUndefined();
-    client.notify("initialized");
-    const ugly = 'const  value  =  "text"\n';
-    open(client, join(a, "x.js"), ugly);
-    open(client, join(c, "y.js"), ugly);
-    const [inA, inC] = await Promise.all([format(client, join(a, "x.js")), format(client, join(c, "y.js"))]);
-    expect(inA.error).toBeUndefined();
-    expect(inC.error).toBeUndefined();
-    // The folder's own file is the only one that is read.
-    expect(applyEdits(ugly, inA.result)).toBe('const value = "text"\n');
-    expect(applyEdits(ugly, inC.result)).toBe("const value = 'text';\n");
+  test(
+    "formats each document with the bunfig.toml of its workspace folder, or of a directory above it",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", {
+        "bunfig.toml": "[fmt]\nsingleQuote = true\n",
+        "a/bunfig.toml": "[fmt]\nsemi = false\n",
+        "a/x.js": "",
+        "c/y.js": "",
+      });
+      const a = join(String(dir), "a");
+      const c = join(String(dir), "c");
+      await using client = new Client(String(dir));
+      expect((await initialize(client, [a, c])).error).toBeUndefined();
+      client.notify("initialized");
+      const ugly = 'const  value  =  "text"\n';
+      open(client, join(a, "x.js"), ugly);
+      open(client, join(c, "y.js"), ugly);
+      const [inA, inC] = await Promise.all([format(client, join(a, "x.js")), format(client, join(c, "y.js"))]);
+      expect(inA.error).toBeUndefined();
+      expect(inC.error).toBeUndefined();
+      // The folder's own file is the only one that is read.
+      expect(applyEdits(ugly, inA.result)).toBe('const value = "text"\n');
+      expect(applyEdits(ugly, inC.result)).toBe("const value = 'text';\n");
 
-    // When a configuration file changes, the next request uses the new one.
-    writeFileSync(join(a, "bunfig.toml"), "[fmt]\nsemi = false\nsingleQuote = true\n");
-    client.notify("workspace/didChangeWatchedFiles", {
-      changes: [{ uri: uriOf(a, "bunfig.toml"), type: 2 }],
-    });
-    const again = await format(client, join(a, "x.js"));
-    expect(applyEdits(ugly, again.result)).toBe("const value = 'text'\n");
+      // When a configuration file changes, the next request uses the new one.
+      writeFileSync(join(a, "bunfig.toml"), "[fmt]\nsemi = false\nsingleQuote = true\n");
+      client.notify("workspace/didChangeWatchedFiles", {
+        changes: [{ uri: uriOf(a, "bunfig.toml"), type: 2 }],
+      });
+      const again = await format(client, join(a, "x.js"));
+      expect(applyEdits(ugly, again.result)).toBe("const value = 'text'\n");
 
-    // A change of the document is what is formatted afterwards.
-    client.notify("textDocument/didChange", {
-      textDocument: { uri: uriOf(a, "x.js"), version: 2 },
-      contentChanges: [{ text: "let  a  =  1\n" }],
-    });
-    const changed = await format(client, join(a, "x.js"));
-    expect(applyEdits("let  a  =  1\n", changed.result)).toBe("let a = 1\n");
+      // A change of the document is what is formatted afterwards.
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(a, "x.js"), version: 2 },
+        contentChanges: [{ text: "let  a  =  1\n" }],
+      });
+      const changed = await format(client, join(a, "x.js"));
+      expect(applyEdits("let  a  =  1\n", changed.result)).toBe("let a = 1\n");
 
-    expect((await client.request("shutdown")).result).toBeNull();
-    client.notify("exit");
-    const { exitCode, garbage, rest } = await client.end();
-    expect([garbage, rest]).toEqual([[], ""]);
-    expect(exitCode).toBe(0);
-  });
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
 
-  test("formats a range as `bun fmt --range-start` does, and says so when a request is about no open document", async () => {
-    using dir = tempDir("bun-fmt-lsp", { "a.js": "" });
-    const text = "a  ;\nb  ;\nc  ;\n";
-    // The second line.
-    await using cli = spawn({
-      cmd: [bunExe(), "fmt", "--no-script", "--range-start=5", "--range-end=9", "--stdin-filepath", "a.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdin: Buffer.from(text),
-      stderr: "pipe",
-    });
-    const [expected, cliExitCode] = await Promise.all([cli.stdout.text(), cli.exited]);
-    expect(cliExitCode).toBe(0);
-    expect(expected).not.toBe(text);
+  test(
+    "formats a range as `bun fmt --range-start` does, and says so when a request is about no open document",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", { "a.js": "" });
+      const text = "a  ;\nb  ;\nc  ;\n";
+      // The second line.
+      await using cli = spawn({
+        cmd: [bunExe(), "fmt", "--no-script", "--range-start=5", "--range-end=9", "--stdin-filepath", "a.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdin: Buffer.from(text),
+        stderr: "pipe",
+      });
+      const [expected, cliExitCode] = await Promise.all([cli.stdout.text(), cli.exited]);
+      expect(cliExitCode).toBe(0);
+      expect(expected).not.toBe(text);
 
-    await using client = new Client(String(dir));
-    await initialize(client, [String(dir)]);
-    client.notify("initialized");
-    open(client, join(String(dir), "a.js"), text);
-    const ranged = await client.request("textDocument/rangeFormatting", {
-      textDocument: { uri: uriOf(String(dir), "a.js") },
-      range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
-      options: { tabSize: 2, insertSpaces: true },
-    });
-    expect(ranged.error).toBeUndefined();
-    expect(applyEdits(text, ranged.result)).toBe(expected);
-    const unknown = await format(client, join(String(dir), "b.js"));
-    expect(unknown.error?.code).toBe(-32602);
-    expect((await client.request("shutdown")).result).toBeNull();
-    client.notify("exit");
-    const { exitCode, garbage } = await client.end();
-    expect(garbage).toEqual([]);
-    expect(exitCode).toBe(0);
-  });
+      await using client = new Client(String(dir));
+      await initialize(client, [String(dir)]);
+      client.notify("initialized");
+      open(client, join(String(dir), "a.js"), text);
+      const ranged = await client.request("textDocument/rangeFormatting", {
+        textDocument: { uri: uriOf(String(dir), "a.js") },
+        range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
+        options: { tabSize: 2, insertSpaces: true },
+      });
+      expect(ranged.error).toBeUndefined();
+      expect(applyEdits(text, ranged.result)).toBe(expected);
+      const unknown = await format(client, join(String(dir), "b.js"));
+      expect(unknown.error?.code).toBe(-32602);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage } = await client.end();
+      expect(garbage).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
 
   // Plugins run in a VM, which the server has only on Unix; there what else is printed is kept off the client's pipe.
   test.skipIf(isWindows)(
@@ -344,27 +361,35 @@ exports.format = async (text, options) => {
     timeout,
   );
 
-  test("exits with 1 and prints no frame when standard input ends before initialize", async () => {
-    using dir = tempDir("bun-fmt-lsp", {});
-    await using proc = spawn({ cmd: command, env: bunEnv, cwd: String(dir), stdin: "ignore", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
-    expect(exitCode).toBe(1);
-  });
+  test(
+    "exits with 1 and prints no frame when standard input ends before initialize",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", {});
+      await using proc = spawn({ cmd: command, env: bunEnv, cwd: String(dir), stdin: "ignore", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
 
-  test("exits with 1 when the client goes away after initialize, and refuses a request before it", async () => {
-    using dir = tempDir("bun-fmt-lsp", {});
-    await using early = new Client(String(dir));
-    const refused = await early.request("shutdown");
-    expect(refused.error).toEqual({ code: -32002, message: expect.any(String) });
-    expect((await initialize(early, [String(dir)])).error).toBeUndefined();
-    const gone = await early.end();
-    expect([gone.garbage, gone.rest]).toEqual([[], ""]);
-    expect(gone.exitCode).toBe(1);
+  test(
+    "exits with 1 when the client goes away after initialize, and refuses a request before it",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", {});
+      await using early = new Client(String(dir));
+      const refused = await early.request("shutdown");
+      expect(refused.error).toEqual({ code: -32002, message: expect.any(String) });
+      expect((await initialize(early, [String(dir)])).error).toBeUndefined();
+      const gone = await early.end();
+      expect([gone.garbage, gone.rest]).toEqual([[], ""]);
+      expect(gone.exitCode).toBe(1);
 
-    await using without = new Client(String(dir));
-    await initialize(without, [String(dir)]);
-    without.notify("exit");
-    expect((await without.end()).exitCode).toBe(1);
-  });
+      await using without = new Client(String(dir));
+      await initialize(without, [String(dir)]);
+      without.notify("exit");
+      expect((await without.end()).exitCode).toBe(1);
+    },
+    timeout,
+  );
 });

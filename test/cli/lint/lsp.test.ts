@@ -11,7 +11,8 @@ const command = [bunExe(), "lint", "--lsp"];
 // `bun lint` is compiled into debug and canary builds only.
 const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
-// A JavaScript plugin runs in a VM, which takes seconds to start in a debug build.
+// Each test spawns a debug build and waits for initialize, a lint or format and exit, which is seconds under ASAN; a
+// JavaScript plugin runs in a VM, which takes seconds more to start.
 const timeout = isDebug || isASAN ? 120_000 : 10_000;
 
 type Message = {
@@ -195,84 +196,96 @@ const noDebugger = {
 };
 
 describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
-  test("answers initialize with the capabilities of a linter and a formatter", async () => {
-    using dir = tempDir("bun-lint-lsp", {});
-    await using client = new Client(String(dir));
-    const { result, error } = await initialize(client, [String(dir)]);
-    expect(error).toBeUndefined();
-    expect(result.serverInfo).toEqual({ name: "bun", version: expect.stringMatching(/^\d+\.\d+\.\d+/) });
-    expect(result.capabilities).toEqual({
-      positionEncoding: "utf-16",
-      textDocumentSync: { openClose: true, change: 2, save: true },
-      codeActionProvider: { codeActionKinds: ["quickfix", "source.fixAll.bun"] },
-      documentFormattingProvider: true,
-      documentRangeFormattingProvider: true,
-      workspace: { workspaceFolders: { supported: true, changeNotifications: true } },
-    });
-    expect((await client.request("shutdown")).result).toBeNull();
-    client.notify("exit");
-    const { exitCode, garbage, rest } = await client.end();
-    expect([garbage, rest]).toEqual([[], ""]);
-    expect(exitCode).toBe(0);
-  });
+  test(
+    "answers initialize with the capabilities of a linter and a formatter",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {});
+      await using client = new Client(String(dir));
+      const { result, error } = await initialize(client, [String(dir)]);
+      expect(error).toBeUndefined();
+      expect(result.serverInfo).toEqual({ name: "bun", version: expect.stringMatching(/^\d+\.\d+\.\d+/) });
+      expect(result.capabilities).toEqual({
+        positionEncoding: "utf-16",
+        textDocumentSync: { openClose: true, change: 2, save: true },
+        codeActionProvider: { codeActionKinds: ["quickfix", "source.fixAll.bun"] },
+        documentFormattingProvider: true,
+        documentRangeFormattingProvider: true,
+        workspace: { workspaceFolders: { supported: true, changeNotifications: true } },
+      });
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
 
-  test("publishes the problems of an open document with the bunfig.toml of its folder, and follows its changes", async () => {
-    using dir = tempDir("bun-lint-lsp", {
-      "a/bunfig.toml": '[lint.rules]\n"no-debugger" = "off"\n',
-      "a/x.js": "",
-      "b/y.js": "",
-    });
-    const a = join(String(dir), "a");
-    const b = join(String(dir), "b");
-    await using client = new Client(String(dir));
-    expect((await initialize(client, [a, b])).error).toBeUndefined();
-    client.notify("initialized");
-    open(client, join(a, "x.js"), "debugger;\n");
-    open(client, join(b, "y.js"), "debugger;\n");
-    const [inA, inB] = await Promise.all([client.diagnostics(join(a, "x.js")), client.diagnostics(join(b, "y.js"))]);
-    expect(inA.params).toEqual({ uri: uriOf(a, "x.js"), version: 1, diagnostics: [] });
-    expect(inB.params).toEqual({
-      uri: uriOf(b, "y.js"),
-      version: 1,
-      diagnostics: [{ ...noDebugger, codeDescription: { href: expect.any(String) } }],
-    });
+  test(
+    "publishes the problems of an open document with the bunfig.toml of its folder, and follows its changes",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        "a/bunfig.toml": '[lint.rules]\n"no-debugger" = "off"\n',
+        "a/x.js": "",
+        "b/y.js": "",
+      });
+      const a = join(String(dir), "a");
+      const b = join(String(dir), "b");
+      await using client = new Client(String(dir));
+      expect((await initialize(client, [a, b])).error).toBeUndefined();
+      client.notify("initialized");
+      open(client, join(a, "x.js"), "debugger;\n");
+      open(client, join(b, "y.js"), "debugger;\n");
+      const [inA, inB] = await Promise.all([client.diagnostics(join(a, "x.js")), client.diagnostics(join(b, "y.js"))]);
+      expect(inA.params).toEqual({ uri: uriOf(a, "x.js"), version: 1, diagnostics: [] });
+      expect(inB.params).toEqual({
+        uri: uriOf(b, "y.js"),
+        version: 1,
+        diagnostics: [{ ...noDebugger, codeDescription: { href: expect.any(String) } }],
+      });
 
-    // An incremental change: the first line becomes `1;`.
-    client.notify("textDocument/didChange", {
-      textDocument: { uri: uriOf(b, "y.js"), version: 2 },
-      contentChanges: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 9 } }, text: "1;" }],
-    });
-    const changed = await client.diagnostics(join(b, "y.js"));
-    expect(changed.params).toEqual({ uri: uriOf(b, "y.js"), version: 2, diagnostics: [] });
+      // An incremental change: the first line becomes `1;`.
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(b, "y.js"), version: 2 },
+        contentChanges: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 9 } }, text: "1;" }],
+      });
+      const changed = await client.diagnostics(join(b, "y.js"));
+      expect(changed.params).toEqual({ uri: uriOf(b, "y.js"), version: 2, diagnostics: [] });
 
-    // Their problems are withdrawn when a document is closed.
-    client.notify("textDocument/didClose", { textDocument: { uri: uriOf(b, "y.js") } });
-    const closed = await client.diagnostics(join(b, "y.js"));
-    expect(closed.params.diagnostics).toEqual([]);
+      // Their problems are withdrawn when a document is closed.
+      client.notify("textDocument/didClose", { textDocument: { uri: uriOf(b, "y.js") } });
+      const closed = await client.diagnostics(join(b, "y.js"));
+      expect(closed.params.diagnostics).toEqual([]);
 
-    expect((await client.request("shutdown")).result).toBeNull();
-    client.notify("exit");
-    const { exitCode, garbage, rest } = await client.end();
-    expect([garbage, rest]).toEqual([[], ""]);
-    expect(exitCode).toBe(0);
-  });
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
 
-  test("formats with [fmt] of the bunfig.toml of the folder", async () => {
-    using dir = tempDir("bun-lint-lsp", { "bunfig.toml": "[fmt]\nsemi = false\n", "a.js": "" });
-    await using client = new Client(String(dir));
-    expect((await initialize(client, [String(dir)])).error).toBeUndefined();
-    client.notify("initialized");
-    const text = 'const  a  =  "a";\n';
-    open(client, join(String(dir), "a.js"), text);
-    const formatted = await format(client, join(String(dir), "a.js"));
-    expect(formatted.error).toBeUndefined();
-    expect(applyEdits(text, formatted.result)).toBe('const a = "a"\n');
-    expect((await client.request("shutdown")).result).toBeNull();
-    client.notify("exit");
-    const { exitCode, garbage, rest } = await client.end();
-    expect([garbage, rest]).toEqual([[], ""]);
-    expect(exitCode).toBe(0);
-  });
+  test(
+    "formats with [fmt] of the bunfig.toml of the folder",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", { "bunfig.toml": "[fmt]\nsemi = false\n", "a.js": "" });
+      await using client = new Client(String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const text = 'const  a  =  "a";\n';
+      open(client, join(String(dir), "a.js"), text);
+      const formatted = await format(client, join(String(dir), "a.js"));
+      expect(formatted.error).toBeUndefined();
+      expect(applyEdits(text, formatted.result)).toBe('const a = "a"\n');
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
 
   // Plugins run in a VM, which the server has only on Unix; there what else is printed is kept off the client's pipe.
   test.skipIf(isWindows)(
@@ -320,24 +333,32 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
     timeout,
   );
 
-  test("exits with 1 and prints no frame when standard input ends before initialize", async () => {
-    using dir = tempDir("bun-lint-lsp", {});
-    await using proc = spawn({ cmd: command, env: bunEnv, cwd: String(dir), stdin: "ignore", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
-    expect(exitCode).toBe(1);
-  });
+  test(
+    "exits with 1 and prints no frame when standard input ends before initialize",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {});
+      await using proc = spawn({ cmd: command, env: bunEnv, cwd: String(dir), stdin: "ignore", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
 
-  test("refuses a request before initialize, and a method it does not have", async () => {
-    using dir = tempDir("bun-lint-lsp", {});
-    await using client = new Client(String(dir));
-    expect((await client.request("shutdown")).error).toEqual({ code: -32002, message: expect.any(String) });
-    expect((await initialize(client, [String(dir)])).error).toBeUndefined();
-    expect((await client.request("textDocument/hover")).error).toEqual({ code: -32601, message: expect.any(String) });
-    // `exit` before `shutdown` is an error for the protocol.
-    client.notify("exit");
-    const { exitCode, garbage, rest } = await client.end();
-    expect([garbage, rest]).toEqual([[], ""]);
-    expect(exitCode).toBe(1);
-  });
+  test(
+    "refuses a request before initialize, and a method it does not have",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {});
+      await using client = new Client(String(dir));
+      expect((await client.request("shutdown")).error).toEqual({ code: -32002, message: expect.any(String) });
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      expect((await client.request("textDocument/hover")).error).toEqual({ code: -32601, message: expect.any(String) });
+      // `exit` before `shutdown` is an error for the protocol.
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
 });

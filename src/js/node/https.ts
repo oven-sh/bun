@@ -16,6 +16,7 @@ const {
   tlsSymbol,
 } = require("internal/http");
 const { kSNIContexts } = require("internal/net/symbols");
+const buntls = Symbol.for("::buntls::");
 const setListenerSecureContext = $bindgen("Listener.bind.ts", "setSecureContext");
 const addServerName = $bindgen("Listener.bind.ts", "addServerName");
 const { validateHeaderValue } = require("node:_http_common");
@@ -634,7 +635,7 @@ Server.prototype.setSecureContext = function setSecureContext(options) {
   // Inherits, because tls.Server reads each option by name: one that is inherited, a getter or non-enumerable counts, as in Node.
   tlsServer.setSecureContext({ __proto__: options, ...require("internal/tls").ignoredByHttpsServer });
   const handle = this[serverSymbol];
-  if (handle) setListenerSecureContext(handle, tlsServer._sharedCreds.context);
+  if (handle) setListenerSecureContext(handle, tlsServer[buntls](null)[0].secureContext);
 };
 
 Server.prototype.getTicketKeys = function getTicketKeys() {

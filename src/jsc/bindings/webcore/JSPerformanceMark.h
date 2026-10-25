@@ -29,7 +29,6 @@ namespace WebCore {
 class JSPerformanceMark : public JSPerformanceEntry {
 public:
     using Base = JSPerformanceEntry;
-    using DOMWrapped = PerformanceMark;
     static JSPerformanceMark* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceMark>&& impl)
     {
         JSPerformanceMark* ptr = new (NotNull, JSC::allocateCell<JSPerformanceMark>(globalObject->vm())) JSPerformanceMark(structure, *globalObject, WTF::move(impl));

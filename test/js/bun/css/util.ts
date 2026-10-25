@@ -40,7 +40,7 @@ export function minify_error_test_with_options(source: string, expectedError: st
     let error_string: string | undefined = undefined;
     try {
       __minifyErrorTestWithOptions(source, expectedError, options);
-    } catch (err) {
+    } catch (err: any) {
       error_string = err.toString();
     }
     expect(error_string).toEqual(expectedError);
@@ -72,12 +72,18 @@ export function cssTest(source: string, expected: string, browsers?: Browsers, s
   });
 }
 
+export function cssTestTodo(source: string, expected: string, browsers?: Browsers) {
+  test.todo(source, () => {
+    expect(_test(source, expected, browsers)).toEqualIgnoringWhitespace(expected);
+  });
+}
+
 export function attrTest(source: string, expected: string, minify: boolean, targets?: Browsers) {
   return __attrTest(source, expected, minify, targets);
 }
 
 //
-export function indoc(...args: any) {
+export function indoc(...args: Parameters<typeof dedent>) {
   return dedent(...args);
 }
 

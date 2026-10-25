@@ -355,10 +355,13 @@ impl Checker<'_, '_> {
             _ => SignatureKind::Call,
         };
         let flags = IGNORE_ERRORS | WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME;
+        self.printing_closes_cycles = true;
+        self.printing_floors.push(self.stack.len());
         let mut text = with_printer(self, None, None, flags, |printer| {
             printer.never_ascii_escape = true;
             printer.signature_to_text(signature, kind, b"", false, None)
         });
+        self.printing_floors.pop();
         out.append(&mut text);
     }
 

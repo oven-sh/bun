@@ -9128,6 +9128,35 @@ export function* f() { yield t = {}; }
       expect(exitCode).toBe(1);
     });
 
+    // "provides no match for the signature" comes first, and it prints the signature's return type.
+    test("the signature in the message of an error can be the first to ask for the function's return type", async () => {
+      using dir = project({
+        "logical.ts": `declare let t: typeof f;
+export async function f() { return t &&= {}; }
+`,
+        "two.ts": `declare let t: typeof g;
+declare let u: typeof f;
+export function f() { return t = [1]; }
+export function g() { return u = [1]; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      const circular = (name: string) =>
+        `error TS7023: '${name}' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.`;
+      expect(stdout.split("\n")).toEqual([
+        `logical.ts(2,23): ${circular("f")}`,
+        "logical.ts(2,36): error TS2322: Type '{}' is not assignable to type '() => any'.",
+        "  Type '{}' provides no match for the signature '(): any'.",
+        `two.ts(3,17): ${circular("f")}`,
+        "two.ts(3,30): error TS2322: Type 'number[]' is not assignable to type '() => any'.",
+        "  Type 'number[]' provides no match for the signature '(): any'.",
+        `two.ts(4,17): ${circular("g")}`,
+        "two.ts(4,30): error TS2322: Type 'number[]' is not assignable to type '() => any'.",
+        "  Type 'number[]' provides no match for the signature '(): any'.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("TS7053 prints an aliased intersection with a class by its members", async () => {
       using dir = project({
         "a.ts": `class User { id = 1 }

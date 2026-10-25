@@ -1545,7 +1545,7 @@ pub struct Checker<'p, 's> {
     /// True if the next `with_printer` isn't a barrier for cycle detection, because it prints when
     /// and what tsgo prints.
     printing_closes_cycles: bool,
-    /// The height of `stack` when each `typeToStringEx` in progress began.
+    /// The height of `stack` when each `typeToStringEx` or `signatureToString` in progress began.
     printing_floors: Vec<usize>,
     serialized_types: print::SerializedTypes,
     /// The height of `inference_contexts` while `getContextFreeTypeOfExpression` or
@@ -2822,6 +2822,7 @@ impl<'p, 's> Checker<'p, 's> {
         // - It reaches the `typeToStringEx` call that led here, with no type resolution on the way, and
         //   prints one serialization level higher. That can close a cycle through what the first call
         //   is resolving. At `maxSerializationLevel` the printer returns "?" and resolves nothing.
+        //   `signatureToString` has no levels. It gets `any` for the return type that the first call is resolving.
         let first_printing = self.printing_floors.iter().find(|&&floor| floor > i);
         let is_through_printing = first_printing
             .is_some_and(|&floor| !self.stack[i..floor].iter().any(|&q| self.is_resolution(q)));

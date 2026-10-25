@@ -496,10 +496,11 @@ describe("headers queued before the handshake", () => {
   });
 });
 
-// lsquic can finish the handshake, read the peer's first stream and close the connection in one
-// engine pass, before JS sees any of it. A request created before `opened` is sent with the
-// client's Finished, and lsquic rejects its bad content-length with H3_MESSAGE_ERROR (0x10e).
-test("a malformed request in the handshake's last flight closes only that connection", async () => {
+// lsquic can finish the handshake and read the peer's first stream in one engine pass, before JS
+// sees any of it. A request created before `opened` is sent with the client's Finished, and
+// lsquic rejects its bad content-length with H3_MESSAGE_ERROR (0x10e). RFC 9114 sec 4.1.2 scopes
+// that to the stream, so the connection carries on and a later request on it is answered.
+test("a malformed request in the handshake's last flight resets only that stream", async () => {
   const events: unknown[] = [];
   const sessions: Promise<unknown>[] = [];
   await using server = await listen(
@@ -534,14 +535,26 @@ test("a malformed request in the handshake's last flight closes only that connec
 
   const malformed = await connect(server.address!, options);
   malformed.opened.catch(() => {});
-  const close = malformed.closed.then(
+  const poisoned = await malformed.createBidirectionalStream({
+    headers: { ...headers, "content-length": "abc" },
+  });
+  const reset = poisoned.closed.then(
     () => undefined,
     (err: any) => ({ code: err.code, errorCode: err.errorCode }),
   );
-  (await malformed.createBidirectionalStream({ headers: { ...headers, "content-length": "abc" } })).closed.catch(
-    () => {},
-  );
-  expect(await close).toEqual({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 0x10en });
+  expect(await reset).toEqual({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 0x10en });
+
+  // The connection survived the reset, so a well-formed request on it is answered.
+  const second = Promise.withResolvers<string>();
+  malformed.closed.then(() => second.reject(new Error("closed without an answer")), second.reject);
+  (
+    await malformed.createBidirectionalStream({
+      headers,
+      onheaders: (h: Record<string, any>) => second.resolve(h[":status"]),
+    })
+  ).closed.catch(() => {});
+  expect(await second.promise).toBe("200");
+  malformed.close();
 
   const client = await connect(server.address!, options);
   const answered = Promise.withResolvers<string>();
@@ -554,7 +567,8 @@ test("a malformed request in the handshake's last flight closes only that connec
   expect(await answered.promise).toBe("200");
   client.close();
   await Promise.all(sessions);
-  expect(events).toEqual([["handshake", "h3", "localhost"], "stream", "error"]);
+  // No "error": the malformed request resets its stream, not the session.
+  expect(events).toEqual([["handshake", "h3", "localhost"], "stream", "stream"]);
 });
 
 test("session.close() before the handshake ends doesn't wait for a pending HTTP/3 stream", async () => {

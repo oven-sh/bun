@@ -153,6 +153,12 @@ export const lsquic: Dependency = {
     // and failed for a larger one. Such a block gets a heap buffer, sized from
     // the header list.
     "patches/lsquic/large-header-block.patch",
+    // RFC 9114 sec 4.1.2: a malformed HTTP/3 message (content-length mismatch,
+    // rejected header, undecodable field section) is a *stream* error; the
+    // stock library routes every one to ci_abort_error() = CONNECTION_CLOSE,
+    // so one bad request nuked every innocent request sharing the connection.
+    // Applies after node-quic-accessors.patch (uses ss_error_code).
+    "patches/lsquic/message-error-stream-reset.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

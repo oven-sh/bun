@@ -1840,7 +1840,11 @@ async function h3Exchange(
           status = received[":status"] as string;
         },
       });
-      stream.closed.catch(() => {});
+      // RFC 9114 sec 4.1.2 scopes a malformed message to its stream, so the
+      // reset lands here while the connection stays usable.
+      stream.closed.catch((err: Error & { code?: string; errorCode?: bigint }) =>
+        outcome.resolve(err?.code === "ERR_QUIC_APPLICATION_ERROR" ? `reset ${err.code} ${err.errorCode}` : "reset"),
+      );
       let body = "";
       for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
         for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
@@ -1882,9 +1886,9 @@ describe("Bun.serve HTTP/3 request validation", () => {
     results.after = await h3Exchange(server.port!, requestHeaders("/"));
 
     expect(results).toEqual({
-      [JSON.stringify("a\r\nb: c")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
-      [JSON.stringify("a\nb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
-      [JSON.stringify("a\rb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      [JSON.stringify("a\r\nb: c")]: "reset ERR_QUIC_APPLICATION_ERROR 270",
+      [JSON.stringify("a\nb")]: "reset ERR_QUIC_APPLICATION_ERROR 270",
+      [JSON.stringify("a\rb")]: "reset ERR_QUIC_APPLICATION_ERROR 270",
       wellFormed: "200 1",
       after: "200 1",
     });
@@ -1971,7 +1975,7 @@ describe("Bun.serve HTTP/3 request validation", () => {
     }).toEqual({
       atTheLimit: "200",
       overTheLimit: "431 ",
-      farOverTheLimit: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      farOverTheLimit: "reset ERR_QUIC_APPLICATION_ERROR 270",
       after: "200 " + JSON.stringify({ host: "localhost" }),
     });
   });

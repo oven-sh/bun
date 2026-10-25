@@ -21,6 +21,9 @@ const from = require("internal/streams/from");
 const PromiseWithResolvers = Promise.withResolvers.bind(Promise);
 
 class Duplexify extends Duplex {
+  declare _readableState: { readable: boolean; ended: boolean; endEmitted: boolean };
+  declare _writableState: { writable: boolean; ending: boolean; ended: boolean; finished: boolean };
+
   constructor(options) {
     super(options);
 
@@ -195,8 +198,21 @@ function duplexify(body, name?) {
   );
 }
 
+interface AsyncGenWrite {
+  __proto__?: null;
+  chunk?: unknown;
+  done: boolean;
+  cb: (err?: Error | null) => void;
+}
+
 function fromAsyncGen(fn) {
-  let { promise, resolve } = PromiseWithResolvers();
+  let {
+    promise,
+    resolve,
+  }: {
+    promise: Promise<AsyncGenWrite> | null;
+    resolve: ((value: AsyncGenWrite) => void) | null;
+  } = PromiseWithResolvers<AsyncGenWrite>();
   const ac = new AbortController();
   const signal = ac.signal;
   const value = fn(
@@ -208,7 +224,7 @@ function fromAsyncGen(fn) {
         process.nextTick(cb);
         if (done) return;
         if (signal.aborted) throw $makeAbortError(undefined, { cause: signal.reason });
-        ({ promise, resolve } = PromiseWithResolvers());
+        ({ promise, resolve } = PromiseWithResolvers<AsyncGenWrite>());
         yield chunk;
       }
     })(),
@@ -220,12 +236,12 @@ function fromAsyncGen(fn) {
     write(chunk, encoding, cb) {
       const _resolve = resolve;
       resolve = null;
-      _resolve({ chunk, done: false, cb });
+      _resolve!({ chunk, done: false, cb });
     },
     final(cb) {
       const _resolve = resolve;
       resolve = null;
-      _resolve({ done: true, cb });
+      _resolve!({ done: true, cb });
     },
     destroy(err, cb) {
       ac.abort(err);

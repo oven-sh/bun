@@ -1,7 +1,8 @@
 import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, DirectoryTree, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, DirectoryTree, isDebug, isWindows, MAX_PATH_BYTES, tempDir, tempDirWithFiles } from "harness";
+import { join } from "path";
 
 function test1000000(arg1: any, arg218718132: any) {}
 
@@ -703,6 +704,24 @@ Date)
       `,
     );
   });
+  it("does not take undefined for no argument", async () => {
+    await tester.testError(
+      { msg: "Matcher error: Expected first argument to be a string or object" },
+      /*js*/ `
+        test("cases", () => {
+          expect(1).toMatchInlineSnapshot(undefined);
+        });
+      `,
+    );
+    await tester.testError(
+      { msg: "Matcher error: Expected first argument to be a string" },
+      /*js*/ `
+        test("cases", () => {
+          expect(() => { throw new Error("1"); }).toThrowErrorMatchingInlineSnapshot(undefined);
+        });
+      `,
+    );
+  });
   it("only replaces when the argument is a literal string 3", async () => {
     await tester.testError(
       {
@@ -957,4 +976,61 @@ test("write snapshot from filter", async () => {
   expect(await Bun.file(dir + "/mytests/snap.test.ts").text()).toBe(sver("a", true));
   expect(await Bun.file(dir + "/mytests/snap2.test.ts").text()).toBe(sver("b", true));
   expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));
+});
+
+test("snapshot matchers treat undefined arguments as omitted", async () => {
+  using dir = tempDir("snapshot-undefined-argument", {
+    "snap.test.ts": `
+      test("undefined", () => {
+        const thrower = () => { throw new Error("message"); };
+        expect(1).toMatchSnapshot(undefined);
+        expect(2).toMatchSnapshot("hint", undefined);
+        expect({ a: 3 }).toMatchSnapshot({ a: 3 }, undefined);
+        expect(thrower).toThrowErrorMatchingSnapshot(undefined);
+        expect(thrower).toThrowErrorMatchingSnapshot("hint", "ignored");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./snap.test.ts"],
+    env: { ...bunEnv, CI: "false" },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("5 added");
+  expect(exitCode).toBe(0);
+});
+
+// Windows cannot create directories as deep as its path buffer is long.
+test.skipIf(isWindows)("snapshot file path longer than PATH_MAX fails the test instead of crashing", async () => {
+  using dir = tempDir("snapshot-long-path", {});
+  let deep = String(dir);
+  const component = Buffer.alloc(100, "a").toString();
+  while (deep.length + 1 + component.length <= MAX_PATH_BYTES - 116) {
+    deep = join(deep, component);
+    mkdirSync(deep);
+  }
+  // `<deep>/<sub>/snapx.test.ts` is 16 bytes under PATH_MAX, so
+  // `<deep>/<sub>/__snapshots__/snapx.test.ts.snap` is over it.
+  const sub = Buffer.alloc(MAX_PATH_BYTES - 16 - deep.length - 1 - "/snapx.test.ts".length, "b").toString();
+  mkdirSync(join(deep, sub));
+  writeFileSync(
+    join(deep, sub, "snapx.test.ts"),
+    `import { test, expect } from "bun:test";\ntest("snap", () => { expect(1).toMatchSnapshot(); });\n`,
+  );
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", `./${sub}/snapx.test.ts`],
+    env: bunEnv,
+    cwd: deep,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("Failed to open snapshot file for test file: ");
+  expect(stderr).toContain("snapx.test.ts");
+  expect(stdout + stderr).toContain("1 fail");
+  expect(exitCode).toBe(1);
 });

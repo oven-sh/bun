@@ -256,11 +256,13 @@ test.concurrent("an error and its note on one very long line both print a bounde
 });
 
 test.concurrent.each([
-  // The last 120 bytes start one byte into an `é` and three bytes into a `𐐀`.
+  // The last 120 bytes start one byte into an `é` or a `名`, and three bytes into a `𐐀`.
+  // The caret counts terminal columns: a `名` takes 2, and a `𐐀` takes 1 though it is 2 UTF-16 units.
   ["2-byte", fill(600, "\u00E9") + "]", "1 | " + fill(120, "\u00E9") + "]", 4 + 60],
-  ["4-byte", fill(400, "\u{10400}") + "xy]", "1 | " + fill(120, "\u{10400}") + "xy]", 4 + 60 + 2],
+  ["3-byte wide", fill(600, "\u540D") + "]", "1 | " + fill(120, "\u540D") + "]", 4 + 2 * 40],
+  ["4-byte", fill(400, "\u{10400}") + "xy]", "1 | " + fill(120, "\u{10400}") + "xy]", 4 + 30 + 2],
 ])(
-  "bounded excerpt of a line of %s characters starts on a character and counts UTF-16 units",
+  "bounded excerpt of a line of %s characters starts on a character and has the caret under the token",
   async (_, source, excerpt, caret) => {
     const { excerpts, exitCode } = await printedExcerpts(["build", "long.js"], { "long.js": source });
     expect(excerpts).toEqual([{ excerpt, caret }]);
@@ -320,4 +322,29 @@ test.concurrent("bun install prints a bounded excerpt of a one-line package.json
   expect(excerpts).toEqual([{ excerpt: "1 | " + source.slice(-120), caret: 4 + 119 }]);
   expect(stderr.length).toBeLessThan(1024);
   expect(exitCode).toBe(1);
+});
+
+test.concurrent("CLI caret counts a tab the same with and without non-ASCII text on the line", async () => {
+  using dir = tempDir("parse-col-caret-tabs", {
+    "ascii.js": '\t\tconst a = "e" + ;\n',
+    "accent.js": '\t\tconst a = "é" + ;\n',
+    "wide.js": '\tconst a = "名前" + ;\n',
+  });
+  const caretIn = async (file: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", file],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return stderr
+      .split("\n")
+      .find(l => l.trimEnd().endsWith("^"))!
+      .indexOf("^");
+  };
+  const [ascii, accent, wide] = await Promise.all(["ascii.js", "accent.js", "wide.js"].map(caretIn));
+  // "1 | " is 4 columns. Each of the two wide characters takes 2.
+  expect({ ascii, accent, wide }).toEqual({ ascii: 4 + 18, accent: 4 + 18, wide: 4 + 20 });
 });

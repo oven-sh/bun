@@ -92,6 +92,10 @@ fn lower_jsx_member_expression(
     expr: &E::Dot,
     expr_loc: Loc,
 ) -> Result<Place, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
+
     // Use the full member expression's loc for instruction locs (matching TS: exprPath.node.loc)
     let expr_loc = convert_loc(expr_loc);
     let object = match expr.target.data {
@@ -400,10 +404,12 @@ fn jsx_import_kind(builder: &HirBuilder, expr: &Expr) -> Option<JsxImportKind> {
 
 /// The identifier `a` of an `a.b.c` callee. An import is not a local, so an
 /// `EImportIdentifier` root is of no interest.
-fn member_expression_root(expr: &Expr) -> Option<Ref> {
+fn member_expression_root(mut expr: &Expr) -> Option<Ref> {
+    while let ExprData::EDot(dot) = &expr.data {
+        expr = &dot.target;
+    }
     match expr.data {
         ExprData::EIdentifier(id) => Some(id.ref_),
-        ExprData::EDot(dot) => member_expression_root(&dot.target),
         _ => None,
     }
 }

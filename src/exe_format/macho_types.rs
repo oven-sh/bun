@@ -9,7 +9,7 @@
 //! SAFETY contract: callers must not reallocate or shrink the backing buffer
 //! while a `LoadCommandIterator` derived from it is live.
 
-#![allow(non_camel_case_types, non_snake_case)]
+#![allow(non_snake_case)]
 
 // Canonical `<mach-o/loader.h>` POD layouts live in `bun_sys::macho` (lower-tier
 // crate, also consumed by `crash_handler`). Re-export so `exe_format::macho`

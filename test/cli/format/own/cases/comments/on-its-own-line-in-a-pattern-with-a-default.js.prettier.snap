@@ -1,0 +1,61 @@
+------------------
+{ printWidth: 80 }
+------------------
+function f({
+  // c
+  a = 1,
+}) {}
+function g(
+  // c
+  a = 1,
+) {}
+const [
+  // c
+  b = 1,
+] = x;
+({
+  // c
+  a = 1,
+} = x);
+function h({
+  a:
+    /* c */
+    b = 1,
+}) {}
+function i({ /** @type {unknown} */ m = /** @type {M} */ t }) {}
+function j(
+  // c
+  a = 1,
+) {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function f({
+  // c
+  a = 1,
+}) {}
+function g(
+  // c
+  a = 1,
+) {}
+const [
+  // c
+  b = 1,
+] = x;
+({
+  // c
+  a = 1,
+} = x);
+function h({
+  a:
+    /* c */
+    b = 1,
+}) {}
+function i({ /** @type {unknown} */ m = /** @type {M} */ t }) {}
+function j(
+  // c
+  a = 1,
+) {}
+
+===================== End =====================

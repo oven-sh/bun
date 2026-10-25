@@ -7,30 +7,30 @@ use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
 use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult};
+use bun_jsc::{GlobalRef, JSValue, JsCell, JsResult};
 use bun_ptr::RefPtr;
 
 // Re-exports (thin aliases)
 pub(crate) use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
-pub use crate::webcore::s3::multipart::MultiPartUpload;
-pub use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
-pub use bun_s3_signing::acl::ACL;
-pub use bun_s3_signing::storage_class::StorageClass;
+pub(crate) use crate::webcore::s3::multipart::MultiPartUpload;
+pub(crate) use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
+pub(crate) use bun_s3_signing::acl::ACL;
+pub(crate) use bun_s3_signing::storage_class::StorageClass;
 
-pub use bun_s3_signing::error as Error;
+pub(crate) use bun_s3_signing::error as Error;
 // `throw_sign_error` / `get_js_sign_error` live in `error_jsc.rs` (jsc-side
 // of the s3_signing error tables). The pure error module is `bun_s3_signing::error`;
 // the jsc helpers are mounted here as a child module of this umbrella
 // re-export hub.
 #[path = "error_jsc.rs"]
-pub mod error_jsc;
+pub(crate) mod error_jsc;
 pub(crate) use error_jsc::S3ErrorJsc;
 pub(crate) use error_jsc::get_js_sign_error;
 pub(crate) use error_jsc::s3_error_to_js;
 pub(crate) use error_jsc::throw_sign_error;
 
-pub use bun_s3_signing::credentials::S3Credentials;
-pub use bun_s3_signing::credentials::S3CredentialsWithOptions;
+pub(crate) use bun_s3_signing::credentials::S3Credentials;
+pub(crate) use bun_s3_signing::credentials::S3CredentialsWithOptions;
 use bun_s3_signing::credentials::encode_uri_component;
 
 pub(crate) use crate::webcore::s3::list_objects::S3ListObjectsOptions;
@@ -40,21 +40,24 @@ pub(crate) use crate::webcore::s3::simple_request::S3DownloadResult;
 pub(crate) use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 pub(crate) use crate::webcore::s3::simple_request::S3ListObjectsResult;
 pub(crate) use crate::webcore::s3::simple_request::S3StatResult;
-pub use crate::webcore::s3::simple_request::S3UploadResult;
+pub(crate) use crate::webcore::s3::simple_request::S3UploadResult;
 
 use crate::webcore::s3::simple_request as s3_simple_request;
 
+use crate::generated_bindgen::s3_upload_stream::{
+    Bun__S3UploadStream__onRejectStream, Bun__S3UploadStream__onResolveStream,
+};
 use crate::webcore::ByteStream;
 use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::s3::multipart::State as MultiPartUploadState;
-use crate::webcore::sink::JSSink;
-use crate::webcore::streams::{NetworkSink, NetworkSinkJSSink};
+use crate::webcore::sink::ReadableSinkController;
+use crate::webcore::streams::NetworkSink;
 use bun_collections::IntegerBitSet;
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
-use bun_jsc::CallFrame;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 
 bun_core::declare_scope!(S3UploadStream, visible);
 
@@ -351,6 +354,7 @@ pub(crate) fn list_objects(
             http_proxy,
             verbose: Some(vm.get_verbose_fetch()),
             reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
+            tls_props: crate::socket::http_client_defaults(vm),
             signals: Some(task.signal_store.to()),
             ..Default::default()
         },
@@ -419,10 +423,11 @@ pub(crate) fn writable_stream(
     storage_class: Option<StorageClass>,
     request_payer: bool,
 ) -> JsResult<JSValue> {
-    // Local callback wrapper. `uploaded` is read off the upload (see `MultiPartUpload::callback`).
+    // Local callback wrapper. `uploaded` and `path` are read off the upload (see `MultiPartUpload::callback`).
     fn wrapper_callback(
         result: S3UploadResult,
         uploaded: u64,
+        path: &[u8],
         sink: &mut NetworkSink,
     ) -> JsResult<()> {
         // `global_this` is a `BackRef` set at construction; copy it so the
@@ -449,7 +454,7 @@ pub(crate) fn writable_stream(
                     }
                 }
                 S3UploadResult::Failure(err) => {
-                    let js_err = s3_error_to_js(&err, global, sink.path());
+                    let js_err = s3_error_to_js(&err, global, Some(path));
                     if sink.flush_promise.has_value() {
                         sink.flush_promise.reject(global, Ok(js_err))?;
                     }
@@ -476,7 +481,9 @@ pub(crate) fn writable_stream(
         let sink = ctx.cast::<NetworkSink>();
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below; the box is live
         // while the upload holds it.
-        let r = wrapper_callback(result, task.uploaded_bytes.get(), unsafe { &mut *sink });
+        let r = wrapper_callback(result, task.uploaded_bytes.get(), &task.path, unsafe {
+            &mut *sink
+        });
         // SAFETY: the upload's hold on the box ends here; `sink` is not used afterwards.
         unsafe { NetworkSink::release_writer_holder(sink) };
         r
@@ -535,8 +542,6 @@ pub(crate) fn writable_stream(
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, cx.context()) };
 
-    // Heap-allocate; `JSSink<NetworkSink>` is layout-
-    // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     let response_stream: *mut NetworkSink =
         bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
             // SAFETY: adopts one of `task_ptr`'s two initial refs (released in `detach_writable`).
@@ -549,7 +554,7 @@ pub(crate) fn writable_stream(
     task.callback_context.set(response_stream.cast::<c_void>());
 
     // SAFETY: freshly heap-allocated; exclusive access here. Ownership transfers to the JS
-    // wrapper via `to_js()` (the C++ side stores it as m_ctx and calls `finalize` on collect).
+    // wrapper via `to_js()` (the C++ side stores it and calls `finalize` on collect).
     let sink = unsafe { &mut *response_stream };
     // `source` defaults to `SourceHandle::None`; no stream is attached on the
     // `writer()` path, so ready/close/start are no-ops.
@@ -560,7 +565,7 @@ pub(crate) fn writable_stream(
 // (Aligned for `NativePromiseContext`, which packs its tag into the pointer's low bits.)
 #[derive(bun_ptr::CellRefCounted)]
 #[repr(align(16))]
-pub struct S3UploadStreamWrapper {
+pub(crate) struct S3UploadStreamWrapper {
     pub(crate) ref_count: core::cell::Cell<u32>,
 
     pub sink: Option<NonNull<NetworkSink>>,
@@ -581,7 +586,7 @@ impl S3UploadStreamWrapper {
         if let Some(sink_ptr) = self.sink.take() {
             // SAFETY: allocated via `Box::leak` in `upload_stream`; consumed once here.
             let mut sink = unsafe { bun_core::heap::take(sink_ptr.as_ptr()) };
-            JSSink::<NetworkSink>::detach(&mut sink.source, &self.global);
+            sink.source.detach(&self.global);
             // releases NetworkSink's counted ref on the MultiPartUpload
             sink.finalize();
         }
@@ -733,59 +738,27 @@ impl S3UploadStreamWrapper {
     }
 }
 
-fn s3_upload_stream_on_resolve(
-    _global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
+pub(crate) fn on_resolve_upload_stream(
+    _: &mut JsScope<'_>,
+    _: JsLocal<'_>,
+    context: Option<NonNull<S3UploadStreamWrapper>>,
+) {
     // The cell hands back the ref `upload_stream` gave it, which `handle_resolve_stream` balances.
-    if let Some(this) =
-        crate::api::native_promise_context::take::<S3UploadStreamWrapper>(args[args.len() - 1])
-    {
+    if let Some(this) = context {
         // SAFETY: that ref keeps the wrapper alive.
         unsafe { (*this.as_ptr()).handle_resolve_stream() };
     }
-    Ok(JSValue::UNDEFINED)
 }
 
-fn s3_upload_stream_on_reject(
-    _global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    let err = args[0];
-    // As `s3_upload_stream_on_resolve`; `handle_reject_stream` balances the ref.
-    if let Some(this) =
-        crate::api::native_promise_context::take::<S3UploadStreamWrapper>(args[args.len() - 1])
-    {
+pub(crate) fn on_reject_upload_stream(
+    _: &mut JsScope<'_>,
+    err: JsLocal<'_>,
+    context: Option<NonNull<S3UploadStreamWrapper>>,
+) {
+    // As `on_resolve_upload_stream`; `handle_reject_stream` balances the ref.
+    if let Some(this) = context {
         // SAFETY: that ref keeps the wrapper alive.
-        unsafe { (*this.as_ptr()).handle_reject_stream(err) };
-    }
-    Ok(JSValue::UNDEFINED)
-}
-
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__S3UploadStream__onResolveStream")]
-    unsafe fn s3_upload_stream_on_resolve_shim(
-        g: *mut JSGlobalObject,
-        cf: *mut CallFrame,
-    ) -> JSValue {
-        match s3_upload_stream_on_resolve(bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(cf)) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
-    }
-}
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__S3UploadStream__onRejectStream")]
-    unsafe fn s3_upload_stream_on_reject_shim(
-        g: *mut JSGlobalObject,
-        cf: *mut CallFrame,
-    ) -> JSValue {
-        match s3_upload_stream_on_reject(bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(cf)) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
+        unsafe { (*this.as_ptr()).handle_reject_stream(err.to_js()) };
     }
 }
 
@@ -971,11 +944,9 @@ pub(crate) fn upload_stream(
     let ctx = unsafe { &mut *ctx_ptr };
     task.callback_context.set(ctx_ptr.cast::<c_void>());
 
-    // Heap-allocate; `JSSink<NetworkSink>` is layout-
-    // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     // Ownership stays with `ctx.sink` (freed in `detach_sink`); the JS
-    // controller created by `assign_to_stream` detaches (`m_sinkPtr = null`)
-    // via `controller.end()/close()` before GC so its destructor never calls
+    // controller created by `assign_to_stream` detaches via
+    // `controller.end()/close()` before GC so its `Drop` never calls
     // `finalize` on this allocation.
     let sink: &mut NetworkSink = Box::leak(NetworkSink::new(NetworkSink {
         // SAFETY: `task_ptr` is live; the sink's ref is released in `detach_writable`.
@@ -1062,7 +1033,7 @@ pub(crate) fn upload_stream(
     }
 
     // The controller cell is installed into `sink.source` by `assign_to_stream`.
-    let assignment_result: JSValue = NetworkSinkJSSink::assign_to_stream(
+    let assignment_result: JSValue = ReadableSinkController::assign_to_stream(
         cx.global(),
         readable_stream.value,
         NonNull::from(sink),
@@ -1087,8 +1058,8 @@ pub(crate) fn upload_stream(
                             ctx_ptr,
                             JSValue::ZERO,
                         ),
-                        s3_upload_stream_on_resolve_shim,
-                        s3_upload_stream_on_reject_shim,
+                        Bun__S3UploadStream__onResolveStream,
+                        Bun__S3UploadStream__onRejectStream,
                     );
                 }
                 bun_jsc::js_promise::Status::Fulfilled => {
@@ -1283,6 +1254,7 @@ fn download_stream(
             verbose: Some(verbose),
             signals: Some(task.signals),
             reject_unauthorized: Some(reject_unauthorized),
+            tls_props: crate::socket::http_client_defaults(vm),
             ..Default::default()
         },
     ));
@@ -1376,12 +1348,12 @@ impl S3DownloadStreamWrapper {
     /// The other half of this rule is in `S3HttpDownloadStreamingTask::process_http_callback`
     /// (HTTP thread).
     fn after_chunk_delivered(&self, bytes: &ByteStream) {
-        use crate::webcore::byte_stream::{AfterDelivery, ProducerHold};
+        use crate::webcore::byte_stream::AfterDelivery;
         let task = self.task.get();
         if task.is_null() {
             return;
         }
-        match ProducerHold::after_delivery(bytes) {
+        match self.stream.after_delivery(bytes) {
             // SAFETY: see `task`.
             AfterDelivery::Resume => unsafe { (*task).resume_receive() },
             // SAFETY: see `task`.
@@ -1390,7 +1362,7 @@ impl S3DownloadStreamWrapper {
                 // SAFETY: see `task`.
                 unsafe { (*task).signal_store.pause_receive() };
                 if self.stream.park() {
-                    // SAFETY: see `task`; `park` touched the stream's source, not the task.
+                    // SAFETY: see `task`.
                     unsafe { (*task).poll_ref.unref(bun_io::js_vm_ctx()) };
                 }
             }
@@ -1418,7 +1390,7 @@ impl S3DownloadStreamWrapper {
         self.unpark();
     }
 
-    /// The parked stream's wrapper was collected: nothing can read the rest. Inside a GC sweep;
+    /// The stream's wrapper was collected: nothing can read the rest. Inside a GC sweep;
     /// touches no JS cell.
     pub(crate) fn on_stream_collected(&self) {
         self.on_stream_cancelled();
@@ -1475,12 +1447,12 @@ pub(crate) fn readable_stream(
     // store as `'static` for the heap-allocated wrapper.
     let global_static = GlobalRef::from(cx.global());
 
-    // Ownership of the heap-allocated NewSource transfers to the JS wrapper (m_ctx) via
+    // Ownership of the heap-allocated NewSource transfers to the JS wrapper via
     // `to_readable_stream()`/`to_js()`; the wrapper's finalize() reclaims it.
     let reader: *mut crate::webcore::byte_stream::Source =
         crate::webcore::byte_stream::Source::new(crate::webcore::readable_stream::NewSource {
             context: ByteStream::default(),
-            global_this: Some(bun_ptr::BackRef::new(cx.global())),
+            global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             ..Default::default()
         });
     // SAFETY: freshly heap-allocated via TrivialNew; exclusive access until handed to JS below.

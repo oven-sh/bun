@@ -295,9 +295,10 @@ impl<'p, 's> Checker<'p, 's> {
             self.resolution_start = self.stack.len();
         }
         let serial = self.work;
-        // `getResolvedSignature` would return it. Here the call is resolved again, and the result isn't used.
-        let is_assigned =
-            (self.signatures_resolved_within.iter()).any(|r| r.0 == file && r.1 == call);
+        // `getResolvedSignature` would return it. Here the call is resolved again, and the result isn't used. What
+        // `defers_call_of_generic_function` left behind was assigned inside this resolution.
+        let is_assigned = is_in_progress
+            && (self.signatures_resolved_within.iter()).any(|r| r.0 == file && r.1 == call);
         let outer_errors = self.call_resolution_errors.take();
         let is_re_resolved = std::mem::replace(&mut self.is_call_re_resolved, is_in_progress);
         self.last_call_outcome = CallOutcome::Chosen;

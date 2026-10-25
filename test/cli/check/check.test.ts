@@ -8984,6 +8984,39 @@ export const c11 = router({ b: new C00().p.keys() });
       expect(exitCode).toBe(1);
     });
 
+    // The callee of `x31()` leads to `x42` again, and that resolution of `x31()` finds `x31` to be `any` and assigns the
+    // untyped signature. The outer one gets the type of `fn` and fails, and `resolveCall` assigns the signature of a
+    // failed call over it. So `x31()` is `void` in the outer resolution of `take`.
+    test("a failed call replaces the signature that a resolution inside the check of its callee assigned", async () => {
+      using dir = project({
+        "a.ts": `declare function take<V extends object>(a: { v: V }): void;
+declare function id<T>(x: T): T;
+declare function fn(n: number): void;
+export const x42 = take(x31());
+export const api = id(x42);
+export function x51() { return api; }
+var o = { a: fn, b: x51() };
+var x31 = o.a;
+`,
+      });
+      const circular =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          `a.ts(4,14): error TS7022: 'x42' implicitly has type 'any' ${circular}`,
+          "a.ts(4,25): error TS2454: Variable 'x31' is used before being assigned.",
+          "a.ts(4,25): error TS2554: Expected 1 arguments, but got 0.",
+          "a.ts(4,25): error TS2345: Argument of type 'void' is not assignable to parameter of type '{ v: object; }'.",
+          `a.ts(5,14): error TS7022: 'api' implicitly has type 'any' ${circular}`,
+          "a.ts(6,17): error TS7023: 'x51' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          `a.ts(7,5): error TS7022: 'o' implicitly has type 'any' ${circular}`,
+          `a.ts(8,5): error TS7022: 'x31' implicitly has type 'any' ${circular}`,
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // b.ts is checked first. The call of `router` is resolved a second time inside its first resolution, without
     // constraint checks, so there it succeeds. The outer resolution fails, and `resolveCall` assigns the signature of a
     // failed call before it reports, so `one` is a `Router<Def>` for the outer call of `merge`.

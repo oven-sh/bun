@@ -13,9 +13,7 @@
 namespace WebCore {
 using namespace JSC;
 
-// Node's converters.Argon2Params (lib/internal/crypto/webidl.js): members in
-// WebIDL order (name, then the rest sorted by name). Conversion only; the
-// OperationError rules run later in CryptoAlgorithmArgon2::validateDeriveBits.
+// Conversion only; the OperationError rules live in CryptoAlgorithmArgon2::validateDeriveBits.
 template<> CryptoAlgorithmArgon2Params convertDictionary<CryptoAlgorithmArgon2Params>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);

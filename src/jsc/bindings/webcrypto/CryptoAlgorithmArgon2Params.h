@@ -16,8 +16,7 @@ public:
     uint32_t memory { 0 };
     uint32_t passes { 0 };
     uint8_t version { 0x13 };
-    // Use secretValueVector()/associatedDataVector() instead of these. The
-    // BufferSource is gone once the vector accessor is called.
+    // Read through secretValueVector()/associatedDataVector(); the accessor moves the BufferSource out.
     mutable std::optional<BufferSource::VariantType> secretValue;
     mutable std::optional<BufferSource::VariantType> associatedData;
 

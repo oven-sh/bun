@@ -1349,6 +1349,57 @@ describe("Argon2", () => {
     });
   });
 
+  it("an Argon2 key can be the derived key of deriveKey and the shared key of encapsulateKey", async () => {
+    const alg = { name: "Argon2id", memory: 32, passes: 3, parallelism: 4, nonce: Buffer.alloc(16, 0x02) };
+    const x25519 = (await crypto.subtle.generateKey("X25519", false, ["deriveKey", "deriveBits"])) as CryptoKeyPair;
+    const derived = await crypto.subtle.deriveKey(
+      { name: "X25519", public: x25519.publicKey },
+      x25519.privateKey,
+      "Argon2id",
+      false,
+      ["deriveBits"],
+    );
+    expect({
+      algorithm: derived.algorithm,
+      type: derived.type,
+      extractable: derived.extractable,
+      usages: derived.usages,
+    }).toEqual({ algorithm: { name: "Argon2id" }, type: "secret", extractable: false, usages: ["deriveBits"] });
+    const secret = await crypto.subtle.deriveBits(
+      { name: "X25519", public: x25519.publicKey },
+      x25519.privateKey,
+      null,
+    );
+    const fromSecret = await crypto.subtle.importKey("raw-secret", secret, "Argon2id", false, ["deriveBits"]);
+    expect(hex(await crypto.subtle.deriveBits(alg, derived, 256))).toBe(
+      hex(await crypto.subtle.deriveBits(alg, fromSecret, 256)),
+    );
+
+    const kem = (await crypto.subtle.generateKey("ML-KEM-768", false, [
+      "encapsulateKey",
+      "decapsulateKey",
+    ])) as CryptoKeyPair;
+    const { ciphertext, sharedKey } = await crypto.subtle.encapsulateKey(
+      { name: "ML-KEM-768" },
+      kem.publicKey,
+      "Argon2id",
+      false,
+      ["deriveBits"],
+    );
+    expect(sharedKey.algorithm).toEqual({ name: "Argon2id" });
+    const decapsulated = await crypto.subtle.decapsulateKey(
+      { name: "ML-KEM-768" },
+      kem.privateKey,
+      ciphertext,
+      "Argon2id",
+      false,
+      ["deriveBits"],
+    );
+    expect(hex(await crypto.subtle.deriveBits(alg, decapsulated, 256))).toBe(
+      hex(await crypto.subtle.deriveBits(alg, sharedKey, 256)),
+    );
+  });
+
   it("SubtleCrypto.supports reports the Argon2 operations", () => {
     const alg = { name: "Argon2id", memory: 32, passes: 3, parallelism: 4, nonce: Buffer.alloc(16, 0x02) };
     const supports = (op: string, a: unknown, extra?: unknown) => (SubtleCrypto as any).supports(op, a, extra);

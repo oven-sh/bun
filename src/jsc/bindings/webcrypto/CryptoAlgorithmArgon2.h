@@ -9,12 +9,10 @@ namespace WebCore {
 class CryptoAlgorithmArgon2Params;
 class CryptoKeyRaw;
 
-// One implementation backs Argon2d/Argon2i/Argon2id; the registered subclasses
-// below only pin the name and identifier, mirroring Node's argon2.js. The
-// derivation runs in the same rust-argon2 engine as node:crypto.argon2.
+// One implementation for Argon2d/Argon2i/Argon2id; the subclasses pin the name and identifier.
 class CryptoAlgorithmArgon2 : public CryptoAlgorithm {
 public:
-    // The deriveBits checks that need no key, shared with SubtleCrypto::supports.
+    // The deriveBits checks that need no key; SubtleCrypto::supports asks it too.
     static ExceptionOr<void> validateDeriveBits(const CryptoAlgorithmArgon2Params&, std::optional<size_t> length);
 
     void deriveBits(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, std::optional<size_t> length, VectorCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&) final;

@@ -61,8 +61,7 @@ static ASCIILiteral keyFormatName(CryptoKeyFormat format)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// validateArgon2DeriveBitsLength (node's lib/internal/crypto/argon2.js), then
-// the Argon2Params validators (lib/internal/crypto/webidl.js) in node's order.
+// Node's validateArgon2DeriveBitsLength, then its Argon2Params validators, in node's order.
 ExceptionOr<void> CryptoAlgorithmArgon2::validateDeriveBits(const CryptoAlgorithmArgon2Params& parameters, std::optional<size_t> length)
 {
     if (!length)
@@ -116,8 +115,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmArgon2::platformDeriveBits(CryptoAlg
     return output;
 }
 
-// importGenericSecretKey in node's lib/internal/crypto/keys.js, reached only
-// for raw-secret (lib/internal/crypto/webcrypto.js importKeySync).
+// Node's importGenericSecretKey order: format, then extractable, then usages.
 void CryptoAlgorithmArgon2::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
     auto name = CryptoAlgorithmRegistry::singleton().name(m_identifier);

@@ -1322,14 +1322,10 @@ pub(crate) fn argon2_sync<'a>(
     heap.create_buffer_from_box(ctx.output.into_boxed_slice())
 }
 
-/// WebCrypto Argon2 (`CryptoAlgorithmArgon2.cpp`) runs the same engine as
-/// `crypto.argon2`. `variant` is a `kArgon2Types` value (0 argon2d, 1 argon2i,
-/// 2 argon2id). Writes `tag_length` bytes to `out`. Returns false when the
-/// variant is unknown or the derivation fails.
+/// WebCrypto Argon2 (`CryptoAlgorithmArgon2.cpp`). `variant` is a `kArgon2Types` value.
 ///
 /// # Safety
-/// Every (ptr, len) pair must be a valid byte slice for the duration of the
-/// call (null only with len 0). `out` must point to `tag_length` writable bytes.
+/// Each (ptr, len) pair is a readable byte slice; `out` has `tag_length` writable bytes.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__Argon2__deriveBits(
     variant: u8,

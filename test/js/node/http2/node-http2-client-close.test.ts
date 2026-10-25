@@ -1,7 +1,9 @@
 /**
- * ClientHttp2Stream.close(code) event contract:
+ * Http2Stream.close(code) event contract, client and server, while the peer's half is still open:
  *   NO_ERROR / CANCEL  -> 'end', 'close'             (documented 'error' exemption)
  *   any other code     -> 'error', 'close'           (no 'end': the body was killed by RST_STREAM)
+ * Once the peer's half has ended (END_STREAM on a HEADERS frame, or a server push, which has no
+ * inbound half) the readable already has its EOF, so 'end' comes first for every code.
  *
  * Works with both:
  *   bun bd test test/js/node/http2/node-http2-client-close.test.ts
@@ -38,7 +40,7 @@ function rawH2Server(): net.Server {
     let buf = Buffer.alloc(0);
     let pre = false;
     s.on("error", () => {});
-    s.on("data", d => {
+    s.on("data", (d: Buffer) => {
       buf = Buffer.concat([buf, d]);
       if (!pre) {
         if (buf.length < PREFACE.length) return;
@@ -183,10 +185,185 @@ describe("ClientHttp2Stream.close(code) while pending", () => {
   }
 });
 
+// The listeners below call close(code) once the peer's half of the stream has ended. Each one is
+// the event of a HEADERS frame that carried END_STREAM (or the pushStream() callback: a server push
+// has no inbound half). "server 'stream', request open" is the contrast: no END_STREAM yet.
+type Site =
+  | "server 'stream'"
+  | "server 'stream' after respond()"
+  | "server 'stream', request open"
+  | "server 'trailers'"
+  | "pushStream() callback"
+  | "client 'response'"
+  | "client 'trailers'";
+
+async function closeIn(site: Site, code: number, defer: boolean): Promise<string[]> {
+  const events: string[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+  const watch = (stream: http2.Http2Stream) => {
+    stream.on("end", () => events.push("end"));
+    stream.on("error", e => events.push("error:" + (e as NodeJS.ErrnoException).code));
+    stream.on("close", () => {
+      events.push("close:" + stream.rstCode);
+      resolve(events);
+    });
+    stream.resume();
+  };
+  const close = (stream: http2.Http2Stream) => {
+    if (defer) process.nextTick(() => stream.close(code));
+    else stream.close(code);
+  };
+  const ignoreErrors = (stream: http2.Http2Stream) => stream.on("error", () => {});
+
+  const server = http2.createServer();
+  server.on("stream", (stream: http2.ServerHttp2Stream) => {
+    switch (site) {
+      case "server 'stream'":
+      case "server 'stream', request open":
+        watch(stream);
+        close(stream);
+        break;
+      case "server 'stream' after respond()":
+        watch(stream);
+        stream.respond({ ":status": 200 }, { endStream: true });
+        close(stream);
+        break;
+      case "server 'trailers'":
+        watch(stream);
+        stream.respond({ ":status": 200 });
+        stream.on("trailers", () => close(stream));
+        break;
+      case "pushStream() callback":
+        ignoreErrors(stream);
+        stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
+          if (err) return reject(err);
+          watch(pushed);
+          close(pushed);
+        });
+        stream.respond({ ":status": 200 });
+        stream.end();
+        break;
+      case "client 'response'":
+        ignoreErrors(stream);
+        stream.respond({ ":status": 204 }, { endStream: true });
+        break;
+      case "client 'trailers'":
+        ignoreErrors(stream);
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "1" }));
+        stream.end("body");
+        break;
+    }
+  });
+  const port = await listen(server);
+  const client = http2.connect(`http://127.0.0.1:${port}`);
+  client.on("error", reject);
+  client.on("stream", pushed => ignoreErrors(pushed).resume());
+  try {
+    switch (site) {
+      case "server 'trailers'": {
+        const req = client.request({ ":path": "/", ":method": "POST" }, { waitForTrailers: true });
+        req.on("wantTrailers", () => req.sendTrailers({ "x-trailer": "1" }));
+        ignoreErrors(req).resume();
+        req.end("body");
+        break;
+      }
+      case "client 'response'":
+      case "client 'trailers'": {
+        // The request stays open, so nothing but close(code) can close the stream.
+        const req = client.request({ ":path": "/", ":method": "POST" });
+        watch(req);
+        req.on(site === "client 'response'" ? "response" : "trailers", () => close(req));
+        break;
+      }
+      case "server 'stream', request open":
+        ignoreErrors(client.request({ ":path": "/", ":method": "POST" })).resume();
+        break;
+      default:
+        ignoreErrors(client.request({ ":path": "/" }, { endStream: true })).resume();
+    }
+    return await promise;
+  } finally {
+    client.destroy();
+    server.close();
+  }
+}
+
+const endThenClose = [
+  [NGHTTP2_NO_ERROR, ["end", "close:0"]],
+  [NGHTTP2_CANCEL, ["end", "close:8"]],
+  [NGHTTP2_INTERNAL_ERROR, ["end", "error:ERR_HTTP2_STREAM_ERROR", "close:2"]],
+  [NGHTTP2_ENHANCE_YOUR_CALM, ["end", "error:ERR_HTTP2_STREAM_ERROR", "close:11"]],
+] as const;
+const noEndForErrorCodes = [
+  [NGHTTP2_NO_ERROR, ["end", "close:0"]],
+  [NGHTTP2_CANCEL, ["end", "close:8"]],
+  [NGHTTP2_INTERNAL_ERROR, ["error:ERR_HTTP2_STREAM_ERROR", "close:2"]],
+  [NGHTTP2_ENHANCE_YOUR_CALM, ["error:ERR_HTTP2_STREAM_ERROR", "close:11"]],
+] as const;
+
+for (const [site, table] of [
+  ["server 'stream'", endThenClose],
+  ["server 'stream' after respond()", endThenClose],
+  ["server 'trailers'", endThenClose],
+  ["pushStream() callback", endThenClose],
+  ["client 'response'", endThenClose],
+  ["client 'trailers'", endThenClose],
+  ["server 'stream', request open", noEndForErrorCodes],
+] as const) {
+  for (const defer of [false, true]) {
+    describe(`close(code) ${defer ? "a tick after" : "in"} ${site}`, () => {
+      for (const [code, expected] of table) {
+        test(`close(${code})`, async () => {
+          assert.deepStrictEqual(await closeIn(site, code, defer), expected);
+        });
+      }
+    });
+  }
+}
+
+// request() rejects invalid headers one tick later, so the user's close() or destroy() runs first.
+describe("closing a request before its invalid headers are rejected keeps rstCode 0 and doesn't emit 'error'", () => {
+  const invalidHeaders = {
+    "a :path with a space": { ":path": "/a b" },
+    "content-length on a DELETE": { ":method": "DELETE", "content-length": "1" },
+  };
+  const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+
+  for (const [name, headers] of Object.entries(invalidHeaders)) {
+    for (const call of ["close", "destroy"] as const) {
+      test(`${call}() with ${name}`, async () => {
+        const server = http2.createServer();
+        const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+        try {
+          await new Promise(resolve => client.on("connect", resolve));
+          const events: string[] = [];
+          const req = client.request(headers);
+          req.on("close", () => events.push("close:" + req.rstCode));
+          req[call]();
+          // close() waits for 'ready' and then queues the RST_STREAM with setImmediate.
+          await nextTurn();
+          await nextTurn();
+          assert.deepStrictEqual(events, ["close:0"]);
+        } finally {
+          client.destroy();
+          server.close();
+        }
+      });
+    }
+  }
+});
+
 if (typeof Bun !== "undefined") {
   const node = Bun.which("node");
+  // Alpine's node segfaults at a random point of this file (alpine 3.23 aarch64, on main too), and
+  // the CI runner fails a file for any new core dump, whichever process wrote it. The glibc, macOS
+  // and Windows lanes keep the cross-check.
+  const isMusl =
+    process.platform === "linux" &&
+    !(process.report.getReport() as { header: { glibcVersionRuntime?: string } }).header.glibcVersionRuntime;
   describe("Node.js compatibility", () => {
-    test("tests should run on node.js", { skip: !node }, async () => {
+    test("tests should run on node.js", { skip: !node || isMusl }, async () => {
       await using proc = Bun.spawn({
         cmd: [node as string, "--test", import.meta.filename],
         stdout: "inherit",

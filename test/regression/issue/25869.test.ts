@@ -6,10 +6,10 @@ import { expect, jest, test } from "bun:test";
 // testing-library/react checks for setTimeout.clock or setTimeout._isMockFunction
 // to determine if fake timers are enabled.
 function jestFakeTimersAreEnabled(): boolean {
-  // @ts-expect-error - checking for Jest fake timers markers
+  // checking for Jest fake timers markers
   if (typeof jest !== "undefined" && jest !== null) {
     return (
-      // @ts-expect-error - checking for mock function marker
+      // checking for mock function marker
       (globalThis.setTimeout as any)._isMockFunction === true ||
       Object.prototype.hasOwnProperty.call(globalThis.setTimeout, "clock")
     );

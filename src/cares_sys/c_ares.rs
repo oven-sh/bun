@@ -1869,8 +1869,6 @@ pub const ARES_SOCKET_BAD: ares_socket_t = usize::MAX; // INVALID_SOCKET
 #[cfg(not(windows))]
 pub const ARES_SOCKET_BAD: ares_socket_t = -1;
 
-// Bun__canonicalizeIP_ host fn: see bun_runtime::dns_jsc::cares_jsc
-
 /// Creates a sockaddr structure from an address, port.
 ///
 /// # Parameters

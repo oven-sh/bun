@@ -1,0 +1,3 @@
+x =  /* prettier-ignore */ a ? b : c;
+const someLongVariableName = /* prettier-ignore */ someCondition ? someConsequentValueThatIsLong : someAlternateValueThatIsLong1234;
+const x = /* prettier-ignore */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ? bbbbbbbbbbbbbbbbbbbbbbbbbbbbb : cccccccccccccccccccccccc) ? d : e;

@@ -366,6 +366,8 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
                         ..Default::default()
                     });
+                    p.export_star_import_records
+                        .push(deduped.import_record_index);
                 }
                 return Ok(());
             }

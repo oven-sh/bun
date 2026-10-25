@@ -7321,78 +7321,24 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
-                // Check the FileMap first for in-memory files
-                if let Some(file_map) = self.file_map {
-                    if let Some(_file_map_result) = file_map.resolve(
-                        self.arena(),
-                        source.path.text,
-                        import_record.path.text,
-                        import_record.kind.is_from_css() || loader == Loader::Html,
-                    ) {
-                        let mut file_map_result = _file_map_result;
-                        let mut path_primary = file_map_result.path_pair.primary;
-                        let import_record_loader = import_record.loader.unwrap_or_else(|| {
-                            Fs::Path::init(path_primary.text)
-                                .loader(&transpiler.options.loaders)
-                                .unwrap_or(Loader::File)
-                        });
-                        import_record.loader = Some(import_record_loader);
-
-                        if let Some(id) =
-                            self.path_to_source_index_map(target).get(path_primary.text)
-                        {
-                            import_record.source_index = Index::init(id);
-                            continue;
-                        }
-
-                        let resolve_entry =
-                            resolve_queue.get_or_put(path_primary.text).expect("oom");
-                        if resolve_entry.found_existing {
-                            // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                            import_record.path =
-                                path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
-                            continue;
-                        }
-
-                        // For virtual files, use the path text as-is (no relative path computation needed).
-                        // A relative path already has its display path.
-                        if path_primary.pretty.as_ptr() == path_primary.text.as_ptr() {
-                            // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
-                            // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`
-                            // (otherwise `path_primary: Path<'static>` forces `&self: 'static`,
-                            // cascading borrow conflicts into every `&mut self` call below).
-                            path_primary.pretty = unsafe {
-                                bun_ptr::detach_lifetime(
-                                    self.arena().alloc_slice_copy(path_primary.text),
-                                )
-                            };
-                        }
-                        import_record.path = path_as_static(&path_primary);
-                        let _ = path_primary.text; // key already interned by get_or_put
-                        bun_core::scoped_log!(
-                            Bundle,
-                            "created ParseTask from FileMap: {}",
-                            bstr::BStr::new(&path_primary.text)
-                        );
-                        file_map_result.path_pair.primary = path_primary;
-                        // Arena-owned.
-                        let resolve_task_val =
-                            ParseTask::init(&file_map_result, bun_ast::Index::INVALID, self);
-                        // SAFETY: arena outlives the bundle pass.
-                        let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
-                        resolve_task.known_target = target;
-                        // Use transpiler JSX options, applying force_node_env like the disk path does
-                        resolve_task.jsx = transpiler.options.jsx.clone();
-                        resolve_task.jsx.development = transpiler.options.forced_jsx_development();
-                        resolve_task.loader = Some(import_record_loader);
-                        resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
-                        *resolve_entry.value_ptr = resolve_task;
-                        continue;
-                    }
-                }
-
+                // A `files` hit stands in for the resolver's result. The steps below treat it like a file on disk.
+                let in_memory_result: Option<_resolver::Result> =
+                    self.file_map.and_then(|file_map| {
+                        file_map.resolve(
+                            self.arena(),
+                            source.path.text,
+                            import_record.path.text,
+                            import_record.kind.is_from_css() || loader == Loader::Html,
+                        )
+                    });
+                let is_in_memory = in_memory_result.is_some();
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
+                    if let Some(mut result) = in_memory_result {
+                        // A `files` hit takes the JSX options of the build, not of a tsconfig.json.
+                        result.jsx = transpiler.options.jsx.clone();
+                        break result;
+                    }
                     match transpiler.resolver.resolve_with_framework(
                         source_dir,
                         import_record.path.text,
@@ -7754,9 +7700,17 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                *path = self
-                    .path_with_pretty_initialized(path, target)
-                    .expect("oom");
+                if !is_in_memory {
+                    *path = self
+                        .path_with_pretty_initialized(path, target)
+                        .expect("oom");
+                } else if path.pretty.as_ptr() == path.text.as_ptr() {
+                    // An absolute key or a name is its own display path. A relative path already has one.
+                    // SAFETY: the arena outlives the bundle pass. Detaching keeps `&self` free for the calls below.
+                    path.pretty = unsafe {
+                        bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(path.text))
+                    };
+                }
 
                 import_record.path = path_as_static(path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut

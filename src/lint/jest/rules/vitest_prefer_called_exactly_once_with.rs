@@ -1,8 +1,8 @@
-use bun_lint_oxlint::ast_util::{as_member_expression, callee_name};
 use crate::jest::{self, ParsedExpectFnCall, ParsedJestFnCall, PossibleJestNode};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint_oxlint::ast_util::{as_member_expression, callee_name};
 use rustc_hash::FxHashMap;
 
 /// It checks when a target is asserted with both `toHaveBeenCalledOnce` and `toHaveBeenCalledWith` instead of
@@ -15,8 +15,12 @@ const PREFER_CALLED_EXACTLY_ONCE_WITH: Message = Message::new(
 );
 
 impl Rule for PreferCalledExactlyOnceWith {
-    const META: Meta =
-        Meta::oxlint(Plugin::Vitest, "prefer-called-exactly-once-with", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::oxlint(
+        Plugin::Vitest,
+        "prefer-called-exactly-once-with",
+        Kind::Suggestion,
+    )
+    .fixable(Fixable::Code);
     const ON: On = On::new().stmts(&[StmtTag::Block]).finish();
     type State<'a> = ();
 
@@ -25,7 +29,8 @@ impl Rule for PreferCalledExactlyOnceWith {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (file.mentions("toHaveBeenCalledOnce") && file.mentions("toHaveBeenCalledWith")).then_some(())
+        (file.mentions("toHaveBeenCalledOnce") && file.mentions("toHaveBeenCalledWith"))
+            .then_some(())
     }
 
     fn stmt<'a>(&self, block_statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -35,7 +40,7 @@ impl Rule for PreferCalledExactlyOnceWith {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        // The bodies of the callbacks of tests are reached from the statements that call the tests.
+        // Test callback bodies are reached through the statements that call the tests.
         check_block_body(cx.file().body(), cx);
     }
 }
@@ -46,18 +51,18 @@ enum MatcherKind {
     ToHaveBeenCalledWith,
 }
 
-/// An `expect(a).toHaveBeenCalledOnce()` or an `expect(a).toHaveBeenCalledWith(..)`, and the other if it has been found.
+/// One of `expect(a).toHaveBeenCalledOnce()` and `expect(a).toHaveBeenCalledWith(..)`, plus the other once it's found.
 struct TrackingExpectPair<'a> {
     first: MatcherKind,
     span_to_substitute: Span,
-    /// The lines of the other.
+    /// The other call's lines.
     span_to_remove: Option<Span>,
     /// The `expect(a).toHaveBeenCalledWith(..)`.
     called_with: Option<Call<'a>>,
 }
 
-/// The arguments as they are written, with `, ` between.
-fn text_of_arguments<'a>(arguments: List<'a, Expr<'a>>) -> Vec<u8> {
+/// The arguments' source text, joined with `, `.
+fn arguments_text<'a>(arguments: List<'a, Expr<'a>>) -> Vec<u8> {
     let mut text = Vec::new();
     for (i, argument) in arguments.iter().enumerate() {
         text.extend_from_slice(if i > 0 { ", " } else { "" }.as_bytes());
@@ -67,7 +72,7 @@ fn text_of_arguments<'a>(arguments: List<'a, Expr<'a>>) -> Vec<u8> {
 }
 
 fn check_block_body<'a>(statements: List<'a, Stmt<'a>>, cx: &Cx<'a, PreferCalledExactlyOnceWith>) {
-    // With the bodies of the callbacks of tests and suites, however deep.
+    // Also checks the callback bodies of tests and suites, at any depth.
     let mut pending = vec![statements];
     while let Some(statements) = pending.pop() {
         check_statements(statements, &mut pending, cx);
@@ -80,16 +85,21 @@ fn check_statements<'a>(
     cx: &Cx<'a, PreferCalledExactlyOnceWith>,
 ) {
     let file = cx.file();
-    // By what is expected, as it is written.
+    // Keyed by the source text of `expect`'s arguments.
     let mut variables_expected: FxHashMap<Vec<u8>, TrackingExpectPair<'a>> = FxHashMap::default();
     for statement in statements {
         let StmtKind::Expr(expression) = statement.kind() else {
             continue;
         };
-        let Some(call_expr) = expression.as_call().filter(|_| !expression.is_parenthesized() && !expression.is_chain_root()) else {
+        let Some(call_expr) = expression
+            .as_call()
+            .filter(|_| !expression.is_parenthesized() && !expression.is_chain_root())
+        else {
             continue;
         };
-        if callee_name(call_expr).is_some_and(|it| it.is_any(&["mockClear", "mockReset", "mockRestore"])) {
+        if callee_name(call_expr)
+            .is_some_and(|it| it.is_any(&["mockClear", "mockReset", "mockRestore"]))
+        {
             if let Some(identify) = as_member_expression(call_expr.callee()).and_then(Expr::object)
                 && let Some(name) = identify.as_ident().filter(|_| !identify.is_parenthesized())
             {
@@ -97,22 +107,36 @@ fn check_statements<'a>(
             }
             continue;
         }
-        let expect_call = match jest::parse_jest_fn_call(file, PossibleJestNode::new(expression, jest::Runner::Vitest)) {
+        let expect_call = match jest::parse_jest_fn_call(
+            file,
+            PossibleJestNode::new(expression, jest::Runner::Vitest),
+        ) {
             Some(ParsedJestFnCall::GeneralJest(_)) => {
-                let callback = call_expr.args().iter().rev().find_map(|it| it.as_fn().filter(|_| !it.is_parenthesized()));
+                let callback = call_expr
+                    .args()
+                    .iter()
+                    .rev()
+                    .find_map(|it| it.as_fn().filter(|_| !it.is_parenthesized()));
                 pending.extend(callback.and_then(Func::body_statements));
                 continue;
             }
             Some(ParsedJestFnCall::Expect(expect_call)) => expect_call,
             _ => continue,
         };
-        let Some((variable_expected_name, matcher)) = get_identifier_and_matcher_to_be_expected(&expect_call) else {
+        let Some((variable_expected_name, matcher)) =
+            get_identifier_and_matcher_to_be_expected(&expect_call)
+        else {
             continue;
         };
         let called_with = (matcher == MatcherKind::ToHaveBeenCalledWith).then_some(call_expr);
         let Some(expects) = variables_expected.get_mut(&variable_expected_name) else {
             let span_to_substitute = expression.span();
-            let expects = TrackingExpectPair { first: matcher, span_to_substitute, span_to_remove: None, called_with };
+            let expects = TrackingExpectPair {
+                first: matcher,
+                span_to_substitute,
+                span_to_remove: None,
+                called_with,
+            };
             variables_expected.insert(variable_expected_name, expects);
             continue;
         };
@@ -120,12 +144,16 @@ fn check_statements<'a>(
             expects.span_to_remove = Some(get_source_code_line_span(statement.span(), file));
             expects.called_with = expects.called_with.or(called_with);
         } else {
-            // The same again, or a third.
+            // The same matcher again, or a third call.
             variables_expected.remove(&variable_expected_name);
         }
     }
-    for (identifier, expects) in &variables_expected {
-        let (Some(span_to_remove), Some(called_with)) = (expects.span_to_remove, expects.called_with) else {
+    for (identifier, expects) in
+        utils::sort::collect_sorted_by_key(&variables_expected, |it| it.1.span_to_substitute.start)
+    {
+        let (Some(span_to_remove), Some(called_with)) =
+            (expects.span_to_remove, expects.called_with)
+        else {
             continue;
         };
         let report = cx
@@ -133,36 +161,57 @@ fn check_statements<'a>(
             .first_label("Replace with `toHaveBeenCalledExactlyOnceWith`")
             .label(span_to_remove, "Remove this expect");
         report.fix_dangerously(|fixer| {
-            let arguments = text_of_arguments(called_with.args());
+            let arguments = arguments_text(called_with.args());
             let substitute = [
                 b"expect(".as_slice(),
                 identifier.as_slice(),
                 b").toHaveBeenCalledExactlyOnceWith".as_slice(),
-                file.slice(called_with.type_args().angle_brackets_span().unwrap_or_default()),
+                file.slice(
+                    called_with
+                        .type_args()
+                        .angle_brackets_span()
+                        .unwrap_or_default(),
+                ),
                 b"(".as_slice(),
                 arguments.as_slice(),
                 b")".as_slice(),
             ];
-            [fixer.replace(expects.span_to_substitute, substitute.concat()), fixer.remove(span_to_remove)]
+            [
+                fixer.replace(expects.span_to_substitute, substitute.concat()),
+                fixer.remove(span_to_remove),
+            ]
         });
     }
 }
 
-fn get_identifier_and_matcher_to_be_expected(expect_call: &ParsedExpectFnCall) -> Option<(Vec<u8>, MatcherKind)> {
+fn get_identifier_and_matcher_to_be_expected(
+    expect_call: &ParsedExpectFnCall,
+) -> Option<(Vec<u8>, MatcherKind)> {
     let matcher = match expect_call.matcher()?.name()? {
         b"toHaveBeenCalledOnce" => MatcherKind::ToHaveBeenCalledOnce,
         b"toHaveBeenCalledWith" => MatcherKind::ToHaveBeenCalledWith,
         _ => return None,
     };
-    if expect_call.members.iter().any(|member| member.is_name_equal("not")) {
+    if expect_call
+        .members
+        .iter()
+        .any(|member| member.is_name_equal("not"))
+    {
         return None;
     }
-    Some((text_of_arguments(expect_call.expect_arguments?), matcher))
+    Some((arguments_text(expect_call.expect_arguments?), matcher))
 }
 
-/// From the start of the line to the character after the statement, which is taken to be the line break.
+/// Spans from the start of the line to one character past the statement, assumed to be the line break.
 fn get_source_code_line_span(statement_span: Span, file: &File) -> Span {
-    let before = file.text().get(..statement_span.start as usize).unwrap_or_default();
-    let column_0 = strings::last_index_of_char(before, b'\n').map_or(statement_span.start, |index| index as u32 + 1);
-    Span::new(column_0, (statement_span.end + 1).min(file.text().len() as u32))
+    let before = file
+        .text()
+        .get(..statement_span.start as usize)
+        .unwrap_or_default();
+    let column_0 = strings::last_index_of_char(before, b'\n')
+        .map_or(statement_span.start, |index| index as u32 + 1);
+    Span::new(
+        column_0,
+        (statement_span.end + 1).min(file.text().len() as u32),
+    )
 }

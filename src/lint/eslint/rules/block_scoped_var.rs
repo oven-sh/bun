@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashMap;
 
 /// Enforce the use of variables within the scope they are defined.
 pub struct BlockScopedVar;
@@ -13,11 +13,11 @@ const OUT_OF_SCOPE: Message = Message::new(
 #[derive(Default)]
 pub struct State<'a> {
     binding_contexts: AncestorMemo<'a, Span>,
-    /// The last statement with several names that declares the symbol.
-    declared_in: FxHashMap<Symbol<'a>, Stmt<'a>>,
+    /// The last multi-name statement that declares the symbol.
+    declared_in: IdMap<Symbol<'a>, Stmt<'a>>,
 }
 
-/// All that is on the left in the declaration that `pat` is in.
+/// The whole left side of the declarator that contains `pat`.
 fn pattern_of(pat: Pat) -> Span {
     match Declaration::Var(pat).node() {
         Some(Node::VarDecl(declarator)) => declarator.pat().span(),
@@ -26,22 +26,24 @@ fn pattern_of(pat: Pat) -> Span {
 }
 
 impl BlockScopedVar {
-    /// The innermost block, loop, `switch` or static block around `statement`. `None` at the top
-    /// level of the file, which nothing is outside of.
+    /// Returns the innermost block, loop, `switch` or static block around `statement`. `None` at the top level of the
+    /// file, since nothing is outside it.
     fn binding_context<'a>(statement: Stmt<'a>, cx: &mut Cx<'a, Self>) -> Option<Span> {
-        cx.state.binding_contexts.find(Node::Stmt(statement), |_, ancestor| match ancestor {
-            Node::Func(func) if func.kind() == FnKind::StaticBlock => Some(func.owner().span()),
-            Node::Func(func) => func.body_span(),
-            Node::Stmt(it) => match it.kind() {
-                StmtKind::Block(_)
-                | StmtKind::For { .. }
-                | StmtKind::ForIn { .. }
-                | StmtKind::ForOf { .. }
-                | StmtKind::Switch { .. } => Some(it.span()),
+        cx.state
+            .binding_contexts
+            .find(Node::Stmt(statement), |_, ancestor| match ancestor {
+                Node::Func(func) if func.kind() == FnKind::StaticBlock => Some(func.owner().span()),
+                Node::Func(func) => func.body_span(),
+                Node::Stmt(it) => match it.kind() {
+                    StmtKind::Block(_)
+                    | StmtKind::For { .. }
+                    | StmtKind::ForIn { .. }
+                    | StmtKind::ForOf { .. }
+                    | StmtKind::Switch { .. } => Some(it.span()),
+                    _ => None,
+                },
                 _ => None,
-            },
-            _ => None,
-        })
+            })
     }
 }
 
@@ -60,26 +62,33 @@ impl Rule for BlockScopedVar {
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         // `const`, `let`
-        if matches!(cx.text().get(statement.span().start as usize), Some(b'c' | b'l')) {
+        if matches!(
+            cx.text().get(statement.span().start as usize),
+            Some(b'c' | b'l')
+        ) {
             return;
         }
         let Some(declarations) = statement.as_var() else {
             return;
         };
-        let Some(first) = declarations.first().filter(|it| it.var_kind() == VarKind::Var) else {
+        let Some(first) = declarations
+            .first()
+            .filter(|it| it.var_kind() == VarKind::Var)
+        else {
             return;
         };
         let Some(context) = Self::binding_context(statement, cx) else {
             return;
         };
-        // oxlint goes through them all.
+        // oxlint checks every one of them.
         let is_oxlint = cx.language().is_oxlint;
-        let has_one_name = is_oxlint || first.pat().tag() == PatTag::Ident && declarations.iter().nth(1).is_none();
+        let has_one_name =
+            is_oxlint || first.pat().tag() == PatTag::Ident && declarations.iter().nth(1).is_none();
         let mut check_binding = |pat: Pat<'a>| {
             let Some(symbol) = pat.symbol() else {
                 return;
             };
-            // Of several declarations of a name in the statement, the first stands for all.
+            // If the statement declares a name several times, only the first declaration is checked.
             if !has_one_name && cx.state.declared_in.insert(symbol, statement) == Some(statement) {
                 return;
             }
@@ -94,32 +103,39 @@ impl Rule for BlockScopedVar {
                 }
                 let definition = *definition.get_or_insert_with(|| cx.position(pat.span().start));
                 cx.report(identifier, OUT_OF_SCOPE)
+                    .called_with(statement)
                     .data("name", reference.name())
                     .data("definitionLine", definition.line)
                     .data("definitionColumn", definition.column + 1)
                     .labels_with(|labels| {
                         let name = bstr::BStr::new(reference.name().bytes());
-                        // A declaration that gives the variable a value.
+                        // A declaration with an initializer.
                         if matches!(reference.node(), Node::Pat(_)) {
                             labels.first("it is redeclared here");
-                            return labels.push(pattern_of(pat), format!("'{name}' is first declared here"));
+                            return labels
+                                .push(pattern_of(pat), format!("'{name}' is first declared here"));
                         }
                         labels.first(format!("'{name}' is used here"));
                         labels.push(pattern_of(pat), "It is declared in a different scope here");
                     });
                 false
             };
-            // They are in source order, but for those in one pattern, which is not partly in a block.
-            // So those outside the block are at the two ends.
+            // References are in source order, except within one pattern, and a pattern is never only partly inside a
+            // block. So the references outside the block are at the two ends.
             let mut references = symbol.references();
-            if references.any(&mut is_inside) {
+            if is_oxlint {
+                // In source order.
+                for reference in references {
+                    is_inside(reference);
+                }
+            } else if references.any(&mut is_inside) {
                 let _ = references.rfind(|&it| is_inside(it));
             }
             if !is_oxlint || symbol.declaration_count() < 2 {
                 return;
             }
-            // For oxlint another declaration is a use. One that gives the variable a value is a reference here.
-            let mut is_declared_inside = |declaration: Declaration<'a>| {
+            // oxlint counts another declaration as a use. One with an initializer is already a reference here.
+            let is_declared_inside = |declaration: Declaration<'a>| {
                 let Some(name) = declaration.name_span() else {
                     return false;
                 };
@@ -130,7 +146,8 @@ impl Rule for BlockScopedVar {
                     return true;
                 }
                 if cx.file().reference_at(name.start).is_none() {
-                    cx.report(name, OUT_OF_SCOPE).data("name", symbol.name()).labels_with(|labels| {
+                    let report = cx.report(name, OUT_OF_SCOPE).called_with(statement);
+                    report.data("name", symbol.name()).labels_with(|labels| {
                         labels.first("it is redeclared here");
                         let name = bstr::BStr::new(symbol.name().bytes());
                         labels.push(pattern_of(pat), format!("'{name}' is first declared here"));
@@ -138,9 +155,8 @@ impl Rule for BlockScopedVar {
                 }
                 false
             };
-            let mut declarations = symbol.declarations();
-            if declarations.any(&mut is_declared_inside) {
-                let _ = declarations.rfind(|&it| is_declared_inside(it));
+            for declaration in symbol.declarations() {
+                is_declared_inside(declaration);
             }
         };
         for declaration in declarations {

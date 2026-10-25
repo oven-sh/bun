@@ -14,6 +14,7 @@
 
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSLexicalEnvironmentInlines.h>
@@ -362,9 +363,53 @@ static JSObject* createModuleGraphFrame(Zig::GlobalObject* globalObject, JSModul
     return frame;
 }
 
+JSValue asyncContextWithoutModuleGraphs(Zig::GlobalObject* globalObject, JSValue asyncContext)
+{
+    if (!globalObject->hasModuleGraphs())
+        return asyncContext;
+
+    VM& vm = globalObject->vm();
+    auto& names = WebCore::builtinNames(vm);
+    auto isModuleGraphFrame = [&](JSObject* frame) {
+        JSValue storage = frame->getDirect(vm, names.storagePublicName());
+        return storage && (storage == globalObject || dynamicDowncast<JSModuleGraph>(storage));
+    };
+
+    // `asyncContext` keeps every frame alive. Frames older than the oldest graph frame are reused as-is. Newer ones are copied.
+    Vector<JSObject*, 16> frames;
+    size_t framesToRebuild = 0;
+    for (JSObject* frame = asyncContext.getObject(); frame;) {
+        frames.append(frame);
+        if (isModuleGraphFrame(frame))
+            framesToRebuild = frames.size();
+        JSValue previous = frame->getDirect(vm, names.prevPublicName());
+        frame = previous ? previous.getObject() : nullptr;
+    }
+    if (!framesToRebuild)
+        return asyncContext;
+
+    auto getField = [&](JSObject* frame, const Identifier& name) {
+        JSValue value = frame->getDirect(vm, name);
+        return value ? value : jsUndefined();
+    };
+    JSValue result = getField(frames[framesToRebuild - 1], names.prevPublicName());
+    for (size_t i = framesToRebuild - 1; i--;) {
+        JSObject* frame = frames[i];
+        if (isModuleGraphFrame(frame))
+            continue;
+        JSObject* copy = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
+        copy->putDirectOffset(vm, FrameStorage, getField(frame, names.storagePublicName()));
+        copy->putDirectOffset(vm, FrameValue, getField(frame, vm.propertyNames->value));
+        copy->putDirectOffset(vm, FramePrev, result);
+        copy->putDirectOffset(vm, FrameMasked, getField(frame, names.maskedPublicName()));
+        result = copy;
+    }
+    return result;
+}
+
 // With no script on the stack, a microtask checkpoint resets the async context
 // (GlobalObject::drainMicrotasks): inside a scope native code entered, to what it entered.
-static void noteEnteredFromEventLoop(Zig::GlobalObject* globalObject, JSValue asyncContext)
+void noteEnteredFromEventLoop(Zig::GlobalObject* globalObject, JSValue asyncContext)
 {
     VM& vm = globalObject->vm();
     if (vm.entryScope || !globalObject->m_moduleGraphs)

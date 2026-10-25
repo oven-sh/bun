@@ -1,15 +1,15 @@
-//! From statements to the tree: `EventedTokenizer` of `simple-html-tokenizer`, which is given the text between the
-//! mustaches piece by piece, and `TokenizerEventHandlers` and `HandlebarsNodeVisitors` of `@glimmer/syntax`, in the
-//! mode `codemod`: entities stay as they are written.
+//! Turns statements into the tree: `EventedTokenizer` from `simple-html-tokenizer`, which is fed the text between the
+//! mustaches piece by piece, plus `TokenizerEventHandlers` and `HandlebarsNodeVisitors` from `@glimmer/syntax` in
+//! `codemod` mode, which leaves entities as written.
 //!
-//! The states are those of the tokenizer, with all that they let through and all that they drop.
+//! The states are the tokenizer's, and they accept everything it accepts. Text that it drops isn't lost: the node it's
+//! dropped from is marked (`Node::is_verbatim`), or else the whole template is (`Tree::has_lost_text`).
 
 use super::Error;
 use super::ast::{Kind, NOTHING, NodeId, Range, Text, Tree};
 use super::parser::{Statement, StatementKind};
-use super::positions::Positions;
 use crate::stack::Stack;
-use crate::syntax_error::{Message, Refusal};
+use crate::syntax_error::{Message, Rejection};
 use bun_core::strings;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -23,7 +23,7 @@ enum State {
     DoctypeName,
     AfterDoctypeName,
     AfterDoctypePublicKeyword,
-    /// The tokenizer goes to this state and to the next, and has neither.
+    /// The tokenizer transitions to this state and the next one, but implements neither.
     BeforeDoctypePublicIdentifier,
     AfterDoctypeSystemKeyword,
     DoctypePublicIdentifierDoubleQuoted,
@@ -52,11 +52,33 @@ enum State {
     EndTagOpen,
 }
 
+impl State {
+    fn is_in_doctype(self) -> bool {
+        matches!(
+            self,
+            State::Doctype
+                | State::BeforeDoctypeName
+                | State::DoctypeName
+                | State::AfterDoctypeName
+                | State::AfterDoctypePublicKeyword
+                | State::BeforeDoctypePublicIdentifier
+                | State::AfterDoctypeSystemKeyword
+                | State::DoctypePublicIdentifierDoubleQuoted
+                | State::DoctypePublicIdentifierSingleQuoted
+                | State::AfterDoctypePublicIdentifier
+                | State::BetweenDoctypePublicAndSystemIdentifiers
+                | State::DoctypeSystemIdentifierDoubleQuoted
+                | State::DoctypeSystemIdentifierSingleQuoted
+                | State::AfterDoctypeSystemIdentifier
+        )
+    }
+}
+
 fn is_space(byte: u8) -> bool {
     matches!(byte, b'\t' | b'\n' | 0x0C | b' ')
 }
 
-/// What a tag can start with.
+/// True if a tag name can start with `byte`.
 fn starts_tag_name(byte: u8) -> bool {
     matches!(byte, b'@' | b':') || byte.is_ascii_alphabetic()
 }
@@ -83,7 +105,7 @@ pub(crate) fn is_void_tag(name: &[u8]) -> bool {
     )
 }
 
-/// The first six UTF-16 code units of `text`, in upper case, are `keyword`.
+/// True if the first six UTF-16 code units of `text`, uppercased, are `keyword`.
 fn starts_with_keyword(text: &[u8], keyword: [u8; 6]) -> bool {
     if let Some(start) = text.get(..6)
         && start.is_ascii()
@@ -112,6 +134,8 @@ struct Tag {
     name: Text,
     start: usize,
     is_self_closing: bool,
+    /// Something in it gets dropped.
+    is_verbatim: bool,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -121,59 +145,55 @@ struct Attribute {
     value_start: usize,
     is_quoted: bool,
     is_dynamic: bool,
-    /// Empty: there is none.
+    /// Empty if there's none.
     current_part: Text,
 }
 
-/// What is open: an element, or the body of a block or of the template.
+/// An open container: an element, or the body of a block or of the template.
 #[derive(Copy, Clone)]
 struct Frame {
-    /// `NOTHING`: a body.
+    /// `NOTHING` for a body.
     element: NodeId,
-    /// Where its children start in `Builder::children`.
+    /// The start of its children in `Builder::children`.
     base: usize,
 }
 
 struct Builder<'a> {
     source: &'a [u8],
-    refusal: &'a Refusal,
+    rejection: &'a Rejection,
     statements: &'a [Statement],
-    positions: &'a Positions,
     tree: &'a mut Tree,
 
     state: State,
-    /// Where the tokenizer is, and where the piece ends that it has been given.
+    /// The tokenizer's position, and the end of the piece it was given.
     index: usize,
     end: usize,
-    /// The tokenizer has read one character more than it had.
+    /// The tokenizer has read one character past the end of its piece.
     has_read_too_far: bool,
-    /// Up to `shifted_up_to`, the tokenizer takes itself to be so many UTF-16 code units before where it is.
-    shift: u32,
-    shifted_up_to: usize,
-    /// `tagNameBuffer` is empty. Otherwise it is `tag.name`.
+    /// True if `tagNameBuffer` is empty. Otherwise it equals `tag.name`.
     is_tag_name_buffer_empty: bool,
 
     tag_open: usize,
     tag: Tag,
     /// The attributes, modifiers and comments of `tag`.
     tag_parts: [Vec<NodeId>; 3],
-    /// The same, in the order of the template.
+    /// The same, in source order.
     sorted_tag_parts: Vec<NodeId>,
     tag_params: Vec<Text>,
     attribute: Attribute,
     attribute_parts: Vec<NodeId>,
-    /// Of the text or the comment that is being read.
+    /// The start of the text or comment being read.
     start: usize,
-    /// Where the text that is being read really starts.
-    data_start: usize,
     comment: Text,
-    /// Where the dashes are that may end the comment.
+    /// Something in the comment gets dropped.
+    is_comment_verbatim: bool,
+    /// The offsets of the dashes that may end the comment.
     dashes: [usize; 2],
 
     stack: Vec<Frame>,
-    /// The children so far of everything that is open.
+    /// The children collected so far for every open container.
     children: Vec<NodeId>,
-    /// For blocks in each other.
+    /// Limits how deeply blocks can nest.
     room: Stack,
 }
 
@@ -188,17 +208,6 @@ impl Builder<'_> {
 
     fn rest(&self) -> &[u8] {
         self.source.get(self.index..self.end).unwrap_or_default()
-    }
-
-    /// `this.offset()`
-    fn position(&self) -> usize {
-        if self.shift != 0 && self.index <= self.shifted_up_to {
-            return self
-                .positions
-                .moved(self.source, self.index, -i64::from(self.shift))
-                .unwrap_or(self.index);
-        }
-        self.index
     }
 
     fn text(&self, text: Text) -> &[u8] {
@@ -220,20 +229,21 @@ impl Builder<'_> {
                 value: self.comment,
             },
             self.start,
-            self.position(),
+            self.index,
         );
+        if std::mem::take(&mut self.is_comment_verbatim) {
+            self.tree.keep_verbatim(comment);
+        }
         self.children.push(comment);
     }
 
     fn begin_data(&mut self) {
-        (self.start, self.data_start) = (self.position(), self.index);
+        self.start = self.index;
     }
 
     fn finish_data(&mut self) {
-        let chars = Text::source(self.data_start, self.index);
-        let text = self
-            .tree
-            .add(Kind::Text { chars }, self.start, self.position());
+        let chars = Text::source(self.start, self.index);
+        let text = self.tree.add(Kind::Text { chars }, self.start, self.index);
         self.children.push(text);
     }
 
@@ -243,19 +253,20 @@ impl Builder<'_> {
             name: Text::EMPTY,
             start: self.tag_open,
             is_self_closing: false,
+            is_verbatim: false,
         };
         self.is_tag_name_buffer_empty = false;
         self.tag_parts.iter_mut().for_each(Vec::clear);
         self.tag_params.clear();
     }
 
-    /// The character before `index`.
+    /// Appends the character before `index`.
     fn append_to_tag_name(&mut self) {
         self.tree
             .append_source(self.source, &mut self.tag.name, self.index - 1, self.index);
     }
 
-    /// The children from `base` on, as a list of the tree. With Prettier's `addBackslash`.
+    /// Moves the children from `base` on into a list in the tree, and applies Prettier's `addBackslash`.
     fn take_children(&mut self, base: usize) -> Range {
         for index in base..self.children.len().saturating_sub(1) {
             if let Kind::Mustache { .. } = self.tree.kind(self.children[index + 1])
@@ -275,7 +286,7 @@ impl Builder<'_> {
         list
     }
 
-    /// `message`, where the tokenizer is.
+    /// Reports `message` at the tokenizer's position.
     #[cold]
     fn error(&self, message: Message) -> Error {
         self.error_at(message, self.index)
@@ -283,14 +294,14 @@ impl Builder<'_> {
 
     #[cold]
     fn error_at(&self, message: Message, at: usize) -> Error {
-        Error::Syntax(self.refusal.note(message, at as u32))
+        Error::Syntax(self.rejection.note(message, at as u32))
     }
 
     fn finish_tag(&mut self) -> Result<(), Error> {
         if self.tag.is_end {
             return self.finish_end_tag(false);
         }
-        // Prettier sorts them by where they start. Each list is in that order.
+        // Prettier sorts them by start offset. Each list is already sorted, so this merges them.
         self.sorted_tag_parts.clear();
         let mut rest = self.tag_parts.each_ref().map(|list| &list[..]);
         while let Some(first) = rest
@@ -308,7 +319,10 @@ impl Builder<'_> {
             children: Range::default(),
             is_self_closing: self.tag.is_self_closing,
         };
-        let element = self.tree.add(kind, self.tag.start, self.position());
+        let element = self.tree.add(kind, self.tag.start, self.index);
+        if self.tag.is_verbatim {
+            self.tree.keep_verbatim(element);
+        }
         self.stack.push(Frame {
             element,
             base: self.children.len(),
@@ -338,9 +352,11 @@ impl Builder<'_> {
             return Err(self.error_at(Message::WrongEndTag, self.tag.start));
         }
         let list = self.take_children(frame.base);
-        let end = self.position() as u32;
+        let end = self.index as u32;
+        let is_verbatim = self.tag.is_verbatim;
         if let Some(node) = self.tree.nodes.get_mut(frame.element as usize) {
             node.end = end;
+            node.is_verbatim |= is_verbatim;
             if let Kind::Element { children, .. } = &mut node.kind {
                 *children = list;
             }
@@ -350,7 +366,7 @@ impl Builder<'_> {
     }
 
     fn begin_attribute(&mut self) {
-        let position = self.position();
+        let position = self.index;
         self.attribute = Attribute {
             start: position,
             value_start: position,
@@ -359,7 +375,7 @@ impl Builder<'_> {
         self.attribute_parts.clear();
     }
 
-    /// The character before `index`.
+    /// Appends the character before `index`.
     fn append_to_attribute_name(&mut self) -> Result<(), Error> {
         self.tree.append_source(
             self.source,
@@ -376,7 +392,7 @@ impl Builder<'_> {
     fn begin_attribute_value(&mut self, is_quoted: bool) {
         self.attribute.is_quoted = is_quoted;
         self.attribute.current_part = Text::EMPTY;
-        self.attribute.value_start = self.position();
+        self.attribute.value_start = self.index;
     }
 
     fn append_to_attribute_value(&mut self, start: usize, end: usize) {
@@ -402,7 +418,7 @@ impl Builder<'_> {
 
     fn finish_attribute_value(&mut self) -> Result<(), Error> {
         self.finalize_text_part();
-        let position = self.position();
+        let position = self.index;
         let Attribute {
             name,
             start,
@@ -442,8 +458,8 @@ impl Builder<'_> {
         Ok(())
     }
 
-    /// Behind `as`. Where the piece ends in the parameters, an error is kept for the next mustache or the end of the
-    /// template, one of which comes.
+    /// Called after `as`. If the piece ends inside the parameters, `@glimmer/syntax` saves the error for the next
+    /// mustache or the end of the template. One of those always follows, so it's reported right away.
     fn parse_possible_block_params(&mut self) -> Result<(), Error> {
         match self.peek() {
             Some(next) if is_space(next) => {
@@ -535,12 +551,12 @@ impl Builder<'_> {
 
     fn open_tag(&mut self) {
         self.state = State::TagOpen;
-        self.tag_open = self.position();
+        self.tag_open = self.index;
         self.index += 1;
     }
 
-    /// `consume()`, where it matters that it takes a UTF-16 code unit. After half a character comes nothing that the
-    /// state goes on with.
+    /// `consume()`, for the places where it matters that it takes one UTF-16 code unit. After half a surrogate pair,
+    /// none of those states can continue, so that's an error.
     fn consume_unit(&mut self) -> Result<(), Error> {
         self.index += match self.peek() {
             None | Some(..0xC0) => 1,
@@ -585,7 +601,7 @@ impl Builder<'_> {
         Ok(())
     }
 
-    /// In a doctype: `>` ends it, `next` says where another character leads.
+    /// A step inside a doctype: `>` ends it, and `next` returns the new state for any other character.
     fn doctype(&mut self, next: impl FnOnce(u8) -> Option<State>) {
         let Some(character) = self.peek() else {
             return;
@@ -598,7 +614,7 @@ impl Builder<'_> {
         }
     }
 
-    /// One step. There is a character.
+    /// Runs one step. `character` is the current character.
     fn step(&mut self, character: u8) -> Result<(), Error> {
         match self.state {
             State::BeforeData => {
@@ -632,7 +648,7 @@ impl Builder<'_> {
                     self.begin_tag(false);
                     self.append_to_tag_name();
                 } else {
-                    self.tree.is_damaged = true;
+                    self.tree.has_lost_text = true;
                 }
             }
             State::MarkupDeclarationOpen => {
@@ -647,9 +663,8 @@ impl Builder<'_> {
                 {
                     self.index += 6;
                     self.state = State::Doctype;
-                    self.tree.is_damaged = true;
                 } else {
-                    self.tree.is_damaged = true;
+                    self.tree.has_lost_text = true;
                 }
             }
             State::Doctype => {
@@ -674,7 +689,7 @@ impl Builder<'_> {
                 if character == b'>' {
                     self.state = State::BeforeData;
                 } else if is_public || is_system {
-                    // One more than the keyword has.
+                    // The tokenizer consumes one character more than the keyword has.
                     self.index -= 1;
                     for _ in 0..7 {
                         self.consume_unit()?;
@@ -692,7 +707,7 @@ impl Builder<'_> {
                     b'"' => State::DoctypePublicIdentifierDoubleQuoted,
                     b'\'' => State::DoctypePublicIdentifierSingleQuoted,
                     b'>' => State::BeforeData,
-                    // The tokenizer stays where it is for ever.
+                    // The tokenizer would loop forever without advancing.
                     _ => return Err(self.error(Message::InvalidDoctype)),
                 };
                 self.index += 1;
@@ -747,8 +762,8 @@ impl Builder<'_> {
                     self.finish_comment();
                     self.state = State::BeforeData;
                 } else {
-                    // The character is dropped: a UTF-16 code unit.
-                    self.tree.is_damaged = true;
+                    // The tokenizer drops this character, which is one UTF-16 code unit.
+                    self.is_comment_verbatim = true;
                     self.append_to_comment(self.dashes[0], self.dashes[0] + 1);
                     if character >= 0xF0 {
                         self.index = (self.index + 4).min(self.end);
@@ -867,7 +882,7 @@ impl Builder<'_> {
                     self.index += 1;
                     self.append_to_attribute_name()?;
                 } else {
-                    // It is not `as` on the way.
+                    // The name can't become `as` along the way, so take the whole run.
                     let start = self.index;
                     self.index += self
                         .rest()
@@ -979,7 +994,7 @@ impl Builder<'_> {
                     self.begin_tag(true);
                     self.append_to_tag_name();
                 } else {
-                    self.tree.is_damaged = true;
+                    self.tree.has_lost_text = true;
                 }
             }
         }
@@ -989,34 +1004,46 @@ impl Builder<'_> {
     /// `ContentStatement`: `tokenizePart` and `flushData`.
     fn content(&mut self, start: usize, end: usize) -> Result<(), Error> {
         (self.index, self.end) = (start, end);
-        // Only in a text and in the value of an attribute, an escaped mustache is printed with its backslash.
-        self.tree.is_damaged |= self.source[start..end].starts_with(b"{{")
-            && !matches!(
-                self.state,
+        // An escaped mustache is only printed with its backslash in a text or an attribute value.
+        if self.source[start..end].starts_with(b"{{") {
+            match self.state {
                 State::BeforeData
-                    | State::BeforeAttributeValue
-                    | State::AttributeValueDoubleQuoted
-                    | State::AttributeValueSingleQuoted
-                    | State::AttributeValueUnquoted
-            );
-        // It counts from where the parser takes the piece to start. The next line is counted from its start.
-        self.shift = self.positions.deficit_at(start);
-        let has_read_too_far = std::mem::take(&mut self.has_read_too_far);
-        if self.shift != 0 || has_read_too_far {
-            let line = &self.source[start..end];
-            let line = &line[..strings::index_of_char_usize(line, b'\n').unwrap_or(line.len())];
-            self.shifted_up_to = start + line.len();
-            // It skips a character, and does not count it.
-            if has_read_too_far {
-                if line.is_empty() {
-                    return Err(self.error(Message::UnexpectedCharacter));
-                }
-                self.consume_unit()?;
-                self.shift += 1;
+                | State::BeforeAttributeValue
+                | State::AttributeValueDoubleQuoted
+                | State::AttributeValueSingleQuoted
+                | State::AttributeValueUnquoted => {}
+                State::CommentStart
+                | State::CommentStartDash
+                | State::Comment
+                | State::CommentEndDash
+                | State::CommentEnd => self.is_comment_verbatim = true,
+                State::TagName
+                | State::EndTagName
+                | State::BeforeAttributeName
+                | State::AttributeName
+                | State::AfterAttributeName
+                | State::AfterAttributeValueQuoted
+                | State::SelfClosingStartTag => self.tag.is_verbatim = true,
+                state if state.is_in_doctype() => {}
+                _ => self.tree.has_lost_text = true,
             }
         }
+        // The tokenizer skips a character.
+        if std::mem::take(&mut self.has_read_too_far) {
+            if matches!(self.peek(), None | Some(b'\n')) {
+                return Err(self.error(Message::UnexpectedCharacter));
+            }
+            self.consume_unit()?;
+            self.tree.has_lost_text = true;
+        }
         while let Some(character) = self.peek() {
+            let was_in_doctype = self.state.is_in_doctype();
             self.step(character)?;
+            if was_in_doctype && self.state == State::BeforeData {
+                let end = self.index.min(self.end);
+                let doctype = self.tree.add(Kind::Doctype, self.tag_open, end);
+                self.children.push(doctype);
+            }
         }
         self.has_read_too_far = self.index > self.end;
         self.index = self.end;
@@ -1038,7 +1065,10 @@ impl Builder<'_> {
         else {
             return Err(self.error(Message::MisplacedMustache));
         };
-        self.tree.is_damaged |= is_trusting || strip != 0;
+        // An `ElementModifierStatement` stores neither the third brace nor the tilde.
+        if is_trusting || strip != 0 {
+            self.tree.keep_verbatim(mustache);
+        }
         if self.tag.is_end
             || !matches!(
                 self.tree.kind(call.path),
@@ -1078,9 +1108,16 @@ impl Builder<'_> {
             | State::AttributeValueUnquoted => {
                 self.append_dynamic_attribute_value_part(mustache);
             }
-            // Where a comment starts or ends, it gets out of it.
+            // At the start or the end of a comment, `@glimmer/syntax` would move the mustache before the comment.
+            State::CommentStart
+            | State::CommentStartDash
+            | State::CommentEndDash
+            | State::CommentEnd => {
+                self.is_comment_verbatim = true;
+                self.state = State::Comment;
+            }
             _ => {
-                self.tree.is_damaged |= !matches!(self.state, State::BeforeData | State::Data);
+                self.tree.has_lost_text |= !matches!(self.state, State::BeforeData | State::Data);
                 self.children.push(mustache);
             }
         }
@@ -1091,8 +1128,7 @@ impl Builder<'_> {
         if let StatementKind::Content = statement.kind {
             return self.content(statement.start as usize, statement.end as usize);
         }
-        let [start, end] = [statement.start, statement.end]
-            .map(|offset| self.positions.of_token(self.source, offset as usize));
+        let (start, end) = (statement.start as usize, statement.end as usize);
         if let StatementKind::Unsupported = statement.kind {
             return Err(self.error_at(Message::UnsupportedMustache, statement.start as usize));
         }
@@ -1120,16 +1156,15 @@ impl Builder<'_> {
             StatementKind::Mustache {
                 node,
                 is_valid,
-                is_damaged,
+                is_verbatim,
             } => {
                 if !is_valid {
                     return Err(
                         self.error_at(Message::UnsupportedMustache, statement.start as usize)
                     );
                 }
-                self.tree.is_damaged |= is_damaged;
-                if let Some(mustache) = self.tree.nodes.get_mut(node as usize) {
-                    (mustache.start, mustache.end) = (start as u32, end as u32);
+                if is_verbatim {
+                    self.tree.keep_verbatim(node);
                 }
                 self.mustache(node)?;
             }
@@ -1139,13 +1174,12 @@ impl Builder<'_> {
                 has_second,
                 is_inverted,
                 is_valid,
-                is_damaged,
+                is_verbatim,
                 block_params,
             } => {
                 if !matches!(self.state, State::Data | State::BeforeData) || !is_valid {
                     return Err(self.error_at(Message::MisplacedBlock, statement.start as usize));
                 }
-                self.tree.is_damaged |= is_damaged;
                 let first = (index + 1, first_end as usize);
                 let second = (first_end as usize, statement.next as usize);
                 let (default_block, else_block) = match is_inverted {
@@ -1161,6 +1195,7 @@ impl Builder<'_> {
                 };
                 if let Some(block) = self.tree.nodes.get_mut(node as usize) {
                     (block.start, block.end) = (start as u32, end as u32);
+                    block.is_verbatim = is_verbatim;
                     if let Kind::BlockStatement {
                         program, inverse, ..
                     } = &mut block.kind
@@ -1195,9 +1230,9 @@ impl Builder<'_> {
             self.statement(index, statement)?;
             index = statement.next as usize;
         }
-        // What is left of a tag or a comment goes on behind the block, or is lost.
-        self.tree.is_damaged |= self.state != State::BeforeData;
-        // An element that is open stays so.
+        // The rest of an unfinished tag or comment would continue after the block or get lost.
+        self.tree.has_lost_text |= self.state != State::BeforeData;
+        // An element that's still open here is an error.
         match self.stack.pop() {
             Some(frame) if self.stack.len() == depth => Ok(self.take_children(frame.base)),
             Some(frame) if frame.element != NOTHING => Err(self.error_at(
@@ -1215,27 +1250,23 @@ impl Builder<'_> {
     }
 }
 
-/// Adds the template that `statements` are to `tree`. `front_matter` comes first in it.
+/// Builds the template from `statements` and adds it to `tree`. `front_matter` becomes its first child.
 pub(crate) fn build(
     source: &[u8],
     statements: &[Statement],
-    positions: &Positions,
     front_matter: Option<NodeId>,
     tree: &mut Tree,
-    refusal: &Refusal,
+    rejection: &Rejection,
 ) -> Result<NodeId, Error> {
     let mut builder = Builder {
         source,
-        refusal,
+        rejection,
         statements,
-        positions,
         tree,
         state: State::BeforeData,
         index: 0,
         end: 0,
         has_read_too_far: false,
-        shift: 0,
-        shifted_up_to: 0,
         is_tag_name_buffer_empty: true,
         tag_open: 0,
         tag: Tag::default(),
@@ -1245,8 +1276,8 @@ pub(crate) fn build(
         attribute: Attribute::default(),
         attribute_parts: Vec::new(),
         start: 0,
-        data_start: 0,
         comment: Text::EMPTY,
+        is_comment_verbatim: false,
         dashes: [0; 2],
         stack: Vec::new(),
         children: Vec::new(),

@@ -29,7 +29,7 @@ impl Rule for JsxNoCommentTextnodes {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // A string that is spread is a `Literal` whose parent is of JSX as well. oxlint looks at text only.
+        // A spread string is also a `Literal` with a JSX parent. oxlint only checks text.
         let spread = |it: Expr<'a>| match it.kind() {
             ExprKind::Spread(argument) if !is_oxlint => argument,
             _ => it,
@@ -44,13 +44,13 @@ impl Rule for JsxNoCommentTextnodes {
     }
 }
 
-/// A line of the text starts with `//` or `/*`: `/^\s*\/(\/|\*)/m`
+/// True if a line of the text starts with `//` or `/*`: `/^\s*\/(\/|\*)/m`
 fn has_comment_pattern(text: &[u8], is_oxlint: bool) -> bool {
     let starts_comment = |line: &[u8]| line.starts_with(b"//") || line.starts_with(b"/*");
     if !strings::contains_char(text, b'/') {
         return false;
     }
-    // For oxlint only `\n` ends a line, U+0085 is a blank and U+FEFF is none.
+    // For oxlint only `\n` ends a line, U+0085 is whitespace and U+FEFF isn't.
     match is_oxlint {
         true => strings::split(text, b"\n").map(strings::trim_unicode_whitespace).any(starts_comment),
         false => strings::js_lines(text).map(strings::trim_js_whitespace_start).any(starts_comment),

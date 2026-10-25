@@ -5,7 +5,7 @@
 //
 // - `tests`: every `assert_format(input, config, expected)` of crates/oxc_formatter/tests/ir_transform/sort_imports/*.rs.
 // - `tokens`, `lines`: as in fuzz.mjs.
-// A case also has `plain`: what oxfmt prints without `sortImports`. Where bun format and oxfmt differ on that, the
+// A case also has `plain`: what oxfmt prints without `sortImports`. Where bun fmt and oxfmt differ on that, the
 // difference is not about imports.
 import fs from "node:fs";
 import { createRequire } from "node:module";

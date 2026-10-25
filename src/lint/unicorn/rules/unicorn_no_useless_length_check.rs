@@ -1,8 +1,8 @@
+use bun_lint::prelude::*;
+use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::{
     get_inner_expression, get_inner_expression_unless_chain, get_member_expr, static_property_name,
 };
-use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 use smallvec::SmallVec;
 
 /// Disallow useless array length check.
@@ -12,13 +12,13 @@ const USELESS_LENGTH_CHECK: Message = Message::new("", "Found a useless array le
 
 #[derive(Copy, Clone)]
 enum Operand<'a> {
-    /// `array.length === 0` beside `||`, `array.length !== 0` or `array.length > 0` beside `&&`.
+    /// `array.length === 0` next to `||`, `array.length !== 0` or `array.length > 0` next to `&&`.
     LengthCheck(Name<'a>, Span),
-    /// `array.every(..)` beside `||`, `array.some(..)` beside `&&`.
+    /// `array.every(..)` next to `||`, `array.some(..)` next to `&&`.
     Call(Name<'a>),
 }
 
-/// The `array` of `array.length`.
+/// The `array` in `array.length`.
 fn array_of(member: Expr<'_>) -> Option<Name<'_>> {
     get_inner_expression(member.object()?).as_ident()
 }
@@ -30,16 +30,28 @@ fn operand(e: Expr<'_>, operator: BinOp) -> Option<Operand<'_>> {
                 BinOp::Or => op == BinOp::EqEqEq,
                 _ => matches!(op, BinOp::NotEqEq | BinOp::Gt),
             };
-            if !is_check || right.tag() != ExprTag::Number || right.is_parenthesized() || right.text() != b"0" {
+            if !is_check
+                || right.tag() != ExprTag::Number
+                || right.is_parenthesized()
+                || right.text() != b"0"
+            {
                 return None;
             }
             let member = get_inner_expression_unless_chain(left)?;
-            static_property_name(member)?.is("length").then_some(Operand::LengthCheck(array_of(member)?, e.span()))
+            static_property_name(member)?
+                .is("length")
+                .then_some(Operand::LengthCheck(array_of(member)?, e.span()))
         }
         ExprKind::Call(call) if !e.is_chain_root() => {
             let member = get_member_expr(call.callee())?;
-            let method = if operator == BinOp::Or { "every" } else { "some" };
-            static_property_name(member)?.is(method).then_some(Operand::Call(array_of(member)?))
+            let method = if operator == BinOp::Or {
+                "every"
+            } else {
+                "some"
+            };
+            static_property_name(member)?
+                .is(method)
+                .then_some(Operand::Call(array_of(member)?))
         }
         _ => None,
     }
@@ -65,26 +77,34 @@ impl Rule for NoUselessLengthCheck {
         if matches!(root.parent(), Node::Expr(parent) if parent.binary_op() == Some(operator)) {
             return;
         }
-        // oxlint looks at the operands of `a && b && c` once for each `&&` that they are under: two neighbours are
-        // reported as often as there are `&&` around both.
+        // oxlint checks the operands of `a && b && c` once for each `&&` above them, so two neighbors are reported once
+        // for every `&&` that contains both.
         let mut pending: SmallVec<[(Expr<'a>, u32); 8]> = SmallVec::new();
-        let (mut at, mut depth, mut around_both) = (root, 0, 0);
+        let (mut at, mut depth, mut enclosing_both) = (root, 0, 0);
         let mut previous = None;
+        // The `&&` expressions around the current operand, outermost first. oxlint's rule is called with each.
+        let mut enclosing: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
         loop {
             while let ExprKind::Binary { op, left, right } = at.kind()
                 && op == operator
             {
+                enclosing.truncate(depth as usize);
+                enclosing.push(at);
                 depth += 1;
                 pending.push((right, depth));
                 at = left;
             }
             let current = operand(at, operator);
             if let (Some(Operand::LengthCheck(array, span)), Some(Operand::Call(called)))
-            | (Some(Operand::Call(called)), Some(Operand::LengthCheck(array, span))) = (previous, current)
+            | (Some(Operand::Call(called)), Some(Operand::LengthCheck(array, span))) =
+                (previous, current)
                 && array == called
             {
-                for _ in 0..around_both {
-                    cx.report(span, USELESS_LENGTH_CHECK).help(match operator {
+                for called_with in enclosing.iter().take(enclosing_both as usize) {
+                    let report = cx
+                        .report(span, USELESS_LENGTH_CHECK)
+                        .called_with(*called_with);
+                    report.help(match operator {
                         BinOp::And => {
                             "The non-empty check is useless as `Array#some()` returns `false` for an empty array."
                         }
@@ -97,7 +117,7 @@ impl Rule for NoUselessLengthCheck {
                 return;
             };
             (at, depth) = next;
-            around_both = depth;
+            enclosing_both = depth;
         }
     }
 }

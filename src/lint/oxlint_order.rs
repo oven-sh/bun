@@ -1,358 +1,525 @@
-//! In which order oxlint has what several rules report at one start.
+//! Reproduces the order in which oxlint prints a file's diagnostics.
 //!
-//! It sorts by the start alone, which leaves what starts at one place in the order in which it was reported, and
-//! this is how it runs (`execute_rules`): first `run_once` of each rule, by the number of the rule; then the nodes,
-//! the outer before the inner, each with the rules by their numbers; then the calls of Jest, each with the rules by
-//! their numbers. What tsgolint reports comes last.
+//! oxlint doesn't sort them, so whatever is reported first is printed first. Its `execute_rules` runs in four phases.
+//! First it calls each rule's `run_once`, in rule-number order. Then it visits the nodes in pre-order and calls, for
+//! each node, the rules registered for that node kind, in rule-number order. Then it visits the Jest calls, each with
+//! the rules in rule-number order. tsgolint's diagnostics come last.
 //!
-//! A rule may report an inner node while it is called with an outer one. So the kinds of node that it is called with
-//! count before its number.
-//!
-//! Made from `generated/rule_runner_impls.rs` of oxlint 1.87.
+//! Our rules run differently, so [`in_run_order`] reorders the diagnostics afterwards, only for files that have any. It
+//! emits the four phases one after the other, with the first sorted by rule number. For the second, [`NodeFinder`]
+//! finds the node that oxlint's rule is called with.
 
-use crate::rule::When::{AtTheEnd, Entering, Last, Once};
+mod table;
+mod visited;
+
+use crate::ast::File;
+use crate::context::Diagnostic;
+use crate::rule::When::Entering;
 use crate::rule::{Meta, Plugin, When};
+use crate::span::Span;
 use crate::utils::sort;
 use bun_core::strings;
 use bun_wyhash::hash_const;
+use rustc_hash::FxHashMap;
 use std::sync::LazyLock;
+use table::{KINDS, RULES};
+use visited::{CalledNode, NodeFinder};
 
-/// When oxlint reports what `rule` reports, and what its rules are to be sorted by: of two that are called with nodes,
-/// and report the same span, the one that is called with the outer node comes first, then the one with the lower
-/// number. A rule that oxlint has not comes after its rules.
-pub(crate) fn of(rule: &Meta) -> (When, u16) {
-    let found = BY_KEY.binary_search_by_key(&key(rule.plugin, rule.name.as_bytes()), |it| it.0);
-    match found.ok().and_then(|at| BY_KEY.get(at)) {
-        Some(found) => (found.1, found.2),
-        None => (Entering, u16::MAX),
+/// A set of oxc node kinds, with one bit per index in [`KINDS`].
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub(crate) struct Kinds([u64; 3]);
+
+impl Kinds {
+    #[inline]
+    fn has(&self, kind: u8) -> bool {
+        let word = self.0.get(kind as usize / 64).copied().unwrap_or(0);
+        (word >> (kind % 64)) & 1 != 0
     }
+
+    fn insert(&mut self, kind: u8) {
+        if let Some(word) = self.0.get_mut(kind as usize / 64) {
+            *word |= 1 << (kind % 64);
+        }
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.0 == [0; 3]
+    }
+
+    #[inline]
+    fn has_any_of(&self, others: &Kinds) -> bool {
+        let both = self.0.iter().zip(others.0);
+        both.into_iter().any(|(mine, theirs)| mine & theirs != 0)
+    }
+
+    /// True if this set is a subset of `others`.
+    #[inline]
+    fn is_subset_of(&self, others: &Kinds) -> bool {
+        let both = self.0.iter().zip(others.0);
+        both.into_iter().all(|(mine, theirs)| mine & !theirs == 0)
+    }
+}
+
+/// The nodes oxlint calls a rule with: the oxc node kinds, plus masks derived from them for our own node tags, so that
+/// for most nodes one bit test tells whether the rule is called with them.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct Called {
+    kinds: Kinds,
+    /// One bit per `ExprTag` that maps to one of the kinds in every context.
+    exprs: u64,
+    /// The same for the tags that do so in a file without JSX.
+    exprs_without_jsx: u64,
+    /// One bit per `StmtTag`.
+    stmts: u64,
+    /// One bit per `BinOp`, and one per `UnOp`.
+    binaries: u32,
+    unaries: u32,
+    /// True if the rule is called with something that's only part of one of our nodes, so a bit test isn't enough.
+    needs_part_lookup: bool,
+}
+
+/// How oxlint runs a rule.
+#[derive(Copy, Clone)]
+pub(crate) struct Ran {
+    pub(crate) when: When,
+    /// Its position among all rules, sorted by plugin and name. A rule that oxlint doesn't have sorts after all of
+    /// oxlint's.
+    pub(crate) number: u16,
+    /// For [`Entering`]: the node kinds it's called with.
+    kinds: Called,
+    /// [`once`]
+    once: Once,
+    /// [`is_port`]
+    is_port: bool,
+}
+
+impl Ran {
+    /// A rule that isn't in the table is treated as one that's called with nodes.
+    pub(crate) fn unknown(when: When, number: u16) -> Ran {
+        Ran {
+            when,
+            number,
+            kinds: Called::default(),
+            once: Once::ByStart,
+            is_port: false,
+        }
+    }
+}
+
+pub(crate) fn of(rule: &Meta) -> Ran {
+    let key = key(rule.plugin, rule.name.as_bytes());
+    let found = TABLE.rules.binary_search_by_key(&key, |it| it.key);
+    let (when, number, kinds) = match found.ok().and_then(|at| TABLE.rules.get(at)) {
+        Some(it) => (it.when, it.number, visited::called(it.kinds)),
+        None => (Entering, u16::MAX, Called::default()),
+    };
+    Ran {
+        when,
+        number,
+        kinds,
+        once: once(rule),
+        is_port: is_port(rule),
+    }
+}
+
+/// The index in [`KINDS`] of the oxc node kind `name`. `None` if no rule is called with it.
+fn kind_named(name: &str) -> Option<u8> {
+    TABLE.kinds.get(name.as_bytes()).copied()
+}
+
+/// The order in which a `run_once` rule reports.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Once {
+    /// It reports in source order.
+    ByStart,
+    /// It reports a function when it leaves the function.
+    ByEnd,
+    /// It iterates over one of oxc's hash tables, or reports one kind of problem after another. Our rule reports in the
+    /// same order.
+    AsReported,
+}
+
+fn once(rule: &Meta) -> Once {
+    let as_reported = match rule.plugin.in_oxlint() {
+        Plugin::Eslint if rule.name == "max-statements" => return Once::ByEnd,
+        Plugin::Eslint => rule.name == "no-undef",
+        Plugin::Import => matches!(
+            rule.name,
+            "extensions" | "group-exports" | "no-duplicates" | "no-self-import"
+        ),
+        Plugin::Jest => rule.name == "no-export",
+        Plugin::Node => rule.name == "exports-style",
+        Plugin::React => rule.name == "only-export-components",
+        _ => false,
+    };
+    if as_reported {
+        Once::AsReported
+    } else {
+        Once::ByStart
+    }
+}
+
+/// True if our rule is a port of oxlint's, so it walks a node the same way. A port of an ESLint rule may walk it
+/// differently, so its reports about one node are sorted by source position.
+fn is_port(rule: &Meta) -> bool {
+    rule.follows_oxlint
 }
 
 fn key(plugin: Plugin, name: &[u8]) -> u32 {
     hash_const(hash_const(0, plugin.prefix().as_bytes()), name) as u32
 }
 
-/// Each rule of [`RULES`]: its [`key`], by which they are sorted, and what [`of`] returns. The number of a rule is its place
-/// among all of them, by the plugin and the name.
-static BY_KEY: LazyLock<Vec<(u32, When, u16)>> = LazyLock::new(|| {
+struct Rule {
+    /// [`key`]. The rules are sorted by it.
+    key: u32,
+    when: When,
+    number: u16,
+    kinds: Kinds,
+}
+
+/// [`RULES`] and [`KINDS`], parsed.
+struct Table {
+    rules: Vec<Rule>,
+    /// Each name's index in [`KINDS`].
+    kinds: FxHashMap<&'static [u8], u8>,
+}
+
+static TABLE: LazyLock<Table> = LazyLock::new(|| {
     let rank = |plugin: Plugin| RULES.iter().position(|it| it.0 == plugin.in_oxlint());
     let mut all = Vec::new();
-    for (plugin, lists) in RULES {
-        for (when, outer, names) in *lists {
-            let names = strings::split(names.as_bytes(), b" ");
-            all.extend(names.map(|name| (rank(*plugin), name, *plugin, *when, *outer)));
+    for (plugin, when, words) in RULES {
+        let mut kinds = Kinds::default();
+        for word in strings::split(words.as_bytes(), b" ") {
+            if !word.first().is_some_and(u8::is_ascii_digit) {
+                all.push((rank(*plugin), word, *plugin, *when, kinds));
+                continue;
+            }
+            let number =
+                |digits: &[u8]| digits.iter().fold(0, |it, digit| it * 10 + (digit - b'0'));
+            kinds = Kinds::default();
+            strings::split(word, b",").for_each(|it| kinds.insert(number(it)));
         }
     }
     sort::sort_unstable_by_key(&mut all, |it| (it.0, it.1));
-    let mut by_key: Vec<_> = (all.iter().zip(0u16..))
-        .map(|(it, number)| (key(it.2, it.1), it.3, (it.4 << 10) | number))
+    let mut rules: Vec<Rule> = (all.iter().zip(0u16..))
+        .map(|(it, number)| Rule {
+            key: key(it.2, it.1),
+            when: it.3,
+            number,
+            kinds: it.4,
+        })
         .collect();
-    sort::sort_unstable_by_key(&mut by_key, |it| it.0);
-    by_key
+    sort::sort_unstable_by_key(&mut rules, |it| it.key);
+    Table {
+        rules,
+        kinds: strings::split(KINDS.as_bytes(), b" ").zip(0..).collect(),
+    }
 });
 
-/// The plugins in the order of oxlint. The rules of each by when they report, `run_once` ([`Once`]), `run` ([`Entering`]),
-/// `run_on_jest_node` ([`AtTheEnd`]) or tsgolint ([`Last`]), and by how far out the outermost kind of node is that they are
-/// called with (`NODE_TYPES`): 0 for the program. The names are separated by spaces.
-#[rustfmt::skip]
-static RULES: &[(Plugin, &[(When, u16, &str)])] = &[
-    (Plugin::Import, &[
-        (Once, 0, concat!(
-            "default export exports-last extensions first group-exports max-dependencies named namespace no-cycle ",
-            "no-default-export no-duplicates no-named-as-default no-named-as-default-member no-namespace ",
-            "no-self-import prefer-default-export unambiguous",
-        )),
-        (Entering, 1, concat!(
-            "no-anonymous-default-export no-mutable-exports no-named-export no-nodejs-modules ",
-            "no-relative-parent-imports",
-        )),
-        (Entering, 2, concat!(
-            "consistent-type-specifier-style newline-after-import no-absolute-path no-empty-named-blocks ",
-            "no-named-default no-unassigned-import no-webpack-loader-syntax",
-        )),
-        (Entering, 8, "no-amd no-commonjs no-dynamic-require"),
-    ]),
-    (Plugin::Eslint, &[
-        (Once, 0, concat!(
-            "capitalized-comments max-classes-per-file max-lines max-statements no-dupe-class-members ",
-            "no-duplicate-imports no-extend-native no-global-assign no-implicit-globals no-inline-comments ",
-            "no-irregular-whitespace no-redeclare no-restricted-globals no-restricted-imports no-shadow ",
-            "no-shadow-restricted-names no-this-before-super no-undef no-unreachable no-unused-labels ",
-            "no-unused-private-class-members no-unused-vars no-useless-assignment no-warning-comments one-var ",
-            "prefer-rest-params sort-imports unicode-bom",
-        )),
-        (Entering, 0, "no-eval"),
-        (Entering, 1, "no-restricted-exports no-useless-rename"),
-        (Entering, 2, concat!(
-            "block-scoped-var complexity curly default-case default-case-last for-direction guard-for-in ",
-            "init-declarations logical-assignment-operators max-depth no-await-in-loop no-cond-assign ",
-            "no-constant-condition no-constructor-return no-continue no-debugger no-dupe-else-if no-duplicate-case ",
-            "no-else-return no-empty no-empty-function no-empty-static-block no-extra-label no-fallthrough ",
-            "no-import-assign no-inner-declarations no-label-var no-labels no-lone-blocks no-lonely-if no-loop-func ",
-            "no-negated-condition no-setter-return no-throw-literal no-unmodified-loop-condition no-unreachable-loop ",
-            "no-unsafe-finally no-unused-expressions no-useless-catch no-useless-return no-var no-with prefer-const ",
-            "preserve-caught-error require-await sort-vars use-isnan vars-on-top",
-        )),
-        (Entering, 3, "constructor-super no-class-assign"),
-        (Entering, 4, "accessor-pairs grouped-accessor-pairs"),
-        (Entering, 5, concat!(
-            "class-methods-use-this func-name-matching no-case-declarations no-const-assign no-multi-assign ",
-            "no-unassigned-vars no-underscore-dangle no-useless-computed-key no-useless-constructor object-shorthand ",
-            "prefer-destructuring",
-        )),
-        (Entering, 6, concat!(
-            "array-callback-return arrow-body-style default-param-last func-names func-style getter-return ",
-            "max-lines-per-function max-nested-callbacks max-params no-func-assign prefer-arrow-callback require-yield",
-        )),
-        (Entering, 7, "no-ex-assign no-param-reassign"),
-        (Entering, 8, concat!(
-            "eqeqeq new-cap no-alert no-array-constructor no-async-promise-executor no-bitwise no-caller ",
-            "no-compare-neg-zero no-console no-constant-binary-expression no-control-regex no-delete-var no-dupe-keys ",
-            "no-eq-null no-extra-bind no-extra-boolean-cast no-implicit-coercion no-implied-eval no-invalid-regexp ",
-            "no-iterator no-misleading-character-class no-nested-ternary no-new no-new-func ",
-            "no-new-native-nonconstructor no-new-wrappers no-obj-calls no-object-constructor no-plusplus ",
-            "no-promise-executor-return no-proto no-prototype-builtins no-regex-spaces no-restricted-properties ",
-            "no-return-assign no-script-url no-self-assign no-self-compare no-sequences no-sparse-arrays no-ternary ",
-            "no-unexpected-multiline no-unneeded-ternary no-unsafe-negation no-unsafe-optional-chaining ",
-            "no-useless-backreference no-useless-call no-useless-concat no-useless-escape no-void operator-assignment ",
-            "prefer-exponentiation-operator prefer-named-capture-group prefer-numeric-literals prefer-object-has-own ",
-            "prefer-object-spread prefer-promise-reject-errors prefer-regex-literals prefer-spread prefer-template ",
-            "radix require-unicode-regexp sort-keys symbol-description valid-typeof yoda",
-        )),
-        (Entering, 9, "no-empty-pattern"),
-        (Entering, 10, concat!(
-            "id-denylist id-length id-match no-div-regex no-empty-character-class no-loss-of-precision ",
-            "no-magic-numbers no-multi-str no-nonoctal-decimal-escape no-template-curly-in-string no-undefined ",
-            "no-use-before-define",
-        )),
-    ]),
-    (Plugin::TypeScript, &[
-        (Once, 0, "ban-ts-comment ban-tslint-comment prefer-ts-expect-error triple-slash-reference"),
-        (Entering, 0, "adjacent-overload-signatures unified-signatures"),
-        (Entering, 1,
-            "consistent-type-definitions explicit-module-boundary-types no-useless-empty-export prefer-function-type"),
-        (Entering, 2, concat!(
-            "consistent-indexed-object-style consistent-type-imports no-empty-interface no-empty-object-type ",
-            "no-import-type-side-effects no-misused-new no-require-imports no-unsafe-declaration-merging prefer-for-of",
-        )),
-        (Entering, 3, "no-extraneous-class parameter-properties"),
-        (Entering, 4, "class-literal-property-style no-duplicate-enum-values prefer-enum-initializers"),
-        (Entering, 5, concat!(
-            "consistent-generic-constructors explicit-member-accessibility method-signature-style no-inferrable-types ",
-            "no-this-alias no-unnecessary-parameter-property-assignment prefer-as-const prefer-literal-enum-member",
-        )),
-        (Entering, 6, "explicit-function-return-type"),
-        (Entering, 7, "no-unnecessary-type-constraint"),
-        (Entering, 8, concat!(
-            "array-type ban-types consistent-type-assertions no-confusing-non-null-assertion no-dynamic-delete ",
-            "no-explicit-any no-extra-non-null-assertion no-invalid-void-type no-namespace ",
-            "no-non-null-asserted-nullish-coalescing no-non-null-asserted-optional-chain no-non-null-assertion ",
-            "no-restricted-types no-unsafe-function-type no-var-requires no-wrapper-object-types ",
-            "prefer-namespace-keyword",
-        )),
-        (Last, 0, concat!(
-            "await-thenable consistent-return consistent-type-exports dot-notation no-array-delete no-base-to-string ",
-            "no-confusing-void-expression no-deprecated no-duplicate-type-constituents no-floating-promises ",
-            "no-for-in-array no-generated-empty-object-type no-implied-eval no-meaningless-void-operator ",
-            "no-misused-promises no-misused-spread no-mixed-enums no-redundant-type-constituents ",
-            "no-unnecessary-boolean-literal-compare no-unnecessary-condition no-unnecessary-qualifier ",
-            "no-unnecessary-template-expression no-unnecessary-type-arguments no-unnecessary-type-assertion ",
-            "no-unnecessary-type-conversion no-unnecessary-type-parameters no-unsafe-argument no-unsafe-assignment ",
-            "no-unsafe-call no-unsafe-enum-comparison no-unsafe-member-access no-unsafe-return ",
-            "no-unsafe-type-assertion no-unsafe-unary-minus no-useless-default-assignment ",
-            "non-nullable-type-assertion-style only-throw-error prefer-find prefer-includes prefer-nullish-coalescing ",
-            "prefer-optional-chain prefer-promise-reject-errors prefer-readonly prefer-readonly-parameter-types ",
-            "prefer-reduce-type-parameter prefer-regexp-exec prefer-return-this-type prefer-string-starts-ends-with ",
-            "promise-function-async related-getter-setter-pairs require-array-sort-compare require-await ",
-            "restrict-plus-operands restrict-template-expressions return-await strict-boolean-expressions ",
-            "strict-void-return switch-exhaustiveness-check unbound-method use-unknown-in-catch-callback-variable",
-        )),
-    ]),
-    (Plugin::Jest, &[
-        (Once, 0, concat!(
-            "consistent-test-it max-expects max-nested-describe no-commented-out-tests no-confusing-set-timeout ",
-            "no-duplicate-hooks no-export no-identical-title no-jasmine-globals no-large-snapshots no-mocks-import ",
-            "no-standalone-expect prefer-each prefer-expect-assertions prefer-hooks-in-order prefer-hooks-on-top ",
-            "prefer-importing-jest-globals prefer-snapshot-hint require-top-level-describe valid-expect",
-        )),
-        (Entering, 0, "require-hook"),
-        (Entering, 2, "no-conditional-in-test no-test-return-statement"),
-        (Entering, 8, concat!(
-            "no-deprecated-functions prefer-jest-mocked prefer-mock-promise-shorthand prefer-mock-return-shorthand ",
-            "prefer-spy-on",
-        )),
-        (AtTheEnd, 0, concat!(
-            "expect-expect no-alias-methods no-conditional-expect no-disabled-tests no-done-callback no-focused-tests ",
-            "no-hooks no-interpolation-in-snapshots no-restricted-jest-methods no-restricted-matchers no-test-prefixes ",
-            "no-unneeded-async-expect-function no-untyped-mock-factory padding-around-after-all-blocks ",
-            "padding-around-test-blocks prefer-called-with prefer-comparison-matcher prefer-ending-with-an-expect ",
-            "prefer-equality-matcher prefer-expect-resolves prefer-lowercase-title prefer-strict-equal prefer-to-be ",
-            "prefer-to-contain prefer-to-have-been-called prefer-to-have-been-called-times prefer-to-have-length ",
-            "prefer-todo require-to-throw-message valid-describe-callback valid-expect-in-promise valid-title",
-        )),
-    ]),
-    (Plugin::React, &[
-        (Once, 0, concat!(
-            "capitalized-calls display-name error-boundaries exhaustive-effect-dependencies globals hooks immutability ",
-            "incompatible-library invariant jsx-filename-extension memo-dependencies no-deriving-state-in-effects ",
-            "no-multi-comp only-export-components preserve-manual-memoization purity refs rule-suppression ",
-            "set-state-in-effect set-state-in-render static-components syntax todo unsupported-syntax use-memo ",
-            "void-use-memo",
-        )),
-        (Entering, 3, concat!(
-            "no-redundant-should-component-update no-unstable-nested-components prefer-es6-class ",
-            "prefer-function-component",
-        )),
-        (Entering, 5,
-            "jsx-handler-names jsx-props-no-spreading no-children-prop no-string-refs no-unsafe state-in-constructor"),
-        (Entering, 6, "function-component-definition require-render-return"),
-        (Entering, 8, concat!(
-            "button-has-type checked-requires-onchange-or-readonly forbid-component-props forbid-dom-props ",
-            "forbid-elements forward-ref-uses-ref hook-use-state iframe-missing-sandbox jsx-boolean-value ",
-            "jsx-curly-brace-presence jsx-fragments jsx-key jsx-max-depth jsx-no-constructed-context-values ",
-            "jsx-no-duplicate-props jsx-no-literals jsx-no-script-url jsx-no-target-blank jsx-no-undef ",
-            "jsx-no-useless-fragment jsx-pascal-case jsx-props-no-spread-multi no-array-index-key no-clone-element ",
-            "no-danger no-danger-with-children no-did-mount-set-state no-did-update-set-state no-direct-mutation-state ",
-            "no-find-dom-node no-is-mounted no-namespace no-react-children no-render-return-value no-set-state ",
-            "no-unknown-property no-will-update-set-state react-in-jsx-scope self-closing-comp style-prop-object ",
-            "void-dom-elements-no-children",
-        )),
-        (Entering, 9, "no-object-type-as-default-prop"),
-        (Entering, 10, "jsx-no-comment-textnodes no-this-in-sfc no-unescaped-entities"),
-    ]),
-    (Plugin::ReactPerf, &[
-        (Entering, 5,
-            "jsx-no-jsx-as-prop jsx-no-new-array-as-prop jsx-no-new-function-as-prop jsx-no-new-object-as-prop"),
-    ]),
-    (Plugin::Unicorn, &[
-        (Once, 0, "consistent-function-scoping filename-case no-abusive-eslint-disable no-empty-file"),
-        (Entering, 1,
-            "import-style no-anonymous-default-export no-thenable require-module-attributes require-module-specifiers"),
-        (Entering, 2, concat!(
-            "consistent-assert empty-brace-spaces no-immediate-mutation no-lonely-if no-negated-condition ",
-            "no-useless-iterator-to-array no-useless-switch-case prefer-classlist-toggle prefer-default-parameters ",
-            "prefer-export-from prefer-module prefer-node-protocol prefer-single-call prefer-ternary prefer-type-error ",
-            "switch-case-braces",
-        )),
-        (Entering, 3, "custom-error-definition no-static-only-class prefer-class-fields prefer-event-target"),
-        (Entering, 5, "no-this-assignment prefer-array-find prefer-set-has switch-case-break-position"),
-        (Entering, 6, "prefer-native-coercion-functions"),
-        (Entering, 7, "catch-error-name no-object-as-default-parameter prefer-optional-catch-binding"),
-        (Entering, 8, concat!(
-            "consistent-date-clone consistent-empty-array-spread consistent-existence-index-check ",
-            "consistent-template-literal-escape error-message escape-case explicit-length-check explicit-timer-delay ",
-            "max-nested-calls new-for-builtins no-array-callback-reference no-array-fill-with-reference-type ",
-            "no-array-for-each no-array-method-this-argument no-array-reduce no-array-reverse no-array-sort ",
-            "no-await-expression-member no-await-in-promise-methods no-confusing-array-with no-console-spaces ",
-            "no-document-cookie no-hex-escape no-instanceof-array no-instanceof-builtins no-invalid-fetch-options ",
-            "no-invalid-remove-event-listener no-length-as-slice-end no-magic-array-flat-depth ",
-            "no-negation-in-equality-check no-nested-ternary no-new-array no-new-buffer no-process-exit ",
-            "no-single-promise-in-promise-methods no-typeof-undefined no-unnecessary-array-flat-depth ",
-            "no-unnecessary-array-splice-count no-unnecessary-await no-unnecessary-slice-end no-unreadable-iife ",
-            "no-useless-collection-argument no-useless-error-capture-stack-trace no-useless-fallback-in-spread ",
-            "no-useless-length-check no-useless-promise-resolve-reject no-useless-spread no-useless-undefined ",
-            "prefer-add-event-listener prefer-array-flat prefer-array-flat-map prefer-array-index-of prefer-array-some ",
-            "prefer-at prefer-bigint-literals prefer-blob-reading-methods prefer-code-point prefer-date-now ",
-            "prefer-dom-node-append prefer-dom-node-dataset prefer-dom-node-remove prefer-dom-node-text-content ",
-            "prefer-import-meta-properties prefer-includes prefer-keyboard-event-key ",
-            "prefer-logical-operator-over-ternary prefer-math-min-max prefer-math-trunc prefer-modern-dom-apis ",
-            "prefer-modern-math-apis prefer-negative-index prefer-number-coercion prefer-number-properties ",
-            "prefer-object-from-entries prefer-prototype-methods prefer-query-selector prefer-reflect-apply ",
-            "prefer-regexp-test prefer-response-static-json prefer-set-size prefer-spread prefer-string-replace-all ",
-            "prefer-string-slice prefer-string-starts-ends-with prefer-string-trim-start-end prefer-structured-clone ",
-            "prefer-top-level-await relative-url-style require-array-join-separator ",
-            "require-number-to-fixed-digits-argument require-post-message-target-origin throw-new-error",
-        )),
-        (Entering, 9, "no-unreadable-array-destructuring"),
-        (Entering, 10, concat!(
-            "no-accessor-recursion no-null no-zero-fractions number-literal-case numeric-separators-style ",
-            "prefer-global-this prefer-string-raw text-encoding-identifier-case",
-        )),
-    ]),
-    (Plugin::JsxA11y, &[
-        (Entering, 5, "aria-props aria-proptypes"),
-        (Entering, 8, concat!(
-            "alt-text anchor-ambiguous-text anchor-has-content anchor-is-valid aria-activedescendant-has-tabindex ",
-            "aria-role aria-unsupported-elements autocomplete-valid click-events-have-key-events ",
-            "control-has-associated-label heading-has-content html-has-lang iframe-has-title img-redundant-alt ",
-            "interactive-supports-focus label-has-associated-control lang media-has-caption ",
-            "mouse-events-have-key-events no-access-key no-aria-hidden-on-focusable no-autofocus ",
-            "no-distracting-elements no-interactive-element-to-noninteractive-role ",
-            "no-noninteractive-element-interactions no-noninteractive-element-to-interactive-role ",
-            "no-noninteractive-tabindex no-redundant-roles no-static-element-interactions prefer-tag-over-role ",
-            "role-has-required-aria-props role-supports-aria-props scope tabindex-no-positive",
-        )),
-    ]),
-    (Plugin::Oxc, &[
-        (Once, 0, "no-barrel-file"),
-        (Entering, 1, "no-this-in-exported-function"),
-        (Entering, 2, "branches-sharing-code no-const-enum"),
-        (Entering, 6, "no-async-await only-used-in-recursion"),
-        (Entering, 8, concat!(
-            "bad-array-method-on-arguments bad-bitwise-operator bad-char-at-comparison bad-comparison-sequence ",
-            "bad-match-all-arg bad-min-max-func bad-object-literal-comparison bad-replace-all-arg const-comparisons ",
-            "double-comparisons erasing-op misrefactored-assign-op missing-throw no-accumulating-spread ",
-            "no-async-endpoint-handlers no-map-spread no-optional-chaining no-rest-spread-properties ",
-            "number-arg-out-of-range uninvoked-array-callback",
-        )),
-        (Entering, 10, "approx-constant"),
-    ]),
-    (Plugin::Nextjs, &[
-        (Once, 0, "no-async-client-component"),
-        (Entering, 2, concat!(
-            "no-assign-module-variable no-document-import-in-page no-duplicate-head no-head-import-in-document ",
-            "no-script-component-in-head no-title-in-document-head",
-        )),
-        (Entering, 5, "inline-script-id"),
-        (Entering, 8, concat!(
-            "google-font-display google-font-preconnect next-script-for-ga ",
-            "no-before-interactive-script-outside-document no-css-tags no-head-element no-html-link-for-pages ",
-            "no-img-element no-page-custom-font no-styled-jsx-in-document no-sync-scripts no-typos ",
-            "no-unwanted-polyfillio",
-        )),
-    ]),
-    (Plugin::Promise, &[
-        (Entering, 2, "catch-or-return prefer-catch"),
-        (Entering, 6, "always-return prefer-await-to-callbacks"),
-        (Entering, 8, concat!(
-            "avoid-new no-callback-in-promise no-multiple-resolved no-nesting no-new-statics no-promise-in-callback ",
-            "no-return-in-finally no-return-wrap param-names prefer-await-to-then spec-only valid-params",
-        )),
-    ]),
-    (Plugin::Vitest, &[
-        (Once, 0, concat!(
-            "consistent-test-filename consistent-test-it max-expects max-nested-describe no-commented-out-tests ",
-            "no-duplicate-hooks no-identical-title no-import-node-test no-large-snapshots no-mocks-import ",
-            "no-standalone-expect prefer-each prefer-expect-assertions prefer-hooks-in-order prefer-hooks-on-top ",
-            "prefer-importing-vitest-globals prefer-snapshot-hint require-test-timeout require-top-level-describe ",
-            "valid-expect",
-        )),
-        (Entering, 0, "prefer-called-exactly-once-with require-hook"),
-        (Entering, 2,
-            "consistent-vitest-vi no-conditional-in-test no-importing-vitest-globals no-test-return-statement"),
-        (Entering, 8, "prefer-mock-promise-shorthand prefer-mock-return-shorthand prefer-spy-on"),
-        (AtTheEnd, 0, concat!(
-            "consistent-each-for expect-expect hoisted-apis-on-top no-alias-methods no-conditional-expect ",
-            "no-conditional-tests no-disabled-tests no-focused-tests no-hooks no-interpolation-in-snapshots ",
-            "no-restricted-matchers no-restricted-vi-methods no-test-prefixes no-unneeded-async-expect-function ",
-            "padding-around-after-all-blocks padding-around-test-blocks prefer-called-once prefer-called-times ",
-            "prefer-called-with prefer-comparison-matcher prefer-describe-function-title prefer-equality-matcher ",
-            "prefer-expect-resolves prefer-expect-type-of prefer-import-in-mock prefer-lowercase-title ",
-            "prefer-strict-boolean-matchers prefer-strict-equal prefer-to-be prefer-to-be-falsy prefer-to-be-object ",
-            "prefer-to-be-truthy prefer-to-contain prefer-to-have-been-called-times prefer-to-have-length prefer-todo ",
-            "require-awaited-expect-poll require-local-test-context-for-concurrent-snapshots ",
-            "require-mock-type-parameters require-to-throw-message valid-describe-callback valid-expect-in-promise ",
-            "valid-title warn-todo",
-        )),
-    ]),
-    (Plugin::Node, &[
-        (Once, 0, "exports-style"),
-        (Entering, 2, "no-mixed-requires no-top-level-await"),
-        (Entering, 6, "handle-callback-err"),
-        (Entering, 8,
-            "callback-return global-require no-exports-assign no-new-require no-path-concat no-process-env no-sync"),
-    ]),
-    (Plugin::ReactHooks, &[
-        (Entering, 8, "exhaustive-deps rules-of-hooks"),
-    ]),
-];
+/// A sort key for when oxlint reports a diagnostic during a run. Earlier reports have smaller keys. The key doesn't
+/// depend on which other rules run, so the diagnostics from linting a file again can be merged with the earlier ones.
+pub(crate) type RunKey = (u64, u128);
+
+/// Finds the Jest call around each diagnostic. Diagnostics must be looked up in order of their start.
+struct Turns<'t> {
+    /// `File::jest_calls_in_oxlint_order`
+    calls: &'t [(Span, u32)],
+    /// How many of `calls` have been reached.
+    seen: usize,
+    /// The calls enclosing the current position, outermost first: each one's end and turn.
+    open: Vec<(u32, u32)>,
+}
+
+impl Turns<'_> {
+    fn pop_calls_ending_by(&mut self, offset: u32) {
+        while self.open.last().is_some_and(|it| it.0 <= offset) {
+            self.open.pop();
+        }
+    }
+
+    /// The turn of the innermost call around `label`. If there's none, `u32::MAX`, which sorts after every call.
+    fn innermost_turn(&mut self, label: Span) -> u32 {
+        while let Some((call, turn)) = self.calls.get(self.seen)
+            && call.start <= label.start
+        {
+            self.pop_calls_ending_by(call.start);
+            self.open.push((call.end, *turn));
+            self.seen += 1;
+        }
+        self.pop_calls_ending_by(label.start);
+        let enclosing_count = self.open.partition_point(|it| it.0 >= label.end);
+        let innermost = enclosing_count
+            .checked_sub(1)
+            .and_then(|it| self.open.get(it));
+        innermost.map_or(u32::MAX, |it| it.1)
+    }
+}
+
+/// A key that sorts spans by start, longer first, which is pre-order.
+fn preorder_key(span: Span) -> u64 {
+    (u64::from(span.start) << 32) | u64::from(u32::MAX - span.end)
+}
+
+// Bit offsets of the fields in the key that orders the diagnostics whose nodes start at the same offset, least
+// significant first. The low 32 bits hold the index into `diagnostics`.
+/// The tie-breaker among one rule's reports about one node.
+const WITHIN: u32 = 32;
+/// The rule's index. Rules are in the order of oxlint's numbers, and there are fewer than `1 << 15`.
+const RULE: u32 = WITHIN + 32;
+/// The node's depth among the nodes that share its span, counted from the outermost.
+const DEPTH: u32 = RULE + 15;
+/// `u32::MAX` minus the node's end.
+const END: u32 = DEPTH + 15;
+/// Deeper than any node. Used when the node wasn't found and the diagnostic's own span replaces it.
+const DEEPEST: u128 = (1 << 15) - 1;
+
+/// Merges two sorted lists.
+fn merged(a: &[u64], b: &[u64]) -> Vec<u64> {
+    let mut all = Vec::with_capacity(a.len() + b.len());
+    let (mut rest_of_a, mut rest_of_b) = (a, b);
+    while let ([first_of_a, after_a @ ..], [first_of_b, after_b @ ..]) = (rest_of_a, rest_of_b) {
+        if first_of_a <= first_of_b {
+            all.push(*first_of_a);
+            rest_of_a = after_a;
+        } else {
+            all.push(*first_of_b);
+            rest_of_b = after_b;
+        }
+    }
+    all.extend_from_slice(rest_of_a);
+    all.extend_from_slice(rest_of_b);
+    all
+}
+
+/// Sorts `nodes`, which is already sorted by node start, into pre-order, and within one node by rule. Each entry has
+/// the node's start in its high half and the index into `diagnostics` and `found` in its low half. `found` has each
+/// diagnostic's node and the tie-breaker among one rule's reports about that node.
+fn sort_preorder<'a>(
+    file: &'a File<'a>,
+    diagnostics: &[Diagnostic],
+    found: &[(CalledNode, u32)],
+    nodes: &mut [u64],
+) {
+    let key = |at: u32, depth_of: &dyn Fn(&CalledNode) -> u128| {
+        let (it, (target, within)) = (diagnostics.get(at as usize)?, found.get(at as usize)?);
+        Some(
+            (u128::from(u32::MAX - target.span.end) << END)
+                | (depth_of(target) << DEPTH)
+                | (u128::from(it.rule) << RULE)
+                | (u128::from(*within) << WITHIN)
+                | u128::from(at),
+        )
+    };
+    let node_of = |key: u128| found.get(key as u32 as usize).and_then(|it| it.0.node);
+    let mut same_start_keys: Vec<u128> = Vec::new();
+    for same_start in nodes.chunk_by_mut(|a, b| a >> 32 == b >> 32) {
+        if same_start.len() < 2 {
+            continue;
+        }
+        let level = |it: &CalledNode| it.node.map_or(DEEPEST, |it| it.1.into());
+        same_start_keys.clear();
+        same_start_keys.extend(same_start.iter().filter_map(|it| key(*it as u32, &level)));
+        same_start_keys.sort_unstable();
+        // Nested nodes with identical spans.
+        let is_other_node = |pair: &[u128]| match pair {
+            [a, b] => {
+                a >> END == b >> END && node_of(*a).map(|it| it.0) != node_of(*b).map(|it| it.0)
+            }
+            _ => false,
+        };
+        if same_start_keys
+            .array_windows::<2>()
+            .any(|it| is_other_node(it))
+        {
+            let depth = |it: &CalledNode| match it.node {
+                Some(node) => u128::from(visited::depth(file, node, it.span)).min(DEEPEST - 1),
+                None => DEEPEST,
+            };
+            same_start_keys.clear();
+            same_start_keys.extend(same_start.iter().filter_map(|it| key(*it as u32, &depth)));
+            same_start_keys.sort_unstable();
+        }
+        for (entry, sorted) in same_start.iter_mut().zip(&same_start_keys) {
+            *entry = u64::from(*sorted as u32);
+        }
+    }
+}
+
+/// Returns the indices into `diagnostics` in the order oxlint reports them, and with `with_keys` also each one's
+/// [`RunKey`]. `ran` returns the [`Ran`] of the rule with the given index.
+pub(crate) fn in_run_order<'a, 'r>(
+    file: &'a File<'a>,
+    diagnostics: &[Diagnostic],
+    ran: &dyn Fn(u16) -> Option<&'r Ran>,
+    with_keys: bool,
+) -> (Vec<u32>, Vec<RunKey>) {
+    let unknown = Ran::unknown(Entering, u16::MAX);
+    let mut finder = NodeFinder::new(file);
+    // The four phases of the run. Each entry has the index into `diagnostics` in its low 32 bits.
+    let with_index = |key: u64, at: u32| (u128::from(key) << 32) | u128::from(at);
+    let mut once: Vec<u128> = Vec::new();
+    let mut nodes: Vec<u64> = Vec::with_capacity(diagnostics.len());
+    let mut calls: Vec<u128> = Vec::new();
+    let mut last: Vec<u128> = Vec::new();
+    // For the second phase: each diagnostic's node, and the diagnostics whose node still has to be searched for.
+    let not_found = CalledNode {
+        span: Span::new(0, u32::MAX),
+        node: None,
+    };
+    let mut found: Vec<(CalledNode, u32)> = vec![(not_found, 0); diagnostics.len()];
+    let mut searched: Vec<u128> = Vec::new();
+    // Each diagnostic's rule number, for the keys.
+    let mut numbers: Vec<u16> = Vec::with_capacity(if with_keys { diagnostics.len() } else { 0 });
+    // Each rule's diagnostics are contiguous.
+    let mut rest = (0u32..).zip(&mut found);
+    for rule_diagnostics in diagnostics.chunk_by(|a, b| a.rule == b.rule) {
+        let ran = rule_diagnostics.first().and_then(|it| ran(it.rule));
+        let ran = ran.unwrap_or(&unknown);
+        if with_keys {
+            numbers.resize(numbers.len() + rule_diagnostics.len(), ran.number);
+        }
+        for (it, (at, slot)) in rule_diagnostics.iter().zip(&mut rest) {
+            let details = it.details.as_deref();
+            // A diagnostic about the whole file, with no position, comes first in its phase.
+            let start = details.and_then(|it| it.start_position.as_ref());
+            let has_position = u64::from(start.is_none_or(|it| it.line != 0));
+            let by_position = (has_position << 32) | u64::from(it.span.start);
+            match ran.when {
+                // If the diagnostic states its node, the rule also has a `run`, and that's what reports it.
+                When::Once if !it.has_explicit_node => {
+                    let within = match ran.once {
+                        Once::AsReported => u64::from(at),
+                        Once::ByEnd => (has_position << 32) | u64::from(it.span.end),
+                        Once::ByStart => by_position,
+                    };
+                    once.push(with_index((u64::from(it.rule) << 33) | within, at));
+                }
+                // In a chain of calls, oxlint reaches the inner calls first.
+                When::AtTheEnd => {
+                    let label = (u64::from(it.span.start) << 32) | u64::from(it.span.end);
+                    calls.push(with_index(label, at));
+                }
+                When::Last => last.push(with_index(by_position, at)),
+                _ => {
+                    // A rule that states its node walks the node the same way oxlint's rule does.
+                    slot.1 = match it.has_explicit_node || ran.is_port {
+                        true => at,
+                        false => it.span.start,
+                    };
+                    let called = &ran.kinds;
+                    let stated = details.and_then(|it| it.listened_on);
+                    let label = stated.filter(|_| it.node.is_none()).unwrap_or(it.span);
+                    let known = match it.node {
+                        _ if has_position == 0 => Some(not_found),
+                        Some(node) => (finder.by_bit_test(called, node, it))
+                            .or_else(|| finder.of(it.rule, &called.kinds, label, it.node)),
+                        // `Report::called_with_name`: oxlint's node is the reported name, which isn't a node in our
+                        // tree.
+                        None if it.has_explicit_node && stated.is_none() => Some(CalledNode {
+                            span: label,
+                            node: None,
+                        }),
+                        None => finder.of(it.rule, &called.kinds, label, None),
+                    };
+                    match known {
+                        Some(known) => {
+                            slot.0 = known;
+                            nodes.push((u64::from(known.span.start) << 32) | u64::from(at));
+                        }
+                        None => searched.push(with_index(preorder_key(label), at)),
+                    }
+                }
+            }
+        }
+    }
+    nodes.sort_unstable();
+    if !searched.is_empty() {
+        searched.sort_unstable();
+        let mut searched_nodes: Vec<u64> = Vec::with_capacity(searched.len());
+        // How many of `nodes` start at or before the span being searched for.
+        let mut before = 0;
+        for (label, at) in (searched.into_iter()).map(|it| ((it >> 32) as u64, it as u32)) {
+            let label = Span::new((label >> 32) as u32, u32::MAX - label as u32);
+            while (nodes.get(before)).is_some_and(|it| (it >> 32) as u32 <= label.start) {
+                before += 1;
+            }
+            // The last of those is nearby, so the search can start there.
+            let near = before.checked_sub(1).and_then(|it| {
+                let (start, at) = nodes.get(it).map(|it| ((it >> 32) as u32, *it as u32))?;
+                let node = found.get(at as usize)?.0.node.map(|it| it.0);
+                Some((start, node.or(diagnostics.get(at as usize)?.node)?))
+            });
+            let (Some(it), Some(slot)) = (diagnostics.get(at as usize), found.get_mut(at as usize))
+            else {
+                continue;
+            };
+            let kinds = ran(it.rule).map_or_else(Kinds::default, |it| it.kinds.kinds);
+            slot.0 = finder.search(it.rule, &kinds, label, near);
+            searched_nodes.push((u64::from(slot.0.span.start) << 32) | u64::from(at));
+        }
+        searched_nodes.sort_unstable();
+        nodes = merged(&nodes, &searched_nodes);
+    }
+    sort_preorder(file, diagnostics, &found, &mut nodes);
+    once.sort_unstable();
+    last.sort_unstable();
+    // oxlint visits each Jest call with the rules in rule-number order.
+    calls.sort_unstable();
+    let mut turn_of: Vec<u32> = Vec::new();
+    if let Some(in_turns) = file.sink.jest_calls_in_oxlint_order.get() {
+        let mut turns = Turns {
+            calls: in_turns,
+            seen: 0,
+            open: Vec::new(),
+        };
+        // Rebuild each key as: turn, rule, start, index into `diagnostics`.
+        for call in &mut calls {
+            let (label, at) = ((*call >> 32) as u64, *call as u32);
+            let span = Span::new((label >> 32) as u32, label as u32);
+            let rule = diagnostics.get(at as usize).map_or(0, |it| it.rule);
+            *call = (u128::from(turns.innermost_turn(span)) << 80)
+                | (u128::from(rule) << 64)
+                | (u128::from(span.start) << 32)
+                | u128::from(at);
+        }
+        calls.sort_unstable();
+        turn_of.extend(calls.iter().map(|it| (it >> 80) as u32));
+        for call in &mut calls {
+            *call &= (1 << 64) - 1;
+        }
+    }
+    let mut keys: Vec<RunKey> = Vec::new();
+    if with_keys {
+        let number_of = |at: u32| u128::from(numbers.get(at as usize).copied().unwrap_or(u16::MAX));
+        let part = |part: u64, first: u32| (part << 32) | u64::from(first);
+        keys.reserve(diagnostics.len());
+        for key in &once {
+            let within = (key >> 32) & ((1 << 33) - 1);
+            keys.push((part(0, number_of(*key as u32) as u32), within));
+        }
+        for at in nodes.iter().map(|it| *it as u32) {
+            let Some((target, within)) = found.get(at as usize) else {
+                continue;
+            };
+            let depth = target.node.map_or(DEEPEST, |it| it.1.into());
+            let rest = (u128::from(u32::MAX - target.span.end) << END)
+                | (depth << DEPTH)
+                | ((number_of(at) & DEEPEST) << RULE)
+                | (u128::from(*within) << WITHIN);
+            keys.push((part(1, target.span.start), rest));
+        }
+        let turns = turn_of.iter().chain(std::iter::repeat(&0));
+        for (call, turn) in calls.iter().zip(turns) {
+            let rule = number_of(*call as u32) << 64;
+            keys.push((part(2, *turn), rule | (call >> 32)));
+        }
+        keys.extend(last.iter().map(|it| (part(3, 0), it >> 32)));
+    }
+    let indices_of = |it: Vec<u128>| it.into_iter().map(|it| it as u32);
+    let order = indices_of(once)
+        .chain(nodes.into_iter().map(|it| it as u32))
+        .chain(indices_of(calls))
+        .chain(indices_of(last));
+    (order.collect(), keys)
+}

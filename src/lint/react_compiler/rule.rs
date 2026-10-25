@@ -1,11 +1,11 @@
-//! What the rules have in common. Each reports the diagnostics of one category.
+//! Code shared by the rules. Each rule reports the diagnostics of one category.
 
 use crate::Flavor;
 use crate::eslint::{self, Suggested};
 use crate::oxlint::{Rendered, render_all};
 use bun_core::strings;
 use bun_lint::ast::File;
-use bun_lint::context::Cx;
+use bun_lint::context::{Cx, Report};
 use bun_lint::rule::{Message, Rule};
 use bun_lint::span::Span;
 use bun_react_compiler::diagnostics::ErrorCategory;
@@ -13,9 +13,16 @@ use bun_react_compiler::diagnostics::ErrorCategory;
 const MESSAGE: Message = Message::new("", "{{message}}");
 const DESCRIPTION: Message = Message::new("", "{{description}}");
 
-/// oxlint's `run_react_compiler_rule`: reports what the compiler says of the file in `category`.
+/// oxlint's `run_react_compiler_rule`. Reports the compiler's diagnostics for the file in `category`.
 pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
-    let file = cx.file();
+    report_with(cx.file(), category, &|at| cx.report(at, MESSAGE));
+}
+
+fn report_with<'a>(
+    file: &'a File<'a>,
+    category: ErrorCategory,
+    report_at: &dyn Fn(Span) -> Report<'a>,
+) {
     let findings = crate::findings(file, Flavor::Oxlint)
         .iter()
         .filter(|finding| finding.category == category);
@@ -28,12 +35,11 @@ pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
         } = rendered;
         let mut labels = labels.into_iter();
         let first = labels.next();
-        // oxlint prints a diagnostic without a label without a place.
-        let place = first
+        // oxlint prints a diagnostic that has no label without a location.
+        let report_span = first
             .as_ref()
             .map_or_else(|| Span::empty(0), |label| label.span);
-        let mut report = cx
-            .report(place, MESSAGE)
+        let mut report = report_at(report_span)
             .data("message", message.into_owned())
             .help(help)
             .note(note);
@@ -47,9 +53,16 @@ pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
     }
 }
 
-/// `makeRule` of eslint-plugin-react-hooks: reports what the compiler says of the file in `category`.
+/// eslint-plugin-react-hooks' `makeRule`. Reports the compiler's diagnostics for the file in `category`.
 pub fn report_as_eslint<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
-    let file = cx.file();
+    report_as_eslint_with(cx.file(), category, &|at| cx.report(at, MESSAGE));
+}
+
+fn report_as_eslint_with<'a>(
+    file: &'a File<'a>,
+    category: ErrorCategory,
+    report_at: &dyn Fn(Span) -> Report<'a>,
+) {
     let findings = crate::findings(file, Flavor::Eslint)
         .iter()
         .filter(|finding| finding.category == category);
@@ -57,9 +70,7 @@ pub fn report_as_eslint<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
         let Some(rendered) = eslint::render(file, finding) else {
             continue;
         };
-        let mut report = cx
-            .report(rendered.span, MESSAGE)
-            .data("message", rendered.message);
+        let mut report = report_at(rendered.span).data("message", rendered.message);
         for suggested in rendered.suggestions {
             let Suggested {
                 description,
@@ -73,7 +84,7 @@ pub fn report_as_eslint<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
     }
 }
 
-/// Whether the rule for `category` has anything to do in the file. For [`Rule::register`].
+/// True if the rule for `category` has anything to do in the file. Call it from [`Rule::start`].
 pub fn starts<'a>(file: &'a File<'a>, flavor: Flavor, category: ErrorCategory) -> bool {
     let starts = crate::program::may_have_react_code(file, flavor)
         && (flavor == Flavor::Eslint || should_run(file));

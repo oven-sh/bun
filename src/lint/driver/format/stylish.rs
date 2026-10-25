@@ -1,8 +1,8 @@
-//! ESLint's `stylish` formatter, byte for byte, and what oxlint calls `stylish`.
+//! ESLint's `stylish` formatter, byte for byte, and oxlint's `stylish`.
 
-use super::Meta;
 use super::info::Source;
 use super::oxlint::is_error;
+use super::{Meta, link, linked};
 use crate::results::{Counts, FileResult};
 use crate::{fs, paths};
 use bun_core::strings;
@@ -53,7 +53,7 @@ fn styled(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]) {
     }
 }
 
-/// What `util.stripVTControlCharacters` removes.
+/// Matches what `util.stripVTControlCharacters` removes.
 static CONTROL_SEQUENCE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::literal(concat!(
         r"/[\u001B\u009B][[\]()#;?]*",
@@ -119,11 +119,14 @@ struct Row {
     message: Vec<u8>,
     message_len: usize,
     rule: Vec<u8>,
+    /// [`link`]
+    link: Option<Vec<u8>>,
 }
 
+/// Formats a line or column of a [`LintMessage`](bun_lint::linter::LintMessage).
 fn number(n: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity(4);
-    let _ = write!(out, "{n}");
+    let _ = write!(out, "{}", n as i32);
     out
 }
 
@@ -135,7 +138,8 @@ pub(super) fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
 }
 
-pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
+pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
+    let color = meta.color;
     let mut counts = Counts::default();
     let mut has_errors = false;
     let mut padded = 0usize;
@@ -156,17 +160,16 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
                     }
                     text => text,
                 };
+                let rule = (message.rule_id.as_ref()).map(|id| id.to_vec());
+                let rule = rule.unwrap_or_default();
                 Row {
                     line: number(message.line),
                     column: number(message.column),
                     is_error: message.is_fatal || message.severity == Severity::Error,
                     message: text.to_vec(),
                     message_len: visible_len(text),
-                    rule: message
-                        .rule_id
-                        .as_ref()
-                        .map(|id| id.to_vec())
-                        .unwrap_or_default(),
+                    link: link(&rule, message, meta),
+                    rule,
                 }
             })
             .collect();
@@ -178,7 +181,8 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
         );
         let (kinds, messages) = (widest(&kind_len), widest(&|row| row.message_len));
         let rules = widest(&|row| visible_len(&row.rule));
-        // Every row is as wide as the widest. Where that is more than ESLint can print ("Invalid string length"), none is.
+        // Every row is padded to the widest one. If that would exceed what ESLint can print ("Invalid string length"),
+        // no row is padded.
         padded = padded.saturating_add(rows.len().saturating_mul(messages));
         let is_padded = padded as u64 <= bun_lint::fix::MAX_STRING_LENGTH;
         let mut text = Vec::new();
@@ -204,7 +208,12 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
             };
             pad(&mut text, gap + 2);
             if !row.rule.is_empty() {
-                styled(&mut text, color, &DIM, &row.rule);
+                styled(
+                    &mut text,
+                    color,
+                    &DIM,
+                    row.link.as_ref().unwrap_or(&row.rule),
+                );
             }
             pad(&mut text, rules - visible_len(&row.rule));
             text.truncate(strings::trim_js_whitespace_end(&text).len());
@@ -260,7 +269,7 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
     }
 }
 
-/// As oxlint styles a text: whatever it starts with, it ends with a reset.
+/// Styles text like oxlint: whatever the style opens with, it closes with a reset.
 fn styled_until_reset(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]) {
     let style = Style {
         open: style.open,
@@ -269,8 +278,8 @@ fn styled_until_reset(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]
     styled(out, color, &style, text);
 }
 
-/// A row of oxlint's.
-struct Placed<'r> {
+/// One row of oxlint's output.
+struct OxlintRow<'r> {
     line: usize,
     /// `line:column`
     position: Vec<u8>,
@@ -278,14 +287,15 @@ struct Placed<'r> {
     code: Vec<u8>,
 }
 
-/// `filename`: what oxlint calls the file. Empty for the problems without a place, which it puts under the working directory.
+/// `filename` is oxlint's name for the file. It's empty for problems without a location, which oxlint lists under the
+/// working directory.
 fn write_file_as_oxlint(
     out: &mut Vec<u8>,
-    color: bool,
-    cwd: &[u8],
+    (color, meta): (bool, &Meta),
     filename: &[u8],
-    rows: &mut [Placed],
+    rows: &mut [OxlintRow],
 ) {
+    let cwd = meta.cwd;
     if rows.is_empty() {
         return;
     }
@@ -308,18 +318,18 @@ fn write_file_as_oxlint(
         out.extend_from_slice(b"  ");
         out.extend_from_slice(&row.message.message);
         out.extend_from_slice(b"  ");
-        styled_until_reset(out, color, &DIM, &row.code);
+        styled_until_reset(out, color, &DIM, &linked(&row.code, row.message, meta));
         out.push(b'\n');
     }
 }
 
-/// With the end of the last line.
+/// Includes the final newline.
 pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    // oxlint asks for nothing else: not whether it writes to a terminal, not for `FORCE_COLOR`.
+    // oxlint checks nothing else: not whether it writes to a terminal, and not `FORCE_COLOR`.
     let has_no_color = bun_core::getenv_z(&bun_core::ZBox::from_bytes(b"NO_COLOR")).is_some();
     let color = meta.color_option.unwrap_or(!has_no_color);
     let (mut total, mut errors) = (0, 0);
-    let mut without_place = Vec::new();
+    let mut without_location = Vec::new();
     for result in results.iter().filter(|it| !it.messages.is_empty()) {
         let source = Source::new(result, meta);
         let mut rows = Vec::new();
@@ -328,20 +338,20 @@ pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &
             errors += usize::from(is_error(message));
             let info = source.info(message);
             let group = if info.filename.is_empty() {
-                &mut without_place
+                &mut without_location
             } else {
                 &mut rows
             };
-            group.push(Placed {
+            group.push(OxlintRow {
                 line: info.start.line,
                 position: format!("{}:{}", info.start.line, info.start.column).into_bytes(),
                 message,
                 code: info.code.unwrap_or_default(),
             });
         }
-        write_file_as_oxlint(out, color, meta.cwd, &source.name, &mut rows);
+        write_file_as_oxlint(out, (color, meta), &source.name, &mut rows);
     }
-    write_file_as_oxlint(out, color, meta.cwd, b"", &mut without_place);
+    write_file_as_oxlint(out, (color, meta), b"", &mut without_location);
     if total == 0 {
         return;
     }

@@ -91,14 +91,12 @@ fn message_type(ty: TypeNode<'_>) -> &[u8] {
     if is_simple_type(ty) { ty.text() } else { b"T" }
 }
 
-/// Whether a scope around `ty`, other than the global scope, declares `name`.
+/// True if a scope around `ty`, other than the global scope, declares `name`.
 fn is_shadowed<'a>(ty: TypeNode<'a>, name: Name<'a>) -> bool {
-    Node::Type(ty).scope().chain().any(|scope| {
-        scope.parent().is_some()
-            && (scope.get_name(name).is_some()
-                // ESLint has the name of a class declaration in the scope of the class too.
-                || matches!(scope.node(), Node::Class(class) if class.name().is_some_and(|it| it.name() == name)))
-    })
+    Node::Type(ty)
+        .scope()
+        .chain()
+        .any(|scope| scope.parent().is_some() && scope.variable(name).is_some())
 }
 
 impl ArrayType {
@@ -107,8 +105,15 @@ impl ArrayType {
         let TypeKind::Array(element) = ty.kind() else {
             return;
         };
-        let readonly = ty.parent().as_type().filter(|parent| parent.tag() == TypeTag::Readonly);
-        let style = if readonly.is_some() { self.readonly } else { self.default };
+        let readonly = ty
+            .parent()
+            .as_type()
+            .filter(|parent| parent.tag() == TypeTag::Readonly);
+        let style = if readonly.is_some() {
+            self.readonly
+        } else {
+            self.default
+        };
         if style == Style::Array || style == Style::ArraySimple && is_simple_type(element) {
             return;
         }
@@ -117,15 +122,25 @@ impl ArrayType {
             _ => ERROR_STRING_GENERIC_SIMPLE,
         };
         let whole = readonly.unwrap_or(ty).span();
-        let class_name = if readonly.is_some() { "ReadonlyArray" } else { "Array" };
+        let class_name = if readonly.is_some() {
+            "ReadonlyArray"
+        } else {
+            "Array"
+        };
         cx.report(whole, message)
             .data("type", message_type(element))
             .data("className", class_name)
-            .data("readonlyPrefix", if readonly.is_some() { "readonly " } else { "" })
+            .data(
+                "readonlyPrefix",
+                if readonly.is_some() { "readonly " } else { "" },
+            )
             .fix(|fixer| {
                 let inner = element.span();
                 [
-                    fixer.replace(Span::new(whole.start, inner.start), format!("{class_name}<")),
+                    fixer.replace(
+                        Span::new(whole.start, inner.start),
+                        format!("{class_name}<"),
+                    ),
                     fixer.replace(Span::new(inner.end, whole.end), ">"),
                 ]
             });
@@ -142,20 +157,30 @@ impl ArrayType {
         let (is_readonly, is_readonly_with_array) = match name.bytes() {
             b"Array" => (false, false),
             b"ReadonlyArray" => (true, false),
-            // oxlint does not know it.
+            // oxlint doesn't handle `Readonly`.
             b"Readonly" if cx.language().is_oxlint => return,
-            b"Readonly" if args.first().is_some_and(|it| it.tag() == TypeTag::Array) => (true, true),
+            b"Readonly" if args.first().is_some_and(|it| it.tag() == TypeTag::Array) => {
+                (true, true)
+            }
             _ => return,
         };
-        let style = if is_readonly { self.readonly } else { self.default };
-        // oxlint takes `Array` for `Array<any>`.
+        let style = if is_readonly {
+            self.readonly
+        } else {
+            self.default
+        };
+        // oxlint treats `Array` as `Array<any>`.
         if args.is_empty()
             && cx.language().is_oxlint
             && style != Style::Generic
             && !cx.file().is_javascript()
             && utils::estree_type_name(Node::Type(ty)) == "TSTypeReference"
         {
-            let message = if style == Style::Array { ERROR_STRING_ARRAY } else { ERROR_STRING_ARRAY_SIMPLE };
+            let message = if style == Style::Array {
+                ERROR_STRING_ARRAY
+            } else {
+                ERROR_STRING_ARRAY_SIMPLE
+            };
             let readonly_prefix = if is_readonly { "readonly " } else { "" };
             cx.report(ty, message)
                 .data("type", "any")
@@ -188,7 +213,10 @@ impl ArrayType {
             .fix(|fixer| {
                 let type_parens = type_needs_parentheses(argument);
                 let parent_parens = is_readonly
-                    && ty.parent().as_type().is_some_and(|parent| parent.tag() == TypeTag::Array)
+                    && ty
+                        .parent()
+                        .as_type()
+                        .is_some_and(|parent| parent.tag() == TypeTag::Array)
                     && !ty.is_parenthesized();
                 let start = format!(
                     "{}{readonly_prefix}{}",

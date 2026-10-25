@@ -43,7 +43,7 @@ fn is_property_call(node: Node<'_>, object_name: &str, function_name: &str) -> b
     })
 }
 
-/// The value of a key that is a string literal, in brackets or not.
+/// Returns the value of a string literal key, computed or not.
 fn string_literal_key<'a>(key: Key<'a>, file: &'a File<'a>) -> Option<Name<'a>> {
     match key.kind() {
         KeyKind::String(value) => Some(value),
@@ -77,9 +77,9 @@ impl FuncNameMatching {
             (true, true) => NOT_MATCH_PROPERTY,
             (true, false) => NOT_MATCH_VARIABLE,
         };
-        // oxlint points at the name of the function.
-        let place = if cx.language().is_oxlint { func_name.span() } else { node.span() };
-        cx.report(place, message).data("name", name).data("funcName", func_name);
+        // oxlint reports at the function's name.
+        let report_span = if cx.language().is_oxlint { func_name.span() } else { node.span() };
+        cx.report(report_span, message).data("name", name).data("funcName", func_name);
     }
 
     fn check_assignment<'a>(
@@ -108,7 +108,7 @@ impl FuncNameMatching {
             Some(name) => Some(Cow::Borrowed(name.bytes())),
             None => ast_utils::get_static_property_name(target),
         };
-        // Upstream does not pass the ECMAScript version here.
+        // Upstream doesn't pass the ECMAScript version here.
         if let Some(name) = name
             && text::is_identifier_es5(&name)
             && self.should_warn(&name, func_name.bytes())
@@ -155,7 +155,7 @@ impl FuncNameMatching {
                 && (is_property_call(descriptors.parent(), "Object", "defineProperties")
                     || is_property_call(descriptors.parent(), "Object", "create"))
             {
-                // `key.name`, which is `undefined` for a key that is not an identifier.
+                // `key.name`, which is `undefined` for a key that isn't an identifier.
                 match outer.key().map(Key::kind) {
                     Some(KeyKind::Ident(name)) => {
                         if self.should_warn(name.bytes(), func_name.bytes()) {

@@ -6,10 +6,10 @@ use bun_lint::types::tsutils::{
     is_type_reference, union_constituents,
 };
 use bun_lint::types::utils::{
-    get_constrained_type_at_location, get_contextual_type, get_declaration, is_nullable_type,
-    is_type_flag_set,
+    get_constrained_type_at_location, get_constraint_of_type_parameter, get_contextual_type,
+    get_declaration, is_nullable_type, is_type_flag_set,
 };
-use bun_lint::types::{Signature, SyntaxKind, TsNode, Type, TypeFlags};
+use bun_lint::types::{IdSet, Signature, SyntaxKind, TsNode, Type, TypeFlags};
 use bun_lint::utils::ast_utils::is_member_expression;
 use bun_lint::utils::ts_utils::{
     is_start_of_arrow_function_body_needing_parentheses,
@@ -42,7 +42,7 @@ const UNNECESSARY_ASSERTION: Message = Message::new(
 struct Assertion<'a> {
     node: Expr<'a>,
     expression: Expr<'a>,
-    /// `None`: `const`.
+    /// `None` for `const`.
     type_annotation: Option<TypeNode<'a>>,
 }
 
@@ -59,13 +59,13 @@ fn as_assertion(node: Expr<'_>) -> Option<Assertion<'_>> {
     })
 }
 
-/// Whether there is a chance that the variable is used before a value is assigned to it.
+/// True if the variable might be used before a value is assigned to it.
 fn is_possibly_used_before_assigned(node: Expr) -> bool {
     let Some(declaration) = get_declaration(node) else {
         return true;
     };
     let options = node.file().type_checker().compiler_options();
-    // Properties and parameters cannot be used before they are defined.
+    // Properties and parameters can't be used before they're defined.
     if !is_strict_compiler_option_enabled(options, CompilerOption::StrictNullChecks)
         || declaration.kind() != SyntaxKind::VariableDeclaration
     {
@@ -73,7 +73,7 @@ fn is_possibly_used_before_assigned(node: Expr) -> bool {
     }
     let list = declaration.parent().filter(|it| it.kind() == SyntaxKind::VariableDeclarationList);
 
-    // A `var` may be used outside of the block that declares it.
+    // A `var` may be used outside the block that declares it.
     if list.is_some()
         && declaration.flags().is_empty()
         && let Some(declarator_node) = declaration.to_ast()
@@ -93,12 +93,12 @@ fn is_possibly_used_before_assigned(node: Expr) -> bool {
         && !declaration.has_exclamation_token()
         && let Some(type_node) = declaration.type_node()
     {
-        // What is declared with `declare` is never narrowed.
+        // Anything declared with `declare` is never narrowed.
         let is_declare = list.and_then(|it| it.parent()).is_some_and(|statement| {
             statement.kind() == SyntaxKind::VariableStatement
                 && statement.children().any(|it| it.kind() == SyntaxKind::DeclareKeyword)
         });
-        // The type has not changed since the declaration, so nothing may have been assigned.
+        // The type hasn't changed since the declaration, so maybe nothing was assigned.
         if !is_declare && type_node.get_type_from_type_node() == get_constrained_type_at_location(node) {
             return true;
         }
@@ -106,8 +106,8 @@ fn is_possibly_used_before_assigned(node: Expr) -> bool {
     false
 }
 
-/// Whether TypeScript's parser gives the nodes at `node` flags for where they are, so that the
-/// flags of a `var` are not `NodeFlags.None`.
+/// True if TypeScript's parser sets context flags on the nodes at `node`, so that a `var`'s flags aren't
+/// `NodeFlags.None`.
 fn has_parser_context_flags(node: Node) -> bool {
     node.file().is_javascript()
         || node.enclosing_function().is_some_and(|func| {
@@ -129,9 +129,15 @@ fn is_implicitly_narrowed_literal_declaration(assertion: Assertion) -> bool {
         Node::Member(member) => {
             member.kind() == MemberKind::Property
                 && member.flags().contains(Flags::READONLY)
-                && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
                 && !member.is_signature()
-                && !member.decorators().any(|decorator| decorator == assertion.node)
+                && match assertion.node.file().language().is_oxlint {
+                    // A `PropertyDeclaration`, even with `accessor` or `abstract`, is its initializer's parent.
+                    true => member.init() == Some(assertion.node),
+                    false => {
+                        !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
+                            && !member.decorators().any(|decorator| decorator == assertion.node)
+                    }
+                }
         }
         _ => false,
     }
@@ -170,8 +176,15 @@ fn is_type_unchanged<'a>(
     if uncast == cast {
         return true;
     }
-    // What tsgolint 7.0 has besides. A numeric enum and `number` can be assigned to each other, and are not the same.
-    if expression.file().language().is_oxlint
+    let is_oxlint = expression.file().language().is_oxlint;
+    // tsgolint's `utils.IsTypeFlagSet` checks the type's own flags. typescript-eslint's `isTypeFlagSet` also checks a
+    // union's constituents.
+    let has_flags = |ty: Type<'a>, flags: TypeFlags| match is_oxlint {
+        true => ty.has_flags(flags),
+        false => is_type_flag_set(ty, flags),
+    };
+    // Extra checks in tsgolint 7.0. A numeric enum and `number` are assignable to each other but aren't the same.
+    if is_oxlint
         && (tsgolint_has_enum_type(uncast)
             || tsgolint_has_enum_type(cast)
             || is_type_parameter(uncast) && tsgolint_is_receiver_of_write_access(expression))
@@ -181,8 +194,8 @@ fn is_type_unchanged<'a>(
     if type_annotation.is_some_and(|it| it.tag() == TypeTag::Intersection) && contains_type_variable(cast) {
         return false;
     }
-    if is_type_flag_set(uncast, TypeFlags::UNDEFINED)
-        && is_type_flag_set(cast, TypeFlags::UNDEFINED)
+    if has_flags(uncast, TypeFlags::UNDEFINED)
+        && has_flags(cast, TypeFlags::UNDEFINED)
         && is_compiler_option_enabled(
             expression.file().type_checker().compiler_options(),
             CompilerOption::ExactOptionalPropertyTypes,
@@ -193,7 +206,7 @@ fn is_type_unchanged<'a>(
     if expression.tag() != ExprTag::Object && is_conceptually_literal(expression) {
         return false;
     }
-    if (is_type_flag_set(uncast, TypeFlags::NON_PRIMITIVE) && !is_type_flag_set(cast, TypeFlags::NON_PRIMITIVE))
+    if (has_flags(uncast, TypeFlags::NON_PRIMITIVE) && !has_flags(cast, TypeFlags::NON_PRIMITIVE))
         || has_index_signature(uncast) != has_index_signature(cast)
         || contains_any(uncast)
         || contains_any(cast)
@@ -207,7 +220,7 @@ fn is_type_unchanged<'a>(
         return false;
     }
     if cast.is_intersection() && !uncast.is_intersection() {
-        // `T & {}`, where `T` cannot be `null` or `undefined`.
+        // `T & {}`, where `T` can't be `null` or `undefined`.
         let cast_parts = cast.types();
         return is_type_parameter(uncast)
             && cast_parts.len() == 2
@@ -216,9 +229,13 @@ fn is_type_unchanged<'a>(
                 .iter()
                 .find(|part| *part != uncast)
                 .is_some_and(|other_part| is_empty_object_type(other_part) && !contains_type_variable(other_part))
-            && uncast.get_base_constraint_of_type().is_some_and(|constraint| !is_nullable_type(constraint));
+            && uncast.get_base_constraint_of_type().is_some_and(|constraint| match is_oxlint {
+                // The checker's `isNullableType` goes by type facts, so `any`, `unknown` and `void` aren't nullable.
+                true => !is_type_flag_set(constraint, TypeFlags::NULL | TypeFlags::UNDEFINED),
+                false => !is_nullable_type(constraint),
+            });
     }
-    // The properties last: each is looked up in each constituent of a union.
+    // The properties come last, because each one is looked up in every constituent of a union.
     have_same_type_arguments(uncast, cast)
         && are_mutually_assignable(uncast, cast)
         && has_same_properties(uncast, cast)
@@ -240,21 +257,21 @@ fn get_type_arguments<'a>(ty: Type<'a>) -> impl ExactSizeIterator<Item = Type<'a
     }
 }
 
-/// What [`type_contains`] has met.
+/// The types [`type_contains`] has visited.
 #[derive(Default)]
-struct Met<'a> {
-    seen: FxHashSet<Type<'a>>,
-    /// The declarations of the signatures that are being looked into. Only tsgolint has them.
+struct Visited<'a> {
+    seen: IdSet<Type<'a>>,
+    /// The declarations of the signatures currently being examined. Only used for tsgolint.
     active_signatures: SmallVec<[TsNode<'a>; 8]>,
 }
 
-/// `None`: the type is infinite. Upstream runs out of stack, which ends the walk. To go on with the rest of each level
-/// instead would take exponential time.
-fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Met<'a>) -> Option<bool> {
+/// `None` if the type is infinite. Upstream runs out of stack, which ends the walk. Continuing with the rest of each
+/// level instead would take exponential time.
+fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, visited: &mut Visited<'a>) -> Option<bool> {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return None;
     }
-    if !met.seen.insert(ty) {
+    if !visited.seen.insert(ty) {
         return Some(false);
     }
     if predicate(ty) {
@@ -262,54 +279,54 @@ fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Me
     }
     if ty.is_union_or_intersection() {
         for part in ty.types() {
-            if type_contains(part, predicate, met)? {
+            if type_contains(part, predicate, visited)? {
                 return Some(true);
             }
         }
         return Some(false);
     }
     for type_argument in get_type_arguments(ty) {
-        if type_contains(type_argument, predicate, met)? {
+        if type_contains(type_argument, predicate, visited)? {
             return Some(true);
         }
     }
     let is_oxlint = ty.file().language().is_oxlint;
     for signature in ty.get_call_signatures() {
-        // An instantiation of a signature in what that signature takes or returns: tsgolint takes it that the type is
-        // infinite and that it may contain what is looked for. All instantiations have one declaration.
+        // A signature's instantiation inside that signature's own parameters or return type. tsgolint assumes that the
+        // type is infinite and may contain what we're looking for. All instantiations share one declaration.
         let declaration = signature.declaration().filter(|_| is_oxlint);
-        if declaration.is_some_and(|it| met.active_signatures.contains(&it)) {
+        if declaration.is_some_and(|it| visited.active_signatures.contains(&it)) {
             return Some(true);
         }
-        met.active_signatures.extend(declaration);
-        // tsgolint begins with the parameters. What is met first matters: it is looked into once.
-        if !is_oxlint && type_contains(signature.get_return_type(), predicate, met)? {
+        visited.active_signatures.extend(declaration);
+        // tsgolint starts with the parameters. The order matters, because each type is only examined once.
+        if !is_oxlint && type_contains(signature.get_return_type(), predicate, visited)? {
             return Some(true);
         }
         for parameter in signature.parameters() {
-            if type_contains(parameter.get_type(), predicate, met)? {
+            if type_contains(parameter.get_type(), predicate, visited)? {
                 return Some(true);
             }
         }
-        if is_oxlint && type_contains(signature.get_return_type(), predicate, met)? {
+        if is_oxlint && type_contains(signature.get_return_type(), predicate, visited)? {
             return Some(true);
         }
         if declaration.is_some() {
-            met.active_signatures.pop();
+            visited.active_signatures.pop();
         }
     }
     Some(false)
 }
 
-// What upstream says of `any` in an infinite type, once it has run out of stack, changes with the rest of the file. Mostly it is
-// that there is one, which is also what reports nothing.
+// What upstream decides about `any` in an infinite type, once it has run out of stack, depends on the rest of the file.
+// Mostly it decides there is one, which is also the answer that reports nothing.
 fn contains_any(ty: Type) -> bool {
-    type_contains(ty, |t| is_type_flag_set(t, TypeFlags::ANY), &mut Met::default()).unwrap_or(true)
+    type_contains(ty, |t| is_type_flag_set(t, TypeFlags::ANY), &mut Visited::default()).unwrap_or(true)
 }
 
 fn contains_type_variable(ty: Type) -> bool {
-    let is_one = |t| is_type_flag_set(t, TypeFlags::TYPE_VARIABLE | TypeFlags::INDEX);
-    type_contains(ty, is_one, &mut Met::default()).unwrap_or(false)
+    let is_type_variable_or_index = |t| is_type_flag_set(t, TypeFlags::TYPE_VARIABLE | TypeFlags::INDEX);
+    type_contains(ty, is_type_variable_or_index, &mut Visited::default()).unwrap_or(false)
 }
 
 fn has_phantom_type_arguments(ty: Type) -> bool {
@@ -361,8 +378,8 @@ fn are_union_parts_equivalent_ignoring_undefined<'a>(uncast: Type<'a>, cast: Typ
     if parts(uncast).count() != parts(cast).count() {
         return false;
     }
-    let uncast_parts: FxHashSet<Type<'a>> = parts(uncast).collect();
-    parts(cast).all(|part| uncast_parts.contains(&part))
+    let uncast_parts: IdSet<Type<'a>> = parts(uncast).collect();
+    parts(cast).all(|part| uncast_parts.contains(part))
 }
 
 fn get_original_expression(assertion: Assertion<'_>) -> Expr<'_> {
@@ -371,6 +388,21 @@ fn get_original_expression(assertion: Assertion<'_>) -> Expr<'_> {
         current = inner.expression;
     }
     current
+}
+
+/// tsgolint's `isConstrainedTo`: true if `source` is `target`, or reaches it through type parameter constraints.
+fn tsgolint_is_constrained_to<'a>(source: Type<'a>, target: Type<'a>, seen: &mut IdSet<Type<'a>>) -> bool {
+    if source == target {
+        return true;
+    }
+    if !seen.insert(source) {
+        return false;
+    }
+    if is_type_parameter(source) {
+        return get_constraint_of_type_parameter(source)
+            .is_some_and(|constraint| tsgolint_is_constrained_to(constraint, target, seen));
+    }
+    source.is_intersection() && source.types().iter().any(|part| tsgolint_is_constrained_to(part, target, seen))
 }
 
 fn is_double_assertion_unnecessary<'a>(
@@ -387,6 +419,15 @@ fn is_double_assertion_unnecessary<'a>(
         return Some(UNNECESSARY_ASSERTION);
     }
     let contextual_type = contextual_type?;
+    // tsgolint keeps a double assertion between two type parameters if the first isn't constrained to the second.
+    if cast_type.file().language().is_oxlint
+        && original_type != cast_type
+        && is_type_parameter(original_type)
+        && is_type_parameter(cast_type)
+        && !tsgolint_is_constrained_to(original_type, cast_type, &mut IdSet::new())
+    {
+        return None;
+    }
     (is_type_flag_set(inner_expression.ty(), TypeFlags::ANY | TypeFlags::UNKNOWN)
         && original_type.is_assignable_to(contextual_type))
     .then_some(CONTEXTUALLY_UNNECESSARY)
@@ -441,7 +482,7 @@ fn is_generic_call_with_inferred_type_arguments(expression: Expr) -> bool {
         .is_some_and(|call| call.type_args().is_empty() && has_generic_call_signature(call.callee().ty()))
 }
 
-/// The call or the `new` that `node` is an argument of, and which one.
+/// Returns the call or `new` that `node` is an argument of, and the argument's index.
 fn as_argument(node: Expr<'_>) -> Option<(Call<'_>, usize)> {
     let Node::Expr(parent) = node.parent() else {
         return None;
@@ -489,7 +530,7 @@ fn is_in_destructuring_declaration(node: Expr) -> bool {
     )
 }
 
-/// ESTree's `Property`, of an object or of a pattern.
+/// ESTree's `Property`, in an object or a pattern.
 fn is_property(prop: Prop) -> bool {
     prop.kind() != PropKind::Spread && !prop.is_jsx_attribute() && !prop.is_import_attribute()
 }
@@ -518,18 +559,21 @@ fn is_property_in_problematic_context(assertion: Assertion) -> bool {
     }
     let is_satisfies = |node: Node| matches!(node, Node::Expr(e) if e.tag() == ExprTag::Satisfies);
     let object_parent = object_expr.parent();
-    // tsgolint 7.0 also leaves what has its context from another assertion: `{ a: "b" as C } as D`.
+    // tsgolint 7.0 also skips one that gets its context from another assertion: `{ a: "b" as C } as D`.
     let is_assertion = |node: Node| matches!(node, Node::Expr(e) if matches!(e.tag(), ExprTag::As | ExprTag::AsConst));
+    let is_oxlint = node.file().language().is_oxlint;
+    // Between the call and the `satisfies` ESLint has a `ChainExpression` around `f?.({})`, tsgolint a
+    // `ParenthesizedExpression` around `(f({}))`.
+    let is_child_of_satisfies = |call: Expr| match is_oxlint {
+        true => !call.is_parenthesized() && is_satisfies(call.parent()),
+        false => !call.is_chain_root() && is_satisfies(call.parent()),
+    };
     is_satisfies(object_parent)
-        || node.file().language().is_oxlint && is_assertion(object_parent)
-        || matches!(
-            object_parent,
-            // ESLint has a `ChainExpression` around `f?.({})`.
-            Node::Expr(call) if call.tag() == ExprTag::Call && !call.is_chain_root() && is_satisfies(call.parent())
-        )
+        || is_oxlint && is_assertion(object_parent)
+        || matches!(object_parent, Node::Expr(call) if call.tag() == ExprTag::Call && is_child_of_satisfies(call))
 }
 
-/// The `AssignmentExpression` that `node` is the right of.
+/// Returns the `AssignmentExpression` whose right side is `node`.
 fn as_assigned_value(node: Expr<'_>) -> Option<(Expr<'_>, Option<BinOp>)> {
     let Node::Expr(parent) = node.parent() else {
         return None;
@@ -554,7 +598,7 @@ fn is_in_generic_context(node: Expr) -> bool {
     let mut seen_function = false;
     for current in Node::Expr(node).ancestors() {
         match current {
-            // For tsgolint a method is no function expression: it looks further out.
+            // For tsgolint a method isn't a function expression, so it keeps looking further out.
             Node::Func(func)
                 if !matches!(func.kind(), FnKind::Arrow | FnKind::Expr | FnKind::Decl)
                     && node.file().language().is_oxlint => {}
@@ -595,8 +639,7 @@ fn has_phantom_type_argument_mismatch<'a>(node: Expr<'a>, uncast_type: Type<'a>,
         && !have_same_type_arguments(uncast_type, contextual_type)
 }
 
-/// The parent is a `TSAsExpression`, a `TSTypeAssertion`, a `SpreadElement` or a
-/// `TSSatisfiesExpression`.
+/// True if the parent is a `TSAsExpression`, a `TSTypeAssertion`, a `SpreadElement` or a `TSSatisfiesExpression`.
 fn has_parent_to_skip(node: Expr) -> bool {
     match node.parent() {
         Node::Expr(parent) => match parent.kind() {
@@ -613,8 +656,8 @@ fn has_parent_to_skip(node: Expr) -> bool {
     }
 }
 
-/// tsgolint's `isPropertyInInferredCallbackReturn`: `a.map(b => ({ c: "d" as C }))`. What the callback returns is
-/// inferred from the type of the property.
+/// tsgolint's `isPropertyInInferredCallbackReturn`: `a.map(b => ({ c: "d" as C }))`. The callback's return type is
+/// inferred from the property's type.
 fn tsgolint_is_property_in_inferred_callback_return(node: Expr) -> bool {
     let Node::Prop(parent) = node.parent() else {
         return false;
@@ -631,18 +674,18 @@ fn tsgolint_is_property_in_inferred_callback_return(node: Expr) -> bool {
         && is_in_generic_context(node)
 }
 
-/// tsgolint's `hasGenericInferenceParameterAtArgument`: the type of the parameter, as it is declared, has a type
-/// variable at `element_path`, which goes from the argument inwards.
+/// tsgolint's `hasGenericInferenceParameterAtArgument`: true if the parameter's declared type has a type variable at
+/// `element_path`, which leads from the argument inward.
 fn tsgolint_has_generic_inference_parameter_at_argument<'a>(
     call: Expr<'a>,
     arg_index: usize,
-    element_path: impl Iterator<Item = usize>,
+    element_path: &mut dyn Iterator<Item = usize>,
 ) -> bool {
     let Some(declaration) = call.resolved_signature().and_then(|it| it.declaration()) else {
         return false;
     };
     let has_type_parameters = |node: TsNode| node.children().any(|it| it.kind() == SyntaxKind::TypeParameter);
-    // The type parameters of the signature of a constructor are those of the class.
+    // A constructor signature's type parameters are the class's.
     if !has_type_parameters(declaration)
         && !(declaration.kind() == SyntaxKind::Constructor && declaration.parent().is_some_and(has_type_parameters))
     {
@@ -663,7 +706,11 @@ fn tsgolint_has_generic_inference_parameter_at_argument<'a>(
         let last = type_arguments.len().saturating_sub(1);
         param_type = type_arguments.nth((arg_index - param_index).min(last)).unwrap_or(param_type);
     }
-    for element_index in element_path {
+    // An optional parameter's symbol type includes `undefined`, so it isn't a tuple and has nothing at an index.
+    let options = call.file().type_checker().compiler_options();
+    let is_optional =
+        param.has_question_token() && is_strict_compiler_option_enabled(options, CompilerOption::StrictNullChecks);
+    for element_index in element_path.take(if is_optional { 0 } else { usize::MAX }) {
         let element_type = match param_type.is_tuple_type() {
             true => {
                 let type_arguments = param_type.get_type_arguments();
@@ -679,12 +726,12 @@ fn tsgolint_has_generic_inference_parameter_at_argument<'a>(
     contains_type_variable(param_type)
 }
 
-/// tsgolint's `isNestedInArrayLiteralArgumentToGenericCall`: `new Map([["a", b as string]])`. That the context accepts
-/// the element does not say what is inferred from it.
+/// tsgolint's `isNestedInArrayLiteralArgumentToGenericCall`: `new Map([["a", b as string]])`. Even if the context
+/// accepts the element, that doesn't determine what's inferred from it.
 fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
     node: Expr<'a>,
 ) -> bool {
-    // From the innermost array outwards.
+    // From the innermost array outward.
     let mut element_path: SmallVec<[usize; 4]> = SmallVec::new();
     let mut child = Node::Expr(node);
     for current in Node::Expr(node).ancestors() {
@@ -718,14 +765,14 @@ fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
             continue;
         }
         let arg_index = call.args().iter().position(|it| it == argument).unwrap_or_else(|| call.args().len());
-        let (arg_index, left_out) = if is_spread { (arg_index + element_index, 1) } else { (arg_index, 0) };
-        let element_path = element_path.into_iter().rev().skip(left_out);
-        return tsgolint_has_generic_inference_parameter_at_argument(parent, arg_index, element_path);
+        let (arg_index, skipped) = if is_spread { (arg_index + element_index, 1) } else { (arg_index, 0) };
+        let mut element_path = element_path.into_iter().rev().skip(skipped);
+        return tsgolint_has_generic_inference_parameter_at_argument(parent, arg_index, &mut element_path);
     }
     false
 }
 
-/// TypeScript's `getAssignmentReducedType`: the members of the union `declared` that are left after `assigned` has been
+/// TypeScript's `getAssignmentReducedType`: the members of the union `declared` that remain after `assigned` is
 /// assigned to a variable of that type.
 fn get_assignment_reduced_type<'a>(declared: Type<'a>, assigned: Type<'a>) -> SmallVec<[Type<'a>; 8]> {
     if assigned.has_flags(TypeFlags::NEVER) {
@@ -744,11 +791,11 @@ fn get_assignment_reduced_type<'a>(declared: Type<'a>, assigned: Type<'a>) -> Sm
     }
 }
 
-/// tsgolint's `isInNarrowingAssignment`, for an assertion that is all of what is assigned: `a = b as C;` narrows `a`
-/// for the statements that follow, so that `a` accepts `b` does not make the assertion unnecessary.
+/// tsgolint's `isInNarrowingAssignment`, for an assertion that's the whole assigned value. `a = b as C;` narrows `a`
+/// for the following statements, so the fact that `a` accepts `b` doesn't make the assertion unnecessary.
 fn tsgolint_is_in_narrowing_assignment<'a>(node: Expr<'a>, uncast_type: Type<'a>, cast_type: Type<'a>) -> bool {
-    // Up to the assignment that `node` can be the value of, or a part of the value: `a = b && (a as C)`,
-    // `[a] = [a as C]`. What else can be the value is not looked at, which leaves more alone than tsgolint does.
+    // Walk up to the assignment whose value is `node`, or contains it: `a = b && (a as C)`, `[a] = [a as C]`. Other
+    // kinds of values aren't handled, so this skips more than tsgolint does.
     let (mut current, mut is_in_literal) = (node, false);
     let target = loop {
         let parent = match current.parent() {
@@ -814,8 +861,7 @@ fn should_skip_contextual_type_fallback<'a>(
             || is_in_generic_context(node)
             || node.file().language().is_oxlint && is_property_in_problematic_context(assertion);
     }
-    // A template with expressions can be widened to `string` where the contextual type still
-    // accepts it.
+    // A template with expressions can be widened to `string` even if the contextual type still accepts it.
     if is_template_literal_with_expressions(expression)
         || has_parent_to_skip(node)
         || expression.tag() == ExprTag::Array
@@ -834,21 +880,28 @@ fn should_skip_contextual_type_fallback<'a>(
 }
 
 fn get_uncast_type(expression: Expr<'_>) -> Type<'_> {
-    // Of an IIFE, the return type of the function.
+    let is_oxlint = expression.file().language().is_oxlint;
+    // For an IIFE, the function's return type. ESLint has a `ChainExpression` around an optional call, tsgolint
+    // doesn't.
     if let ExprKind::Call(call) = expression.kind()
-        && !expression.is_chain_root()
+        && (is_oxlint || !expression.is_chain_root())
         && let Some(callee) = call.callee().as_fn()
         && let Some(signature) = call.callee().ty().get_call_signatures().first()
     {
         let return_type = signature.get_return_type();
-        // What is inferred for `() => {}` should be `void`.
-        if callee.return_type().is_none() && is_type_flag_set(return_type, TypeFlags::UNDEFINED) {
+        // tsgolint's `utils.IsTypeFlagSet` checks the type's own flags, so a union with `undefined` is left as is.
+        let is_undefined = match is_oxlint {
+            true => return_type.has_flags(TypeFlags::UNDEFINED),
+            false => is_type_flag_set(return_type, TypeFlags::UNDEFINED),
+        };
+        // The type inferred for `() => {}` should be `void`.
+        if callee.return_type().is_none() && is_undefined {
             return expression.file().type_checker().get_void_type();
         }
         return return_type;
     }
-    // tsgolint 7.0: what is asserted is not what the type arguments of a call are inferred from.
-    if expression.file().language().is_oxlint {
+    // tsgolint 7.0: a call's type arguments aren't inferred from the asserted type.
+    if is_oxlint {
         let (mut call, mut awaits) = (expression, 0);
         while let ExprKind::Await(argument) = call.kind() {
             (call, awaits) = (argument, awaits + 1);
@@ -856,45 +909,39 @@ fn get_uncast_type(expression: Expr<'_>) -> Type<'_> {
         if let ExprKind::Call(it) | ExprKind::New(it) | ExprKind::TaggedTemplate(it) = call.kind()
             && it.type_args().is_empty()
         {
-            let ty = call.context_free_type_of_call_resolved_afresh();
+            let ty = call.context_free_type_of_freshly_resolved_call();
             return (0..awaits).fold(ty, |ty, _| ty.get_awaited_type().unwrap_or(ty));
         }
     }
     expression.ty()
 }
 
-/// Looks for a call that infers its type arguments, but not in functions and assertions, which expect other things.
+/// Looks for a call that infers its type arguments. It skips functions and assertions, which have their own contextual
+/// types.
 #[derive(Default)]
-struct CallThatInfers {
-    /// How many functions and assertions are around.
+struct InferringCallFinder {
+    /// The number of enclosing functions and assertions.
     hidden: u32,
     is_found: bool,
 }
 
-impl CallThatInfers {
+impl InferringCallFinder {
     fn hides(node: Node) -> bool {
         matches!(node, Node::Expr(e) if e.as_fn().is_some()
             || matches!(e.tag(), ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies))
     }
 }
 
-impl<'a> Visitor<'a> for CallThatInfers {
+impl<'a> Visitor<'a> for InferringCallFinder {
     fn enter(&mut self, node: Node<'a>) {
         self.hidden += u32::from(Self::hides(node));
         if self.hidden == 0
             && !self.is_found
             && let Node::Expr(e) = node
-            && let ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) = e.kind()
-            && call.type_args().is_empty()
-            && let Some(declaration) = e.resolved_signature().and_then(|it| it.declaration())
+            && infers_type_arguments(e) == Some(true)
         {
-            // The type parameters of the signature of a constructor are those of the class.
-            let generic = match declaration.kind() {
-                SyntaxKind::Constructor => declaration.parent(),
-                _ => Some(declaration),
-            };
-            let mut parts = generic.into_iter().flat_map(TsNode::children);
-            self.is_found = parts.any(|it| it.kind() == SyntaxKind::TypeParameter);
+            // If its type is the same without a contextual type, the assertion doesn't affect it.
+            self.is_found = e.context_free_type_of_freshly_resolved_call() != e.ty();
         }
     }
 
@@ -903,9 +950,28 @@ impl<'a> Visitor<'a> for CallThatInfers {
     }
 }
 
-/// `Array.from(a.querySelectorAll("b")) as C[]`: what is asserted is expected of the inner call too, through the outer
-/// one. Only the outer one is resolved again where nothing is expected, so nothing is said about such an assertion.
-fn is_asserted_type_expected_of_a_call_in_the_arguments(expression: Expr) -> bool {
+/// True if the call, `new` or tagged template `node` has its type arguments inferred. `None` if it's none of these, or
+/// if the signature it resolves to has no declaration.
+fn infers_type_arguments(node: Expr) -> Option<bool> {
+    let (ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call)) = node.kind() else {
+        return None;
+    };
+    if !call.type_args().is_empty() {
+        return Some(false);
+    }
+    let declaration = node.resolved_signature()?.declaration()?;
+    // A constructor signature's type parameters are the class's.
+    let generic = match declaration.kind() {
+        SyntaxKind::Constructor => declaration.parent(),
+        _ => Some(declaration),
+    };
+    let mut parts = generic.into_iter().flat_map(TsNode::children);
+    Some(parts.any(|it| it.kind() == SyntaxKind::TypeParameter))
+}
+
+/// `Array.from(a.querySelectorAll("b")) as C[]`: the asserted type also becomes the inner call's contextual type,
+/// through the outer call's type parameters. Such an assertion isn't reported.
+fn asserted_type_reaches_call_in_arguments(expression: Expr) -> bool {
     let mut call = expression;
     while let ExprKind::Await(argument) = call.kind() {
         call = argument;
@@ -913,9 +979,21 @@ fn is_asserted_type_expected_of_a_call_in_the_arguments(expression: Expr) -> boo
     let (ExprKind::Call(it) | ExprKind::New(it) | ExprKind::TaggedTemplate(it)) = call.kind() else {
         return false;
     };
-    let mut calls = CallThatInfers::default();
-    for argument in it.args() {
-        walk_node(Node::Expr(argument), &mut calls);
+    // Without type parameters to infer, an argument's contextual type doesn't depend on the assertion.
+    let infers = infers_type_arguments(call);
+    if infers == Some(false) {
+        return false;
+    }
+    // Arguments can be matched to parameters if nothing is spread.
+    let is_by_index = infers.is_some()
+        && !matches!(call.kind(), ExprKind::TaggedTemplate(_))
+        && !it.args().iter().any(|argument| argument.tag() == ExprTag::Spread);
+    let mut calls = InferringCallFinder::default();
+    for (index, argument) in it.args().iter().enumerate() {
+        // The same goes for a parameter without a type variable.
+        if !is_by_index || tsgolint_has_generic_inference_parameter_at_argument(call, index, &mut std::iter::empty()) {
+            walk_node(Node::Expr(argument), &mut calls);
+        }
     }
     calls.is_found
 }
@@ -934,8 +1012,8 @@ fn fix_assertion<'a>(fixer: Fixer<'a>, assertion: Assertion<'a>) -> Option<Vec<F
         };
         let opening_angle_bracket = file.tokens_before(type_annotation).find(|it| it.is_punctuator("<"))?;
         let closing_angle_bracket = file.tokens_after(type_annotation).find(|it| it.is_punctuator(">"))?;
-        // Without the angle brackets the operand is where the assertion was. There a `{`, a
-        // `function` or a `class` can be taken for a block or a declaration.
+        // Without the angle brackets the operand starts where the assertion did. There a `{`, a `function` or a `class`
+        // can be mistaken for a block or a declaration.
         let first_operand_token = file.token_after(closing_angle_bracket)?;
         let needs_parens = is_start_of_expression_statement_needing_parentheses(node, &first_operand_token)
             || is_start_of_arrow_function_body_needing_parentheses(node, &first_operand_token);
@@ -950,7 +1028,7 @@ fn fix_assertion<'a>(fixer: Fixer<'a>, assertion: Assertion<'a>) -> Option<Vec<F
     Some(vec![fixer.remove(Span::new(token_before_as.end(), node.span().end))])
 }
 
-/// `node`: the range of a `TSNonNullExpression`, which ends with its `!`.
+/// `node` is the range of a `TSNonNullExpression`, which ends with its `!`.
 fn fix_non_null_assertion(fixer: Fixer, node: Span) -> Fix {
     fixer.remove(Span::new(node.end.saturating_sub(1), node.end))
 }
@@ -977,12 +1055,21 @@ impl NoUnnecessaryTypeAssertion {
             return;
         }
 
-        let uncast_type = get_uncast_type(expression);
+        let mut uncast_type = get_uncast_type(expression);
         if cast_type.is_unresolved() || uncast_type.is_unresolved() {
             return;
         }
-        if cx.language().is_oxlint && is_asserted_type_expected_of_a_call_in_the_arguments(expression) {
+        if cx.language().is_oxlint && asserted_type_reaches_call_in_arguments(expression) {
             return;
+        }
+        // If an identifier with a conditional type has its constraint as its type, tsgolint uses the declared type.
+        if cx.language().is_oxlint
+            && uncast_type == cast_type
+            && expression.tag() == ExprTag::Ident
+            && let Some(symbol_type) = expression.ts_symbol().map(|symbol| symbol.get_type())
+            && symbol_type.has_flags(TypeFlags::CONDITIONAL)
+        {
+            uncast_type = symbol_type;
         }
         let would_same_type_be_inferred = match cast_type_is_literal {
             true => is_implicitly_narrowed_literal_declaration(assertion),
@@ -1052,7 +1139,7 @@ impl NoUnnecessaryTypeAssertion {
         let ExprKind::NonNull(expression) = node.kind() else {
             return;
         };
-        // `x!!` is one node here. For ESLint it is `x!` in another assertion, and each is looked at.
+        // `x!!` is one node here. For ESLint it's `x!` inside another assertion, and each one is checked.
         let mut inner = node.inner_non_null_spans();
         let innermost = inner.next();
         let is_run = innermost.is_some();
@@ -1061,15 +1148,15 @@ impl NoUnnecessaryTypeAssertion {
         let actual_type = expression.ty();
         let is_resolved = !actual_type.is_unresolved();
         let constrained_type = get_constrained_type_at_location(expression);
-        // The constraint of a type parameter can be `any`, which is nullable, while TypeScript
-        // takes the type parameter itself for what it is.
+        // A type parameter's constraint can be `any`, which is nullable, while TypeScript treats the type parameter
+        // itself as what it is.
         let is_nullable = is_nullable_type(constrained_type) || is_nullable_type(actual_type);
-        // What an assertion is applied to in a run, from the second on: the type of the one before.
+        // In a run, the operand type of every assertion after the first: the type of the previous one.
         let asserted_type = node.ty();
         if let Some(innermost) = innermost
             && is_resolved
         {
-            // Nothing is known about what an assertion accepts, so `x!` is only reported if `x` cannot be null.
+            // We don't know what an assertion accepts, so `x!` is only reported if `x` can't be null.
             if !is_nullable && !(expression.tag() == ExprTag::Ident && is_possibly_used_before_assigned(expression)) {
                 cx.report(innermost, UNNECESSARY_ASSERTION).fix(|fixer| fix_non_null_assertion(fixer, innermost));
             }
@@ -1087,8 +1174,8 @@ impl NoUnnecessaryTypeAssertion {
             if target == node {
                 cx.report(node, CONTEXTUALLY_UNNECESSARY).fix(|fixer| fix_non_null_assertion(fixer, outermost));
             }
-            // What is assigned is not looked at: an assertion that the assignment does not need
-            // can change the type of the variable in what follows.
+            // The assigned value isn't checked. An assertion that the assignment doesn't need can still change the
+            // variable's type in the code that follows.
             return;
         }
         if !is_resolved {
@@ -1107,7 +1194,7 @@ impl NoUnnecessaryTypeAssertion {
             return;
         }
 
-        // It is nullable. Does what receives it accept that?
+        // It's nullable. Does the receiver accept that?
         if constrained_type != actual_type {
             return;
         }
@@ -1119,7 +1206,7 @@ impl NoUnnecessaryTypeAssertion {
         {
             return;
         }
-        // `null` cannot be assigned to `undefined`, so each of them has to be accepted.
+        // `null` isn't assignable to `undefined`, so each of them has to be accepted.
         let is_valid = [TypeFlags::UNDEFINED, TypeFlags::NULL, TypeFlags::VOID]
             .into_iter()
             .all(|flag| !is_type_flag_set(constrained_type, flag) || is_type_flag_set(contextual_type, flag));

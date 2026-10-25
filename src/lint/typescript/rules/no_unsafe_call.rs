@@ -42,7 +42,7 @@ enum Use {
     TemplateTag,
 }
 
-fn check_call<'a>(node: Expr<'a>, reporting_node: Expr<'a>, how: Use, cx: &Cx<'a, NoUnsafeCall>) {
+fn check_call<'a>(node: Expr<'a>, reporting_node: Span, how: Use, cx: &Cx<'a, NoUnsafeCall>) {
     let (unsafe_message, error_message) = match how {
         Use::Call => (UNSAFE_CALL, ERROR_CALL),
         Use::New => (UNSAFE_NEW, ERROR_NEW),
@@ -67,9 +67,9 @@ fn check_call<'a>(node: Expr<'a>, reporting_node: Expr<'a>, how: Use, cx: &Cx<'a
         return;
     }
 
-    // Also what extends `Function`, as `interface Foo extends Function {}`. Such a type is safe to
-    // call with a call or a construct signature, and safe to construct with a construct signature
-    // or a call signature that does not return `void`.
+    // This includes types that extend `Function`, like `interface Foo extends Function {}`. Such a type is safe to call
+    // if it has a call or construct signature, and safe to construct if it has a construct signature or a call
+    // signature that doesn't return `void`.
     if is_builtin_symbol_like(ty, "Function") {
         if !ty.get_construct_signatures().is_empty() {
             return;
@@ -104,16 +104,17 @@ impl Rule for NoUnsafeCall {
             ExprKind::Call(call) => (Use::Call, call),
             ExprKind::TaggedTemplate(call) => (Use::TemplateTag, call),
             ExprKind::New(call) => {
-                check_call(call.callee(), node, Use::New, cx);
-                // What is made can be called or be a tag: two reports at one place. typescript-eslint listens for callees and
-                // tags, with selectors that are more specific than `NewExpression` and so come after it; tsgolint for calls.
+                check_call(call.callee(), node.span(), Use::New, cx);
+                // The new object can itself be called or used as a tag, which gives two reports at one location.
+                // typescript-eslint listens for callees and tags, with selectors that are more specific than
+                // `NewExpression` and so run after it. tsgolint listens for calls.
                 if !cx.language().is_oxlint
                     && let Node::Expr(parent) = node.parent()
                 {
                     match parent.kind() {
-                        ExprKind::Call(outer) if outer.callee() == node => check_call(node, node, Use::Call, cx),
+                        ExprKind::Call(outer) if outer.callee() == node => check_call(node, node.span(), Use::Call, cx),
                         ExprKind::TaggedTemplate(outer) if outer.callee() == node => {
-                            check_call(node, node, Use::TemplateTag, cx);
+                            check_call(node, node.span(), Use::TemplateTag, cx);
                         }
                         _ => {}
                     }
@@ -122,8 +123,12 @@ impl Rule for NoUnsafeCall {
             }
             _ => return,
         };
-        if cx.language().is_oxlint || call.callee().tag() != ExprTag::New {
-            check_call(call.callee(), call.callee(), how, cx);
+        let callee = call.callee();
+        if cx.language().is_oxlint && callee.is_parenthesized() {
+            // tsgolint reports the ParenthesizedExpression.
+            check_call(callee, callee.outer_span(), how, cx);
+        } else if cx.language().is_oxlint || callee.tag() != ExprTag::New {
+            check_call(callee, callee.span(), how, cx);
         }
     }
 }

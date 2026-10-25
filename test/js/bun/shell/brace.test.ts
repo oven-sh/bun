@@ -333,3 +333,34 @@ describe("comma-less brace group is literal (bash 5.2)", () => {
     });
   });
 });
+
+describe("$.braces arguments", () => {
+  test("input is ToString", () => {
+    expect($.braces(12 as any)).toEqual(["12"]);
+    expect($.braces({ toString: () => "a{b,c}" } as any)).toEqual(["ab", "ac"]);
+  });
+
+  test("a word with nothing to expand comes back as it was", () => {
+    expect($.braces("a\ud800b")).toEqual(["a\ud800b"]);
+  });
+
+  test("options are an object, null or undefined", () => {
+    for (const options of [undefined, null, {}, [], () => {}]) {
+      expect($.braces("a{b,c}", options as any)).toEqual(["ab", "ac"]);
+    }
+    for (const options of [5, "s", true, Symbol("s")]) {
+      expect(() => $.braces("a{b,c}", options as any)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "BracesOptions must be an object",
+        }),
+      );
+    }
+  });
+
+  test("an argument that was not passed is undefined", () => {
+    expect(($.braces as any)()).toEqual(["undefined"]);
+    expect($.braces(undefined as any)).toEqual(["undefined"]);
+  });
+});

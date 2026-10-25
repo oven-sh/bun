@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint_eslint::rules::no_unused_expressions::{Config, Prologue, check, is_plainly_used};
+use bun_lint_eslint::rules::no_unused_expressions::{Config, Prologue, check, is_obviously_used};
 
 /// Disallow unused expressions.
 pub struct NoUnusedExpressions {
@@ -9,7 +9,8 @@ pub struct NoUnusedExpressions {
 impl Rule for NoUnusedExpressions {
     const META: Meta = Meta::typescript("no-unused-expressions", Kind::Suggestion)
         .recommended()
-        .extends_base_rule("no-unused-expressions");
+        .extends_base_rule("no-unused-expressions")
+        .hints();
     const ON: On = On::new().stmts(&[StmtTag::Expr]);
     type State<'a> = Prologue<'a>;
 
@@ -24,7 +25,7 @@ impl Rule for NoUnusedExpressions {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if is_plainly_used(statement) {
+        if is_obviously_used(statement) {
             return;
         }
         let mut prologue = std::mem::take(&mut cx.state);

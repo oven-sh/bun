@@ -48,7 +48,7 @@ impl Rule for NoConsoleSpaces {
                     .data("leading_or_trailing", leading_or_trailing)
                     .data("method_name", method_name)
                     .fix(|fixer| {
-                        // As it is written, with its escape sequences.
+                        // The source text, with its escape sequences.
                         let raw_text = fixer.file().slice(span);
                         fixer.replace(span, match is_template_lit {
                             true => {

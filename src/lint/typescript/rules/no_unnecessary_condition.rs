@@ -6,12 +6,15 @@ use bun_lint::types::tsutils::{
 };
 use bun_lint::types::utils::{
     find_truthiness_asserted_argument, find_type_guard_asserted_argument,
-    get_constrained_type_at_location, get_constraint_info, get_type_name,
+    get_constrained_type_at_location, get_constraint_info, get_constraint_of_type_parameter,
+    get_type_name,
     get_type_of_property_of_name, get_value_of_literal_type, is_array_method_call_with_predicate,
     is_nullable_type, is_possibly_falsy, is_possibly_truthy, is_type_any_type, is_type_flag_set,
     is_type_unknown_type,
 };
-use bun_lint::types::{Literal, SymbolFlags, Type, TypeFlags};
+use bun_lint::types::{
+    Literal, ObjectFlags, SymbolFlags, Type, TypeFlags, TypePredicateKind, TypeStructure,
+};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::StaticValue;
 use std::borrow::Cow;
@@ -32,17 +35,19 @@ enum AllowConstantLoopConditions {
 }
 
 pub struct State<'a> {
-    /// The compiler options that the rule depends on.
+    /// The compiler options the rule depends on.
     is_strict_null_checks: bool,
     is_no_unchecked_indexed_access: bool,
     /// [`is_only_used_for_truthiness`]
     only_used_for_truthiness: AncestorMemo<'a, bool>,
+    /// True if tsgolint's `isAssertionArgument` applies, which it only checks with `checkTypePredicates`.
+    is_assertion_argument_checked: bool,
 }
 
 type Context<'a> = Cx<'a, NoUnnecessaryCondition>;
 
-/// What has a condition is listened to in the order of the source, the outer one first, as upstream: a condition that is in
-/// another one can be reported twice at one place.
+/// Nodes with a condition are visited in source order, outer node first, as upstream does. It matters because a
+/// condition nested in another one can be reported twice at the same location.
 const CONDITIONS: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).enter(
     NodeTags::CASE
         .exprs(&[ExprTag::Assign, ExprTag::Binary, ExprTag::Call, ExprTag::Cond])
@@ -105,10 +110,14 @@ fn is_nullish_type(ty: Type) -> bool {
 }
 
 fn is_always_nullish(ty: Type) -> bool {
+    // tsgolint's `isAlwaysNullishType` checks the type's own flags, so `void` qualifies and a union doesn't.
+    if ty.file().language().is_oxlint {
+        return ty.has_flags(NULLISH_OR_VOID_FLAG);
+    }
     union_constituents(ty).iter().all(is_nullish_type)
 }
 
-/// Unlike `is_nullable_type`, `any` and `unknown` are not.
+/// Unlike `is_nullable_type`, this doesn't count `any` and `unknown`.
 fn is_possibly_nullish(ty: Type) -> bool {
     union_constituents(ty).iter().any(|t| t.has_flags(NULLISH_OR_VOID_FLAG))
 }
@@ -141,7 +150,7 @@ fn to_static_value(ty: Type<'_>) -> Option<StaticValue<'_>> {
     })
 }
 
-/// `None` if a `bigint` in a string is too long to be compared.
+/// `None` if a `bigint` in a string is too long to compare.
 fn boolean_comparison<'a>(left: &StaticValue<'a>, operator: BinOp, right: &StaticValue<'a>) -> Option<bool> {
     Some(match operator {
         BinOp::NotEq => !left.js_loose_equals(right)?,
@@ -183,8 +192,13 @@ fn big_int_comparison(left: Type, operator: BinOp, right: Type) -> Option<bool> 
     })
 }
 
-fn is_only_used_for_truthiness<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
+fn is_only_used_for_truthiness<'a>(
+    node: Expr<'a>,
+    known: &mut AncestorMemo<'a, bool>,
+    is_assertion_argument_checked: bool,
+) -> bool {
     let decide = |node: Node<'a>, parent: Node<'a>| match parent {
+        _ if matches!(node, Node::Expr(it) if it.with_jsdoc_cast() != it) => Some(false),
         Node::Expr(parent) => match parent.kind() {
             ExprKind::Cond { test, .. } => Some(Node::Expr(test) == node),
             ExprKind::Binary {
@@ -197,6 +211,10 @@ fn is_only_used_for_truthiness<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, 
                 ..
             } => None,
             ExprKind::Unary { op, .. } => Some(op == UnOp::Not),
+            // tsgolint: the argument that the called function `asserts`.
+            ExprKind::Call(_) if is_assertion_argument_checked => {
+                Some(find_truthiness_asserted_argument(parent).map(Node::Expr) == Some(node))
+            }
             _ => Some(false),
         },
         Node::Stmt(parent) => Some(match parent.kind() {
@@ -211,20 +229,25 @@ fn is_only_used_for_truthiness<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, 
     known.find(Node::Expr(node), decide).unwrap_or(false)
 }
 
-/// `node` is any expression as ESLint has it: the whole of an optional chain is a
-/// `ChainExpression` there, which is no `MemberExpression`.
+/// `node` is any expression as ESLint sees it. A whole optional chain is a `ChainExpression` there, which isn't a
+/// `MemberExpression`.
 fn is_array_index_expression(node: Expr) -> bool {
     let ExprKind::Index { obj, index, .. } = node.kind() else {
         return false;
     };
-    // For ESLint it is a `ChainExpression`, for tsgolint the access itself.
+    // For ESLint it's a `ChainExpression`, for tsgolint the access itself.
     if node.is_chain_root() && !node.file().language().is_oxlint {
         return false;
     }
+    // For tsgolint only an index written as a number.
+    let is_literal_index = match node.file().language().is_oxlint {
+        true => index.tag() == ExprTag::Number,
+        false => ast_utils::is_literal(index),
+    };
     let parts = union_constituents(get_constrained_type_at_location(obj));
     parts.iter().any(|part| part.is_array_type())
         // A literal index into a tuple has a sound type.
-        || !ast_utils::is_literal(index) && parts.iter().any(|part| part.is_tuple_type())
+        || !is_literal_index && parts.iter().any(|part| part.is_tuple_type())
 }
 
 /// A conditional is always necessary if it involves `any`, `unknown` or a naked type variable.
@@ -256,7 +279,11 @@ fn is_nullable_property_type<'a>(obj_type: Type<'a>, property_type: Type<'a>) ->
     if let Some(name) = property_name_of_literal_type(property_type)
         && let Some(prop_type) = get_type_of_property_of_name(obj_type, &name, None)
     {
-        return is_nullable_type(prop_type);
+        // tsgolint's `isNullishType`: a property that's `any` or `unknown` doesn't count.
+        return match obj_type.file().language().is_oxlint {
+            true => is_possibly_nullish(prop_type),
+            false => is_nullable_type(prop_type),
+        };
     }
     let type_name = get_type_name(property_type);
     obj_type.get_index_infos().any(|info| get_type_name(info.key_type()) == type_name)
@@ -267,7 +294,7 @@ fn is_nullable_member_expression(node: Expr) -> bool {
     match node.kind() {
         ExprKind::Index { obj, index, .. } => is_nullable_property_type(obj.ty(), index.ty()),
         ExprKind::Dot { obj, name, .. } => {
-            // As it is written, which for `this.#prop` is the name of the symbol.
+            // The name as written, which for `this.#prop` is the symbol's name.
             let property_name = node.file().slice(name.span());
             let mut properties = obj.ty().get_properties().iter();
             properties.find(|prop| prop.name() == property_name).is_some_and(|prop| prop.has_flags(SymbolFlags::OPTIONAL))
@@ -276,8 +303,47 @@ fn is_nullable_member_expression(node: Expr) -> bool {
     }
 }
 
-/// Whether `node` is `object[key]`, every key that it can have is known and names a property, and
-/// one of these properties may be something else than `null` and `undefined`.
+/// `checker.getIndexTypeOfType(type, keyType)`: the type an index signature gives for a key of `key_type`.
+fn get_index_type_of_type<'a>(object_type: Type<'a>, key_type: Type<'a>) -> Option<Type<'a>> {
+    if key_type.has_flags(TypeFlags::NUMBER_LIKE)
+        && let Some(number_index_type) = object_type.get_number_index_type()
+    {
+        return Some(number_index_type);
+    }
+    match key_type.has_flags(TypeFlags::STRING_LIKE | TypeFlags::NUMBER_LIKE) {
+        true => object_type.get_string_index_type(),
+        false => None,
+    }
+}
+
+/// tsgolint's `getNullishCoalescingType`, minus its narrowing: true if the target `node` of `??=` is read through an
+/// index signature. With `noUncheckedIndexedAccess` that read can be `undefined`, which a target's type doesn't
+/// include.
+fn tsgolint_reads_index_signature(node: Expr) -> bool {
+    match node.kind() {
+        ExprKind::Dot { obj, name, .. } => {
+            let property_name = node.file().slice(name.span());
+            !property_name.starts_with(b"#")
+                && get_resolved_type(obj).is_some_and(|base_type| {
+                    base_type.get_property(property_name).is_none() && base_type.get_index_infos().next().is_some()
+                })
+        }
+        ExprKind::Index { obj, index, .. } => {
+            let (Some(base_type), Some(key_type)) = (get_resolved_type(obj), get_resolved_type(index)) else {
+                return false;
+            };
+            union_constituents(key_type).iter().any(|key_type| {
+                let is_property = property_name_of_literal_type(key_type)
+                    .is_some_and(|name| base_type.get_property(&name).is_some());
+                !is_property && get_index_type_of_type(base_type, key_type).is_some()
+            })
+        }
+        _ => false,
+    }
+}
+
+/// True if `node` is `object[key]`, every possible key is known and names a property, and one of these properties may
+/// be something other than `null` and `undefined`.
 fn has_possibly_non_nullish_computed_member_property(node: Expr) -> bool {
     let ExprKind::Index { obj, index, .. } = node.kind() else {
         return false;
@@ -290,6 +356,11 @@ fn has_possibly_non_nullish_computed_member_property(node: Expr) -> bool {
     for key_type in union_constituents(get_constrained_type_at_location(index)) {
         let selected_type = property_name_of_literal_type(key_type)
             .and_then(|name| get_type_of_property_of_name(object_type, &name, None));
+        let selected_type = match selected_type {
+            // tsgolint's `hasPossiblyNonNullishIndexedRead` also reads through an index signature.
+            None if node.file().language().is_oxlint => get_index_type_of_type(object_type, key_type),
+            selected_type => selected_type,
+        };
         let Some(selected_type) = selected_type else {
             return false;
         };
@@ -298,10 +369,10 @@ fn has_possibly_non_nullish_computed_member_property(node: Expr) -> bool {
     is_possibly_non_nullish_property
 }
 
-/// Searches an optional chain for an optional access to an element of an array, which "infects"
-/// the types of the rest: in `[{ x: { y: "z" } }][n]?.x?.y` the second `?.` looks unnecessary.
+/// Searches an optional chain for an optional access to an array element, which "infects" the types of the rest: in
+/// `[{ x: { y: "z" } }][n]?.x?.y` the second `?.` looks unnecessary.
 ///
-/// `node` is a call or a member access, whether or not it is the whole of the chain.
+/// `node` is a call or a member access, whether or not it's the whole chain.
 fn option_chain_contains_option_array_index(mut node: Expr) -> bool {
     loop {
         let lhs_node = match node.kind() {
@@ -319,8 +390,8 @@ fn option_chain_contains_option_array_index(mut node: Expr) -> bool {
     }
 }
 
-/// tsgolint 7.0 takes the constraint of a type parameter only. A conditional type that is not resolved, `Awaited<T>`,
-/// stays what it is, and nothing is said of it.
+/// tsgolint 7.0 only replaces a type parameter with its constraint. An unresolved conditional type such as `Awaited<T>`
+/// stays as it is, and nothing is reported for it.
 fn tsgolint_is_undecided(e: Expr) -> bool {
     e.file().language().is_oxlint
         && union_constituents(e.ty())
@@ -328,28 +399,162 @@ fn tsgolint_is_undecided(e: Expr) -> bool {
             .any(|part| part.has_flags(TypeFlags::CONDITIONAL | TypeFlags::SUBSTITUTION))
 }
 
+/// tsgolint's `resolveIndexedAccessType`: `T[K]` becomes the property its single key names, or the index signature's
+/// type.
+fn tsgolint_resolve_indexed_access_type(ty: Type<'_>) -> Type<'_> {
+    let TypeStructure::IndexedAccess { object_type, index_type } = ty.structure() else {
+        return ty;
+    };
+    let object_type = object_type.get_base_constraint_of_type().unwrap_or(object_type);
+    let index_type = index_type.get_base_constraint_of_type().unwrap_or(index_type);
+    if let Some(name) = property_name_of_literal_type(index_type)
+        && let Some(property_type) = object_type.get_type_of_property(&name)
+    {
+        return property_type;
+    }
+    let is_index = |flags: TypeFlags| union_constituents(index_type).iter().any(|part| part.has_flags(flags));
+    if is_index(TypeFlags::STRING_LIKE)
+        && let Some(string_index_type) = object_type.get_string_index_type()
+    {
+        return string_index_type;
+    }
+    if is_index(TypeFlags::NUMBER_LIKE)
+        && let Some(number_index_type) = object_type.get_number_index_type()
+    {
+        return number_index_type;
+    }
+    ty
+}
+
+/// Returns the type to check: typescript-eslint's `getConstrainedTypeAtLocation`, or tsgolint's `getResolvedType`,
+/// which only replaces a type parameter with its constraint, not other type variables. `None` for one without a
+/// constraint.
+fn get_resolved_type(e: Expr<'_>) -> Option<Type<'_>> {
+    if !e.file().language().is_oxlint {
+        return Some(get_constrained_type_at_location(e));
+    }
+    get_constraint_info(e.ty()).constraint_type.map(tsgolint_resolve_indexed_access_type)
+}
+
+/// tsgolint's `checkTypeCondition`: returns whether the type is always truthy, and whether it's always falsy. `never`
+/// is falsy. A type it has no case for is neither: a template literal type, an enum with computed members, `T[K]`.
+fn tsgolint_check_type_condition(ty: Type) -> (bool, bool) {
+    let flags = ty.flags();
+    if flags.intersects(TypeFlags::NEVER) {
+        return (false, true);
+    }
+    if flags.intersects(TypeFlags::INDEXED_ACCESS) {
+        return (false, false);
+    }
+    if ty.is_union() {
+        let (mut is_truthy, mut is_falsy) = (true, true);
+        for part in ty.types() {
+            let (is_part_truthy, is_part_falsy) = tsgolint_check_type_condition(part);
+            is_truthy &= is_part_truthy;
+            is_falsy &= is_part_falsy;
+        }
+        return (is_truthy, is_falsy);
+    }
+    if ty.is_intersection() {
+        let mut is_truthy = true;
+        for part in ty.types() {
+            let (is_part_truthy, is_part_falsy) = tsgolint_check_type_condition(part);
+            if is_part_falsy {
+                return (false, true);
+            }
+            is_truthy &= is_part_truthy;
+        }
+        return (is_truthy, false);
+    }
+    if flags.intersects(NULLISH_OR_VOID_FLAG) {
+        return (false, true);
+    }
+    let always_truthy =
+        TypeFlags::OBJECT | TypeFlags::NON_PRIMITIVE | TypeFlags::ES_SYMBOL | TypeFlags::UNIQUE_ES_SYMBOL;
+    if flags.intersects(always_truthy) {
+        return (true, false);
+    }
+    if is_boolean_literal_type(ty) {
+        let is_true = is_true_literal_type(ty);
+        return (is_true, !is_true);
+    }
+    let is_truthy = match ty.value() {
+        Some(Literal::String(value)) => !value.is_empty(),
+        Some(Literal::Number(value)) => value != 0.0 && !value.is_nan(),
+        Some(Literal::BigInt { base10, .. }) => base10 != b"0",
+        None => return (false, false),
+    };
+    (is_truthy, !is_truthy)
+}
+
+/// tsgolint's `isComparable`: an intersection is comparable if all its parts are, and an unresolved type always is.
+fn tsgolint_is_comparable(ty: Type, flags: TypeFlags) -> bool {
+    if ty.has_flags(flags | TypeFlags::CONDITIONAL | TypeFlags::SUBSTITUTION) {
+        return true;
+    }
+    if ty.is_union() {
+        return ty.types().iter().any(|part| tsgolint_is_comparable(part, flags));
+    }
+    ty.is_intersection() && ty.types().iter().all(|part| tsgolint_is_comparable(part, flags))
+}
+
+/// tsgolint's `getPropertyTypeFromBase` for the access `prop_access` to `name`: the property's declared type, or the
+/// type a `string` index signature gives. `None` if it can't find a type, as for a mapped type without the property.
+fn tsgolint_get_property_type_from_base<'a>(
+    base_type: Type<'a>,
+    prop_access: Expr<'a>,
+    name: &[u8],
+    is_no_unchecked_indexed_access: bool,
+) -> Option<Type<'a>> {
+    let apparent_type = base_type.get_apparent_type();
+    let property_type = base_type.get_type_of_property(name).or_else(|| apparent_type.get_type_of_property(name));
+    if property_type.is_some() {
+        return property_type;
+    }
+    match base_type.get_string_index_type().or_else(|| apparent_type.get_string_index_type()) {
+        Some(string_index_type) => (!is_no_unchecked_indexed_access).then_some(string_index_type),
+        None if base_type.object_flags().intersects(ObjectFlags::MAPPED) => None,
+        None => Some(prop_access.ty()),
+    }
+}
+
+/// tsgolint's `getTypeFromCallProperty` for `f().b`: `b` on the first non-nullish part of `f`'s return type.
+fn tsgolint_get_type_from_call_property<'a>(
+    call: Expr<'a>,
+    prop_access: Expr<'a>,
+    name: &[u8],
+    is_no_unchecked_indexed_access: bool,
+) -> Option<Type<'a>> {
+    let return_type = match call.resolved_signature() {
+        Some(signature) => signature.get_return_type(),
+        None => call.ty(),
+    };
+    let base_type = union_constituents(return_type).iter().find(|part| !part.has_flags(NULLISH_OR_VOID_FLAG))?;
+    tsgolint_get_property_type_from_base(base_type, prop_access, name, is_no_unchecked_indexed_access)
+}
+
 /// Reports `expression` if its type is always truthy or always falsy.
 fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
     let mut node = expression;
     let (expression, is_unary_not_argument) = loop {
-        let (mut expression, mut is_unary_not_argument) = (node, false);
+        let (mut expression, mut is_unary_not_argument) = (node.with_jsdoc_cast(), false);
         while let ExprKind::Unary {
             op: UnOp::Not,
             operand,
         } = expression.kind()
         {
-            expression = operand;
+            expression = operand.with_jsdoc_cast();
             is_unary_not_argument = !is_unary_not_argument;
         }
 
-        // The type of an element of an array does not tell that the index may be out of bounds.
+        // An array element's type doesn't reflect that the index may be out of bounds.
         if !cx.state.is_no_unchecked_indexed_access && is_array_index_expression(expression) {
             return;
         }
 
-        // The left side has been checked as the left side of a logical expression. The right side is
-        // a condition only if the whole is one. Not so for `??`: `nullBool ?? true` is common, so the
-        // type of the whole is looked at.
+        // The left side has already been checked as the left side of a logical expression. The right side is only a
+        // condition if the whole expression is one. `??` is different: `nullBool ?? true` is common, so the whole
+        // expression's type is checked.
         let ExprKind::Binary {
             op: BinOp::And | BinOp::Or,
             right,
@@ -358,30 +563,35 @@ fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
         else {
             break (expression, is_unary_not_argument);
         };
-        if !is_only_used_for_truthiness(expression, &mut cx.state.only_used_for_truthiness) {
+        let is_assertion_argument_checked = cx.state.is_assertion_argument_checked;
+        let known = &mut cx.state.only_used_for_truthiness;
+        if !is_only_used_for_truthiness(expression, known, is_assertion_argument_checked) {
             return;
         }
         node = right;
     };
 
-    let ty = get_constrained_type_at_location(expression);
+    let Some(ty) = get_resolved_type(expression) else {
+        return;
+    };
     if is_conditional_always_necessary(ty) {
         return;
     }
     let is_oxlint = cx.language().is_oxlint;
-    if tsgolint_is_undecided(expression) {
-        return;
-    }
+    let (is_truthy, is_falsy) = match is_oxlint {
+        true => tsgolint_check_type_condition(ty),
+        false => (!is_possibly_falsy(ty), !is_possibly_truthy(ty)),
+    };
     let message = if is_type_flag_set(ty, TypeFlags::NEVER) {
         NEVER
-    } else if !is_possibly_truthy(ty) {
+    } else if is_falsy {
         if is_unary_not_argument { ALWAYS_TRUTHY } else { ALWAYS_FALSY }
-    } else if !is_possibly_falsy(ty) {
+    } else if is_truthy {
         if is_unary_not_argument { ALWAYS_FALSY } else { ALWAYS_TRUTHY }
     } else {
         return;
     };
-    // oxlint points at what the type is of: the `a` of `!a`. tsgolint does not say the type of a literal.
+    // oxlint points at the expression whose type it is: the `a` in `!a`. tsgolint doesn't print a literal's type.
     let is_literal = tsgolint_is_self_explanatory(expression);
     cx.report(if is_oxlint && !is_literal { expression } else { node }, message)
         .comments_apply_at(node)
@@ -393,7 +603,7 @@ fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
         });
 }
 
-/// tsgolint's `typeNameForDiagnostic`: no more than 120 characters.
+/// tsgolint's `typeNameForDiagnostic`: at most 120 characters.
 fn tsgolint_type_name(ty: Type) -> String {
     tsgolint_truncated(&ty.to_text())
 }
@@ -407,7 +617,7 @@ fn tsgolint_truncated(text: &[u8]) -> String {
     }
 }
 
-/// Of a union of which two parts are written the same, each text once: tsgolint names what each key of `a?.[k]` gives.
+/// If two parts of a union print the same, prints each text once. tsgolint lists what each key of `a?.[k]` gives.
 fn tsgolint_distinct_type_names(ty: Type) -> String {
     let mut names: Vec<Vec<u8>> = union_constituents(ty).iter().map(|it| it.to_text()).collect();
     let (count, mut seen) = (names.len(), rustc_hash::FxHashSet::default());
@@ -418,7 +628,7 @@ fn tsgolint_distinct_type_names(ty: Type) -> String {
     }
 }
 
-/// tsgolint's `isSelfExplanatoryLiteral`: it does not say the type of these.
+/// tsgolint's `isSelfExplanatoryLiteral`: it doesn't print the type of these.
 fn tsgolint_is_self_explanatory(e: Expr) -> bool {
     matches!(
         e.tag(),
@@ -426,12 +636,19 @@ fn tsgolint_is_self_explanatory(e: Expr) -> bool {
     ) || matches!(e.kind(), ExprKind::Template(template) if template.exprs().is_empty())
 }
 
-fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
-    let ty = match tsgolint_is_undecided(node) {
-        true => node.ty(),
-        false => get_constrained_type_at_location(node),
+fn check_node_for_nullish<'a>(node: Expr<'a>, is_assignment_target: bool, cx: &mut Context<'a>) {
+    let node = node.with_jsdoc_cast();
+    let Some(ty) = get_resolved_type(node) else {
+        return;
     };
     if is_type_flag_set(ty, ANY_UNKNOWN_OR_TYPE_VARIABLE_FLAG) {
+        return;
+    }
+    if is_assignment_target
+        && cx.state.is_no_unchecked_indexed_access
+        && cx.language().is_oxlint
+        && tsgolint_reads_index_signature(node)
+    {
         return;
     }
     let is_chain_expression = node.is_chain_root();
@@ -442,7 +659,7 @@ fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
         // For tsgolint `a?.[b]` is an access like `a[b]`.
         && ((is_chain_expression && !cx.language().is_oxlint) || !is_nullable_member_expression(node))
     {
-        // The type of an element of an array does not tell that the index may be out of bounds.
+        // An array element's type doesn't reflect that the index may be out of bounds.
         if !cx.state.is_no_unchecked_indexed_access
             && (is_array_index_expression(node)
                 || is_chain_expression
@@ -465,7 +682,7 @@ fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     });
 }
 
-/// The operator after `left`. In `switch (left) { case node: }` there is none: `node`.
+/// The span of the operator after `left`. `switch (left) { case node: }` has none, so it's `node`.
 fn operator_span<'a>(node: Expr<'a>, (left, right): (Expr<'a>, Expr<'a>), operator: BinOp) -> Span {
     if node == right {
         return node.outer_span();
@@ -474,8 +691,8 @@ fn operator_span<'a>(node: Expr<'a>, (left, right): (Expr<'a>, Expr<'a>), operat
     Span::new(start, start + bin_op_text(operator).len() as u32)
 }
 
-/// Reports a comparison of two literal types, and one with `null` or `undefined` of what cannot be
-/// that, which TypeScript does not report: https://github.com/microsoft/TypeScript/issues/37160
+/// Reports a comparison of two literal types, and a comparison with `null` or `undefined` of something that can't be
+/// that, which TypeScript doesn't report: https://github.com/microsoft/TypeScript/issues/37160
 fn check_if_bool_expression_is_necessary_conditional<'a>(
     node: Expr<'a>,
     left: Expr<'a>,
@@ -486,17 +703,18 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
     if tsgolint_is_undecided(left) || tsgolint_is_undecided(right) {
         return;
     }
-    let left_type = get_constrained_type_at_location(left);
-    let right_type = get_constrained_type_at_location(right);
+    let (Some(left_type), Some(right_type)) = (get_resolved_type(left), get_resolved_type(right)) else {
+        return;
+    };
 
     let condition_is_true = match (to_static_value(left_type), to_static_value(right_type)) {
         (Some(left), Some(right)) => boolean_comparison(&left, operator, &right),
         _ => big_int_comparison(left_type, operator, right_type),
     };
     if let Some(condition_is_true) = condition_is_true {
-        // oxlint points at the left operand, which for a `case` is what the `switch` compares.
-        let place = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
-        cx.report(place, COMPARISON_BETWEEN_LITERAL_TYPES)
+        // oxlint points at the left operand, which for a `case` is the `switch`'s discriminant.
+        let report_span = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
+        cx.report(report_span, COMPARISON_BETWEEN_LITERAL_TYPES)
             .comments_apply_at(operator_span(node, (left, right), operator))
             .data("left", left_type.to_text())
             .data("operator", bin_op_text(operator))
@@ -519,7 +737,10 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
         if matches!(operator, BinOp::EqEq | BinOp::NotEq) {
             flag |= NULLISH_OR_VOID_FLAG;
         }
-        is_type_flag_set(ty, flag)
+        match cx.language().is_oxlint {
+            true => tsgolint_is_comparable(ty, flag),
+            false => is_type_flag_set(ty, flag),
+        }
     };
     let undefined_or_void = TypeFlags::UNDEFINED | TypeFlags::VOID;
     let (left_flags, right_flags) = (left_type.flags(), right_type.flags());
@@ -528,14 +749,14 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
         || left_flags == TypeFlags::NULL && !is_comparable(right_type, TypeFlags::NULL)
         || right_flags == TypeFlags::NULL && !is_comparable(left_type, TypeFlags::NULL)
     {
-        // The first label of tsgolint 7.0 starts where the token before the left operand ends.
+        // tsgolint 7.0's first label starts where the token before the left operand ends.
         let operand = left.outer_span();
         let start = cx.file().end_of_token_before(operand.start);
-        let place = if cx.language().is_oxlint { Span::new(start, operand.end) } else { node.span() };
-        cx.report(place, NO_OVERLAP_BOOLEAN_EXPRESSION)
+        let report_span = if cx.language().is_oxlint { Span::new(start, operand.end) } else { node.span() };
+        cx.report(report_span, NO_OVERLAP_BOOLEAN_EXPRESSION)
             .comments_apply_at(operator_span(node, (left, right), operator))
             .labels_with(|labels| {
-                // And so does the second.
+                // The second label does the same.
                 let operand = right.outer_span();
                 let operand = Span::new(cx.file().end_of_token_before(operand.start), operand.end);
                 labels.first(format!("Type: {}", tsgolint_type_name(left_type)));
@@ -552,8 +773,8 @@ enum Property<'a> {
     Computed(Expr<'a>),
 }
 
-/// Whether the member access `node` can be `null` or `undefined` only because its object can:
-/// the `foo?.bar` of a `{ bar: { baz: string } } | null`.
+/// True if the member access `node` can only be `null` or `undefined` because its object can: the `foo?.bar` of a
+/// `{ bar: { baz: string } } | null`.
 fn is_member_expression_nullable_origin_from_object<'a>(node: Expr<'a>, cx: &Context<'a>) -> bool {
     let (object, property) = match node.kind() {
         ExprKind::Dot { obj, name, .. } if !node.file().slice(name.span()).starts_with(b"#") => {
@@ -598,7 +819,9 @@ fn is_call_expression_nullable_origin_from_callee(callee: Expr) -> bool {
 }
 
 fn is_optionable_expression<'a>(node: Expr<'a>, cx: &Context<'a>) -> bool {
-    let ty = get_constrained_type_at_location(node);
+    let Some(ty) = get_resolved_type(node) else {
+        return true;
+    };
     if is_conditional_always_necessary(ty) {
         return true;
     }
@@ -613,7 +836,7 @@ fn is_optionable_expression<'a>(node: Expr<'a>, cx: &Context<'a>) -> bool {
         }
 }
 
-/// `a[b]`, not `a?.[b]`, unless it is an element of a tuple at an index that is written as a number.
+/// `a[b]`, not `a?.[b]`, unless it's a tuple element at an index written as a number.
 fn tsgolint_is_unguarded_element_access(e: Expr) -> bool {
     match e.kind() {
         ExprKind::Index { obj, index, .. } => {
@@ -624,7 +847,8 @@ fn tsgolint_is_unguarded_element_access(e: Expr) -> bool {
     }
 }
 
-/// What tsgolint leaves alone: `e` is such an access, or it ends with an optional step and there is one before that.
+/// True for what tsgolint ignores: `e` is such an access, or `e` ends with an optional step and there's such an access
+/// before it.
 fn tsgolint_has_unguarded_element_access(e: Expr) -> bool {
     if tsgolint_is_unguarded_element_access(e) {
         return true;
@@ -644,7 +868,7 @@ fn tsgolint_has_unguarded_element_access(e: Expr) -> bool {
 }
 
 fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
-    // Only this step of the chain is of interest.
+    // Only this step of the chain matters.
     if !node.is_optional() {
         return;
     }
@@ -654,7 +878,7 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
         ExprKind::Call(call) => (call.callee(), ""),
         _ => return,
     };
-    // The type of an element of an array does not tell that the index may be out of bounds.
+    // An array element's type doesn't reflect that the index may be out of bounds.
     if !cx.state.is_no_unchecked_indexed_access
         && match cx.language().is_oxlint {
             true => tsgolint_has_unguarded_element_access(node_to_check),
@@ -666,27 +890,55 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     if is_optionable_expression(node_to_check, cx) {
         return;
     }
-    // What tsgolint 7.0 goes by, where that is another type.
-    let goes_by = |node_to_check: Expr<'a>| match node_to_check.kind() {
-        // `a?.b?.c`: what `b` is declared as, whatever is known of `a?.b` here.
+    let is_no_unchecked_indexed_access = cx.state.is_no_unchecked_indexed_access;
+    // The type tsgolint 7.0 uses, where it differs.
+    let tsgolint_type_of = |node_to_check: Expr<'a>| match node_to_check.kind() {
+        // `a?.b?.c`: `b`'s declared type, whatever is known about `a?.b` here.
         ExprKind::Dot { obj, name, .. } if node_to_check.is_optional() => {
-            get_constrained_type_at_location(obj).get_non_nullable_type().get_type_of_property(name.bytes())
+            let base_type = get_constrained_type_at_location(obj).get_non_nullable_type();
+            let name = name.bytes();
+            let property_type =
+                tsgolint_get_property_type_from_base(base_type, node_to_check, name, is_no_unchecked_indexed_access);
+            Some(property_type.unwrap_or_else(|| {
+                // A mapped type without `?` doesn't add `undefined`, so the only one in the type here comes from the
+                // `?.`.
+                let is_optional =
+                    matches!(base_type.structure(), TypeStructure::Mapped { optional: MappedModifier::Add, .. });
+                let is_mapped_type_without_optional = !is_no_unchecked_indexed_access
+                    && base_type.object_flags().intersects(ObjectFlags::MAPPED)
+                    && !is_optional;
+                match is_mapped_type_without_optional {
+                    true => node_to_check.ty().get_non_nullable_type(),
+                    false => node_to_check.ty(),
+                }
+            }))
         }
-        // `a?.[b]?.c`: it looks up what `a?.[b]` gives only where the type of `b` is that of string literals.
+        // `a?.[b]?.c`: it only looks up what `a?.[b]` gives if `b`'s type consists of string literals.
         ExprKind::Index { index, .. } if node_to_check.is_optional() => {
             let is_looked_up = union_constituents(index.ty()).iter().all(|it| it.is_string_literal());
             (!is_looked_up).then(|| node_to_check.ty())
         }
-        // `a?.b.c?.d`, and not `a?.b().c?.d`: with the `undefined` of the `?.` further left.
-        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj.tag() != ExprTag::Call => {
-            Some(get_constrained_type_at_location(node_to_check))
+        // `a?.b().c?.d`: `c`'s declared type in `b`'s return type.
+        ExprKind::Dot { obj, name, .. } if obj.tag() == ExprTag::Call => {
+            tsgolint_get_type_from_call_property(obj, node_to_check, name.bytes(), is_no_unchecked_indexed_access)
         }
+        // `a?.b()[0]?.d`: the type at the location, including the `undefined` from the `?.` further left.
+        ExprKind::Index { obj, .. } if obj.tag() == ExprTag::Call => Some(node_to_check.ty()),
+        // `a?.b.c?.d`: including the `undefined` from the `?.` further left.
+        ExprKind::Dot { .. } | ExprKind::Index { .. } => Some(get_constrained_type_at_location(node_to_check)),
         _ => None,
     };
-    if cx.language().is_oxlint && goes_by(node_to_check).is_some_and(is_nullable_type) {
-        return;
+    if cx.language().is_oxlint {
+        let is_property_of_call =
+            matches!(node_to_check.kind(), ExprKind::Dot { obj, .. } if obj.tag() == ExprTag::Call);
+        match tsgolint_type_of(node_to_check) {
+            Some(ty) if is_nullable_type(ty) => return,
+            // It finds no type for `f().b` if `b` isn't a property of `f`'s return type, and reports nothing.
+            None if is_property_of_call => return,
+            _ => {}
+        }
     }
-    // `f()?.a`: tsgolint 7.0 goes by the first signature of `f`, whichever is called.
+    // `f()?.a`: tsgolint 7.0 uses `f`'s first signature, whichever one is called.
     if cx.language().is_oxlint
         && let ExprKind::Call(call) = node_to_check.kind()
         && union_constituents(get_constrained_type_at_location(call.callee())).iter().any(|part| {
@@ -701,13 +953,13 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     if cx.slice(question_dot_operator) != b"?." {
         return;
     }
-    // oxlint points at what is before the `?.`.
-    let place = if cx.language().is_oxlint { node_to_check.outer_span() } else { question_dot_operator };
-    cx.report(place, NEVER_OPTIONAL_CHAIN)
+    // oxlint points at the expression before the `?.`.
+    let report_span = if cx.language().is_oxlint { node_to_check.outer_span() } else { question_dot_operator };
+    cx.report(report_span, NEVER_OPTIONAL_CHAIN)
         .comments_apply_at(question_dot_operator)
         .labels_with(|labels| {
-            // The type that it goes by, without the `undefined` of a `?.` further left.
-            let ty = goes_by(node_to_check).unwrap_or_else(|| get_constrained_type_at_location(node_to_check));
+            // The type it uses, without the `undefined` from a `?.` further left.
+            let ty = tsgolint_type_of(node_to_check).unwrap_or_else(|| get_constrained_type_at_location(node_to_check));
             labels.first(format!("Type: {}", tsgolint_distinct_type_names(ty.get_non_nullable_type())));
             labels.push(question_dot_operator, "");
         })
@@ -741,13 +993,19 @@ impl NoUnnecessaryCondition {
         };
         let type_of_argument = get_constrained_type_at_location(type_guard_asserted_argument.argument);
         let asserted_type = type_guard_asserted_argument.ty;
-        // `any` is assignable to everything. Beyond that the two types have to be equivalent, or
-        // the asserted type a union that the type of the argument is a subtype of: a structural
-        // subtype whose other members are optional in the asserted type is no reason to report.
-        if !type_of_argument.has_flags(TypeFlags::ANY | TypeFlags::UNKNOWN)
-            && type_of_argument.is_assignable_to(asserted_type)
-            && (asserted_type.is_assignable_to(type_of_argument) || asserted_type.is_union())
-        {
+        // `any` is assignable to everything. Beyond that, the two types have to be equivalent, or the asserted type has
+        // to be a union that the argument's type is a subtype of. A structural subtype whose other members are optional
+        // in the asserted type is no reason to report.
+        let is_already_type = match cx.language().is_oxlint {
+            // tsgolint: the argument's type is the asserted type itself.
+            true => type_of_argument == asserted_type,
+            false => {
+                !type_of_argument.has_flags(TypeFlags::ANY | TypeFlags::UNKNOWN)
+                    && type_of_argument.is_assignable_to(asserted_type)
+                    && (asserted_type.is_assignable_to(type_of_argument) || asserted_type.is_union())
+            }
+        };
+        if is_already_type {
             cx.report(type_guard_asserted_argument.argument, TYPE_GUARD_ALREADY_IS_TYPE)
                 .data(
                     "typeGuardOrAssertionFunction",
@@ -776,9 +1034,12 @@ impl NoUnnecessaryCondition {
         let Some(callback) = node.as_call().and_then(|call| call.args().first()) else {
             return;
         };
-        // tsgolint 7.0 goes by the type that the function returns, also where what it returns is written there.
-        let is_oxlint = cx.language().is_oxlint;
-        if !is_oxlint && let ExprKind::Fn(function) = callback.kind() {
+        // tsgolint 7.0 uses the function's return type, even for an inline function.
+        if cx.language().is_oxlint {
+            self.tsgolint_check_predicate_function(callback, cx);
+            return;
+        }
+        if let ExprKind::Fn(function) = callback.kind() {
             match function.body() {
                 // `() => something`
                 FnBody::Expr(body) => return check_node(body, cx),
@@ -795,7 +1056,7 @@ impl NoUnnecessaryCondition {
             }
         }
 
-        // Otherwise the type of the function as a whole is looked at.
+        // Otherwise check the type of the function as a whole.
         let signatures = get_call_signatures_of_type(get_constrained_type_at_location(callback));
         if signatures.is_empty() {
             // Not callable: `any`
@@ -821,28 +1082,74 @@ impl NoUnnecessaryCondition {
                 return;
             }
         }
-        // And it points at the body of a function that is written there, as at a condition.
+        Self::report_predicate_function(callback, !has_falsy_return_types, first_return_type, cx);
+    }
+
+    /// Reports an array method's callback, whose return type `return_type` is always truthy or always falsy.
+    fn report_predicate_function<'a>(
+        callback: Expr<'a>,
+        is_truthy: bool,
+        return_type: Option<Type<'a>>,
+        cx: &Context<'a>,
+    ) {
+        // For an inline function, oxlint points at the body, as it does for a condition.
         let body = match callback.kind() {
-            ExprKind::Fn(function) if is_oxlint => match function.body() {
+            ExprKind::Fn(function) if cx.language().is_oxlint => match function.body() {
                 FnBody::Expr(body) => Some(body.outer_span()),
                 _ => function.body_span(),
             },
             _ => None,
         };
-        let (place, message) = match (body, has_falsy_return_types) {
-            (Some(body), false) => (body, ALWAYS_TRUTHY),
-            (Some(body), true) => (body, ALWAYS_FALSY),
-            (None, false) => (callback.span(), ALWAYS_TRUTHY_FUNC),
-            (None, true) => (callback.span(), ALWAYS_FALSY_FUNC),
+        let (report_span, message) = match (body, is_truthy) {
+            (Some(body), true) => (body, ALWAYS_TRUTHY),
+            (Some(body), false) => (body, ALWAYS_FALSY),
+            (None, true) => (callback.span(), ALWAYS_TRUTHY_FUNC),
+            (None, false) => (callback.span(), ALWAYS_FALSY_FUNC),
         };
-        cx.report(place, message).labels_with(|labels| {
+        cx.report(report_span, message).labels_with(|labels| {
             let is_literal = matches!(callback.kind(), ExprKind::Fn(function)
                 if matches!(function.body(), FnBody::Expr(body) if tsgolint_is_self_explanatory(body)));
-            if !is_literal && let Some(ty) = first_return_type {
+            if !is_literal && let Some(ty) = return_type {
                 labels.first(format!("Return type: {}", tsgolint_type_name(ty)));
-                labels.push(place, "");
+                labels.push(report_span, "");
             }
         });
+    }
+
+    /// tsgolint's `checkPredicateFunction`: checks each of the callback's call signatures separately.
+    fn tsgolint_check_predicate_function<'a>(&self, callback: Expr<'a>, cx: &Context<'a>) {
+        for signature in get_constrained_type_at_location(callback).get_call_signatures() {
+            // A type guard for the type its parameter already has.
+            if self.check_type_predicates
+                && let Some(type_predicate) = signature.get_type_predicate()
+                && type_predicate.kind() == TypePredicateKind::Identifier
+                && let Some(parameter) =
+                    type_predicate.parameter_index().and_then(|index| signature.parameters().get(index))
+                && let Some(predicate_type) = type_predicate.ty()
+                && parameter.get_type().is_assignable_to(predicate_type)
+            {
+                // It points at the parameter if this file declares it.
+                let report_span = match parameter.value_declaration() {
+                    Some(declaration) if declaration.is_in_linted_file() => declaration.span(),
+                    _ => callback.outer_span(),
+                };
+                cx.report(report_span, TYPE_GUARD_ALREADY_IS_TYPE)
+                    .data("typeGuardOrAssertionFunction", "type guard")
+                    .labels_with(|labels| {
+                        let value = tsgolint_type_name(parameter.get_type());
+                        let predicate = tsgolint_type_name(predicate_type);
+                        labels.first(format!("Type {value} already satisfies predicate type {predicate}"));
+                        labels.push(report_span, "");
+                    });
+                return;
+            }
+            let return_type = signature.get_return_type();
+            let return_type = get_constraint_of_type_parameter(return_type).unwrap_or(return_type);
+            let (is_truthy, is_falsy) = tsgolint_check_type_condition(return_type);
+            if is_truthy || is_falsy {
+                Self::report_predicate_function(callback, is_truthy, Some(return_type), cx);
+            }
+        }
     }
 
     fn check_assignment_expression<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
@@ -857,7 +1164,7 @@ impl NoUnnecessaryCondition {
                 op: Some(BinOp::Nullish),
                 target,
                 ..
-            } => check_node_for_nullish(target, cx),
+            } => check_node_for_nullish(target, true, cx),
             _ => {}
         }
     }
@@ -877,9 +1184,9 @@ impl NoUnnecessaryCondition {
             | BinOp::NotEqEq => {
                 check_if_bool_expression_is_necessary_conditional(node, left, right, op, cx);
             }
-            BinOp::Nullish => check_node_for_nullish(left, cx),
-            // Only the left side: the right side need not be a condition at all. It is checked
-            // if the whole is used as one.
+            BinOp::Nullish => check_node_for_nullish(left, false, cx),
+            // Only the left side, because the right side doesn't have to be a condition at all. It's checked if the
+            // whole expression is used as one.
             BinOp::And | BinOp::Or => check_node(left, cx),
             _ => {}
         }
@@ -934,6 +1241,7 @@ impl Rule for NoUnnecessaryCondition {
                 CompilerOption::NoUncheckedIndexedAccess,
             ),
             only_used_for_truthiness: AncestorMemo::default(),
+            is_assertion_argument_checked: file.language().is_oxlint && self.check_type_predicates,
         };
         Some(flags)
     }

@@ -7,7 +7,7 @@ pub struct NoEmptyPattern {
 
 const UNEXPECTED: Message = Message::new("unexpected", "Unexpected empty {{type}} pattern.");
 
-/// `{}` or `{} = {}` as a parameter of a function.
+/// True for `{}` or `{} = {}` as a function parameter.
 fn is_allowed_parameter(pat: Pat) -> bool {
     let Node::Param(param) = pat.parent() else {
         return false;
@@ -25,8 +25,13 @@ fn is_allowed_parameter(pat: Pat) -> bool {
     }
 }
 
-fn report<'a>(at: Span, kind: &'static str, cx: &Cx<'a, NoEmptyPattern>) {
-    let report = cx.report(at, UNEXPECTED).data("type", kind);
+/// `is_property_value` means the pattern is a property's value, after the `:`.
+fn report<'a>(at: Span, kind: &'static str, is_property_value: bool, cx: &Cx<'a, NoEmptyPattern>) {
+    let report = cx.report(at, UNEXPECTED).data("type", kind).hint(match (is_property_value, kind) {
+        (false, _) => "It declares no variables.",
+        (true, "array") => "It declares no variables. For a default value, write = [] instead of : [].",
+        (true, _) => "It declares no variables. For a default value, write = {} instead of : {}.",
+    });
     if cx.language().is_oxlint {
         report.help(match kind {
             "array" => {
@@ -42,7 +47,7 @@ fn report<'a>(at: Span, kind: &'static str, cx: &Cx<'a, NoEmptyPattern>) {
 }
 
 impl Rule for NoEmptyPattern {
-    const META: Meta = Meta::eslint("no-empty-pattern", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-empty-pattern", Kind::Problem).recommended().hints();
     const ON: On = On::new()
         .pats(&[PatTag::Object, PatTag::Array])
         .exprs(&[ExprTag::Object, ExprTag::Array]);
@@ -67,7 +72,7 @@ impl Rule for NoEmptyPattern {
             PatKind::Array(elements) if elements.is_empty() => "array",
             _ => return,
         };
-        report(utils::estree_span(pat.into()), kind, cx);
+        report(utils::estree_span(pat.into()), kind, matches!(pat.parent(), Node::PatProp(_)), cx);
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -76,9 +81,9 @@ impl Rule for NoEmptyPattern {
             ExprTag::Array if e.as_array().is_some_and(List::is_empty) => "array",
             _ => return,
         };
-        // oxlint looks at what declares only.
+        // oxlint only looks at declarations.
         if !cx.language().is_oxlint && utils::is_assignment_target(e) {
-            report(e.span(), kind, cx);
+            report(e.span(), kind, matches!(e.parent(), Node::Prop(_)), cx);
         }
     }
 }

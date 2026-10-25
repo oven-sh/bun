@@ -1,7 +1,7 @@
-//! Prettier's `language-html/print/tag.js`, as far as it makes strings, and `get-node-content.js`.
+//! The parts of Prettier's `language-html/print/tag.js` that build strings, and `get-node-content.js`.
 //!
-//! Where white space counts, a line can only be broken inside of a tag. So a node may have to write the end of the
-//! tag before it, or the start of the one behind it: it borrows them.
+//! Where whitespace is significant, a line can only be broken inside a tag. So a node may have to print the end of the
+//! tag before it or the start of the tag after it. Prettier calls that borrowing.
 
 use super::Options;
 use super::ast::{Flags, Id, Kind, Tree};
@@ -9,7 +9,7 @@ use super::utilities::{is_pre_like, is_text_like};
 
 const HTML5_DOCTYPE_START_MARKER: &[u8] = b"<!doctype";
 
-/// What the strings are made for.
+/// The context for building the strings.
 #[derive(Copy, Clone)]
 pub(crate) struct Tags<'t, 'a, 'o> {
     pub(crate) tree: &'t Tree<'a>,
@@ -44,8 +44,8 @@ impl<'o> Tags<'_, '_, 'o> {
         self.closing_tag_start_marker(id, out);
     }
 
-    /// Whether what follows the node writes the end of its closing tag.
-    fn lends_closing_tag_end_marker(self, id: Id) -> bool {
+    /// True if what follows the node prints the end of the node's closing tag.
+    pub(crate) fn lends_closing_tag_end_marker(self, id: Id) -> bool {
         match (self.tree.next(id), self.tree.parent(id)) {
             (Some(next), _) => self.needs_to_borrow_prev_closing_tag_end_marker(next),
             (None, Some(parent)) => self.needs_to_borrow_last_child_closing_tag_end_marker(parent),
@@ -108,9 +108,31 @@ impl<'o> Tags<'_, '_, 'o> {
             Kind::IeConditionalStartComment => b"]><!-->",
             Kind::Interpolation => b"}}",
             Kind::AngularIcuExpression => b"}",
-            Kind::Element if node.has(Flags::IS_SELF_CLOSING) => b"/>",
+            Kind::Element
+                if node.has(Flags::IS_SELF_CLOSING) && !self.is_verbatim_void_without_slash(id) =>
+            {
+                b"/>"
+            }
             _ => b">",
         });
+    }
+
+    /// True if `id` is a void element written without a slash, like `<br>`, and is printed verbatim. The marker it
+    /// lends is then `>`. Prettier assumes `/>`, so `<img a=b>c` becomes `<img a=/>c`.
+    fn is_verbatim_void_without_slash(self, id: Id) -> bool {
+        let end = self.tree[id].span.end as usize;
+        self.tree.has_prettier_ignore(id)
+            && (self.options.original_text.get(..end)).is_some_and(|text| !text.ends_with(b"/>"))
+    }
+
+    /// True if the contents of `id` are printed verbatim and `id` has no end tag to mark where they end. Prettier
+    /// treats the contents as empty: `<pre><b>a</b>` becomes `<pre>>`. Here they're printed through the end of the last
+    /// descendant, without adding an end tag.
+    pub(crate) fn is_verbatim_without_end_tag(self, id: Id) -> bool {
+        let node = &self.tree[id];
+        node.has(Flags::PRESERVES_CONTENT)
+            && !(node.flags).intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
+            && self.tree.has_children(id)
     }
 
     fn should_not_print_closing_tag(self, id: Id) -> bool {
@@ -118,6 +140,7 @@ impl<'o> Tags<'_, '_, 'o> {
             .flags
             .intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
             && (self.tree.has_prettier_ignore(id)
+                || self.is_verbatim_without_end_tag(id)
                 || self
                     .tree
                     .parent_of(id)
@@ -237,7 +260,7 @@ impl<'o> Tags<'_, '_, 'o> {
             Kind::IeConditionalEndComment => out.extend_from_slice(b"<!--<!"),
             Kind::Interpolation => out.extend_from_slice(b"{{"),
             Kind::DocType => {
-                // Only in `.html` and `.htm` files is the one of HTML5 written in lower case.
+                // The HTML5 doctype is only lowercased in `.html` and `.htm` files.
                 let is_html_file = self
                     .options
                     .filepath
@@ -276,7 +299,7 @@ impl<'o> Tags<'_, '_, 'o> {
         });
     }
 
-    /// The length of what `write` writes.
+    /// Returns the length of what `write` writes.
     pub(crate) fn len_of(self, write: impl FnOnce(Self, &mut Vec<u8>)) -> usize {
         let mut out = Vec::new();
         write(self, &mut out);
@@ -286,9 +309,6 @@ impl<'o> Tags<'_, '_, 'o> {
     /// `getNodeContent`
     pub(crate) fn node_content(self, id: Id) -> &'o [u8] {
         let node = &self.tree[id];
-        let Some(end_span) = node.end_span() else {
-            return b"";
-        };
         let mut start = node.start_span.end as usize;
         if self
             .tree
@@ -298,6 +318,17 @@ impl<'o> Tags<'_, '_, 'o> {
             start =
                 start.saturating_sub(self.len_of(|tags, out| tags.opening_tag_end_marker(id, out)));
         }
+        let Some(end_span) = node.end_span() else {
+            if !self.is_verbatim_without_end_tag(id) {
+                return b"";
+            }
+            let (mut end, mut at) = (node.span.end, id);
+            while let Some(last) = self.tree.last_child(at) {
+                (end, at) = (end.max(self.tree[last].span.end), last);
+            }
+            let content = self.options.original_text.get(start..end as usize);
+            return content.unwrap_or_default().trim_ascii_end();
+        };
         let mut end = end_span.start as usize;
         if self
             .tree

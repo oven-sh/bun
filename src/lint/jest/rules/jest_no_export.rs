@@ -1,7 +1,7 @@
 use crate::jest::{self, Ctx, JestFnKind, JestGeneralFnKind, Runner};
-use bun_lint_oxlint::import::is_type_export_declaration;
-use bun_lint_oxlint::module_record::ModuleRecord;
 use bun_lint::prelude::*;
+use bun_lint_oxlint::import::is_type_export_declaration;
+use bun_lint_oxlint::module_record::{ModuleRecord, in_hash_order};
 
 /// Prevents using exports if a file has one or more tests in it.
 pub struct NoExport<const RUNNER: u8 = { jest::JEST }>;
@@ -18,18 +18,27 @@ impl<const RUNNER: u8> Rule for NoExport<RUNNER> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_for(file, RUNNER) && jest::mentions_test(file) && jest::is_jest_file(file)).then_some(())
+        (jest::is_for(file, RUNNER) && jest::mentions_test(file) && jest::is_jest_file(file))
+            .then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        run_once(&Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) });
+        run_once(&Ctx {
+            file: cx.file(),
+            runner: Runner::of(RUNNER),
+            report: &|at, message| cx.report(at, message),
+        });
     }
 }
 
 fn run_once(ctx: &Ctx) {
     let file = ctx.file;
     let may_export = |it: Stmt| {
-        it.is_exported() || matches!(it.tag(), StmtTag::ExportStar | StmtTag::ExportDefault | StmtTag::ExportNamed)
+        it.is_exported()
+            || matches!(
+                it.tag(),
+                StmtTag::ExportStar | StmtTag::ExportDefault | StmtTag::ExportNamed
+            )
     };
     if !file.body().iter().any(may_export) {
         return;
@@ -40,17 +49,38 @@ fn run_once(ctx: &Ctx) {
     });
     if has_tests {
         let module_record = ModuleRecord::new(file);
-        // Who imports a type does not run the file. oxlint reports these too.
+        // Importing a type doesn't run the file, so type exports are fine under Bun. oxlint reports them.
         let is_type = |at: Span| {
             ctx.runner == Runner::Bun
-                && file.body().iter().find(|it| it.span().contains(at)).is_some_and(|it| match it.kind() {
-                    StmtKind::ExportNamed(export) => {
-                        export.is_type_only() || export.items().iter().any(|it| it.is_type_only() && it.span().contains(at))
-                    }
-                    _ => is_type_export_declaration(it),
-                })
+                && file
+                    .body()
+                    .iter()
+                    .find(|it| it.span().contains(at))
+                    .is_some_and(|it| match it.kind() {
+                        StmtKind::ExportNamed(export) => {
+                            export.is_type_only()
+                                || export
+                                    .items()
+                                    .iter()
+                                    .any(|it| it.is_type_only() && it.span().contains(at))
+                        }
+                        _ => is_type_export_declaration(it),
+                    })
         };
-        for span in module_record.exported_bindings.values().copied().chain(module_record.export_default()) {
+        // oxlint's parser inserts them in source order, and the rule iterates that hash map, so the reports follow its
+        // order.
+        let bindings = module_record
+            .exported_bindings
+            .iter()
+            .map(|it| (*it.0, *it.1));
+        let bindings = in_hash_order(utils::sort::collect_sorted_by_key(bindings, |it| {
+            it.1.start
+        }));
+        for span in bindings
+            .into_iter()
+            .map(|it| it.1)
+            .chain(module_record.export_default())
+        {
             if !is_type(span) {
                 ctx.report(span, NO_EXPORT);
             }

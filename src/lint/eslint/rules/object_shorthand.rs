@@ -26,8 +26,10 @@ const EXPECTED_LITERAL_METHOD_LONGFORM: Message = Message::new(
 );
 const EXPECTED_PROPERTY_SHORTHAND: Message =
     Message::new("expectedPropertyShorthand", "Expected property shorthand.");
-const EXPECTED_PROPERTY_LONGFORM: Message =
-    Message::new("expectedPropertyLongform", "Expected longform property syntax.");
+const EXPECTED_PROPERTY_LONGFORM: Message = Message::new(
+    "expectedPropertyLongform",
+    "Expected longform property syntax.",
+);
 const EXPECTED_METHOD_SHORTHAND: Message =
     Message::new("expectedMethodShorthand", "Expected method shorthand.");
 const EXPECTED_METHOD_LONGFORM: Message =
@@ -37,7 +39,7 @@ const UNEXPECTED_MIX: Message = Message::new(
     "Unexpected mix of shorthand and non-shorthand properties.",
 );
 
-/// What is wrong with a property.
+/// The problem found with a property.
 enum Finding<'a> {
     /// `{ x() {} }` should be written as `{ x: function() {} }`
     MethodLongform(Message, Func<'a>),
@@ -49,10 +51,10 @@ enum Finding<'a> {
     PropertyShorthand(Name<'a>),
 }
 
-/// ESLint's `isConstructor`: whether the first character of `name` after `_`, `$` and digits is a
-/// capital letter.
+/// ESLint's `isConstructor`: true if the first character of `name` after any `_`, `$` and digits is a capital letter.
 fn is_constructor(name: &[u8]) -> bool {
-    let mut rest = strings::wtf8_codepoints(name).skip_while(|it| matches!(it.1, 0x5F | 0x24 | 0x30..=0x39));
+    let mut rest =
+        strings::wtf8_codepoints(name).skip_while(|it| matches!(it.1, 0x5F | 0x24 | 0x30..=0x39));
     let Some((start, first)) = rest.next() else {
         return false;
     };
@@ -62,15 +64,20 @@ fn is_constructor(name: &[u8]) -> bool {
 
 /// ESLint's `canHaveShorthand`
 fn can_have_shorthand(prop: Prop) -> bool {
-    !matches!(prop.kind(), PropKind::Getter | PropKind::Setter | PropKind::Spread)
+    !matches!(
+        prop.kind(),
+        PropKind::Getter | PropKind::Setter | PropKind::Spread
+    )
 }
 
 /// ESLint's `isStringLiteral(property.key)`
 fn is_string_literal_key<'a>(key: Key<'a>, file: &File<'a>) -> bool {
     match key.kind() {
         KeyKind::String(_) => true,
-        // It is also what a template without substitutions is.
-        KeyKind::ComputedString(_) => file.text().get(key.inner_span(file).start as usize) != Some(&b'`'),
+        // A template without substitutions is a `ComputedString` too.
+        KeyKind::ComputedString(_) => {
+            file.text().get(key.inner_span(file).start as usize) != Some(&b'`')
+        }
         KeyKind::Computed(e) => matches!(e.kind(), ExprKind::String(_)),
         _ => false,
     }
@@ -86,19 +93,20 @@ fn is_redundant(prop: Prop) -> bool {
     let (Some(key), Some(value)) = (prop.key(), prop.value()) else {
         return false;
     };
-    // oxlint does not look into parentheses.
+    // oxlint doesn't look into parentheses.
     if is_proto_key(key) || value.file().language().is_oxlint && value.is_parenthesized() {
         return false;
     }
     match value.kind() {
         ExprKind::Fn(func) if func.kind() == FnKind::Expr => func.name().is_none(),
-        ExprKind::Ident(name) => ast_utils::get_static_key_name(key).is_some_and(|it| *it == *name.bytes()),
+        ExprKind::Ident(name) => {
+            ast_utils::get_static_key_name(key).is_some_and(|it| *it == *name.bytes())
+        }
         _ => false,
     }
 }
 
-/// Whether `e`, which is written `arguments`, refers to a variable of a function that is not an
-/// arrow function, or of the global scope.
+/// True if `e`, an identifier named `arguments`, refers to a variable of a non-arrow function or of the global scope.
 fn is_arguments_of_function(e: Expr) -> bool {
     let Some(symbol) = e.reference().and_then(Reference::symbol) else {
         return false;
@@ -111,14 +119,14 @@ fn is_arguments_of_function(e: Expr) -> bool {
     }
 }
 
-/// Whether there is a `this`, a `super`, a `new.target` or an `arguments` in `arrow` that means
-/// something else in a method.
+/// True if `arrow` has a `this`, `super`, `new.target` or `arguments` that would mean something else in a method.
 fn has_lexical_identifier(arrow: Func) -> bool {
     let mut pending = vec![Node::Func(arrow)];
     while let Some(node) = pending.pop() {
         match node {
             Node::Func(func) => {
-                let defines_its_own = func.has_body() && !matches!(func.kind(), FnKind::Arrow | FnKind::StaticBlock);
+                let defines_its_own =
+                    func.has_body() && !matches!(func.kind(), FnKind::Arrow | FnKind::StaticBlock);
                 if defines_its_own {
                     continue;
                 }
@@ -126,7 +134,9 @@ fn has_lexical_identifier(arrow: Func) -> bool {
             Node::Expr(e) => match e.kind() {
                 ExprKind::Super | ExprKind::NewTarget => return true,
                 ExprKind::This if !e.is_jsx_tag_name() => return true,
-                ExprKind::Ident(name) if name.is("arguments") && is_arguments_of_function(e) => return true,
+                ExprKind::Ident(name) if name.is("arguments") && is_arguments_of_function(e) => {
+                    return true;
+                }
                 _ => {}
             },
             _ => {}
@@ -155,10 +165,17 @@ fn make_function_shorthand<'a>(fixer: Fixer<'a>, prop: Prop<'a>, func: Func<'a>)
         None => {
             // `function`, `async function`
             let first = next_token(file.text(), value.start);
-            let keyword = if func.is_async() { next_token(file.text(), first.end) } else { first };
+            let keyword = if func.is_async() {
+                next_token(file.text(), first.end)
+            } else {
+                first
+            };
             let function_token = match file.slice(keyword) == b"function" {
                 true => keyword,
-                false => file.tokens_in(value).find(|token| token.is_keyword("function"))?.span(),
+                false => file
+                    .tokens_in(value)
+                    .find(|token| token.is_keyword("function"))?
+                    .span(),
             };
             let token_before_params = match func.is_generator() {
                 true => Some(next_token(file.text(), function_token.end))
@@ -169,11 +186,17 @@ fn make_function_shorthand<'a>(fixer: Fixer<'a>, prop: Prop<'a>, func: Func<'a>)
             method.extend_from_slice(file.slice(Span::new(token_before_params.end, value.end)));
         }
         Some(arrow) => {
-            // The first token that is not `async`.
-            let start = file.tokens_in(value).nth(usize::from(func.is_async()))?.start();
+            // The first token that isn't `async`.
+            let start = file
+                .tokens_in(value)
+                .nth(usize::from(func.is_async()))?
+                .start();
             let params = file.slice(Span::new(start, file.token_before(arrow)?.end()));
-            let should_add_parens =
-                func.params().len() == 1 && func.params().first().is_some_and(|it| it.span().start == start);
+            let should_add_parens = func.params().len() == 1
+                && func
+                    .params()
+                    .first()
+                    .is_some_and(|it| it.span().start == start);
             if should_add_parens {
                 method.push(b'(');
             }
@@ -192,7 +215,11 @@ fn make_function_longform<'a>(fixer: Fixer<'a>, prop: Prop<'a>, func: Func<'a>) 
     let file = fixer.file();
     let key = prop.key()?.span(file);
     let mut longform = file.slice(key).to_vec();
-    longform.extend_from_slice(if func.is_async() { &b": async function"[..] } else { b": function" });
+    longform.extend_from_slice(if func.is_async() {
+        &b": async function"[..]
+    } else {
+        b": function"
+    });
     if func.is_generator() {
         longform.push(b'*');
     }
@@ -218,12 +245,23 @@ impl ObjectShorthand {
         }
         if shorthand > 0 {
             cx.report(e, UNEXPECTED_MIX);
-        } else if self.is_consistent_as_needed && props.iter().filter(|it| can_have_shorthand(*it)).all(is_redundant) {
+        } else if self.is_consistent_as_needed
+            && props
+                .iter()
+                .filter(|it| can_have_shorthand(*it))
+                .all(is_redundant)
+        {
             cx.report(e, EXPECTED_ALL_PROPERTIES_SHORTHANDED);
         }
     }
 
-    fn find<'a>(&self, prop: Prop<'a>, key: Key<'a>, value: Expr<'a>, file: &'a File<'a>) -> Option<Finding<'a>> {
+    fn find<'a>(
+        &self,
+        prop: Prop<'a>,
+        key: Key<'a>,
+        value: Expr<'a>,
+        file: &'a File<'a>,
+    ) -> Option<Finding<'a>> {
         match (prop.kind(), value.as_fn(), value.as_ident()) {
             (PropKind::Method, Some(func), _) => {
                 let message = if self.is_never {
@@ -242,9 +280,12 @@ impl ObjectShorthand {
             (PropKind::Init, Some(func), _) if self.applies_to_methods && func.name().is_none() => {
                 let name = ast_utils::get_static_key_name(key);
                 let name = name.as_deref();
-                // oxlint takes only a key that is written as a name for that of a constructor.
-                let can_be_constructor = !file.language().is_oxlint || matches!(key.kind(), KeyKind::Ident(_));
-                if (self.ignores_constructors && can_be_constructor && name.is_some_and(is_constructor))
+                // For oxlint, only an identifier key can name a constructor.
+                let can_be_constructor =
+                    !file.language().is_oxlint || matches!(key.kind(), KeyKind::Ident(_));
+                if (self.ignores_constructors
+                    && can_be_constructor
+                    && name.is_some_and(is_constructor))
                     || (self.methods_ignore_pattern.as_ref())
                         .is_some_and(|pattern| name.is_some_and(|name| pattern.test(name)))
                     || (self.avoids_quotes && is_string_literal_key(key, file))
@@ -271,8 +312,14 @@ impl ObjectShorthand {
                 // A JSDoc type annotation would be lost.
                 let has_type_annotation = file.comments_in(prop).any(|comment| {
                     let value = comment.comment_value();
-                    let start = if is_quoted { value } else { strings::trim_js_whitespace_start(value) };
-                    comment.kind() == TokenKind::Block && start.starts_with(b"*") && strings::contains(value, b"@type")
+                    let start = if is_quoted {
+                        value
+                    } else {
+                        strings::trim_js_whitespace_start(value)
+                    };
+                    comment.kind() == TokenKind::Block
+                        && start.starts_with(b"*")
+                        && strings::contains(value, b"@type")
                 });
                 (!has_type_annotation).then_some(Finding::PropertyShorthand(name))
             }
@@ -280,7 +327,8 @@ impl ObjectShorthand {
         }
     }
 
-    /// Whether [`ObjectShorthand::find`] can find something for a property of this kind with the value `value`.
+    /// Fast check: true if [`ObjectShorthand::find`] may find a problem with a property of this kind whose value is
+    /// `value`.
     #[inline]
     fn may_find(&self, prop: Prop, value: Expr) -> bool {
         match prop.kind() {
@@ -303,22 +351,32 @@ impl ObjectShorthand {
         let Some(finding) = self.find(prop, key, value, cx.file()) else {
             return;
         };
-        let is_in_pattern = matches!(prop.parent(), Node::Expr(object) if utils::is_assignment_target(object));
+        let is_in_pattern =
+            matches!(prop.parent(), Node::Expr(object) if utils::is_assignment_target(object));
         if is_proto_key(key) || is_in_pattern {
             return;
         }
         match finding {
             Finding::MethodLongform(message, func) => {
-                cx.report(prop, message).fix(|fixer| make_function_longform(fixer, prop, func));
+                cx.report(prop, message)
+                    .fix(|fixer| make_function_longform(fixer, prop, func));
             }
             Finding::PropertyLongform(name) => {
-                cx.report(prop, EXPECTED_PROPERTY_LONGFORM)
-                    .fix(|fixer| fixer.insert_after(key.span(fixer.file()), [&b": "[..], name.bytes()].concat()));
+                cx.report(prop, EXPECTED_PROPERTY_LONGFORM).fix(|fixer| {
+                    fixer.insert_after(key.span(fixer.file()), [&b": "[..], name.bytes()].concat())
+                });
             }
             Finding::MethodShorthand(func) => {
                 // oxlint points at the function.
-                let place = if cx.language().is_oxlint { value.span() } else { prop.span() };
-                cx.report(place, EXPECTED_METHOD_SHORTHAND).fix(|fixer| make_function_shorthand(fixer, prop, func));
+                let location = if cx.language().is_oxlint {
+                    value.span()
+                } else {
+                    prop.span()
+                };
+                let report = cx
+                    .report(location, EXPECTED_METHOD_SHORTHAND)
+                    .called_with(prop);
+                report.fix(|fixer| make_function_shorthand(fixer, prop, func));
             }
             Finding::PropertyShorthand(name) => {
                 cx.report(prop, EXPECTED_PROPERTY_SHORTHAND).fix(|fixer| {
@@ -331,14 +389,18 @@ impl ObjectShorthand {
 }
 
 impl Rule for ObjectShorthand {
-    const META: Meta = Meta::eslint("object-shorthand", Kind::Suggestion).fixable(Fixable::Code).reports_on_exit();
+    const META: Meta = Meta::eslint("object-shorthand", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Object]).props();
     no_state!();
 
     fn new(options: &Options) -> Self {
         let apply = options.str(0).unwrap_or("always");
         let params = options.object(1);
-        let pattern = params.str("methodsIgnorePattern").filter(|it| !it.is_empty());
+        let pattern = params
+            .str("methodsIgnorePattern")
+            .filter(|it| !it.is_empty());
         ObjectShorthand {
             applies_to_methods: matches!(apply, "methods" | "always"),
             applies_to_props: matches!(apply, "properties" | "always"),

@@ -1,8 +1,8 @@
-//! oxfmt's `sortTailwindcss`: the classes of Tailwind CSS in a string are put in the order in which Tailwind writes their
+//! oxfmt's `sortTailwindcss`: sorts the Tailwind CSS classes in a string into the order in which Tailwind emits their
 //! rules.
 //!
-//! A port of `sortClasses` and `sortClassList` of `prettier-plugin-tailwindcss`, which oxfmt calls. The order is known to
-//! Tailwind alone, which is JavaScript, so whoever calls the formatter brings it: [`Orders`].
+//! A port of `prettier-plugin-tailwindcss`'s `sortClasses` and `sortClassList`, which oxfmt calls. Only Tailwind
+//! knows the order, and Tailwind is JavaScript, so the formatter's caller supplies it through [`Orders`].
 
 use bun_core::strings;
 use bun_lint::regex::Regex;
@@ -10,27 +10,32 @@ use rustc_hash::FxHashSet;
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Where a class is among those that it has been asked with: the lower, the earlier. `None`: Tailwind does not know it.
+/// A class's position among the classes it was looked up with. Lower sorts earlier. `None` means Tailwind doesn't
+/// know the class.
 pub type Rank = Option<u32>;
 
-/// What is known about the order of classes.
+/// The source of the class order.
 pub trait Orders: std::fmt::Debug + Send + Sync + std::panic::RefUnwindSafe {
-    /// The rank of each of `classes`, which have one blank between them. `None`: that is not known yet.
+    /// Returns the rank of each of `classes`, which are separated by single spaces, or `None` if the ranks aren't
+    /// known yet.
     fn ranks_of(&self, classes: &[u8]) -> Option<Vec<Rank>>;
+
+    /// True if there's a Tailwind to query.
+    fn has_tailwind(&self) -> bool;
 }
 
-/// Names, and patterns for names, which are written `"/^tw/"`.
+/// Names and name patterns. A pattern is written `"/^tw/"`.
 #[derive(Debug, Default)]
 pub struct Names {
     names: Vec<Vec<u8>>,
     patterns: Vec<Regex>,
 }
 
-/// Nothing in it changes.
+/// It's immutable once built.
 impl std::panic::RefUnwindSafe for Names {}
 
 impl Names {
-    /// The plugin's `parseRegex`, for each of `list`.
+    /// The plugin's `parseRegex`, applied to each entry of `list`.
     pub fn new(list: Vec<Vec<u8>>) -> Names {
         let mut all = Names::default();
         for it in list {
@@ -46,12 +51,16 @@ impl Names {
         all
     }
 
-    /// Those that are no patterns.
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty() && self.patterns.is_empty()
+    }
+
+    /// The entries that aren't patterns.
     pub fn names(&self) -> &[Vec<u8>] {
         &self.names
     }
 
-    /// Whether `name` is one of the names. oxfmt's own rules know no patterns.
+    /// True if `name` is one of the plain names. oxfmt's own rules don't support patterns.
     pub fn has_name(&self, name: &[u8]) -> bool {
         self.names.iter().any(|it| it == name)
     }
@@ -66,6 +75,18 @@ impl Names {
     }
 }
 
+/// The position of `@prettier/plugin-oxc` among the plugins. It parses TypeScript, and JavaScript that isn't embedded
+/// in HTML.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Oxc {
+    #[default]
+    Absent,
+    /// It's listed before the plugin that sorts classes, which reads its tree.
+    Before,
+    /// It's listed after that plugin and overrides it, so nothing is sorted in the files that it parses.
+    After,
+}
+
 /// `sortTailwindcss`, for one file.
 #[derive(Debug)]
 pub struct Tailwind {
@@ -75,25 +96,36 @@ pub struct Tailwind {
     pub attributes: Names,
     pub preserves_whitespace: bool,
     pub preserves_duplicates: bool,
+    /// Sorting was turned on by `prettier-plugin-tailwindcss` in a Prettier config, so where oxfmt has its own rules,
+    /// the plugin's apply instead.
+    pub follows_plugin: bool,
+    pub oxc: Oxc,
     pub orders: Box<dyn Orders>,
     /// See [`Tailwind::has_missed`].
     pub has_missed: AtomicBool,
 }
 
-/// What is at the ends of a text with classes.
+/// How to treat the two ends of a text with classes.
 #[derive(Clone, Copy, Debug)]
 pub struct Ends {
-    /// The first class touches what is before the text, so it stays where it is.
+    /// The first class is attached to whatever precedes the text, so it stays in place.
     pub ignores_first: bool,
-    /// The last class touches what is behind the text.
+    /// The last class is attached to whatever follows the text.
     pub ignores_last: bool,
-    /// The white space at the start can go. If not, a blank stays of it.
+    /// Whitespace at the start can be removed. If false, it collapses to one space.
     pub collapses_start: bool,
     pub collapses_end: bool,
 }
 
+/// The cleanups applied to a class list besides sorting.
+#[derive(Clone, Copy, Debug)]
+pub struct Tidies {
+    pub collapses_white_space: bool,
+    pub removes_duplicates: bool,
+}
+
 impl Ends {
-    /// Nothing that counts.
+    /// Nothing significant on either side.
     pub const FREE: Ends = Ends {
         ignores_first: false,
         ignores_last: false,
@@ -102,12 +134,12 @@ impl Ends {
     };
 }
 
-/// What stands for the classes that follow.
+/// True for `...` and `…`, which represent further classes.
 fn is_rest(class: &[u8]) -> bool {
     class == b"..." || class == "…".as_bytes()
 }
 
-/// What can follow the classes behind `@apply`.
+/// Suffixes that can follow the classes after `@apply`.
 const IMPORTANT: [&[u8]; 4] = [
     b"!important",
     b"#{!important}",
@@ -116,11 +148,11 @@ const IMPORTANT: [&[u8]; 4] = [
 ];
 
 impl Tailwind {
-    /// `params`, which are behind `@apply`, with the classes sorted. `None`: there are none. A port of oxfmt's
-    /// `write_apply_prelude`, which follows the plugin's `transformCss`.
-    pub fn sorted_to_apply(&self, params: &[u8]) -> Option<Vec<u8>> {
+    /// Returns `params`, the text after `@apply`, with its classes sorted, or `None` if it has no classes. A port of
+    /// oxfmt's `write_apply_prelude`, which follows the plugin's `transformCss`.
+    pub fn sorted_apply_params(&self, params: &[u8]) -> Option<Vec<u8>> {
         let params = strings::trim_js_whitespace(params);
-        // `~"a b"` of Less
+        // Less's `~"a b"`
         let escaped = (*b"\"'").into_iter().find_map(|quote| {
             let inner = params.strip_prefix(&[b'~', quote])?;
             Some((quote, inner.strip_suffix(&[quote])?))
@@ -152,8 +184,8 @@ impl Tailwind {
         Some(sorted)
     }
 
-    /// Whether the order of some classes was not known, so that they have been left as they are, and what has been
-    /// printed is of no use.
+    /// True if the order of some classes wasn't known yet. Those classes were left unsorted, so the output must be
+    /// discarded.
     pub fn has_missed(&self) -> bool {
         self.has_missed.load(Ordering::Relaxed)
     }
@@ -165,15 +197,28 @@ impl Tailwind {
 
     /// `sortClasses(text, { env, ignoreFirst, ignoreLast, collapseWhitespace })`
     pub fn sorted_between<'t>(&self, text: &'t [u8], ends: Ends) -> Cow<'t, [u8]> {
+        self.sorted_with(text, ends, self.tidies())
+    }
+
+    /// The cleanups that the options allow.
+    pub fn tidies(&self) -> Tidies {
+        Tidies {
+            collapses_white_space: !self.preserves_whitespace,
+            removes_duplicates: !self.preserves_duplicates,
+        }
+    }
+
+    /// Same as `sorted_between`, for callers that want fewer cleanups than the options allow.
+    pub fn sorted_with<'t>(&self, text: &'t [u8], ends: Ends, tidies: Tidies) -> Cow<'t, [u8]> {
         if text.is_empty() || strings::contains(text, b"{{") {
             return Cow::Borrowed(text);
         }
-        let collapses_whitespace = !self.preserves_whitespace;
+        let collapses_whitespace = tidies.collapses_white_space;
         if collapses_whitespace && text.iter().all(u8::is_ascii_whitespace) {
             return Cow::Borrowed(&b" "[..]);
         }
-        // `text.split(/([\t\r\f\n ]+)/)`: a class, white space, a class, and so on. The first and the last class can be
-        // empty.
+        // `text.split(/([\t\r\f\n ]+)/)`: a class, whitespace, a class, and so on. The first and the last class can
+        // be empty.
         let (mut classes, mut white_space): (Vec<&[u8]>, Vec<&[u8]>) = (Vec::new(), Vec::new());
         let mut rest = text;
         loop {
@@ -181,22 +226,22 @@ impl Tailwind {
                 .iter()
                 .take_while(|byte| !byte.is_ascii_whitespace())
                 .count();
-            let (class, behind) = rest.split_at(len);
+            let (class, after) = rest.split_at(len);
             classes.push(class);
-            if behind.is_empty() {
+            if after.is_empty() {
                 break;
             }
-            let len = behind
+            let len = after
                 .iter()
                 .take_while(|byte| byte.is_ascii_whitespace())
                 .count();
-            let (blanks, behind) = behind.split_at(len);
+            let (separator, after) = after.split_at(len);
             white_space.push(if collapses_whitespace {
                 &b" "[..]
             } else {
-                blanks
+                separator
             });
-            rest = behind;
+            rest = after;
         }
         if classes.last().is_some_and(|class| class.is_empty()) {
             classes.pop();
@@ -237,22 +282,22 @@ impl Tailwind {
         crate::sort::sort_by(&mut ordered[..], |a, z| {
             is_rest(a.0).cmp(&is_rest(z.0)).then(a.1.cmp(&z.1))
         });
-        // Of a class that Tailwind knows, the first stays.
+        // Only the first occurrence of a class that Tailwind knows is kept.
         let mut seen = FxHashSet::default();
         let is_removed: Vec<bool> = ordered
             .iter()
             .map(|&(class, rank)| {
                 let is_seen = seen.contains(class);
-                if rank.is_some() && !self.preserves_duplicates {
+                if rank.is_some() && tidies.removes_duplicates {
                     seen.insert(class);
                 }
                 is_seen
             })
             .collect();
-        // The white space before it goes with it.
+        // A removed class takes the whitespace before it with it.
         let mut white_space = (white_space.iter().copied().enumerate())
             .filter(|(index, _)| is_removed.get(index + 1) != Some(&true))
-            .map(|(_, blanks)| blanks);
+            .map(|(_, separator)| separator);
         let mut result = Vec::with_capacity(text.len());
         for (&(class, _), _) in ordered.iter().zip(&is_removed).filter(|it| !*it.1) {
             result.extend_from_slice(class);
@@ -261,23 +306,23 @@ impl Tailwind {
         if !collapses_whitespace {
             return Cow::Owned([prefix, result, suffix].concat());
         }
-        // Of the white space at an end a blank stays, or nothing.
-        let mut sorted = strings::trim_js_whitespace_end(&prefix).to_vec();
+        // Whitespace at either end collapses to one space or to nothing. The plugin trims what JavaScript counts as
+        // whitespace, which deletes a class that's a no-break space.
+        let mut sorted = prefix.trim_ascii_end().to_vec();
         if sorted.len() < prefix.len() {
             sorted.push(b' ');
         }
-        if !ends.collapses_start && strings::trim_js_whitespace_start(&result).len() < result.len()
-        {
+        if !ends.collapses_start && result.trim_ascii_start().len() < result.len() {
             sorted.push(b' ');
         }
-        sorted.extend_from_slice(strings::trim_js_whitespace(&result));
-        if !ends.collapses_end && strings::trim_js_whitespace_end(&result).len() < result.len() {
+        sorted.extend_from_slice(result.trim_ascii());
+        if !ends.collapses_end && result.trim_ascii_end().len() < result.len() {
             sorted.push(b' ');
         }
-        if strings::trim_js_whitespace_start(&suffix).len() < suffix.len() {
+        if suffix.trim_ascii_start().len() < suffix.len() {
             sorted.push(b' ');
         }
-        sorted.extend_from_slice(strings::trim_js_whitespace_start(&suffix));
+        sorted.extend_from_slice(suffix.trim_ascii_start());
         Cow::Owned(sorted)
     }
 }

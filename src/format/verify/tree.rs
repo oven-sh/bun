@@ -1,31 +1,30 @@
-//! The two syntax trees, compared in one walk from the root.
+//! Compares the two syntax trees in one walk from the root.
 //!
-//! Every field of every node that can be reached is compared, but for ids and positions. So all that
-//! is not in the tree is free to change: white space, parentheses that mean nothing, semicolons,
-//! the comma after the last element of a list, the separators of the members of a type, the
-//! parentheses around the parameter of an arrow function. Parentheses that mean something make
-//! another tree.
+//! Every field of every reachable node is compared, except ids and positions. So anything that isn't in the
+//! tree may change: whitespace, redundant parentheses, semicolons, the comma after a list's last element, the
+//! separators between a type's members, the parentheses around an arrow function's parameter. Parentheses
+//! that matter produce a different tree.
 //!
-//! What the formatter changes in the tree is allowed where it is compared, each next to a comment
-//! that starts with "Allowed".
+//! The changes that the formatter makes to the tree are allowed at the point where they're compared, each
+//! next to a comment that starts with "Allowed".
 //!
-//! The parser numbers the nodes of a list in the order of the source. So two trees of the same shape
-//! have the same ids, and most trees have the same shape before and after. That is tried first
-//! (`Walk::by_id`): the nodes with the same id are compared one after the other, and in place of a walk
-//! down to a child its ids are compared. If all are the same, so are the trees. If not, nothing is known,
-//! and the trees are walked.
+//! The parser numbers the nodes of each list in source order. So two trees with the same shape have the same
+//! ids, and most trees keep their shape when they're formatted. That's the fast path (`Walk::by_id`): nodes
+//! with the same id are compared one after the other, and instead of walking down to a child, only the
+//! child's ids are compared. If everything matches, the trees are the same. If not, that proves nothing, and
+//! the trees are walked.
 
 use super::Difference;
 use crate::js::utils::number::format_trimmed_number;
 use crate::options::FormatOptions;
 use bun_lint::ast::{Expr as ExprHandle, File, Handle};
 use bun_lint::tokens::skip_trivia;
-use bun_sema::atom::{Atom, Intern, NOT_IN_THE_FILE};
+use bun_sema::atom::{Atom, FIRST_ATOM_NOT_IN_FILE, Intern};
 use bun_sema::hir::*;
 
 macro_rules! lists {
     ($($field:ident: $ty:ty,)*) => {
-        /// A program: the lists of its `FileIn`, wherever they are stored, and its names.
+        /// A program: the lists of its `FileIn`, whatever their storage, and its names.
         pub struct Program<'a> {
             $($field: &'a [$ty],)*
             text: &'a [u8],
@@ -35,7 +34,9 @@ macro_rules! lists {
         }
 
         impl<'a> Program<'a> {
-            /// `text`: what `hir` has been parsed from. `atoms`: what the atoms in `hir` are of.
+            /// `text` is the source that `hir` was parsed from. `atoms` is the interner that `hir`'s atoms
+            /// belong to.
+            #[optimize(size)]
             pub fn new<S: Storage>(hir: &'a FileIn<S>, text: &'a [u8], atoms: &'a dyn Intern) -> Self {
                 Program {
                     $($field: &hir.$field[..],)*
@@ -71,6 +72,7 @@ lists! {
     props: Prop,
     var_decls: VarDecl,
     calls: Call,
+    tagged_templates: (CallId, ExprId),
     cases: Case,
     jsx: Jsx,
     imports: Import,
@@ -86,45 +88,52 @@ lists! {
     non_null_ends: (ExprId, u32),
     jsx_expressions: (ExprId, u32, u32),
     modifiers_of_params: Span<ModifierId>,
+    modifiers_of_stmts: (StmtId, Span<ModifierId>),
     modifiers_of_props: (PropId, Span<ModifierId>),
     with_bodies: (u32, u32),
     import_attributes: (u32, ExprId),
     deferred_import_calls: (ExprId, u32),
     import_call_type_args: (ExprId, IdList<TypeNodeId>),
-    comments: (u32, u32),
+    comments: Comment,
     diagnostics: Diagnostic,
     specifier_uses: SpecifierUse,
 }
 
 impl<'a> Program<'a> {
     #[inline]
+    #[optimize(size)]
     fn ids_of<T>(&self, list: IdList<T>) -> &'a [u32] {
         self.ids.get(list.range()).unwrap_or_default()
     }
 
     #[inline]
+    #[optimize(size)]
     fn slice(&self, start: u32, end: u32) -> &'a [u8] {
         self.text
             .get(start as usize..end.max(start) as usize)
             .unwrap_or_default()
     }
 
+    #[optimize(size)]
     fn from(&self, start: u32) -> &'a [u8] {
         self.text.get(start as usize..).unwrap_or_default()
     }
 
+    #[optimize(size)]
     fn is_parenthesized(&self, e: ExprId) -> bool {
         self.parens.binary_search_by_key(&e.0, |it| it.0.0).is_ok()
     }
 
-    /// Whether `e` is all there is between the braces of a `{e}` in JSX.
+    /// True if `e` is the whole content of a JSX `{e}`.
+    #[optimize(size)]
     fn is_in_braces(&self, e: ExprId) -> bool {
         self.jsx_expressions
             .binary_search_by_key(&e.0, |it| it.0.0)
             .is_ok()
     }
 
-    /// The end of `e` with the parentheses around it.
+    /// The end of `e`, including its surrounding parentheses.
+    #[optimize(size)]
     fn outer_end(&self, e: ExprId) -> u32 {
         let after = self.parens.partition_point(|it| it.0.0 <= e.0);
         match after.checked_sub(1).and_then(|last| self.parens.get(last)) {
@@ -133,11 +142,13 @@ impl<'a> Program<'a> {
         }
     }
 
+    #[optimize(size)]
     fn end_of_last(&self, types: IdList<TypeNodeId>) -> Option<u32> {
         Some(self.types.get(*self.ids_of(types).last()? as usize)?.end)
     }
 
-    /// Where `extends A<B>` ends.
+    /// The end of `extends A<B>`.
+    #[optimize(size)]
     fn end_of_extends(&self, class: &Class) -> Option<u32> {
         match self.end_of_last(class.extends_args) {
             Some(end) => Some(skip_trivia(self.text, end) + 1),
@@ -145,6 +156,7 @@ impl<'a> Program<'a> {
         }
     }
 
+    #[optimize(size)]
     fn param_modifiers(&self, param: ParamId) -> Span<ModifierId> {
         self.modifiers_of_params
             .get(param.idx())
@@ -152,6 +164,7 @@ impl<'a> Program<'a> {
             .unwrap_or(Span::EMPTY)
     }
 
+    #[optimize(size)]
     fn prop_modifiers(&self, prop: PropId) -> Span<ModifierId> {
         if self.modifiers_of_props.is_empty() {
             return Span::EMPTY;
@@ -165,6 +178,7 @@ impl<'a> Program<'a> {
             .map_or(Span::EMPTY, |it| it.1)
     }
 
+    #[optimize(size)]
     fn is_empty_statement(&self, id: u32) -> bool {
         matches!(
             self.stmts.get(id as usize),
@@ -175,13 +189,15 @@ impl<'a> Program<'a> {
         )
     }
 
-    /// Whether the statement is a string that is not in parentheses.
+    /// True if the statement is a string literal without parentheses.
+    #[optimize(size)]
     fn is_directive(&self, id: u32) -> bool {
         matches!(self.stmts.get(id as usize), Some(Stmt { kind: StmtKind::Expr(e), .. })
             if matches!(self.exprs.get(e.idx()), Some(Expr { kind: ExprKind::String(_), pos, .. })
                 if self.text.get(*pos as usize) != Some(&b'`') && !self.is_parenthesized(*e)))
     }
 
+    #[optimize(size)]
     fn is_import(&self, id: u32) -> bool {
         matches!(
             self.stmts.get(id as usize),
@@ -192,8 +208,9 @@ impl<'a> Program<'a> {
         )
     }
 
-    /// The operator of `e`, if that is `&&`, `||` or `??`.
+    /// `e`'s operator, if it's `&&`, `||` or `??`.
     #[inline]
+    #[optimize(size)]
     fn logical_operator(&self, e: ExprId) -> Option<BinOp> {
         match self.exprs.get(e.idx())?.kind {
             ExprKind::Binary {
@@ -204,10 +221,11 @@ impl<'a> Program<'a> {
         }
     }
 
-    /// Appends the operands of the chain of `op` that `e` is to `out`, in order: those of
-    /// `(a && b) && (c && d)` are `a`, `b`, `c` and `d`.
-    fn operands_of_chain(&self, e: ExprId, op: BinOp, out: &mut Vec<ExprId>) {
-        // What is not taken apart yet, the last first.
+    /// Appends the operands of `e`, a chain of `op`, to `out` in order. For `(a && b) && (c && d)` they're
+    /// `a`, `b`, `c` and `d`.
+    #[optimize(size)]
+    fn chain_operands(&self, e: ExprId, op: BinOp, out: &mut Vec<ExprId>) {
+        // The expressions still to split, in reverse order.
         let mut rest = vec![e];
         while let Some(next) = rest.pop() {
             match self.exprs.get(next.idx()).map(|it| it.kind) {
@@ -221,7 +239,8 @@ impl<'a> Program<'a> {
         }
     }
 
-    /// `ty`, or if that is a union or an intersection of one type, that type.
+    /// `ty`, or its only member if it's a union or intersection of one type.
+    #[optimize(size)]
     fn without_lone_operator(&self, mut ty: TypeNodeId) -> TypeNodeId {
         while let Some(TypeNode {
             kind: TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types),
@@ -235,39 +254,40 @@ impl<'a> Program<'a> {
     }
 }
 
-/// What is allocated to compare two programs, and used again for the next two.
+/// Allocations for comparing two programs, reused for the next pair.
 #[derive(Default)]
 pub struct Scratch {
-    /// By atom of the program before, the atom of the program after that has the same text.
+    /// Indexed by an atom of the program before: the atom of the program after with the same text.
     atoms: Vec<u32>,
     operands: (Vec<ExprId>, Vec<ExprId>),
     imports: (Vec<u32>, Vec<u32>),
 }
 
-/// No atom has been found for it yet.
+/// No matching atom has been found yet.
 const UNKNOWN: u32 = u32::MAX - 1;
 
-/// `Err`: a difference has been found, and the walk is over.
+/// `Err` means a difference was found and the walk is over.
 type Same = Result<(), ()>;
 
 struct Walk<'a, 'f> {
-    /// An expression, a statement, a type or a pattern is the same as the one with the same id, and as no other.
+    /// An expression, statement, type or pattern only counts as equal to the one with the same id.
     by_id: bool,
     a: &'a Program<'a>,
     b: &'a Program<'a>,
-    /// The program before, for questions about where a node is.
+    /// The program before, used to look at a node's surroundings.
     before: &'f File<'f>,
     scratch: &'a mut Scratch,
     stack: bun_core::StackCheck,
     /// The formatter sorts imports.
     imports_can_move: bool,
-    /// The formatter sorts the classes of Tailwind CSS.
+    /// The formatter sorts Tailwind CSS classes.
     classes_can_move: bool,
     difference: Option<(&'static str, u32, u32)>,
 }
 
-/// Whether the same words are in `a` and in `b`, in whatever order and however often.
+/// True if `a` and `b` contain the same set of words, regardless of order and repetition.
 #[cold]
+#[optimize(size)]
 fn has_same_words(a: &[u8], b: &[u8]) -> bool {
     let words = |text: &[u8]| -> Vec<Vec<u8>> {
         let mut words: Vec<Vec<u8>> = (text.split(u8::is_ascii_whitespace))
@@ -281,8 +301,9 @@ fn has_same_words(a: &[u8], b: &[u8]) -> bool {
     words(a) == words(b)
 }
 
-/// Whether `after`, which is what formatting with `options` has made of `before`, is the same program.
-/// `file`: `before`.
+/// Checks that `after`, the result of formatting `before` with `options`, is the same program. `file` is
+/// `before`.
+#[optimize(size)]
 pub fn compare<'f>(
     file: &'f File<'f>,
     before: &Program<'_>,
@@ -357,7 +378,7 @@ pub fn compare<'f>(
 }
 
 macro_rules! both {
-    // The two nodes, if both are there. Returns from the function if neither is, or only one.
+    // Evaluates to the two nodes if both exist. Returns from the function if one or both are missing.
     ($self:ident, $list:ident, $a:expr, $b:expr, $what:literal) => {
         match ($self.a.$list.get($a.idx()), $self.b.$list.get($b.idx())) {
             (Some(x), Some(y)) => (*x, *y),
@@ -368,7 +389,9 @@ macro_rules! both {
 }
 
 impl Walk<'_, '_> {
-    /// Compares each expression, statement, type and pattern with the one that has the same id. With `by_id` only.
+    /// Compares each expression, statement, type and pattern with the one that has the same id. Only used
+    /// with `by_id`.
+    #[optimize(size)]
     fn all_nodes(&mut self) -> Same {
         let (a, b) = (self.a, self.b);
         let lengths = |it: &Program<'_>| {
@@ -383,8 +406,11 @@ impl Walk<'_, '_> {
         for (id, (x, y)) in (0..).map(ExprId).zip(a.exprs.iter().zip(b.exprs)) {
             self.expr_kind((id, x), (id, y))?;
         }
-        for (x, y) in a.stmts.iter().zip(b.stmts) {
-            self.modifiers(x.modifiers, y.modifiers)?;
+        for (id, (x, y)) in (0..).map(StmtId).zip(a.stmts.iter().zip(b.stmts)) {
+            self.modifiers(
+                stmt_modifiers_in(a.modifiers_of_stmts, id),
+                stmt_modifiers_in(b.modifiers_of_stmts, id),
+            )?;
             self.stmt_kind(x.kind, y.kind)?;
         }
         for (id, (x, y)) in (0..).map(TypeNodeId).zip(a.types.iter().zip(b.types)) {
@@ -399,18 +425,21 @@ impl Walk<'_, '_> {
 
 impl Walk<'_, '_> {
     #[cold]
+    #[optimize(size)]
     fn differ(&mut self, what: &'static str, before: u32, after: u32) -> Same {
         self.difference = Some((what, before, after));
         Err(())
     }
 
     #[inline]
+    #[optimize(size)]
     fn is_same_id(a: u32, b: u32) -> Same {
         if a == b { Ok(()) } else { Err(()) }
     }
 
-    /// `Program::ids` are the same.
+    /// Checks that both lists cover the same range of `Program::ids`.
     #[inline]
+    #[optimize(size)]
     fn is_same_list<T>(a: IdList<T>, b: IdList<T>) -> Same {
         if a.len == b.len && (a.start == b.start || a.len == 0) {
             Ok(())
@@ -419,23 +448,26 @@ impl Walk<'_, '_> {
         }
     }
 
-    /// For a difference whose place is not known. The caller that knows one fills it in.
+    /// Reports a difference whose position isn't known here. A caller that knows it fills it in.
     #[cold]
+    #[optimize(size)]
     fn differ_somewhere(&mut self, what: &'static str) -> Same {
         self.differ(what, u32::MAX, u32::MAX)
     }
 
-    /// `result`, with a place for a difference that has none yet.
+    /// Returns `result`. If it's a difference that has no position yet, it gets this one.
     #[inline]
+    #[optimize(size)]
     fn at(&mut self, result: Same, before: u32, after: u32) -> Same {
         if result.is_err() {
-            self.set_place(before, after);
+            self.set_position(before, after);
         }
         result
     }
 
     #[cold]
-    fn set_place(&mut self, before: u32, after: u32) {
+    #[optimize(size)]
+    fn set_position(&mut self, before: u32, after: u32) {
         if let Some(difference) = &mut self.difference {
             if difference.1 == u32::MAX {
                 difference.1 = before;
@@ -447,6 +479,7 @@ impl Walk<'_, '_> {
     }
 
     #[inline]
+    #[optimize(size)]
     fn check(&mut self, is_same: bool, what: &'static str) -> Same {
         match is_same {
             true => Ok(()),
@@ -456,8 +489,9 @@ impl Walk<'_, '_> {
 
     // ───────────────────────────── names ─────────────────────────────
 
-    /// Each interner has one atom for a text. So the texts of two atoms are compared once.
+    /// Each interner has one atom per text, so the texts of a pair of atoms are compared only once.
     #[inline]
+    #[optimize(size)]
     fn is_same_atom(&mut self, a: Atom, b: Atom) -> bool {
         match self.scratch.atoms.get(a.0 as usize) {
             Some(&known) if known == b.0 => true,
@@ -467,20 +501,21 @@ impl Walk<'_, '_> {
 
     #[cold]
     #[inline(never)]
+    #[optimize(size)]
     fn is_same_atom_by_text(&mut self, a: Atom, b: Atom) -> bool {
         if a.is_none() || b.is_none() {
             return a == b;
         }
         let (text, text2) = (self.a.atoms.bytes(a), self.b.atoms.bytes(b));
         let is_same = text == text2;
-        // Allowed: classes are sorted, and one that is there twice is there once.
+        // Allowed: classes are sorted, and duplicates are removed.
         if !is_same && self.classes_can_move {
             return has_same_words(text, text2);
         }
         let (at, known) = (a.0 as usize, &mut self.scratch.atoms);
-        // The names of a file are numbered one after the other. What is not among them has a number far from theirs, and
-        // is compared by its text every time.
-        if is_same && a.0 < NOT_IN_THE_FILE {
+        // A file's own names are numbered consecutively. Any other atom has a number far from theirs, so it
+        // isn't cached and its text is compared every time.
+        if is_same && a.0 < FIRST_ATOM_NOT_IN_FILE {
             if known.len() <= at {
                 known.resize(at + 1, UNKNOWN);
             }
@@ -489,8 +524,9 @@ impl Walk<'_, '_> {
         is_same
     }
 
-    /// Whether `b` can be what sorting classes has made of `a`. They have passed for the same.
+    /// True if `b` could be `a` with its classes sorted. The two have already compared equal as atoms.
     #[inline]
+    #[optimize(size)]
     fn is_sorted(&self, a: Atom, b: Atom) -> bool {
         let has_white_space = |text: &[u8]| text.iter().any(u8::is_ascii_whitespace);
         self.classes_can_move
@@ -498,6 +534,7 @@ impl Walk<'_, '_> {
     }
 
     #[inline]
+    #[optimize(size)]
     fn atom(&mut self, a: Atom, b: Atom, what: &'static str) -> Same {
         match self.is_same_atom(a, b) {
             true => Ok(()),
@@ -505,6 +542,7 @@ impl Walk<'_, '_> {
         }
     }
 
+    #[optimize(size)]
     fn entity_name(&mut self, a: Span<NameId>, b: Span<NameId>) -> Same {
         let (xs, ys) = (
             self.a.names.get(a.range()).unwrap_or_default(),
@@ -519,8 +557,9 @@ impl Walk<'_, '_> {
         Ok(())
     }
 
-    /// Allowed: a name gets or loses its quotes, and a number is written in another way. The text of
-    /// the name is the same then.
+    /// Allowed: a name gains or loses its quotes, and a number is written differently. The name's text stays
+    /// the same.
+    #[optimize(size)]
     fn name_kind(&mut self, a: NameKind, b: NameKind) -> Same {
         let is_plain = |it| {
             matches!(
@@ -531,11 +570,13 @@ impl Walk<'_, '_> {
         self.check(a == b || (is_plain(a) && is_plain(b)), "the kind of a name")
     }
 
-    /// `at`: where the keys are.
+    /// `at` holds the positions of the two keys.
+    #[optimize(size)]
     fn key(&mut self, a: PropKey, b: PropKey, at: (u32, u32)) -> Same {
         match (a, b) {
             // The tree has no name for a `bigint`.
             (PropKey::None, PropKey::None) => {
+                #[optimize(size)]
                 fn word(text: &[u8]) -> &[u8] {
                     let len = text
                         .iter()
@@ -554,7 +595,7 @@ impl Walk<'_, '_> {
                 self.atom(x, y, "a key")?;
                 match self.is_sorted(x, y) {
                     true => Ok(()),
-                    false => self.name_as_written(at),
+                    false => self.name_spelling(at),
                 }
             }
             (PropKey::Private(x), PropKey::Private(y)) => self.atom(x, y, "a key"),
@@ -563,11 +604,12 @@ impl Walk<'_, '_> {
         }
     }
 
-    /// Two names with the same text, which can be strings or numbers, at `at`: they are written in the same way,
-    /// but for what is allowed for a string and for a number. Allowed: a string without escapes gets or loses
-    /// its quotes.
+    /// Checks that two names with the same text at `at`, which can be strings or numbers, are also written
+    /// the same way, apart from what's allowed for a string or a number. Allowed: a string without escapes
+    /// gains or loses its quotes.
     #[inline]
-    fn name_as_written(&mut self, at: (u32, u32)) -> Same {
+    #[optimize(size)]
+    fn name_spelling(&mut self, at: (u32, u32)) -> Same {
         let is_plain = |program: &Program<'_>, at: u32| {
             program
                 .text
@@ -583,17 +625,19 @@ impl Walk<'_, '_> {
         }
     }
 
-    /// Allowed: the keywords that are next to each other are put in order, but for `export`, `default`,
-    /// `async` and `accessor`, which stay where they are, as decorators do.
+    /// Allowed: adjacent keywords are reordered, except `export`, `default`, `async` and `accessor`, which
+    /// stay in place, like decorators.
+    #[optimize(size)]
     fn modifiers(&mut self, a: Span<ModifierId>, b: Span<ModifierId>) -> Same {
         if a.is_empty() && b.is_empty() {
             return Ok(());
         }
-        const STAY: Flags = Flags::EXPORT
+        const FIXED_KEYWORDS: Flags = Flags::EXPORT
             .union(Flags::DEFAULT)
             .union(Flags::ASYNC)
             .union(Flags::ACCESSOR);
-        /// Takes the keywords that `list` starts with and that can be put in order.
+        /// Takes the reorderable keywords at the start of `list`.
+        #[optimize(size)]
         fn take_keywords(list: &mut &[Modifier]) -> Flags {
             let mut all = Flags::empty();
             while let [
@@ -603,7 +647,7 @@ impl Walk<'_, '_> {
                 },
                 rest @ ..,
             ] = list
-                && !keyword.intersects(STAY)
+                && !keyword.intersects(FIXED_KEYWORDS)
             {
                 all |= *keyword;
                 *list = rest;
@@ -636,6 +680,7 @@ impl Walk<'_, '_> {
 
     // ───────────────────────────── the program ─────────────────────────────
 
+    #[optimize(size)]
     fn program(&mut self) -> Same {
         let (a, b) = (self.a, self.b);
         self.diagnostics()?;
@@ -658,14 +703,16 @@ impl Walk<'_, '_> {
         Ok(())
     }
 
-    /// What the parser accepts and has something to say about, like the comma in `f<A,>()`, is not in the
-    /// tree. Allowed: there is less of it.
+    /// Syntax that the parser accepts with a diagnostic, like the comma in `f<A,>()`, isn't in the tree.
+    /// Allowed: there are fewer diagnostics.
+    #[optimize(size)]
     fn diagnostics(&mut self) -> Same {
         if self.b.diagnostics.is_empty() {
             return Ok(());
         }
         const TRAILING_COMMA_NOT_ALLOWED: u32 = 1009;
-        // Allowed: a comma after the last element of a list in brackets. Flow has it where TypeScript does not.
+        // Allowed: a comma after the last element of a bracketed list. Flow accepts it where TypeScript
+        // doesn't.
         let is_before_closing_bracket = |comma: u32| {
             matches!(
                 self.b
@@ -686,19 +733,20 @@ impl Walk<'_, '_> {
         Ok(())
     }
 
-    /// The values of module specifiers are in the tree. Here they are compared as they are written.
+    /// The tree has the values of module specifiers. This compares how they're written.
+    #[optimize(size)]
     fn module_specifiers(&mut self) -> Same {
         if self.imports_can_move {
             return Ok(());
         }
-        // What the parser reads twice is listed twice, and not where it is.
-        let places = |program: &Program<'_>| {
-            let mut places: Vec<u32> = program.specifier_uses.iter().map(|it| it.pos).collect();
-            crate::sort::sort(&mut places[..]);
-            places.dedup();
-            places
+        // A specifier that the parser reads twice is listed twice, and out of order.
+        let positions = |program: &Program<'_>| {
+            let mut positions: Vec<u32> = program.specifier_uses.iter().map(|it| it.pos).collect();
+            crate::sort::sort(&mut positions[..]);
+            positions.dedup();
+            positions
         };
-        for (x, y) in places(self.a).into_iter().zip(places(self.b)) {
+        for (x, y) in positions(self.a).into_iter().zip(positions(self.b)) {
             if let (Some(p), Some(q)) = (
                 string_at_start(self.a.from(x)),
                 string_at_start(self.b.from(y)),
@@ -711,7 +759,9 @@ impl Walk<'_, '_> {
     }
 
     /// `with { .. }`, `assert { .. }`
+    #[optimize(size)]
     fn import_attributes(&mut self, a: (u32, ExprId), b: (u32, ExprId)) -> Same {
+        #[optimize(size)]
         fn keyword(text: &[u8]) -> &[u8] {
             text.get(
                 ..text
@@ -727,7 +777,8 @@ impl Walk<'_, '_> {
         self.expr(a.1, b.1)
     }
 
-    /// Allowed, if the formatter sorts imports: they, and the names in them, are in another order.
+    /// Allowed, if the formatter sorts imports: the imports and the names in them are reordered.
+    #[optimize(size)]
     fn moved_imports(&mut self) -> Same {
         let sorted = |program: &Program<'_>, ids: &[u32]| {
             let mut all: Vec<_> = ids.iter().map(|&id| import_as_text(program, id)).collect();
@@ -741,7 +792,7 @@ impl Walk<'_, '_> {
         if !xs.iter().map(|it| &it.0).eq(ys.iter().map(|it| &it.0)) {
             return self.differ("the imports", 0, 0);
         }
-        // The attributes of exports and of import types stay where they are.
+        // The attributes of exports and of import types stay in place.
         let others = |program: &Program<'_>,
                       imports: &[(Vec<u8>, Option<(u32, ExprId)>)]|
          -> Vec<Option<(u32, ExprId)>> {
@@ -768,7 +819,8 @@ impl Walk<'_, '_> {
 
     // ───────────────────────────── statements ─────────────────────────────
 
-    /// The statements of a program or of a function, which start with its directives.
+    /// Compares the statements of a program or function, which start with its directives.
+    #[optimize(size)]
     fn body(&mut self, a: IdList<StmtId>, b: IdList<StmtId>) -> Same {
         let directives = |program: &Program<'_>, list| {
             program
@@ -784,8 +836,9 @@ impl Walk<'_, '_> {
         self.stmt_list(a, b)
     }
 
-    /// Allowed: empty statements in a list are left out.
+    /// Allowed: empty statements in a list are dropped.
     #[inline]
+    #[optimize(size)]
     fn stmt_list(&mut self, a: IdList<StmtId>, b: IdList<StmtId>) -> Same {
         match self.by_id {
             true => Self::is_same_list(a, b),
@@ -793,6 +846,7 @@ impl Walk<'_, '_> {
         }
     }
 
+    #[optimize(size)]
     fn stmt_list_in_depth(&mut self, a: IdList<StmtId>, b: IdList<StmtId>) -> Same {
         let (xs, ys) = (self.a.ids_of(a), self.b.ids_of(b));
         let (mut i, mut j) = (0, 0);
@@ -831,6 +885,7 @@ impl Walk<'_, '_> {
     }
 
     #[inline]
+    #[optimize(size)]
     fn stmt(&mut self, a: StmtId, b: StmtId) -> Same {
         match self.by_id {
             true => Self::is_same_id(a.0, b.0),
@@ -838,6 +893,7 @@ impl Walk<'_, '_> {
         }
     }
 
+    #[optimize(size)]
     fn stmt_in_depth(&mut self, a: StmtId, b: StmtId) -> Same {
         let (x, y) = both!(self, stmts, a, b, "a statement is missing");
         if !self.stack.is_safe_to_recurse() {
@@ -848,11 +904,15 @@ impl Walk<'_, '_> {
             );
         }
         let result = self
-            .modifiers(x.modifiers, y.modifiers)
+            .modifiers(
+                stmt_modifiers_in(self.a.modifiers_of_stmts, a),
+                stmt_modifiers_in(self.b.modifiers_of_stmts, b),
+            )
             .and_then(|()| self.stmt_kind(x.kind, y.kind));
         self.at(result, x.start, y.start)
     }
 
+    #[optimize(size)]
     fn stmt_kind(&mut self, x: StmtKind, y: StmtKind) -> Same {
         use StmtKind::*;
         match (x, y) {
@@ -864,7 +924,7 @@ impl Walk<'_, '_> {
             | (ExportAssign(x), ExportAssign(y)) => self.expr(x, y),
             (Var(x), Var(y)) => {
                 self.check(x.len() == y.len(), "the number of declarations")?;
-                // The keyword is a property of what is declared.
+                // The keyword is stored on the declarators, so it can't be compared without one.
                 self.check(!x.is_empty(), "a declaration of nothing")?;
                 x.iter()
                     .zip(y.iter())
@@ -905,7 +965,7 @@ impl Walk<'_, '_> {
                 for (m, n) in i.members.iter().zip(j.members.iter()) {
                     let (m, n) = both!(self, enum_members, m, n, "a member of an enum is missing");
                     let result = (self.atom(m.name, n.name, "the name of a member of an enum"))
-                        .and_then(|()| self.name_as_written((m.pos, n.pos)))
+                        .and_then(|()| self.name_spelling((m.pos, n.pos)))
                         .and_then(|()| self.name_kind(m.name_kind, n.name_kind))
                         .and_then(|()| self.expr(m.computed_name, n.computed_name))
                         .and_then(|()| self.expr(m.init, n.init));
@@ -919,7 +979,7 @@ impl Walk<'_, '_> {
                     (ModuleName::Ident(x), ModuleName::Ident(y))
                     | (ModuleName::String(x), ModuleName::String(y)) => {
                         self.atom(x, y, "the name of a namespace")?;
-                        self.name_as_written((i.name_pos, j.name_pos))?;
+                        self.name_spelling((i.name_pos, j.name_pos))?;
                     }
                     (ModuleName::Global, ModuleName::Global) => {}
                     _ => return self.differ_somewhere("the kind of a namespace"),
@@ -987,7 +1047,7 @@ impl Walk<'_, '_> {
                 },
             ) => {
                 self.check(is_await == is_await2, "`await` after `for`")?;
-                // The parser says nothing about `for (async of a)`, which takes parentheses around the name.
+                // The parser doesn't report `for (async of a)`, which needs parentheses around the name.
                 let is_bare_async = matches!(self.b.stmts.get(left2.idx()), Some(Stmt { kind: Expr(e), .. })
                     if matches!(self.b.exprs.get(e.idx()), Some(it) if self.b.slice(it.pos, it.end) == b"async") && !self.b.is_parenthesized(*e));
                 self.check(
@@ -1075,7 +1135,7 @@ impl Walk<'_, '_> {
                 let is_same =
                     (i.type_only, i.is_deferred, i.mode) == (j.type_only, j.is_deferred, j.mode);
                 self.check(is_same, "the keywords of an import")?;
-                // Allowed: `import a, {} from "a"` is `import a from "a"`.
+                // Allowed: `import a, {} from "a"` becomes `import a from "a"`.
                 let has_braces = |it: &bun_sema::hir::Import| {
                     it.has_named_imports
                         && !(it.named.is_empty()
@@ -1094,7 +1154,7 @@ impl Walk<'_, '_> {
                     if !is_same {
                         return self.differ("a name of an import", s.start, t.start);
                     }
-                    self.name_as_written((s.imported_pos, t.imported_pos))?;
+                    self.name_spelling((s.imported_pos, t.imported_pos))?;
                 }
                 Ok(())
             }
@@ -1131,8 +1191,8 @@ impl Walk<'_, '_> {
                     if !is_same {
                         return self.differ("a name of an export", s.start, t.start);
                     }
-                    self.name_as_written((s.local_pos, t.local_pos))?;
-                    self.name_as_written((s.pos, t.pos))?;
+                    self.name_spelling((s.local_pos, t.local_pos))?;
+                    self.name_spelling((s.pos, t.pos))?;
                 }
                 Ok(())
             }
@@ -1157,7 +1217,7 @@ impl Walk<'_, '_> {
                 self.atom(spec, spec2, "a module specifier")?;
                 self.atom(alias, alias2, "the name of an export")?;
                 if alias.is_some() {
-                    self.name_as_written((alias_pos, alias_pos2))?;
+                    self.name_spelling((alias_pos, alias_pos2))?;
                 }
                 self.check(
                     (type_only, mode) == (type_only2, mode2),
@@ -1168,8 +1228,9 @@ impl Walk<'_, '_> {
         }
     }
 
-    /// The parser says nothing about a comma after the last element of a list that must not end with
-    /// one: `let a,`, `class A extends B, {}`. `end`: where the last element ends in the program after.
+    /// The parser doesn't report a comma after the last element of a list that must not end with one:
+    /// `let a,`, `class A extends B, {}`. `end` is the end of the last element in the program after.
+    #[optimize(size)]
     fn no_comma_follows(&mut self, end: Option<u32>) -> Same {
         match end.map(|end| skip_trivia(self.b.text, end)) {
             Some(next) if self.b.text.get(next as usize) == Some(&b',') => {
@@ -1179,6 +1240,7 @@ impl Walk<'_, '_> {
         }
     }
 
+    #[optimize(size)]
     fn var_decl(&mut self, a: VarDeclId, b: VarDeclId) -> Same {
         let (x, y) = both!(self, var_decls, a, b, "a declaration is missing");
         self.check(
@@ -1193,6 +1255,7 @@ impl Walk<'_, '_> {
     // ───────────────────────────── patterns ─────────────────────────────
 
     #[inline]
+    #[optimize(size)]
     fn pat(&mut self, a: PatId, b: PatId) -> Same {
         match self.by_id {
             true => Self::is_same_id(a.0, b.0),
@@ -1200,12 +1263,14 @@ impl Walk<'_, '_> {
         }
     }
 
+    #[optimize(size)]
     fn pat_in_depth(&mut self, a: PatId, b: PatId) -> Same {
         let (x, y) = both!(self, pats, a, b, "a pattern is missing");
         let result = self.pat_kind(x.kind, y.kind);
         self.at(result, x.pos, y.pos)
     }
 
+    #[optimize(size)]
     fn pat_kind(&mut self, x: PatKind, y: PatKind) -> Same {
         match (x, y) {
             (PatKind::Missing, PatKind::Missing) => Ok(()),
@@ -1216,6 +1281,7 @@ impl Walk<'_, '_> {
         }
     }
 
+    #[optimize(size)]
     fn pat_props(&mut self, a: Span<PatPropId>, b: Span<PatPropId>) -> Same {
         self.check(a.len() == b.len(), "the number of properties of a pattern")?;
         for (p, q) in a.iter().zip(b.iter()) {
@@ -1239,6 +1305,7 @@ impl Walk<'_, '_> {
         Ok(())
     }
 
+    #[optimize(size)]
     fn pat_elems(&mut self, a: Span<PatElemId>, b: Span<PatElemId>) -> Same {
         self.check(a.len() == b.len(), "the number of elements of a pattern")?;
         for (p, q) in a.iter().zip(b.iter()) {
@@ -1255,6 +1322,7 @@ impl Walk<'_, '_> {
 
     // ───────────────────────────── functions and classes ─────────────────────────────
 
+    #[optimize(size)]
     fn type_params(&mut self, a: Span<TypeParamId>, b: Span<TypeParamId>) -> Same {
         self.check(a.len() == b.len(), "the number of type parameters")?;
         a.iter()
@@ -1262,6 +1330,7 @@ impl Walk<'_, '_> {
             .try_for_each(|(x, y)| self.type_param(x, y))
     }
 
+    #[optimize(size)]
     fn type_param(&mut self, a: TypeParamId, b: TypeParamId) -> Same {
         let (x, y) = both!(self, type_params, a, b, "a type parameter is missing");
         let result = (self.atom(x.name, y.name, "the name of a type parameter"))
@@ -1272,6 +1341,7 @@ impl Walk<'_, '_> {
         self.at(result, x.start, y.start)
     }
 
+    #[optimize(size)]
     fn param(&mut self, a: ParamId, b: ParamId) -> Same {
         let (x, y) = both!(self, params, a, b, "a parameter is missing");
         let result = (self.check(x.flags == y.flags, "the modifiers of a parameter"))
@@ -1282,12 +1352,14 @@ impl Walk<'_, '_> {
         self.at(result, x.pos, y.pos)
     }
 
+    #[optimize(size)]
     fn func(&mut self, a: FnId, b: FnId) -> Same {
         let (x, y) = both!(self, fns, a, b, "a function is missing");
         let result = self.func_parts(&x, &y);
         self.at(result, x.start, y.start)
     }
 
+    #[optimize(size)]
     fn func_parts(&mut self, x: &Func, y: &Func) -> Same {
         self.check(
             (function_kind(x), without_name_kind(x.flags))
@@ -1308,6 +1380,7 @@ impl Walk<'_, '_> {
         }
     }
 
+    #[optimize(size)]
     fn members(&mut self, a: Span<MemberId>, b: Span<MemberId>) -> Same {
         self.check(a.len() == b.len(), "the number of members")?;
         a.iter()
@@ -1315,6 +1388,7 @@ impl Walk<'_, '_> {
             .try_for_each(|(x, y)| self.member(x, y))
     }
 
+    #[optimize(size)]
     fn member(&mut self, a: MemberId, b: MemberId) -> Same {
         let (x, y) = both!(self, members, a, b, "a member is missing");
         let form = |it: &Member, program: &Program<'_>| {
@@ -1337,7 +1411,7 @@ impl Walk<'_, '_> {
             .and_then(|()| self.key(x.key, y.key, (x.name_pos, y.name_pos)))
             .and_then(|()| self.modifiers(x.modifiers, y.modifiers))
             .and_then(|()| self.func(x.func, y.func))
-            // That of an index signature is the return type of its function.
+            // An index signature's type is its function's return type, which `func` has compared.
             .and_then(|()| match x.kind {
                 MemberKind::IndexSignature => Ok(()),
                 _ => self.ty(x.ty, y.ty),
@@ -1346,6 +1420,7 @@ impl Walk<'_, '_> {
         self.at(result, x.start, y.start)
     }
 
+    #[optimize(size)]
     fn class(&mut self, a: ClassId, b: ClassId) -> Same {
         let (x, y) = both!(self, classes, a, b, "a class is missing");
         let result = (self.atom(x.name, y.name, "the name of a class"))
@@ -1364,8 +1439,9 @@ impl Walk<'_, '_> {
         self.at(result, x.start, y.start)
     }
 
-    /// The parser says nothing about `[a: string]: B,` in a class either. `members`: those of a class in the
+    /// The parser doesn't report `[a: string]: B,` in a class either. `members` are those of a class in the
     /// program after.
+    #[optimize(size)]
     fn no_member_ends_with_a_comma(&mut self, members: Span<MemberId>) -> Same {
         let ends_with_a_comma = |it: &&Member| {
             it.kind == MemberKind::IndexSignature
@@ -1392,6 +1468,7 @@ impl Walk<'_, '_> {
     // ───────────────────────────── expressions ─────────────────────────────
 
     #[inline]
+    #[optimize(size)]
     fn expr_list(&mut self, a: IdList<ExprId>, b: IdList<ExprId>) -> Same {
         match self.by_id {
             true => Self::is_same_list(a, b),
@@ -1399,6 +1476,7 @@ impl Walk<'_, '_> {
         }
     }
 
+    #[optimize(size)]
     fn expr_list_in_depth(&mut self, a: IdList<ExprId>, b: IdList<ExprId>) -> Same {
         let (xs, ys) = (self.a.ids_of(a), self.b.ids_of(b));
         self.check(xs.len() == ys.len(), "the number of expressions in a list")?;
@@ -1407,6 +1485,7 @@ impl Walk<'_, '_> {
             .try_for_each(|(&x, &y)| self.expr(ExprId(x), ExprId(y)))
     }
 
+    #[optimize(size)]
     fn props(&mut self, a: Span<PropId>, b: Span<PropId>) -> Same {
         self.check(a.len() == b.len(), "the number of properties")?;
         for (p, q) in a.iter().zip(b.iter()) {
@@ -1428,16 +1507,18 @@ impl Walk<'_, '_> {
         Ok(())
     }
 
+    #[optimize(size)]
     fn call(&mut self, a: CallId, b: CallId) -> Same {
         let (x, y) = both!(self, calls, a, b, "a call is missing");
         self.check(x.chain == y.chain, "the `?.` of a call")?;
         self.expr(x.callee, y.callee)?;
-        self.type_list(x.type_args, y.type_args)?;
-        // Allowed: `new A` is `new A()`.
+        self.type_list(x.type_args.of(self.a.ids), y.type_args.of(self.b.ids))?;
+        // Allowed: `new A` becomes `new A()`.
         self.expr_list(x.args, y.args)
     }
 
     #[inline]
+    #[optimize(size)]
     fn expr(&mut self, a: ExprId, b: ExprId) -> Same {
         match self.by_id {
             true => Self::is_same_id(a.0, b.0),
@@ -1445,6 +1526,7 @@ impl Walk<'_, '_> {
         }
     }
 
+    #[optimize(size)]
     fn expr_in_depth(&mut self, a: ExprId, b: ExprId) -> Same {
         let (x, y) = both!(self, exprs, a, b, "an expression is missing");
         let result = self.expr_kind((a, &x), (b, &y));
@@ -1452,6 +1534,7 @@ impl Walk<'_, '_> {
     }
 
     #[inline]
+    #[optimize(size)]
     fn expr_kind(&mut self, (a, x): (ExprId, &Expr), (b, y): (ExprId, &Expr)) -> Same {
         use ExprKind::*;
         match (x.kind, y.kind) {
@@ -1494,7 +1577,7 @@ impl Walk<'_, '_> {
                     "the quotes of a template",
                 )?;
                 match is_a_template {
-                    // It can be text in JSX that starts with a `` ` ``.
+                    // It can also be JSX text that starts with a `` ` ``.
                     true if self.by_id => self
                         .atom(p, q, "a string")
                         .and_then(|()| self.template((a, x, IdList::EMPTY), (y, IdList::EMPTY))),
@@ -1517,16 +1600,17 @@ impl Walk<'_, '_> {
                     "how a number is written",
                 )
             }
-            // Allowed: lower case.
+            // Allowed: it's lowercased.
             (BigInt(x), BigInt(y)) => self.bigint(x, y),
             (Regex, Regex) => self.regex(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)),
             (Template { exprs: p }, Template { exprs: q }) => self.template((a, x, p), (y, q)),
-            (TaggedTemplate(x), TaggedTemplate(y)) => {
-                let (x, y) = both!(self, calls, x, y, "a call is missing");
+            (TaggedTemplate(a), TaggedTemplate(b)) => {
+                let (x, y) = both!(self, calls, a, b, "a call is missing");
                 self.expr(x.callee, y.callee)?;
-                self.type_list(x.type_args, y.type_args)?;
+                self.type_list(x.type_args.of(self.a.ids), y.type_args.of(self.b.ids))?;
                 // Its substitutions are the arguments.
-                self.expr(x.template, y.template)
+                let a = template_in(self.a.tagged_templates, a);
+                self.expr(a, template_in(self.b.tagged_templates, b))
             }
             (Array(x), Array(y)) => {
                 self.has_stack_left()?;
@@ -1591,16 +1675,16 @@ impl Walk<'_, '_> {
                 self.nested(value, value2)
             }
             (
-                Cond { test, yes, no },
+                Cond { test, branches },
                 Cond {
                     test: test2,
-                    yes: yes2,
-                    no: no2,
+                    branches: branches2,
                 },
             ) => {
+                let (x, y) = (branches.of(self.a.ids), branches2.of(self.b.ids));
                 self.expr(test, test2)?;
-                self.expr(yes, yes2)?;
-                self.nested(no, no2)
+                self.expr(x.yes, y.yes)?;
+                self.nested(x.no, y.no)
             }
             (Spread(x), Spread(y)) | (Await(x), Await(y)) | (AsConst(x), AsConst(y)) => {
                 self.nested(x, y)
@@ -1652,7 +1736,7 @@ impl Walk<'_, '_> {
                 },
             ) => {
                 self.nested(expr, expr2)?;
-                self.type_list(type_args, type_args2)
+                self.type_list(type_args.of(self.a.ids), type_args2.of(self.b.ids))
             }
             (Jsx(x), Jsx(y)) => {
                 self.has_stack_left()?;
@@ -1688,6 +1772,7 @@ impl Walk<'_, '_> {
     }
 
     #[inline]
+    #[optimize(size)]
     fn has_stack_left(&mut self) -> Same {
         match self.by_id || self.stack.is_safe_to_recurse() {
             true => Ok(()),
@@ -1695,22 +1780,22 @@ impl Walk<'_, '_> {
         }
     }
 
-    /// [`Walk::expr`] where code can be nested without end.
+    /// [`Walk::expr`] with a stack check, for places where code can nest arbitrarily deep.
     #[inline]
+    #[optimize(size)]
     fn nested(&mut self, a: ExprId, b: ExprId) -> Same {
         self.has_stack_left()?;
         self.expr(a, b)
     }
 
-    /// Allowed: `a && (b && c)` is `a && b && c`, and the same for `||` and `??`.
+    /// Allowed: `a && (b && c)` becomes `a && b && c`, and the same for `||` and `??`.
     #[cold]
+    #[optimize(size)]
     fn logical_chain(&mut self, a: ExprId, b: ExprId, op: BinOp) -> Same {
         self.has_stack_left()?;
         let (first, first2) = (self.scratch.operands.0.len(), self.scratch.operands.1.len());
-        self.a
-            .operands_of_chain(a, op, &mut self.scratch.operands.0);
-        self.b
-            .operands_of_chain(b, op, &mut self.scratch.operands.1);
+        self.a.chain_operands(a, op, &mut self.scratch.operands.0);
+        self.b.chain_operands(b, op, &mut self.scratch.operands.1);
         let count = self.scratch.operands.0.len() - first;
         let mut result = self.check(
             count == self.scratch.operands.1.len() - first2,
@@ -1730,6 +1815,7 @@ impl Walk<'_, '_> {
         result
     }
 
+    #[optimize(size)]
     fn number(&mut self, a: u32, b: u32) -> Same {
         let bits = |program: &Program<'_>, at: u32| {
             program.numbers.get(at as usize).map(|it| it.to_bits())
@@ -1737,6 +1823,7 @@ impl Walk<'_, '_> {
         self.check(bits(self.a, a) == bits(self.b, b), "a number")
     }
 
+    #[optimize(size)]
     fn bigint(&mut self, a: Atom, b: Atom) -> Same {
         let is_same = self.is_same_atom(a, b)
             || (a.is_some()
@@ -1750,6 +1837,7 @@ impl Walk<'_, '_> {
     }
 
     /// Allowed: the flags are sorted.
+    #[optimize(size)]
     fn regex(&mut self, a: &[u8], b: &[u8]) -> Same {
         if a == b {
             return Ok(());
@@ -1767,7 +1855,8 @@ impl Walk<'_, '_> {
 
     // ───────────────────────────── templates ─────────────────────────────
 
-    /// The source of each piece of text of the template at `start` whose substitutions are `exprs`.
+    /// The source of each text chunk of the template at `start`, whose substitutions are `exprs`.
+    #[optimize(size)]
     fn template_texts<'p>(
         program: &'p Program<'p>,
         start: u32,
@@ -1793,6 +1882,7 @@ impl Walk<'_, '_> {
         })
     }
 
+    #[optimize(size)]
     fn template(
         &mut self,
         (a, x, p): (ExprId, &Expr, IdList<ExprId>),
@@ -1806,8 +1896,9 @@ impl Walk<'_, '_> {
         if texts().eq(texts2()) {
             return Ok(());
         }
-        // Allowed: other line breaks. In a template, all of them stand for `\n`.
-        fn with_one_kind_of_line_break(text: &[u8]) -> impl Iterator<Item = u8> {
+        // Allowed: different line breaks. In a template, they all evaluate to `\n`.
+        #[optimize(size)]
+        fn with_normalized_line_breaks(text: &[u8]) -> impl Iterator<Item = u8> {
             (text.iter().zip(text.iter().skip(1).map(Some).chain([None]))).filter_map(
                 |(&byte, next)| match (byte, next) {
                     (b'\r', Some(b'\n')) => None,
@@ -1818,7 +1909,7 @@ impl Walk<'_, '_> {
         }
         if texts()
             .zip(texts2())
-            .all(|(x, y)| with_one_kind_of_line_break(x).eq(with_one_kind_of_line_break(y)))
+            .all(|(x, y)| with_normalized_line_breaks(x).eq(with_normalized_line_breaks(y)))
         {
             return Ok(());
         }
@@ -1832,8 +1923,9 @@ impl Walk<'_, '_> {
         )
     }
 
-    /// Whether the formatter may make `after` of `before`, the texts of the template `e`.
+    /// True if the formatter may turn `before`, the texts of template `e`, into `after`.
     #[cold]
+    #[optimize(size)]
     fn can_template_change<'t>(
         &self,
         e: ExprId,
@@ -1845,7 +1937,7 @@ impl Walk<'_, '_> {
         if super::is_in_another_language(template) {
             return true;
         }
-        // Allowed: the columns of the table of a `` describe.each`..` `` are lined up.
+        // Allowed: the table columns of a `` describe.each`..` `` are aligned.
         let without_white_space =
             |text: &'t [u8]| text.iter().copied().filter(|it| !it.is_ascii_whitespace());
         super::is_table(template)
@@ -1856,6 +1948,7 @@ impl Walk<'_, '_> {
 
     // ───────────────────────────── JSX ─────────────────────────────
 
+    #[optimize(size)]
     fn jsx(&mut self, a: JsxId, b: JsxId) -> Same {
         let (x, y) = both!(self, jsx, a, b, "an element is missing");
         self.check(
@@ -1869,6 +1962,7 @@ impl Walk<'_, '_> {
         self.jsx_children(&x, &y)
     }
 
+    #[optimize(size)]
     fn jsx_attribute_value(&mut self, a: ExprId, b: ExprId) -> Same {
         let (Some(x), Some(y)) = (jsx_string(self.a, a), jsx_string(self.b, b)) else {
             self.check(
@@ -1880,7 +1974,7 @@ impl Walk<'_, '_> {
         if x == y {
             return Ok(());
         }
-        // Allowed: other quotes, what has to be escaped with them, and other line breaks.
+        // Allowed: different quotes, the escapes that they require, and different line breaks.
         let value = |text: &[u8]| {
             let content = text
                 .get(1..text.len().saturating_sub(1))
@@ -1898,7 +1992,8 @@ impl Walk<'_, '_> {
         )
     }
 
-    /// Allowed: the white space in JSX text, and `{" "}`. The words are the same.
+    /// Allowed: whitespace in JSX text and `{" "}` change. The words stay the same.
+    #[optimize(size)]
     fn jsx_children(&mut self, a: &Jsx, b: &Jsx) -> Same {
         let (mut xs, mut ys) = (JsxChildren::new(self.a, a), JsxChildren::new(self.b, b));
         loop {
@@ -1922,6 +2017,7 @@ impl Walk<'_, '_> {
     // ───────────────────────────── types ─────────────────────────────
 
     #[inline]
+    #[optimize(size)]
     fn type_list(&mut self, a: IdList<TypeNodeId>, b: IdList<TypeNodeId>) -> Same {
         match self.by_id {
             true => Self::is_same_list(a, b),
@@ -1929,6 +2025,7 @@ impl Walk<'_, '_> {
         }
     }
 
+    #[optimize(size)]
     fn type_list_in_depth(&mut self, a: IdList<TypeNodeId>, b: IdList<TypeNodeId>) -> Same {
         let (xs, ys) = (self.a.ids_of(a), self.b.ids_of(b));
         self.check(xs.len() == ys.len(), "the number of types in a list")?;
@@ -1938,6 +2035,7 @@ impl Walk<'_, '_> {
     }
 
     #[inline]
+    #[optimize(size)]
     fn ty(&mut self, a: TypeNodeId, b: TypeNodeId) -> Same {
         match self.by_id {
             true => Self::is_same_id(a.0, b.0),
@@ -1945,12 +2043,14 @@ impl Walk<'_, '_> {
         }
     }
 
+    #[optimize(size)]
     fn ty_in_depth(&mut self, a: TypeNodeId, b: TypeNodeId) -> Same {
         let (x, y) = both!(self, types, a, b, "a type is missing");
         let result = self.type_kind((a, x.kind), (b, y.kind));
         self.at(result, x.pos, y.pos)
     }
 
+    #[optimize(size)]
     fn type_kind(
         &mut self,
         (a, x): (TypeNodeId, TypeNodeKind),
@@ -2194,7 +2294,7 @@ impl Walk<'_, '_> {
                 self.ty(ty, ty2)
             }
             _ => {
-                // Allowed: no `|` or `&` before a type that is alone.
+                // Allowed: the `|` or `&` before a single type is dropped.
                 let (inner, inner2) = (
                     self.a.without_lone_operator(a),
                     self.b.without_lone_operator(b),
@@ -2208,7 +2308,9 @@ impl Walk<'_, '_> {
     }
 }
 
-/// Whether the keys that are not plain names, each in a program at a position, are written the same.
+/// True if two keys that aren't plain identifiers are written the same way. Each is given as a program and a
+/// position.
+#[optimize(size)]
 fn is_literal_name_same(a: (&Program<'_>, u32), b: (&Program<'_>, u32)) -> bool {
     // `["a"]`
     let inside = |program: &Program<'_>, at: u32| match program.text.get(at as usize) {
@@ -2216,7 +2318,7 @@ fn is_literal_name_same(a: (&Program<'_>, u32), b: (&Program<'_>, u32)) -> bool 
         _ => at,
     };
     let (x, y) = (a.0.from(inside(a.0, a.1)), b.0.from(inside(b.0, b.1)));
-    // What is between the quotes is what is written without them. Allowed: `.5` is `"0.5"`.
+    // True if `string`'s content equals the unquoted `other`. Allowed: `.5` becomes `"0.5"`.
     let is_without_quotes = |string: &[u8], other: &[u8]| {
         let content = string.get(1..string.len() - 1).unwrap_or_default();
         if let Some(number) = number_at_start(other) {
@@ -2240,8 +2342,9 @@ fn is_literal_name_same(a: (&Program<'_>, u32), b: (&Program<'_>, u32)) -> bool 
     }
 }
 
-/// Everything about the import `id` that is compared, in a form that does not depend on the order
-/// of its names, but for its attributes, which come with it.
+/// Everything that's compared about the import `id`, serialized so that the order of its names doesn't
+/// matter. Its attributes aren't serialized and are returned alongside.
+#[optimize(size)]
 fn import_as_text(program: &Program<'_>, id: u32) -> (Vec<u8>, Option<(u32, ExprId)>) {
     let mut out = Vec::new();
     let Some(Stmt {
@@ -2304,8 +2407,8 @@ fn import_as_text(program: &Program<'_>, id: u32) -> (Vec<u8>, Option<(u32, Expr
     )
 }
 
-/// The text of the string `e`, if that is not between braces: JSX text, or the value of an
-/// attribute with its quotes.
+/// The source of string `e`, if it isn't in braces: JSX text, or an attribute value with its quotes.
+#[optimize(size)]
 fn jsx_string<'p>(program: &'p Program<'p>, e: ExprId) -> Option<&'p [u8]> {
     match program.exprs.get(e.idx()) {
         Some(Expr {
@@ -2317,7 +2420,8 @@ fn jsx_string<'p>(program: &'p Program<'p>, e: ExprId) -> Option<&'p [u8]> {
     }
 }
 
-/// The string that `text` starts with, with its quotes.
+/// The string literal at the start of `text`, with its quotes.
+#[optimize(size)]
 fn string_at_start(text: &[u8]) -> Option<&[u8]> {
     let quote = *text.first().filter(|it| matches!(it, b'"' | b'\''))?;
     let mut len = 1;
@@ -2330,7 +2434,8 @@ fn string_at_start(text: &[u8]) -> Option<&[u8]> {
     None
 }
 
-/// The number that `text` starts with.
+/// The number at the start of `text`.
+#[optimize(size)]
 fn number_at_start(text: &[u8]) -> Option<&[u8]> {
     text.first()
         .filter(|it| it.is_ascii_digit() || **it == b'.')?;
@@ -2351,20 +2456,24 @@ fn number_at_start(text: &[u8]) -> Option<&[u8]> {
     )
 }
 
-/// Whether two strings, with their quotes, are written in the same way. Allowed: other quotes, a `\` before
-/// a quote, and another line break after a `\`.
+/// True if two strings, given with their quotes, are written the same way. Allowed: different quotes, a `\`
+/// before a quote, and a different line break after a `\`.
 #[inline]
+#[optimize(size)]
 fn is_same_string(a: &[u8], b: &[u8]) -> bool {
-    a == b || is_same_string_but_for_quotes(a, b)
+    a == b || is_same_string_ignoring_quotes(a, b)
 }
 
-fn is_same_string_but_for_quotes(a: &[u8], b: &[u8]) -> bool {
+#[optimize(size)]
+fn is_same_string_ignoring_quotes(a: &[u8], b: &[u8]) -> bool {
+    #[optimize(size)]
     fn content(text: &[u8]) -> Option<&[u8]> {
         match text {
             [b'"' | b'\'', content @ .., b'"' | b'\''] => Some(content),
             _ => None,
         }
     }
+    #[optimize(size)]
     fn without_quote_escapes(content: &[u8]) -> Vec<u8> {
         let mut out = Vec::with_capacity(content.len());
         let mut bytes = content.iter().copied().peekable();
@@ -2383,7 +2492,7 @@ fn is_same_string_but_for_quotes(a: &[u8], b: &[u8]) -> bool {
     }
     match (content(a), content(b)) {
         (Some(x), Some(y)) => x == y || without_quote_escapes(x) == without_quote_escapes(y),
-        // A name in JSX. Allowed: `a : b` is `a:b`.
+        // A name in JSX. Allowed: `a : b` becomes `a:b`.
         (None, None) => {
             let without_white_space = |text: &'_ [u8]| -> Vec<u8> {
                 text.iter()
@@ -2397,24 +2506,27 @@ fn is_same_string_but_for_quotes(a: &[u8], b: &[u8]) -> bool {
     }
 }
 
-/// Whether two numbers are written in the same way. Allowed: what the formatter does to a number: `0XAB`, `1.0`,
-/// `.5`, `1E5`.
+/// True if two numbers are written the same way. Allowed: the formatter's number normalization: `0XAB`,
+/// `1.0`, `.5`, `1E5`.
 #[inline]
+#[optimize(size)]
 fn is_same_number(a: &[u8], b: &[u8]) -> bool {
     a == b || format_trimmed_number(a) == format_trimmed_number(b)
 }
 
 /// Allowed: see `Walk::name_kind`.
+#[optimize(size)]
 fn without_name_kind(flags: Flags) -> Flags {
     flags - (Flags::LITERAL_NAME | Flags::STRING_NAME)
 }
 
-/// Allowed: `"constructor"() {}` in a class is `constructor() {}`, which is what it means.
+/// Allowed: `"constructor"() {}` in a class becomes `constructor() {}`, which means the same.
+#[optimize(size)]
 fn function_kind(function: &Func) -> FnKind {
     match function.kind {
         FnKind::Method
             if function.name == bun_sema::atom::known::constructor
-                && !function.flags.intersects(NOT_OF_A_CONSTRUCTOR) =>
+                && !function.flags.intersects(NON_CONSTRUCTOR_FLAGS) =>
         {
             FnKind::Constructor
         }
@@ -2422,31 +2534,32 @@ fn function_kind(function: &Func) -> FnKind {
     }
 }
 
-const NOT_OF_A_CONSTRUCTOR: Flags = Flags::STATIC
+const NON_CONSTRUCTOR_FLAGS: Flags = Flags::STATIC
     .union(Flags::COMPUTED_NAME)
     .union(Flags::ASYNC)
     .union(Flags::GENERATOR);
 
 enum JsxChild<'p> {
-    /// A run of what is not white space in JSX text.
+    /// A run of non-whitespace in JSX text.
     Word(&'p [u8]),
-    /// An element, or what is between braces.
+    /// An element or a `{..}` expression.
     Node(ExprId),
 }
 
-/// The children of an element, without the white space between them.
+/// An element's children, without the whitespace between them.
 struct JsxChildren<'p> {
     program: &'p Program<'p>,
     children: std::slice::Iter<'p, u32>,
-    /// What is left of the text that is being taken apart.
+    /// The rest of the text that's being split into words.
     text: &'p [u8],
     /// The child after that text.
     next: Option<ExprId>,
-    /// Where the last child ends, and where the closing tag starts.
+    /// The end of the last child, and the start of the closing tag.
     rest: (u32, u32),
 }
 
 impl<'p> JsxChildren<'p> {
+    #[optimize(size)]
     fn new(program: &'p Program<'p>, element: &Jsx) -> Self {
         JsxChildren {
             program,
@@ -2468,6 +2581,7 @@ impl<'p> JsxChildren<'p> {
 impl<'p> Iterator for JsxChildren<'p> {
     type Item = JsxChild<'p>;
 
+    #[optimize(size)]
     fn next(&mut self) -> Option<JsxChild<'p>> {
         loop {
             self.text = self.text.trim_ascii_start();
@@ -2482,8 +2596,8 @@ impl<'p> Iterator for JsxChildren<'p> {
                 return Some(JsxChild::Word(word));
             }
             let Some(child) = self.next.take() else {
-                // Text that is white space to the parser and has a line break in it is not among the children. A no-break
-                // space is white space to it.
+                // The parser drops text from the children if it's all whitespace and contains a line break.
+                // It counts a no-break space as whitespace.
                 let next = self.children.next().map(|&it| ExprId(it));
                 let span = match next {
                     Some(child) => match self

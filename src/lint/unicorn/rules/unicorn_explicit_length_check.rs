@@ -12,11 +12,16 @@ pub struct ExplicitLengthCheck {
     is_non_zero_not_equal: bool,
 }
 
-const NON_ZERO: Message =
-    Message::new("", "Use `.{{prop_name}} {{op_and_rhs}}` when checking {{prop_name}} is not zero.");
-const ZERO: Message = Message::new("", "Use `.{{prop_name}} {{op_and_rhs}}` when checking {{prop_name}} is zero.");
+const NON_ZERO: Message = Message::new(
+    "",
+    "Use `.{{prop_name}} {{op_and_rhs}}` when checking {{prop_name}} is not zero.",
+);
+const ZERO: Message = Message::new(
+    "",
+    "Use `.{{prop_name}} {{op_and_rhs}}` when checking {{prop_name}} is zero.",
+);
 
-/// Whether `comparison` tells that a length is zero (`true`) or that it is not (`false`): `a.length == 0`,
+/// Returns `true` if `comparison` checks that a length is zero and `false` if it checks that it isn't: `a.length == 0`,
 /// `1 <= a.length`.
 fn is_zero_length_check(comparison: Expr) -> Option<bool> {
     let ExprKind::Binary { op, left, right } = comparison.kind() else {
@@ -38,23 +43,33 @@ fn is_zero_length_check(comparison: Expr) -> Option<bool> {
 }
 
 impl ExplicitLengthCheck {
-    /// `node`: what is replaced by a comparison of `member`.
-    fn report<'a>(&self, node: Expr<'a>, is_zero: bool, member: Expr<'a>, auto_fix: bool, cx: &Cx<'a, Self>) {
+    /// `node` is replaced with a comparison of `member`.
+    fn report<'a>(
+        &self,
+        node: Expr<'a>,
+        is_zero: bool,
+        member: Expr<'a>,
+        auto_fix: bool,
+        cx: &Cx<'a, Self>,
+    ) {
         let (operator, check_code) = match (is_zero, self.is_non_zero_not_equal) {
             (true, _) => (BinOp::EqEqEq, "=== 0"),
             (false, false) => (BinOp::Gt, "> 0"),
             (false, true) => (BinOp::NotEqEq, "!== 0"),
         };
-        if matches!(node.kind(), ExprKind::Binary { op, right, .. } if op == operator && is_number_value(right, 0.0)) {
+        if matches!(node.kind(), ExprKind::Binary { op, right, .. } if op == operator && is_number_value(right, 0.0))
+        {
             return;
         }
         let Some(property) = member.member_name() else {
             return;
         };
+        // oxlint's rule is called with the `.length`.
         cx.report(node, if is_zero { ZERO } else { NON_ZERO })
+            .called_with(member)
             .data("prop_name", property)
             .data("op_and_rhs", check_code)
-            // Where there is a fix oxlint says what it says of any.
+            // With a fix, oxlint prints its generic help instead.
             .help_with(|| match (auto_fix, std::str::from_utf8(property.bytes())) {
                 (false, Ok(property)) => format!("Replace `.{property}` with `.{property} {check_code}`."),
                 _ => String::new(),
@@ -75,17 +90,24 @@ impl ExplicitLengthCheck {
 }
 
 impl Rule for ExplicitLengthCheck {
-    const META: Meta = Meta::oxlint(Plugin::Unicorn, "explicit-length-check", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::oxlint(Plugin::Unicorn, "explicit-length-check", Kind::Suggestion)
+        .fixable(Fixable::Code);
     const ON: On = On::new().members_named(&["length", "size"]);
     /// See [`is_boolean_node`].
     type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
-        ExplicitLengthCheck { is_non_zero_not_equal: options.object(0).str("non-zero") == Some("not-equal") }
+        ExplicitLengthCheck {
+            is_non_zero_not_equal: options.object(0).str("non-zero") == Some("not-equal"),
+        }
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        if file.mentions_any(&["length", "size"]) { Self::ON } else { On::new() }
+        if file.mentions_any(&["length", "size"]) {
+            Self::ON
+        } else {
+            On::new()
+        }
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
@@ -104,8 +126,11 @@ impl Rule for ExplicitLengthCheck {
         {
             return;
         }
-        // What `member` is directly in, if it is not in parentheses.
-        let parent = member.parent().as_expr().filter(|_| !member.is_parenthesized());
+        // `member`'s direct parent, unless `member` is parenthesized.
+        let parent = member
+            .parent()
+            .as_expr()
+            .filter(|_| !member.is_parenthesized());
         if let Some(comparison) = parent
             && let Some(is_zero) = is_zero_length_check(comparison)
         {
@@ -120,7 +145,8 @@ impl Rule for ExplicitLengthCheck {
         }
         // `a.length && b`, `a.length || b`, not `a.length || 1`
         if let Some(ExprKind::Binary { op, right, .. }) = parent.map(Expr::kind)
-            && (op == BinOp::And || op == BinOp::Or && (right.tag() != ExprTag::Number || right.is_parenthesized()))
+            && (op == BinOp::And
+                || op == BinOp::Or && (right.tag() != ExprTag::Number || right.is_parenthesized()))
         {
             self.report(ancestor, is_negative, member, false, cx);
         }

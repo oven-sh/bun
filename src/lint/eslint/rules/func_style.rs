@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdSet;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashSet;
 
@@ -23,25 +24,25 @@ const DECLARATION: Message = Message::new("declaration", "Expected a function de
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The arrow functions that should be declarations, unless they use `this` or `super`, each
-    /// with its declarator.
+    /// The arrow functions that should be declarations unless they use `this` or `super`, each with its declarator.
     candidates: Vec<(Func<'a>, VarDecl<'a>)>,
     /// The arrow functions that are the innermost function around a `this` or a `super`.
-    with_this_or_super: FxHashSet<Func<'a>>,
+    with_this_or_super: IdSet<Func<'a>>,
     functions: AncestorMemo<'a, Func<'a>>,
-    /// The overload signatures of the file, once a function declaration asks: what has the list of
-    /// statements it is in, its name, and whether it is exported.
+    /// The file's overload signatures, built the first time a function declaration needs them: the owner of the
+    /// statement list, the name, and whether it's exported.
     overloads: Option<FxHashSet<(Node<'a>, Name<'a>, bool)>>,
 }
 
-/// What has the list of statements that `statement` is in. All clauses of a `switch` are one list.
+/// Returns the node that owns the statement list containing `statement`. All the clauses of a `switch` count as one
+/// list.
 fn statement_list_owner(statement: Stmt<'_>) -> Option<Node<'_>> {
     match statement.parent() {
         parent @ (Node::File(_) | Node::Func(_)) => Some(parent),
-        Node::Case(case) => Some(case.parent()).filter(|it| it.as_stmt().is_some_and(|it| it.tag() == StmtTag::Switch)),
-        Node::Stmt(parent) => {
-            (parent.as_block().is_some() || parent.tag() == StmtTag::Module).then_some(Node::Stmt(parent))
-        }
+        Node::Case(case) => Some(case.parent())
+            .filter(|it| it.as_stmt().is_some_and(|it| it.tag() == StmtTag::Switch)),
+        Node::Stmt(parent) => (parent.as_block().is_some() || parent.tag() == StmtTag::Module)
+            .then_some(Node::Stmt(parent)),
         _ => None,
     }
 }
@@ -53,13 +54,17 @@ fn overloads<'a>(file: &'a File<'a>) -> FxHashSet<(Node<'a>, Name<'a>, bool)> {
         if func.has_body() || flags.contains(Flags::EXPORT | Flags::DEFAULT) {
             return None;
         }
-        Some((statement_list_owner(statement)?, func.name()?.name(), flags.contains(Flags::EXPORT)))
+        Some((
+            statement_list_owner(statement)?,
+            func.name()?.name(),
+            flags.contains(Flags::EXPORT),
+        ))
     });
     signatures.collect()
 }
 
-/// Whether one of the statements next to the function declaration `statement` is an overload
-/// signature of the same name, exported in the same way.
+/// True if a sibling of the function declaration `statement` is an overload signature with the same name, exported the
+/// same way.
 fn is_overloaded_function<'a>(
     statement: Stmt<'a>,
     func: Func<'a>,
@@ -69,9 +74,10 @@ fn is_overloaded_function<'a>(
     let file = cx.file();
     let overloads = cx.state.overloads.get_or_insert_with(|| overloads(file));
     !overloads.is_empty()
-        && func.name().zip(statement_list_owner(statement)).is_some_and(|(name, owner)| {
-            overloads.contains(&(owner, name.name(), is_exported))
-        })
+        && func
+            .name()
+            .zip(statement_list_owner(statement))
+            .is_some_and(|(name, owner)| overloads.contains(&(owner, name.name(), is_exported)))
 }
 
 impl FuncStyle {
@@ -85,12 +91,14 @@ impl FuncStyle {
         let Node::VarDecl(declarator) = e.parent() else {
             return;
         };
-        // For oxlint parentheses are between the two.
+        // For oxlint, parentheses are a node between the two.
         if cx.language().is_oxlint && e.is_parenthesized() {
             return;
         }
         let expects_declaration = match self.named_exports {
-            Some(style) if declarator.flags().contains(Flags::EXPORT) => style == Style::Declaration,
+            Some(style) if declarator.flags().contains(Flags::EXPORT) => {
+                style == Style::Declaration
+            }
             _ => self.enforce_declarations,
         };
         if !expects_declaration || self.allow_type_annotation && declarator.ty().is_some() {
@@ -104,24 +112,27 @@ impl FuncStyle {
     }
 
     fn check_this_or_super<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // A static block and the initializer of a property are not functions to ESLint.
-        let function = cx.state.functions.find(Node::Expr(e), |_, ancestor| match ancestor {
-            Node::Func(func)
-                if matches!(
-                    func.kind(),
-                    FnKind::Decl
-                        | FnKind::Expr
-                        | FnKind::Arrow
-                        | FnKind::Method
-                        | FnKind::Getter
-                        | FnKind::Setter
-                        | FnKind::Constructor
-                ) =>
-            {
-                Some(func)
-            }
-            _ => None,
-        });
+        // ESLint doesn't treat a static block or a property initializer as a function.
+        let function = cx
+            .state
+            .functions
+            .find(Node::Expr(e), |_, ancestor| match ancestor {
+                Node::Func(func)
+                    if matches!(
+                        func.kind(),
+                        FnKind::Decl
+                            | FnKind::Expr
+                            | FnKind::Arrow
+                            | FnKind::Method
+                            | FnKind::Getter
+                            | FnKind::Setter
+                            | FnKind::Constructor
+                    ) =>
+                {
+                    Some(func)
+                }
+                _ => None,
+            });
         if let Some(func) = function
             && func.is_arrow()
         {
@@ -193,16 +204,22 @@ impl Rule for FuncStyle {
             Some(style) if is_exported => style == Style::Expression,
             _ => !self.enforce_declarations,
         };
-        // oxlint leaves alone what is declared more than once: with a namespace, an interface, a type of the same name.
-        let is_merged = cx.language().is_oxlint && func.symbol().is_some_and(|it| it.declaration_count() > 1);
-        if expects_expression && !is_merged && !is_overloaded_function(statement, func, is_exported, cx) {
-            cx.report(statement.span_without_export(), EXPRESSION);
+        // oxlint skips a function that's declared more than once: merged with a namespace, interface or type of the
+        // same name.
+        let is_merged =
+            cx.language().is_oxlint && func.symbol().is_some_and(|it| it.declaration_count() > 1);
+        if expects_expression
+            && !is_merged
+            && !is_overloaded_function(statement, func, is_exported, cx)
+        {
+            cx.report(statement.span_without_export(), EXPRESSION)
+                .called_with(func);
         }
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         for (func, declarator) in &cx.state.candidates {
-            if !cx.state.with_this_or_super.contains(func) {
+            if !cx.state.with_this_or_super.contains(*func) {
                 cx.report(declarator, DECLARATION);
             }
         }

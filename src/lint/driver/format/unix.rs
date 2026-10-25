@@ -1,15 +1,17 @@
-//! `eslint-formatter-unix`, and what oxlint calls `unix`.
+//! `eslint-formatter-unix`, and oxlint's `unix`.
 
 use super::Meta;
 use super::info::Source;
-use super::oxlint::{Codes, is_error};
+use super::oxlint::{code, is_error};
 use crate::results::FileResult;
 use bun_core::fmt::{ItoaBuf, itoa};
 use bun_lint::context::Severity;
+use bun_lint::linter::{LintMessage, RuleId};
+use bun_sema::util::FxHashMap;
 use std::io::Write;
 
 /// `:1:2: `
-fn write_place(out: &mut Vec<u8>, line: usize, column: usize) {
+fn write_position(out: &mut Vec<u8>, line: i64, column: i64) {
     out.push(b':');
     out.extend_from_slice(itoa(&mut ItoaBuf::new(), line));
     out.push(b':');
@@ -23,7 +25,8 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult]) {
         total += result.messages.len();
         for message in &result.messages {
             out.extend_from_slice(&result.path);
-            write_place(out, message.line as usize, message.column as usize);
+            let (line, column) = (message.line as i32, message.column as i32);
+            write_position(out, line.into(), column.into());
             out.extend_from_slice(&message.message);
             let is_error = message.is_fatal || message.severity == Severity::Error;
             match is_error {
@@ -46,23 +49,65 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult]) {
     }
 }
 
-/// With the end of the last line.
+/// Writes ` [Warning/eslint(no-debugger)]` and the newline.
+fn write_end(out: &mut Vec<u8>, message: &LintMessage) {
+    out.extend_from_slice(match is_error(message) {
+        true => b" [Error",
+        false => b" [Warning",
+    });
+    if let Some(code) = code(message) {
+        out.push(b'/');
+        out.extend_from_slice(&code);
+    }
+    out.extend_from_slice(b"]\n");
+}
+
+/// Caches [`write_end`]'s output per built-in rule and severity.
+#[derive(Default)]
+struct Ends {
+    /// All the cached outputs, concatenated.
+    text: Vec<u8>,
+    /// Keyed by the address of the rule's `Meta`, plus 1 for an error. The value is the output's start and end in
+    /// `text`.
+    ranges: FxHashMap<usize, (u32, u32)>,
+}
+
+impl Ends {
+    fn write(&mut self, out: &mut Vec<u8>, message: &LintMessage) {
+        let Some(RuleId::Known(meta)) = &message.rule_id else {
+            return write_end(out, message);
+        };
+        let key = std::ptr::from_ref(*meta).addr() + usize::from(is_error(message));
+        let (start, end) = match self.ranges.get(&key) {
+            Some(range) => *range,
+            None => {
+                let start = self.text.len() as u32;
+                write_end(&mut self.text, message);
+                let range = (start, self.text.len() as u32);
+                self.ranges.insert(key, range);
+                range
+            }
+        };
+        out.extend_from_slice(
+            self.text
+                .get(start as usize..end as usize)
+                .unwrap_or_default(),
+        );
+    }
+}
+
+/// Includes the final newline.
 pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    let (mut total, mut codes) = (0, Codes::default());
+    let (mut total, mut ends) = (0, Ends::default());
     for result in results.iter().filter(|it| !it.messages.is_empty()) {
         let source = Source::new(result, meta);
         total += result.messages.len();
         for message in &result.messages {
             let start = source.start(message);
             out.extend_from_slice(&source.name);
-            write_place(out, start.line, start.column);
+            write_position(out, start.line as i64, start.column as i64);
             out.extend_from_slice(&message.message);
-            match is_error(message) {
-                true => out.extend_from_slice(b" [Error"),
-                false => out.extend_from_slice(b" [Warning"),
-            }
-            codes.write(out, b"/", message);
-            out.extend_from_slice(b"]\n");
+            ends.write(out, message);
         }
     }
     if total > 0 {

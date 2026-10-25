@@ -27,6 +27,12 @@ test/cli/format/own/cases/** -text
 # Compared line by line with what a runner prints, which ends a line with \n on every system.
 test/cli/format/*/expected.txt text eol=lf
 test/cli/lint/conformance/expected*.txt text eol=lf
+# Embedded in the executable, which splits them at \n.
+src/lint/linter/config/presets.txt text eol=lf
+src/lint/linter/deprecated.txt text eol=lf
+src/lint/linter/schema/schemas.txt text eol=lf
+src/lint/oxlint_help.txt text eol=lf
+src/sema/messages.txt text eol=lf
 
 *.lockb binary diff=lockb
 

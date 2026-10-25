@@ -3,14 +3,14 @@ use crate::jsx::{as_jsx_element, get_jsx_element_name};
 use crate::react::{is_create_element_call, is_jsx};
 use crate::util_jsx::is_dom_component;
 use bun_core::strings;
-use bun_glob::{Options as GlobOptions, Pattern};
+use bun_lint::glob::Minimatch;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use std::borrow::Cow;
 
 /// Disallow usage of dangerous JSX properties.
 pub struct NoDanger {
-    custom_component_names: Vec<Pattern>,
+    custom_component_names: Vec<Minimatch>,
 }
 
 const DANGEROUS_PROP: Message = Message::new("dangerousProp", "Dangerous property '{{name}}' found");
@@ -23,13 +23,13 @@ impl Rule for NoDanger {
 
     fn new(options: &Options) -> Self {
         let names = options.object(0).strings("customComponentNames");
-        let minimatch = |name: &str| Pattern::new(name.as_bytes(), GlobOptions::MINIMATCH_3);
+        let minimatch = |name: &str| Minimatch::new(name.as_bytes());
         NoDanger { custom_component_names: names.into_iter().map(minimatch).collect() }
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Jsx]);
-        // oxlint also looks at the props of `createElement`.
+        // oxlint also checks the props passed to `createElement`.
         if !file.language().is_oxlint || !file.mentions("createElement") {
             return on;
         }
@@ -54,7 +54,7 @@ impl Rule for NoDanger {
                 let Some(first) = dangerous.peek().and_then(|it| it.key()) else {
                     return;
                 };
-                // oxlint looks at every element, and points at the name of the first.
+                // oxlint checks every element, and reports the first attribute's name.
                 if cx.language().is_oxlint {
                     cx.report(first.span(cx.file()), NO_DANGER);
                 } else if is_dom_component(jsx) || self.is_custom_component(jsx) {
@@ -91,7 +91,7 @@ impl NoDanger {
     }
 }
 
-/// `functionName`. `None` for `<a:b>`, where upstream has a node and no text.
+/// `functionName`. `None` for `<a:b>`, where upstream has a node instead of a string.
 fn function_name(jsx: Jsx<'_>) -> Option<Cow<'_, [u8]>> {
     match jsx.tag()?.kind() {
         ExprKind::String(name) if strings::contains_char(name.bytes(), b':') => None,

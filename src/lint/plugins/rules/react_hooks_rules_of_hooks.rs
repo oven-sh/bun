@@ -1,6 +1,7 @@
 use crate::oxlint::{self, rules_of_hooks::Flow};
 use bun_core::strings;
 use bun_lint::code_path::{Event, Step, steps};
+use bun_lint::paths;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::source::ByName;
@@ -12,12 +13,18 @@ use std::collections::BinaryHeap;
 /// Enforces the Rules of Hooks.
 pub struct RulesOfHooks;
 
-pub(crate) const TRY_CATCH: Message = Message::new("", "React Hook \"{{hook}}\" cannot be called in a try/catch block.");
+pub(crate) const TRY_CATCH: Message = Message::new(
+    "",
+    "React Hook \"{{hook}}\" cannot be called in a try/catch block.",
+);
 pub(crate) const LOOP: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" may be executed more than once. Possibly because it is called in a loop. React Hooks must be called in the exact same order in every component render.",
 );
-const ASYNC: Message = Message::new("", "React Hook \"{{hook}}\" cannot be called in an async function.");
+const ASYNC: Message = Message::new(
+    "",
+    "React Hook \"{{hook}}\" cannot be called in an async function.",
+);
 const CONDITIONAL: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" is called conditionally. React Hooks must be called in the exact same order in every component render.{{hint}}",
@@ -47,7 +54,7 @@ pub(crate) const EFFECT_EVENT_FUNCTION: Message = Message::new(
     "`{{function}}` is a function created with React Hook \"useEffectEvent\", and can only be called from Effects and Effect Events in the same component.{{hint}}",
 );
 
-/// `use`, or `use` and then an uppercase Latin letter or a digit, which leaves out `user`.
+/// `use`, or `use` followed by an uppercase Latin letter or a digit, which excludes `user`.
 pub(crate) fn is_hook_name(name: &[u8]) -> bool {
     match name.strip_prefix(b"use") {
         Some([]) => true,
@@ -60,13 +67,40 @@ fn starts_with_uppercase(name: Name) -> bool {
     name.bytes().first().is_some_and(u8::is_ascii_uppercase)
 }
 
-/// `useState`, `React.useState`: the name of a hook, which can be a member of what is named in Pascal case.
+/// `useState`, `React.useState`: a hook name, optionally as a member of a PascalCase name.
 fn is_hook(e: Expr) -> bool {
     match e.kind() {
         ExprKind::Ident(name) => is_hook_name(name.bytes()),
-        ExprKind::Dot { obj, name, .. } => is_hook_name(name.bytes()) && obj.as_ident().is_some_and(starts_with_uppercase),
+        ExprKind::Dot { obj, name, .. } => {
+            is_hook_name(name.bytes()) && obj.as_ident().is_some_and(starts_with_uppercase)
+        }
         _ => false,
     }
+}
+
+/// True if `callee` is a `use` that the file declares itself, other than by importing it from React. Playwright passes
+/// a function with that name to every fixture: `async ({ page }, use) => { await use(page); }`.
+fn is_locally_declared_use(callee: Expr) -> bool {
+    let is_from_react =
+        |it| matches!(it, Declaration::ImportSpec(spec) if spec.import().spec().is("react"));
+    callee.is_ident("use")
+        && callee
+            .symbol()
+            .is_some_and(|symbol| !symbol.declarations().any(is_from_react))
+}
+
+/// [`is_hook`], minus things that only have a hook's name. With an ESLint or oxlint config only the name counts, as in
+/// the plugin.
+fn calls_hook(callee: Expr) -> bool {
+    is_hook(callee)
+        && !(callee.file().language().has_no_foreign_config && is_locally_declared_use(callee))
+}
+
+/// Storybook renders a story's `render` function as a component, so it can call hooks.
+fn is_story_render(name: FunctionName, file: &File) -> bool {
+    matches!(name, FunctionName::Ident(name, _) if name.is("render"))
+        && file.language().has_no_foreign_config
+        && strings::contains(paths::basename(file.path()), b".stories.")
 }
 
 /// `name`, `React.name`
@@ -84,7 +118,8 @@ fn is_forward_ref_or_memo_callback(e: Expr) -> bool {
     match e.parent() {
         Node::Expr(parent) if !e.is_chain_root() => match parent.kind() {
             ExprKind::Call(call) | ExprKind::New(call) => {
-                is_react_function(call.callee(), "forwardRef") || is_react_function(call.callee(), "memo")
+                is_react_function(call.callee(), "forwardRef")
+                    || is_react_function(call.callee(), "memo")
             }
             _ => false,
         },
@@ -92,17 +127,17 @@ fn is_forward_ref_or_memo_callback(e: Expr) -> bool {
     }
 }
 
-/// What `getFunctionName` returns.
+/// The result of `getFunctionName`.
 #[derive(Copy, Clone)]
 enum FunctionName<'a> {
     Ident(Name<'a>, Span),
     Expr(Expr<'a>),
-    /// A pattern, or a key that is a string or a number.
+    /// A pattern, or a key that's a string or a number.
     Other(Span),
 }
 
 impl<'a> FunctionName<'a> {
-    fn of_pattern(pat: Pat<'a>, span: Span) -> FunctionName<'a> {
+    fn from_pattern(pat: Pat<'a>, span: Span) -> FunctionName<'a> {
         match pat.as_ident() {
             Some(name) => FunctionName::Ident(name, span),
             None => FunctionName::Other(span),
@@ -119,7 +154,9 @@ impl<'a> FunctionName<'a> {
     /// `isComponentName(name) || isHook(name)`
     fn is_component_or_hook(self) -> bool {
         match self {
-            FunctionName::Ident(name, _) => starts_with_uppercase(name) || is_hook_name(name.bytes()),
+            FunctionName::Ident(name, _) => {
+                starts_with_uppercase(name) || is_hook_name(name.bytes())
+            }
             FunctionName::Expr(e) => match e.kind() {
                 ExprKind::Ident(name) => starts_with_uppercase(name) || is_hook_name(name.bytes()),
                 _ => is_hook(e),
@@ -129,7 +166,7 @@ impl<'a> FunctionName<'a> {
     }
 }
 
-/// The name that JavaScript gives the function, roughly.
+/// Roughly the name that JavaScript gives the function.
 fn get_function_name(func: Func) -> Option<FunctionName> {
     if let Some(name) = func.name()
         && matches!(func.kind(), FnKind::Decl | FnKind::Expr)
@@ -140,7 +177,10 @@ fn get_function_name(func: Func) -> Option<FunctionName> {
         return None;
     };
     match e.parent() {
-        Node::VarDecl(declarator) => Some(FunctionName::of_pattern(declarator.pat(), declarator.binding_span())),
+        Node::VarDecl(declarator) => Some(FunctionName::from_pattern(
+            declarator.pat(),
+            declarator.binding_span(),
+        )),
         Node::Expr(parent) => match parent.kind() {
             ExprKind::Assign {
                 op: None,
@@ -153,27 +193,39 @@ fn get_function_name(func: Func) -> Option<FunctionName> {
             let key = prop.key()?;
             match key.kind() {
                 KeyKind::Ident(name) => Some(FunctionName::Ident(name, key.span(e.file()))),
-                KeyKind::String(_) | KeyKind::Number(_) => Some(FunctionName::Other(key.span(e.file()))),
+                KeyKind::String(_) | KeyKind::Number(_) => {
+                    Some(FunctionName::Other(key.span(e.file())))
+                }
                 _ => None,
             }
         }
-        Node::Param(param) => Some(FunctionName::of_pattern(param.pat(), param.binding_span())),
-        Node::PatElem(element) => element.pat().map(|pat| FunctionName::of_pattern(pat, pat.span())),
-        Node::PatProp(prop) if prop.default() == Some(e) => Some(FunctionName::of_pattern(prop.value(), prop.value().span())),
+        Node::Param(param) => Some(FunctionName::from_pattern(
+            param.pat(),
+            param.binding_span(),
+        )),
+        Node::PatElem(element) => element
+            .pat()
+            .map(|pat| FunctionName::from_pattern(pat, pat.span())),
+        Node::PatProp(prop) if prop.default() == Some(e) => Some(FunctionName::from_pattern(
+            prop.value(),
+            prop.value().span(),
+        )),
         _ => None,
     }
 }
 
 fn is_inside_component_or_hook<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, ()>) -> bool {
-    let is_one = |it: Node<'a>| match it {
+    let is_component_or_hook_node = |it: Node<'a>| match it {
         Node::Func(func) => get_function_name(func).is_some_and(FunctionName::is_component_or_hook),
         Node::Expr(e) => is_forward_ref_or_memo_callback(e),
         _ => false,
     };
-    known.find(node, |it, _| is_one(it).then_some(())).is_some()
+    known
+        .find(node, |it, _| is_component_or_hook_node(it).then_some(()))
+        .is_some()
 }
 
-/// Ranges of the text, to ask in how many of them a position is.
+/// A set of text ranges that can answer how many of them contain an offset.
 pub(crate) struct Ranges {
     /// Sorted.
     starts: Vec<u32>,
@@ -183,45 +235,50 @@ pub(crate) struct Ranges {
 
 impl Ranges {
     pub(crate) fn new(ranges: impl Iterator<Item = Span>) -> Ranges {
-        let (mut starts, mut ends): (Vec<u32>, Vec<u32>) = ranges.map(|it| (it.start, it.end)).unzip();
+        let (mut starts, mut ends): (Vec<u32>, Vec<u32>) =
+            ranges.map(|it| (it.start, it.end)).unzip();
         starts.sort_unstable();
         ends.sort_unstable();
         Ranges { starts, ends }
     }
 
-    pub(crate) fn count_around(&self, at: u32) -> usize {
-        self.starts.partition_point(|it| *it <= at).saturating_sub(self.ends.partition_point(|it| *it <= at))
+    pub(crate) fn count_containing(&self, at: u32) -> usize {
+        self.starts
+            .partition_point(|it| *it <= at)
+            .saturating_sub(self.ends.partition_point(|it| *it <= at))
     }
 
     pub(crate) fn contains(&self, at: u32) -> bool {
-        self.count_around(at) != 0
+        self.count_containing(at) != 0
     }
 }
 
-/// What is asked about every hook, and computed once for the file.
+/// Per-file data that every hook check needs, computed once.
 #[derive(Default)]
 pub(crate) struct Memo<'a> {
     do_while_loops: OnceCell<Ranges>,
     try_statements: OnceCell<Ranges>,
-    /// For oxlint: the calls in which a function that `useEffectEvent` returns can be referred to.
+    /// oxlint only: the calls inside which a function returned by `useEffectEvent` may be referenced.
     pub(crate) effects: OnceCell<Ranges>,
-    /// The lines after those on which a comment `$FlowFixMe[react-rule-hook]` ends, sorted.
+    /// The sorted line numbers that follow a line where a `$FlowFixMe[react-rule-hook]` comment ends.
     suppressed_lines: OnceCell<Vec<u32>>,
-    /// Whether something is a component or a hook, or in one.
+    /// Caches whether a node is a component or a hook, or is inside one.
     pub(crate) inside_component_or_hook: AncestorMemo<'a, ()>,
-    /// For oxlint: the function around something,
-    pub(crate) function_around: AncestorMemo<'a, Func<'a>>,
-    /// and whether it is in a call of `memo` or `forwardRef`.
+    /// oxlint only: caches a node's enclosing function.
+    pub(crate) enclosing_function: AncestorMemo<'a, Func<'a>>,
+    /// oxlint only: caches whether a node is inside a `memo` or `forwardRef` call.
     pub(crate) in_memo_or_forward_ref: AncestorMemo<'a, ()>,
 }
 
 impl<'a> Memo<'a> {
     pub(crate) fn do_while_loops(&self, file: &'a File<'a>) -> &Ranges {
-        self.do_while_loops.get_or_init(|| Ranges::new(file.stmts_of_kind(StmtTag::DoWhile).map(Stmt::span)))
+        self.do_while_loops
+            .get_or_init(|| Ranges::new(file.stmts_of_kind(StmtTag::DoWhile).map(Stmt::span)))
     }
 
     pub(crate) fn try_statements(&self, file: &'a File<'a>) -> &Ranges {
-        self.try_statements.get_or_init(|| Ranges::new(file.stmts_of_kind(StmtTag::Try).map(Stmt::span)))
+        self.try_statements
+            .get_or_init(|| Ranges::new(file.stmts_of_kind(StmtTag::Try).map(Stmt::span)))
     }
 
     fn is_inside_do_while_loop(&self, e: Expr<'a>) -> bool {
@@ -232,7 +289,7 @@ impl<'a> Memo<'a> {
         self.try_statements(e.file()).contains(e.span().start)
     }
 
-    /// A comment `$FlowFixMe[react-rule-hook]` ends on the line before.
+    /// True if a `$FlowFixMe[react-rule-hook]` comment ends on the previous line.
     fn has_flow_suppression(&self, hook: Expr<'a>) -> bool {
         const SUPPRESSION: &[u8] = b"$FlowFixMe[react-rule-hook]";
         let file = hook.file();
@@ -240,26 +297,35 @@ impl<'a> Memo<'a> {
             if !strings::contains(file.text(), SUPPRESSION) {
                 return Vec::new();
             }
-            let comments = file.comments().filter(|it| strings::contains(it.value(), SUPPRESSION));
+            let comments = file
+                .comments()
+                .filter(|it| strings::contains(it.value(), SUPPRESSION));
             let mut lines: Vec<u32> = comments.map(|it| file.line_of(it.end()) + 1).collect();
             lines.sort_unstable();
             lines
         });
-        !lines.is_empty() && lines.binary_search(&file.line_of(hook.span().start)).is_ok()
+        !lines.is_empty()
+            && lines
+                .binary_search(&file.line_of(hook.span().start))
+                .is_ok()
     }
 }
 
-/// The `useEffect` of `React.useEffect`.
+/// Returns the `useEffect` in `React.useEffect`.
 fn name_without_react_namespace(callee: Expr) -> Option<Name> {
     match callee.kind() {
         ExprKind::Ident(name) => Some(name),
-        ExprKind::Dot { obj, name, .. } if obj.is_ident("React") && !name.bytes().starts_with(b"#") => Some(name.name()),
+        ExprKind::Dot { obj, name, .. }
+            if obj.is_ident("React") && !name.bytes().starts_with(b"#") =>
+        {
+            Some(name.name())
+        }
         _ => None,
     }
 }
 
-/// The number of routes through a part of a code path, which doubles with every `if`. It is only compared, with 0 and with another:
-/// so it is kept modulo a prime.
+/// The number of paths through part of a code path, which doubles with every `if`. It's only ever compared with 0 or
+/// with another count, so it's stored modulo a prime.
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct Count {
     residue: u64,
@@ -286,7 +352,8 @@ impl Count {
 
     fn times(self, other: Count) -> Count {
         Count {
-            residue: (u128::from(self.residue) * u128::from(other.residue) % u128::from(Count::MODULUS)) as u64,
+            residue: (u128::from(self.residue) * u128::from(other.residue)
+                % u128::from(Count::MODULUS)) as u64,
             is_zero: self.is_zero || other.is_zero,
         }
     }
@@ -298,7 +365,7 @@ enum Direction {
     ToEnd,
 }
 
-/// What is computed about the segments of one code path that has calls of hooks.
+/// Per-segment data for one code path that contains hook calls.
 struct Paths<'a> {
     /// The ids of the segments that end with a `throw`.
     thrown: FxHashSet<u32>,
@@ -306,33 +373,34 @@ struct Paths<'a> {
     cyclic: FxHashSet<u32>,
     from_start: FxHashMap<u32, Count>,
     to_end: FxHashMap<u32, Count>,
-    /// `None` while it is computed.
+    /// `None` while it's being computed.
     shortest: FxHashMap<u32, Option<u32>>,
-    /// A call that cannot be reached is counted for the segment of the code path around that the function is in. Upstream looks at
-    /// that while it is analyzed, when it leads nowhere yet and nothing made later leads to it.
+    /// An unreachable call is counted against the segment of the enclosing code path that contains the function.
+    /// Upstream looks at that segment while its code path is still being analyzed, when it has no successors yet and no
+    /// later segment leads to it.
     outer: Option<Segment<'a>>,
 }
 
-/// The segments whose count from the start has come out as zero while one segment is asked for.
+/// The segments whose count from the start came out as zero during one top-level call to `count`.
 ///
-/// Upstream keeps no count that is zero, and counts anew each time: in a loop that takes twice as long with every `if`. A count is zero
-/// because all routes from the start to the segment lead through segments of the stack. Until the topmost of these leaves the stack it
-/// comes out as zero again, and counting it again finds nothing new to be in a cycle but the frames of the stack above the lowest of
-/// them. When the topmost leaves the stack with zero itself, the same holds with the segments that made it zero: its group takes over
-/// those that it owns.
+/// Upstream doesn't cache a zero count and recounts it every time, which in a loop doubles the work with every `if`. A
+/// count is zero because every path from the start to the segment goes through segments that are on the stack. Until
+/// the topmost of those is popped, a recount gives zero again, and the only new cycle members it can find are the stack
+/// frames above the lowest of them. If the topmost one is itself popped with a zero count, the same holds for the
+/// segments that made it zero, so its group absorbs the groups it owns.
 #[derive(Default)]
 struct Zeros {
-    /// The group of each segment, by its id.
+    /// Maps each segment's id to its group.
     group_of: FxHashMap<u32, usize>,
     groups: Vec<ZeroGroup>,
 }
 
 struct ZeroGroup {
-    /// The group that has taken it over, or itself.
+    /// The group that absorbed it, or itself.
     parent: usize,
-    /// `Frame::cyclic_from` of the frame that it was made for.
+    /// `Frame::cyclic_from` of the frame it was created for.
     cyclic_from: usize,
-    /// Where in the stack the frame is that owns it.
+    /// The stack index of the frame that owns it.
     owner: usize,
     is_valid: bool,
 }
@@ -340,7 +408,12 @@ struct ZeroGroup {
 impl Zeros {
     fn find(&mut self, group: usize) -> usize {
         let mut root = group;
-        while let Some(parent) = self.groups.get(root).map(|it| it.parent).filter(|it| *it != root) {
+        while let Some(parent) = self
+            .groups
+            .get(root)
+            .map(|it| it.parent)
+            .filter(|it| *it != root)
+        {
             root = parent;
         }
         let mut at = group;
@@ -350,14 +423,17 @@ impl Zeros {
         root
     }
 
-    /// `cyclic_from` and `owner` of the group of `segment`, if its count is still known to be zero.
+    /// Returns `cyclic_from` and `owner` of `segment`'s group, if its count is still known to be zero.
     fn get(&mut self, segment: u32) -> Option<(usize, usize)> {
         let group = *self.group_of.get(&segment)?;
         let root = self.find(group);
-        self.groups.get(root).filter(|it| it.is_valid).map(|it| (it.cyclic_from, it.owner))
+        self.groups
+            .get(root)
+            .filter(|it| it.is_valid)
+            .map(|it| (it.cyclic_from, it.owner))
     }
 
-    /// Makes a group for `segment`, which takes over the groups `owned`.
+    /// Creates a group for `segment` that absorbs the groups in `owned`.
     fn add(&mut self, segment: u32, cyclic_from: usize, owner: usize, owned: &[usize]) -> usize {
         let group = self.groups.len();
         self.groups.push(ZeroGroup {
@@ -376,8 +452,8 @@ impl Zeros {
         group
     }
 
-    /// The frame that owns the groups `owned` has left the stack with a count that is not zero.
-    fn forget(&mut self, owned: &[usize]) {
+    /// Invalidates the groups in `owned`, because the frame that owns them was popped with a nonzero count.
+    fn invalidate(&mut self, owned: &[usize]) {
         for &it in owned {
             let root = self.find(it);
             if let Some(root) = self.groups.get_mut(root) {
@@ -397,28 +473,34 @@ impl<'a> Paths<'a> {
             Direction::FromStart => segment.prev_segments(),
             Direction::ToEnd => segment.next_segments(),
         };
-        if let Some(outer) = self.outer.filter(|outer| outer.code_path() == segment.code_path()) {
-            all.retain(|it| it.id() <= outer.id() && (direction == Direction::FromStart || segment != outer));
+        if let Some(outer) = self
+            .outer
+            .filter(|outer| outer.code_path() == segment.code_path())
+        {
+            all.retain(|it| {
+                it.id() <= outer.id() && (direction == Direction::FromStart || segment != outer)
+            });
         }
         all
     }
 
-    /// `countPathsFromStart` and `countPathsToEnd`, which also find the segments that are in a cycle.
+    /// `countPathsFromStart` and `countPathsToEnd`. They also find the segments that are in a cycle.
     fn count(&mut self, start: Segment<'a>, direction: Direction) -> Count {
         struct Frame<'a> {
             segment: Segment<'a>,
             neighbors: Segments<'a>,
             next: usize,
             sum: Count,
-            /// The frames from this position in the stack up to this one are in a cycle.
+            /// The frames from this stack index up to this frame are in a cycle.
             cyclic_from: usize,
-            /// Where in the stack the segments are that the routes from here have led back to. Only from the start.
-            met: BinaryHeap<usize>,
-            /// The groups of `zeros` that are zero as long as this frame is in the stack.
+            /// The stack indices of the segments that paths from here have led back to. Only used when counting from
+            /// the start.
+            back_edge_targets: BinaryHeap<usize>,
+            /// The groups in `zeros` that stay zero as long as this frame is on the stack.
             owned: Vec<usize>,
         }
         let mut stack: Vec<Frame<'a>> = Vec::new();
-        // Where each segment of the stack is in it.
+        // The stack index of each segment that's on the stack.
         let mut positions: FxHashMap<u32, usize> = FxHashMap::default();
         let mut zeros = Zeros::default();
         let mut entering = Some(start);
@@ -433,7 +515,7 @@ impl<'a> Paths<'a> {
                     if let Some(top) = stack.last_mut() {
                         top.cyclic_from = top.cyclic_from.min(at + 1);
                         if direction == Direction::FromStart {
-                            top.met.push(at);
+                            top.back_edge_targets.push(at);
                         }
                     }
                     returned = Count::ZERO;
@@ -442,20 +524,28 @@ impl<'a> Paths<'a> {
                 } else if let Some((cyclic_from, owner)) = zeros.get(segment.id()) {
                     if let Some(top) = stack.last_mut() {
                         top.cyclic_from = top.cyclic_from.min(cyclic_from);
-                        top.met.push(owner);
+                        top.back_edge_targets.push(owner);
                     }
                     returned = Count::ZERO;
                 } else {
                     let is_thrown = self.thrown.contains(&segment.id());
-                    let neighbors = if is_thrown { Segments::new() } else { self.neighbors(segment, direction) };
+                    let neighbors = if is_thrown {
+                        Segments::new()
+                    } else {
+                        self.neighbors(segment, direction)
+                    };
                     positions.insert(segment.id(), stack.len());
                     stack.push(Frame {
                         segment,
-                        sum: if is_thrown || !neighbors.is_empty() { Count::ZERO } else { Count::ONE },
+                        sum: if is_thrown || !neighbors.is_empty() {
+                            Count::ZERO
+                        } else {
+                            Count::ONE
+                        },
                         neighbors,
                         next: 0,
                         cyclic_from: usize::MAX,
-                        met: BinaryHeap::new(),
+                        back_edge_targets: BinaryHeap::new(),
                         owned: Vec::new(),
                     });
                     returned = Count::ZERO;
@@ -484,27 +574,33 @@ impl<'a> Paths<'a> {
             }
             match direction {
                 Direction::FromStart => {
-                    while top.met.peek().is_some_and(|it| *it >= position) {
-                        top.met.pop();
+                    while top
+                        .back_edge_targets
+                        .peek()
+                        .is_some_and(|it| *it >= position)
+                    {
+                        top.back_edge_targets.pop();
                     }
-                    // There is a route from the start to a segment that can be reached: it was asked from inside a cycle.
+                    // A reachable segment always has a path from the start, so a zero only means the count was
+                    // requested from inside a cycle.
                     if segment.is_reachable() && sum.is_zero {
                         self.from_start.remove(&segment.id());
-                        match top.met.peek() {
+                        match top.back_edge_targets.peek() {
                             Some(&owner) => {
-                                let group = zeros.add(segment.id(), top.cyclic_from, owner, &top.owned);
+                                let group =
+                                    zeros.add(segment.id(), top.cyclic_from, owner, &top.owned);
                                 if let Some(frame) = stack.get_mut(owner) {
                                     frame.owned.push(group);
                                 }
                             }
-                            None => zeros.forget(&top.owned),
+                            None => zeros.invalidate(&top.owned),
                         }
                     } else {
                         self.from_start.insert(segment.id(), sum);
-                        zeros.forget(&top.owned);
+                        zeros.invalidate(&top.owned);
                     }
                     if let Some(below) = stack.last_mut() {
-                        below.met.append(&mut top.met);
+                        below.back_edge_targets.append(&mut top.back_edge_targets);
                     }
                 }
                 Direction::ToEnd => {
@@ -555,7 +651,11 @@ impl<'a> Paths<'a> {
                 entering = Some(prev);
                 continue;
             }
-            let length = if top.prev.is_empty() { 1 } else { top.length.saturating_add(1) };
+            let length = if top.prev.is_empty() {
+                1
+            } else {
+                top.length.saturating_add(1)
+            };
             self.shortest.insert(top.segment.id(), Some(length));
             stack.pop();
             if stack.is_empty() {
@@ -568,18 +668,59 @@ impl<'a> Paths<'a> {
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The calls of hooks.
+    /// The hook calls.
     calls: Vec<Expr<'a>>,
-    /// The segments that have started and not ended, of all code paths. Only those that can be reached.
+    /// The segments of all code paths that have started but not ended. Only reachable ones.
     segments: Vec<Segment<'a>>,
-    /// The callees that are hooks, with the segment that each is in, of the code paths that have not ended.
+    /// The callees that are hooks, each with its segment, for the code paths that haven't ended.
     hooks: Vec<(Option<Segment<'a>>, Expr<'a>)>,
-    /// Where those of each code path start in `hooks`.
+    /// The index in `hooks` where each code path's entries start.
     starts: Vec<usize>,
 }
 
+/// The hint for a conditional hook. Points at the condition or early return that decides whether `func` calls `hook`.
+fn why_conditional<'a>(hook: Expr<'a>, func: Func<'a>) -> Option<String> {
+    let file = hook.file();
+    let mut inner = Node::Expr(hook);
+    for outer in inner.ancestors().take_while(|it| *it != Node::Func(func)) {
+        let decides = match outer {
+            Node::Case(_) => true,
+            Node::Stmt(it) => it
+                .as_if()
+                .is_some_and(|(test, ..)| Node::Expr(test) != inner),
+            Node::Expr(it) => match it.kind() {
+                ExprKind::Cond { test, .. } => Node::Expr(test) != inner,
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    right,
+                    ..
+                } => Node::Expr(right) == inner,
+                _ => false,
+            },
+            _ => false,
+        };
+        if decides {
+            let line = file.line_of(outer.span().start);
+            return Some(format!(
+                "Whether it is called depends on the condition on line {line}."
+            ));
+        }
+        inner = outer;
+    }
+    let early = func
+        .returns()
+        .filter(|it| it.span().end <= hook.span().start)
+        .min_by_key(|it| it.span().start)?;
+    let line = file.line_of(early.span().start);
+    Some(format!(
+        "The return on line {line} can end the render before it is called."
+    ))
+}
+
 impl Rule for RulesOfHooks {
-    const META: Meta = Meta::plugin(Plugin::ReactHooks, "rules-of-hooks", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::ReactHooks, "rules-of-hooks", Kind::Problem)
+        .recommended()
+        .hints();
     const ON: On = On::new().finish();
     type State<'a> = State<'a>;
 
@@ -589,17 +730,25 @@ impl Rule for RulesOfHooks {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let mut state = State::default();
-        // A file has many times as many calls as names.
-        let mut is_name_of_hook = ByName::default();
-        let may_call_a_hook = file.mentions_name_of_hook();
-        for e in file.exprs_of_kind(ExprTag::Call).filter(|_| may_call_a_hook) {
+        // Cache by name, because a file has many times more calls than names.
+        let mut hook_name_cache = ByName::default();
+        let may_call_a_hook = file.mentions_hook_name();
+        for e in file
+            .exprs_of_kind(ExprTag::Call)
+            .filter(|_| may_call_a_hook)
+        {
             let Some(callee) = e.as_call().map(Call::callee) else {
                 continue;
             };
-            let Some(name) = callee.as_ident().or_else(|| callee.member_name().map(|it| it.name())) else {
+            let Some(name) = callee
+                .as_ident()
+                .or_else(|| callee.member_name().map(|it| it.name()))
+            else {
                 continue;
             };
-            if is_name_of_hook.get_or_insert_with(name, || is_hook_name(name.bytes())) && is_hook(callee) {
+            if hook_name_cache.get_or_insert_with(name, || is_hook_name(name.bytes()))
+                && calls_hook(callee)
+            {
                 state.calls.push(e);
             }
         }
@@ -623,16 +772,16 @@ fn checks_effect_events(file: &File) -> bool {
     file.mentions("useEffectEvent") && !oxlint::is_followed(file)
 }
 
-/// A call in a statement at the top of a code path, in a part of it that is always evaluated.
-struct AtTheTop<'a> {
-    /// What the code path starts with.
+/// A call in a top-level statement of a code path, in a part of the statement that's always evaluated.
+struct TopLevelCall<'a> {
+    /// The node that starts the code path.
     root: Node<'a>,
-    /// From where the code path starts to the statement. Empty in the body of an arrow function that is an expression.
+    /// From the start of the code path to the statement. Empty in an arrow function's expression body.
     before: Span,
 }
 
-/// `steps`: how many more levels can be looked at.
-fn at_the_top_of_its_code_path<'a>(call: Expr<'a>, steps: &mut usize) -> Option<AtTheTop<'a>> {
+/// `steps`: the remaining budget of levels to climb.
+fn as_top_level_call<'a>(call: Expr<'a>, steps: &mut usize) -> Option<TopLevelCall<'a>> {
     let mut child = call;
     let statement = loop {
         *steps = steps.checked_sub(1)?;
@@ -654,9 +803,13 @@ fn at_the_top_of_its_code_path<'a>(call: Expr<'a>, steps: &mut usize) -> Option<
                     | ExprKind::Spread(_)
                     | ExprKind::Unary { .. }
                     | ExprKind::Await(_) => !parent.is_assignment_target(),
-                    ExprKind::Binary { op, left, .. } => !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) || left == child,
+                    ExprKind::Binary { op, left, .. } => {
+                        !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) || left == child
+                    }
                     ExprKind::Cond { test, .. } => test == child,
-                    ExprKind::Assign { op: None, value, .. } => value == child && !parent.is_assignment_target(),
+                    ExprKind::Assign {
+                        op: None, value, ..
+                    } => value == child && !parent.is_assignment_target(),
                     _ => false,
                 };
                 if !is_always_evaluated {
@@ -664,14 +817,21 @@ fn at_the_top_of_its_code_path<'a>(call: Expr<'a>, steps: &mut usize) -> Option<
                 }
                 child = parent;
             }
-            Node::VarDecl(declarator) if declarator.init() == Some(child) => match declarator.parent() {
-                Node::Stmt(statement) if !statement.is_wrapper() => break statement,
-                _ => return None,
-            },
-            Node::Stmt(statement) if matches!(statement.tag(), StmtTag::Expr | StmtTag::Return) && !statement.is_wrapper() => break statement,
-            // The body of an arrow function.
+            Node::VarDecl(declarator) if declarator.init() == Some(child) => {
+                match declarator.parent() {
+                    Node::Stmt(statement) if !statement.is_wrapper() => break statement,
+                    _ => return None,
+                }
+            }
+            Node::Stmt(statement)
+                if matches!(statement.tag(), StmtTag::Expr | StmtTag::Return)
+                    && !statement.is_wrapper() =>
+            {
+                break statement;
+            }
+            // An arrow function's expression body.
             Node::Func(func) => {
-                return Some(AtTheTop {
+                return Some(TopLevelCall {
                     root: Node::Func(func),
                     before: Span::empty(0),
                 });
@@ -685,26 +845,31 @@ fn at_the_top_of_its_code_path<'a>(call: Expr<'a>, steps: &mut usize) -> Option<
         Node::File(_) => 0,
         _ => return None,
     };
-    Some(AtTheTop {
+    Some(TopLevelCall {
         root,
         before: Span::new(start, statement.span().start),
     })
 }
 
-/// What the code path that each of `calls` is in starts with, if the syntax tells that every way through it leads through the call
-/// once: the call is at the top of the code path, and nothing before can end the code path or go on forever. That holds for nearly
-/// every call of a hook, and saves the analysis of the file. It gives up where the code is nested so deeply that the analysis costs
-/// less: it takes time in proportion to the number of calls and of statements.
+/// Fast path that skips code path analysis. Returns the node that starts the code path of each of `calls`, if the
+/// syntax alone shows that every path through it runs the call exactly once. That means the call is at the top level of
+/// the code path and nothing before it can end the code path or loop forever, which is true for nearly every hook call.
+/// Gives up if the code is nested so deeply that the analysis would be cheaper, so its cost stays proportional to the
+/// number of calls and statements.
 fn roots_if_always_called<'a>(file: &'a File<'a>, calls: &[Expr<'a>]) -> Option<Vec<Node<'a>>> {
     const STEPS_FOR_EACH: usize = 32;
     let mut steps = STEPS_FOR_EACH * (calls.len() + 8);
-    let calls: Vec<AtTheTop<'a>> = calls.iter().map(|it| at_the_top_of_its_code_path(*it, &mut steps)).collect::<Option<_>>()?;
-    // For each code path, where the last of the statements starts.
+    let calls: Vec<TopLevelCall<'a>> = calls
+        .iter()
+        .map(|it| as_top_level_call(*it, &mut steps))
+        .collect::<Option<_>>()?;
+    // For each code path, the start of the last of those statements.
     let mut last: FxHashMap<Node<'a>, u32> = FxHashMap::default();
     for call in &calls {
         let last = last.entry(call.root).or_insert(0);
         *last = call.before.end.max(*last);
     }
+    #[expect(clippy::iter_over_hash_type, reason = "only checks if any matches")]
     for (root, before) in &last {
         if let Node::Func(func) = root
             && func.returns().any(|it| it.span().start < *before)
@@ -713,19 +878,30 @@ fn roots_if_always_called<'a>(file: &'a File<'a>, calls: &[Expr<'a>]) -> Option<
         }
     }
     let before = Ranges::new(calls.iter().map(|it| it.before));
-    let ends_or_repeats = [StmtTag::Throw, StmtTag::For, StmtTag::While, StmtTag::DoWhile];
-    let earlier = ends_or_repeats.into_iter().flat_map(|tag| file.stmts_of_kind(tag)).filter(|it| before.contains(it.span().start));
+    let ends_or_repeats = [
+        StmtTag::Throw,
+        StmtTag::For,
+        StmtTag::While,
+        StmtTag::DoWhile,
+    ];
+    let earlier = ends_or_repeats
+        .into_iter()
+        .flat_map(|tag| file.stmts_of_kind(tag))
+        .filter(|it| before.contains(it.span().start));
     for statement in earlier {
         steps += STEPS_FOR_EACH;
-        let mut around = Node::Stmt(statement).ancestors();
+        let mut enclosing_nodes = Node::Stmt(statement).ancestors();
         let root = loop {
             steps = steps.checked_sub(1)?;
-            match around.next() {
+            match enclosing_nodes.next() {
                 Some(it) if !bun_lint::code_path::starts_code_path(it) => {}
                 root => break root,
             }
         };
-        if root.and_then(|root| last.get(&root)).is_some_and(|before| statement.span().start < *before) {
+        if root
+            .and_then(|root| last.get(&root))
+            .is_some_and(|before| statement.span().start < *before)
+        {
             return None;
         }
     }
@@ -746,7 +922,7 @@ impl RulesOfHooks {
         }
     }
 
-    /// Analyzes the file, and does what upstream does in its listeners.
+    /// Runs code path analysis on the file and does what upstream's listeners do.
     fn analyze<'a>(&self, cx: &mut Cx<'a, Self>) {
         let mut memo = Memo::default();
         for step in steps(cx.file(), ExprTag::Call.into(), NodeTags::EMPTY) {
@@ -763,7 +939,7 @@ impl RulesOfHooks {
                 }
                 Step::Enter(Node::Expr(e)) => {
                     if let Some(call) = e.as_call()
-                        && is_hook(call.callee())
+                        && calls_hook(call.callee())
                     {
                         let segment = cx.state.segments.last().copied();
                         cx.state.hooks.push((segment, call.callee()));
@@ -774,7 +950,8 @@ impl RulesOfHooks {
         }
     }
 
-    /// `node`: what the code path starts with. `code_path`: `None` if every way through it leads through each of `hooks` once.
+    /// `node`: the node that starts the code path. `code_path`: `None` if every path through it runs each of `hooks`
+    /// exactly once.
     fn check_hooks<'a>(
         &self,
         node: Node<'a>,
@@ -783,42 +960,57 @@ impl RulesOfHooks {
         memo: &mut Memo<'a>,
         cx: &Cx<'a, Self>,
     ) {
-        // The routes, how many lead from the start to the end, and the length of the shortest.
+        // The path data, the number of paths from start to end, and the length of the shortest one.
         let mut analyzed = code_path.map(|code_path| {
             let mut paths = Paths {
-                thrown: code_path.thrown_segments().iter().map(|it| it.id()).collect(),
+                thrown: code_path
+                    .thrown_segments()
+                    .iter()
+                    .map(|it| it.id())
+                    .collect(),
                 cyclic: FxHashSet::default(),
                 from_start: FxHashMap::default(),
                 to_end: FxHashMap::default(),
                 shortest: FxHashMap::default(),
-                outer: hooks.iter().find_map(|it| it.0.filter(|segment| segment.code_path() != code_path)),
+                outer: hooks
+                    .iter()
+                    .find_map(|it| it.0.filter(|segment| segment.code_path() != code_path)),
             };
-            let all_paths_from_start_to_end = paths.count(code_path.initial_segment(), Direction::ToEnd);
+            let all_paths_from_start_to_end =
+                paths.count(code_path.initial_segment(), Direction::ToEnd);
             let mut shortest_final_path_length = INFINITY;
             for segment in code_path.final_segments() {
                 if segment.is_reachable() {
-                    shortest_final_path_length = shortest_final_path_length.min(paths.shortest_path_length_to_start(segment));
+                    shortest_final_path_length = shortest_final_path_length
+                        .min(paths.shortest_path_length_to_start(segment));
                 }
             }
-            (paths, all_paths_from_start_to_end, shortest_final_path_length)
+            (
+                paths,
+                all_paths_from_start_to_end,
+                shortest_final_path_length,
+            )
         });
 
         let func = node.as_func();
         let function_name = func.and_then(get_function_name);
         let follows_oxlint = oxlint::is_followed(cx.file());
-        let is_somewhere_inside_component_or_hook = !follows_oxlint && is_inside_component_or_hook(node, &mut memo.inside_component_or_hook);
+        let is_somewhere_inside_component_or_hook = !follows_oxlint
+            && is_inside_component_or_hook(node, &mut memo.inside_component_or_hook);
         let function_expr = match (node, func.map(Func::owner)) {
             (Node::Expr(e), _) | (_, Some(Node::Expr(e))) => Some(e),
             _ => None,
         };
         let is_directly_inside_component_or_hook = match function_name {
-            Some(name) => name.is_component_or_hook(),
+            Some(name) => name.is_component_or_hook() || is_story_render(name, cx.file()),
             None => function_expr.is_some_and(is_forward_ref_or_memo_callback),
         };
-        // It is the value of a method or of a property of a class.
+        // True if it's the value of a class method or property.
         let is_in_class = match (func.map(Func::owner), function_expr.map(Expr::parent)) {
             (Some(Node::Member(member)), _) => member.kind() != MemberKind::StaticBlock,
-            (_, Some(Node::Member(member))) => member.init() == function_expr && !member.flags().contains(Flags::ACCESSOR),
+            (_, Some(Node::Member(member))) => {
+                member.init() == function_expr && !member.flags().contains(Flags::ACCESSOR)
+            }
             _ => false,
         };
 
@@ -829,16 +1021,20 @@ impl RulesOfHooks {
                 is_cyclic: false,
                 is_conditional: false,
             };
-            if let Some((paths, all_paths_from_start_to_end, shortest_final_path_length)) = &mut analyzed {
+            if let Some((paths, all_paths_from_start_to_end, shortest_final_path_length)) =
+                &mut analyzed
+            {
                 flow.is_reachable = false;
                 if let Some(segment) = segment.filter(|it| it.is_reachable()) {
                     let length = paths.shortest_path_length_to_start(segment);
-                    possibly_has_early_return = match paths.neighbors(segment, Direction::ToEnd).is_empty() {
-                        true => *shortest_final_path_length <= length,
-                        false => *shortest_final_path_length < length,
-                    };
-                    let paths_from_start_to_end =
-                        paths.count(segment, Direction::FromStart).times(paths.count(segment, Direction::ToEnd));
+                    possibly_has_early_return =
+                        match paths.neighbors(segment, Direction::ToEnd).is_empty() {
+                            true => *shortest_final_path_length <= length,
+                            false => *shortest_final_path_length < length,
+                        };
+                    let paths_from_start_to_end = paths
+                        .count(segment, Direction::FromStart)
+                        .times(paths.count(segment, Direction::ToEnd));
                     flow = Flow {
                         is_reachable: true,
                         is_cyclic: paths.cyclic.contains(&segment.id()),
@@ -894,12 +1090,20 @@ impl RulesOfHooks {
                     true => " Did you accidentally call a React Hook after an early return?",
                     false => "",
                 };
-                report(message).data("hint", hint).data("function", function_name.map_or(&b""[..], |it| cx.slice(it.span())));
+                report(message)
+                    .data("hint", hint)
+                    .data(
+                        "function",
+                        function_name.map_or(&b""[..], |it| cx.slice(it.span())),
+                    )
+                    .hint_with(|| {
+                        why_conditional(hook, func?).filter(|_| message.text == CONDITIONAL.text)
+                    });
             }
         }
     }
 
-    /// What is about `useEffectEvent`, which upstream does while it walks.
+    /// The `useEffectEvent` checks, which upstream does during its traversal.
     fn check_effect_events<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         let additional_effect_hooks = file
@@ -907,7 +1111,7 @@ impl RulesOfHooks {
             .get(b"react-hooks")
             .and_then(|it| it.get(b"additionalEffectHooks")?.as_str())
             .and_then(|it| Regex::from_bytes(it, b"").ok());
-        // The calls in which such a function can be referred to, in the order in which the walk enters them.
+        // The calls inside which such a function may be referenced, in the order the traversal enters them.
         let mut effects: Vec<Span> = Vec::new();
         let mut functions: Vec<Reference<'a>> = Vec::new();
         let mut inside_component_or_hook = AncestorMemo::default();
@@ -920,7 +1124,9 @@ impl RulesOfHooks {
             };
             let is_effect_event = name.is("useEffectEvent");
             let is_effect = name.is_any(&["useEffect", "useLayoutEffect", "useInsertionEffect"])
-                || additional_effect_hooks.as_ref().is_some_and(|it| it.test(name.bytes()));
+                || additional_effect_hooks
+                    .as_ref()
+                    .is_some_and(|it| it.test(name.bytes()));
             if (is_effect || is_effect_event) && !call.args().is_empty() {
                 effects.push(e.span());
             }
@@ -929,7 +1135,8 @@ impl RulesOfHooks {
             }
             let parent = e.parent();
             let is_expression_statement = matches!(parent, Node::Stmt(stmt) if stmt.tag() == StmtTag::Expr && !stmt.is_wrapper());
-            if e.is_chain_root() || !(matches!(parent, Node::VarDecl(_)) || is_expression_statement) {
+            if e.is_chain_root() || !(matches!(parent, Node::VarDecl(_)) || is_expression_statement)
+            {
                 cx.report(e, EFFECT_EVENT_PASSED_DOWN);
             }
             // `recordAllUseEffectEventFunctions`
@@ -938,7 +1145,9 @@ impl RulesOfHooks {
                 && call.callee().tag() == ExprTag::Ident
                 && declarator.pat().tag() == PatTag::Ident
                 && let Some(symbol) = declarator.pat().symbol()
-                && let Some(declaring) = symbol.references().find(|it| it.span() == declarator.pat().span())
+                && let Some(declaring) = symbol
+                    .references()
+                    .find(|it| it.span() == declarator.pat().span())
                 && let Node::Func(func) = declaring.scope().node()
                 && matches!(func.kind(), FnKind::Decl | FnKind::Arrow)
                 && is_inside_component_or_hook(Node::Func(func), &mut inside_component_or_hook)
@@ -956,14 +1165,25 @@ impl RulesOfHooks {
             let Some(e) = reference.expr().filter(|it| !it.is_jsx_tag_name()) else {
                 continue;
             };
-            // The call that was entered last, if the walk has not left it.
+            // The call entered last, if the traversal hasn't left it yet.
             let entered = effects.partition_point(|it| it.start <= e.span().start);
-            if entered.checked_sub(1).and_then(|at| effects.get(at)).is_some_and(|it| it.contains(e.span())) {
+            if entered
+                .checked_sub(1)
+                .and_then(|at| effects.get(at))
+                .is_some_and(|it| it.contains(e.span()))
+            {
                 continue;
             }
-            let is_called = matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call);
-            let hint = if is_called { "" } else { " It cannot be assigned to a variable or passed down." };
-            cx.report(e, EFFECT_EVENT_FUNCTION).data("function", e.text()).data("hint", hint);
+            let is_called =
+                matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call);
+            let hint = if is_called {
+                ""
+            } else {
+                " It cannot be assigned to a variable or passed down."
+            };
+            cx.report(e, EFFECT_EVENT_FUNCTION)
+                .data("function", e.text())
+                .data("hint", hint);
         }
     }
 }

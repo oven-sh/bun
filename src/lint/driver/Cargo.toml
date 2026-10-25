@@ -14,6 +14,8 @@ bun_lint_plugins.workspace = true
 bun_lint_unicorn.workspace = true
 bun_lint_react.workspace = true
 bun_lint_jest.workspace = true
+bun_lint_json.workspace = true
+bun_lint_markdown.workspace = true
 bun_lint_graph.workspace = true
 bun_lint_conformance.workspace = true
 bun_format.workspace = true
@@ -26,9 +28,11 @@ bun_ast.workspace = true
 bun_clap.workspace = true
 bun_collections.workspace = true
 bun_core.workspace = true
+bun_md.workspace = true
 bun_paths.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
+bun_zstd.workspace = true
 bstr.workspace = true
 
 [lints]

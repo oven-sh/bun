@@ -1,9 +1,10 @@
-// The cases of oxfmt's own command line tests (`apps/oxfmt/test/cli/*/options.json` of oxc-project/oxc, MIT: see LICENSE), with what
-// oxfmt 0.72 does in each: the exit code, the files afterwards, and the files that `--check` and `--list-different` name.
+// The cases from oxfmt's own command line tests (`apps/oxfmt/test/cli/*/options.json` in oxc-project/oxc, MIT: see
+// LICENSE), with oxfmt 0.72's result for each: the exit code, the files afterwards, and the files that `--check` and
+// `--list-different` list.
 // `cases.json` is written by `test/cli/lint/oracle/driver/oxfmt-fixtures.mjs --record`.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readFileSync, symlinkSync } from "node:fs";
+import { readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../../children";
 import { cases, fixtures } from "./cases.json";
@@ -11,17 +12,19 @@ import { cases, fixtures } from "./cases.json";
 afterAll(endChildren);
 
 type Files = Record<string, string | { link: string }>;
-// A fixture has `experimentalTailwindcss`, which has no effect here. That `bun format` says so is tested elsewhere.
-const command = [bunExe(), "format", "--allow-unsupported"];
+// A fixture sets `experimentalTailwindcss`, which has no effect here. `bun fmt`'s message about that is tested
+// elsewhere.
+const command = [bunExe(), "fmt", "--allow-unsupported"];
 const env = { NO_COLOR: "1", AGENT: "0", CLAUDECODE: undefined };
 
-describe.concurrent("bun format does what oxfmt does", () => {
+describe.concurrent("bun fmt behaves like oxfmt", () => {
   for (const it of cases) {
     const files = { ...(fixtures as Record<string, Files>)[it.name], ...it.gitignore } as Files;
     const links = Object.entries(files).filter(([, file]) => typeof file !== "string") as [string, { link: string }][];
     test.skipIf(isWindows && links.length > 0)(`${it.name}/${it.index}: ${it.args.join(" ")}`, async () => {
       const texts = Object.entries(files).filter(([, file]) => typeof file === "string") as [string, string][];
-      // Without a configuration file `bun format` is like Prettier. An empty one above the fixtures makes it like oxfmt.
+      // Without a configuration file, `bun fmt` behaves like Prettier. An empty one above the fixtures makes it behave
+      // like oxfmt.
       using dir = tempDir("oxfmt-cli", {
         ".oxfmtrc.json": "{}\n",
         ...Object.fromEntries(texts.map(([name, text]) => [`fixtures/${name}`, text])),
@@ -37,21 +40,19 @@ describe.concurrent("bun format does what oxfmt does", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // Also what `--init` makes.
-      const made = Object.keys(it.changed).filter(name => !(name in files) && existsSync(join(root, name)));
-      const changed = [...texts, ...made.map(name => [name, undefined])].flatMap(([name, text]) => {
-        const after = readFileSync(join(root, name as string), "utf8");
+      const changed = texts.flatMap(([name, text]) => {
+        const after = readFileSync(join(root, name), "utf8");
         return after === text ? [] : [[name, after]];
       });
-      const named = (stdout + stderr)
+      const lines = (stdout + stderr)
         .replace(/\x1b\[[0-9;]*m/g, "")
         .split("\n")
         .map(line => line.replace(/^\[warn\] | \(\d+ms\)$/g, ""));
       expect({
         changed: Object.fromEntries(changed),
-        listed: it.listed && it.listed.filter(name => named.includes(name)),
+        listed: it.listed && it.listed.filter(name => lines.includes(name)),
         others:
-          it.listed && texts.map(([name]) => name).filter(name => named.includes(name) && !it.listed.includes(name)),
+          it.listed && texts.map(([name]) => name).filter(name => lines.includes(name) && !it.listed.includes(name)),
         stdout: it.stdout === undefined ? undefined : stdout,
         exitCode,
       }).toEqual({

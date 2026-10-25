@@ -1,8 +1,8 @@
+use crate::import_minimatch::Glob;
 use crate::import_type::ImportType::{External, Index, Internal, Parent, Sibling};
 use crate::import_type::ImportTypes;
 use crate::module_visitor::{Systems, Visitor};
 use bun_core::strings;
-use bun_glob::{Options as GlobOptions, Pattern};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use smallvec::SmallVec;
@@ -12,7 +12,7 @@ use std::borrow::Cow;
 pub struct NoInternalModules {
     visitor: Visitor,
     /// `forbidRegexps` if there is a `forbid`, else `allowRegexps`.
-    regexps: Vec<Pattern>,
+    regexps: Vec<Glob>,
     is_forbid: bool,
 }
 
@@ -57,7 +57,7 @@ impl Rule for NoInternalModules {
         let globs = options.array(if is_forbid { "forbid" } else { "allow" }).iter().filter_map(Json::as_str);
         NoInternalModules {
             visitor: Visitor::of(Systems { esmodule: true, commonjs: true, amd: false }),
-            regexps: globs.map(|it| Pattern::new(it, GlobOptions::MINIMATCH_3_MAKE_RE)).collect(),
+            regexps: globs.map(Glob::new).collect(),
             is_forbid,
         }
     }
@@ -89,7 +89,7 @@ impl Rule for NoInternalModules {
                 types.of_name(import_path, visited.is_require)
             } else {
                 let resolved = types.resolvers().resolve(file, import_path, visited.is_require);
-                // What is not found is neither allowed nor forbidden by its path, and is not reported.
+                // A module that doesn't resolve has no path to allow or forbid, so it isn't reported.
                 if resolved.file().is_none_or(|it| self.is_listed(&normalize_sep(it)) != self.is_forbid) {
                     continue;
                 }

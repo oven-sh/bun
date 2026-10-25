@@ -9,14 +9,16 @@ use std::cell::OnceCell;
 /// Enforce consistent usage of type imports.
 pub struct ConsistentTypeImports {
     disallow_type_annotations: bool,
-    /// `fixStyle` is `"inline-type-imports"`, not `"separate-type-imports"`.
+    /// True if `fixStyle` is `"inline-type-imports"`, not `"separate-type-imports"`.
     fixes_inline: bool,
-    /// `prefer` is `"type-imports"`, not `"no-type-imports"`.
+    /// True if `prefer` is `"type-imports"`, not `"no-type-imports"`.
     prefers_type_imports: bool,
 }
 
-const AVOID_IMPORT_TYPE: Message =
-    Message::new("avoidImportType", "Use an `import` instead of an `import type`.");
+const AVOID_IMPORT_TYPE: Message = Message::new(
+    "avoidImportType",
+    "Use an `import` instead of an `import type`.",
+);
 const NO_IMPORT_TYPE_ANNOTATIONS: Message = Message::new(
     "noImportTypeAnnotations",
     "`import()` type annotations are forbidden.",
@@ -33,8 +35,8 @@ const TYPE_OVER_VALUE: Message = Message::new(
 #[derive(Default)]
 pub struct State<'a> {
     imports: Vec<Import<'a>>,
-    /// There is a decorator, in a file for which `experimentalDecorators` and
-    /// `emitDecoratorMetadata` are on: a type next to it can be needed as a value.
+    /// True if there's a decorator in a file that has `experimentalDecorators` and `emitDecoratorMetadata` on. A type
+    /// next to it may then be needed as a value.
     has_decorator_metadata: bool,
 }
 
@@ -60,29 +62,32 @@ impl<'a> Specifier<'a> {
 fn specifiers_of<'a>(import: Import<'a>) -> impl Iterator<Item = Specifier<'a>> {
     let default = import.default().map(|_| Specifier::Default(import));
     let namespace = import.namespace().map(|_| Specifier::Namespace(import));
-    default.into_iter().chain(namespace).chain(import.named().iter().map(Specifier::Named))
+    default
+        .into_iter()
+        .chain(namespace)
+        .chain(import.named().iter().map(Specifier::Named))
 }
 
-/// oxlint does not know what JSX is compiled to, and takes `import React` and `import * as React` for values that it needs,
-/// whatever the file is.
-fn oxlint_takes_for_jsx_factory(file: &File, specifier: Specifier) -> bool {
+/// oxlint doesn't know what JSX compiles to, so it treats `import React` and `import * as React` as values JSX needs,
+/// in any kind of file.
+fn oxlint_treats_as_jsx_factory(file: &File, specifier: Specifier) -> bool {
     file.language().is_oxlint
         && !matches!(specifier, Specifier::Named(_))
         && specifier.local().is_some_and(|it| it.name().is("React"))
 }
 
-/// What is known of all the imports from one module.
+/// What's known about all the imports from one module.
 #[derive(Default)]
 struct SourceImports<'a> {
-    /// The first `import type` with nothing but named imports.
+    /// The first `import type` with only named imports.
     type_only_named_import: Option<Import<'a>>,
-    /// The first import of values with named imports only, or else with a default import.
+    /// The first value import with only named imports, or else with a default import.
     value_import: Option<Import<'a>>,
-    /// The first import of values with nothing but named imports.
+    /// The first value import with only named imports.
     value_only_named_import: Option<Import<'a>>,
 }
 
-/// `imports`: all of the file, in the order of the source.
+/// `imports` holds all of the file's imports, in source order.
 fn source_imports<'a>(imports: &[Import<'a>]) -> FxHashMap<Name<'a>, SourceImports<'a>> {
     let mut sources: FxHashMap<Name<'a>, SourceImports<'a>> = FxHashMap::default();
     for &import in imports {
@@ -92,7 +97,10 @@ fn source_imports<'a>(imports: &[Import<'a>]) -> FxHashMap<Name<'a>, SourceImpor
             if has_only_named {
                 source_imports.type_only_named_import.get_or_insert(import);
             }
-        } else if source_imports.value_only_named_import.is_none() && has_only_named && !import.named().is_empty() {
+        } else if source_imports.value_only_named_import.is_none()
+            && has_only_named
+            && !import.named().is_empty()
+        {
             source_imports.value_only_named_import = Some(import);
             source_imports.value_import = Some(import);
         } else if import.default().is_some() {
@@ -102,19 +110,21 @@ fn source_imports<'a>(imports: &[Import<'a>]) -> FxHashMap<Name<'a>, SourceImpor
     sources
 }
 
-/// An import of values of which some are only used as types.
+/// A value import with some specifiers that are only used as types.
 struct ReportValueImport<'a> {
     import: Import<'a>,
-    /// At least one, in the order of the source.
+    /// At least one, in source order.
     type_specifiers: Vec<Specifier<'a>>,
     has_value_or_unused_specifiers: bool,
 }
 
 impl<'a> ReportValueImport<'a> {
-    /// `specifier`: one of the import.
+    /// `specifier` must belong to this import.
     fn is_type(&self, specifier: Specifier<'a>) -> bool {
         let start = |it: &Specifier<'a>| it.local().map(|it| it.span().start);
-        self.type_specifiers.binary_search_by_key(&start(&specifier), start).is_ok()
+        self.type_specifiers
+            .binary_search_by_key(&start(&specifier), start)
+            .is_ok()
     }
 }
 
@@ -132,14 +142,14 @@ fn has_attributes(import: Import) -> bool {
     (import.stmt().import_attributes()).is_some_and(|attributes| !attributes.entries().is_empty())
 }
 
-/// oxc's `in_ambient_context`, in `class`.
+/// oxc's `in_ambient_context`, inside `class`.
 fn oxlint_is_ambient(class: Class) -> bool {
     class.file().is_declaration_file()
         || class.flags().contains(Flags::AMBIENT)
         || AmbientAncestors::default().has_ambient_typescript_ancestor(class.into())
 }
 
-/// Whether an `import type` would do for `reference`.
+/// True if an `import type` would be enough for `reference`.
 fn is_type_only_use(reference: Reference) -> bool {
     if !reference.is_value() {
         return reference.is_type();
@@ -156,19 +166,23 @@ fn is_type_only_use(reference: Reference) -> bool {
         match child.parent() {
             // `typeof foo.bar`
             Node::Type(ty) => return ty.tag() == TypeTag::Typeof,
-            // `{ [foo.bar]: string }`. For oxlint also `{ [foo.bar](): string }`, and in a class where nothing is evaluated.
+            // `{ [foo.bar]: string }`. For oxlint also `{ [foo.bar](): string }`, and a class member whose key is never
+            // evaluated.
             Node::Member(member) => {
                 return matches!(member.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == child)
                     && match member.parent() {
                         Node::Class(class) => {
                             is_oxlint
-                                && (member.flags().intersects(Flags::ABSTRACT | Flags::AMBIENT) || oxlint_is_ambient(class))
+                                && (member.flags().intersects(Flags::ABSTRACT | Flags::AMBIENT)
+                                    || oxlint_is_ambient(class))
                         }
                         _ => is_oxlint || member.kind() == MemberKind::Property,
                     };
             }
             // `declare class A extends foo.bar {}`
-            Node::Class(class) => return is_oxlint && class.extends() == Some(child) && oxlint_is_ambient(class),
+            Node::Class(class) => {
+                return is_oxlint && class.extends() == Some(child) && oxlint_is_ambient(class);
+            }
             Node::Expr(parent) => match parent.kind() {
                 ExprKind::Call(call) if is_oxlint && call.callee() == child => child = parent,
                 ExprKind::Dot {
@@ -195,7 +209,11 @@ fn fix_remove_type_specifier_from_import_specifier<'a>(
 ) -> Option<Fix> {
     let start = spec.span().start;
     let type_token = Span::new(start, start + "type".len() as u32);
-    let after = fixer.file().tokens_after(type_token).with_comments().next()?;
+    let after = fixer
+        .file()
+        .tokens_after(type_token)
+        .with_comments()
+        .next()?;
     Some(fixer.remove(Span::new(start, after.start())))
 }
 
@@ -205,12 +223,15 @@ fn fix_remove_type_specifier_from_import_declaration<'a>(
     import: Import<'a>,
 ) -> Option<Fix> {
     let file = fixer.file();
-    let type_token = file.tokens_after(import_keyword(import)).next().filter(|it| it.is("type"))?;
+    let type_token = file
+        .tokens_after(import_keyword(import))
+        .next()
+        .filter(|it| it.is("type"))?;
     let after = file.tokens_after(type_token).with_comments().next()?;
     Some(fixer.remove(Span::new(type_token.start(), after.start())))
 }
 
-/// `import Foo` to `import type Foo`.
+/// Turns `import Foo` into `import type Foo`.
 fn fix_insert_type_specifier_for_import_declaration<'a>(
     fixer: Fixer<'a>,
     import: Import<'a>,
@@ -222,15 +243,24 @@ fn fix_insert_type_specifier_for_import_declaration<'a>(
     if is_default_import {
         let source = import.stmt().module_specifier_span()?;
         // `import Foo, {} from 'foo'`
-        let opening = file.tokens_between(import_token, source).find(is_opening_brace_token);
+        let opening = file
+            .tokens_between(import_token, source)
+            .find(is_opening_brace_token);
         if let Some(opening) = opening {
             let comma = file.tokens_before(opening).find(is_comma_token)?;
-            let closing = file.tokens_between(opening, source).find(is_closing_brace_token)?;
+            let closing = file
+                .tokens_between(opening, source)
+                .find(is_closing_brace_token)?;
             fixes.push(fixer.remove(Span::new(comma.start(), closing.end())));
             if specifiers_of(import).count() > 1 {
                 let specifiers_text = file.slice(Span::new(comma.end(), closing.end()));
-                let text =
-                    concat(&[b"\nimport type", specifiers_text, b" from ", file.slice(source), b";"]);
+                let text = concat(&[
+                    b"\nimport type",
+                    specifiers_text,
+                    b" from ",
+                    file.slice(source),
+                    b";",
+                ]);
                 fixes.push(fixer.insert_after(import.stmt(), text));
             }
         }
@@ -238,14 +268,16 @@ fn fix_insert_type_specifier_for_import_declaration<'a>(
     // Not `import type { type T }`.
     for spec in import.named() {
         if spec.is_type_only() {
-            fixes.push(fix_remove_type_specifier_from_import_specifier(fixer, spec)?);
+            fixes.push(fix_remove_type_specifier_from_import_specifier(
+                fixer, spec,
+            )?);
         }
     }
     Some(())
 }
 
-/// What to remove to remove the specifiers from `first` to `last`, and the text to put between
-/// braces to import them.
+/// Returns the range to remove in order to remove the specifiers from `first` to `last`, and the range of the text to
+/// put between braces to import them.
 fn get_named_specifier_ranges<'a>(
     file: &'a File<'a>,
     first: ImportSpec<'a>,
@@ -269,8 +301,8 @@ fn get_named_specifier_ranges<'a>(
     ))
 }
 
-/// How to remove `subset`, which is in the order of the source, from the named specifiers of
-/// `import`, and the text to put between braces to import them.
+/// Returns the fixes that remove `subset`, which is in source order, from `import`'s named specifiers, and the text to
+/// put between braces to import them.
 fn get_fixes_named_specifiers<'a>(
     fixer: Fixer<'a>,
     import: Import<'a>,
@@ -285,9 +317,13 @@ fn get_fixes_named_specifiers<'a>(
     if subset.len() == all.len() {
         // `import Foo, { Type1, Type2 } from 'foo'`: from the comma to the closing brace.
         let source = import.stmt().module_specifier_span()?;
-        let opening = file.tokens_before(*subset.first()?).find(is_opening_brace_token)?;
+        let opening = file
+            .tokens_before(*subset.first()?)
+            .find(is_opening_brace_token)?;
         let comma = file.tokens_before(opening).find(is_comma_token)?;
-        let closing = file.tokens_between(opening, source).find(is_closing_brace_token)?;
+        let closing = file
+            .tokens_between(opening, source)
+            .find(is_closing_brace_token)?;
         removals.push(fixer.remove(Span::new(comma.start(), closing.end())));
         texts.push(file.slice(Span::new(opening.end(), closing.start())));
     } else {
@@ -312,7 +348,7 @@ fn get_fixes_named_specifiers<'a>(
     Some((removals, texts.join(&b","[..])))
 }
 
-/// `import type { Already } from 'foo'` to `import type { Already, Type1, Type2 } from 'foo'`.
+/// Turns `import type { Already } from 'foo'` into `import type { Already, Type1, Type2 } from 'foo'`.
 fn fix_insert_named_specifiers_in_named_specifier_list<'a>(
     fixer: Fixer<'a>,
     target: Import<'a>,
@@ -330,7 +366,7 @@ fn fix_insert_named_specifiers_in_named_specifier_list<'a>(
     Some(fixer.insert_before(closing, concat(&[separator, insert_text])))
 }
 
-/// `import A, { B }` to `import A, { type B }`.
+/// Turns `import A, { B }` into `import A, { type B }`.
 fn fix_inline_type_import_declaration<'a>(
     fixer: Fixer<'a>,
     report: &ReportValueImport<'a>,
@@ -397,7 +433,8 @@ impl ConsistentTypeImports {
         }
 
         let source_text = file.slice(statement.module_specifier_span()?);
-        let type_named: Vec<ImportSpec> = named.iter().filter(|spec| is_named_type(*spec)).collect();
+        let type_named: Vec<ImportSpec> =
+            named.iter().filter(|spec| is_named_type(*spec)).collect();
         let (remove_type_named, type_named_text) =
             get_fixes_named_specifiers(fixer, import, &type_named)?;
         let mut after_fixes = Vec::new();
@@ -414,7 +451,7 @@ impl ConsistentTypeImports {
                     after_fixes.push(insert);
                 }
             } else if self.fixes_inline {
-                // A default type import and named type imports cannot be in one declaration.
+                // A default type import and named type imports can't share a declaration.
                 let mut text = b"import {".to_vec();
                 for (i, spec) in type_named.iter().enumerate() {
                     if i > 0 {
@@ -426,8 +463,13 @@ impl ConsistentTypeImports {
                 text.extend_from_slice(&concat(&[b"} from ", source_text, b";\n"]));
                 fixes.push(fixer.insert_before(statement, text));
             } else {
-                let text =
-                    concat(&[b"import type {", &type_named_text, b"} from ", source_text, b";\n"]);
+                let text = concat(&[
+                    b"import type {",
+                    &type_named_text,
+                    b"} from ",
+                    source_text,
+                    b";\n",
+                ]);
                 fixes.push(fixer.insert_before(statement, text));
             }
         }
@@ -438,8 +480,13 @@ impl ConsistentTypeImports {
             let namespace = import.namespace_span()?;
             let comma = file.tokens_before(namespace).find(is_comma_token)?;
             remove_type_namespace = Some(fixer.remove(Span::new(comma.start(), namespace.end)));
-            let text =
-                concat(&[b"import type ", file.slice(namespace), b" from ", source_text, b";\n"]);
+            let text = concat(&[
+                b"import type ",
+                file.slice(namespace),
+                b" from ",
+                source_text,
+                b";\n",
+            ]);
             fixes.push(fixer.insert_before(statement, text));
         }
         if is_default_type {
@@ -449,8 +496,16 @@ impl ConsistentTypeImports {
             } else {
                 // `import Type , { .. } from 'foo'`
                 let comma = file.tokens_after(default).find(is_comma_token)?;
-                let default_text = strings::trim_js_whitespace(file.slice(Span::new(default.start, comma.start())));
-                let text = concat(&[b"import type ", default_text, b" from ", source_text, b";\n"]);
+                let default_text = strings::trim_js_whitespace(
+                    file.slice(Span::new(default.start, comma.start())),
+                );
+                let text = concat(&[
+                    b"import type ",
+                    default_text,
+                    b" from ",
+                    source_text,
+                    b";\n",
+                ]);
                 fixes.push(fixer.insert_before(statement, text));
                 let after = file.tokens_after(comma).with_comments().next()?;
                 fixes.push(fixer.remove(Span::new(default.start, after.start())));
@@ -474,7 +529,9 @@ impl ConsistentTypeImports {
         for &import in imports.iter().filter(|it| !it.is_type_only()) {
             let statement = import.stmt();
             let scope = match statement.parent() {
-                Node::File(_) => *top_level_scope.get_or_insert_with(|| Node::Stmt(statement).scope()),
+                Node::File(_) => {
+                    *top_level_scope.get_or_insert_with(|| Node::Stmt(statement).scope())
+                }
                 _ => Node::Stmt(statement).scope(),
             };
             let mut type_specifiers = Vec::new();
@@ -483,11 +540,14 @@ impl ConsistentTypeImports {
                 if matches!(specifier, Specifier::Named(spec) if spec.is_type_only()) {
                     continue;
                 }
-                let variable = specifier.local().and_then(|local| scope.get_name(local.name()));
-                let has_only_type_references = !oxlint_takes_for_jsx_factory(cx.file(), specifier) && variable.is_some_and(|variable| {
-                    let mut references = variable.references();
-                    references.len() > 0 && references.all(is_type_only_use)
-                });
+                let variable = specifier
+                    .local()
+                    .and_then(|local| scope.get_name(local.name()));
+                let has_only_type_references = !oxlint_treats_as_jsx_factory(cx.file(), specifier)
+                    && variable.is_some_and(|variable| {
+                        let mut references = variable.references();
+                        references.len() > 0 && references.all(is_type_only_use)
+                    });
                 match has_only_type_references {
                     true => type_specifiers.push(specifier),
                     false => has_value_or_unused_specifiers = true,
@@ -502,24 +562,31 @@ impl ConsistentTypeImports {
             }
         }
 
-        // Only a fix asks.
+        // Only needed by a fix.
         let sources = OnceCell::new();
         let fix = |fixer: Fixer<'a>, report: &ReportValueImport<'a>| {
-            let source_imports = sources.get_or_init(|| source_imports(&imports)).get(&report.import.spec())?;
+            let source_imports = sources
+                .get_or_init(|| source_imports(&imports))
+                .get(&report.import.spec())?;
             self.fix_to_type_import_declaration(fixer, report, source_imports)
         };
         for report in &reports {
             let statement = report.import.stmt();
             if report.has_value_or_unused_specifiers {
-                let locals = report.type_specifiers.iter().filter_map(|specifier| specifier.local());
+                let locals = report
+                    .type_specifiers
+                    .iter()
+                    .filter_map(|specifier| specifier.local());
                 let type_imports = match cx.language().is_oxlint {
-                    true => utils::oxlint::format_word_list(&locals.map(|local| local.bytes()).collect::<Vec<_>>()),
+                    true => utils::oxlint::format_word_list(
+                        &locals.map(|local| local.bytes()).collect::<Vec<_>>(),
+                    ),
                     false => {
                         let in_quotes = locals.map(|local| concat(&[b"\"", local.bytes(), b"\""]));
                         format_word_list(&in_quotes.collect::<Vec<_>>())
                     }
                 };
-                // What oxlint says about its fix.
+                // oxlint's description of its fix.
                 let (import, named) = (report.import, report.import.named());
                 let adds_to_each = self.fixes_inline
                     && import.namespace().is_none()
@@ -534,7 +601,9 @@ impl ConsistentTypeImports {
                 let problem = match (cx.language().is_oxlint, adds_to_each) {
                     (false, _) => problem,
                     (true, true) => problem.help("Add type specifier to imported types"),
-                    (true, false) => problem.help("Mark all type-only imports with the type specifier"),
+                    (true, false) => {
+                        problem.help("Mark all type-only imports with the type specifier")
+                    }
                 };
                 problem.fix(|fixer| fix(fixer, report));
             } else if !has_attributes(report.import) {
@@ -547,8 +616,9 @@ impl ConsistentTypeImports {
 }
 
 impl Rule for ConsistentTypeImports {
-    const META: Meta =
-        Meta::typescript("consistent-type-imports", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::typescript("consistent-type-imports", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .uses_types();
     const ON: On = On::new()
         .stmts(&[StmtTag::Import])
         .types(&[TypeTag::Import])
@@ -578,13 +648,21 @@ impl Rule for ConsistentTypeImports {
             return on.import_specs();
         }
 
-        // `parserOptions` say it only where there is no program to say it.
+        // `parserOptions` only matter if there's no program to get the options from.
         let (experimental_decorators, emit_decorator_metadata) = match file.types() {
             Some(types) => {
                 let options = types.compiler_options();
-                (options.experimental_decorators, options.emit_decorator_metadata)
+                (
+                    options.experimental_decorators,
+                    options.emit_decorator_metadata,
+                )
             }
-            None => (file.language().experimental_decorators, file.language().emit_decorator_metadata),
+            // There's no config file to set these in, and the fix would remove imports that decorator metadata needs.
+            None if file.language().has_no_foreign_config => (true, true),
+            None => (
+                file.language().experimental_decorators,
+                file.language().emit_decorator_metadata,
+            ),
         };
         if experimental_decorators && emit_decorator_metadata {
             on = on.classes().members().params();
@@ -613,7 +691,7 @@ impl Rule for ConsistentTypeImports {
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(span) = ty.import_span() {
-            cx.report(span, NO_IMPORT_TYPE_ANNOTATIONS);
+            cx.report(span, NO_IMPORT_TYPE_ANNOTATIONS).called_with(ty);
         }
     }
 

@@ -345,6 +345,7 @@ expectType<Mock<(name: string) => string>>(myNormalSpiedMethod);
 
 const spy = spyOn(console, "log");
 expectType(spy.mock.calls).is<any[][]>();
+expectType(expect(spy).toHaveBeenCalledOnce()).is<void>();
 
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);

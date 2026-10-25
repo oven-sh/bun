@@ -29,23 +29,23 @@ impl Config {
 
 const UNNAMED: Message = Message::new("unnamed", "Unexpected unnamed {{name}}.");
 const NAMED: Message = Message::new("named", "Unexpected named {{name}}.");
-/// What oxlint suggests.
+/// oxlint's suggestion.
 const REMOVE_NAME: Message = Message::new("removeName", "Remove the name.");
 
-/// [`guess_function_name`], by what the function is in.
+/// Caches [`guess_function_name`] by the function's ancestors.
 type GuessedNames<'a> = AncestorMemo<'a, Option<Name<'a>>>;
 
 /// oxlint's `is_valid_identifier_name`.
 fn is_valid_identifier_name(name: &[u8]) -> bool {
-    const TAKEN: &[u8] = b"let static implements interface package private protected public await break case catch class \
+    const RESERVED_NAMES: &[u8] = b"let static implements interface package private protected public await break case catch class \
         const continue debugger default delete do else enum export extends false finally for function if import in \
         instanceof new null return super switch this throw true try typeof var void while with yield Infinity NaN \
         globalThis undefined arguments eval constructor async";
-    !strings::split(TAKEN, b" ").any(|it| it == name) && text::is_identifier_name(name)
+    !strings::split(RESERVED_NAMES, b" ").any(|it| it == name) && text::is_identifier_name(name)
 }
 
-/// oxlint's `guess_function_name`: that of the first assignment, declarator, property or field around the function,
-/// however far out that is.
+/// oxlint's `guess_function_name`: the name from the first assignment, declarator, property or field around the
+/// function, however far out that is.
 #[cold]
 #[inline(never)]
 fn guess_function_name<'a>(func: Func<'a>, known: &mut GuessedNames<'a>) -> Option<Name<'a>> {
@@ -72,10 +72,12 @@ fn guess_function_name<'a>(func: Func<'a>, known: &mut GuessedNames<'a>) -> Opti
         }
         _ => None,
     });
-    found.flatten().filter(|name| is_valid_identifier_name(name.bytes()))
+    found
+        .flatten()
+        .filter(|name| is_valid_identifier_name(name.bytes()))
 }
 
-/// oxlint's fix: the function gets the name, unless that means something in the function.
+/// oxlint's fix: gives the function that name, unless the name already refers to something inside the function.
 #[cold]
 #[inline(never)]
 fn add_name<'a>(fixer: Fixer<'a>, func: Func<'a>, known: &mut GuessedNames<'a>) -> Option<Fix> {
@@ -98,16 +100,14 @@ fn is_identifier(pat: Pat) -> bool {
     pat.tag() == PatTag::Ident
 }
 
-/// ESLint's `hasInferredName`, for a function expression that is not a method.
+/// ESLint's `hasInferredName`, for a function expression that isn't a method.
 fn has_inferred_name(e: Expr) -> bool {
     match e.parent() {
         Node::VarDecl(it) => it.init() == Some(e) && is_identifier(it.pat()),
         Node::Prop(it) => it.value() == Some(e) && !it.is_jsx_attribute(),
         Node::Member(it) => it.init() == Some(e) && !it.flags().contains(Flags::ACCESSOR),
         Node::Expr(parent) => match parent.kind() {
-            ExprKind::Assign { target, value, .. } => {
-                value == e && target.tag() == ExprTag::Ident
-            }
+            ExprKind::Assign { target, value, .. } => value == e && target.tag() == ExprTag::Ident,
             _ => false,
         },
         Node::Param(it) => it.default() == Some(e) && is_identifier(it.pat()),
@@ -145,7 +145,7 @@ impl Rule for FuncNames {
 impl FuncNames {
     #[inline(never)]
     fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        // For oxlint `export default function (): void;` is a function like others.
+        // oxlint treats `export default function (): void;` like any other function.
         if !func.has_body() && !cx.language().is_oxlint {
             return;
         }
@@ -162,13 +162,16 @@ impl FuncNames {
             Node::Stmt(_) => UNNAMED,
             // It may be recursive.
             Node::Expr(_) if has_name => match func.symbol() {
-                // For oxlint the name is needed only where the function calls itself.
+                // For oxlint the name is only needed if the function calls itself.
                 Some(symbol) if cx.language().is_oxlint => {
                     let is_called = |e: Expr<'a>| {
                         !e.is_parenthesized()
                             && matches!(e.parent(), Node::Expr(it) if it.as_call().is_some_and(|it| it.callee() == e))
                     };
-                    if symbol.references().any(|it| it.expr().is_some_and(is_called)) {
+                    if symbol
+                        .references()
+                        .any(|it| it.expr().is_some_and(is_called))
+                    {
                         return;
                     }
                     NAMED
@@ -181,14 +184,18 @@ impl FuncNames {
             _ => return,
         };
         let head = ast_utils::get_function_head_loc(func);
-        // For oxlint it starts with the function, not with the member that the function is the value of.
+        // For oxlint the span starts at the function, not at the member whose value it is.
         let (start, name) = match cx.language().is_oxlint {
-            true => (func.estree_span().start, utils::oxlint::get_function_name_with_kind(func)),
+            true => (
+                func.estree_span().start,
+                utils::oxlint::get_function_name_with_kind(func),
+            ),
             false => (head.start, ast_utils::get_function_name_with_kind(func)),
         };
         // `"FunctionExpression:exit"`
         let report = cx
             .report(Span::new(start, head.end), message)
+            .called_with(func)
             .on_exit(func.kind() == FnKind::Expr)
             .data("name", name);
         if cx.language().is_oxlint {

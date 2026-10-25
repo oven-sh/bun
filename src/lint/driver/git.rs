@@ -516,7 +516,7 @@ impl<'e> Files<'e> {
     fn real_index_lock(&self) -> Option<Vec<u8>> {
         let index = bun_core::getenv_z(&bun_core::ZBox::from_bytes(b"GIT_INDEX_FILE"))?;
         let name = paths::file_name(index);
-        if !name.ends_with(b".lock") || name == b"index.lock" {
+        if !name.starts_with(b"next-index-") || !name.ends_with(b".lock") {
             return None;
         }
         let index = paths::resolve(&self.environment.cwd, &paths::from_native(index));

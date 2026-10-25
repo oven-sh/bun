@@ -3016,7 +3016,10 @@ JSC_DEFINE_CUSTOM_GETTER(getStructsSurface, (JSGlobalObject * lexicalGlobalObjec
     const Identifier conditionName = Identifier::fromString(vm, "Condition"_s);
     const Identifier canBeSharedName = Identifier::fromString(vm, "canBeShared"_s);
     const Identifier sharedArrayName = Identifier::fromString(vm, "SharedArray"_s);
-    bool fromAtomics = property.uid() == mutexName.impl() || property.uid() == conditionName.impl();
+    // A vm context also has the four overloaded functions lazy (see defineStructsSurfaceLazily).
+    bool fromAtomics = property.uid() == mutexName.impl() || property.uid() == conditionName.impl()
+        || property.uid() == Identifier::fromString(vm, "load"_s).impl() || property.uid() == Identifier::fromString(vm, "store"_s).impl()
+        || property.uid() == Identifier::fromString(vm, "exchange"_s).impl() || property.uid() == Identifier::fromString(vm, "compareExchange"_s).impl();
     bool fromReflect = property.uid() == canBeSharedName.impl();
 
     // The other holders are found by name; one that a script replaced is no longer lazy and is left as it is.
@@ -3077,6 +3080,15 @@ void defineStructsSurfaceLazily(JSC::JSGlobalObject* realm)
     if (atomicsObject) {
         defineStructsLazy(atomicsObject, "Mutex"_s);
         defineStructsLazy(atomicsObject, "Condition"_s);
+        // The module captures the default realm's own load, store, exchange and compareExchange while it is evaluated, so only
+        // another realm can have them lazy: a script there that is handed a shared struct uses Atomics.store before it reads
+        // any of the four names. The default realm keeps the engine's functions until one of the four is read.
+        if (!dynamicDowncast<Zig::GlobalObject>(realm)) {
+            defineStructsLazy(atomicsObject, "load"_s);
+            defineStructsLazy(atomicsObject, "store"_s);
+            defineStructsLazy(atomicsObject, "exchange"_s);
+            defineStructsLazy(atomicsObject, "compareExchange"_s);
+        }
     }
     if (reflectObject)
         defineStructsLazy(reflectObject, "canBeShared"_s);

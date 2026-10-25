@@ -2008,7 +2008,7 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         case CryptoAlgorithmIdentifier::Argon2d:
         case CryptoAlgorithmIdentifier::Argon2i:
         case CryptoAlgorithmIdentifier::Argon2id:
-            return CryptoAlgorithmArgon2::lengthIsValid(length);
+            return !CryptoAlgorithmArgon2::validateDeriveBits(downcast<CryptoAlgorithmArgon2Params>(params), length).hasException();
         case CryptoAlgorithmIdentifier::X25519:
             return !length || *length <= 256;
         case CryptoAlgorithmIdentifier::ECDH: {

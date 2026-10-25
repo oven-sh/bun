@@ -8,9 +8,7 @@
 
 namespace WebCore {
 
-// Node's Argon2Params dictionary (lib/internal/crypto/webidl.js). The
-// validators run inside convertDictionary<CryptoAlgorithmArgon2Params>, so a
-// constructed instance already satisfies every OperationError rule.
+// Node's Argon2Params dictionary (lib/internal/crypto/webidl.js).
 class CryptoAlgorithmArgon2Params final : public CryptoAlgorithmParameters {
 public:
     BufferSource nonce;

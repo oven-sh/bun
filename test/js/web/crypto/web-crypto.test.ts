@@ -1313,9 +1313,13 @@ describe("Argon2", () => {
       "parallelism 0": await derive({ ...alg, parallelism: 0 }),
       "parallelism too large": await derive({ ...alg, parallelism: 2 ** 24, memory: 2 ** 27 }),
       "memory too small": await derive({ ...alg, memory: 31 }),
-      // memory is checked against the raw parallelism value before parallelism converts.
+      // The whole dictionary converts (EnforceRange truncates 1.5 to 1 and rejects -1 with a
+      // TypeError) before the OperationError rules run.
       "memory 8 parallelism 1.5": await derive({ ...alg, memory: 8, parallelism: 1.5 }),
-      "two bad members": await derive({ ...alg, memory: 7, nonce: Buffer.alloc(4), parallelism: 1, passes: -1 }),
+      "two bad members": await derive({ ...alg, memory: 7, nonce: Buffer.alloc(4), parallelism: 1, passes: -1 }).then(
+        r => r.split(":")[0],
+      ),
+      "memory before nonce": await derive({ ...alg, memory: 7, nonce: Buffer.alloc(4), parallelism: 1 }),
       "nonce too short": await derive({ ...alg, nonce: Buffer.alloc(7) }),
       "version 0x10": await derive({ ...alg, version: 0x10 }),
       "length null": await derive(alg, null),
@@ -1330,8 +1334,9 @@ describe("Argon2", () => {
       "parallelism 0": "OperationError: parallelism must be > 0 and <= 16777215",
       "parallelism too large": "OperationError: parallelism must be > 0 and <= 16777215",
       "memory too small": "OperationError: memory must be at least 8 times the degree of parallelism",
-      "memory 8 parallelism 1.5": "OperationError: memory must be at least 8 times the degree of parallelism",
-      "two bad members": "OperationError: memory must be at least 8 times the degree of parallelism",
+      "memory 8 parallelism 1.5": "ok",
+      "two bad members": "TypeError",
+      "memory before nonce": "OperationError: memory must be at least 8 times the degree of parallelism",
       "nonce too short": "OperationError: nonce must be at least 8 bytes",
       "version 0x10": "OperationError: 16 is not a valid Argon2 version",
       "length null": "OperationError: length cannot be null",

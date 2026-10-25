@@ -432,6 +432,26 @@ describe("tsconfig unused imports", () => {
       const result = await run(String(dir), ["-e", `import { unused } from "./effect"; console.log("eval");`]);
       expect(result).toEqual({ stdout: "effect\neval\n", stderr: "", exitCode: 0 });
     });
+
+    // The dev server scans the imports of a module with its hot-reload transform.
+    test.concurrent("dev server", async () => {
+      using dir = tempDir("ts-unused-imports-dev-server", {
+        ...entryPoints,
+        "index.html": `<!DOCTYPE html><html><body><script type="module" src="./entry.ts"></script></body></html>`,
+        "serve.ts": `
+          import page from "./index.html";
+          using server = Bun.serve({ port: 0, development: true, routes: { "/": page } });
+          const html = await (await fetch(server.url)).text();
+          const src = html.match(/src="(\\/_bun\\/client\\/[^"]+)"/)![1];
+          const script = await (await fetch(new URL(src, server.url))).text();
+          const modules = ["effect", "type-only", "types", "erased"];
+          console.log(modules.filter(name => script.includes('console.log("' + name + '")')).join(" "));
+        `,
+      });
+      const { stdout, exitCode } = await run(String(dir), ["serve.ts"]);
+      expect(stdout).toBe("effect type-only types\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   // The tsconfig.json nearest to a file decides, wherever bun starts. A file in node_modules
@@ -498,6 +518,72 @@ describe("tsconfig unused imports", () => {
       });
       expect(await run(path.join(String(dir), "app"), ["--tsconfig-override=../tsconfig.json", "index.ts"])).toEqual({
         stdout: "app\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      const build = await run(String(dir), [
+        "build",
+        "--target=bun",
+        "--tsconfig-override=on.json",
+        "static.ts",
+        "--outfile=out.js",
+      ]);
+      expect(build.stderr).toBe("");
+      expect(await run(String(dir), ["out.js"])).toEqual({
+        stdout: "app effect\napp\nnested effect\nnested\nlib effect\nlib\ndep\ndep-with-tsconfig\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // A plugin's source has no tsconfig.json of its own: the one of the working directory
+    // decides. A source for a path in node_modules takes none.
+    test.concurrent("a plugin's source takes the tsconfig.json of the working directory", async () => {
+      const names = ["onLoad", "namespace", "module", "dependency"];
+      using dir = tempDir("ts-unused-imports-plugin", {
+        "tsconfig.json": verbatim,
+        ...Object.fromEntries(names.map(name => [`effect-${name}.ts`, effect(name)])),
+        "file.virtual": "",
+        "node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "./file.virtual" }),
+        "node_modules/dep/file.virtual": "",
+        "sources.ts": `
+          const source = (name: string) => ({
+            contents: "import { unused } from " + JSON.stringify(import.meta.dir + "/effect-" + name) + '; console.log("' + name + '");',
+            loader: "ts" as const,
+          });
+          export function setup(build: Bun.PluginBuilder) {
+            build.onLoad({ filter: /\\.virtual$/ }, args => source(args.path.includes("node_modules") ? "dependency" : "onLoad"));
+            build.onResolve({ filter: /^ns:/ }, args => ({ path: args.path.slice(3), namespace: "ns" }));
+            build.onLoad({ filter: /.*/, namespace: "ns" }, () => source("namespace"));
+          }
+          export const virtualModule = () => source("module");
+        `,
+        "preload.ts": `
+          import { setup, virtualModule } from "./sources";
+          Bun.plugin({
+            name: "sources",
+            setup(build) {
+              setup(build);
+              build.module("virtual:module", virtualModule);
+            },
+          });
+        `,
+        "runtime.ts": `import "./file.virtual"; import "ns:source"; import "virtual:module"; import "dep";`,
+        "entry.ts": `import "./file.virtual"; import "ns:source"; import "dep";`,
+        "bundle.ts": `
+          import { setup } from "./sources";
+          const build = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun", plugins: [{ name: "sources", setup }] });
+          await Bun.write("out.mjs", await build.outputs[0].text());
+          await import("./out.mjs");
+        `,
+      });
+      expect(await run(String(dir), ["--preload=./preload.ts", "runtime.ts"])).toEqual({
+        stdout: "onLoad effect\nonLoad\nnamespace effect\nnamespace\nmodule effect\nmodule\ndependency\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(await run(String(dir), ["bundle.ts"])).toEqual({
+        stdout: "onLoad effect\nonLoad\nnamespace effect\nnamespace\ndependency\n",
         stderr: "",
         exitCode: 0,
       });

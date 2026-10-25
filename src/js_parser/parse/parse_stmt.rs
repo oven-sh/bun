@@ -1258,7 +1258,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // path.assertions
                 );
                 // A `declare` block is dropped whole, and its records with it.
-                if opts.is_typescript_declare {
+                if Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare {
                     p.import_records.items_mut()[import_record_index as usize]
                         .flags
                         .insert(ImportRecordFlags::IS_UNUSED);
@@ -1340,7 +1340,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let import_record_index =
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
                     // As for an import: see `starts_unused` in `t_import`.
-                    if opts.is_typescript_declare || (valueless_clause && !SCAN_ONLY) {
+                    if Self::IS_TYPESCRIPT_ENABLED
+                        && (opts.is_typescript_declare || (valueless_clause && !SCAN_ONLY))
+                    {
                         p.import_records.items_mut()[import_record_index as usize]
                             .flags
                             .insert(ImportRecordFlags::IS_UNUSED);
@@ -1581,7 +1583,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         path,
                         loc,
                         false,
-                        opts.is_typescript_declare,
+                        Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare,
                     );
                 }
 
@@ -1710,9 +1712,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect_or_insert_semicolon()?;
 
         // Not an import until `ImportScanner::scan` keeps it. It never sees a `declare` block.
-        let valueless_clause =
-            stmt.has_items_clause && stmt.items.is_empty() && stmt.default_name.is_none();
-        let starts_unused = opts.is_typescript_declare || (valueless_clause && !SCAN_ONLY);
+        let starts_unused = Self::IS_TYPESCRIPT_ENABLED
+            && (opts.is_typescript_declare
+                || (!SCAN_ONLY
+                    && stmt.has_items_clause
+                    && stmt.items.is_empty()
+                    && stmt.default_name.is_none()));
         p.process_import_statement(stmt, path, loc, was_originally_bare_import, starts_unused)
     }
 

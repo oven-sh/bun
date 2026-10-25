@@ -4255,9 +4255,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_records.items_mut()[stmt.import_record_index as usize]
             .flags
             .set(bun_ast::ImportRecordFlags::PHASE_DEFER, stmt.phase_defer);
-        self.import_records.items_mut()[stmt.import_record_index as usize]
-            .flags
-            .set(bun_ast::ImportRecordFlags::IS_UNUSED, starts_unused);
+        if Self::IS_TYPESCRIPT_ENABLED && starts_unused {
+            self.import_records.items_mut()[stmt.import_record_index as usize]
+                .flags
+                .insert(bun_ast::ImportRecordFlags::IS_UNUSED);
+        }
 
         if let Some(star) = stmt.star_name_loc.to_nullable() {
             let name = self.load_name_from_ref(stmt.namespace_ref);

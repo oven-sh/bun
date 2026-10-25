@@ -217,6 +217,7 @@ pub struct Import {
     /// TypeScript only: a `{ ... }` clause was written, so empty `items` is `import {} from`.
     pub has_items_clause: bool, // = false
 }
+const _: () = assert!(core::mem::size_of::<Import>() == 48);
 
 impl Default for Import {
     fn default() -> Self {

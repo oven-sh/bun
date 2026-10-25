@@ -82,17 +82,17 @@ impl<'a> ImportScanner<'a> {
                     }
 
                     // A file that becomes CommonJS at runtime cannot hold an import statement.
-                    let unused_import_flags = if will_transform_to_common_js {
-                        TSUnusedImportFlags::empty()
-                    } else {
-                        p.options.unused_import_flags_ts
-                    };
+                    let unused_import_flags =
+                        if !is_typescript_enabled || will_transform_to_common_js {
+                            TSUnusedImportFlags::empty()
+                        } else {
+                            p.options.unused_import_flags_ts
+                        };
                     let keep_values_ts =
                         unused_import_flags.contains(TSUnusedImportFlags::KEEP_VALUES);
                     let mut did_remove_star_loc = false;
                     let keep_unused_imports = !p.options.features.trim_unused_imports
-                        || (!will_transform_to_common_js
-                            && p.options.keeps_unused_import_names_ts());
+                        || (keep_values_ts && p.options.keeps_unused_import_names_ts());
                     // Without trimming (JavaScript), exports deleted on request
                     // (`replace_exports`) still take the imports that only they used: a binding
                     // goes when its only uses were in them. An import that nothing used stays, for
@@ -278,7 +278,9 @@ impl<'a> ImportScanner<'a> {
                     let _ = did_remove_star_loc;
 
                     // The statement stays: a record that `t_import` created unused is live now.
-                    record!().flags.remove(import_record::Flags::IS_UNUSED);
+                    if is_typescript_enabled {
+                        record!().flags.remove(import_record::Flags::IS_UNUSED);
+                    }
 
                     let namespace_ref = st.namespace_ref;
                     // `import defer * as ns` must keep its namespace binding
@@ -755,9 +757,11 @@ impl<'a> ImportScanner<'a> {
                     p.import_records_for_current_part
                         .push(st.import_record_index);
                     // `export {} from 'x'` that tsconfig keeps: see the import arm.
-                    p.import_records.items_mut()[st.import_record_index as usize]
-                        .flags
-                        .remove(import_record::Flags::IS_UNUSED);
+                    if is_typescript_enabled {
+                        p.import_records.items_mut()[st.import_record_index as usize]
+                            .flags
+                            .remove(import_record::Flags::IS_UNUSED);
+                    }
                     // SAFETY: arena-owned slice valid for 'p.
                     let items = st.items.slice();
                     p.named_imports

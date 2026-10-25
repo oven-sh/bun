@@ -18,6 +18,7 @@
 
 #include "libusockets.h"
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -880,10 +881,10 @@ void us_socket_pause(struct us_socket_t *s) {
     if (s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
     if (us_socket_is_closed(s)) return;
+    s->flags.is_paused = 1;
     // we are readable and writable so we can just pause readable side; after our FIN nothing new waits for writable
     us_poll_change(&s->p, s->group->loop,
                    us_internal_socket_can_raw_write(s) ? LIBUS_SOCKET_WRITABLE : us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
-    s->flags.is_paused = 1;
 }
 
 void us_socket_resume(struct us_socket_t *s) {
@@ -897,7 +898,14 @@ void us_socket_resume(struct us_socket_t *s) {
         // still writable: a FIN of ours would have left the socket read-only
         events |= LIBUS_SOCKET_WRITABLE;
     }
-    if (us_poll_change(&s->p, s->group->loop, events) != 0) {
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+    ssize_t injected = 0;
+    int unused = 0;
+    const int refused = US_FAULT_CHECK(US_FAULT_POLL_START, us_poll_fd(&s->p), injected, unused);
+#else
+    const int refused = 0;
+#endif
+    if (refused || us_poll_change(&s->p, s->group->loop, events) != 0) {
         /* The dispatcher parked this socket while it was paused (loop.c) and the
          * kernel refused to take it back: nothing would ever deliver its tail,
          * end or close again, so fail it like a failed first registration. Defer

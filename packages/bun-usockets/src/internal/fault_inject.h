@@ -44,7 +44,7 @@ enum us_fault_syscall {
      * no byte count to clamp and no zero return to fake. */
     US_FAULT_SSL_LOOP_BUFFER,
     /* Not a syscall: poll registration in us_poll_start_rc (uv_poll_init_socket
-     * on Windows/libuv, EPOLL_CTL_ADD / kevent on epoll/kqueue). The fd is
+     * on Windows/libuv, EPOLL_CTL_ADD / kevent on epoll/kqueue), and the change in us_socket_resume. The fd is
      * always fresh from the kernel here, so the failure path is unreachable
      * without fault injection. Only US_FAULT_ERRNO applies. */
     US_FAULT_POLL_START,

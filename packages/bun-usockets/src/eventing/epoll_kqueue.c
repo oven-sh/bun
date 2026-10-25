@@ -269,9 +269,9 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop, int first) 
              * forwarded as a libus close code, and a raw EPOLLERR (8) would
              * read as errno 8 (ENOEXEC) in the JS error path. */
             const int error = !!(events & EPOLLERR);
-            /* A read-side FIN is EPOLLIN + recv()==0; EPOLLHUP means both directions
+            /* A read-side FIN is EPOLLIN + recv()==0, or EPOLLRDHUP where epoll_fin_interest asked for it; EPOLLHUP means both directions
              * are down and is level-triggered, so tag it for the dispatch to close. */
-            const int eof = (events & EPOLLHUP) ? LIBUS_POLL_HANGUP : 0;
+            const int eof = (events & EPOLLHUP) ? LIBUS_POLL_HANGUP : (events & EPOLLRDHUP) ? LIBUS_POLL_EOF : 0;
             events &= us_poll_events(poll);
             if (events || error || eof) {
                 us_internal_dispatch_ready_poll(poll, error, eof, events);
@@ -680,6 +680,15 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 
 #endif
 
+#ifdef LIBUS_USE_EPOLL
+/* EPOLLIN reports the peer's FIN to a socket that reads. A paused fin_ends_pause socket asks for it by name, and the resume takes it out again. */
+static int epoll_fin_interest(struct us_poll_t *p, int events) {
+    if ((events & LIBUS_SOCKET_READABLE) || us_internal_poll_type(p) != POLL_TYPE_SOCKET) return 0;
+    struct us_socket_t *s = (struct us_socket_t *) p;
+    return s->flags.is_paused && s->fin_ends_pause && !s->read_eof ? EPOLLRDHUP : 0;
+}
+#endif
+
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int old_ext_size, unsigned int ext_size) {
 
     unsigned int old_size = sizeof(struct us_poll_t) + old_ext_size;
@@ -728,11 +737,11 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
          * close the socket once both directions are down. Never add
          * EPOLLRDHUP here - the peer's FIN has typically ALREADY arrived, so
          * a level-triggered EPOLLRDHUP would fire on every epoll_wait while
-         * the dispatcher (which derives eof from EPOLLHUP only) ignores it,
+         * the dispatcher (which has delivered that end already) ignores it,
          * spinning the loop at 100% CPU until the JS side closes the fd. */
         events |= EPOLLHUP | EPOLLERR;
     }
-    event.events = events;
+    event.events = events | epoll_fin_interest(p, events);
     event.data.ptr = p;
     int ret;
     do {
@@ -761,7 +770,7 @@ int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 
 #ifdef LIBUS_USE_EPOLL
         struct epoll_event event;
-        event.events = events;
+        event.events = events | epoll_fin_interest(p, events);
         if(!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
             /* See us_poll_start_rc: EPOLLHUP/EPOLLERR are implicit; never add
              * EPOLLRDHUP for an already-half-closed socket or the loop spins. */

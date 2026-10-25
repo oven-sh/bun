@@ -212,6 +212,9 @@ private:
             /* The pause for backed-up pipelined responses lifts when their bytes drain, and after
              * a hangup they never do. Node.js destroys the socket on the failed write. */
             s->hangup_closes_unsent = 1;
+        } else {
+            /* Bun.serve's own pauses only bound memory, so the peer's FIN may end them. */
+            s->fin_ends_pause = 1;
         }
 
         /* A peer FIN must not tear the connection down at the loop level:

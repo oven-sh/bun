@@ -7190,3 +7190,186 @@ it("keeps serving after a handler throws a deeply nested request body", async ()
   // An error that reached the default handler sets the exit code.
   expect(exitCode).toBe(1);
 });
+
+// Bun.serve stops reading a connection while a request body is unread, and while requests wait behind a response. A
+// client that has left can send no more, so its stream is read to the end, where its leaving shows.
+describe.each([
+  ["http", false],
+  ["https", true],
+] as const)("a client that goes away while Bun.serve isn't reading (%s)", (_protocol, secure) => {
+  const turns = async (count: number) => {
+    for (let turn = 0; turn < count; turn++) await new Promise(resolve => setImmediate(resolve));
+  };
+  const connectTo = async (server: Server) => {
+    const options = { port: server.port!, host: "127.0.0.1", allowHalfOpen: true };
+    const client = secure ? nodeTls.connect({ ...options, ca: tls.cert }) : net.connect(options);
+    client.on("error", () => {});
+    await once(client, secure ? "secureConnect" : "connect");
+    return client;
+  };
+  // Resolves once the kernel has all of it and the server has had the time to read it.
+  const send = async (client: net.Socket, ...parts: (string | Buffer)[]) => {
+    await new Promise<void>(resolve =>
+      client.write(Buffer.concat(parts.map(part => Buffer.from(part))), () => resolve()),
+    );
+    await turns(200);
+  };
+  const released = async (server: Server) => {
+    for (let turn = 0; turn < 10_000 && server.pendingRequests > 0; turn++) await turns(1);
+    return server.pendingRequests;
+  };
+  // The server has read all but a few bytes of it when it stops reading, whatever the size of the kernel's buffers.
+  const behind = Buffer.alloc(512 * 1024, "b");
+  const pipelined = `POST /behind HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${behind.length}\r\n\r\n`;
+
+  it("releases a request that others wait behind, and runs none of them", async () => {
+    const held = Promise.withResolvers<(response: Response) => void>();
+    const aborted = Promise.withResolvers<void>();
+    let ranBehind = 0;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: secure ? tls : undefined,
+      fetch(req, server) {
+        if (new URL(req.url).pathname === "/behind") return (ranBehind++, new Response("behind"));
+        server.timeout(req, 0);
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        return new Promise<Response>(held.resolve);
+      },
+    });
+    const client = await connectTo(server);
+    try {
+      await send(client, "GET /held HTTP/1.1\r\nHost: localhost\r\n\r\n", pipelined, behind);
+      const answer = await held.promise;
+      client.end();
+      await aborted.promise;
+      answer(new Response("late"));
+      expect({ pendingRequests: await released(server), ranBehind }).toEqual({ pendingRequests: 0, ranBehind: 0 });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("releases a request whose body is unread", async () => {
+    const aborted = Promise.withResolvers<void>();
+    const cancelled = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: secure ? tls : undefined,
+      fetch(req, server) {
+        server.timeout(req, 0);
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        return new Response(
+          new ReadableStream({
+            start: controller => controller.enqueue("connected\n"),
+            cancel: () => cancelled.resolve(),
+          }),
+        );
+      },
+    });
+    const client = await connectTo(server);
+    try {
+      const half = Buffer.alloc(1024 * 1024, "b");
+      client.resume();
+      await send(client, `POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${2 * half.length}\r\n\r\n`, half);
+      client.end();
+      await Promise.all([aborted.promise, cancelled.promise]);
+      expect(await released(server)).toBe(0);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("gives a handler that starts late the whole body", async () => {
+    const body = Buffer.alloc(2 * 1024 * 1024, "b");
+    const read = Promise.withResolvers<number>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: secure ? tls : undefined,
+      async fetch(req, server) {
+        server.timeout(req, 0);
+        await turns(300);
+        await req.arrayBuffer().then(bytes => read.resolve(bytes.byteLength), read.reject);
+        return new Response("ok");
+      },
+    });
+    const client = await connectTo(server);
+    try {
+      client.end(
+        Buffer.concat([
+          Buffer.from(`POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${body.length}\r\n\r\n`),
+          body,
+        ]),
+      );
+      expect(await read.promise).toBe(body.length);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("finishes a response whose length is known for a client that ended its side and reads on", async () => {
+    const payload = Buffer.alloc(8 * 1024 * 1024, "r");
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: secure ? tls : undefined,
+      fetch(req, server) {
+        server.timeout(req, 0);
+        return new Response(payload);
+      },
+    });
+    const client = await connectTo(server);
+    try {
+      // Not read yet, so the response is still on its way when the requests behind it arrive.
+      client.pause();
+      await send(client, "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n", pipelined, behind);
+      client.end();
+      await turns(50);
+      let received = 0;
+      const events: string[] = [];
+      client.on("data", chunk => void (received += chunk.length));
+      client.on("error", (error: NodeJS.ErrnoException) => events.push(`error ${error.code}`));
+      client.on("end", () => events.push("end"));
+      await once(client.resume(), "close");
+      expect({ wholeFirstResponse: received >= payload.length, events }).toEqual({
+        wholeFirstResponse: true,
+        events: ["end"],
+      });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("leaves the event loop idle while such a response waits for its client", async () => {
+    const payload = Buffer.alloc(32 * 1024 * 1024, "r");
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: secure ? tls : undefined,
+      fetch(req, server) {
+        server.timeout(req, 0);
+        return new Response(payload);
+      },
+    });
+    const client = await connectTo(server);
+    try {
+      client.pause();
+      await send(client, "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n", pipelined, behind);
+      client.end();
+      // A loop that spins burns every window. A garbage collection burns one.
+      let leastShare = Infinity;
+      for (let window = 0; window < 5 && leastShare >= 0.5; window++) {
+        const before = process.cpuUsage();
+        const started = performance.now();
+        await Bun.sleep(200);
+        const { user, system } = process.cpuUsage(before);
+        leastShare = Math.min(leastShare, (user + system) / 1000 / (performance.now() - started));
+      }
+      expect(leastShare).toBeLessThan(0.5);
+    } finally {
+      client.destroy();
+    }
+  });
+});

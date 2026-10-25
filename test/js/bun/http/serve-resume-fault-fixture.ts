@@ -1,5 +1,5 @@
-// Sends one Bun.serve request whose socket is paused by request-body backpressure. The peer hangs up, so
-// the loop removes the fd from the epoll set, and the injected poll_start failure makes the resume fail.
+// Sends one Bun.serve request whose socket is paused by request-body backpressure. The injected poll_start
+// failure makes the resume fail: the handler's, or with "client-ends" the loop's own when the client ends its side.
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { connect } from "node:net";
 
@@ -8,6 +8,7 @@ const [mode, unix] = process.argv.slice(2);
 const BODY_CHUNK = 1024 * 1024 + 4096;
 
 const faultArmed = Promise.withResolvers<void>();
+const aborted = Promise.withResolvers<void>();
 const log = (line: string) => console.log(line);
 
 // fetch() would reuse a connection, and a reused connection doesn't register a poll.
@@ -32,8 +33,11 @@ const server = Bun.serve({
   async fetch(req) {
     if (new URL(req.url).pathname === "/ping") return new Response("pong");
 
-    req.signal.addEventListener("abort", () => log("abort"));
-    await faultArmed.promise;
+    req.signal.addEventListener("abort", () => {
+      log("abort");
+      aborted.resolve();
+    });
+    await (mode === "client-ends" ? aborted.promise : faultArmed.promise);
 
     try {
       if (mode === "body-buffered") {
@@ -59,17 +63,17 @@ socket.on("error", () => {});
 await new Promise<void>(resolve => socket.once("connect", resolve));
 socket.write(`POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: ${8 * BODY_CHUNK}\r\n\r\n`);
 await new Promise<void>(resolve => socket.write(Buffer.alloc(BODY_CHUNK, 0x61), () => resolve()));
-socket.destroy();
-await new Promise<void>(resolve => socket.once("close", resolve));
 
-// Makes the loop poll and notice that the socket above hung up.
+// Gives the server the time to read up to its mark and pause.
 await ping("before");
 
 // If the resume doesn't consume this rule, the ping after the handler fails.
 fault.set({ syscall: "poll_start", action: "errno", errno: "ENOMEM", repeat: 1 });
 faultArmed.resolve();
+if (mode === "client-ends") socket.end();
 
 while (server.pendingRequests > 0) await new Promise<void>(resolve => setImmediate(resolve));
+socket.destroy();
 await ping("after");
 await server.stop();
 log("done");

@@ -5843,10 +5843,12 @@ impl<'p, 's> Checker<'p, 's> {
         let depth = self.flow_type_cache_depth;
         if evolved.incomplete && depth == usize::MAX {
             for at in (0..self.stack.len()).rev() {
-                let Query::Expr(file, e) = self.stack[at] else {
-                    break;
-                };
-                self.note_checked_with_incomplete_walk(file, e);
+                match self.stack[at] {
+                    Query::Expr(file, e) => self.note_checked_with_incomplete_walk(file, e),
+                    // `checkObjectLiteral` checks every member each time.
+                    Query::LiteralProp(..) => {}
+                    _ => break,
+                }
             }
         } else if evolved.incomplete && self.is_flow_loop_visible(depth) {
             self.taint_from(depth);

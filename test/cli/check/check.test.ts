@@ -10778,6 +10778,30 @@ export function f() {
       expect(exitCode).toBe(1);
     });
 
+    // As in the test before. `return q` checks the assigned value again, and `checkObjectLiteral` checks every member each
+    // time.
+    test("an object literal is checked again after a walk in a member that ended with an incomplete type", async () => {
+      using dir = project({
+        "a.ts": `declare const c: boolean;
+declare const root: { kids: unknown[] };
+export function f() {
+  let q;
+  for (const key in root) {
+    while (root) { }
+    while (c) {
+      while (c) { if (c) break; }
+      try { q = ({ p: root.v }).p; } finally { }
+    }
+  }
+  return q;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe("a.ts(9,28): error TS2339: Property 'v' does not exist on type 'never'.");
+      expect(exitCode).toBe(1);
+    });
+
     test("what can be reached after a `finally` block depends on how the block was entered", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

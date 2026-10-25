@@ -141,8 +141,7 @@ fn create() -> ThreadPool {
     })
 }
 
-/// The pool for the parse of a file that imports a macro. The thread that runs a macro sleeps
-/// until the macro's promise settles, and a [`WorkPool`] task is what most often settles it.
+/// Parses the files that import a macro: a waiting macro must not hold a [`WorkPool`] thread.
 pub struct MacroPool;
 
 static MACRO_POOL: OnceLock<ThreadPool> = OnceLock::new();

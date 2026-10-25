@@ -699,8 +699,7 @@ impl TransformTask {
     }
 
     fn run_on_macro_pool(task: *mut jsc::WorkPoolTask) {
-        // SAFETY: `task` is the `macro_pool_task` of a live `TransformTask`. `JobContext::run`
-        // scheduled it and does not touch the task again, so it is this thread's alone.
+        // SAFETY: `JobContext::run` handed this field of a live `TransformTask` to this thread.
         let this = unsafe { &mut *bun_core::from_field_ptr!(Self, macro_pool_task, task) };
         let done = this.done.take().expect("scheduled with its completion");
         if !done.ticket().cancelled() {

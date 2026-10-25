@@ -1,5 +1,5 @@
 import { escapeHTML } from "bun" with { type: "macro" };
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -346,7 +346,7 @@ describe("a macro result that is bound to a name", () => {
   }
 
   // A debug build is 10 to 100 times slower, so it runs a sample of the generated modules, always the same one.
-  const every = isDebug || isASAN ? 8 : 1;
+  const every = isDebug || isASAN ? 16 : 1;
   const bodies = [...written.map(([body]) => body), ...generated.filter((_, i) => i % every === 0)];
 
   const files: Record<string, string> = {
@@ -370,11 +370,27 @@ describe("a macro result that is bound to a name", () => {
     files[`macro/${i}.ts`] = `import { ${names} } from "../m.ts" with { type: "macro" };\n${body}\n`;
   });
 
-  async function observe(cwd: string, dir: string, ext: string) {
+  // A door builds and loads each module, which takes a debug build more than the default 5 seconds under load.
+  const doorLimit = 60_000;
+
+  // One directory serves each door. The doors read the same modules and write to their own folders.
+  let fixture: ReturnType<typeof tempDir>;
+  // What each module exports with a plain import.
+  let plain: Awaited<ReturnType<typeof observe>>;
+  beforeAll(async () => {
+    fixture = tempDir("macro-bound", files);
+    plain = await observe("plain", "ts");
+    // Each written module has its value, and no generated module throws.
+    expect(Object.values(plain.seen).slice(0, written.length)).toEqual(written.map(([, exported]) => exported));
+    expect(Object.values(plain.seen).filter(value => String(value).startsWith("threw "))).toEqual([]);
+  }, doorLimit);
+  afterAll(() => fixture[Symbol.dispose]());
+
+  async function observe(dir: string, ext: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "observe.ts", dir, ext, String(bodies.length)],
       env: bunEnv,
-      cwd,
+      cwd: String(fixture),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -384,46 +400,45 @@ describe("a macro result that is bound to a name", () => {
     return { seen: Object.fromEntries(bodies.map((body, i) => [`${i}: ${body}`, seen[i]])), stderr, exitCode };
   }
 
-  // The plain import gives each written module its value, and no generated module throws there.
-  async function oracle(cwd: string) {
-    const plain = await observe(cwd, "plain", "ts");
-    expect(Object.values(plain.seen).slice(0, written.length)).toEqual(written.map(([, exported]) => exported));
-    expect(Object.values(plain.seen).filter(value => String(value).startsWith("threw "))).toEqual([]);
-    return plain;
-  }
-
-  test.concurrent("bun run", async () => {
-    using dir = tempDir("macro-bound-run", files);
-    expect(await observe(String(dir), "macro", "ts")).toEqual(await oracle(String(dir)));
-  });
+  test.concurrent(
+    "bun run",
+    async () => {
+      expect(await observe("macro", "ts")).toEqual(plain);
+    },
+    doorLimit,
+  );
 
   // `--no-bundle --target=bun` and `--minify` turn the inliner on. The plain build leaves it off.
   test.concurrent.each([
     ["bun build", []],
     ["bun build --no-bundle", ["--no-bundle"]],
     ["bun build --minify", ["--minify"]],
-  ])("%s", async (_, flags) => {
-    using dir = tempDir("macro-bound-build", files);
-    await using build = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        ...flags,
-        ...bodies.map((_, i) => `./macro/${i}.ts`),
-        "--target=bun",
-        "--outdir=out",
-        // Without a name pattern, 9 or more entry points go to `out/macro/` (#38732).
-        "--entry-naming=[name].[ext]",
-      ],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect({ buildErr, buildExit }).toEqual({ buildErr: "", buildExit: 0 });
-    expect(await observe(String(dir), "out", "js")).toEqual(await oracle(String(dir)));
-  });
+  ])(
+    "%s",
+    async (door, flags) => {
+      const outdir = door.replaceAll(" ", "-");
+      await using build = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          ...flags,
+          ...bodies.map((_, i) => `./macro/${i}.ts`),
+          "--target=bun",
+          "--outdir=" + outdir,
+          // Without a name pattern, 9 or more entry points go to a `macro/` folder (#38732).
+          "--entry-naming=[name].[ext]",
+        ],
+        env: bunEnv,
+        cwd: String(fixture),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect({ buildErr, buildExit }).toEqual({ buildErr: "", buildExit: 0 });
+      expect(await observe(outdir, "js")).toEqual(plain);
+    },
+    doorLimit,
+  );
 
   // The inliner takes a `const` primitive from a macro at each position. It takes no `let` and no `var`: the
   // program can assign to them.

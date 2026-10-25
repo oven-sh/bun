@@ -3419,6 +3419,74 @@ describe("css tests", () => {
         chrome: 99 << 16,
       },
     );
+
+    // #46872: a prefixed `background` value is held back so that an
+    // unprefixed value with targets can drop it. Every flush inside the rule
+    // writes the held values first, so the cascade keeps the source order.
+    describe("prefixed values keep source order", () => {
+      const chrome = { chrome: 95 << 16 };
+
+      // A value that is kept as tokens flushes the typed values before it.
+      for (const targets of [undefined, chrome]) {
+        cssTest(
+          ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-radial-gradient(center, circle cover, yellow, green) }",
+          ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-radial-gradient(center, circle cover, yellow, green); }",
+          targets,
+        );
+        cssTest(
+          ".r { background-image: -webkit-linear-gradient(red, blue); background-image: -moz-linear-gradient(red, blue); background-image: -webkit-radial-gradient(center, circle cover, yellow, green) }",
+          ".r { background-image: -webkit-linear-gradient(red, #00f); background-image: -moz-linear-gradient(red, #00f); background-image: -webkit-radial-gradient(center, circle cover, yellow, green); }",
+          targets,
+        );
+        cssTest(
+          ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-radial-gradient(20px 30px, yellow, green) }",
+          ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-radial-gradient(20px 30px, #ff0, green); }",
+          targets,
+        );
+      }
+
+      // Without targets nothing is dropped, and nothing is written twice.
+      cssTest(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -ms-linear-gradient(red, blue); background: linear-gradient(red, blue) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -ms-linear-gradient(red, blue); background: linear-gradient(red, #00f); }",
+      );
+      cssTest(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background-image: url(a.png); background-position: var(--p) }",
+        '.r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: url("a.png"); background-position: var(--p); }',
+      );
+
+      // A color the targets do not support flushes the earlier value once.
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue) lab(50% 0 0) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: lab(50% 0 0) -moz-linear-gradient(red, #00f); }",
+        chrome,
+      );
+
+      // A background-clip with another prefix flushes the earlier values first.
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background-clip: text; -webkit-background-clip: border-box }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); -webkit-background-clip: text; background-clip: text; -webkit-background-clip: border-box; }",
+        chrome,
+      );
+
+      // A held value before a value kept as tokens is written, even when an
+      // unprefixed value follows. Only the values held at that point are dropped.
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -ms-linear-gradient(red, blue); background: linear-gradient(red, blue) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -ms-linear-gradient(red, blue); background: linear-gradient(red, #00f); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: linear-gradient(red, blue) }",
+        ".r { background: linear-gradient(red, #00f); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); }",
+        chrome,
+      );
+    });
   });
 
   describe("flex", () => {

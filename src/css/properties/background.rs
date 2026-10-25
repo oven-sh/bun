@@ -650,8 +650,8 @@ impl BackgroundHandler {
                 self.color = Some(val.deep_clone(arena));
             }
             Property::BackgroundImage(val) => {
-                self.background_helper(val, property, dest, context);
-                self.images = Some(val.deep_clone(arena));
+                flush_helper!(self, images, val, dest, context);
+                self.set_images(val.deep_clone(arena), property, dest, context);
             }
             Property::BackgroundPosition(val) => {
                 let len = val.len();
@@ -718,15 +718,15 @@ impl BackgroundHandler {
                 for b in val.slice() {
                     images.append_assume_capacity(b.image.deep_clone(arena));
                 }
-                self.background_helper(&images, property, dest, context);
-                let arena = dest.bump();
                 let color = val.last().unwrap().color.deep_clone(arena);
-                flush_helper!(self, color, &color, dest, context);
-                let arena = dest.bump();
                 let mut clips: SmallList<BackgroundClip, 1> = SmallList::init_capacity(val.len());
                 for b in val.slice() {
                     clips.append_assume_capacity(b.clip);
                 }
+
+                // Every flush decision comes before the new value is recorded.
+                flush_helper!(self, images, &images, dest, context);
+                flush_helper!(self, color, &color, dest, context);
                 let mut clips_vp = VendorPrefix::NONE;
                 // Drop the `self.clips` borrow before calling flush().
                 let needs_flush = if let Some((existing_clips, existing_vp)) = &self.clips {
@@ -741,7 +741,7 @@ impl BackgroundHandler {
                 }
 
                 self.color = Some(color);
-                self.images = Some(images);
+                self.set_images(images, property, dest, context);
                 let len = val.len();
                 {
                     let x_positions = init_small_list_helper!(self, x_positions, len);
@@ -804,32 +804,45 @@ impl BackgroundHandler {
         true
     }
 
-    fn background_helper(
+    /// Records `images` as the current value. Call it after every flush
+    /// decision of the arm, so that `self.decls.last()` and `self.images`
+    /// always describe the same declaration.
+    ///
+    /// A prefixed declaration is held in `self.decls` as written. `flush`
+    /// writes the held ones ahead of the current value. An unprefixed value
+    /// with targets drops the held ones: the needed prefixes are generated.
+    fn set_images(
         &mut self,
-        val: &SmallList<Image, 1>,
+        images: SmallList<Image, 1>,
         property: &Property,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        flush_helper!(self, images, val, dest, context);
-
-        // Store prefixed properties. Clear if we hit an unprefixed property and we have
-        // targets. In this case, the necessary prefixes will be generated.
-        self.has_prefix = val.any(|item: &Image| item.has_vendor_prefix());
+        self.has_prefix = images.any(|item: &Image| item.has_vendor_prefix());
         if self.has_prefix {
             let arena = dest.bump();
             self.decls.push(property.deep_clone(arena));
         } else if context.targets.browsers.is_some() {
             self.decls.clear();
         }
+        self.images = Some(images);
     }
 
     fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
+            debug_assert!(self.decls.is_empty() && !self.has_prefix);
             return;
         }
         self.has_any = false;
         let arena = dest.bump();
+
+        // Held prefixed declarations go out first. The last one mirrors
+        // `self.images`, which is written below with its fallbacks.
+        if self.has_prefix {
+            let _ = self.decls.pop();
+            self.has_prefix = false;
+        }
+        dest.extend(self.decls.drain(..));
 
         let mut maybe_color: Option<CssColor> = self.color.take();
         let mut maybe_images: Option<SmallList<Image, 1>> = self.images.take();
@@ -1136,20 +1149,6 @@ impl BackgroundHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        // If the last declaration is prefixed, pop the last value
-        // so it isn't duplicated when we flush.
-        if self.has_prefix {
-            let _ = self.decls.pop();
-            // Drop handles deinit.
-        }
-
-        let arena = dest.bump();
-        for decl in self.decls.drain(..) {
-            // `Property` is not `Clone` here, so move out via drain.
-            let _ = arena;
-            dest.push(decl);
-        }
-
         self.flush(dest, context);
         self.flushed_properties = BackgroundProperty::empty();
     }

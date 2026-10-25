@@ -1143,6 +1143,11 @@ const linkedDirsFixture = /* ts */ `
     Object.entries(router.routes)
       .map(([name, file]) => name + " is " + shown(file as string))
       .sort();
+  if (process.argv[2] === "resolver first") {
+    seen.resolved = ["./site/pages/sub/to-a.tsx", "./p/index.tsx", "./site/pages/linked/c"].map(
+      specifier => specifier + " is " + shown(Bun.resolveSync(specifier, root)),
+    );
+  }
   for (const dir of process.argv[2] === "direct last" ? spellings.toReversed() : spellings) {
     const router = new Bun.FileSystemRouter({ dir: path.join(root, dir), style: "nextjs", fileExtensions: [".tsx"] });
     routers[dir] = router;
@@ -1165,41 +1170,45 @@ const linkedDirsFixture = /* ts */ `
   console.log(JSON.stringify(seen));
 `;
 
+/** What linkedDirsFixture prints for `order`. It adds and removes routes, so each run has its own tree. */
+async function runLinkedDirsFixture(order: "direct first" | "direct last" | "resolver first") {
+  using dir = tempDir("fsr-links", {
+    "fixture.ts": linkedDirsFixture,
+    "site/pages/index.tsx": "export default 1;\n",
+    "site/pages/a.tsx": "export default 1;\n",
+    "site/pages/sub/b.tsx": "export default 1;\n",
+    "site/pages/sub/[id].tsx": "export default 1;\n",
+    "shared/c.tsx": "export default 1;\n",
+    "shared/deep/d.tsx": "export default 1;\n",
+  });
+  const root = String(dir);
+  // Junctions on Windows, which take an absolute target. Elsewhere, "junction" is ignored.
+  fs.symlinkSync(path.join(root, "shared"), path.join(root, "site/pages/linked"), "junction");
+  fs.symlinkSync(path.join(root, "site"), path.join(root, "site-by-link"), "junction");
+  fs.symlinkSync(path.join(root, "site/pages"), path.join(root, "p"), "junction");
+  fs.symlinkSync(path.join(root, "site/pages"), path.join(root, "pages-by-link"), "junction");
+  fs.symlinkSync(path.join(root, "site/pages/a.tsx"), path.join(root, "site/pages/sub/to-a.tsx"), "file");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts", order],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  return JSON.parse(stdout);
+}
+
 // `dir` can be a link, and so can a directory above it, a directory below it and a file below it. A
 // route is named by where its file is below `dir` as it was given, and its file is where the file is.
 // A name is what is left of a path after `dir`, so each link has another length than what it leads to.
 it("names the routes of one directory the same through a link to it, above it and below it", async () => {
-  // The fixture adds and removes routes, so each order has its own tree.
-  const run = async (order: "direct first" | "direct last") => {
-    using dir = tempDir("fsr-links", {
-      "fixture.ts": linkedDirsFixture,
-      "site/pages/index.tsx": "export default 1;\n",
-      "site/pages/a.tsx": "export default 1;\n",
-      "site/pages/sub/b.tsx": "export default 1;\n",
-      "site/pages/sub/[id].tsx": "export default 1;\n",
-      "shared/c.tsx": "export default 1;\n",
-      "shared/deep/d.tsx": "export default 1;\n",
-    });
-    const root = String(dir);
-    // Junctions on Windows, which take an absolute target. Elsewhere, "junction" is ignored.
-    fs.symlinkSync(path.join(root, "shared"), path.join(root, "site/pages/linked"), "junction");
-    fs.symlinkSync(path.join(root, "site"), path.join(root, "site-by-link"), "junction");
-    fs.symlinkSync(path.join(root, "site/pages"), path.join(root, "p"), "junction");
-    fs.symlinkSync(path.join(root, "site/pages"), path.join(root, "pages-by-link"), "junction");
-    fs.symlinkSync(path.join(root, "site/pages/a.tsx"), path.join(root, "site/pages/sub/to-a.tsx"), "file");
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.ts", order],
-      env: bunEnv,
-      cwd: root,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    return JSON.parse(stdout);
-  };
-  const [directFirst, directLast] = await Promise.all([run("direct first"), run("direct last")]);
+  const [directFirst, directLast] = await Promise.all([
+    runLinkedDirsFixture("direct first"),
+    runLinkedDirsFixture("direct last"),
+  ]);
   expect(directLast).toEqual(directFirst);
   const { p, "pages-by-link": byLink, "site-by-link/pages": belowLink, ...direct } = directFirst;
   const routed = direct["site/pages"];
@@ -1246,6 +1255,81 @@ it("names the routes of one directory the same through a link to it, above it an
       ],
     }
   `);
+});
+
+// The resolver keeps the path it found a file by, and a router that is made after it gives that path as
+// the file of the route, where a router that is made first gives where the file is. It is so for a
+// router of the path to the directory that the resolver went by, and until reload().
+it("names the file of a route by the path Bun.resolveSync found it by before the router was made", async () => {
+  // What a router gives when it is made first.
+  const routed = {
+    matches: [
+      "/a is /a in site/pages/a.tsx, src a.tsx",
+      "/sub/7 is /sub/[id] in site/pages/sub/[id].tsx, src sub/[id].tsx",
+      "/linked/deep/d is /linked/deep/d in shared/deep/d.tsx, src ../../shared/deep/d.tsx",
+      "/sub/to-a is /sub/to-a in site/pages/a.tsx, src a.tsx",
+    ],
+    routes: [
+      "/ is site/pages/index.tsx",
+      "/a is site/pages/a.tsx",
+      "/linked/c is shared/c.tsx",
+      "/linked/deep/d is shared/deep/d.tsx",
+      "/sub/[id] is site/pages/sub/[id].tsx",
+      "/sub/b is site/pages/sub/b.tsx",
+      "/sub/to-a is site/pages/a.tsx",
+    ],
+  };
+  expect(await runLinkedDirsFixture("resolver first")).toEqual({
+    resolved: [
+      "./site/pages/sub/to-a.tsx is site/pages/a.tsx",
+      "./p/index.tsx is site/pages/index.tsx",
+      "./site/pages/linked/c is shared/c.tsx",
+    ],
+    "site/pages": {
+      matches: [
+        "/a is /a in site/pages/a.tsx, src a.tsx",
+        "/sub/7 is /sub/[id] in site/pages/sub/[id].tsx, src sub/[id].tsx",
+        "/linked/deep/d is /linked/deep/d in shared/deep/d.tsx, src ../../shared/deep/d.tsx",
+        "/sub/to-a is /sub/to-a in site/pages/sub/to-a.tsx, src sub/to-a.tsx",
+      ],
+      routes: [
+        "/ is site/pages/index.tsx",
+        "/a is site/pages/a.tsx",
+        "/linked/c is site/pages/linked/c.tsx",
+        "/linked/deep/d is shared/deep/d.tsx",
+        "/sub/[id] is site/pages/sub/[id].tsx",
+        "/sub/b is site/pages/sub/b.tsx",
+        "/sub/to-a is site/pages/sub/to-a.tsx",
+      ],
+    },
+    p: {
+      matches: routed.matches,
+      routes: [
+        "/ is p/index.tsx",
+        "/a is site/pages/a.tsx",
+        "/linked/c is shared/c.tsx",
+        "/linked/deep/d is shared/deep/d.tsx",
+        "/sub/[id] is site/pages/sub/[id].tsx",
+        "/sub/b is site/pages/sub/b.tsx",
+        "/sub/to-a is site/pages/a.tsx",
+      ],
+    },
+    "pages-by-link": routed,
+    "site-by-link/pages": routed,
+    "site/pages after reload(), with three files more": [
+      "/ is site/pages/index.tsx",
+      "/a is site/pages/a.tsx",
+      "/linked/c is shared/c.tsx",
+      "/linked/deep/d is shared/deep/d.tsx",
+      "/linked/deep/new is shared/deep/new.tsx",
+      "/linked/new is shared/new.tsx",
+      "/sub/[id] is site/pages/sub/[id].tsx",
+      "/sub/b is site/pages/sub/b.tsx",
+      "/sub/new is site/pages/sub/new.tsx",
+      "/sub/to-a is site/pages/a.tsx",
+    ],
+    "site/pages after reload(), with them removed": routed.routes,
+  });
 });
 
 // The directory fits a path buffer, and so does its index.tsx. The other file fits only through the

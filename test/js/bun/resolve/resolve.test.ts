@@ -1,7 +1,19 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  joinP,
+  MAX_PATH_BYTES,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { dirname, join, relative, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -2859,3 +2871,73 @@ describe.concurrent("Bun.resolveSync of a package through a link and by its own 
     expect(directFirst).toEqual(linkedFirst);
   });
 });
+
+// The directory fits a path buffer, and so does its index.tsx, which is given by where it is. The other
+// file fits only through the link: it is given by that path, and loaded by it. How long a path can be,
+// and what is answered for a longer one, is up to the kernel: this is what Linux answers.
+test.concurrent.skipIf(!isLinux)(
+  "finds a file that fits a path buffer only through a link, by its path through the link",
+  async () => {
+    using dir = tempDir("resolve-link-long", {});
+    const root = String(dir);
+    const segment = Buffer.alloc(100, "d").toString();
+    const depth = Math.floor((MAX_PATH_BYTES - root.length - "/index.tsx".length - 1) / (segment.length + 1));
+    const pages = join(root, ...Array.from({ length: depth }, () => segment));
+    const long = Buffer.alloc(150, "f").toString() + ".tsx";
+    mkdirSync(pages, { recursive: true });
+    symlinkSync(pages, join(root, "p"));
+    writeFileSync(join(root, "p", "index.tsx"), "export default 1;\n");
+    writeFileSync(join(root, "p", long), "export default 2;\n");
+    expect(join(pages, "index.tsx").length).toBeLessThan(MAX_PATH_BYTES);
+    expect(join(pages, long).length).toBeGreaterThan(MAX_PATH_BYTES);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const [root, long] = process.argv.slice(1);
+          const resolved = specifier => {
+            try {
+              return Bun.resolveSync(specifier, root);
+            } catch (error) {
+              return "throws " + error.code;
+            }
+          };
+          let loaded;
+          try {
+            loaded = (await import(root + "/p/" + long)).default;
+          } catch (error) {
+            loaded = "throws " + error.code;
+          }
+          console.log(
+            JSON.stringify({
+              index: resolved("./p/index.tsx"),
+              long: resolved("./p/" + long),
+              bare: resolved("./p/" + long.slice(0, -4)),
+              loaded,
+            }),
+          );
+        `,
+        root,
+        long,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const shown = stdout.replaceAll(pages, "<pages>").replaceAll(root, "<dir>").replaceAll(long, "<long>.tsx");
+    expect({ stdout: shown, stderr: stripAsanWarning(stderr), exitCode }).toEqual({
+      stdout:
+        JSON.stringify({
+          index: "<pages>/index.tsx",
+          long: "<dir>/p/<long>.tsx",
+          bare: "<dir>/p/<long>.tsx",
+          loaded: 2,
+        }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

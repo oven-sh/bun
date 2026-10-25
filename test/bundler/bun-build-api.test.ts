@@ -1531,6 +1531,80 @@ describe("Bun.build", () => {
     `);
   });
 
+  // A tsconfig "paths" entry can lead through a link to a directory. The file it finds is bundled from
+  // where it is. With packages: "external" the file is bundled by its path through the link, so a file
+  // that is also imported by where it is is bundled twice.
+  test.concurrent("tsconfig paths that lead through a directory link", async () => {
+    using dir = tempDir("build-link-paths", {
+      "package.json": JSON.stringify({ name: "root" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@/*": ["./linked-src/*"], "@d/*": ["./real-src/*"] } },
+      }),
+      "real-src/x.ts": `export const x = "X";\n`,
+      "real-src/sub/y.ts": `export const y = "Y";\n`,
+      "entry.ts": [
+        `import { x } from "@/x";`,
+        `import { y } from "@/sub/y";`,
+        `import { x as x2 } from "./real-src/x";`,
+        `import { x as x3 } from "@d/x";`,
+        `console.log(x, y, x2, x3);`,
+      ].join("\n"),
+      // Builds once for each "packages" it is given, and prints the modules and the inputs of each build.
+      "fixture.mjs": String.raw`
+        const seen = {};
+        for (const packages of process.argv.slice(2)) {
+          const result = await Bun.build({
+            entrypoints: ["./entry.ts"],
+            packages,
+            metafile: true,
+            target: "bun",
+          });
+          const text = await result.outputs[0].text();
+          seen[packages] = {
+            // The comment above each module of the output is its path from the root.
+            modules: (text.match(/^\/\/ .+$/gm) ?? [])
+              .map(line => line.slice(3).replaceAll("\\", "/"))
+              .filter(module => module !== "@bun"),
+            inputs: Object.keys(result.metafile.inputs)
+              .map(input => input.replaceAll("\\", "/"))
+              .sort(),
+          };
+        }
+        console.log(JSON.stringify(seen));
+      `,
+    });
+    const root = String(dir);
+    // A junction on Windows, which takes an absolute target. Elsewhere, "junction" is ignored.
+    symlinkSync(join(root, "real-src"), join(root, "linked-src"), "junction");
+
+    /** What the fixture builds in a new process, once for each of `order`. */
+    const run = async (...order: ("external" | "bundle")[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs", ...order],
+        env: bunEnv,
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return JSON.parse(stdout);
+    };
+    const [externalFirst, bundleFirst] = await Promise.all([run("external", "bundle"), run("bundle", "external")]);
+    expect(externalFirst).toEqual({
+      external: {
+        modules: ["linked-src/x.ts", "linked-src/sub/y.ts", "real-src/x.ts", "entry.ts"],
+        inputs: ["entry.ts", "linked-src/sub/y.ts", "linked-src/x.ts", "real-src/x.ts"],
+      },
+      bundle: {
+        modules: ["real-src/x.ts", "real-src/sub/y.ts", "entry.ts"],
+        inputs: ["entry.ts", "real-src/sub/y.ts", "real-src/x.ts"],
+      },
+    });
+    // The build that a process makes first does not change what either is built to.
+    expect(bundleFirst).toEqual(externalFirst);
+  });
+
   test.concurrent("errors are returned as an array", async () => {
     const x = await buildNoThrow({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],

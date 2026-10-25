@@ -60,6 +60,12 @@ struct ThreadArena {
     next: Link,
 }
 
+impl Default for Session {
+    fn default() -> Session {
+        Session::new()
+    }
+}
+
 impl Session {
     pub fn new() -> Session {
         Session {

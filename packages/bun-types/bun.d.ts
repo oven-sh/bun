@@ -3616,6 +3616,10 @@ declare module "bun" {
      *   name. Only an import or entrypoint with exactly that text gets it, so
      *   `src/config.ts` does not override `./src/config.ts`.
      *
+     * An entrypoint gets a key only when it is written exactly like the key.
+     * Bun resolves any other entrypoint on disk, and then takes the contents
+     * from `files` if the file that it finds is there.
+     *
      * In a key, `\` is the same as `/`: `.\a.ts` and `./a.ts` are one key, and
      * the last one wins. If two keys name one file in different ways (`./a.ts`
      * and `./lib/../a.ts`) and have different contents, `Bun.build()` throws a

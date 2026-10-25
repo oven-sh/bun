@@ -1121,9 +1121,24 @@ pub mod bv2_impl {
                     found.map(|(_, file)| &*file.contents)
                 }
 
-                /// `path` is the path of a module, the text of a key, or an entry point that names a file here.
+                /// `path` is the path of a module, or the text of a key.
                 pub fn contains(&self, path: &[u8]) -> bool {
                     self.get(path).is_some()
+                }
+
+                /// `entry_point` is the text of a key. The default root is then the cwd.
+                pub fn is_written_as_key(&self, entry_point: &[u8]) -> bool {
+                    if bun_paths::is_absolute_loose(entry_point) {
+                        self.file(entry_point)
+                            .is_some_and(|(_, file)| file.absolute)
+                    } else {
+                        self.file_spelled(entry_point).is_some()
+                    }
+                }
+
+                /// The cwd of the `Bun.build()` call is still the cwd.
+                pub(crate) fn is_at_cwd(&self, cwd: &[u8]) -> bool {
+                    self.cwd == cwd
                 }
 
                 /// The path from the cwd of a file that a `./` key names. Its output takes that directory and name.
@@ -1137,7 +1152,7 @@ pub mod bv2_impl {
                         return None;
                     }
                     if bun_paths::is_absolute_loose(entry_point) {
-                        // The disk resolver finds the file of a `./` key, and the parse task reads the key. That route has the settings of the file.
+                        // The absolute path of a `./` key is for the disk resolver. The parse task reads the key at the path it finds.
                         return (self.file(entry_point)).filter(|(_, file)| file.absolute);
                     }
                     if let Some(found) = self.file_spelled(entry_point) {
@@ -1170,8 +1185,13 @@ pub mod bv2_impl {
                         return self.file(specifier);
                     }
                     if !bun_paths::is_package_path_not_absolute(specifier) {
-                        let beside = self.file_beside(source_file, specifier);
-                        return beside.or_else(|| self.file_spelled(specifier));
+                        let beside = || self.file_beside(source_file, specifier);
+                        // `.` and `..` can be names of keys: the key text comes first for them, as for any name.
+                        return if Self::starts_with_dot_slash(specifier) {
+                            beside().or_else(|| self.file_spelled(specifier))
+                        } else {
+                            self.file_spelled(specifier).or_else(beside)
+                        };
                     }
                     self.file_spelled(specifier).or_else(|| {
                         // An absolute key answers a bare specifier. A relative path answers one only where the disk resolver reads it as relative.
@@ -1198,14 +1218,13 @@ pub mod bv2_impl {
                     source_file: &[u8],
                     specifier: &[u8],
                 ) -> Option<(&[u8], &File)> {
-                    // The path of a module can be a name. It is then a path from the cwd of the call.
+                    // `source_file` may itself be relative (e.g. on Windows).
                     let mut abs_source_buf = bun_paths::path_buffer_pool::get();
                     let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
                         source_file
                     } else {
-                        bun_paths::resolve_path::join_abs_string_buf_checked::<
-                            bun_paths::platform::Loose,
-                        >(self.cwd, &mut **abs_source_buf, &[source_file])?
+                        bun_resolver::fs::FileSystem::instance()
+                            .abs_buf_checked(&[source_file], &mut *abs_source_buf)?
                     };
 
                     // Windows paths from the real filesystem may use backslashes.
@@ -1233,7 +1252,7 @@ pub mod bv2_impl {
                         {
                             b"/"
                         } else {
-                            self.cwd
+                            bun_resolver::fs::FileSystem::instance().top_level_dir()
                         }
                     } else {
                         source_dir
@@ -1443,12 +1462,6 @@ pub mod bv2_impl {
                     );
                     assert_eq!(import("/proj/src/index.ts", "./missing.ts", js), None);
                     assert_eq!(import("/proj/src/index.ts", "", js), None);
-                    // The path of an importer can be a name. It is then a path from the cwd of the call.
-                    assert_eq!(import("lib/name.ts", "../src/config.ts", js), config);
-                    assert_eq!(
-                        import("lib/name.ts", "../../abs/chart.js", js),
-                        Some("/abs/chart.js")
-                    );
                 }
 
                 #[test]
@@ -1470,24 +1483,26 @@ pub mod bv2_impl {
                     assert_eq!(entry("/abs/entry.ts"), Some("/abs/entry.ts"));
                     assert_eq!(entry("/abs/missing.ts"), None);
                     assert_eq!(entry(""), None);
-                    // Any other relative entry point is joined onto the directory above the cwd. Only an absolute key answers.
-                    assert_eq!(entry("src/entry.ts"), None);
-                    assert_eq!(entry("in-cwd.ts"), None);
-                    assert_eq!(entry("proj/in-cwd.ts"), Some("/proj/in-cwd.ts"));
-                    assert_eq!(entry("proj/src/entry.ts"), None);
-
                     // The output of a file that a `./` key names is at its path from the cwd.
                     let output_path = |path: &str| files.output_path(path.as_bytes()).map(text);
                     assert_eq!(output_path("/proj/src/entry.ts"), Some("src/entry.ts"));
                     assert_eq!(output_path("/abs/entry.ts"), None);
                     assert_eq!(output_path("worker.js"), None);
 
-                    // The parse task, the debug assertions and the default root ask with the path of a module or the text of a key.
+                    // The parse task and the debug assertions ask with the path of a module or the text of a key.
                     for found in ["/proj/src/entry.ts", "./src/entry.ts", "worker.js"] {
                         assert!(files.contains(found.as_bytes()));
                     }
                     for missing in ["/proj/worker.js", "src/entry.ts"] {
                         assert!(!files.contains(missing.as_bytes()));
+                    }
+
+                    // The default root is the cwd when every entry point is the text of a key.
+                    for key in ["./src/entry.ts", "worker.js", "/abs/entry.ts"] {
+                        assert!(files.is_written_as_key(key.as_bytes()));
+                    }
+                    for other in ["/proj/src/entry.ts", "src/entry.ts", "/abs/missing.ts"] {
+                        assert!(!files.is_written_as_key(other.as_bytes()));
                     }
                 }
             }
@@ -4925,7 +4940,7 @@ pub mod bv2_impl {
 
                 // SAFETY: `LinkerContext::link` takes `bundle` as a raw `*mut BundleV2` and only
                 // touches fields disjoint from `this.linker` (`graph`, `transpiler`,
-                // `dynamic_import_entry_points`, scalar reads) via `addr_of_mut!`/place
+                // `dynamic_import_entry_points`, `file_map`, scalar reads) via `addr_of_mut!`/place
                 // projection, so the `&mut this.linker` receiver and `*bundle_ptr` never produce
                 // overlapping `&mut`.
                 let mut chunks = unsafe {
@@ -6550,7 +6565,7 @@ pub mod bv2_impl {
             // much of its state to be valid memory, even if empty.
             // SAFETY: `LinkerContext::load` takes `bundle` as a raw `*mut BundleV2` and only
             // touches fields disjoint from `self.linker` (`graph`, `transpiler`,
-            // `dynamic_import_entry_points`) via `addr_of_mut!`, so the `&mut self.linker`
+            // `dynamic_import_entry_points`, `file_map`) via `addr_of_mut!`, so the `&mut self.linker`
             // receiver and `*bundle_ptr` never produce overlapping `&mut`. Both Index newtypes
             // are `#[repr(transparent)]` u32 — see `generate_from_cli` for the slice cast.
             unsafe {

@@ -1012,7 +1012,7 @@ pub(crate) mod js_bundler {
                     if !this.files.is_empty() {
                         let mut all_in_filemap = true;
                         for ep in entry_points {
-                            if !this.files.contains(ep) {
+                            if !this.files.is_written_as_key(ep) {
                                 all_in_filemap = false;
                                 break;
                             }

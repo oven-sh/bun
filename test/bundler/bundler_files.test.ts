@@ -1020,8 +1020,8 @@ describe("bundler files option", () => {
       }`;
       // A relative entry point that is not the text of a key is for the disk
       // resolver. The parse task reads the key at the path that it finds.
-      const page = (key: string) => `{
-        entrypoints: ["src/page.tsx"],
+      const page = (key: string, entry = `"src/page.tsx"`) => `{
+        entrypoints: [${entry}],
         files: { [${key}]: 'console.log(<div>{"page from memory"}</div>);' },
         external: ["preact"],
       }`;
@@ -1039,17 +1039,19 @@ describe("bundler files option", () => {
           "absolute": ${build(`abs("src/entry.ts")`)},
           "the tsconfig.json of the file applies": ${page(`"./src/page.tsx"`)},
           "the tsconfig.json of the file applies, absolute key": ${page(`abs("src/page.tsx")`)},
+          "the tsconfig.json of the file applies, absolute entry point": ${page(`"./src/page.tsx"`, `abs("src/page.tsx")`)},
         }`,
         report => {
           const page = { logs: [], outputs: ["./page.js"], found: ["page from memory", "preact/jsx-dev-runtime"] };
           expect(report).toEqual({
-            // The entrypoint is the text of a key or the path of its file, so the root is the cwd.
+            // The entrypoint is the text of a key, so the root is the cwd.
             "./src/entry.ts": { logs: [], outputs: ["src/entry.js"], found: ["entry from memory"] },
-            "absolute": { logs: [], outputs: ["src/entry.js"], found: ["entry from memory"] },
             // If not, the root is the directory of the entry point, as for an entry point on disk.
+            "absolute": { logs: [], outputs: ["./entry.js"], found: ["entry from memory"] },
             "src/entry.ts": { logs: [], outputs: ["./entry.js"], found: ["entry from memory"] },
             "the tsconfig.json of the file applies": page,
             "the tsconfig.json of the file applies, absolute key": page,
+            "the tsconfig.json of the file applies, absolute entry point": page,
           });
         },
       );
@@ -1147,27 +1149,13 @@ describe("bundler files option", () => {
           files: { "./src/config.ts": 'export const config = "config from memory";' },
           metafile: true,
         },
-        // The path of this module is a name. An import in it is a path from the directory of the call.
-        "process.chdir() after the call, an import in a name": {
-          chdir: "one",
-          chdirAfterCall: "../other",
-          entrypoints: ["worker.ts"],
-          files: {
-            "worker.ts": 'import { config } from "./src/config.ts"; console.log(config);',
-            [abs("one/src/config.ts")]: 'export const config = "config from memory";',
-          },
-        },
       }`,
       report => {
         const inMemory = { logs: [], outputs: ["./index.js"], found: ["config from memory"] };
         expect(report).toEqual({
           "the directory of the call": inMemory,
+          // The build thread can read the entry point before or after the chdir, so this matcher is loose.
           "process.chdir() after the call": { ...inMemory, inputs: expect.arrayContaining(["src/config.ts"]) },
-          "process.chdir() after the call, an import in a name": {
-            logs: [],
-            outputs: [expect.stringContaining("worker.js")],
-            found: ["config from memory"],
-          },
         });
       },
     );
@@ -1475,7 +1463,8 @@ describe("bundler files option", () => {
 
     // The output of a "./" key has the directory and the name of its path from the cwd, like the
     // key text gave it on Bun 1.4. No directory of these keys is on disk. The builds import the
-    // key by its text, and give the output of Bun 1.4.
+    // key by its text, and give the output of Bun 1.4. For a directory that cannot be opened,
+    // `[dir]` drops a leading "..": the two rows with a key above the cwd pin that.
     buildsIn(
       "the output of a ./ key is at its path from the cwd",
       { "src/keep": "", "packages/app/keep": "" },
@@ -1511,9 +1500,10 @@ describe("bundler files option", () => {
 
     // The module of a "./" key is the file at its path, so the imports in it resolve from the
     // directory of the key. Bun 1.4 resolved them from the cwd. A key without "./" is a name:
-    // the imports in it resolve from the cwd.
+    // the disk resolver still resolves the imports in it from the cwd. `files` looks beside
+    // the name first, as it does for an absolute key.
     buildsIn(
-      "an import in a ./ key resolves from the directory of the key, and in a name from the cwd",
+      "an import in a ./ key resolves from the directory of the key",
       {
         "helper.js": `export const helper = "helper in the cwd";`,
         "both.js": `export const both = "both in the cwd";`,
@@ -1542,6 +1532,10 @@ describe("bundler files option", () => {
           "a name: a file of the cwd": build("src/a.ts", helper),
           "a name: a file of the cwd, declined": build("src/a.ts", helper, declines),
           "a name: a file in both directories": build("src/a.ts", both),
+          "a name: a key beside it": {
+            entrypoints: ["src/a.ts"],
+            files: { "src/a.ts": both, "./src/both.js": 'export const both = "both beside the key";' },
+          },
         };
       })()`,
       report => {
@@ -1556,6 +1550,7 @@ describe("bundler files option", () => {
           "a name: a file of the cwd": { logs: [], outputs: ["src/a.js"], found: ["helper in the cwd"] },
           "a name: a file of the cwd, declined": { logs: [], outputs: ["src/a.js"], found: ["helper in the cwd"] },
           "a name: a file in both directories": { logs: [], outputs: ["src/a.js"], found: ["both in the cwd"] },
+          "a name: a key beside it": { logs: [], outputs: ["src/a.js"], found: ["both beside the key"] },
         });
       },
     );

@@ -2,8 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -4848,18 +4849,249 @@ describe("css tests", () => {
       ".foo { background: repeating-radial-gradient(circle 20px, yellow, blue) }",
       ".foo{background:repeating-radial-gradient(20px,#ff0,#00f)}",
     );
+    // lightningcss prints `(20px,#ff0,#00f)` for these. A prefixed name has no circle radius, and `20px` is a position there:
+    // https://compat.spec.whatwg.org/#css-gradients-webkit-radial-gradient
     minify_test(
       ".foo { background: -webkit-repeating-radial-gradient(circle 20px, yellow, blue) }",
-      ".foo{background:-webkit-repeating-radial-gradient(20px,#ff0,#00f)}",
+      ".foo{background:-webkit-repeating-radial-gradient(circle 20px,yellow,blue)}",
     );
     minify_test(
       ".foo { background: -moz-repeating-radial-gradient(circle 20px, yellow, blue) }",
-      ".foo{background:-moz-repeating-radial-gradient(20px,#ff0,#00f)}",
+      ".foo{background:-moz-repeating-radial-gradient(circle 20px,yellow,blue)}",
     );
     minify_test(
       ".foo { background: -o-repeating-radial-gradient(circle 20px, yellow, blue) }",
-      ".foo{background:-o-repeating-radial-gradient(20px,#ff0,#00f)}",
+      ".foo{background:-o-repeating-radial-gradient(circle 20px,yellow,blue)}",
     );
+
+    describe("prefixed gradient with the standard syntax", () => {
+      const names = [
+        "-webkit-radial-gradient",
+        "-webkit-repeating-radial-gradient",
+        "-moz-radial-gradient",
+        "-moz-repeating-radial-gradient",
+        "-o-radial-gradient",
+        "-o-repeating-radial-gradient",
+      ];
+
+      // `<shape> || <extent>` means the same in the prefixed syntax, so these values stay typed.
+      for (const [args, minified] of [
+        ["red, blue", "red,#00f"],
+        ["circle, red, blue", "circle,red,#00f"],
+        ["ellipse, red, blue", "red,#00f"],
+        ["closest-side, red, blue", "closest-side,red,#00f"],
+        ["farthest-corner, red, blue", "red,#00f"],
+        ["closest-side circle, red, blue", "circle closest-side,red,#00f"],
+        ["circle closest-corner, red, blue", "circle closest-corner,red,#00f"],
+        ["ellipse farthest-side, red, blue", "farthest-side,red,#00f"],
+        ["farthest-side ellipse, red, blue", "farthest-side,red,#00f"],
+        ["CIRCLE, red 10px, blue 50px", "circle,red 10px,#00f 50px"],
+      ]) {
+        minify_test(
+          `.foo { background: -webkit-radial-gradient(${args}) }`,
+          `.foo{background:-webkit-radial-gradient(${minified})}`,
+        );
+      }
+      for (const name of names.slice(1)) {
+        minify_test(
+          `.foo { background: ${name}(closest-side circle, red, blue) }`,
+          `.foo{background:${name}(circle closest-side,red,#00f)}`,
+        );
+      }
+
+      // The prefixed syntax has no `at` and no radius in the shape. One or two lengths at the start are a position there.
+      const asWritten: [args: string, minified: string][] = [
+        ["circle at 30% 107%, red, blue", "circle at 30% 107%,red,blue"],
+        ["circle at center, red, blue", "circle at center,red,blue"],
+        ["at top left, red, blue", "at top left,red,blue"],
+        ["closest-side at 10px 20px, red, blue", "closest-side at 10px 20px,red,blue"],
+        ["circle 20px, red, blue", "circle 20px,red,blue"],
+        ["20px circle, red, blue", "20px circle,red,blue"],
+        ["ellipse 20px 30px, red, blue", "ellipse 20px 30px,red,blue"],
+        ["20px 30px ellipse, red, blue", "20px 30px ellipse,red,blue"],
+        ["20px, red, blue", "20px,red,blue"],
+        ["20px 30px, red, blue", "20px 30px,red,blue"],
+        ["10% 20%, red, blue", "10% 20%,red,blue"],
+        ["20px 30px at top left, red, blue", "20px 30px at top left,red,blue"],
+        // Chromium and WebKit reject a transition hint in a prefixed gradient.
+        ["red, 30%, blue", "red,30%,blue"],
+        ["circle, red, 50%, blue", "circle,red,50%,blue"],
+      ];
+
+      for (const name of names) {
+        for (const [args, minified] of asWritten) {
+          minify_test(`.foo { background: ${name}(${args}) }`, `.foo{background:${name}(${minified})}`);
+        }
+        // The prefixed linear functions take no hint either.
+        const linear = name.replace("radial", "linear");
+        minify_test(`.foo { background: ${linear}(red, 30%, blue) }`, `.foo{background:${linear}(red,30%,blue)}`);
+        minify_test(
+          `.foo { background: ${linear}(red 10%, 50%, blue) }`,
+          `.foo{background:${linear}(red 10%,50%,blue)}`,
+        );
+      }
+      minify_test(
+        ".foo { background: -webkit-linear-gradient(red 10%, blue) }",
+        ".foo{background:-webkit-linear-gradient(red 10%,#00f)}",
+      );
+
+      // The targets that `bun build` uses for `--target=browser`.
+      const bundlerDefaults = {
+        chrome: 80 << 16,
+        edge: 80 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+        opera: 67 << 16,
+      };
+
+      for (const targets of [undefined, bundlerDefaults]) {
+        // Browsers reject the second value of each rule, so it must not replace the first.
+        cssTest(
+          ".foo { background: radial-gradient(circle at 30% 107%, red, blue); background: -webkit-radial-gradient(circle at 30% 107%, red, blue) }",
+          ".foo { background: radial-gradient(circle at 30% 107%, red, #00f); background: -webkit-radial-gradient(circle at 30% 107%, red, blue); }",
+          targets,
+        );
+        cssTest(
+          ".foo { background: red; background: -webkit-radial-gradient(circle at center, red, blue) }",
+          ".foo { background: red; background: -webkit-radial-gradient(circle at center, red, blue); }",
+          targets,
+        );
+        cssTest(
+          ".foo { background-image: url(a.png); background-image: -moz-radial-gradient(circle 20px, red, blue) }",
+          '.foo { background-image: url("a.png"); background-image: -moz-radial-gradient(circle 20px, red, blue); }',
+          targets,
+        );
+        cssTest(
+          ".foo { background: red; background: -webkit-radial-gradient(circle, red, 50%, blue) }",
+          ".foo { background: red; background: -webkit-radial-gradient(circle, red, 50%, blue); }",
+          targets,
+        );
+        cssTest(
+          ".foo { background: red; background: -webkit-linear-gradient(red, 50%, blue) }",
+          ".foo { background: red; background: -webkit-linear-gradient(red, 50%, blue); }",
+          targets,
+        );
+        // Such a value is not removed when the standard value comes after it.
+        cssTest(
+          ".foo { background: -webkit-radial-gradient(circle at 30% 107%, red, blue); background: radial-gradient(circle at 30% 107%, red, blue) }",
+          ".foo { background: -webkit-radial-gradient(circle at 30% 107%, red, blue); background: radial-gradient(circle at 30% 107%, red, #00f); }",
+          targets,
+        );
+      }
+      // A typed value is still removed when no target needs the prefix.
+      prefix_test(
+        ".foo { background: -webkit-radial-gradient(circle, red, blue); background: radial-gradient(circle, red, blue) }",
+        ".foo { background: radial-gradient(circle, red, #00f); }",
+        bundlerDefaults,
+      );
+
+      // BackgroundHandler writes the prefixed declarations that it holds after a value that is kept as tokens.
+      // The order is wrong, so it is not pinned here.
+      test("typed prefixed values before a value that is kept as tokens", () => {
+        const output = cssInternals._test(
+          ".foo { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-radial-gradient(20px 30px, yellow, green) }",
+          "",
+        );
+        expect(output.match(/background: [^;]+;/g)?.sort()).toEqual([
+          "background: -moz-linear-gradient(red, #00f);",
+          "background: -webkit-linear-gradient(red, #00f);",
+          "background: -webkit-radial-gradient(20px 30px, yellow, green);",
+        ]);
+      });
+
+      // `circle 20px` and `20px` are not the same value.
+      minify_test(
+        ".a { background: -webkit-radial-gradient(circle 20px, red, blue) } .b { background: -webkit-radial-gradient(20px, red, blue) }",
+        ".a{background:-webkit-radial-gradient(circle 20px,red,blue)}.b{background:-webkit-radial-gradient(20px,red,blue)}",
+      );
+
+      // Every property that takes an image reads the same syntax.
+      minify_test(
+        ".foo { border-image-source: -webkit-radial-gradient(circle at center, red, blue) }",
+        ".foo{border-image-source:-webkit-radial-gradient(circle at center,red,blue)}",
+      );
+      minify_test(
+        ".foo { -webkit-mask-image: -webkit-radial-gradient(circle at top left, red, blue) }",
+        ".foo{-webkit-mask-image:-webkit-radial-gradient(circle at top left,red,blue)}",
+      );
+      minify_test(
+        ".foo { background-image: image-set(-webkit-radial-gradient(circle 20px, red, blue) 1x) }",
+        ".foo{background-image:image-set(-webkit-radial-gradient(circle 20px,red,blue)1x)}",
+      );
+      minify_test(
+        ".foo { background: -webkit-radial-gradient(circle 20px, red, blue) !important }",
+        ".foo{background:-webkit-radial-gradient(circle 20px,red,blue)!important}",
+      );
+
+      // A value that is kept as tokens gets the color fallbacks of an unparsed declaration.
+      prefix_test(
+        ".foo { background: -webkit-radial-gradient(circle at center, lab(50% 40 30), blue) }",
+        `.foo {
+          background: -webkit-radial-gradient(circle at center, #bb5846, blue);
+        }
+        @supports (color: color(display-p3 0 0 0)) {
+          .foo {
+            background: -webkit-radial-gradient(circle at center, color(display-p3 .685125 .366092 .297589), blue);
+          }
+        }
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            background: -webkit-radial-gradient(circle at center, lab(50% 40 30), blue);
+          }
+        }`,
+        bundlerDefaults,
+      );
+
+      minify_test(
+        '@property --a { syntax: "<image>"; inherits: false; initial-value: -webkit-radial-gradient(closest-side circle, red, blue) }',
+        '@property --a{syntax:"<image>";inherits:false;initial-value:-webkit-radial-gradient(circle closest-side,red,#00f)}',
+      );
+      // `@property` has no fallback for a value that is not typed (#45806 adds one). The value is never rewritten.
+      for (const [value, rewritten] of [
+        ["-webkit-radial-gradient(20px 30px, red, blue)", "(20px 30px,red,#00f)"],
+        ["-webkit-radial-gradient(circle at center, red, blue)", "(circle,red,#00f)"],
+        ["-webkit-linear-gradient(red, 50%, blue)", "(red,#00f)"],
+      ]) {
+        test(`@property initial-value: ${value}`, () => {
+          const source = `@property --a { syntax: "<image>"; inherits: false; initial-value: ${value} }`;
+          let output: string;
+          try {
+            output = cssInternals.minifyTestWithOptions(source, "");
+          } catch (error) {
+            output = String(error);
+          }
+          expect(output).not.toContain(rewritten);
+        });
+      }
+
+      test("Bun.build", async () => {
+        using dir = tempDir("css-prefixed-radial-gradient", {
+          "in.css": `
+.instagram { background: radial-gradient(circle at 30% 107%, red, blue); background: -webkit-radial-gradient(circle at 30% 107%, red, blue) }
+.fallback { background: red; background: -webkit-radial-gradient(circle at center, red, blue) }
+.radius { background: -webkit-radial-gradient(circle 20px, red, blue) }
+`,
+        });
+        const result = await Bun.build({ entrypoints: [join(String(dir), "in.css")] });
+        expect(result.logs).toEqual([]);
+        // The first line is a comment with the path of the file.
+        const css = await result.outputs[0].text();
+        expect(css.slice(css.indexOf("\n") + 1)).toBe(`.instagram {
+  background: radial-gradient(circle at 30% 107%, red, #00f);
+  background: -webkit-radial-gradient(circle at 30% 107%, red, blue);
+}
+
+.fallback {
+  background: red;
+  background: -webkit-radial-gradient(circle at center, red, blue);
+}
+
+.radius {
+  background: -webkit-radial-gradient(circle 20px, red, blue);
+}
+`);
+      });
+    });
     minify_test(
       ".foo { background: -webkit-gradient(radial, center center, 0, center center, 100, from(blue), to(yellow)) }",
       ".foo{background:-webkit-gradient(radial,50% 50%,0,50% 50%,100,from(#00f),to(#ff0))}",

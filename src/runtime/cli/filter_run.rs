@@ -836,6 +836,18 @@ pub(crate) fn run_scripts_with_filter(
     post_script_name[0..4].copy_from_slice(b"post");
     post_script_name[4..].copy_from_slice(script_name);
 
+    // The forwarded arguments as shell words. `+ 3`: a space, and the quotes of a quoted word.
+    let mut arguments: Vec<u8> =
+        Vec::with_capacity(ctx.passthrough.iter().map(|part| part.len() + 3).sum());
+    for part in &ctx.passthrough {
+        arguments.push(b' ');
+        if crate::shell::needs_escape_utf8_ascii_latin1(part) {
+            crate::shell::escape_8bit::<true, false>(part, &mut arguments)?;
+        } else {
+            arguments.extend_from_slice(part);
+        }
+    }
+
     let _ = bun_resolver::fs::FileSystem::init(None)?;
     let fsinstance = bun_resolver::fs::FileSystem::get();
 
@@ -888,24 +900,16 @@ pub(crate) fn run_scripts_with_filter(
                 continue;
             };
 
-            let mut copy_script_capacity: usize = original_content.len();
-            for part in &ctx.passthrough {
-                copy_script_capacity += 1 + part.len();
-            }
+            // The arguments go to the script, not to its pre and post scripts.
+            let arguments: &[u8] = if i == 1 { &arguments } else { b"" };
             // we leak this
-            let mut copy_script: Vec<u8> = Vec::with_capacity(copy_script_capacity);
+            let mut copy_script: Vec<u8> =
+                Vec::with_capacity(original_content.len() + arguments.len() + 1);
 
             RunCommand::replace_package_manager_run(&mut copy_script, original_content)?;
             let len_command_only = copy_script.len();
 
-            for part in &ctx.passthrough {
-                copy_script.push(b' ');
-                if crate::shell::needs_escape_utf8_ascii_latin1(part) {
-                    crate::shell::escape_8bit::<true, false>(part, &mut copy_script)?;
-                } else {
-                    copy_script.extend_from_slice(part);
-                }
-            }
+            copy_script.extend_from_slice(arguments);
             copy_script.push(0);
 
             // Route through the process-lifetime CLI arena

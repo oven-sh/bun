@@ -377,6 +377,68 @@ describe("bun", () => {
     expect(exitCode).toBe(7);
   });
 
+  describe.concurrent("arguments after the script name", () => {
+    const root = JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] });
+    const argv = "console.log(JSON.stringify(process.argv.slice(2)));";
+    const hooks = { prescript: `${bunExe()} argv.js pre`, postscript: `${bunExe()} argv.js post` };
+    const scripts = { ...hooks, script: `${bunExe()} argv.js main` };
+
+    async function run(cwd: string, args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args, "--coverage", "b c"],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.split(/\r?\n/).filter(Boolean), stderr, exitCode };
+    }
+
+    test.each([
+      "run --filter pkg script --",
+      "run -F pkg script --",
+      "--filter pkg script --",
+      "run --workspaces script --",
+      "--workspaces script --",
+      "run --filter pkg script",
+    ])("bun %s <arguments>: the script gets them, its pre and post scripts do not", async args => {
+      using dir = tempDir("filter-arguments", {
+        "package.json": root,
+        "packages/pkg/argv.js": argv,
+        "packages/pkg/package.json": JSON.stringify({ name: "pkg", scripts }),
+      });
+      expect(await run(String(dir), args.split(" "))).toEqual({
+        stdout: [
+          'pkg prescript: ["pre"]',
+          "pkg prescript: Exited with code 0",
+          'pkg script: ["main","--coverage","b c"]',
+          "pkg script: Exited with code 0",
+          'pkg postscript: ["post"]',
+          "pkg postscript: Exited with code 0",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("the pre and post scripts of a package that lacks the script do not get them", async () => {
+      using dir = tempDir("filter-arguments", {
+        "package.json": root,
+        "packages/pkg/argv.js": argv,
+        "packages/pkg/package.json": JSON.stringify({ name: "pkg", scripts }),
+        "packages/hooks/argv.js": argv,
+        "packages/hooks/package.json": JSON.stringify({ name: "hooks", scripts: hooks }),
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", "script", "--"]);
+      expect({ withArguments: stdout.filter(line => line.includes("--coverage")), stderr, exitCode }).toEqual({
+        withArguments: ['pkg script: ["main","--coverage","b c"]'],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   test("respect dependency order", () => {
     using dir = tempDir("testworkspace", {
       dep0: {

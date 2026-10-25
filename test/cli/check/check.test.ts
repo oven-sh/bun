@@ -9313,6 +9313,55 @@ export interface User { } export declare const flag: boolean; export declare fun
       expect(exitCode).toBe(1);
     });
 
+    // The parameter `dep` gets the type that `x30` returns to its first resolution. The property `dep` is asked for inside
+    // that resolution and is circular. The declaration file has the type of the property, for both.
+    test("the declaration of a circular parameter property has the type of the property", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "files": [], "references": [{ "path": "./one" }, { "path": "./two" }] }
+`,
+        "one/tsconfig.json": `{ "compilerOptions": { "composite": true, "emitDeclarationOnly": true, "outDir": "out", "strict": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true } }
+`,
+        "two/tsconfig.json": `{ "compilerOptions": { "composite": true, "emitDeclarationOnly": true, "outDir": "out", "strict": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true }, "references": [{ "path": "../one" }] }
+`,
+        "one/lib.ts": `export class App<R = never> {
+  routes!: R;
+  mount<R2>(sub: App<R2>) { return this as unknown as App<R | R2>; }
+}
+export function app() { return new App(); }
+export declare const flag: boolean;
+`,
+        "one/svc.ts": `import { app } from "./lib";
+import { x30 } from "./m3";
+export class Svc { constructor(public dep = x30, public n = 1) {} readonly held = app; static shared = new Svc(); }
+`,
+        "one/m3.ts": `import { flag } from "./lib";
+import { x50, x51 } from "./m5";
+export const x30 = flag ? x50 : x51;
+`,
+        "one/m5.ts": `import { app } from "./lib";
+import { Svc } from "./svc";
+export const x50 = Svc.shared.held();
+export const x51 = app().mount(new Svc().dep);
+`,
+        "two/use.ts": `import { Svc } from "../one/svc";
+new Svc().dep.nope;
+export const s: string = new Svc().n;
+`,
+      });
+      const circular =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          `one/m3.ts(3,14): error TS7022: 'x30' implicitly has type 'any' ${circular}`,
+          `one/m5.ts(4,14): error TS7022: 'x51' implicitly has type 'any' ${circular}`,
+          `one/svc.ts(3,32): error TS7022: 'dep' implicitly has type 'any' ${circular}`,
+          "two/use.ts(3,14): error TS2322: Type 'number' is not assignable to type 'string'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // The argument of `router` in m1.ts is first checked in the mode that skips generic functions. The callee of
     // `keys()` leads to `c11` again, and that resolution of `keys()` finds `p` to be `any` and assigns its signature.
     test("a call keeps the signature that a resolution inside the check of its callee assigned", async () => {

@@ -549,7 +549,14 @@ impl<'p, 's> Checker<'p, 's> {
             NodeData::Param(p) if self.is_this_parameter(file, p) => {
                 return Some(self.type_of_this_parameter(file, bound.param_fn[p.idx()]));
             }
-            NodeData::Param(p) => return Some(self.type_of_param(file, p)),
+            NodeData::Param(p) => {
+                // `bindParameter` declares the property last, so that's the symbol of a parameter property.
+                let property = bound.symbol_of_declaration(Decl::ParameterProperty(p));
+                return Some(match property.is_some() {
+                    true => self.type_of_symbol(self.files().sym(file, property)),
+                    false => self.type_of_param(file, p),
+                });
+            }
             NodeData::PatProp(p) => identifier_pattern(hir[p].value)?,
             NodeData::PatElem(p) => identifier_pattern(hir[p].pat)?,
             _ => return None,

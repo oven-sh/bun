@@ -1922,57 +1922,6 @@ pub mod bv2_impl {
         false
     }
 
-    /// The resolver logs a failure that it returns in its own log, and with
-    /// no location: it does not know the importer. Give that message the
-    /// place of the import, in `log`, the log of the importer. The dev
-    /// server shows only that log.
-    #[cold]
-    pub(crate) fn place_resolver_error(
-        resolver_log: NonNull<bun_ast::Log>,
-        log: &mut bun_ast::Log,
-        source: Option<&bun_ast::Source>,
-        range: bun_ast::Range,
-        specifier: &[u8],
-    ) {
-        // Outside the dev server, `log` is the log of the resolver. Only one
-        // of the two is borrowed at a time.
-        let log: *mut bun_ast::Log = log;
-        let msg = {
-            // SAFETY: the log of the resolver outlives the bundle, and only
-            // the bundle thread, which this is, resolves with it.
-            let resolver_log = unsafe { &mut *resolver_log.as_ptr() };
-            let ours = resolver_log.msgs.last().is_some_and(|msg| {
-                msg.kind == bun_ast::Kind::Err
-                    && msg.data.location.is_none()
-                    && matches!(
-                        &msg.metadata,
-                        bun_ast::Metadata::Resolve(resolve)
-                            if resolve.specifier.slice(&msg.data.text) == specifier
-                    )
-            });
-            if !ours {
-                return;
-            }
-            let Some(msg) = resolver_log.msgs.pop() else {
-                return;
-            };
-            resolver_log.errors -= 1;
-            msg
-        };
-        let bun_ast::Metadata::Resolve(resolve) = &msg.metadata else {
-            return;
-        };
-        // SAFETY: `log` came from a `&mut`, and the borrow above has ended.
-        unsafe { &mut *log }.add_resolve_error(
-            source,
-            range,
-            format_args!("{}", bstr::BStr::new(&msg.data.text)),
-            specifier,
-            resolve.import_kind,
-            resolve.err,
-        );
-    }
-
     // Unified with the canonical definitions at the parent module level (this
     // avoids two distinct nominal `BundleV2`/`PendingImport`/`BakeOptions` types
     // that previously caused widespread "expected `BundleV2`, found `BundleV2`"
@@ -2951,23 +2900,16 @@ pub mod bv2_impl {
                                     );
                                 }
                             }
-                        } else if !log_unhandled_resolve_error(
-                            log,
-                            source,
-                            import_record.range,
-                            err,
-                            &import_record.specifier,
-                            import_record.kind,
-                            !handles_import_errors
-                                && !self.transpiler.options.ignore_module_resolution_errors,
-                        ) {
-                            place_resolver_error(
-                                // SAFETY: see `transpiler` note above.
-                                unsafe { (*transpiler).resolver.log },
+                        } else {
+                            log_unhandled_resolve_error(
                                 log,
                                 source,
                                 import_record.range,
+                                err,
                                 &import_record.specifier,
+                                import_record.kind,
+                                !handles_import_errors
+                                    && !self.transpiler.options.ignore_module_resolution_errors,
                             );
                         }
                         return;
@@ -6859,9 +6801,13 @@ pub mod bv2_impl {
                     }
 
                     if import_record.path.text.starts_with(b"bun:") {
-                        let new_text: &'static [u8] = &import_record.path.text[b"bun:".len()..];
-                        import_record.path = bun_paths::fs::Path::init(new_text);
-                        import_record.path.namespace = b"bun";
+                        if let Some(builtin) =
+                            bun_resolve_builtins::HardcodedModule::Alias::bun_prefixed_builtin(
+                                import_record.path.text,
+                            )
+                        {
+                            import_record.path = bun_paths::fs::Path::init(builtin);
+                        }
                         import_record.source_index = Index::INVALID;
                         import_record
                             .flags
@@ -7201,15 +7147,6 @@ pub mod bv2_impl {
                                     import_record.kind,
                                     report,
                                 );
-                                if !ours {
-                                    place_resolver_error(
-                                        transpiler.resolver.log,
-                                        log,
-                                        Some(source),
-                                        import_record.range,
-                                        import_record.path.text,
-                                    );
-                                }
                                 if !ours || report {
                                     last_error = Some(err.into());
                                 }

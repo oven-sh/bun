@@ -63,6 +63,11 @@ async function load(source: string): Promise<SchemaFile> {
       throw new TypeError(`${stem}.bind.ts: export ${name} is not a type, a function, a namespace or b.module()`);
     }
   }
+  const names = new Set<string>();
+  for (const { name } of [...result.functions, ...result.namespaces]) {
+    assert(!names.has(name), `${stem}.bind.ts: two of its functions and namespaces are named ${name}`);
+    names.add(name);
+  }
   return result;
 }
 
@@ -96,6 +101,14 @@ for (const file of files) {
   for (const { name } of file.types) {
     assert(!owners.has(name), `${owners.get(name)}.bind.ts and ${file.origin.stem}.bind.ts both export a type ${name}`);
     owners.set(name, file.origin.stem);
+  }
+  for (const { exportName } of file.functions) {
+    if (!exportName) continue;
+    assert(
+      !owners.has(exportName),
+      `export: ${exportName} is in ${owners.get(exportName)}.bind.ts and ${file.origin.stem}.bind.ts`,
+    );
+    owners.set(exportName, file.origin.stem);
   }
 }
 const tables = analyze(files);

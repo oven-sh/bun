@@ -10,12 +10,11 @@
 //! Everything that touches the
 //! event loop / fs / network stays in `bun_runtime`.
 //!
-//! `BuildArtifact` is **not** hoisted here: its `#[host_fn]`-decorated accessors
-//! must live in an inherent `impl` (the macro emits a sibling shim referencing
-//! `Self`), and those accessors call `BlobExt` methods. With no lower-tier
+//! `BuildArtifact` is **not** hoisted here: its accessors call `BlobExt` methods. With no lower-tier
 //! consumer, the canonical `BuildArtifact` stays in `bun_runtime::api`.
 
 use core::cell::Cell;
+use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_core::strings::AsciiStatus;
@@ -105,10 +104,9 @@ impl From<MimeType> for BlobContentType {
 // Blob
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The `m_ctx` payload of
-/// the codegen'd `JSBlob` wrapper.
+/// What a JS `Blob` wraps (`src/runtime/webcore/Blob.bind.ts`).
 ///
-/// R-2 (`sharedThis`): every JS-facing host-fn takes `&Blob` (not `&mut Blob`)
+/// Every JS-facing host-fn takes `&Blob` (not `&mut Blob`)
 /// so re-entrant JS calls cannot stack two `&mut` to the same instance. Fields
 /// mutated by host-fns are therefore wrapped in `Cell` (Copy scalars) or
 /// `JsCell` (the non-Copy `store`). `Cell<T>` and `JsCell<T>` are both
@@ -125,9 +123,7 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
-    /// `bun.ptr.RawRefCount(u32, .single_threaded)` — counts in-flight `*Blob`
-    /// borrows handed to async readers; not the JS GC retain count. Zero while
-    /// the JS cell is the sole owner.
+    /// Zero for a by-value `Blob`. On a heap one, the JS wrapper, `BlobRefPtr`s and `ExternalShared`s each hold a ref.
     ///
     /// Public so `bun_runtime` can construct `Blob { ref_count: …, .. }`
     /// literals.
@@ -169,10 +165,14 @@ impl Default for Blob {
     }
 }
 
-// Codegen externs (build/debug/codegen/ZigGeneratedClasses.cpp `JSBlob`).
-// `*mut Blob` is opaque to C++ — only Rust dereferences it.
 const _: () = {
-    use crate::generated::JSBlob;
+    // The class is generated into `bun_runtime`, which has its members (`BlobExt`).
+    unsafe extern "C" {
+        safe fn Bun__Bindgen__Blob__fromJS(value: JSValue) -> *mut c_void;
+        safe fn Bun__Bindgen__Blob__fromJSDirect(value: JSValue) -> *mut c_void;
+        fn Bun__Bindgen__Blob__create(global: *mut JSGlobalObject, wrapped: *mut c_void)
+        -> JSValue;
+    }
 
     // `JSValue::as(Blob)` special-case: a `BuildArtifact`
     // wraps a `Blob`, so downcasting to `Blob` must also match it. The struct
@@ -187,13 +187,17 @@ const _: () = {
 
     impl JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
-            let blob = JSBlob::from_js(value).or_else(|| __bun_blob_from_build_artifact(value));
+            let blob = match Bun__Bindgen__Blob__fromJS(value) {
+                blob if blob.is_null() => __bun_blob_from_build_artifact(value),
+                blob => Some(blob.cast()),
+            };
             // C++ `mayHoldBlob` (blob.h) answers for a cell of any other type without this call.
             debug_assert!(blob.is_none() || value.js_type() == crate::JSType::DOMWrapper);
             blob
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            JSBlob::from_js_direct(value)
+            let blob = Bun__Bindgen__Blob__fromJSDirect(value);
+            (!blob.is_null()).then(|| blob.cast())
         }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             // Heap-promote and hand
@@ -201,10 +205,8 @@ const _: () = {
             // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::to_js` for
             // S3-backed blobs; lower-tier callers never construct S3 blobs.
             let ptr = Blob::new(self);
-            JSBlob::to_js(ptr, global)
-        }
-        fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            JSBlob::get_constructor(global)
+            // SAFETY: the new object takes the one ref `Blob::new` made.
+            unsafe { Bun__Bindgen__Blob__create(global.as_mut_ptr(), ptr.cast()) }
         }
     }
 };
@@ -216,25 +218,6 @@ impl Blob {
     pub fn new(mut blob: Blob) -> *mut Blob {
         blob.ref_count = bun_ptr::RawRefCount::init(1);
         bun_core::heap::into_raw(Box::new(blob))
-    }
-
-    /// JS-wrapper finalizer (codegen `BlobClass__finalize` thunk). Releases the
-    /// JS wrapper's `+1` on the intrusive refcount; the allocation may outlive
-    /// this call if other refs remain.
-    ///
-    /// Inherent (not on `BlobExt`) so the generated `Blob::finalize(b)` call
-    /// resolves here ahead of the blanket [`crate::JsFinalize::finalize`] —
-    /// trait-vs-trait would be ambiguous.
-    pub fn finalize(self: Box<Self>) {
-        debug_assert!(
-            self.is_heap_allocated(),
-            "`finalize` may only be called on a heap-allocated Blob"
-        );
-        // SAFETY: `self` is the allocation `Blob::new` produced and the JS
-        // wrapper's `+1` is the count released here. `into_raw` hands the box
-        // over without dropping it; `Blob__deref` runs `deinit()` (which
-        // `drop(heap::take)`s) when the count reaches zero.
-        unsafe { Blob__deref(bun_core::heap::into_raw(self)) }
     }
 
     #[inline]
@@ -479,8 +462,27 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
     }
 }
 
+/// Only for a `Blob` produced by [`Blob::new`].
+impl bun_ptr::AnyRefCounted for Blob {
+    #[inline]
+    unsafe fn rc_ref(this: *mut Self) {
+        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
+        unsafe { Blob__ref(this) }
+    }
+    #[inline]
+    unsafe fn rc_deref(this: *mut Self) {
+        // SAFETY: as `rc_ref`, and the caller releases a ref it owns.
+        unsafe { Blob__deref(this) }
+    }
+    #[inline]
+    unsafe fn rc_has_one_ref(this: *const Self) -> bool {
+        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
+        unsafe { (*this).ref_count.unsafe_get_value() == 1 }
+    }
+}
+
 /// Retain half of the refcount protocol behind `BlobImplRefDerefTraits`
-/// (`src/jsc/bindings/blob.h`) and [`bun_ptr::ExternalShared`].
+/// (`src/jsc/bindings/blob.h`), [`bun_ptr::ExternalShared`] and [`bun_ptr::AnyRefCounted`].
 ///
 /// # Safety
 /// `this` must point to a live `Blob` produced by [`Blob::new`], and the call
@@ -501,7 +503,7 @@ unsafe extern "C" fn Blob__ref(this: *mut Blob) {
 
 /// Release half of the refcount protocol behind `BlobImplRefDerefTraits`
 /// (`src/jsc/bindings/blob.h`), [`bun_ptr::ExternalShared`] and the JS
-/// wrapper's [`Blob::finalize`].
+/// wrapper's ref ([`bun_ptr::AnyRefCounted`]).
 ///
 /// # Safety
 /// `this` must point to a live `Blob` produced by [`Blob::new`], the caller

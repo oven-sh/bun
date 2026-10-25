@@ -1,133 +1,76 @@
 ---
 name: implementing-jsc-classes-rust
-description: Creates JavaScript classes using Bun's Rust bindings generator (.classes.ts). Use when implementing new JS APIs in Rust with JSC integration, prototypes, or constructors.
+description: Creates JavaScript classes using Bun's bindings generator (.bind.ts). Use when implementing new JS APIs in Rust with JSC integration, prototypes, or constructors.
 ---
 
-# Bun's JavaScriptCore Class Bindings Generator
+# JavaScript classes implemented in Rust
 
-Bridge JavaScript and Rust through `.classes.ts` definitions and Rust implementations.
+A class is a `b.class({..})` exported from a `*.bind.ts` file and a Rust struct. `src/codegen/bindgen.ts` generates the C++
+cell, prototype and constructor, the argument conversions, and the Rust functions that call the struct's methods.
+`docs/project/bindgen.mdx` is the reference: read its "Classes" section before writing one.
 
-`src/codegen/bindgen.ts` (`*.bind.ts`, `docs/project/bindgen.mdx`) is replacing this generator: typed arguments, and the struct is stored inside the JS object or, with `refCounted: true`, is a separate refcounted allocation. It does not do `hasPendingActivity` or a custom `estimatedSize` yet.
-
-## Architecture
-
-1. **JavaScript Interface Definition** (`.classes.ts` files)
-2. **Rust Implementation** (`.rs` files)
-3. **Generated Code** — `src/codegen/generate-classes.ts` emits C++ + Rust into `${BUN_CODEGEN_DIR}/generated_classes.rs`, `include!`d as `crate::generated_classes` in `bun_runtime`. Run `bun bd` to regenerate.
-
-## Class Definition (.classes.ts)
+## Schema
 
 ```typescript
-export default [
-  define({
-    name: "Matcher",
-    construct: true,
-    finalize: true,
-    hasPendingActivity: true,
-    proto: {
-      scan:  { fn: "scan",  length: 1 },
-      match: { fn: "match", length: 1 },
-    },
-  }),
-];
+import * as b from "../../codegen/bindgen-lib.ts";
+
+export const Matcher = b.class({
+  rustPath: "crate::api::matcher::Matcher",
+  construct: { args: { pattern: b.string.utf8 } },
+  internalFields: ["callback"],
+  proto: {
+    match: { args: { text: b.string.utf8 }, returns: b.bool },
+    pattern: { getter: b.string.utf8, cache: true },
+  },
+});
 ```
 
-Options:
-
-- `construct`: Has a public `new Foo()` constructor
-- `finalize`: Needs cleanup beyond `Drop` (rarely — see Finalize below)
-- `hasPendingActivity`: GC keep-alive while async work is in flight
-- `proto`: Methods (`fn:`), getters (`getter: true`, optionally `cache: true`)
-- `values: [...]`: WriteBarrier slots for JS values the native side holds (callbacks, buffers)
-
-## Rust Implementation
+## Rust
 
 ```rust
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-#[bun_jsc::JsClass]
 pub struct Matcher {
     pattern: Box<[u8]>,
-    has_pending_activity: AtomicUsize,
 }
 
 impl Matcher {
-    pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Matcher>> {
-        let arg = frame.argument(0);
-        let pattern = bun_core::String::from_js(arg, global)?.to_utf8_bytes().into();
-        Ok(Box::new(Matcher { pattern, has_pending_activity: AtomicUsize::new(0) }))
+    pub fn constructor(pattern: &[u8]) -> Self {
+        Self { pattern: pattern.into() }
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn r#match(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        // ...
-        Ok(JSValue::TRUE)
+    pub fn r#match(&self, text: &[u8]) -> bool {
+        bun_core::strings::contains(text, &self.pattern)
     }
 
-    pub fn has_pending_activity(&self) -> bool {
-        self.has_pending_activity.load(Ordering::SeqCst) > 0
+    pub fn get_pattern(&self) -> &[u8] {
+        &self.pattern
     }
 }
 ```
 
-### Canonical signatures
+A missing or mis-typed method is a compile error: the generated code calls it directly.
 
-| Hook                | Signature                                                                            |
-| ------------------- | ------------------------------------------------------------------------------------ |
-| constructor         | `pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>>` |
-| method (`fn:`)      | `pub fn name(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>`   |
-| getter              | `pub fn get_x(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue>`               |
-| finalize            | `pub fn finalize(self: Box<Self>)` — or omit; the blanket `JsFinalize` just drops    |
-| hasPendingActivity  | `pub fn has_pending_activity(&self) -> bool`                                         |
+## Where the struct lives
 
-A missing or mis-typed hook is a **compile error** in `cargo check -p bun_runtime` — the generated code calls the inherent method directly.
+- Freed when its JS object is freed: it is stored inside the object. This is the default. Cleanup is `Drop`.
+- Can outlive its object (a timer, another thread or a C library still points at it): `refCounted: true`. It is a separate,
+  refcounted heap allocation, and the object holds one ref.
 
-## Hooking into the generated module
+## What a body may do
 
-`#[bun_jsc::JsClass]` on the struct implements the `JsClass` trait (`to_js`, `from_js`, `from_js_direct`, `get_constructor`) by binding the C++ externs. Attribute knobs: `no_constructor`, `no_finalize`, `estimated_size`.
+`capability: "heap"` adds `heap: &JsHeap<'a>` (allocate, throw). `capability: "js"` adds `cx: &mut JsScope<'a>` (also run
+JavaScript); `cx.global()` is the `&JSGlobalObject` the rest of the tree takes. `throws: true` makes the result a
+`JsResult<T>`. `passThis: true` adds the object, `this_value: JsWrapper<'a, Self>`.
 
-The codegen also emits a `js_$T` module with the cached-value accessors. Re-export it when you need `*_set_cached` / `*_get_cached` or `detach_ptr`:
-
-```rust
-pub use crate::generated_classes::js_Image as js;
-// or
-bun_jsc::impl_js_class_via_generated!(Archive => crate::generated_classes::js_Archive);
-```
-
-The `js_$T` module surface:
-
-```rust
-pub fn from_js(value: JSValue) -> Option<NonNull<T>>;
-pub fn from_js_direct(value: JSValue) -> Option<NonNull<T>>;
-pub fn get_constructor(global: &JSGlobalObject) -> JSValue;
-pub fn to_js(this: *mut T, global: &JSGlobalObject) -> JSValue;   // ownership transfer
-pub fn detach_ptr(value: JSValue);
-// per cached getter / `values: [...]` entry:
-pub fn <field>_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
-pub fn <field>_get_cached(this_value: JSValue) -> Option<JSValue>;
-```
-
-## Finalize
-
-Most classes need nothing — `#[bun_jsc::JsClass]` wires the blanket `JsFinalize` whose default is `drop(Box<Self>)`. Override only when you must release a JS handle or defer to a heap helper:
-
-```rust
-pub fn finalize(self: Box<Self>) {
-    bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
-}
-```
-
-Override with an **inherent** method, never `impl JsFinalize for T`.
+Every member takes `&self`; state that changes is in `Cell` or `JsCell`.
 
 ## Holding JS values
 
-Never store raw `JSValue` in a struct field. Declare a slot in `.classes.ts` (`values: ["callback"]` or a `cache: true` getter) and read/write it through `js::callback_set_cached(this_value, global, v)` / `js::callback_get_cached(this_value)`. The slot is a `WriteBarrier` visited by the GC, so the value stays alive without a `Strong`.
+Never store a raw `JSValue` in a struct field. Declare an internal field (`internalFields: ["callback"]` or a `cache: true`
+getter) and use `js_Matcher::callback_set_cached(this_value, global, value)` / `callback_get_cached(this_value)` from
+`crate::generated_bindgen::<file>`. To reach its own object the struct stores a `JsRef`.
 
 ## Reference implementations
 
-- `src/runtime/api/Shell.classes.ts` — constructor, methods, `hasPendingActivity`
-- `src/runtime/server/server.classes.ts` — `noConstructor`, cached getters, `values: [...]`, custom finalize
-- `src/runtime/image/Image.rs:56` — the `pub use crate::generated_classes::js_Image as js;` one-liner
-- `src/jsc/host_fn.rs` — the host-fn adapters the codegen dispatches through
-- `src/jsc_macros/lib.rs` — `#[bun_jsc::JsClass]` proc-macro source
+- `src/jsc/bindgen_test.bind.ts` + `src/jsc/bindgen_test.rs`: an example of most keys
+- `src/jsc/resolve_message.bind.ts`: cached getters, `prototypeBase`, `construct: "illegal"`
+- `src/runtime/api/cron.bind.ts`: `refCounted`, `finalize`

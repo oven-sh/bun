@@ -201,21 +201,6 @@ impl DirInfo {
         self.flags.contains(Flags::InsideNodeModules)
     }
 
-    /// Did the walk build this from what the file system said about each
-    /// name, because the read of the directory failed? The directory then
-    /// got no listing, and it has one only after a later read.
-    #[inline]
-    pub(crate) fn was_probed(&self) -> bool {
-        self.flags.contains(Flags::Probed)
-    }
-
-    /// Read the listing now if this generation does not have it. `Err` is
-    /// that of [`get_entries_ref_locked`](Self::get_entries_ref_locked).
-    pub(crate) fn list(&self, generation: Generation) -> crate::CrateResult<()> {
-        let _lock = fs::FileSystem::instance().fs.entries_mutex.lock_guard();
-        self.get_entries_ref_locked(generation).map(|_| ())
-    }
-
     /// Read-only view of `package_json`. The field stores `NonNull` to preserve
     /// mut-provenance; callers that only read go through here.
     #[inline]
@@ -254,23 +239,11 @@ impl DirInfo {
     /// `&'static mut` returned by `entries_at_locked` is sound and needs no
     /// `unsafe` here. The `.data` map must only be probed/iterated while the
     /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
-    ///
-    /// `Err` when the listing is from an earlier generation, or was never
-    /// read, and the directory could not be listed now: `Unlisted::Failed`.
-    /// The cache keeps what it has, and the next call tries again.
-    #[inline]
-    pub fn get_entries_ref_locked(
-        &self,
-        generation: Generation,
-    ) -> crate::CrateResult<Option<&'static fs::DirEntry>> {
-        match fs::FileSystem::instance()
+    pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
+        fs::FileSystem::instance()
             .fs
-            .entries_at_locked(self.entries, generation)
-        {
-            Some(fs::EntriesOption::Entries(entries)) => Ok(Some(entries)),
-            Some(fs::EntriesOption::Err(err)) if err.failed => Err(err.original_err),
-            Some(fs::EntriesOption::Err(_)) | None => Ok(None),
-        }
+            .entries_at_locked(self.entries, generation)?
+            .as_entries()
     }
 
     /// Generation-checked lookup of one basename in this directory's cached
@@ -280,18 +253,19 @@ impl DirInfo {
     /// drops the old `data` map's buckets), so probing the map after the lock
     /// is released can walk freed buckets. The returned lookup wraps a raw
     /// pointer into the process-lifetime `EntryStore`, which stays valid after
-    /// the lock is dropped. `Err` is that of
-    /// [`get_entries_ref_locked`](Self::get_entries_ref_locked).
-    #[inline]
+    /// the lock is dropped.
     pub(crate) fn get_entry(
         &self,
         generation: Generation,
         query: &[u8],
-    ) -> crate::CrateResult<Option<fs::EntryLookup<'static>>> {
-        let _lock = fs::FileSystem::instance().fs.entries_mutex.lock_guard();
-        Ok(self
-            .get_entries_ref_locked(generation)?
-            .and_then(|entries| entries.get(query)))
+    ) -> Option<fs::EntryLookup<'static>> {
+        let rfs = &mut fs::FileSystem::instance().fs;
+        // `MutexGuard` stores the mutex by raw pointer, so holding it does not
+        // keep `rfs` borrowed.
+        let _lock = rfs.entries_mutex.lock_guard();
+        rfs.entries_at_locked(self.entries, generation)?
+            .as_entries()?
+            .get(query)
     }
 
     /// As-cached listing access with no generation check and no locking.
@@ -412,8 +386,6 @@ bitflags::bitflags! {
         /// This directory has a node_modules subdirectory
         const HasNodeModules    = 1 << 1;
         const InsideNodeModules = 1 << 2;
-        /// `RealFS::probe_walk_names` answered for the listing.
-        const Probed            = 1 << 3;
     }
 }
 impl Flags {

@@ -1,7 +1,6 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_collections::VecExt;
 use core::fmt;
-use std::borrow::Cow;
 
 use bstr::BStr;
 
@@ -10,7 +9,6 @@ use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_js_printer as js_printer;
 
 use super::add_catalog;
 use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry_root, store_entry};
@@ -23,34 +21,21 @@ use super::{
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
 
-pub(crate) fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr) {
-    let preserve_trailing_newline = entry.source.contents.last() == Some(&b'\n');
-    let mut buffer_writer = js_printer::BufferWriter::init();
-    buffer_writer
-        .buffer
-        .list
-        .reserve((entry.source.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
-    buffer_writer.append_newline = preserve_trailing_newline;
-    let mut writer = js_printer::BufferPrinter::init(buffer_writer);
-
-    if let Err(e) = js_printer::print_json(
-        &mut writer,
-        root,
-        &entry.source,
-        js_printer::PrintJsonOptions {
-            indent: entry.indentation,
-            mangled_props: None,
-            ..Default::default()
-        },
-    ) {
-        bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
+/// [`MapEntry::save`] for a command that cannot go on without the new text.
+pub(crate) fn save_entry(entry: &mut MapEntry, root: bun_ast::Expr, log: &mut bun_ast::Log) {
+    if let Err(err) = entry.save(root, log) {
+        let verb = if matches!(err, Error::JsPrinter(_)) {
+            "write"
+        } else {
+            "parse"
+        };
+        bun_core::pretty_errorln!(
+            "package.json failed to {} due to error {}",
+            verb,
+            err.name(),
+        );
         Global::crash();
     }
-    let old = core::mem::replace(
-        &mut entry.source.contents,
-        Cow::Owned(writer.ctx.written_without_trailing_zero().to_vec()),
-    );
-    entry.stale_contents.push(old);
 }
 
 pub(super) fn remove_dependencies_from_package_json(
@@ -370,15 +355,15 @@ fn update_package_json_and_install_with_manager_with_updates(
     // The Smarter™ approach is you resolve ahead of time and write to disk once!
     // But, turns out that's slower in any case where more than one package has to be resolved (most of the time!)
     // Concurrent network requests are faster than doing one and then waiting until the next batch
-    print_package_json_into_cache_entry(current_package_json, current_package_json_root);
     // The edits above went into a promoted copy
     // (`current_package_json_root`), so re-parse the
     // printed source so the cached AST (consumed by `FolderResolver` for workspace
     // members during `install_with_manager`) reflects the new dependency list.
-    if let Err(err) = current_package_json.reparse_root(manager.log_mut()) {
-        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name(),);
-        Global::crash();
-    }
+    save_entry(
+        current_package_json,
+        current_package_json_root,
+        manager.log_mut(),
+    );
 
     let received_requests = matches!(
         subcommand,

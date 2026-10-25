@@ -71,21 +71,6 @@ impl DirEntryProbe for DirEntryKeys {
     }
 }
 
-impl DirEntryKeys {
-    /// The default `.env` files that are in the working directory, for a
-    /// caller that has no listing of it.
-    pub fn default_files_in_cwd() -> DirEntryKeys {
-        DirEntryKeys(
-            EnumSet::<DefaultEnvFile>::all()
-                .iter()
-                .map(DefaultEnvFile::name)
-                .filter(|name| bun_sys::exists(name))
-                .map(Box::from)
-                .collect(),
-        )
-    }
-}
-
 /// Canonical definition; re-exported as
 /// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
 #[repr(u32)]

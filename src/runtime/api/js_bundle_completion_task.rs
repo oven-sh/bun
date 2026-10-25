@@ -1154,6 +1154,21 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.configure_linker();
         transpiler.configure_defines()?;
 
+        if let Some(compile) = &config.compile {
+            if let Err(err) = bun_standalone_graph::StandaloneModuleGraph::validate_env_options(
+                &compile.compile_target,
+                Some(&compile.executable_path.list[..]).filter(|p| !p.is_empty()),
+                compile.env_options,
+            ) {
+                self.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("{}", bstr::BStr::new(err.slice())),
+                );
+                return Err(bun_bundler::Error::BuildFailed);
+            }
+        }
+
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         transpiler.options.compile_target_builtins = match &config.compile {
             Some(compile)

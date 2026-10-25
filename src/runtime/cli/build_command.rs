@@ -489,6 +489,19 @@ impl BuildCommand {
         this_transpiler.configure_defines()?;
         this_transpiler.configure_linker();
 
+        if ctx.bundler_options.compile {
+            if let Err(err) =
+                bun_standalone_module_graph::StandaloneModuleGraph::validate_env_options(
+                    &ctx.bundler_options.compile_target,
+                    ctx.bundler_options.compile_executable_path.as_deref(),
+                    ctx.bundler_options.compile_env_options,
+                )
+            {
+                Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
+                Global::exit(1);
+            }
+        }
+
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         this_transpiler.options.compile_target_builtins = if ctx.bundler_options.compile
             && ctx.bundler_options.bytecode

@@ -2903,6 +2903,26 @@ pub fn target_builtins(
     }
 }
 
+pub fn validate_env_options(
+    target: &CompileTarget,
+    self_exe_path: Option<&[u8]>,
+    env_options: bool,
+) -> Result<(), CompileError> {
+    if !env_options {
+        if !target.is_current_version() {
+            return Err(CompileError::fmt(format_args!(
+                "Disabling runtime environment options requires the current Bun version"
+            )));
+        }
+        if self_exe_path.is_some() {
+            return Err(CompileError::fmt(format_args!(
+                "Disabling runtime environment options cannot be combined with a custom executable path"
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
@@ -2917,17 +2937,12 @@ pub fn to_executable(
     flags: Flags,
     runtime_options: RuntimeOptions,
 ) -> crate::Result<CompileResult> {
-    if flags.contains(Flags::DISABLE_ENV_OPTIONS) {
-        if !target.is_current_version() {
-            return Ok(CompileResult::fail_fmt(format_args!(
-                "Disabling runtime environment options requires the current Bun version"
-            )));
-        }
-        if self_exe_path.is_some() {
-            return Ok(CompileResult::fail_fmt(format_args!(
-                "Disabling runtime environment options cannot be combined with a custom executable path"
-            )));
-        }
+    if let Err(err) = validate_env_options(
+        target,
+        self_exe_path,
+        !flags.contains(Flags::DISABLE_ENV_OPTIONS),
+    ) {
+        return Ok(CompileResult::Err(err));
     }
     #[cfg(windows)]
     let _ = root_dir;

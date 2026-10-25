@@ -80,7 +80,14 @@ describe("compile env options validation", () => {
     expect(result.success).toBe(false);
   });
 
-  describe.each(["version", "executable"])("custom %s", kind => {
+  describe.each([
+    { kind: "version", backend: "cli", bytecode: false },
+    { kind: "executable", backend: "cli", bytecode: false },
+    { kind: "version", backend: "cli", bytecode: true },
+    { kind: "executable", backend: "cli", bytecode: true },
+    { kind: "version", backend: "api", bytecode: true },
+    { kind: "executable", backend: "api", bytecode: true },
+  ])("custom runtime %j", ({ kind, backend, bytecode }) => {
     test.concurrent("rejects an unverified runtime before downloading or writing it", async () => {
       using dir = tempDir("compile-env-options-target", { "entry.ts": `console.log("APP");` });
       let requests = 0;
@@ -94,27 +101,53 @@ describe("compile env options validation", () => {
       });
       const option = kind === "version" ? "--target=bun-linux-x64-v1.0.0" : `--compile-executable-path=${bunExe()}`;
       await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          "--no-compile-env-options",
-          option,
-          "--outfile",
-          join(String(dir), "out"),
-          join(String(dir), "entry.ts"),
-        ],
-        env: { ...bunEnv, ...runtimeEnv, BUN_COMPILE_TARGET_TARBALL_URL: String(server.url) },
+        cmd:
+          backend === "cli"
+            ? [
+                bunExe(),
+                "build",
+                "--compile",
+                "--no-compile-env-options",
+                ...(bytecode ? ["--bytecode"] : []),
+                option,
+                "--outfile",
+                join(String(dir), "out"),
+                join(String(dir), "entry.ts"),
+              ]
+            : [
+                bunExe(),
+                "-e",
+                `const result = await Bun.build({
+            entrypoints: [process.argv.at(-2)],
+            compile: {
+              outfile: process.argv.at(-1),
+              envOptions: false,
+              ${kind === "version" ? 'target: "bun-linux-x64-v1.0.0"' : "executablePath: process.execPath"},
+            },
+            bytecode: true,
+            throw: false,
+          });
+          for (const log of result.logs) console.error(log.message);
+          process.exit(result.success ? 0 : 1);`,
+                join(String(dir), "entry.ts"),
+                join(String(dir), "out"),
+              ],
+        env: {
+          ...bunEnv,
+          ...runtimeEnv,
+          BUN_COMPILE_TARGET_TARBALL_URL: String(server.url),
+          BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
       const [, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(requests).toBe(0);
       expect(stderr).toContain(
         kind === "version"
           ? "Disabling runtime environment options requires the current Bun version"
           : "Disabling runtime environment options cannot be combined with a custom executable path",
       );
-      expect(requests).toBe(0);
       expect(await Bun.file(join(String(dir), "out")).exists()).toBe(false);
       expect(code).toBe(1);
     });

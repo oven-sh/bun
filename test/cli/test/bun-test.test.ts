@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
 describe("bun test", () => {
@@ -2206,6 +2206,172 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(Number(stdout.match(/OPEN_FDS=(\d+)/)?.[1])).toBeLessThan(N);
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
+  });
+
+  // A filter and an ignore pattern know a test file by the path it was found at. The run names it by where it is.
+  describe("a linked directory", () => {
+    const testFile = (name: string) =>
+      `import { test } from "bun:test"; test("${name}", () => { console.log("RAN ${name}"); });`;
+
+    /** Runs `bun test` with `args` where `linked` is a link to `target`, which has two test files. */
+    async function scan(target: string, ...args: string[]) {
+      using dir = tempDir("scanner-linked-dir", {
+        "root.test.ts": testFile("root"),
+        [`${target}/inner.test.ts`]: testFile("inner"),
+        [`${target}/deeper/most.test.ts`]: testFile("most"),
+      });
+      // A junction on Windows, which takes an absolute target. Elsewhere, "junction" is ignored.
+      symlinkSync(join(String(dir), target), join(String(dir), "linked"), "junction");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stderr.replaceAll("\r", "").replaceAll("\\", "/");
+      return {
+        ran: (stdout.match(/RAN \w+/g) ?? []).sort(),
+        files: Array.from(lines.matchAll(/^(.+\.test\.ts):$/gm), match => match[1]).sort(),
+        summary: lines.match(/^(Ran .+ files?\.|The following filters did not match any test files:)/m)?.[0] ?? null,
+        exitCode,
+      };
+    }
+    // The scanner does not enter a directory whose name starts with a dot, so only the link leads to these.
+    const hidden = ".store/suite";
+
+    test("is scanned", async () => {
+      expect(await scan(hidden)).toMatchInlineSnapshot(`
+        {
+          "exitCode": 0,
+          "files": [
+            ".store/suite/deeper/most.test.ts",
+            ".store/suite/inner.test.ts",
+            "root.test.ts",
+          ],
+          "ran": [
+            "RAN inner",
+            "RAN most",
+            "RAN root",
+          ],
+          "summary": "Ran 3 tests across 3 files.",
+        }
+      `);
+    });
+    test("is matched by a filter that names the link", async () => {
+      expect(await scan(hidden, "linked")).toMatchInlineSnapshot(`
+        {
+          "exitCode": 0,
+          "files": [
+            ".store/suite/deeper/most.test.ts",
+            ".store/suite/inner.test.ts",
+          ],
+          "ran": [
+            "RAN inner",
+            "RAN most",
+          ],
+          "summary": "Ran 2 tests across 2 files.",
+        }
+      `);
+    });
+    test("is scanned from a path that names the link", async () => {
+      expect(await scan(hidden, "./linked")).toMatchInlineSnapshot(`
+        {
+          "exitCode": 0,
+          "files": [
+            ".store/suite/deeper/most.test.ts",
+            ".store/suite/inner.test.ts",
+          ],
+          "ran": [
+            "RAN inner",
+            "RAN most",
+          ],
+          "summary": "Ran 2 tests across 2 files.",
+        }
+      `);
+    });
+    test("is not matched by a filter that names its target", async () => {
+      expect(await scan(hidden, "suite")).toMatchInlineSnapshot(`
+        {
+          "exitCode": 1,
+          "files": [],
+          "ran": [],
+          "summary": "The following filters did not match any test files:",
+        }
+      `);
+    });
+    test("has a file ignored by a pattern that names the link", async () => {
+      expect(await scan(hidden, "--path-ignore-patterns", "linked/*.test.ts")).toMatchInlineSnapshot(`
+        {
+          "exitCode": 0,
+          "files": [
+            ".store/suite/deeper/most.test.ts",
+            "root.test.ts",
+          ],
+          "ran": [
+            "RAN most",
+            "RAN root",
+          ],
+          "summary": "Ran 2 tests across 2 files.",
+        }
+      `);
+    });
+    test("has a directory ignored by a pattern that names the link", async () => {
+      expect(await scan(hidden, "--path-ignore-patterns", "linked/deeper/**")).toMatchInlineSnapshot(`
+        {
+          "exitCode": 0,
+          "files": [
+            ".store/suite/inner.test.ts",
+            "root.test.ts",
+          ],
+          "ran": [
+            "RAN inner",
+            "RAN root",
+          ],
+          "summary": "Ran 2 tests across 2 files.",
+        }
+      `);
+    });
+    test("is not ignored by a pattern that names its target", async () => {
+      expect(await scan(hidden, "--path-ignore-patterns", "**/suite/**")).toMatchInlineSnapshot(`
+        {
+          "exitCode": 0,
+          "files": [
+            ".store/suite/deeper/most.test.ts",
+            ".store/suite/inner.test.ts",
+            "root.test.ts",
+          ],
+          "ran": [
+            "RAN inner",
+            "RAN most",
+            "RAN root",
+          ],
+          "summary": "Ran 3 tests across 3 files.",
+        }
+      `);
+    });
+    test("is scanned beside its target", async () => {
+      expect(await scan("suite")).toMatchInlineSnapshot(`
+        {
+          "exitCode": 0,
+          "files": [
+            "root.test.ts",
+            "suite/deeper/most.test.ts",
+            "suite/deeper/most.test.ts",
+            "suite/inner.test.ts",
+            "suite/inner.test.ts",
+          ],
+          "ran": [
+            "RAN inner",
+            "RAN most",
+            "RAN root",
+          ],
+          "summary": "Ran 3 tests across 5 files.",
+        }
+      `);
+    });
   });
 });
 

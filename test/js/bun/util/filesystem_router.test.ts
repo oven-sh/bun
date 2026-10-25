@@ -2,7 +2,18 @@ import { FileSystemRouter } from "bun";
 import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isLinux,
+  isMacOS,
+  isWindows,
+  MAX_PATH_BYTES,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -1117,6 +1128,165 @@ it("loads routes from a directory already cached by Bun.build()", async () => {
     exitCode,
     signalCode: proc.signalCode,
   }).toEqual({ stdout: "/a /b /sub/c /b", stderr: "", exitCode: 0, signalCode: null });
+});
+
+const linkedDirsFixture = /* ts */ `
+  import fs from "fs";
+  import path from "path";
+
+  const root = import.meta.dir;
+  const shown = (file: string) => path.relative(root, file).replaceAll("\\\\", "/");
+  const spellings = ["site/pages", "p", "pages-by-link", "site-by-link/pages"];
+  const routers: Record<string, any> = {};
+  const seen: Record<string, unknown> = {};
+  const routes = (router: any) =>
+    Object.entries(router.routes)
+      .map(([name, file]) => name + " is " + shown(file as string))
+      .sort();
+  for (const dir of process.argv[2] === "direct last" ? spellings.toReversed() : spellings) {
+    const router = new Bun.FileSystemRouter({ dir: path.join(root, dir), style: "nextjs", fileExtensions: [".tsx"] });
+    routers[dir] = router;
+    seen[dir] = {
+      routes: routes(router),
+      matches: ["/a", "/sub/7", "/linked/deep/d", "/sub/to-a"].map(url => {
+        const match = router.match(url);
+        return match && url + " is " + match.name + " in " + shown(match.filePath) + ", src " + match.src;
+      }),
+    };
+  }
+
+  const added = ["site/pages/sub/new.tsx", "shared/new.tsx", "shared/deep/new.tsx"];
+  for (const file of added) fs.writeFileSync(path.join(root, file), "export default 1;\\n");
+  routers["site/pages"].reload();
+  seen["site/pages after reload(), with three files more"] = routes(routers["site/pages"]);
+  for (const file of added) fs.rmSync(path.join(root, file));
+  routers["site/pages"].reload();
+  seen["site/pages after reload(), with them removed"] = routes(routers["site/pages"]);
+  console.log(JSON.stringify(seen));
+`;
+
+// `dir` can be a link, and so can a directory above it, a directory below it and a file below it. A
+// route is named by where its file is below `dir` as it was given, and its file is where the file is.
+// A name is what is left of a path after `dir`, so each link has another length than what it leads to.
+it("names the routes of one directory the same through a link to it, above it and below it", async () => {
+  // The fixture adds and removes routes, so each order has its own tree.
+  const run = async (order: "direct first" | "direct last") => {
+    using dir = tempDir("fsr-links", {
+      "fixture.ts": linkedDirsFixture,
+      "site/pages/index.tsx": "export default 1;\n",
+      "site/pages/a.tsx": "export default 1;\n",
+      "site/pages/sub/b.tsx": "export default 1;\n",
+      "site/pages/sub/[id].tsx": "export default 1;\n",
+      "shared/c.tsx": "export default 1;\n",
+      "shared/deep/d.tsx": "export default 1;\n",
+    });
+    const root = String(dir);
+    // Junctions on Windows, which take an absolute target. Elsewhere, "junction" is ignored.
+    fs.symlinkSync(path.join(root, "shared"), path.join(root, "site/pages/linked"), "junction");
+    fs.symlinkSync(path.join(root, "site"), path.join(root, "site-by-link"), "junction");
+    fs.symlinkSync(path.join(root, "site/pages"), path.join(root, "p"), "junction");
+    fs.symlinkSync(path.join(root, "site/pages"), path.join(root, "pages-by-link"), "junction");
+    fs.symlinkSync(path.join(root, "site/pages/a.tsx"), path.join(root, "site/pages/sub/to-a.tsx"), "file");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", order],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  };
+  const [directFirst, directLast] = await Promise.all([run("direct first"), run("direct last")]);
+  expect(directLast).toEqual(directFirst);
+  const { p, "pages-by-link": byLink, "site-by-link/pages": belowLink, ...direct } = directFirst;
+  const routed = direct["site/pages"];
+  expect({ p, byLink, belowLink }).toEqual({ p: routed, byLink: routed, belowLink: routed });
+  expect(direct).toMatchInlineSnapshot(`
+    {
+      "site/pages": {
+        "matches": [
+          "/a is /a in site/pages/a.tsx, src a.tsx",
+          "/sub/7 is /sub/[id] in site/pages/sub/[id].tsx, src sub/[id].tsx",
+          "/linked/deep/d is /linked/deep/d in shared/deep/d.tsx, src ../../shared/deep/d.tsx",
+          "/sub/to-a is /sub/to-a in site/pages/a.tsx, src a.tsx",
+        ],
+        "routes": [
+          "/ is site/pages/index.tsx",
+          "/a is site/pages/a.tsx",
+          "/linked/c is shared/c.tsx",
+          "/linked/deep/d is shared/deep/d.tsx",
+          "/sub/[id] is site/pages/sub/[id].tsx",
+          "/sub/b is site/pages/sub/b.tsx",
+          "/sub/to-a is site/pages/a.tsx",
+        ],
+      },
+      "site/pages after reload(), with them removed": [
+        "/ is site/pages/index.tsx",
+        "/a is site/pages/a.tsx",
+        "/linked/c is shared/c.tsx",
+        "/linked/deep/d is shared/deep/d.tsx",
+        "/sub/[id] is site/pages/sub/[id].tsx",
+        "/sub/b is site/pages/sub/b.tsx",
+        "/sub/to-a is site/pages/a.tsx",
+      ],
+      "site/pages after reload(), with three files more": [
+        "/ is site/pages/index.tsx",
+        "/a is site/pages/a.tsx",
+        "/linked/c is shared/c.tsx",
+        "/linked/deep/d is shared/deep/d.tsx",
+        "/linked/deep/new is shared/deep/new.tsx",
+        "/linked/new is shared/new.tsx",
+        "/sub/[id] is site/pages/sub/[id].tsx",
+        "/sub/b is site/pages/sub/b.tsx",
+        "/sub/new is site/pages/sub/new.tsx",
+        "/sub/to-a is site/pages/a.tsx",
+      ],
+    }
+  `);
+});
+
+// The directory fits a path buffer, and so does its index.tsx. The other file fits only through the
+// link. Which call fails for it, and with what errno, is up to the kernel: this is what Linux answers.
+it.skipIf(!isLinux)("names a route that does not fit a path buffer by its path through a link", async () => {
+  using dir = tempDir("fsr-link-long", {});
+  const root = String(dir);
+  const segment = Buffer.alloc(100, "d").toString();
+  const depth = Math.floor((MAX_PATH_BYTES - root.length - "/index.tsx".length - 1) / (segment.length + 1));
+  const pages = path.join(root, ...Array.from({ length: depth }, () => segment));
+  const long = Buffer.alloc(150, "f").toString() + ".tsx";
+  fs.mkdirSync(pages, { recursive: true });
+  fs.symlinkSync(pages, path.join(root, "p"));
+  fs.writeFileSync(path.join(root, "p", "index.tsx"), "export default 1;\n");
+  fs.writeFileSync(path.join(root, "p", long), "export default 1;\n");
+  expect(path.join(pages, "index.tsx").length).toBeLessThan(MAX_PATH_BYTES);
+  expect(path.join(pages, long).length).toBeGreaterThan(MAX_PATH_BYTES);
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        try {
+          new Bun.FileSystemRouter({ dir: process.argv[1], style: "nextjs", fileExtensions: [".tsx"] });
+        } catch (error) {
+          console.log(error.message);
+        }
+      `,
+      path.join(root, "p"),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.replaceAll(root, "<dir>").replaceAll(long, "<long>.tsx"), stderr, exitCode }).toEqual({
+    stdout: "ENAMETOOLONG resolving route: <dir>/p/<long>.tsx\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it(".query drops a pair with a malformed percent escape without shifting later parameters", () => {

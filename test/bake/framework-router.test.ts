@@ -1,5 +1,6 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
+import { symlinkSync } from "fs";
 import { tempDir } from "harness";
 import path from "path";
 
@@ -132,6 +133,102 @@ test("discovers from filesystem paths", () => {
       },
     ],
   });
+});
+
+// The root can be a link, and so can a directory above it and a directory below it. A route is named by
+// where its file is below the root as it was given, and its file is that path.
+test("discovers the routes of one directory through a link to it, above it and below it", () => {
+  const spellings = ["site/routes", "routes-by-link", "site-by-link/routes"];
+  /** What a router of each spelling has, with the routers made in `order`. */
+  const discover = (order: string[]) => {
+    using dir = tempDir("fsr-links", {
+      "site/routes/index.tsx": "1",
+      "site/routes/about.tsx": "1",
+      "site/routes/blog/_layout.tsx": "1",
+      "site/routes/blog/[slug].tsx": "1",
+      "shared/team.tsx": "1",
+      "shared/deep/[id].tsx": "1",
+    });
+    const root = String(dir);
+    const shown = (file: string) => path.relative(root, file).replaceAll("\\", "/");
+    // Junctions on Windows, which take an absolute target. Elsewhere, "junction" is ignored.
+    symlinkSync(path.join(root, "shared"), path.join(root, "site/routes/linked"), "junction");
+    symlinkSync(path.join(root, "site"), path.join(root, "site-by-link"), "junction");
+    symlinkSync(path.join(root, "site/routes"), path.join(root, "routes-by-link"), "junction");
+
+    const seen: Record<string, unknown> = {};
+    for (const spelling of order) {
+      const router = new FrameworkRouter({ root: path.join(root, spelling), style: "nextjs-pages" });
+      const files: string[] = [];
+      const walk = (route: any, above: string) => {
+        const pattern = above + (route.part === "/" ? "" : route.part);
+        if (route.page) files.push(`${pattern || "/"} page ${shown(route.page)}`);
+        if (route.layout) files.push(`${pattern || "/"} layout ${shown(route.layout)}`);
+        for (const child of route.children) walk(child, pattern);
+      };
+      walk(router.toJSON(), "");
+      const matched = router.match("/linked/deep/7");
+      seen[spelling] = {
+        files: files.sort(),
+        "/linked/deep/7": matched && { params: matched.params, page: shown(matched.route.page) },
+      };
+    }
+    return Object.fromEntries(spellings.map(spelling => [spelling, seen[spelling]]));
+  };
+  const directFirst = discover(spellings);
+  expect(discover(spellings.toReversed())).toEqual(directFirst);
+  expect(directFirst).toMatchInlineSnapshot(`
+    {
+      "routes-by-link": {
+        "/linked/deep/7": {
+          "page": "routes-by-link/linked/deep/[id].tsx",
+          "params": {
+            "id": "7",
+          },
+        },
+        "files": [
+          "/ page routes-by-link/index.tsx",
+          "/about page routes-by-link/about.tsx",
+          "/blog layout routes-by-link/blog/_layout.tsx",
+          "/blog/:slug page routes-by-link/blog/[slug].tsx",
+          "/linked/deep/:id page routes-by-link/linked/deep/[id].tsx",
+          "/linked/team page routes-by-link/linked/team.tsx",
+        ],
+      },
+      "site-by-link/routes": {
+        "/linked/deep/7": {
+          "page": "site-by-link/routes/linked/deep/[id].tsx",
+          "params": {
+            "id": "7",
+          },
+        },
+        "files": [
+          "/ page site-by-link/routes/index.tsx",
+          "/about page site-by-link/routes/about.tsx",
+          "/blog layout site-by-link/routes/blog/_layout.tsx",
+          "/blog/:slug page site-by-link/routes/blog/[slug].tsx",
+          "/linked/deep/:id page site-by-link/routes/linked/deep/[id].tsx",
+          "/linked/team page site-by-link/routes/linked/team.tsx",
+        ],
+      },
+      "site/routes": {
+        "/linked/deep/7": {
+          "page": "site/routes/linked/deep/[id].tsx",
+          "params": {
+            "id": "7",
+          },
+        },
+        "files": [
+          "/ page site/routes/index.tsx",
+          "/about page site/routes/about.tsx",
+          "/blog layout site/routes/blog/_layout.tsx",
+          "/blog/:slug page site/routes/blog/[slug].tsx",
+          "/linked/deep/:id page site/routes/linked/deep/[id].tsx",
+          "/linked/team page site/routes/linked/team.tsx",
+        ],
+      },
+    }
+  `);
 });
 
 test("match() returns null for a path that doesn't start with a slash", () => {

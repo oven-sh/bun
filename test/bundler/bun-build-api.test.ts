@@ -13,7 +13,7 @@ import {
   tempDirWithFiles,
   tempDirWithFilesAnon,
 } from "harness";
-import path, { join } from "path";
+import path, { dirname, join } from "path";
 import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
 
@@ -1098,6 +1098,438 @@ describe("Bun.build", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // A package is in node_modules as a directory, or as a link to one: to a directory of the store with
+  // the isolated linker, and to a workspace member. A link that is not in node_modules is imported by
+  // its path. A file that is imported through a link is bundled from where it is, and what applies to
+  // it is what the path through the link gives: the "type" and the tsconfig.json of the directories
+  // above the link, not of those above the file.
+  //
+  // Not concurrent: it has seven processes that each build several times.
+  test("a package behind a directory link", async () => {
+    type Placement = {
+      /** Where the files of the package are. */
+      real: string;
+      /** The link to `real`, if the layout has one. */
+      link: string | null;
+      /** How a file at the root imports the package through `link`. */
+      linked: string;
+      /** A directory above `real` that is not above `link`. */
+      above: string | null;
+    };
+    const layouts: Record<string, (pkg: string) => Placement> = {
+      hoisted: pkg => ({ real: `node_modules/${pkg}`, link: null, linked: pkg, above: null }),
+      isolated: pkg => {
+        const store = `node_modules/.bun/${pkg.replace("/", "+")}@1.0.0`;
+        return { real: `${store}/node_modules/${pkg}`, link: `node_modules/${pkg}`, linked: pkg, above: store };
+      },
+      workspace: pkg => ({ real: `packages/${pkg}`, link: `node_modules/${pkg}`, linked: pkg, above: "packages" }),
+      directory: pkg => ({ real: `vendor/${pkg}`, link: `links/${pkg}`, linked: `./links/${pkg}`, above: "vendor" }),
+    };
+
+    const tsconfig = (jsxFactory: string) => JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory } });
+    const effect = (name: string) => `console.log(${JSON.stringify(name)});\n`;
+    const packages: Record<string, Record<string, string>> = {
+      // "sideEffects" entries are paths and globs below the directory of the package.json. Each file
+      // is found in another way: by its name, without its extension, as the .ts of a .js, as the
+      // index of a directory, as a link to a file that is elsewhere, and through "exports".
+      "fx-exact": {
+        "package.json": JSON.stringify({
+          name: "fx-exact",
+          version: "1.0.0",
+          sideEffects: ["./effect.js", "./bare.js", "./typed.ts", "./dir/index.js", "./to-elsewhere.js"],
+        }),
+        "effect.js": effect("fx-exact/effect.js"),
+        "bare.js": effect("fx-exact/bare.js"),
+        "typed.ts": effect("fx-exact/typed.ts"),
+        "dir/index.js": effect("fx-exact/dir/index.js"),
+        "pure.js": effect("fx-exact/pure.js"),
+      },
+      "fx-glob": {
+        "package.json": JSON.stringify({ name: "fx-glob", version: "1.0.0", sideEffects: ["./globbed/*.js"] }),
+        "globbed/one.js": effect("fx-glob/globbed/one.js"),
+        "pure.js": effect("fx-glob/pure.js"),
+      },
+      "fx-exports": {
+        "package.json": JSON.stringify({
+          name: "fx-exports",
+          version: "1.0.0",
+          sideEffects: ["./effect.js", "./globbed/*"],
+          exports: { "./effect": "./effect.js", "./pure": "./pure.js", "./globbed/*": "./globbed/*.js" },
+        }),
+        "effect.js": effect("fx-exports/effect.js"),
+        "globbed/one.js": effect("fx-exports/globbed/one.js"),
+        "globbed/two.ts": effect("fx-exports/globbed/two.ts"),
+        "pure.js": effect("fx-exports/pure.js"),
+      },
+      "@scope/fx": {
+        "package.json": JSON.stringify({ name: "@scope/fx", version: "1.0.0", sideEffects: ["./effect.js"] }),
+        "effect.js": effect("@scope/fx/effect.js"),
+        "pure.js": effect("@scope/fx/pure.js"),
+      },
+      // A "browser" map is applied to a path below the directory of the package.json, and to what a
+      // file below it imports.
+      web: {
+        "package.json": JSON.stringify({
+          name: "web",
+          version: "1.0.0",
+          main: "./main.js",
+          browser: {
+            "./node-only.js": "./browser-only.js",
+            "./off.js": false,
+            "./main.js": "./main-browser.js",
+            "./inner-node.js": "./inner-browser.js",
+            "./inner-off.js": false,
+            dep: "./dep-shim.js",
+            "dep-off": false,
+          },
+        }),
+        "node-only.js": `export const where = "web/node-only.js";\n`,
+        "browser-only.js": `export const where = "web/browser-only.js";\n`,
+        "off.js": effect("web/off.js"),
+        "main.js": `export const main = "web/main.js";\n`,
+        "main-browser.js": `export const main = "web/main-browser.js";\n`,
+        "inner.js": [
+          `import "./inner-off.js";`,
+          `import "dep-off";`,
+          `export { inner } from "./inner-node.js";`,
+          `export { dep } from "dep";`,
+        ].join("\n"),
+        "inner-node.js": `export const inner = "web/inner-node.js";\n`,
+        "inner-browser.js": `export const inner = "web/inner-browser.js";\n`,
+        "inner-off.js": effect("web/inner-off.js"),
+        "dep-shim.js": `export const dep = "web/dep-shim.js";\n`,
+      },
+      "web-exports": {
+        "package.json": JSON.stringify({
+          name: "web-exports",
+          version: "1.0.0",
+          exports: { ".": "./main.js", "./feature": "./node-feature.js" },
+          browser: { "./main.js": "./main-browser.js", "./node-feature.js": "./browser-feature.js" },
+        }),
+        "main.js": `export const main = "web-exports/main.js";\n`,
+        "main-browser.js": `export const main = "web-exports/main-browser.js";\n`,
+        "node-feature.js": `export const feature = "web-exports/node-feature.js";\n`,
+        "browser-feature.js": `export const feature = "web-exports/browser-feature.js";\n`,
+      },
+      // Each file is under another tsconfig.json: one above the package, the one beside it, and one
+      // that extends a file above the package by a relative path. What a file of the package imports
+      // is found from where that file is, so leaf.tsx is under what is above the files.
+      ui: {
+        "package.json": JSON.stringify({ name: "ui", version: "1.0.0" }),
+        "view.tsx": "export const view = <ui-view />;\n",
+        "inner.tsx": `export { leaf } from "./leaf.tsx";\nexport const inner = <ui-inner />;\n`,
+        "leaf.tsx": "export const leaf = <ui-leaf />;\n",
+        "own/tsconfig.json": tsconfig("ownFactory"),
+        "own/view.tsx": "export const view = <ui-own />;\n",
+        "ext/tsconfig.json": JSON.stringify({ extends: "../../tsconfig.base.json", compilerOptions: { jsx: "react" } }),
+        "ext/view.tsx": "export const view = <ui-ext />;\n",
+      },
+      // It has no package.json, so its "type" and its "sideEffects" are those of a directory above it.
+      // "dual" is dual.js where ".js" is tried first, which is for a path with node_modules in it.
+      kind: {
+        "plain.js": effect("kind/plain.js"),
+        "dual.js": effect("kind/dual.js"),
+        "dual.ts": effect("kind/dual.ts"),
+        "unlisted.js": effect("kind/unlisted.js"),
+      },
+      // What it imports by name is found from where its files are.
+      chain: {
+        "package.json": JSON.stringify({ name: "chain", version: "1.0.0" }),
+        "index.js": `export { from } from "chain-dep";\n`,
+      },
+    };
+    const chainDep = (from: string) => ({
+      "package.json": JSON.stringify({ name: "chain-dep", version: "1.0.0" }),
+      "index.js": `export const from = ${JSON.stringify(from)};\n`,
+    });
+    // What the files of `web` import by name.
+    const dependencies = {
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "node_modules/dep/index.js": `export const dep = "dep/index.js";\n`,
+      "node_modules/dep-off/package.json": JSON.stringify({ name: "dep-off", version: "1.0.0" }),
+      "node_modules/dep-off/index.js": effect("dep-off/index.js"),
+    };
+
+    /**
+     * The entry points of one spelling. `at(pkg)` is how a file at the root imports `pkg`, and
+     * `byPath(pkg)` is the path to it. "exports" is for a package that is named: a path goes to the file.
+     */
+    const entries = (spelling: string, at: (pkg: string) => string, byPath: (pkg: string) => string) => {
+      const named = !at("fx-exports").startsWith(".");
+      const exported = (file: string) => `${at("fx-exports")}/${file}${named ? "" : ".js"}`;
+      const lines = (...source: string[]) => source.join("\n") + "\n";
+      return {
+        [`side-${spelling}.js`]: lines(
+          `import "${at("fx-exact")}/effect.js";`,
+          `import "${at("fx-exact")}/bare";`,
+          `import "${at("fx-exact")}/typed.js";`,
+          `import "${at("fx-exact")}/dir";`,
+          `import "${at("fx-exact")}/to-elsewhere.js";`,
+          `import "${at("fx-exact")}/pure.js";`,
+          `import "${at("fx-glob")}/globbed/one.js";`,
+          `import "${at("fx-glob")}/pure.js";`,
+          `import "${exported("effect")}";`,
+          `import "${exported("globbed/one")}";`,
+          `import "${exported("globbed/two")}";`,
+          `import "${exported("pure")}";`,
+          `import "${at("@scope/fx")}/effect.js";`,
+          `import "${at("@scope/fx")}/pure.js";`,
+        ),
+        [`web-${spelling}.js`]: lines(
+          `import { where } from "${at("web")}/node-only.js";`,
+          `import "${byPath("web")}/off.js";`,
+          `import { main } from "${at("web")}";`,
+          `import { inner, dep } from "${at("web")}/inner.js";`,
+          `import { main as exported } from "${at("web-exports")}${named ? "" : "/main.js"}";`,
+          `import { feature } from "${at("web-exports")}/${named ? "feature" : "node-feature.js"}";`,
+          `console.log(where, main, inner, dep, exported, feature);`,
+        ),
+        [`ui-${spelling}.js`]: lines(
+          `import { view } from "${at("ui")}/view.tsx";`,
+          `import { view as own } from "${at("ui")}/own/view.tsx";`,
+          `import { view as ext } from "${at("ui")}/ext/view.tsx";`,
+          `import { inner, leaf } from "${at("ui")}/inner.tsx";`,
+          `import { view as elsewhere } from "${at("ui")}/to-elsewhere.tsx";`,
+          `console.log(view, own, ext, inner, leaf, elsewhere);`,
+        ),
+        [`kind-${spelling}.js`]: lines(
+          `import "${at("kind")}/plain.js";`,
+          `import "${at("kind")}/dual";`,
+          `import "${at("kind")}/unlisted.js";`,
+        ),
+        [`chain-${spelling}.js`]: lines(`import { from } from "${at("chain")}/index.js";`, `console.log(from);`),
+        [`runs-${spelling}.js`]: lines(`export { where } from "${at("web")}/node-only.js";`),
+      };
+    };
+
+    // Builds the entry points of one spelling, and prints what each output has. The two spellings of
+    // one file are never in one build: which of them the file is read as is a race there.
+    const fixture = String.raw`
+      const names = ["side", "web", "ui", "kind", "chain"];
+      async function build(spelling) {
+        const result = await Bun.build({
+          entrypoints: names.map(name => "./" + name + "-" + spelling + ".js"),
+          target: "browser",
+        });
+        const outputs = {};
+        for (const output of result.outputs) outputs[output.path.replace(/^.*[\\/]/, "")] = await output.text();
+        const built = { outputs };
+        for (const name of names) {
+          // The comment above each module of an output is its path from the root.
+          const modules = outputs[name + "-" + spelling + ".js"].match(/^\/\/ .+$/gm) ?? [];
+          built[name] = modules
+            .map(line => line.slice(3).replaceAll("\\", "/"))
+            .filter(module => !module.startsWith(name + "-"));
+        }
+        // What each element of ui is made with, and what the files of kind are read as.
+        const made = outputs["ui-" + spelling + ".js"].matchAll(/([\w$.]+)\("ui-(\w+)"/g);
+        built.jsx = Array.from(made, match => match[2] + ": " + match[1]).join(", ");
+        built.type = outputs["kind-" + spelling + ".js"].includes("__commonJS") ? "commonjs" : "module";
+        return built;
+      }
+      const order = process.argv.slice(2);
+      // The process that builds has a file of the package loaded, by the spelling that is built first.
+      const { where } = await import("./runs-" + order[0] + ".js");
+      const built = { linked: [], direct: [], where };
+      for (const spelling of order) built[spelling].push(await build(spelling));
+      console.log(JSON.stringify(built));
+    `;
+
+    /** What the fixture builds in a project of `layout`. */
+    async function build(layout: string) {
+      const place = layouts[layout];
+      const kind = place("kind");
+      const tree: Record<string, string> = {
+        // Its "sideEffects" names files of kind by the path through the link.
+        "package.json": JSON.stringify({
+          name: "root",
+          type: "commonjs",
+          sideEffects: ["plain.js", "dual.js", "dual.ts"].map(file => `./${kind.link ?? kind.real}/${file}`),
+        }),
+        "tsconfig.json": tsconfig("rootFactory"),
+        "elsewhere/effect.js": effect("elsewhere/effect.js"),
+        "elsewhere/tsconfig.json": tsconfig("elsewhereFactory"),
+        "elsewhere/view.tsx": "export const view = <ui-elsewhere />;\n",
+        ...dependencies,
+        ...entries(
+          "linked",
+          pkg => place(pkg).linked,
+          pkg => `./${place(pkg).link ?? place(pkg).real}`,
+        ),
+        ...entries(
+          "direct",
+          pkg => `./${place(pkg).real}`,
+          pkg => `./${place(pkg).real}`,
+        ),
+        "fixture.mjs": fixture,
+      };
+      for (const [pkg, files] of Object.entries(packages)) {
+        for (const [name, text] of Object.entries(files)) tree[`${place(pkg).real}/${name}`] = text;
+      }
+      const [ui, chain] = [place("ui"), place("chain")];
+      if (ui.above) {
+        // A directory that is above the files and not above the link has another "type", no
+        // "sideEffects", another tsconfig.json, and another chain-dep.
+        tree[`${kind.above}/package.json`] = JSON.stringify({ name: "above", type: "module" });
+        tree[`${ui.above}/tsconfig.json`] = tsconfig("aboveFactory");
+        for (const [name, text] of Object.entries(chainDep("above the files"))) {
+          tree[`${chain.above}/node_modules/chain-dep/${name}`] = text;
+        }
+      }
+      for (const [name, text] of Object.entries(chainDep("at the root"))) tree[`node_modules/chain-dep/${name}`] = text;
+      // What "../../tsconfig.base.json" is from ui/ext, for each spelling of ui.
+      tree[`${dirname(ui.real)}/tsconfig.base.json`] = tsconfig("besideDirectory");
+      if (ui.link) tree[`${dirname(ui.link)}/tsconfig.base.json`] = tsconfig("besideLink");
+
+      using dir = tempDir(`build-link-${layout}`, tree);
+      const root = String(dir);
+      symlinkSync(join(root, "elsewhere/effect.js"), join(root, place("fx-exact").real, "to-elsewhere.js"), "file");
+      symlinkSync(join(root, "elsewhere/view.tsx"), join(root, ui.real, "to-elsewhere.tsx"), "file");
+      for (const pkg of Object.keys(packages)) {
+        const { real, link } = place(pkg);
+        if (!link) continue;
+        mkdirSync(dirname(join(root, link)), { recursive: true });
+        // A junction on Windows, which takes an absolute target. Elsewhere, "junction" is ignored.
+        symlinkSync(join(root, real), join(root, link), "junction");
+      }
+
+      /** What the fixture builds in a new process, one spelling after the other in `order`. */
+      const run = async (...order: ("linked" | "direct")[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fixture.mjs", ...order],
+          env: bunEnv,
+          cwd: root,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+        const { linked, direct, where } = JSON.parse(stdout);
+        expect(where).toBe("web/node-only.js");
+        return { linked: linked as Record<string, any>[], direct: direct as Record<string, any>[] };
+      };
+      const [first, other] = await Promise.all([
+        run("linked", "direct", "linked", "linked"),
+        // With no link, the two spellings are paths to one directory.
+        ui.link ? run("direct", "linked") : null,
+      ]);
+      const [linked, direct] = [first.linked[0], first.direct[0]];
+      // The second and the third build give the output of the first.
+      expect(first.linked.slice(1)).toEqual([linked, linked]);
+      // The spelling that is built first does not change what either is built to.
+      if (other) expect(other).toEqual({ linked: [linked], direct: [direct] });
+
+      /** `<pkg>/<file>` for a module that is at `<file>` below where the files of `<pkg>` are. */
+      const fromPackage = (module: string) => {
+        const pkg = Object.keys(packages).find(pkg => module.startsWith(`${place(pkg).real}/`));
+        return pkg ? `${pkg}/${module.slice(place(pkg).real.length + 1)}` : module;
+      };
+      const modules = ({ side, web, ui }: Record<string, string[]>) =>
+        Object.fromEntries(Object.entries({ side, web, ui }).map(([name, paths]) => [name, paths.map(fromPackage)]));
+      /** What the directories above a file decide for it, and where "chain-dep" is found from chain. */
+      const above = ({ jsx, type, kind, chain }: Record<string, any>) => ({
+        jsx,
+        kind: `${type}: ${kind.map(fromPackage).join(", ")}`,
+        "chain-dep": chain.find((module: string) => module.includes("chain-dep")),
+      });
+      // The same files of the packages are bundled for both spellings.
+      expect(modules(direct)).toEqual(modules(linked));
+      return { modules: modules(linked), linked: above(linked), direct: above(direct) };
+    }
+
+    const built = await Promise.all(Object.keys(layouts).map(async layout => ({ layout, ...(await build(layout)) })));
+    // Every layout bundles the same files.
+    const { modules } = built[0];
+    expect(built.map(({ layout, modules }) => ({ layout, modules }))).toEqual(
+      built.map(({ layout }) => ({ layout, modules })),
+    );
+    expect({
+      modules,
+      ...Object.fromEntries(built.map(({ layout, linked, direct }) => [layout, { linked, direct }])),
+    }).toMatchInlineSnapshot(`
+      {
+        "directory": {
+          "direct": {
+            "chain-dep": "vendor/node_modules/chain-dep/index.js",
+            "jsx": "view: aboveFactory, own: ownFactory, ext: besideDirectory, leaf: aboveFactory, inner: aboveFactory, elsewhere: aboveFactory",
+            "kind": "module: kind/plain.js, kind/dual.ts, kind/unlisted.js",
+          },
+          "linked": {
+            "chain-dep": "vendor/node_modules/chain-dep/index.js",
+            "jsx": "view: rootFactory, own: ownFactory, ext: besideLink, leaf: aboveFactory, inner: rootFactory, elsewhere: rootFactory",
+            "kind": "commonjs: kind/plain.js, kind/dual.ts",
+          },
+        },
+        "hoisted": {
+          "direct": {
+            "chain-dep": "node_modules/chain-dep/index.js",
+            "jsx": "view: rootFactory, own: ownFactory, ext: React.createElement, leaf: rootFactory, inner: rootFactory, elsewhere: rootFactory",
+            "kind": "commonjs: kind/plain.js, kind/dual.js",
+          },
+          "linked": {
+            "chain-dep": "node_modules/chain-dep/index.js",
+            "jsx": "view: rootFactory, own: ownFactory, ext: React.createElement, leaf: rootFactory, inner: rootFactory, elsewhere: rootFactory",
+            "kind": "commonjs: kind/plain.js, kind/dual.js",
+          },
+        },
+        "isolated": {
+          "direct": {
+            "chain-dep": "node_modules/.bun/chain@1.0.0/node_modules/chain-dep/index.js",
+            "jsx": "view: aboveFactory, own: ownFactory, ext: React.createElement, leaf: aboveFactory, inner: aboveFactory, elsewhere: aboveFactory",
+            "kind": "module: kind/plain.js, kind/dual.js, kind/unlisted.js",
+          },
+          "linked": {
+            "chain-dep": "node_modules/.bun/chain@1.0.0/node_modules/chain-dep/index.js",
+            "jsx": "view: rootFactory, own: ownFactory, ext: React.createElement, leaf: aboveFactory, inner: rootFactory, elsewhere: rootFactory",
+            "kind": "commonjs: kind/plain.js, kind/dual.js",
+          },
+        },
+        "modules": {
+          "side": [
+            "fx-exact/effect.js",
+            "fx-exact/bare.js",
+            "fx-exact/typed.ts",
+            "fx-exact/dir/index.js",
+            "elsewhere/effect.js",
+            "fx-glob/globbed/one.js",
+            "fx-exports/effect.js",
+            "fx-exports/globbed/one.js",
+            "fx-exports/globbed/two.ts",
+            "@scope/fx/effect.js",
+          ],
+          "ui": [
+            "ui/view.tsx",
+            "ui/own/view.tsx",
+            "ui/ext/view.tsx",
+            "ui/leaf.tsx",
+            "ui/inner.tsx",
+            "elsewhere/view.tsx",
+          ],
+          "web": [
+            "web/browser-only.js",
+            "web/main-browser.js",
+            "web/inner-browser.js",
+            "web/dep-shim.js",
+            "web-exports/main-browser.js",
+            "web-exports/browser-feature.js",
+          ],
+        },
+        "workspace": {
+          "direct": {
+            "chain-dep": "packages/node_modules/chain-dep/index.js",
+            "jsx": "view: aboveFactory, own: ownFactory, ext: besideDirectory, leaf: aboveFactory, inner: aboveFactory, elsewhere: aboveFactory",
+            "kind": "module: kind/plain.js, kind/dual.ts, kind/unlisted.js",
+          },
+          "linked": {
+            "chain-dep": "packages/node_modules/chain-dep/index.js",
+            "jsx": "view: rootFactory, own: ownFactory, ext: React.createElement, leaf: aboveFactory, inner: rootFactory, elsewhere: rootFactory",
+            "kind": "commonjs: kind/plain.js, kind/dual.js",
+          },
+        },
+      }
+    `);
+  });
 
   test.concurrent("errors are returned as an array", async () => {
     const x = await buildNoThrow({

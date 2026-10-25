@@ -1513,13 +1513,8 @@ impl<'s> Checker<'_, 's> {
             }
             // `checkReturnStatement`
             StmtKind::Return(e) => {
-                // `checkExpressionCached` of the parenthesized expression. `getReturnTypeFromBody`
-                // has stored the type of the expression in the parentheses.
                 if e.is_some() && is_parenthesized(hir, e) {
-                    if self.may_have_another_this_type(file, e) {
-                        self.check_expression_anew(file, e);
-                    }
-                    self.check_expression_after_cached(file, e);
+                    self.check_returned_expression_in_parentheses(file, e);
                 } else {
                     self.check_expression(file, e);
                 }
@@ -1794,13 +1789,18 @@ impl<'s> Checker<'_, 's> {
         self.check_expression(file, e);
     }
 
-    /// True if the type of `e` is stored and `this` has a contextual type in `e`: it's in a function expression or in a
-    /// member of an object literal. That type can be another one by now, like a `ThisType` whose type arguments were
-    /// being inferred when `e` was checked. FOR SPEED: elsewhere a second check of `e` finds what the first one found.
-    fn may_have_another_this_type(&mut self, file: FileId, e: ExprId) -> bool {
-        matches!(self.this_container(file, e), Some(Ok(function))
-            if matches!(self.bound(file).fns[function.idx()].owner, FnOwner::Expr(_)))
-            && self.cached_type_of_expr(file, e).is_some()
+    /// `checkExpressionCached` of `(e)` in `return (e)`. `getReturnTypeFromBody` has stored the type of `e`, not that of
+    /// the parenthesized expression, so `e` is checked again. FOR SPEED only where the second check can find something
+    /// else: after an incomplete walk, or if the type of `e` is stored and `this` has a contextual type in `e`, which is
+    /// in a function expression or in a member of an object literal. That type can be another one by now, like a
+    /// `ThisType` whose type arguments were being inferred when `e` was checked.
+    fn check_returned_expression_in_parentheses(&mut self, file: FileId, e: ExprId) {
+        let has_contextual_this = matches!(self.this_container(file, e), Some(Ok(function))
+            if matches!(self.bound(file).fns[function.idx()].owner, FnOwner::Expr(_)));
+        if has_contextual_this && self.cached_type_of_expr(file, e).is_some() {
+            self.check_expression_anew(file, e);
+        }
+        self.check_expression_after_cached(file, e);
     }
 
     /// `check_expression` for the callee or an argument of a call. `getResolvedSignature` returns

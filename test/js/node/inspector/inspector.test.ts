@@ -1106,6 +1106,31 @@ test("two inspector.open() clients each get the result of their own Runtime.eval
   expect({ a: await answerForA, b: await answerForB }).toEqual({ a: "released", b: "answer-for-B" });
 });
 
+test("the error of a failed command goes to the inspector.open() client that sent it", async () => {
+  await using inspectee = await spawnInspectee("cdp");
+  const a = await inspectee.attach("A");
+  const b = await inspectee.attach("B");
+  await b.evaluate("'first-for-B'");
+
+  // A's failing command and B's second command wait behind hold(), under the same backend id.
+  const held = a.evaluate("hold()");
+  await inspectee.stderr(/HOLDING/);
+  const failed = a.call("Runtime.callFunctionOn", {
+    objectId: "no-such-object",
+    functionDeclaration: "function () {}",
+  });
+  await a.call("Runtime.getIsolateId");
+  const answerForB = b.evaluate("'answer-for-B'");
+  await b.call("Runtime.getIsolateId");
+  inspectee.release();
+
+  expect({ held: await held, failed: valueOf(await failed), answerForB: await answerForB }).toEqual({
+    held: "released",
+    failed: "error -32000",
+    answerForB: "answer-for-B",
+  });
+});
+
 test("the result of an awaited promise goes to the inspector.open() client that awaited", async () => {
   await using inspectee = await spawnInspectee("cdp");
   const a = await inspectee.attach("A");

@@ -89,6 +89,15 @@ export class InspectorClient {
       .filter(message => "id" in message && !this.#settled.has(message))
       .map(message => `${message.id}:${valueOf(message)}`);
   }
+
+  /** The names of the events received so far that are in `names`, in arrival order. */
+  events(...names: string[]): string[] {
+    const methods: string[] = [];
+    for (const { method } of this.received) {
+      if (method !== undefined && names.includes(method)) methods.push(method);
+    }
+    return methods;
+  }
 }
 
 const prelude = `

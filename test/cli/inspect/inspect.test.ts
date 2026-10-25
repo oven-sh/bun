@@ -379,6 +379,8 @@ describe("more than one client", () => {
     await a.call("Debugger.enable");
     await a.call("Debugger.setBreakpointsActive", { active: true });
     await a.call("Debugger.setPauseOnDebuggerStatements", { enabled: true });
+    // The process has one Debugger for all clients. B asks for it too, and gets its events like A.
+    await b.call("Debugger.enable");
     const paused = a.evaluate("debugger; 'A-after-the-pause'");
     await a.waitFor(message => message.method === "Debugger.paused");
 
@@ -388,11 +390,61 @@ describe("more than one client", () => {
     const afterThePause = await paused;
     await Promise.all([a.settle(), b.settle()]);
 
-    expect({ duringThePause, afterThePause, a: a.responses(), b: b.responses() }).toEqual({
+    expect({
+      duringThePause,
+      afterThePause,
+      a: a.responses(),
+      b: b.responses(),
+      aEvents: a.events("Debugger.paused", "Debugger.resumed"),
+      bEvents: b.events("Debugger.paused", "Debugger.resumed"),
+    }).toEqual({
       duringThePause: "B-during-the-pause",
       afterThePause: "A-after-the-pause",
       a: ["1:{}", "2:{}", "3:{}", "4:A-after-the-pause"],
-      b: ["1:B-during-the-pause", "2:{}"],
+      b: [expect.stringMatching(/^1:/), "2:B-during-the-pause", "3:{}"],
+      aEvents: ["Debugger.paused", "Debugger.resumed"],
+      bEvents: ["Debugger.paused", "Debugger.resumed"],
+    });
+  });
+
+  test("the error of a command that fails goes to the client that sent it", async () => {
+    await using inspectee = await spawnInspectee("jsc");
+    const a = await inspectee.attach("A");
+    const b = await inspectee.attach("B");
+
+    const failed = await b.call("Runtime.awaitPromise", { promiseObjectId: '{"injectedScriptId":1,"id":999999}' });
+    await Promise.all([a.settle(), b.settle()]);
+
+    expect({ failed: valueOf(failed), a: a.responses(), b: b.responses() }).toEqual({
+      failed: "error -32000",
+      a: [],
+      b: ["1:error -32000"],
+    });
+  });
+
+  test("the error of an awaited promise that fails later goes to the client that awaited", async () => {
+    await using inspectee = await spawnInspectee("jsc");
+    const a = await inspectee.attach("A");
+    const b = await inspectee.attach("B");
+
+    const promise = await a.call("Runtime.evaluate", {
+      expression: "new Promise(resolve => (globalThis.resolveIt = resolve))",
+    });
+    // A value that refers to itself cannot be returned by value. The backend finds that out when the promise settles.
+    a.send("Runtime.awaitPromise", { promiseObjectId: promise.result.result.objectId, returnByValue: true });
+    await a.settle();
+
+    const first = await b.evaluate("'first-for-B'");
+    const second = await b.evaluate(
+      "(() => { const cyclic = {}; cyclic.self = cyclic; resolveIt(cyclic); })(), 'second-for-B'",
+    );
+    await Promise.all([a.settle(), b.settle()]);
+
+    expect({ first, second, a: a.responses(), b: b.responses() }).toEqual({
+      first: "first-for-B",
+      second: "second-for-B",
+      a: ["1:Promise", "2:error -32000"],
+      b: ["1:first-for-B", "2:second-for-B"],
     });
   });
 

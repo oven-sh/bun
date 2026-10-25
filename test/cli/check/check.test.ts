@@ -8643,6 +8643,27 @@ export const a: never = cart.count.a;
       }
     });
 
+    test("prints a property whose initializer is a very long chain behind a failed call", async () => {
+      const n = isDebug || isASAN ? 50_000 : 500_000;
+      using dir = project({
+        "a.ts": `declare function defineStore<S = {}, G extends Record<string, unknown> = {}>(o: { state?: () => S; view?: G & ThisType<S & G> }): S & G; declare const a: number;
+export const cart = defineStore({
+  state: () => ({ name: "x" }),
+  view: {
+    label() { return [this.name]; },
+    ids: { get inner() { return { y: this.label()${" || a".repeat(n)} }; } },
+  },
+});
+`,
+        "use.ts": `import { cart } from "./a";\nexport const inner: never = cart.ids.inner;\n`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+      expect(stdout.split("\n").filter(line => line.includes("TS2322"))).toEqual([
+        "use.ts(2,14): error TS2322: Type '{ y: any; }' is not assignable to type 'never'.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // TypeScript keeps the signature that a call resolved to. So every property but `z` and `w` is still the error type
     // when its initializer is checked again, no matter which file's error prints it.
     test.each(["a.ts", "use.ts"])(

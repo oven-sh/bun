@@ -22,12 +22,22 @@ pub(super) struct SerializeTypeOptions {
 }
 
 /// True if checking `node` resolves a call. A function's body isn't checked with the function.
+/// A chain of binary operators is as deep as it's long, so the walk doesn't recurse.
 fn resolves_a_call(hir: &File, node: hir::Node) -> bool {
-    match hir.kind(node) {
-        Kind::CallExpression | Kind::NewExpression | Kind::TaggedTemplateExpression => true,
-        kind if kind.is_function_like() => false,
-        _ => hir.for_each_child(node, &mut |child| resolves_a_call(hir, child)),
+    let mut pending = vec![node];
+    while let Some(node) = pending.pop() {
+        match hir.kind(node) {
+            Kind::CallExpression | Kind::NewExpression | Kind::TaggedTemplateExpression => return true,
+            kind if kind.is_function_like() => {}
+            _ => {
+                hir.for_each_child(node, &mut |child| {
+                    pending.push(child);
+                    false
+                });
+            }
+        }
     }
+    false
 }
 
 impl<'p> Printer<'_, 'p, '_> {

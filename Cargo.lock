@@ -1697,6 +1697,10 @@ dependencies = [
 [[package]]
 name = "bun_shared_struct"
 version = "0.0.0"
+dependencies = [
+ "bun_collections",
+ "bun_threading",
+]
 
 [[package]]
 name = "bun_shared_struct_jsc"

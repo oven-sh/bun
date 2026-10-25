@@ -1,5 +1,6 @@
-use std::collections::HashMap;
 use std::sync::Arc;
+
+use bun_collections::HashMap;
 
 /// The field names of a shared struct, in declaration order. Names are UTF-16 code units so
 /// lone surrogates survive, and are looked up without allocating.
@@ -52,12 +53,12 @@ impl StructShape {
         }))
     }
 
+    #[allow(
+        clippy::len_without_is_empty,
+        reason = "a shape is never asked whether it is empty"
+    )]
     pub fn len(&self) -> usize {
         self.names.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.names.is_empty()
     }
 
     pub fn name(&self, i: usize) -> &[u16] {

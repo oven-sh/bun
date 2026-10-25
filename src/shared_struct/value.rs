@@ -1,7 +1,9 @@
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
+
+use bun_collections::HashMap;
+use bun_threading::{Guarded, RwLock};
 
 use crate::mutex::{Condition, Mutex};
 use crate::shape::StructShape;
@@ -52,24 +54,24 @@ fn is_boxed(bits: u64) -> bool {
 /// Append-only table of interned values. Handles are never reused, so a slot's handle
 /// stays valid for the life of the process and equal values compare equal by handle.
 struct Interner<K: std::hash::Hash + Eq, V: ?Sized> {
-    index: StdMutex<HashMap<K, u64>>,
+    index: Guarded<HashMap<K, u64>>,
     values: RwLock<Vec<Arc<V>>>,
 }
 
 impl<K: std::hash::Hash + Eq, V: ?Sized> Interner<K, V> {
     fn new() -> Self {
         Self {
-            index: StdMutex::new(HashMap::new()),
+            index: Guarded::new(HashMap::new()),
             values: RwLock::new(Vec::new()),
         }
     }
 
     fn intern(&self, key: K, value: Arc<V>) -> u64 {
-        let mut index = self.index.lock().unwrap();
+        let mut index = self.index.lock();
         if let Some(&h) = index.get(&key) {
             return h;
         }
-        let mut values = self.values.write().unwrap();
+        let mut values = self.values.write();
         let h = values.len() as u64;
         assert!(h <= DATUM_MASK, "shared string table exhausted");
         values.push(value);
@@ -78,7 +80,7 @@ impl<K: std::hash::Hash + Eq, V: ?Sized> Interner<K, V> {
     }
 
     fn get(&self, h: u64) -> Arc<V> {
-        self.values.read().unwrap()[h as usize].clone()
+        Arc::clone(&self.values.read()[h as usize])
     }
 }
 
@@ -117,7 +119,7 @@ pub struct SharedBlock {
     /// Present for a shared struct: what its slots are called.
     shape: Option<Arc<StructShape>>,
     /// Address and owner of every object a slot has ever held.
-    kept: StdMutex<Vec<(usize, Arc<dyn Any + Send + Sync>)>>,
+    kept: Guarded<Vec<(usize, Arc<dyn Any + Send + Sync>)>>,
 }
 
 impl std::fmt::Debug for SharedBlock {
@@ -142,7 +144,7 @@ impl SharedBlock {
         Arc::new(Self {
             slots: (0..len).map(|_| AtomicU64::new(undefined)).collect(),
             shape,
-            kept: StdMutex::new(Vec::new()),
+            kept: Guarded::new(Vec::new()),
         })
     }
 
@@ -153,18 +155,18 @@ impl SharedBlock {
 
     fn keep<T: Send + Sync + 'static>(&self, a: &Arc<T>) {
         let addr = Arc::as_ptr(a) as usize;
-        let mut kept = self.kept.lock().unwrap();
+        let mut kept = self.kept.lock();
         if !kept.iter().any(|(p, _)| *p == addr) {
-            kept.push((addr, a.clone() as Arc<dyn Any + Send + Sync>));
+            kept.push((addr, Arc::clone(a) as Arc<dyn Any + Send + Sync>));
         }
     }
 
+    #[allow(
+        clippy::len_without_is_empty,
+        reason = "a block is never asked whether it is empty"
+    )]
     pub fn len(&self) -> usize {
         self.slots.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.slots.is_empty()
     }
 
     fn encode(&self, v: &Value) -> u64 {
@@ -180,8 +182,8 @@ impl SharedBlock {
                     n.to_bits()
                 }
             }
-            Value::String(s) => boxed(TAG_STRING, strings().intern(s.clone(), s.clone())),
-            Value::BigInt(s) => boxed(TAG_BIGINT, bigints().intern(s.clone(), s.clone())),
+            Value::String(s) => boxed(TAG_STRING, strings().intern(Arc::clone(s), Arc::clone(s))),
+            Value::BigInt(s) => boxed(TAG_BIGINT, bigints().intern(Arc::clone(s), Arc::clone(s))),
             Value::Struct(b) => {
                 self.keep(b);
                 boxed(TAG_STRUCT, pointer_datum(b))
@@ -215,7 +217,9 @@ impl SharedBlock {
             // `kept`. That list is only ever appended to, so the Arc outlives every slot that
             // names it, and the block owning this slot outlives `&self`.
             TAG_STRUCT => Value::Struct(unsafe { arc_from_datum(datum) }),
+            // SAFETY: as for `TAG_STRUCT`.
             TAG_MUTEX => Value::Mutex(unsafe { arc_from_datum(datum) }),
+            // SAFETY: as for `TAG_STRUCT`.
             TAG_CONDITION => Value::Condition(unsafe { arc_from_datum(datum) }),
             _ => Value::Undefined,
         }

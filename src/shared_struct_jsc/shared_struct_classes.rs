@@ -205,11 +205,11 @@ pub(crate) fn shared_of(value: JSValue) -> Option<Value> {
     if let Some(block) = block_of(value) {
         Some(Value::Struct(block))
     } else if let Some(mutex) = value.as_class_ref::<MutexObject>() {
-        Some(Value::Mutex(mutex.inner.clone()))
+        Some(Value::Mutex(Arc::clone(&mutex.inner)))
     } else {
         value
             .as_class_ref::<ConditionObject>()
-            .map(|condition| Value::Condition(condition.inner.clone()))
+            .map(|condition| Value::Condition(Arc::clone(&condition.inner)))
     }
 }
 

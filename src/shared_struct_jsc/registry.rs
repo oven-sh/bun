@@ -62,7 +62,7 @@ mod tests {
     fn nonces_are_distinct_and_nonzero() {
         let mut registry = Registry::new();
         let nonces: Vec<u64> = (0..64).map(|i| registry.insert(i)).collect();
-        assert!(nonces.iter().all(|&n| n != 0));
+        assert!(nonces.iter().all(|&n| n > 0));
         let mut sorted = nonces.clone();
         sorted.sort_unstable();
         sorted.dedup();
@@ -97,7 +97,7 @@ mod tests {
     fn removing_drops_the_held_count() {
         let held = Arc::new(());
         let mut registry = Registry::new();
-        let nonce = registry.insert(held.clone());
+        let nonce = registry.insert(Arc::clone(&held));
         assert_eq!(Arc::strong_count(&held), 2);
         // A clone made while the entry is held (a deserialize) keeps the object alive past the removal.
         let clone = registry.get(nonce).cloned();

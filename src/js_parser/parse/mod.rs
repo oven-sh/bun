@@ -24,8 +24,8 @@ use crate::p::P;
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
     FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
-    ParseClassOptions, ParseStatementOptions, StructKind, ParsedPath, PropertyOpts, SkipTypeParameterResult,
-    StmtList, TypeParameterFlag,
+    ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
+    StmtList, StructKind, TypeParameterFlag,
 };
 use bun_ast as js_ast;
 use bun_ast::expr::EFlags;
@@ -204,8 +204,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut opts = PropertyOpts {
                 is_class: true,
                 allow_ts_decorators: class_opts.allow_ts_decorators,
-                class_has_extends: extends.is_some()
-                    || class_opts.struct_kind != StructKind::None,
+                class_has_extends: extends.is_some() || class_opts.struct_kind != StructKind::None,
                 is_struct: class_opts.struct_kind != StructKind::None,
                 has_argument_decorators: false,
                 ..Default::default()

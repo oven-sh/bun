@@ -417,5 +417,4 @@ JSC::EncodedJSValue Bun__SharedStruct__createConstructors(JSC::JSGlobalObject* g
     classes->putDirect(vm, JSC::Identifier::fromString(vm, "SharedStruct"_s), JSC::JSFunction::create(vm, globalObject, 1, "SharedStruct"_s, Bun::callSharedStruct, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, Bun::constructSharedStruct));
     return JSC::JSValue::encode(classes);
 }
-
 }

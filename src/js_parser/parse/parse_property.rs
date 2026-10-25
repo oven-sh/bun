@@ -16,9 +16,9 @@ use bun_ast::op::Level;
 use bun_ast::scope::Kind as ScopeKind;
 use bun_ast::ts::Metadata as TsMetadata;
 use js_ast::{
-    E, Expr, ExprNodeList, S,
+    E, Expr, ExprNodeList,
     G::{self, PropertyKind},
-    Stmt, symbol,
+    S, Stmt, symbol,
 };
 use js_lexer::T;
 
@@ -139,10 +139,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 body_loc,
             );
-            let mut stmts = bun_alloc::ArenaVec::<Stmt>::with_capacity_in(
-                func.body.stmts.len() + 1,
-                p.arena,
-            );
+            let mut stmts =
+                bun_alloc::ArenaVec::<Stmt>::with_capacity_in(func.body.stmts.len() + 1, p.arena);
             stmts.push(super_stmt);
             stmts.extend_from_slice(func.body.stmts.slice());
             func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);

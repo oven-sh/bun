@@ -919,7 +919,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if p.lexer.is_contextual_keyword(b"struct") || p.lexer.is_contextual_keyword(b"shared")
+                if p.lexer.is_contextual_keyword(b"struct")
+                    || p.lexer.is_contextual_keyword(b"shared")
                 {
                     // "export struct Foo {}" and "export shared struct Foo {}"
                     opts.is_export = true;

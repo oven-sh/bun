@@ -9,40 +9,14 @@ use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
 // ── local EString shims ────────────────────────────────────────────────────
 // E.rs currently carries two `impl EString` blocks (live + round-C draft) with
-// overlapping inherent methods, so calls like `EString::init`/`javascript_length`
-// /`eql_bytes` are E0034-ambiguous from here. These thin wrappers go through
-// public fields directly and are removed once E.rs is deduped.
+// overlapping inherent methods, so a call like `EString::init` is
+// E0034-ambiguous from here. This thin wrapper goes through public fields
+// directly and is removed once E.rs is deduped.
 #[inline]
 fn e_string_init(data: &[u8]) -> E::EString {
     E::EString {
         data: data.into(),
         ..Default::default()
-    }
-}
-
-#[inline]
-fn e_string_javascript_length(s: &E::EString) -> Option<u32> {
-    if s.rope_len > 0 {
-        // We only support ascii ropes for now
-        return Some(s.rope_len);
-    }
-    if !s.is_utf16 {
-        if !s.data.iter().all(|&b| b < 128) {
-            return None;
-        }
-        return Some(s.data.len() as u32);
-    }
-    // UTF-16: `data.len()` stores the u16 element count (see EString::init_utf16).
-    Some(s.data.len() as u32)
-}
-
-#[inline]
-fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
-    if !s.is_utf16 {
-        s.data == other
-    } else {
-        let s16 = s.slice16();
-        s16.len() == other.len() && s16.iter().zip(other).all(|(&c, &b)| c == b as u16)
     }
 }
 
@@ -548,7 +522,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.options.features.minify_syntax {
                         // minify "long-string".length to 11
                         if name == b"length" {
-                            if let Some(len) = e_string_javascript_length(&str_) {
+                            if let Some(len) = str_.javascript_length() {
                                 return Some(p.new_expr(E::Number::new(len as f64), loc));
                             }
                         }
@@ -578,12 +552,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 if let (Some(value), Some(key)) = (prop.value, prop.key) {
                                     if prop.flags.len() == 0
                                         && matches!(key.data, js_ast::ExprData::EString(_))
-                                        && e_string_eql_bytes(
-                                            &key.data
-                                                .e_string()
-                                                .expect("infallible: variant checked"),
-                                            name,
-                                        )
+                                        && key
+                                            .data
+                                            .e_string()
+                                            .expect("infallible: variant checked")
+                                            .eql_bytes(name)
                                         && name != b"__proto__"
                                         && value.can_be_inlined_from_property_access()
                                     {

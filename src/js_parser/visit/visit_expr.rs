@@ -1069,24 +1069,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     // "foo"[2] -> "o"
                     if let Some(str_) = target.data.as_e_string() {
-                        if !str_.is_utf16 {
-                            let literal = str_.data;
-                            let num: usize = index
-                                .data
-                                .e_number()
-                                .expect("infallible: variant checked")
-                                .to_usize();
-                            debug_assert!(strings::is_all_ascii(&literal));
-                            if num < literal.len() {
-                                *e = p.new_expr(
-                                    E::String {
-                                        data: E::Str::new(&literal[num..num + 1]),
-                                        ..Default::default()
-                                    },
-                                    expr.loc,
-                                );
-                                return;
-                            }
+                        if !str_.is_utf16
+                            && let Ok(num) = u32::try_from(number.value() as u64)
+                            && let Some(char_) = str_.char_at(num, p.arena)
+                        {
+                            *e = p.new_expr(char_, expr.loc);
+                            return;
                         }
                     } else if let Some(array) = target.data.as_e_array() {
                         let int: usize = number.value() as usize;
@@ -2474,16 +2462,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(dot) = e_.target.data.e_dot() {
                 if let Some(target_str) = dot.target.data.e_string() {
                     if !target_str.is_utf16 && dot.name == b"charCodeAt" {
-                        let str_ = target_str.data;
                         let arg1 = e_.args.at(0).unwrap_inlined();
                         if let Data::ENumber(n) = &arg1.data {
                             let float = n.value();
-                            if float % 1.0 == 0.0 && float < (str_.len() as f64) && float >= 0.0 {
-                                let char_ = str_[float as usize];
-                                if char_ < 0x80 {
-                                    *e = p.new_expr(E::Number::new(f64::from(char_)), expr.loc);
-                                    return;
-                                }
+                            if float % 1.0 == 0.0
+                                && (0.0..=f64::from(u32::MAX)).contains(&float)
+                                && let Some(unit) = target_str.code_unit_at(float as u32)
+                            {
+                                *e = p.new_expr(E::Number::new(f64::from(unit)), expr.loc);
+                                return;
                             }
                         }
                     }

@@ -1600,6 +1600,8 @@ pub struct EString {
     // We don't need to deal with substrings
     pub next: Option<StoreRef<EString>>,
     pub end: Option<StoreRef<EString>>,
+    /// The bytes of every segment, or 0 for a string that was never joined. It is not the
+    /// `.length` of JavaScript: see [`EString::javascript_length`].
     pub rope_len: u32,
     pub prefer_template: bool,
     pub is_utf16: bool,
@@ -1609,6 +1611,7 @@ pub struct EString {
     /// Temporal value instead of a string.
     pub toml_datetime: Option<TomlDateTimeKind>,
 }
+const _: () = assert!(core::mem::size_of::<EString>() == 40);
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
 
@@ -1825,6 +1828,7 @@ impl EString {
             return;
         }
         self.data = Str::new(self.flatten_rope(bump));
+        self.rope_len = self.data.len() as u32;
         self.next = None;
     }
 
@@ -1835,17 +1839,25 @@ impl EString {
         }
         let mut copy = self.shallow_clone();
         copy.data = Str::new(self.flatten_rope(bump));
+        copy.rope_len = copy.data.len() as u32;
         copy.next = None;
         Flattened::Owned(copy)
     }
 
-    /// The rope's bytes, concatenated into a fresh `bump` slice.
+    /// The rope's bytes, concatenated into a fresh `bump` slice. The two halves of a surrogate
+    /// pair that meet at a seam become the four bytes of their code point.
     fn flatten_rope<'b>(&self, bump: &'b Bump) -> &'b [u8] {
         let mut bytes = bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(&self.data);
         let mut str_ = self.next;
         while let Some(part) = str_ {
-            bytes.extend_from_slice(&part.get().data);
+            let mut more: &[u8] = &part.get().data;
+            if let Some(pair) = strings::wtf8_pair_across(&bytes, more) {
+                bytes.truncate(bytes.len() - 3);
+                bytes.extend_from_slice(&pair);
+                more = &more[3..];
+            }
+            bytes.extend_from_slice(more);
             str_ = part.get().next;
         }
         bytes.into_bump_slice()
@@ -1909,18 +1921,64 @@ impl EString {
         }
     }
 
-    pub fn javascript_length(&self) -> Option<u32> {
-        if self.rope_len > 0 {
-            // We only support ascii ropes for now
-            return Some(self.rope_len);
-        }
+    /// `self < other` of JavaScript for two flat strings of one storage: the order of their UTF-16
+    /// code units. `None` if it depends on 8-bit bytes that are not WTF-8.
+    pub fn js_order(&self, other: &EString) -> Option<Ordering> {
+        debug_assert!(self.is_utf8() == other.is_utf8());
+        debug_assert!(self.next.is_none() && other.next.is_none());
         if self.is_utf8() {
-            if !strings::is_all_ascii(&self.data) {
-                return None;
-            }
-            return Some(self.data.len() as u32);
+            strings::checked_order_utf16(&self.data, &other.data)
+        } else {
+            Some(strings::order_t(self.slice16(), other.slice16()))
         }
-        Some(self.slice16().len() as u32)
+    }
+
+    /// `.length`: the UTF-16 code units of either storage, and of a rope. `None` for 8-bit bytes
+    /// that are not WTF-8.
+    pub fn javascript_length(&self) -> Option<u32> {
+        if !self.is_utf8() {
+            return Some(self.slice16().len() as u32);
+        }
+        let mut len = 0u32;
+        let mut segment = Some(self);
+        while let Some(s) = segment {
+            len += strings::wtf8_checked_len_utf16(&s.data)?;
+            segment = s.next.as_deref();
+        }
+        Some(len)
+    }
+
+    /// The UTF-16 code unit `index` of an 8-bit string, which may be a rope, with the segment and
+    /// the offset in bytes that it is read from. `None` past the end, and at or after bytes that
+    /// are not WTF-8.
+    fn locate_code_unit(&self, mut index: u32) -> Option<(&EString, usize, u16)> {
+        debug_assert!(self.is_utf8());
+        let mut segment = Some(self);
+        while let Some(s) = segment {
+            match strings::wtf8_code_unit_at(&s.data, index) {
+                strings::Wtf8CodeUnitAt::Unit { at, unit } => return Some((s, at, unit)),
+                strings::Wtf8CodeUnitAt::Past(len) => index -= len,
+                strings::Wtf8CodeUnitAt::IllFormed => return None,
+            }
+            segment = s.next.as_deref();
+        }
+        None
+    }
+
+    /// `.charCodeAt(index)` of an 8-bit string. See [`Self::locate_code_unit`].
+    pub fn code_unit_at(&self, index: u32) -> Option<u16> {
+        self.locate_code_unit(index).map(|found| found.2)
+    }
+
+    /// `[index]` of an 8-bit string. An ASCII character borrows its byte of this string, and any
+    /// other code unit is stored as the lexer stores it. See [`Self::locate_code_unit`].
+    pub fn char_at(&self, index: u32, bump: &Bump) -> Option<EString> {
+        let (segment, at, unit) = self.locate_code_unit(index)?;
+        Some(if unit < 0x80 {
+            EString::init(&segment.data[at..=at])
+        } else {
+            EString::init_utf16(bump.alloc_slice_copy(&[unit]))
+        })
     }
 
     // `eql`, split by operand type.

@@ -4,9 +4,9 @@
 
 use super::unicode_draft::decode_wtf8_rune_t_multibyte;
 use super::{
-    UNICODE_REPLACEMENT, decode_wtf16_raw, element_length_utf8_into_utf16, first_non_ascii,
-    index_of_char_usize, is_valid_utf8, push_codepoint_wtf8, wtf8_byte_sequence_length,
-    wtf8_to_utf16_alloc,
+    UNICODE_REPLACEMENT, decode_wtf16_raw, element_length_utf8_into_utf16, encode_surrogate_pair,
+    first_non_ascii, index_of_char_usize, is_valid_utf8, push_codepoint_wtf8,
+    wtf8_byte_sequence_length, wtf8_to_utf16_alloc,
 };
 
 /// The code point that starts at `at`, and its length in bytes, which is 0 at the end of `text`.
@@ -88,6 +88,138 @@ pub fn wtf8_len_utf16(text: &[u8]) -> u32 {
             .map(|it| codepoint_len_utf16(it.1))
             .sum(),
     }
+}
+
+/// The UTF-16 code units of `text`, each with the offset in bytes of its code point (the two halves
+/// of a pair have the offset of the pair), for text that has to be WTF-8: the walk ends before a
+/// byte that is part of no sequence, and [`Wtf8CheckedUnits::ill_formed`] then tells that end from
+/// the end of `text`. [`wtf8_to_utf16`] has U+FFFD for such a byte.
+#[inline]
+pub fn wtf8_checked_units(text: &[u8]) -> Wtf8CheckedUnits<'_> {
+    Wtf8CheckedUnits {
+        text,
+        at: 0,
+        trail: None,
+        ill_formed: false,
+    }
+}
+
+pub struct Wtf8CheckedUnits<'t> {
+    text: &'t [u8],
+    at: usize,
+    /// The second half of the pair whose first half was the last unit, with the offset of the pair.
+    trail: Option<(usize, u16)>,
+    ill_formed: bool,
+}
+
+impl Wtf8CheckedUnits<'_> {
+    /// Whether the walk ended at a byte that is part of no sequence.
+    #[inline]
+    pub fn ill_formed(&self) -> bool {
+        self.ill_formed
+    }
+}
+
+impl Iterator for Wtf8CheckedUnits<'_> {
+    type Item = (usize, u16);
+
+    fn next(&mut self) -> Option<(usize, u16)> {
+        if let Some(trail) = self.trail.take() {
+            return Some(trail);
+        }
+        let at = self.at;
+        match wtf8_codepoint_at(self.text, at) {
+            (_, 0) => None,
+            // U+FFFD itself has three bytes.
+            (UNICODE_REPLACEMENT, 1) => {
+                self.ill_formed = true;
+                None
+            }
+            (cp, size) => {
+                self.at += size;
+                if cp > 0xFFFF {
+                    let [lead, trail] = encode_surrogate_pair(cp);
+                    self.trail = Some((at, trail));
+                    return Some((at, lead));
+                }
+                Some((at, cp as u16))
+            }
+        }
+    }
+}
+
+/// `text.length`, or `None` if a byte of `text` is part of no sequence. [`wtf8_len_utf16`] counts
+/// such a byte as one unit.
+pub fn wtf8_checked_len_utf16(text: &[u8]) -> Option<u32> {
+    match first_non_ascii(text) {
+        None => Some(text.len() as u32),
+        Some(_) if is_valid_utf8(text) => Some(element_length_utf8_into_utf16(text) as u32),
+        Some(ascii) => {
+            let mut units = wtf8_checked_units(&text[ascii as usize..]);
+            let rest = units.by_ref().count() as u32;
+            (!units.ill_formed()).then_some(ascii + rest)
+        }
+    }
+}
+
+/// What [`wtf8_code_unit_at`] finds at an index.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Wtf8CodeUnitAt {
+    /// The code unit, and the offset in bytes of its code point.
+    Unit { at: usize, unit: u16 },
+    /// The text has this many code units, and the index is not less.
+    Past(u32),
+    /// A byte at or before the index is part of no sequence.
+    IllFormed,
+}
+
+/// `text.charCodeAt(index)`. An index in text that is ASCII up to it reads no byte after it.
+pub fn wtf8_code_unit_at(text: &[u8], index: u32) -> Wtf8CodeUnitAt {
+    let at = index as usize;
+    let ascii = match text.get(..=at) {
+        Some(up_to) => match first_non_ascii(up_to) {
+            None => {
+                return Wtf8CodeUnitAt::Unit {
+                    at,
+                    unit: u16::from(text[at]),
+                };
+            }
+            Some(ascii) => ascii,
+        },
+        None => match first_non_ascii(text) {
+            None => return Wtf8CodeUnitAt::Past(text.len() as u32),
+            Some(ascii) => ascii,
+        },
+    };
+    let mut units = wtf8_checked_units(&text[ascii as usize..]);
+    let mut seen = ascii;
+    for (offset, unit) in units.by_ref() {
+        if seen == index {
+            return Wtf8CodeUnitAt::Unit {
+                at: ascii as usize + offset,
+                unit,
+            };
+        }
+        seen += 1;
+    }
+    if units.ill_formed() {
+        Wtf8CodeUnitAt::IllFormed
+    } else {
+        Wtf8CodeUnitAt::Past(seen)
+    }
+}
+
+/// The four bytes of the code point whose two halves `before` ends with and `after` starts with:
+/// `"\uD83D" + "\uDE00"` is one character. See [`push_wtf8`].
+pub fn wtf8_pair_across(before: &[u8], after: &[u8]) -> Option<[u8; 4]> {
+    let ([.., 0xED, 0xA0..=0xAF, 0x80..=0xBF], [0xED, 0xB0..=0xBF, 0x80..=0xBF, ..]) =
+        (before, after)
+    else {
+        return None;
+    };
+    let mut pair = before[before.len() - 3..].to_vec();
+    push_wtf8(&mut pair, &after[..3]);
+    pair.try_into().ok()
 }
 
 /// `text.length` of the text of a file, which is read as Go reads it: a byte that is part of no
@@ -333,6 +465,108 @@ mod tests {
         ] {
             assert_eq!(utf8_lossy_len_utf16(text), go);
             assert_eq!(utf8_decoded_len_utf16(text), node);
+        }
+    }
+
+    #[test]
+    fn checked_units_are_those_of_javascript() {
+        use Wtf8CodeUnitAt::{IllFormed, Past, Unit};
+        // "a😀\uD800é€"
+        let text = b"a\xF0\x9F\x98\x80\xED\xA0\x80\xC3\xA9\xE2\x82\xAC";
+        let units = [
+            (0, 0x61),
+            (1, 0xD83D),
+            (1, 0xDE00),
+            (5, 0xD800),
+            (8, 0xE9),
+            (10, 0x20AC),
+        ];
+        assert_eq!(wtf8_checked_units(text).collect::<Vec<_>>(), units);
+        assert_eq!(wtf8_checked_len_utf16(text), Some(6));
+        for (index, (at, unit)) in units.into_iter().enumerate() {
+            assert_eq!(wtf8_code_unit_at(text, index as u32), Unit { at, unit });
+        }
+        assert_eq!(wtf8_code_unit_at(text, 6), Past(6));
+        assert_eq!(wtf8_code_unit_at(text, u32::MAX), Past(6));
+        assert_eq!(wtf8_code_unit_at(b"abc", 2), Unit { at: 2, unit: 0x63 });
+        assert_eq!(wtf8_code_unit_at(b"abc", 3), Past(3));
+        assert_eq!(wtf8_code_unit_at(b"", 0), Past(0));
+        assert_eq!(wtf8_checked_len_utf16(b""), Some(0));
+        assert_eq!(wtf8_checked_len_utf16(b"abc"), Some(3));
+        // The two halves of a pair, each in three bytes, are two units as the pair is.
+        assert_eq!(wtf8_checked_len_utf16(b"\xED\xA0\xBD\xED\xB8\x80"), Some(2));
+        for cp in (0..=0x10FFFF).step_by(0x101) {
+            let mut text = vec![b'a'];
+            push_codepoint_wtf8(&mut text, cp);
+            assert_eq!(wtf8_checked_len_utf16(&text), Some(wtf8_len_utf16(&text)));
+            assert_eq!(
+                wtf8_checked_units(&text).map(|it| it.1).collect::<Vec<_>>(),
+                wtf8_to_utf16(&text),
+                "U+{cp:04X}"
+            );
+        }
+        // What is no sequence: an index before it is read, and one at or after it is not.
+        let not_sequences: &[&[u8]] = &[
+            b"\x80",
+            b"\xC0\x80",
+            b"\xC2",
+            b"\xC2a",
+            b"\xE0\x9F\xBF",
+            b"\xE2\x41\x42",
+            b"\xE2\x82",
+            b"\xED\xA0",
+            b"\xF0\x8F\xBF\xBF",
+            b"\xF0\x9F\x98",
+            b"\xF4\x90\x80\x80",
+            b"\xFF",
+        ];
+        for bytes in not_sequences {
+            for before in [&b""[..], b"ab", "é😀".as_bytes()] {
+                let text = [before, bytes].concat();
+                let len = wtf8_len_utf16(before);
+                assert_eq!(wtf8_checked_len_utf16(&text), None, "{text:x?}");
+                let mut units = wtf8_checked_units(&text);
+                assert_eq!(units.by_ref().count() as u32, len, "{text:x?}");
+                assert!(units.ill_formed(), "{text:x?}");
+                for index in 0..len {
+                    assert!(
+                        matches!(wtf8_code_unit_at(&text, index), Unit { .. }),
+                        "{text:x?}"
+                    );
+                }
+                assert_eq!(wtf8_code_unit_at(&text, len), IllFormed, "{text:x?}");
+                assert_eq!(wtf8_code_unit_at(&text, len + 9), IllFormed, "{text:x?}");
+            }
+        }
+    }
+
+    #[test]
+    fn halves_across_a_seam_are_one_code_point() {
+        assert_eq!(
+            wtf8_pair_across(b"a\xED\xA0\xBD", b"\xED\xB8\x80b"),
+            Some(*b"\xF0\x9F\x98\x80")
+        );
+        assert_eq!(
+            wtf8_pair_across(b"\xED\xAF\xBF", b"\xED\xBF\xBF"),
+            Some(*b"\xF4\x8F\xBF\xBF")
+        );
+        // The second half first, one half alone, and what only starts like a half.
+        for (before, after) in [
+            (&b"\xED\xB8\x80"[..], &b"\xED\xA0\xBD"[..]),
+            (b"\xED\xA0\xBD", b"\xED\xA0\xBD"),
+            (b"\xED\xA0\xBD", b"b"),
+            (b"a", b"\xED\xB8\x80"),
+            (b"", b"\xED\xB8\x80"),
+            (b"\xED\xA0\xBD", b""),
+            (b"\xED\xA0A", b"\xED\xB8\x80"),
+            (b"\xED\xA0\xBD", b"\xED\xB8"),
+            (b"\xED\x9F\xBF", b"\xED\xB8\x80"),
+        ] {
+            assert_eq!(
+                wtf8_pair_across(before, after),
+                None,
+                "{before:x?} {after:x?}"
+            );
         }
     }
 

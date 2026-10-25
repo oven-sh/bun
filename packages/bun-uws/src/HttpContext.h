@@ -1120,13 +1120,14 @@ private:
         /* The parser writes a fence behind its input. */
         replayed.grow(replayed.size() + LIBUS_RECV_BUFFER_PADDING);
         httpResponseData->replayedRequestBytes = &replayed;
+        const bool peerEnded = (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN) != 0;
         us_socket_t *returned = onData<false>(s, replayed.mutableSpan().data() + start, (int) length);
         if (!us_socket_is_closed(s) && us_socket_kind(s) == socketKind()) {
             httpResponseData->replayedRequestBytes = nullptr;
-            /* The peer's FIN came during the response ahead. It ends these requests like ones that it finds on arrival. */
-            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN) {
-                return onEnd<false>(s);
-            }
+        }
+        /* The peer's FIN came during the response ahead. These requests, or the WebSocket that one of them became, get it now. */
+        if (peerEnded && !us_socket_is_closed(s)) {
+            return us_dispatch_end(s);
         }
         return returned;
     }

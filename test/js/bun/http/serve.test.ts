@@ -7297,6 +7297,40 @@ describe.each([
     }
   });
 
+  it("closes a WebSocket that starts after its client ended its side", async () => {
+    const payload = Buffer.alloc(8 * 1024 * 1024, "r");
+    const closed = Promise.withResolvers<number>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: secure ? tls : undefined,
+      websocket: { idleTimeout: 0, sendPings: false, message() {}, close: (_ws, code) => closed.resolve(code) },
+      fetch(req, server) {
+        server.timeout(req, 0);
+        if (new URL(req.url).pathname !== "/behind") return new Response(payload);
+        return server.upgrade(req) ? undefined : new Response("no upgrade", { status: 400 });
+      },
+    });
+    const client = await connectTo(server);
+    try {
+      client.pause();
+      await send(
+        client,
+        "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        "GET /behind HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n",
+        "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      );
+      client.end();
+      await turns(50);
+      client.resume();
+      const code = await closed.promise;
+      for (let turn = 0; turn < 10_000 && server.pendingWebSockets > 0; turn++) await turns(1);
+      expect({ code, pendingWebSockets: server.pendingWebSockets }).toEqual({ code: 1006, pendingWebSockets: 0 });
+    } finally {
+      client.destroy();
+    }
+  });
+
   // Bun.serve stops reading while a request body is unread, so the end of the stream waits behind the body.
   it("answers a client that sent its whole body and ended its side, when the handler reads it late", async () => {
     const body = Buffer.alloc(2 * 1024 * 1024, "b");

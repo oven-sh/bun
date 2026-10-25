@@ -1476,6 +1476,15 @@ pub fn check_provided_then<R>(
     provided: host::Provided,
     then: impl FnOnce(Report) -> R,
 ) -> R {
+    let (mut then, mut result) = (Some(then), None);
+    check_provided(request, provided, &mut |report| {
+        result = then.take().map(|then| then(report));
+    });
+    result.expect("`check_provided` calls `then`")
+}
+
+/// Calls `then` once.
+fn check_provided(request: &Request, provided: host::Provided, then: &mut dyn FnMut(Report)) {
     // A no-op if `bun lint` or `bun fmt` already created a pool.
     use_dedicated_pool("Bun Check");
     let threads = match request.threads {
@@ -1511,29 +1520,30 @@ pub fn check_provided_then<R>(
     if let Some(processes) = &disk.content_mapper_processes {
         processes.close();
     }
-    let then = |mut report: Report| {
+    let mut then = |mut report: Report| {
         report.is_case_sensitive = disk.is_case_sensitive();
         report.is_quiet = tristate(request.compiler_options, b"quiet") == Some(true);
         report.not_installed =
             dependencies_not_installed(&disk, &cwd, &project, &report.diagnostics);
-        then(report)
+        then(report);
     };
     if disk.ends_the_process {
         let sessions = std::mem::take(&mut *disk.to_drop_before_the_process_ends.lock());
-        let (mut then, mut result) = (Some((then, report)), None);
+        let mut report = Some(report);
         Session::drop_before_the_process_ends(sessions, |count, work| {
             disk.parallel_while(count, work, &mut || {
-                result = then.take().map(|(then, report)| then(report));
+                if let Some(report) = report.take() {
+                    then(report);
+                }
             });
         });
-        let result = result.expect("`parallel_while` calls `meanwhile`");
         if !bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
             let _not_dropped = std::mem::ManuallyDrop::new(lent);
             let _not_dropped = std::mem::ManuallyDrop::new(disk);
         }
-        return result;
+        return;
     }
-    let result = then(report);
+    then(report);
     drop(lent);
     disk.caches.idle.lock().clear();
     // The process continues, so the free pages are returned to the system.
@@ -1542,7 +1552,6 @@ pub fn check_provided_then<R>(
         release_free_pages_of(io_pool);
     }
     bun_core::Global::mimalloc_cleanup(true);
-    result
 }
 
 /// The dependencies of a `package.json` that an error mentions and that aren't in any `node_modules`.

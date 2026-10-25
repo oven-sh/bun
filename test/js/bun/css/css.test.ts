@@ -6668,8 +6668,8 @@ describe("css tests", () => {
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        if (exitCode !== 0) return { css: "", stderr, exitCode };
-        return { css: (outfile ? await Bun.file(join(String(dir), outfile)).text() : stdout).trim(), exitCode };
+        const css = exitCode !== 0 ? "" : outfile ? await Bun.file(join(String(dir), outfile)).text() : stdout;
+        return { css: css.trim(), stderr, exitCode };
       };
 
       const [browser, bun, module, pretty] = await Promise.all([
@@ -6682,12 +6682,14 @@ describe("css tests", () => {
       expect([browser, bun, module, { ...pretty, css: pretty.css.replace(/\/\*.*?\*\/|\s/g, "") }]).toEqual([
         {
           css: ".a{width:100vh}.b{color:red}.a{width:100dvh}.d{gap:15px}.e{color:#00f}.d{gap:round(1em,5px)}",
+          stderr: "",
           exitCode: 0,
         },
-        { css: ".b{color:red}.a{width:100dvh}.e{color:#00f}.d{gap:round(1em,5px)}", exitCode: 0 },
-        { css: "div{width:100vh}span{color:red}div{width:100dvh}", exitCode: 0 },
+        { css: ".b{color:red}.a{width:100dvh}.e{color:#00f}.d{gap:round(1em,5px)}", stderr: "", exitCode: 0 },
+        { css: "div{width:100vh}span{color:red}div{width:100dvh}", stderr: "", exitCode: 0 },
         {
           css: ".a{width:100vh;}.b{color:red;}.a{width:100dvh;}.d{gap:15px;}.e{color:#00f;}.d{gap:round(1em,5px);}",
+          stderr: "",
           exitCode: 0,
         },
       ]);

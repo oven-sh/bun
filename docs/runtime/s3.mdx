@@ -294,6 +294,16 @@ Response (0 KB) {
 }
 ```
 
+The response has no body. `await response.text()` is an empty string. Bun writes an empty file when you pass the response to [`Bun.write()`](/runtime/file-io#writing-files-bun-write) or to the `write()` method of an `S3File`. To copy the S3 file, pass the `S3File` itself. For a response that has the bytes of the S3 file as its body, pass `s3file.stream()`.
+
+```ts s3.ts icon="/icons/typescript.svg"
+// Bun streams the S3 file to the destination
+await client.file("copy.json").write(s3file);
+
+// A 200 response with the bytes of the S3 file as its body
+const response = new Response(s3file.stream());
+```
+
 ---
 
 ## Support for S3-Compatible Services

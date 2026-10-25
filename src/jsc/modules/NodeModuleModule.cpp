@@ -515,16 +515,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    String request = callFrame->argument(0).toWTFString(globalObject);
+    JSValue requestValue = callFrame->argument(0);
+    // Node's String.prototype.startsWith throws a TypeError for these two.
+    if (requestValue.isUndefinedOrNull()) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "Module._resolveLookupPaths expects a string"_s);
+        return {};
+    }
+    String request = requestValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // A builtin name is short, so a request whose UTF-8 form does not fit in a buffer is not one.
-    if (auto utf8 = UTF8View::tryCreate(request)) {
-        auto span = utf8->span();
-        if (ModuleLoader__isBuiltin(span.data(), span.size())) {
-            return JSC::JSValue::encode(JSC::jsNull());
-        }
-    }
+    if (isBuiltinRequest(requestValue, request))
+        return JSC::JSValue::encode(JSC::jsNull());
 
     PathResolveModule parent = getParent(vm, globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});

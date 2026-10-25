@@ -1020,28 +1020,29 @@ console.log("survived", require("./late.js"));`,
   });
 
   // Node validates the id in require() and require.resolve(), and Module._findPath rejects it unconverted.
-  // Module._resolveFilename converts it first: the last column of the table.
+  // Module._resolveFilename and Module._resolveLookupPaths convert it first: the last two columns of the table.
   describe.concurrent("a module request that is not a string", () => {
     const INVALID = "ERR_INVALID_ARG_TYPE";
     const NO_CODE = "TypeError with no code";
+    const ARRAY = "returned an array";
     const THROWN = "threw what toString threw";
-    // [the value, what ERR_INVALID_ARG_TYPE says it received, Module._resolveFilename]
+    // [the value, what ERR_INVALID_ARG_TYPE says it received, Module._resolveFilename, Module._resolveLookupPaths]
     const values = [
-      ["42", "type number (42)", INVALID],
-      ["undefined", "undefined", NO_CODE],
-      ["null", "null", NO_CODE],
-      ['["dep"]', "an instance of Array", INVALID],
-      ['{ toString: () => "dep" }', "an instance of Object", INVALID],
-      ['new String("dep")', "an instance of String", INVALID],
-      ['Symbol("dep")', "type symbol (Symbol(dep))", NO_CODE],
-      ["pathToFileURL(dep)", "an instance of URL", INVALID],
-      ['Buffer.from("dep")', "an instance of Buffer", INVALID],
-      ["{ toString() { throw thrown; } }", "an instance of Object", THROWN],
+      ["42", "type number (42)", INVALID, ARRAY],
+      ["undefined", "undefined", NO_CODE, NO_CODE],
+      ["null", "null", NO_CODE, NO_CODE],
+      ['["dep"]', "an instance of Array", INVALID, ARRAY],
+      ['{ toString: () => "dep" }', "an instance of Object", INVALID, ARRAY],
+      ['new String("dep")', "an instance of String", INVALID, ARRAY],
+      ['Symbol("dep")', "type symbol (Symbol(dep))", NO_CODE, NO_CODE],
+      ["pathToFileURL(dep)", "an instance of URL", INVALID, ARRAY],
+      ['Buffer.from("dep")', "an instance of Buffer", INVALID, ARRAY],
+      ["{ toString() { throw thrown; } }", "an instance of Object", THROWN, THROWN],
       // Only a string form with the node: prefix names a builtin, and only one that require() loads.
-      ['{ toString: () => "node:fs" }', "an instance of Object", "returned the request"],
-      ['{ toString: () => "node:ws" }', "an instance of Object", INVALID],
-      ['{ toString: () => "node:nope" }', "an instance of Object", INVALID],
-      ['{ toString: () => "fs" }', "an instance of Object", INVALID],
+      ['{ toString: () => "node:fs" }', "an instance of Object", "returned the request", "returned null"],
+      ['{ toString: () => "node:ws" }', "an instance of Object", INVALID, ARRAY],
+      ['{ toString: () => "node:nope" }', "an instance of Object", INVALID, ARRAY],
+      ['{ toString: () => "fs" }', "an instance of Object", INVALID, ARRAY],
     ];
     const invalid = (name, received) =>
       `TypeError [${INVALID}]: The "${name}" argument must be of type string. Received ${received}`;
@@ -1199,10 +1200,12 @@ console.log("survived", require("./late.js"));`,
 
     // Before v26.4.0 node's Module._resolveFilename read options.paths and the parent before it rejected the request.
     for (const [runtime, cmd] of runtimes(nodeExeAtLeast("26.4.0"))) {
-      test.skipIf(!cmd)(`Module._findPath and Module._resolveFilename (${runtime})`, async () => {
-        using dir = tempDir("module-request-not-a-string-natives", {
-          ...files,
-          "main.cjs": `${cjs}
+      test.skipIf(!cmd)(
+        `Module._findPath, Module._resolveFilename and Module._resolveLookupPaths (${runtime})`,
+        async () => {
+          using dir = tempDir("module-request-not-a-string-natives", {
+            ...files,
+            "main.cjs": `${cjs}
               const unread = {
                 get filename() {
                   throw new Error("read parent.filename");
@@ -1219,30 +1222,38 @@ console.log("survived", require("./late.js"));`,
                 "Module._resolveFilename(x, module)": each(x => Module._resolveFilename(x, module)),
                 "Module._resolveFilename(x, module, false, { paths: 'x' })": each(x => Module._resolveFilename(x, module, false, { paths: "x" })),
                 "Module._resolveFilename(x, unread, false, unread)": each(x => Module._resolveFilename(x, unread, false, unread)),
+                "Module._resolveLookupPaths(x, module)": each(x => Module._resolveLookupPaths(x, module)),
                 loaded,
-                strings: [Module._findPath("dep", [nodeModules]) === dep, Module._resolveFilename("dep", module) === dep],
+                strings: [
+                  Module._findPath("dep", [nodeModules]) === dep,
+                  Module._resolveFilename("dep", module) === dep,
+                  outcome(() => Module._resolveLookupPaths("dep", module)),
+                ],
               }));
             `,
-        });
-        const { stdout, stderr, exitCode } = await run(cmd, dir, "main.cjs");
-        expect(stderr).toBe("");
-        // Module._resolveFilename converts the value, then rejects it, before it reads the parent or options.paths.
-        const resolveFilename = values.map(([, received, outcome]) =>
-          outcome === INVALID ? invalid("path", received) : outcome,
-        );
-        expect(JSON.parse(stdout)).toEqual({
-          // Module._findPath converts nothing.
-          "Module._findPath(x, [nodeModules])": allInvalid("path"),
-          "Module._findPath(x)": allInvalid("path"),
-          "Module._findPath(x, 5)": allInvalid("path"),
-          "Module._resolveFilename(x, module)": resolveFilename,
-          "Module._resolveFilename(x, module, false, { paths: 'x' })": resolveFilename,
-          "Module._resolveFilename(x, unread, false, unread)": resolveFilename,
-          loaded: [],
-          strings: [true, true],
-        });
-        expect(exitCode).toBe(0);
-      });
+          });
+          const { stdout, stderr, exitCode } = await run(cmd, dir, "main.cjs");
+          expect(stderr).toBe("");
+          // Module._resolveFilename converts the value, then rejects it, before it reads the parent or options.paths.
+          const resolveFilename = values.map(([, received, outcome]) =>
+            outcome === INVALID ? invalid("path", received) : outcome,
+          );
+          expect(JSON.parse(stdout)).toEqual({
+            // Module._findPath converts nothing.
+            "Module._findPath(x, [nodeModules])": allInvalid("path"),
+            "Module._findPath(x)": allInvalid("path"),
+            "Module._findPath(x, 5)": allInvalid("path"),
+            "Module._resolveFilename(x, module)": resolveFilename,
+            "Module._resolveFilename(x, module, false, { paths: 'x' })": resolveFilename,
+            "Module._resolveFilename(x, unread, false, unread)": resolveFilename,
+            // Module._resolveLookupPaths converts the value. It rejects only undefined and null before that.
+            "Module._resolveLookupPaths(x, module)": values.map(([, , , outcome]) => outcome),
+            loaded: [],
+            strings: [true, true, ARRAY],
+          });
+          expect(exitCode).toBe(0);
+        },
+      );
     }
 
     // Upstream passes values that are not strings to require(). A replacement that only forwards must not change that.

@@ -912,6 +912,12 @@ describe.concurrent("bun fmt --lsp dispatch", () => {
       if (lints)
         expect(actions.result).toContainEqual(expect.objectContaining({ kind: "quickfix", title: "Fix no-var" }));
       else expect(actions.result).toEqual([]);
+      // The lint of `didOpen` is queued behind the requests: under load its diagnostics come after the code actions,
+      // and `exit` would end the process before they are published.
+      if (lints) {
+        const published = await client.diagnostics(join(String(dir), "a.js"));
+        expect(published.params.diagnostics.map((each: any) => each.code)).toContain("no-var");
+      }
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();

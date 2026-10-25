@@ -43,6 +43,10 @@ var StringPrototypeIncludes = String.prototype.includes;
 var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
+// Not the globals, which user code and fake timers replace: https://github.com/nodejs/node/blob/v26.12.1/lib/child_process.js#L76
+const setTimeout: typeof globalThis.setTimeout = $newCppFunction("node/NodeTimers.cpp", "functionSetTimeout", 1);
+const clearTimeout: typeof globalThis.clearTimeout = $newCppFunction("node/NodeTimers.cpp", "functionClearTimeout", 1);
+
 const MAX_BUFFER = 1024 * 1024;
 
 interface ExecException extends Error {
@@ -179,7 +183,7 @@ function spawn(file, args, options) {
           child.emit("error", err);
         }
       }
-    }, timeout).unref();
+    }, timeout);
 
     const clear = () => {
       if (timeoutId) {
@@ -187,6 +191,7 @@ function spawn(file, args, options) {
         timeoutId = null;
       }
     };
+    // Node clears on 'close' alone (https://github.com/nodejs/node/blob/v26.12.1/lib/child_process.js#L874-L880). Here 'exit' is not always followed by 'close'.
     child.once("exit", clear);
     child.once("close", clear);
   }
@@ -262,7 +267,6 @@ function execFile(file, args, options?, callback?) {
   const child = spawn(file, args, {
     cwd: options.cwd,
     env: options.env,
-    timeout: options.timeout,
     killSignal: options.killSignal,
     uid: options.uid,
     gid: options.gid,
@@ -368,7 +372,7 @@ function execFile(file, args, options?, callback?) {
     timeoutId = setTimeout(function delayedKill() {
       timeoutId = null;
       kill();
-    }, optionsTimeout).unref();
+    }, optionsTimeout);
   }
 
   function addOnDataListener(child_buffer, _buffer, kind) {

@@ -1269,9 +1269,10 @@ impl<'d> Desk<'d, '_, '_> {
                     return;
                 }
                 *server.settings.lock() = after;
-                // The configurations of the folders are as they were: their engines go on. A session is made only
-                // while linting is on, so a folder's thread starts over when that changes.
-                match after.lints == before.lints {
+                // The configurations of the folders are as they were: their engines go on. A session is made and
+                // the format options are read only while that half is on, so a folder's thread starts over when
+                // either changes.
+                match after.lints == before.lints && after.formats == before.formats {
                     true => self.lint_all(),
                     false => self.look_again(),
                 }

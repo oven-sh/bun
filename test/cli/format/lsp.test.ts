@@ -90,6 +90,32 @@ describe.concurrent("bun fmt --lsp", () => {
   );
 
   test(
+    "turns formatting on with workspace/didChangeConfiguration after starting with it off",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", { "a.js": "a;\n" });
+      await using client = new Client(command, String(dir));
+      await initialize(client, [String(dir)], {
+        initializationOptions: { format: { enable: false } },
+      });
+      client.notify("initialized");
+      const path = join(String(dir), "a.js");
+      const text = "a  ;\n";
+      open(client, path, text);
+      expect((await format(client, path)).result).toBeNull();
+      client.notify("workspace/didChangeConfiguration", { settings: { bun: { format: { enable: true } } } });
+      const formatted = await format(client, path);
+      expect(formatted.error).toBeUndefined();
+      expect(applyEdits(text, formatted.result)).toBe("a;\n");
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
     "turns linting off with the initialization options, whatever the build has",
     async () => {
       using dir = tempDir("bun-fmt-lsp", { "a.js": "a;\n" });

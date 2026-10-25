@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { chmodSync, symlinkSync } from "node:fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -2104,18 +2103,19 @@ describe("bundler", () => {
     "node_modules/react/jsx-dev-runtime.js": jsxRuntime("react"),
   };
 
-  // A file is compiled and tree-shaken with the package.json and tsconfig.json that enclose it, whichever
-  // way the build reaches it: the resolver alone, an onResolve callback that names the file, or the
-  // resolver after every onResolve callback returned nothing.
-  for (const resolvedBy of ["the resolver", "onResolve", "the resolver after onResolve declined"] as const) {
-    test.concurrent(`plugin/file resolved by ${resolvedBy} uses its package.json and tsconfig.json`, async () => {
+  // The resolver gives a file the package.json and tsconfig.json that enclose it. An import that every
+  // onResolve callback declines goes to the resolver, so it must build the same as with no plugin. The
+  // resolver is not asked about a file that onResolve names: that file is built with the options of the build.
+  for (const resolvedBy of ["the resolver", "the resolver after onResolve declined", "onResolve"] as const) {
+    const alias = resolvedBy === "onResolve";
+    const settings = alias ? "the options of the build" : "its package.json and tsconfig.json";
+    test.concurrent(`plugin/file resolved by ${resolvedBy} uses ${settings}`, async () => {
       const targets = {
         "component": "app/component.tsx",
         "decorated": "app/decorated.ts",
         "unused": "node_modules/side-effect-free/unused.js",
         "importer": "esm-pkg/importer.js",
       };
-      const alias = resolvedBy === "onResolve";
       using dir = tempDir("plugin-resolved-file-metadata", {
         ...fakeJsxRuntimes,
         "entry.js": `
@@ -2187,99 +2187,44 @@ describe("bundler", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({
-        jsxImportSource: "preact",
-        secondDecoratorArgument: "string",
-        unusedRan: false,
-        defaultImportOfCommonJS: "object",
-      });
+      expect(JSON.parse(stdout)).toEqual(
+        alias
+          ? {
+              jsxImportSource: "react",
+              secondDecoratorArgument: "object",
+              unusedRan: true,
+              defaultImportOfCommonJS: "string",
+            }
+          : {
+              jsxImportSource: "preact",
+              secondDecoratorArgument: "string",
+              unusedRan: false,
+              defaultImportOfCommonJS: "object",
+            },
+      );
       expect(exitCode).toBe(0);
     });
   }
 
-  // The import that lands first creates the module, so a file that onResolve names and that the resolver
-  // also finds has to come out the same in either order. The onLoad callback reports that the module
-  // exists, and the other import waits for it.
-  for (const otherImport of ["the resolver", "the resolver after onResolve declined"] as const) {
-    test.concurrent(
-      `plugin/file reached by onResolve and by ${otherImport} builds the same in either order`,
-      async () => {
-        using dir = tempDir("plugin-resolved-file-join-order", {
-          ...fakeJsxRuntimes,
-          "entry.js": `
-          import "late";
-          import { Component } from "alias/component";
-          console.log(Component());
-        `,
-          "late.js": `import "./app/component.tsx";`,
-          "app/tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } }),
-          "app/component.tsx": `export const Component = () => <div />;`,
-        });
-        const root = String(dir);
-
-        async function build(first: "onResolve" | "the other import") {
-          const componentExists = Promise.withResolvers<void>();
-          const result = await Bun.build({
-            entrypoints: [join(root, "entry.js")],
-            throw: false,
-            plugins: [
-              {
-                name: "order",
-                setup(build) {
-                  build.onLoad({ filter: /component\.tsx$/ }, () => {
-                    componentExists.resolve();
-                    return undefined;
-                  });
-                  build.onResolve({ filter: /^alias\/component$/ }, async () => {
-                    if (first === "the other import") await componentExists.promise;
-                    return { path: join(root, "app", "component.tsx") };
-                  });
-                  build.onResolve({ filter: /^late$/ }, async () => {
-                    if (first === "onResolve") await componentExists.promise;
-                    return { path: join(root, "late.js") };
-                  });
-                  if (otherImport === "the resolver after onResolve declined") {
-                    build.onResolve({ filter: /component\.tsx$/ }, () => undefined);
-                  }
-                },
-              },
-            ],
-          });
-          expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
-            success: true,
-            logs: [],
-          });
-          const text = await result.outputs[0].text();
-          return { usesPreact: text.includes(`"preact"`), usesReact: text.includes(`"react"`), text };
-        }
-
-        const onResolveFirst = await build("onResolve");
-        const otherImportFirst = await build("the other import");
-        expect({ usesPreact: onResolveFirst.usesPreact, usesReact: onResolveFirst.usesReact }).toEqual({
-          usesPreact: true,
-          usesReact: false,
-        });
-        expect(onResolveFirst.text).toBe(otherImportFirst.text);
-      },
-    );
-  }
-
-  // A module whose path the resolver does not name stays a plugin module: the "sideEffects" of the
-  // package.json above it does not remove it. The resolver cannot find a path with no file on disk
-  // (a key of `files` included), and it does not print a spelling with a doubled separator.
-  test.concurrent("plugin/onResolve path the resolver cannot name keeps its side effects", async () => {
-    using dir = tempDir("plugin-resolved-file-not-on-disk", {
+  // A module that onResolve names is a plugin module: the "sideEffects" of the package.json above it does
+  // not remove it. That holds for a file on disk, a path with no file, a key of `files`, and a spelling
+  // that the resolver would not print.
+  test.concurrent("plugin/module that onResolve names keeps its side effects", async () => {
+    using dir = tempDir("plugin-named-side-effects", {
       "package.json": JSON.stringify({ name: "app", sideEffects: false }),
       "entry.js": `
+        import "alias/on-disk";
         import "alias/not-on-disk";
         import "alias/in-files";
         import "alias/doubled-slash";
         console.log("entry");
       `,
-      "src/real.js": `console.log("doubled slash ran");`,
+      "src/on-disk.js": `console.log("file on disk: ran");`,
+      "src/real.js": `console.log("doubled separator: ran");`,
     });
     const root = String(dir);
     const targets = {
+      "on-disk": join(root, "src", "on-disk.js"),
       "not-on-disk": join(root, "src", "not-on-disk.js"),
       "in-files": join(root, "src", "in-files.js"),
       "doubled-slash": join(root, "src") + path.sep + path.sep + "real.js",
@@ -2287,7 +2232,7 @@ describe("bundler", () => {
 
     const result = await Bun.build({
       entrypoints: [join(root, "entry.js")],
-      files: { [targets["in-files"]]: `console.log("in files ran");` },
+      files: { [targets["in-files"]]: `console.log("key of files: ran");` },
       throw: false,
       plugins: [
         {
@@ -2297,7 +2242,7 @@ describe("bundler", () => {
               path: targets[args.path.slice("alias/".length) as keyof typeof targets],
             }));
             build.onLoad({ filter: /not-on-disk\.js$/ }, () => ({
-              contents: `console.log("not on disk ran");`,
+              contents: `console.log("path with no file: ran");`,
               loader: "js",
             }));
           },
@@ -2310,107 +2255,103 @@ describe("bundler", () => {
     });
     const text = await result.outputs[0].text();
     expect({
-      notOnDisk: text.includes("not on disk ran"),
-      inFiles: text.includes("in files ran"),
-      doubledSlash: text.includes("doubled slash ran"),
-    }).toEqual({ notOnDisk: true, inFiles: true, doubledSlash: true });
+      onDisk: text.includes("file on disk: ran"),
+      notOnDisk: text.includes("path with no file: ran"),
+      inFiles: text.includes("key of files: ran"),
+      doubledSlash: text.includes("doubled separator: ran"),
+    }).toEqual({ onDisk: true, notOnDisk: true, inFiles: true, doubledSlash: true });
   });
 
-  // The resolver parses a tsconfig.json once per process. When the bundler asks it about a path that onResolve
-  // named and that read is the first one, the parse error is reported then: a later read would not repeat it.
-  // A path through a symlinked directory is not the path the resolver prints, so the module does not take the
-  // resolver's result, but the resolver still read the directory.
-  for (const spelling of ["the resolver's path", "a path through a symlinked directory"] as const) {
-    test.concurrent.skipIf(isWindows && spelling !== "the resolver's path")(
-      `plugin/onResolve with ${spelling} reports a tsconfig.json that does not parse`,
-      async () => {
-        using dir = tempDir("plugin-resolved-file-logs", {
-          "entry.js": `import "alias/leaf";`,
-          "broken/tsconfig.json": `{ "compilerOptions": `,
-          "broken/leaf.js": `console.log("leaf ran");`,
-        });
-        const root = String(dir);
-        if (spelling !== "the resolver's path") symlinkSync(join(root, "broken"), join(root, "link"), "dir");
-        const leaf = join(root, spelling === "the resolver's path" ? "broken" : "link", "leaf.js");
+  // The resolver lists a directory once and reads its tsconfig.json once. Nothing asks the resolver about a
+  // file that onResolve names, so its directory is listed when an import needs it and not before. A plugin
+  // can name a file, write more files in a later callback, and an import finds them. The bundler offers
+  // "gen:b" only after it parsed the file of "gen:a".
+  const laterWrites = {
+    "a file next to it": { named: "gen", written: "gen/c.js", importedAs: "./c.js", declines: false },
+    "a file in the directory above": { named: "gen/deep", written: "gen/c.js", importedAs: "../c.js", declines: false },
+    "a file whose import onResolve declines": {
+      named: "gen",
+      written: "gen/c.js",
+      importedAs: "./c.js",
+      declines: true,
+    },
+  };
+  for (const [what, { named, written, importedAs, declines }] of Object.entries(laterWrites)) {
+    test.concurrent(`plugin/onResolve names a file, then writes ${what}`, async () => {
+      using dir = tempDir("plugin-named-then-writes", {
+        "entry.js": `import "gen:a";`,
+        [`${named}/a.js`]: `import "gen:b";`,
+      });
+      const root = String(dir);
 
-        const result = await Bun.build({
-          entrypoints: [join(root, "entry.js")],
-          throw: false,
-          plugins: [
-            {
-              name: "alias",
-              setup(build) {
-                build.onResolve({ filter: /^alias\/leaf$/ }, () => ({ path: leaf }));
-              },
+      const result = await Bun.build({
+        entrypoints: [join(root, "entry.js")],
+        throw: false,
+        plugins: [
+          {
+            name: "generate",
+            setup(build) {
+              build.onResolve({ filter: /^gen:a$/ }, () => ({ path: join(root, named, "a.js") }));
+              build.onResolve({ filter: /^gen:b$/ }, async () => {
+                await Bun.write(join(root, written), `console.log("written later ran");`);
+                await Bun.write(join(root, named, "b.js"), `import "${importedAs}";`);
+                return { path: join(root, named, "b.js") };
+              });
+              if (declines) build.onResolve({ filter: /c\.js$/ }, () => undefined);
             },
-          ],
-        });
-        expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
-          success: false,
-          logs: ["Unexpected end of file"],
-        });
-      },
-    );
+          },
+        ],
+      });
+      expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+        success: true,
+        logs: [],
+      });
+      expect(await result.outputs[0].text()).toContain("written later ran");
+    });
   }
 
-  // A directory that the user may traverse but not list: the file in it can be read, and that is all a module
-  // needs. The resolver cannot list the directory and logs an error. Without the plugin path nothing asks the
-  // resolver about this directory, so that error must not reach the build. A tsconfig.json above it that does
-  // not parse is another matter: the resolver parsed it on the way, and the import of the sibling, which
-  // starts only after that, would not report it again.
-  for (const tsconfigAbove of ["no tsconfig.json", "a tsconfig.json that does not parse"] as const) {
-    test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
-      `plugin/onResolve path in a directory that cannot be listed, below ${tsconfigAbove}`,
-      async () => {
-        const broken = tsconfigAbove !== "no tsconfig.json";
-        using dir = tempDir("plugin-resolved-file-unlistable", {
-          "entry.js": `
-            import "alias/leaf";
-            import "alias/late";
-          `,
-          "late.js": `import "./lib/sibling.js";`,
-          "lib/sibling.js": `console.log("sibling ran");`,
-          "lib/unlistable/leaf.js": `console.log("leaf ran");`,
-          ...(broken ? { "lib/tsconfig.json": `{ "compilerOptions": ` } : {}),
-        });
-        const root = String(dir);
-        chmodSync(join(root, "lib", "unlistable"), 0o311);
-        try {
-          const leafLoads = Promise.withResolvers<void>();
-          const result = await Bun.build({
-            entrypoints: [join(root, "entry.js")],
-            throw: false,
-            plugins: [
-              {
-                name: "alias",
-                setup(build) {
-                  build.onResolve({ filter: /^alias\/leaf$/ }, () => ({
-                    path: join(root, "lib", "unlistable", "leaf.js"),
-                  }));
-                  build.onLoad({ filter: /unlistable[\\/]leaf\.js$/ }, () => {
-                    leafLoads.resolve();
-                    return undefined;
-                  });
-                  build.onResolve({ filter: /^alias\/late$/ }, async () => {
-                    await leafLoads.promise;
-                    return { path: join(root, "late.js") };
-                  });
-                },
-              },
-            ],
-          });
-          expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual(
-            broken ? { success: false, logs: ["Unexpected end of file"] } : { success: true, logs: [] },
-          );
-        } finally {
-          chmodSync(join(root, "lib", "unlistable"), 0o755);
-        }
-      },
-    );
-  }
+  test.concurrent("plugin/onResolve names a file, then writes a tsconfig.json next to it", async () => {
+    using dir = tempDir("plugin-named-then-tsconfig", {
+      ...fakeJsxRuntimes,
+      "entry.js": `import "gen:a";`,
+      "gen/a.js": `import "gen:b";`,
+      "gen/b.js": `import "./view.tsx";`,
+      "gen/view.tsx": `console.log((() => <div />)());`,
+    });
+    const root = String(dir);
 
-  // The resolver remembers a directory that it did not find. A plugin can name a path in a directory that does
-  // not exist yet and create the directory later, so the bundler asks the resolver only about a path on disk.
+    const result = await Bun.build({
+      entrypoints: [join(root, "entry.js")],
+      throw: false,
+      plugins: [
+        {
+          name: "generate",
+          setup(build) {
+            build.onResolve({ filter: /^gen:a$/ }, () => ({ path: join(root, "gen", "a.js") }));
+            build.onResolve({ filter: /^gen:b$/ }, async () => {
+              await Bun.write(
+                join(root, "gen", "tsconfig.json"),
+                JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } }),
+              );
+              return { path: join(root, "gen", "b.js") };
+            });
+          },
+        },
+      ],
+    });
+    expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+      success: true,
+      logs: [],
+    });
+    const text = await result.outputs[0].text();
+    expect({ usesPreact: text.includes(`"preact"`), usesReact: text.includes(`"react"`) }).toEqual({
+      usesPreact: true,
+      usesReact: false,
+    });
+  });
+
+  // The resolver remembers a directory that it did not find. Nothing asks it about a path that onResolve
+  // names, so a plugin can name a path in a directory that does not exist yet and create the directory later.
   test.concurrent("plugin/onResolve path in a directory that a plugin creates later", async () => {
     using dir = tempDir("plugin-resolved-file-late-directory", {
       ...fakeJsxRuntimes,
@@ -2465,8 +2406,8 @@ describe("bundler", () => {
     });
   });
 
-  // The resolver lists a directory once. The bundler asks it about a file that onResolve named only after
-  // onLoad ran, so a file that onLoad writes next to the module is in that list.
+  // Nothing lists the directory of a file that onResolve names before the imports of that file are
+  // resolved, so a file that onLoad writes next to the module is found.
   test.concurrent("plugin/onLoad can write a file that the module it loads imports", async () => {
     using dir = tempDir("plugin-resolved-file-onload-writes", {
       "entry.js": `import "alias/generated";`,

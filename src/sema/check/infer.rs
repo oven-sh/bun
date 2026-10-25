@@ -1973,7 +1973,7 @@ impl<'p, 's> Checker<'p, 's> {
         source: SigId,
         target: SigId,
     ) -> SmallVec<[(TypeId, TypeId); 8]> {
-        let tp = self.sig_params(target);
+        let tp = self.sig_params_with_first(target, 0);
         // `getTypeAtPosition(source, i)`, and `getRestTypeAtPosition(source, ..)` for all remaining
         // positions.
         let requested = match tp.last() {
@@ -2000,7 +2000,7 @@ impl<'p, 's> Checker<'p, 's> {
             source_count.min(target_non_rest_count)
         };
         // `getTypeAtPosition(target, i)`
-        self.note_parameter_types_resolved(target, &tp, param_count);
+        let tp = self.sig_params_up_to(target, param_count);
         let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::with_capacity(param_count + 2);
         pairs.extend(this_types);
         for i in 0..param_count {

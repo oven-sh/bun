@@ -9460,6 +9460,85 @@ export const parts = new Container().value("a1", new Service(null!));
       expect(exitCode).toBe(1);
     });
 
+    // The inference for `authed.use(..)` compares `typeof X80Svc` with itself, through the augmentation of `Context`, and asks
+    // for the types of the parameters of the constructor one by one. Those are requests like any other: the cycle from
+    // `dep` back to `admin` is found there.
+    test("inference between two signatures asks for the types of the parameters of both", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          ...JSON.parse(tsconfig),
+          files: ["base.ts", "m8.ts", "rpc.ts", "m2.ts", "m3.ts", "m7.ts", "m5.ts", "m4.ts"],
+        }),
+        "base.ts": `import { init } from "./rpc"; import type { Context } from "./rpc";
+export const t = init<Context>();
+export const pub = t.procedure;
+export const authed = pub.use(({ ctx }) => { return { user: ctx.user }});
+export const admin = authed.use(async ({ }) => ({ }));
+`,
+        "m2.ts": `import { X80Svc as rX80Svc } from "./m8";
+declare module "./rpc" { interface Context { aug9: typeof rX80Svc } }
+`,
+        "m3.ts": `import * as Nm4 from "./m4";
+import { X80Svc } from "./m8";
+import { x51 } from "./m5";
+export const x31 = new X80Svc().h.merge(Nm4.x40).nest("deep", x51().y);
+`,
+        "m4.ts": `import { v } from "./rpc"; import { t, pub, authed, admin } from "./base";
+export const x40 = t.router({
+  stats: admin.input(v.num()).mutation(({ input }) => input.id),
+});
+`,
+        "m5.ts": `import { X80Svc } from "./m8";
+let x51Cache: ReturnType<typeof x51Make> | undefined;
+function x51Make() { return { x: X80Svc.shared.dep, y: new X80Svc().dep }}
+export function x51() { return x51Cache ??= x51Make(); }
+`,
+        "m7.ts": `import type { Context } from "./rpc";
+import { X80Svc as rX80Svc } from "./m8";
+export async function x70(ctx: Context) { return new rX80Svc().h}
+`,
+        "m8.ts": `import { x31 } from "./m3";
+import { x70 } from "./m7";
+export class X80Svc { constructor(public dep = x31, private other = x70(null!)) {} readonly held = x31; static shared = new X80Svc(); get h() { return this.held; }}
+`,
+        "rpc.ts": `export interface Parser<T> { }
+export type Out<P> = P extends Parser<infer T> ? T : never;
+export type Flat<T> = { [K in keyof T]: T[K] } & { }
+export class Builder<Ctx extends object, In = void> {  input<P extends Parser<any>>(p: P) { return new Builder<Ctx, In extends void ? Out<P> : Flat<In & Out<P>>>(p, this.steps); }
+  use<E extends object>(f: (o: { ctx: Ctx;}) => E | Promise<E>) { return new Builder<Flat<Omit<Ctx, keyof E> & E>, In>(this.parser, [...this.steps, f]);}
+  mutation<R>(f: (o: { }) => R) { }
+}
+export type Def = { }
+export class Router<D extends Def> { }
+export function router<D extends Def>(d: D) { }
+export function init<Ctx extends object>() { return { procedure: new Builder<Ctx>(), router, merge: <A extends Def, B extends Def>(a: Router<A>, b: Router<B>) => a.merge(b) }}
+export const v = { }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").sort()).toEqual([
+        "base.ts(4,65): error TS2339: Property 'user' does not exist on type 'Context'.",
+        "base.ts(5,14): error TS7022: 'admin' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m3.ts(4,14): error TS7022: 'x31' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m4.ts(2,14): error TS7022: 'x40' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m4.ts(3,24): error TS2339: Property 'num' does not exist on type '{}'.",
+        "m4.ts(3,43): error TS7031: Binding element 'input' implicitly has an 'any' type.",
+        "m5.ts(2,5): error TS2502: 'x51Cache' is referenced directly or indirectly in its own type annotation.",
+        "m5.ts(3,10): error TS7023: 'x51Make' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+        "m5.ts(4,17): error TS7023: 'x51' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+        "m8.ts(3,139): error TS7023: 'h' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+        "m8.ts(3,35): error TS7022: 'dep' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m8.ts(3,93): error TS7022: 'held' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "rpc.ts(11,165): error TS2339: Property 'merge' does not exist on type 'Router<A>'.",
+        "rpc.ts(4,163): error TS2554: Expected 0 arguments, but got 2.",
+        "rpc.ts(4,171): error TS2339: Property 'steps' does not exist on type 'Builder<Ctx, In>'.",
+        "rpc.ts(5,120): error TS2554: Expected 0 arguments, but got 2.",
+        "rpc.ts(5,125): error TS2339: Property 'parser' does not exist on type 'Builder<Ctx, In>'.",
+        "rpc.ts(5,142): error TS2339: Property 'steps' does not exist on type 'Builder<Ctx, In>'.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // `types.ts` is checked first. `first` and `second` are circular, and the argument of `extend` leads to `made`. The
     // resolution of `use(null!)` asks for the type of `v` once, for the argument. That leads to `made` and `use(null!)`
     // again, which asks for `v` a second time and finds the cycle.

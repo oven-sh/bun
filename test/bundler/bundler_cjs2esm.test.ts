@@ -2624,14 +2624,16 @@ describe("bundler", () => {
   // parameter in Node. When it has a value of its own, the file must keep its
   // wrapper, keep the declaration, and leave `exports.x` / `module.exports.x` as
   // plain property accesses. `var exports;` and `var exports = module.exports;`
-  // keep the wrapper value and still lift to ESM.
+  // keep the wrapper value and still lift to ESM. Those files are read through
+  // named imports: a default import used as a whole value keeps the wrapper of
+  // any CommonJS file.
   itBundled("cjs2esm/VarWithTheNameOfModuleOrExportsKeepsWrapper", {
     files: {
       "/entry.js": /* js */ `
         import lib from "./lib.cjs";
         import fake from "./fake-module.cjs";
         import reassigned from "./reassigned.cjs";
-        import uninit from "./uninit.cjs";
+        import { foo as uninitFoo, bar as uninitBar } from "./uninit.cjs";
         import nested from "./nested.cjs";
         import { a as aliasedA } from "./aliased.cjs";
         import { b as chainedB } from "./chained.cjs";
@@ -2645,7 +2647,7 @@ describe("bundler", () => {
             lib,
             fake,
             reassigned,
-            uninit,
+            uninit: { foo: uninitFoo, bar: uninitBar },
             nested,
             aliasedA,
             chainedB,

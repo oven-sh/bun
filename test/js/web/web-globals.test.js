@@ -616,33 +616,31 @@ test.skipIf(isWindows)(
 );
 
 // Line mode belongs to the terminal, not to a thread: the last dialog that ends puts raw mode back.
+// Both dialogs are alert(): its answer is a line of one byte, which only one of the two reads can take.
 test.skipIf(isWindows)("dialogs in a Worker and on the main thread share line mode", async () => {
   const flags = {};
-  const { shown, exitCode } = await typeOnTerminal(
+  const { exitCode } = await typeOnTerminal(
     `process.stdin.setRawMode(true);
-     const worker = ${blobWorker(`postMessage("ready"); const answer = prompt("worker?"); console.log("answered in the worker"); postMessage(answer);`)};
+     const worker = ${blobWorker(`postMessage("ready"); alert("worker!"); console.log("answered in the worker"); postMessage("answered");`)};
      let message = Promise.withResolvers();
      worker.onmessage = event => message.resolve(event.data);
      worker.onerror = event => message.reject(event);
      await message.promise;
      message = Promise.withResolvers();
-     const main = confirm("main?");
+     alert("main!");
      console.log("answered on the main thread");
-     const fromWorker = await message.promise;
+     await message.promise;
      worker.terminate();
      console.log("key?");
-     require("node:fs").readSync(0, Buffer.alloc(1));
-     ${resultThenLine(`{ main, fromWorker }`)}`,
+     require("node:fs").readSync(0, Buffer.alloc(1));`,
     [
-      [/worker\?[^]*main\?|main\?[^]*worker\?/, sampleThenType(flags, "bothWait", "y\r")],
-      ["answered", sampleThenType(flags, "oneWaits", "y\r")],
+      [/worker![^]*main!|main![^]*worker!/, sampleThenType(flags, "bothWait", "\r")],
+      ["answered", sampleThenType(flags, "oneWaits", "\r")],
       ["key?", sampleThenType(flags, "noneWaits", "k")],
-      ["DONE", "\r"],
     ],
   );
-  expect({ flags, result: resultOf(shown), exitCode }).toEqual({
+  expect({ flags, exitCode }).toEqual({
     flags: { bothWait: lineMode, oneWaits: lineMode, noneWaits: rawMode },
-    result: { main: true, fromWorker: "y" },
     exitCode: 0,
   });
 });

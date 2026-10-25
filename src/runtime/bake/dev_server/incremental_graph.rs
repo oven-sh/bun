@@ -1737,6 +1737,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         }
                     }
                     Content::Asset(_) => {
+                        let mut html_importer = false;
+                        let mut other_importer = false;
                         let mut it = self.edge_lists[index].first_dep;
                         while let Some(edge_index) = it {
                             let entry = self.edges[edge_index.get() as usize];
@@ -1746,18 +1748,22 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 &*self.bundled_files.keys()[dep.get() as usize],
                             );
                             let k = k.slice();
-                            if matches!(
-                                self.bundled_files.values()[dep.get() as usize].content,
-                                Content::CssRoot(_),
-                            ) {
+                            let importer = &self.bundled_files.values()[dep.get() as usize];
+                            if importer.html_route_bundle_index.is_some() {
+                                html_importer = true;
+                            } else {
+                                other_importer = true;
+                            }
+                            if matches!(importer.content, Content::CssRoot(_)) {
                                 entry_points.append_css(k)?;
                             } else {
                                 self.append_client_entry_point(entry_points, dep.get() as usize)?;
                             }
                             it = entry.next_dependency;
                         }
-                        // The importers queued above bundle this file again, with the loader that each import asks for.
-                        if self.edge_lists[index].first_dep.is_none()
+                        // One kind of importer bundles this file again, with the loader that its imports ask for. An html link can ask for another loader than a script or a stylesheet.
+                        let one_kind_of_importer = html_importer != other_importer;
+                        if !one_kind_of_importer
                             || self.bundled_files.values()[index]
                                 .html_route_bundle_index
                                 .is_some()

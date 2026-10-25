@@ -3439,11 +3439,28 @@ describe("css tests", () => {
           targets,
         );
         cssTest(
-          ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-radial-gradient(20px 30px, yellow, green) }",
-          ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-radial-gradient(20px 30px, #ff0, green); }",
+          ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-radial-gradient(circle, yellow, green) }",
+          ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-radial-gradient(circle, #ff0, green); }",
           targets,
         );
       }
+
+      // An image the targets do not support flushes the earlier values once.
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-gradient(linear, left top, left bottom, from(red), to(blue)) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-gradient(linear, left top, left bottom, from(red), to(#00f)); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background-image: -webkit-linear-gradient(red, blue); background-image: -moz-linear-gradient(red, blue); background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(blue)) }",
+        ".r { background-image: -webkit-linear-gradient(red, #00f); background-image: -moz-linear-gradient(red, #00f); background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(#00f)); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background-image: -webkit-linear-gradient(red, blue); background-image: -moz-linear-gradient(red, blue); background-image: -o-linear-gradient(lab(50% 0 0), blue); background-image: linear-gradient(red, blue) }",
+        ".r { background-image: -webkit-linear-gradient(red, #00f); background-image: -moz-linear-gradient(red, #00f); background-image: linear-gradient(red, #00f); }",
+        chrome,
+      );
 
       // Without targets nothing is dropped, and nothing is written twice.
       cssTest(

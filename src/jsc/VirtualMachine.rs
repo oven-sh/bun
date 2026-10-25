@@ -353,6 +353,10 @@ pub struct VirtualMachine {
     pub on_print_error_zig_exception_ctx: *mut c_void,
     pub(crate) is_handling_uncaught_exception: bool,
     pub(crate) exit_on_uncaught_exception: bool,
+    /// An earlier `--hot` run ended with an unhandled error. Its `beforeExit` listeners are still registered.
+    hot_run_failed: bool,
+    /// The watcher's loop turned after an unhandled error, so that error did not stop the timers.
+    pub timers_ran_after_error: bool,
 
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,
@@ -1112,21 +1116,14 @@ impl VirtualMachine {
         self.handle.script_allowed()
     }
 
-    /// The context of the script that called a host function. `frame` is that call: script is
-    /// running, so its async context says whose it is. Helpers below the host function take the
-    /// context as a parameter; native code the event loop calls has no frame and uses the
+    /// The context of the script that is calling: script is running, so its async context says
+    /// whose it is. For a host function, a function exported to C++ that a C++ host function calls,
+    /// a custom getter or setter, a Node-API function (an addon calls those from a callback script
+    /// called, or from one of its own completions, which entered the context it was scheduled in).
+    /// Helpers below take the context as a parameter; native code the event loop calls uses the
     /// [`ContextScope`] it entered ([`ContextScope::context`]).
     #[inline]
-    pub fn context_of_caller(&self, _frame: &crate::CallFrame) -> &crate::ScriptExecutionContext {
-        self.current_context()
-    }
-
-    /// [`context_of_caller`](Self::context_of_caller) where script is calling but no `CallFrame`
-    /// reaches Rust: a function exported to C++ that a C++ host function calls, a custom getter or
-    /// setter, a Node-API function (an addon calls those from a callback script called, or from one
-    /// of its own completions, which entered the context it was scheduled in).
-    #[inline]
-    pub fn context_of_caller_no_frame(&self) -> &crate::ScriptExecutionContext {
+    pub fn context_of_caller(&self) -> &crate::ScriptExecutionContext {
         self.current_context()
     }
 
@@ -1863,7 +1860,7 @@ impl VirtualMachine {
         Bun__emitHandledPromiseEvent(global_object, promise)
     }
 
-    pub(crate) fn default_on_unhandled_rejection(
+    pub fn default_on_unhandled_rejection(
         this: &mut VirtualMachine,
         _: &JSGlobalObject,
         value: JSValue,
@@ -2192,7 +2189,11 @@ impl VirtualMachine {
             // and exit, like node's fatal-exception path. Main thread only:
             // process_exit() RETURNS on a worker, so the panic would fire; a
             // worker falls through and exits 1 below (e.g. a beforeExit throw).
-            if self.exit_on_uncaught_exception && self.is_main_thread() {
+            // `--hot` and `--watch` stay to wait for the next save.
+            if self.exit_on_uncaught_exception
+                && self.is_main_thread()
+                && !self.is_watcher_enabled()
+            {
                 self.run_error_handler(err, None);
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
@@ -2231,7 +2232,7 @@ impl VirtualMachine {
         // the hard-exit flag ourselves since we're skipping the dispatch that
         // would have set it, so a throw from an 'exit' listener still stops
         // subsequent listeners.
-        if self.unhandled_error_counter > 0 {
+        if self.unhandled_error_counter > 0 || self.hot_run_failed {
             self.exit_on_uncaught_exception = true;
             return;
         }
@@ -2572,6 +2573,15 @@ impl VirtualMachine {
             (*this).release_queued_work();
             let _ = Self::stop_phase_sweep(this, kind);
         });
+        // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool.
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        unsafe {
+            if let Some(rare) = (*this).rare_data.as_deref_mut() {
+                let held_back = core::mem::take(&mut rare.cleanup_hooks_after_teardown_wait);
+                rare.cleanup_hooks.extend(held_back);
+            }
+            (*this).run_cleanup_hooks();
+        }
         // SAFETY: fn contract (statement-scoped exclusive access).
         unsafe { (*this).stop_import_watcher() };
         // The exiting main thread now parks the process-wide HTTP thread —
@@ -2828,6 +2838,15 @@ pub struct WorkerExecArgvFlags {
     pub invalid: Option<usize>,
 }
 
+/// Which of its timers a `--hot` run takes with it.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum CancelHotRunTimers {
+    None,
+    /// A `setTimeout` may be the next step of an earlier run's loop.
+    Intervals,
+    All,
+}
+
 pub struct RuntimeHooks {
     /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
     /// `configureDebugger()` — everything `init()` does that names a
@@ -2996,6 +3015,11 @@ pub struct RuntimeHooks {
     /// `only`: just the timers script of that context set (the context
     /// stopped; the VM keeps running).
     pub cancel_timers: unsafe fn(vm: *mut VirtualMachine, only: Option<crate::ContextId>),
+    /// A `--hot` run ends, before `hot_reload_counter` moves on. The timers of the runs before it are kept.
+    ///
+    /// # Safety
+    /// `vm` is the live per-thread VM, on the JS thread; `runtime_state` is installed.
+    pub end_hot_run_timers: unsafe fn(vm: *mut VirtualMachine, cancel: CancelHotRunTimers),
     /// Destroy the per-VM global DNS resolver's c-ares channel now, while JSC,
     /// the event loop, `RareData.file_polls`, and `runtime_state` are all
     /// live. `ares_destroy()` re-enters the resolver's socket-state and query
@@ -4757,6 +4781,24 @@ impl VirtualMachine {
         // `JSGlobalObject::reload` drains microtasks + collects async + clears
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");
+        // An unhandled error stops all timers. The next run starts them again, without those of the failed run.
+        // libuv fires timers on Windows, error or not.
+        let timers_ran = core::mem::take(&mut self.timers_ran_after_error) || cfg!(windows);
+        let cancel = if core::mem::take(&mut self.unhandled_error_counter) == 0 {
+            CancelHotRunTimers::None
+        } else {
+            self.hot_run_failed = true;
+            self.exit_handler.exit_code = 0;
+            if timers_ran {
+                CancelHotRunTimers::Intervals
+            } else {
+                CancelHotRunTimers::All
+            }
+        };
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: live per-thread VM on the JS thread; `runtime_state` stays installed.
+            unsafe { (hooks.end_hot_run_timers)(core::ptr::from_mut(self), cancel) };
+        }
         self.hot_reload_counter += 1;
         // reload_entry_point() stores into pending_internal_promise whenever it returns a promise.
         let main = self.main;
@@ -6057,6 +6099,16 @@ impl VirtualMachine {
         self.set_main(None);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;
+
+        // Loaded macros are functions of the outgoing realm. The macro context
+        // remembers which ones are loaded, so the next file loads its own.
+        for callback in self.macros.values() {
+            callback.unprotect();
+        }
+        self.macros.clear_retaining_capacity();
+        if let Some(ctx) = self.transpiler.macro_context.take() {
+            ctx.deinit();
+        }
 
         let old_global = self.global;
         // `old_global` valid for VM lifetime (safe ZST-handle deref);

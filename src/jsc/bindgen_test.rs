@@ -1,18 +1,21 @@
 //! This namespace is used to test binding generator
 
 use core::cell::{Cell, RefCell};
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::ptr::NonNull;
+use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use crate::bindgen::{
     self, BufferSource, Callable, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _,
-    JsScope, JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
+    JsScope, JsStructure, JsWrapper, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
-    TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag,
-    TestNames, TestOptions, TestOptionsEcho, TestOuter, TestTextOrBytes, TestValue, js_TestCounter,
-    js_TestRefCounted,
+    Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
+    TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestNames,
+    TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOtherAsNullOptions,
+    TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestMemberFunctions,
+    js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote,
 };
-use crate::{JSString, JSValue, JsResult};
+use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
 
 // This example should be kept in sync with bindgen's documentation
@@ -59,6 +62,24 @@ pub(crate) fn string_echo(text: &bun_core::String) -> bun_core::String {
     text.clone()
 }
 
+fn copy_of(text: &bun_core::String) -> bun_core::String {
+    if text.is_utf16() {
+        bun_core::String::clone_utf16(text.utf16())
+    } else {
+        bun_core::String::clone_latin1(text.latin1())
+    }
+}
+
+pub(crate) fn string_view_echo(text: &bun_core::StringView<'_>) -> bun_core::String {
+    copy_of(text)
+}
+
+pub(crate) fn string_or_object_view_echo(
+    text: Option<bun_core::StringView<'_>>,
+) -> Option<bun_core::String> {
+    text.map(|text| copy_of(&text))
+}
+
 pub(crate) fn string_length(text: &bun_core::String) -> usize {
     text.length()
 }
@@ -100,7 +121,7 @@ pub(crate) fn describe_value(value: TestValue<'_>) -> Vec<u8> {
     }
 }
 
-pub(crate) fn describe_anything<'a>(cx: &mut JsScope<'a>, value: TestAnything<'a>) -> Vec<u8> {
+pub(crate) fn describe_anything(value: TestAnything<'_>) -> Vec<u8> {
     match value {
         TestAnything::Nothing => b"nothing".to_vec(),
         TestAnything::Flag(flag) => format!("flag {flag}").into_bytes(),
@@ -112,14 +133,8 @@ pub(crate) fn describe_anything<'a>(cx: &mut JsScope<'a>, value: TestAnything<'a
             format!("bytes {}", buffer.byte_slice().len()).into_bytes()
         }
         TestAnything::Blob(_) => b"blob".to_vec(),
-        TestAnything::Counter(counter) => {
-            let count = counter.with(&cx.payloads, |counter| counter.count);
-            format!("counter {count}").into_bytes()
-        }
-        TestAnything::Token(token) => {
-            let id = token.with(&cx.payloads, |token| token.id);
-            format!("token {id}").into_bytes()
-        }
+        TestAnything::Counter(counter) => format!("counter {}", counter.count.get()).into_bytes(),
+        TestAnything::Token(token) => format!("token {}", token.id).into_bytes(),
         TestAnything::List(list) => format!("list {list:?}").into_bytes(),
         TestAnything::Options(options) => format!("options {}", options.count).into_bytes(),
     }
@@ -148,9 +163,7 @@ pub(crate) fn describe_defaults<'a>(heap: &JsHeap<'a>, options: &TestOuter<'a>) 
         TestColorOrRest::Rest(rest) if rest.is_undefined() => "undefined".to_owned(),
         TestColorOrRest::Rest(_) => "given".to_owned(),
     };
-    let counter = options.counter.is_some();
-    format!("inner: {inner}; value: {value}; choice: {choice}; rest: {rest}; counter: {counter}")
-        .into_bytes()
+    format!("inner: {inner}; value: {value}; choice: {choice}; rest: {rest}").into_bytes()
 }
 
 pub(crate) fn overloaded_text_times(text: &[u8], times: u32) -> Vec<u8> {
@@ -178,12 +191,8 @@ pub(crate) fn overloaded_list(list: Vec<f64>) -> Vec<u8> {
     format!("list {:?}", list.into_boxed_slice()).into_bytes()
 }
 
-pub(crate) fn overloaded_counter<'a>(
-    cx: &mut JsScope<'a>,
-    counter: JsWrapper<'a, TestCounter>,
-) -> Vec<u8> {
-    let count = counter.with(&cx.payloads, |counter| counter.count);
-    format!("counter {count}").into_bytes()
+pub(crate) fn overloaded_counter(counter: &TestCounter) -> Vec<u8> {
+    format!("counter {}", counter.count.get()).into_bytes()
 }
 
 pub(crate) fn sum_array(numbers: Vec<i32>) -> f64 {
@@ -384,16 +393,16 @@ pub(crate) fn fail<'a>(
 static ALIVE: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) struct TestCounter {
-    count: i32,
-    label: Vec<u8>,
+    count: Cell<i32>,
+    label: RefCell<Vec<u8>>,
 }
 
 impl TestCounter {
     fn new(count: i32) -> Self {
         ALIVE.fetch_add(1, Ordering::SeqCst);
         TestCounter {
-            count,
-            label: Vec::new(),
+            count: Cell::new(count),
+            label: RefCell::default(),
         }
     }
 }
@@ -413,35 +422,35 @@ impl TestCounter {
     }
 
     pub(crate) fn get_count(&self) -> i32 {
-        self.count
+        self.count.get()
     }
 
-    pub(crate) fn get_label(&self) -> impl AsRef<[u8]> {
-        &self.label
+    pub(crate) fn get_label(&self) -> Vec<u8> {
+        self.label.borrow().clone()
     }
 
-    pub(crate) fn set_label<'a>(&mut self, value: &'a [u8]) {
-        self.label = value.to_vec();
+    pub(crate) fn set_label(&self, value: &[u8]) {
+        *self.label.borrow_mut() = value.to_vec();
     }
 
     pub(crate) fn get_tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
-        bindgen::to_js::array(heap, [self.count], bindgen::to_js::i32)
+        bindgen::to_js::array(heap, [self.count.get()], bindgen::to_js::i32)
     }
 
     pub(crate) fn get_same_tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         self.get_tag(heap)
     }
 
-    pub(crate) fn increment(&mut self, by: i32) -> i32 {
-        self.count = self.count.wrapping_add(by);
-        self.count
+    pub(crate) fn increment(&self, by: i32) -> i32 {
+        self.count.set(self.count.get().wrapping_add(by));
+        self.count.get()
     }
 
-    pub(crate) fn add_length<'a>(&mut self, text: &'a [u8], times: i32) -> i32 {
+    pub(crate) fn add_length(&self, text: &[u8], times: i32) -> i32 {
         self.increment((text.len() as i32).wrapping_mul(times))
     }
 
-    pub(crate) fn add_number(&mut self, by: i32) -> i32 {
+    pub(crate) fn add_number(&self, by: i32) -> i32 {
         self.increment(by)
     }
 
@@ -465,24 +474,20 @@ impl TestCounter {
     }
 
     pub(crate) fn notify<'a>(
-        this: JsWrapper<'a, Self>,
+        &self,
+        this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> bindgen::Result<'a, i32> {
-        if let Some(listener) = js_TestCounter::listener_get_cached(this.to_js())
+        if let Some(listener) = js_TestCounter::listener_get_cached(this_value.to_js())
             && let Some(listener) = JsLocal::new(&cx.heap, listener).as_callable()
         {
-            listener.call(cx, this.as_value(), &[])?;
+            listener.call(cx, this_value.as_value(), &[])?;
         }
-        Ok(this.with(&cx.payloads, |counter| counter.count))
+        Ok(self.count.get())
     }
 
-    pub(crate) fn plus<'a>(
-        this: JsWrapper<'a, Self>,
-        cx: &mut JsScope<'a>,
-        other: JsWrapper<'a, Self>,
-    ) -> i32 {
-        let other = other.with(&cx.payloads, |counter| counter.count);
-        this.with(&cx.payloads, |counter| counter.count.wrapping_add(other))
+    pub(crate) fn plus(&self, other: &Self) -> i32 {
+        self.count.get().wrapping_add(other.count.get())
     }
 
     pub(crate) fn starting<'a>(heap: &JsHeap<'a>, at: i32) -> JsWrapper<'a, Self> {
@@ -502,24 +507,34 @@ impl TestCounter {
     }
 }
 
-pub(crate) struct TestHolder {
-    counter: JsWrapperStrong<TestCounter>,
+pub(crate) struct TestMutates {
+    count: i32,
+    label: Vec<u8>,
 }
 
-impl TestHolder {
-    pub(crate) fn constructor<'a>(heap: &JsHeap<'a>, counter: JsWrapper<'a, TestCounter>) -> Self {
-        TestHolder {
-            counter: counter.to_strong(heap),
+impl TestMutates {
+    pub(crate) fn constructor(count: i32) -> Self {
+        TestMutates {
+            count,
+            label: Vec::new(),
         }
     }
 
-    pub(crate) fn get_counter<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, TestCounter> {
-        self.counter.get(heap)
+    pub(crate) fn get_count(&self) -> i32 {
+        self.count
     }
 
-    pub(crate) fn increment_counter<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> i32 {
-        let counter = this.with(&cx.payloads, |holder| holder.counter.get(&cx.heap));
-        counter.with_mut(&mut cx.payloads, |counter| counter.increment(1))
+    pub(crate) fn get_label(&self) -> impl AsRef<[u8]> {
+        &self.label
+    }
+
+    pub(crate) fn set_label(&mut self, value: &[u8]) {
+        self.label = value.to_vec();
+    }
+
+    pub(crate) fn increment(&mut self, by: i32) -> i32 {
+        self.count = self.count.wrapping_add(by);
+        self.count
     }
 }
 
@@ -642,6 +657,517 @@ impl TestToken {
 
 pub(crate) fn make_token<'a>(heap: &JsHeap<'a>, id: u32) -> JsWrapper<'a, TestToken> {
     TestToken { id }.into_js(heap)
+}
+
+pub(crate) struct TestNote {
+    size: usize,
+}
+
+impl TestNote {
+    pub(crate) fn constructor<'a>(
+        heap: &JsHeap<'a>,
+        structure: JsStructure<'a, Self>,
+        text: JsLocal<'a>,
+        size: usize,
+    ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
+        if text.is_undefined() {
+            return Err(heap.type_error(format_args!("text is required")));
+        }
+        let this_value = structure.create(heap, Self { size });
+        // SAFETY: storing a value runs no JavaScript.
+        js_TestNote::text_set_cached(this_value.to_js(), unsafe { heap.global() }, text.to_js());
+        Ok(this_value)
+    }
+
+    pub(crate) fn estimated_size(&self) -> usize {
+        self.size
+    }
+
+    /// One more than `estimated_size`, to tell which of the two a heap snapshot reads.
+    pub(crate) fn memory_cost(&self) -> usize {
+        self.size + 1
+    }
+}
+
+#[derive(bun_ptr::CellRefCounted)]
+pub(crate) struct TestRefCountedNote {
+    ref_count: Cell<u32>,
+    size: usize,
+}
+
+impl TestRefCountedNote {
+    pub(crate) fn constructor<'a>(
+        heap: &JsHeap<'a>,
+        structure: JsStructure<'a, Self>,
+        text: JsLocal<'a>,
+        size: usize,
+    ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
+        if text.is_undefined() {
+            return Err(heap.type_error(format_args!("text is required")));
+        }
+        let ref_count = Cell::new(1);
+        let this_value = structure.create(heap, RefPtr::new(Self { ref_count, size }));
+        // SAFETY: storing a value runs no JavaScript.
+        let global = unsafe { heap.global() };
+        js_TestRefCountedNote::text_set_cached(this_value.to_js(), global, text.to_js());
+        Ok(this_value)
+    }
+
+    pub(crate) fn estimated_size(&self) -> usize {
+        self.size
+    }
+}
+
+pub(crate) struct TestBoundThis {
+    value: i32,
+    labels: Cell<u32>,
+}
+
+impl TestBoundThis {
+    pub(crate) fn constructor(value: i32) -> Self {
+        Self {
+            value,
+            labels: Cell::new(0),
+        }
+    }
+
+    pub(crate) fn get_value(&self) -> i32 {
+        self.value
+    }
+
+    pub(crate) fn get_label(&self) -> bun_core::String {
+        self.labels.set(self.labels.get() + 1);
+        let label = format!("label {} of {}", self.labels.get(), self.value);
+        bun_core::String::clone_utf8(label.as_bytes())
+    }
+
+    pub(crate) fn plus(&self, other: i32) -> i32 {
+        self.value.wrapping_add(other)
+    }
+}
+
+#[derive(bun_ptr::CellRefCounted)]
+pub(crate) struct TestNonFinal {
+    ref_count: Cell<u32>,
+    value: i32,
+}
+
+pub(crate) trait TestNonFinalExt {
+    fn constructor(value: i32) -> *mut Self;
+    fn get_value(&self) -> i32;
+    fn doubled<'a>(heap: &JsHeap<'a>, value: i32) -> JsLocal<'a>;
+}
+
+impl TestNonFinalExt for TestNonFinal {
+    fn constructor(value: i32) -> *mut Self {
+        let ref_count = Cell::new(1);
+        RefPtr::new(Self { ref_count, value }).into_raw()
+    }
+
+    fn get_value(&self) -> i32 {
+        self.value
+    }
+
+    fn doubled<'a>(heap: &JsHeap<'a>, value: i32) -> JsLocal<'a> {
+        let ref_count = Cell::new(1);
+        // SAFETY: making the object runs no JavaScript.
+        JsLocal::new(
+            heap,
+            Self { ref_count, value }.to_js(unsafe { heap.global() }),
+        )
+    }
+}
+
+impl JsClass for TestNonFinal {
+    fn to_js(mut self, global: &JSGlobalObject) -> JSValue {
+        self.value = self.value.wrapping_mul(2);
+        js_TestNonFinal::to_js(RefPtr::new(self).into_raw(), global)
+    }
+
+    fn from_js(value: JSValue) -> Option<*mut Self> {
+        js_TestNonFinal::from_js(value).map(NonNull::as_ptr)
+    }
+
+    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+        js_TestNonFinal::from_js_direct(value).map(NonNull::as_ptr)
+    }
+}
+
+pub(crate) fn token_id_from_js(token: JsLocal<'_>) -> Option<u32> {
+    Some(token.to_js().as_class_ref::<TestToken>()?.id)
+}
+
+pub(crate) fn is_note_from_js_direct(note: JsLocal<'_>) -> bool {
+    let note = note.to_js();
+    note.is_cell()
+        && (note.as_direct::<TestNote>().is_some()
+            || note.as_direct::<TestRefCountedNote>().is_some())
+}
+
+pub(crate) fn error_constructor<'a>(cx: &mut JsScope<'a>) -> JsLocal<'a> {
+    let constructor = js_TestError::get_constructor(cx.global());
+    JsLocal::new(&cx.heap, constructor)
+}
+
+pub(crate) fn after_first<'a>(
+    heap: &JsHeap<'a>,
+    _: JsLocal<'a>,
+    rest: &'a [JsLocal<'a>],
+) -> bindgen::Result<'a, JsLocal<'a>> {
+    bindgen::to_js::array(heap, rest.iter().copied(), bindgen::to_js::any)
+}
+
+pub(crate) fn this_and_callee<'a>(
+    heap: &JsHeap<'a>,
+    this_value: JsLocal<'a>,
+    callee: JsLocal<'a>,
+    value: JsLocal<'a>,
+) -> bindgen::Result<'a, JsLocal<'a>> {
+    bindgen::to_js::array(heap, [this_value, callee, value], bindgen::to_js::any)
+}
+
+pub(crate) fn doubled(value: i32) -> i32 {
+    value.wrapping_mul(2)
+}
+
+pub(crate) fn make_doubled(cx: &mut JsScope<'_>) -> JSValue {
+    crate::JSFunction::create(
+        cx.global(),
+        "doubled",
+        Bun__BindgenTest__doubled,
+        1,
+        Default::default(),
+    )
+}
+
+static PROMISE_CONTEXT: AtomicI32 = AtomicI32::new(42);
+
+pub(crate) fn promise_ptr_context(_: &JsHeap<'_>) -> JSValue {
+    JSValue::from_ptr_address(PROMISE_CONTEXT.as_ptr() as usize)
+}
+
+pub(crate) fn read_promise_ptr(context: *mut AtomicI32) -> i32 {
+    // SAFETY: `promise_ptr_context` made it of a static.
+    unsafe { &*context }.load(Ordering::Relaxed)
+}
+
+pub(crate) fn make_native_promise_context(cx: &mut JsScope<'_>) -> JSValue {
+    unsafe extern "C" {
+        safe fn Bun__NativePromiseContext__create(
+            global: &JSGlobalObject,
+            ctx: *mut core::ffi::c_void,
+            tag: u8,
+            held: JSValue,
+        ) -> JSValue;
+    }
+    // Only the destructor of a cell that still has its pointer reads the tag, and the test takes the pointer.
+    Bun__NativePromiseContext__create(
+        cx.global(),
+        PROMISE_CONTEXT.as_ptr().cast(),
+        0,
+        JSValue::ZERO,
+    )
+}
+
+pub(crate) fn read_native_promise_context(context: Option<NonNull<AtomicI32>>) -> Option<i32> {
+    // SAFETY: `make_native_promise_context` made the cell of a static.
+    context.map(|context| unsafe { context.as_ref() }.load(Ordering::Relaxed))
+}
+
+pub(crate) fn primes() -> [u32; 3] {
+    [2, 3, 5]
+}
+
+pub(crate) fn increment(value: i32) -> i32 {
+    value.wrapping_add(1)
+}
+
+pub(crate) fn decrement(value: i32) -> i32 {
+    value.wrapping_sub(1)
+}
+
+pub(crate) fn negate_number(value: f64) -> f64 {
+    -value
+}
+
+pub(crate) fn negate_flag(value: bool) -> bool {
+    !value
+}
+
+pub(crate) fn node_options_size(options: &TestNodeOptions) -> Option<u32> {
+    options.size.filter(|_| !options.flag)
+}
+
+pub(crate) fn bare_options_size(options: &TestBareOptions) -> Option<u32> {
+    options.size
+}
+
+pub(crate) fn time_value(time: f64) -> f64 {
+    time
+}
+
+pub(crate) fn text_if_passed(text: Option<&[u8]>) -> &[u8] {
+    text.unwrap_or(b"none")
+}
+
+pub(crate) fn is_passed(_: JsLocal<'_>, second: Option<JsLocal<'_>>) -> bool {
+    second.is_some()
+}
+
+pub(crate) fn length_with_value<'a>(
+    heap: &JsHeap<'a>,
+    (text, value): (&[u8], JsLocal<'a>),
+) -> bindgen::Result<'a, JsLocal<'a>> {
+    let length = bindgen::to_js::usize(heap, text.len())?;
+    bindgen::to_js::array(heap, [length, value], bindgen::to_js::any)
+}
+
+pub(crate) fn counter_with_value<'a>(
+    _: &JsHeap<'a>,
+    (counter, value): (&TestCounter, JsLocal<'a>),
+) -> JsLocal<'a> {
+    counter.count.set(counter.count.get() + 1);
+    value
+}
+
+pub(crate) fn kept_string(text: bun_core::String) -> bun_core::String {
+    text
+}
+
+pub(crate) fn bracket_echo(bracket: TestBracket) -> TestBracket {
+    bracket
+}
+
+pub(crate) fn describe_handle(value: TestHandle<'_>) -> Vec<u8> {
+    match value {
+        TestHandle::Missing => b"missing".to_vec(),
+        TestHandle::Nothing => b"nothing".to_vec(),
+        TestHandle::Callback(_) => b"callback".to_vec(),
+        TestHandle::List(_) => b"list".to_vec(),
+        TestHandle::Point(point) => format!("point {}", point.x).into_bytes(),
+        TestHandle::Text(text) => [b"text ", text].concat(),
+    }
+}
+
+pub(crate) fn is_object(value: TestObjectOrRest<'_>) -> bool {
+    matches!(value, TestObjectOrRest::Object(_))
+}
+
+pub(crate) fn object_echo<'a>(
+    _: &JsHeap<'a>,
+    value: JsLocal<'a, crate::JSObject>,
+) -> JsLocal<'a, crate::JSObject> {
+    value
+}
+
+pub(crate) fn absence_echo(value: TestAbsence) -> TestAbsence {
+    value
+}
+
+pub(crate) fn present_arguments(
+    number: Option<f64>,
+    text: Option<&[u8]>,
+    callback: Option<JsLocal<'_, Callable>>,
+    object: Option<JsLocal<'_, crate::JSObject>>,
+    numbers: Option<Vec<f64>>,
+    counter: Option<&TestCounter>,
+    options: Option<&TestOtherAsNullOptions<'_>>,
+) -> Vec<bun_core::String> {
+    let members = options.map(|options| (options.size, options.callback));
+    let (size, callback_member) = members.unwrap_or((None, None));
+    [
+        ("number", number.is_some()),
+        ("text", text.is_some()),
+        ("callback", callback.is_some()),
+        ("object", object.is_some()),
+        ("numbers", numbers.map(drop).is_some()),
+        ("counter", counter.is_some()),
+        ("options", members.is_some()),
+        ("options.size", size.is_some()),
+        ("options.callback", callback_member.is_some()),
+    ]
+    .into_iter()
+    .filter(|(_, is_present)| *is_present)
+    .map(|(name, _)| bun_core::String::static_(name))
+    .collect()
+}
+
+pub(crate) fn callback_or_delay_callback(
+    this_value: JsLocal<'_>,
+    callee: JsLocal<'_>,
+    callback: JsLocal<'_, Callable>,
+) -> Vec<u8> {
+    format!(
+        "callback, this is undefined: {}, given itself: {}",
+        this_value.is_undefined(),
+        callee.to_js() == callback.to_js()
+    )
+    .into_bytes()
+}
+
+pub(crate) fn callback_or_delay_delay(
+    this_value: JsLocal<'_>,
+    _: JsLocal<'_>,
+    delay: f64,
+) -> Vec<u8> {
+    format!(
+        "delay {delay}, this is undefined: {}",
+        this_value.is_undefined()
+    )
+    .into_bytes()
+}
+
+pub(crate) fn finite_later(cx: &mut JsScope<'_>, value: f64) -> JsResult<JSValue> {
+    let global = cx.global();
+    if !value.is_finite() {
+        return Err(global.throw_invalid_arguments(format_args!("value must be finite")));
+    }
+    Ok(crate::JSPromise::resolved_promise_value(
+        global,
+        JSValue::js_number(value),
+    ))
+}
+
+pub(crate) struct TestReadOnly;
+
+impl TestReadOnly {
+    pub(crate) fn constructor() -> Self {
+        Self
+    }
+
+    pub(crate) fn answer(&self) -> i32 {
+        42
+    }
+
+    pub(crate) fn dispose(&self) {}
+}
+
+#[derive(Default)]
+pub(crate) struct TestMemberFunctions {
+    call_count: Cell<u32>,
+}
+
+impl TestMemberFunctions {
+    pub(crate) fn constructor() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn twice(&self, n: i32) -> i32 {
+        self.call_count.set(self.call_count.get() + 1);
+        n * 2
+    }
+
+    pub(crate) fn run<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        n: JsLocal<'a>,
+        fail: bool,
+    ) -> JsResult<JSValue> {
+        js_TestMemberFunctions::run_in_cpp(this_value.to_js(), cx.global(), n.to_js(), fail)
+    }
+
+    pub(crate) fn set_note<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        _: &JsHeap<'a>,
+        value: JsLocal<'a>,
+    ) -> JSValue {
+        js_TestMemberFunctions::set_note_in_cpp(this_value.to_js(), value.to_js());
+        js_TestMemberFunctions::note_in_cpp(this_value.to_js())
+    }
+
+    pub(crate) fn fail<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+    ) -> JsResult<()> {
+        js_TestMemberFunctions::fail_in_cpp(this_value.to_js(), cx.global())
+    }
+
+    pub(crate) fn promise<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+    ) -> JSValue {
+        js_TestMemberFunctions::promise_in_cpp(this_value.to_js(), cx.global())
+    }
+
+    pub(crate) fn call_count(&self) -> u32 {
+        self.call_count.get()
+    }
+
+    pub(crate) fn sum(&self, bytes: &[u8]) -> u32 {
+        bytes.iter().map(|&byte| u32::from(byte)).sum()
+    }
+
+    pub(crate) fn fail_in_rust<'a>(&self, heap: &JsHeap<'a>) -> Result<(), bindgen::Error<'a>> {
+        Err(heap.range_error(format_args!("thrown in Rust")))
+    }
+}
+
+pub(crate) struct TestError {
+    code: i32,
+}
+
+static ERROR_LEVEL: AtomicI32 = AtomicI32::new(0);
+
+impl TestError {
+    pub(crate) fn constructor(code: i32) -> Self {
+        Self { code }
+    }
+
+    pub(crate) fn call<'a>(heap: &JsHeap<'a>, codes: &[JsLocal<'a>]) -> JsWrapper<'a, Self> {
+        let code = codes.iter().map(|code| code.to_js().to_int32()).sum();
+        Self { code }.into_js(heap)
+    }
+
+    pub(crate) fn get_code(&self) -> i32 {
+        self.code
+    }
+
+    pub(crate) fn get_non_configurable_code(&self) -> i32 {
+        self.code
+    }
+
+    pub(crate) fn get_enumerable_code(&self) -> i32 {
+        self.code
+    }
+
+    pub(crate) fn describe(&self) -> Vec<u8> {
+        format!("error {}", self.code).into_bytes()
+    }
+
+    pub(crate) fn count_arguments(&self, args: &[JsLocal<'_>]) -> usize {
+        args.len()
+    }
+
+    pub(crate) fn get_message(&self) -> Vec<u8> {
+        self.describe()
+    }
+
+    pub(crate) fn get_detail<'a>(&self, _: JsWrapper<'a, Self>, heap: &JsHeap<'a>) -> JsLocal<'a> {
+        JsLocal::new(heap, JSValue::js_number_from_int32(self.code))
+    }
+
+    pub(crate) fn set_detail<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        heap: &JsHeap<'a>,
+        value: JsLocal<'a>,
+    ) {
+        let doubled = JSValue::js_number(value.to_js().as_number() * 2.0);
+        // SAFETY: storing a value runs no JavaScript.
+        js_TestError::detail_set_cached(this_value.to_js(), unsafe { heap.global() }, doubled);
+    }
+
+    pub(crate) fn get_level() -> i32 {
+        ERROR_LEVEL.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn set_level(value: i32) {
+        ERROR_LEVEL.store(value, Ordering::SeqCst);
+    }
 }
 
 pub(crate) fn integer_or_big_int(value: u32) -> u32 {

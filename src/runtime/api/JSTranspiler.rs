@@ -162,7 +162,7 @@ impl Config {
     pub(crate) fn from_js(
         &mut self,
         global: &JSGlobalObject,
-        object: Option<TranspilerOptions<'_>>,
+        object: Option<&TranspilerOptions<'_>>,
         arena: &Arena,
     ) -> JsResult<()> {
         let Some(object) = object else {
@@ -221,7 +221,7 @@ impl Config {
             }
         }
 
-        if let Some(external) = object.external {
+        if let Some(external) = &object.external {
             match external {
                 TranspilerExternal::Name(str) => {
                     if !str.is_empty() {
@@ -841,9 +841,6 @@ fn export_replacement_value(
     global: &JSGlobalObject,
     arena: &Arena,
 ) -> JsResult<Option<bun_ast::Expr>> {
-    // The result outlives every parse, so don't allocate it in the thread-local store.
-    let _guard = bun_ast::expr::Disabler::scope();
-
     if value.is_boolean() {
         return Ok(Some(Expr {
             data: bun_ast::ExprData::EBoolean(bun_ast::E::Boolean {
@@ -882,6 +879,7 @@ fn export_replacement_value(
         // `E::EString::init` erases the borrow to `'static` per the AST
         // crate's `Str` convention (see ast/E.rs).
         let data = arena.alloc_slice_copy(utf8.slice());
+        // The result outlives every parse, so don't allocate it in the thread-local store.
         return Ok(Some(Expr::allocate(
             arena,
             bun_ast::E::EString::init(data),
@@ -895,7 +893,7 @@ fn export_replacement_value(
 impl JSTranspiler {
     pub(crate) fn constructor(
         cx: &mut JsScope<'_>,
-        config_arg: Option<TranspilerOptions<'_>>,
+        config_arg: Option<&TranspilerOptions<'_>>,
     ) -> JsResult<*mut JSTranspiler> {
         let global = cx.global();
         // NOTE: a non-POD field cannot be left uninitialized in a live Box
@@ -1301,7 +1299,7 @@ impl JSTranspiler {
         loader_arg: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let js_thread = global.js_thread_of_caller_no_frame();
+        let js_thread = global.js_thread_of_caller();
         jsc::mark_binding();
         let code = match code_arg {
             StringOrJsBytes::Bytes(buffer) => {

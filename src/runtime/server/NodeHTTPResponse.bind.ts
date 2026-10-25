@@ -1,5 +1,7 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
+export default b.module({ rustPath: "crate::server::node_http_response" });
+
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 const head = {
   statusCode: b.i32.validateInteger(100, 999).default(200),
@@ -26,7 +28,6 @@ export const NodeHTTPResponse = b.class({
   rustPath: "crate::server::NodeHTTPResponse",
   refCounted: true,
   finalize: true,
-  configurable: false,
   internalFields: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   proto: {
     abort: { capability: "js" },
@@ -41,13 +42,13 @@ export const NodeHTTPResponse = b.class({
     hasBody: { getter: b.i32 },
     headersObject: { returns: b.any, capability: "js" },
     notifyWhenReadParsed: { returns: b.bool },
-    onabort: { ...eventHandler, rustName: "on_abort" },
-    ondata: { ...eventHandler, rustName: "on_data" },
-    onwritable: { ...eventHandler, rustName: "on_writable" },
-    pause: { returns: b.bool, rustName: "do_pause" },
-    pauseReads: { rustName: "pause_socket_reads" },
+    onabort: eventHandler,
+    ondata: eventHandler,
+    onwritable: eventHandler,
+    pause: { returns: b.bool },
+    pauseReads: {},
     ref: { rustName: "js_ref" },
-    resume: { returns: b.bool, rustName: "do_resume" },
+    resume: { returns: b.bool },
     takeRawHeaders: { ...method, args: { headers: b.any } },
     takeRequestTrailers: { ...method, args: { useInsecureHTTPParser: b.bool.default(false) }, length: 0 },
     unref: { rustName: "js_unref" },
@@ -71,3 +72,8 @@ export const NodeHTTPResponse = b.class({
     },
   },
 });
+
+/** The reactions to the promise that the `node:http` request handler returned. */
+const reaction = { args: { value: b.any, context: NodeHTTPResponse.withValue }, capability: "js" } as const;
+export const onResolve = b.fn({ ...reaction, export: "Bun__NodeHTTPRequest__onResolve" });
+export const onReject = b.fn({ ...reaction, export: "Bun__NodeHTTPRequest__onReject" });

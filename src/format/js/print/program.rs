@@ -136,7 +136,7 @@ impl<'a> Format<'a> for FormatStatements<'a> {
         let mut imports = ImportRun::new(f);
         for statement in self.0.iter().filter(|it| it.tag() != StmtTag::Empty) {
             if let Some(previous_statement) = previous.replace(statement) {
-                imports.before_separator(statement, true, f);
+                imports.before_separator(statement, f);
                 let is_next_line_empty =
                     match own_line_comment_before_semicolon(previous_statement, f) {
                         Some(comment) => f.lines_before(comment.span()) > 1,

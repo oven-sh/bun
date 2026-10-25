@@ -7,7 +7,7 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
     use bstr::BStr;
     use bun_core::String as BunString;
     use bun_install::lockfile::lockfile_json_stringify_for_debugging::{
-        WriteStream, WriteStreamOptions, json_stringify,
+        WriteStream, json_stringify,
     };
     use bun_install::lockfile::{LoadResult, Lockfile};
     use bun_paths::resolve_path;
@@ -72,10 +72,7 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
     // Feed the lockfile through the in-crate
     // `WriteStream` (lockfile_json_stringify_for_debugging.rs) into a
     // `Vec<u8>`.
-    let mut w = WriteStream::new(WriteStreamOptions {
-        indent: 2,
-        emit_nonportable_numbers_as_strings: true,
-    });
+    let mut w = WriteStream::new();
     // `jsonStringify` only surfaces the underlying writer's error; the
     // `Vec<u8>` writer is infallible, so `expect` rather than swallowing.
     json_stringify(&lockfile_, &mut w).expect("Vec<u8> JSON writer is infallible");

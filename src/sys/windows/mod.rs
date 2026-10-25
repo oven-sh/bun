@@ -1295,8 +1295,6 @@ pub mod rescle {
 
     #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
     pub enum RescleError {
-        #[error("IconEditError")]
-        IconEditError,
         #[error("InvalidVersionFormat")]
         InvalidVersionFormat,
         #[error("FailedToLoadExecutable")]

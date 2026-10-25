@@ -2205,8 +2205,6 @@ pub fn split_first_with_expected(self_: &[u8], expected: u8) -> Option<&[u8]> {
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum PercentEncodeError {
-    #[error("OutOfMemory")]
-    OutOfMemory,
     #[error("IncompleteUTF8")]
     IncompleteUTF8,
 }

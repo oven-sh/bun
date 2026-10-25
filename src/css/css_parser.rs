@@ -3202,13 +3202,12 @@ impl<'a> Parser<'a> {
         &mut self,
         parse_one: impl Fn(&mut Parser) -> CssResult<T>,
     ) -> CssResult<Vec<T>> {
-        self.parse_comma_separated_internal(|(), p| parse_one(p), false)
+        self.parse_comma_separated_internal(|(), p| parse_one(p))
     }
 
     fn parse_comma_separated_internal<T>(
         &mut self,
         mut parse_one: impl FnMut((), &mut Parser) -> CssResult<T>,
-        ignore_errors: bool,
     ) -> CssResult<Vec<T>> {
         // Vec grows from 0 to 4 by default on first push().  So allocate with
         // capacity 1, so in the somewhat common case of only one item we don't
@@ -3218,14 +3217,7 @@ impl<'a> Parser<'a> {
 
         loop {
             self.skip_whitespace(); // Unnecessary for correctness, but may help try() rewind less.
-            match self.parse_until_before(Delimiters::COMMA, |p| parse_one((), p)) {
-                Ok(v) => values.push(v),
-                Err(e) => {
-                    if !ignore_errors {
-                        return Err(e);
-                    }
-                }
-            }
+            values.push(self.parse_until_before(Delimiters::COMMA, |p| parse_one((), p))?);
 
             let tok = match self.next() {
                 Ok(v) => v,

@@ -1307,10 +1307,6 @@ pub enum Metadata {
 /// How TypeScript reports an error, which decides what suppresses it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TypeScriptKind {
-    /// `parseErrorAtRange`
-    Parse,
-    /// `grammarErrorOnNode`
-    Grammar,
     /// `Checker.error`
     Checker,
 }

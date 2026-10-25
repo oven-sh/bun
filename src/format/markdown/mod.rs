@@ -59,7 +59,7 @@ pub struct Scratch {
 
 /// Fills `tree` with the syntax tree of `text`, a description in a JSDoc comment. Returns the root.
 pub(crate) fn parse_plain(text: &[u8], tree: &mut ast::Tree) -> Option<ast::NodeId> {
-    parse::parse_content(text, tree, true)
+    parse::parse_content(text, tree)
 }
 
 /// `normalizeIdentifier(label).toLowerCase()`, with micromark's `normalizeIdentifier`. It's the `identifier` of a node

@@ -174,9 +174,6 @@ impl Entry {
                     Err(bun_core::PercentEncodeError::IncompleteUTF8) => {
                         panic!("Unexpected: asset with incomplete UTF-8 as file path")
                     }
-                    Err(bun_core::PercentEncodeError::OutOfMemory) => {
-                        return Err(crate::Error::Alloc(bun_alloc::AllocError));
-                    }
                 }
                 source_map_strings.extend_from_slice(b"\"");
             }
@@ -347,7 +344,6 @@ impl From<bun_core::PercentEncodeError> for EncodeSourceMapPathError {
     fn from(e: bun_core::PercentEncodeError) -> Self {
         match e {
             bun_core::PercentEncodeError::IncompleteUTF8 => Self::IncompleteUTF8,
-            bun_core::PercentEncodeError::OutOfMemory => Self::OutOfMemory,
         }
     }
 }

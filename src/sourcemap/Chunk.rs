@@ -195,7 +195,6 @@ pub struct VLQSourceMap {
     pub data: MutableString,
     pub internal: Option<internal_source_map::Builder>,
     pub(crate) count: usize,
-    pub(crate) offset: usize,
 }
 
 impl Default for VLQSourceMap {
@@ -204,7 +203,6 @@ impl Default for VLQSourceMap {
             data: MutableString::init_empty(),
             internal: None,
             count: 0,
-            offset: 0,
         }
     }
 }
@@ -251,7 +249,7 @@ impl SourceMapFormatCtx for VLQSourceMap {
             return Ok(());
         }
 
-        let last_byte: u8 = if self.data.list.len() > self.offset {
+        let last_byte: u8 = if !self.data.list.is_empty() {
             self.data.list[self.data.list.len() - 1]
         } else {
             0

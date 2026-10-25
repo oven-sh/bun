@@ -86,7 +86,7 @@ impl GitEnv {
 /// Returns the domain of a shorthand host, e.g. `gitlab.com` for the `gitlab` in
 /// `gitlab:user/repo`.
 fn shorthand_domain(host: &[u8]) -> Option<&'static [u8]> {
-    hosted_git_info::HostProvider::from_shortcut(host, false).map(|provider| provider.domain())
+    hosted_git_info::HostProvider::from_shortcut(host).map(|provider| provider.domain())
 }
 
 /// Returns the `repo` to record in the lockfile for `host:path`. That's `ssh://host:path`, which is

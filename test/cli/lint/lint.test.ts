@@ -4648,6 +4648,24 @@ maybe(() => { return f; });
         expect(lines).toEqual([4, 5, 6, 7]);
       });
 
+      // TypeScript 7.1 rejects it. typescript-eslint's parser and oxlint accept it.
+      test("`a ** b as T ** c` is linted the same with and without types", async () => {
+        const texts = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+          "bunfig.toml": `[lint.rules]\n"typescript/no-unnecessary-type-assertion" = "error"\n"no-var" = "error"\n`,
+          "a.ts": "declare let a: number, b: number;\nexport var x = a ** b as number ** 2;\n",
+        };
+        const rules = async (flags: string[]) => {
+          const { raw } = await lint(texts, [...flags, "-f", "json", "a.ts"]);
+          return (JSON.parse(raw)[0].messages as any[]).map(it => `${it.ruleId} ${it.line}:${it.column}`);
+        };
+        expect(await rules(["--no-type-aware"])).toEqual(["no-var 2:8"]);
+        expect(await rules(["--type-aware"])).toEqual([
+          "no-var 2:8",
+          "@typescript-eslint/no-unnecessary-type-assertion 2:16",
+        ]);
+      });
+
       // Recorded from oxlint 1.87.0 with tsgolint.
       test("a type-aware rule reports with the severity of the ESLint rule of the same name, if that one is on", async () => {
         const texts = {

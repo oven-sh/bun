@@ -81,6 +81,8 @@ struct ParseSettings<'a> {
     jsdoc: JsDoc,
     /// `Options::attach_comments`
     attach_comments: bool,
+    /// `Options::is_before_typescript_7_1`
+    is_before_typescript_7_1: bool,
 }
 
 /// True if `path` ends in `.json` and no `script_kind` overrides that.
@@ -253,6 +255,7 @@ fn parse_file_as(
         dialect,
         part: None,
         attach_comments: how.attach_comments,
+        is_before_typescript_7_1: how.is_before_typescript_7_1,
     };
     let once = |options, scratch: &mut Scratch| match atoms {
         Some(atoms) => crate::parse(text, options, atoms, scratch),
@@ -379,6 +382,7 @@ pub fn summarize<'s>(
     atoms: &Interner<'s>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    is_before_typescript_7_1: bool,
 ) -> File<'s> {
     let how = ParseSettings {
         dialect: Dialect::default(),
@@ -388,6 +392,7 @@ pub fn summarize<'s>(
         every_file_is_a_module,
         jsdoc: JsDoc::Read,
         attach_comments: false,
+        is_before_typescript_7_1,
     };
     SCRATCH.with_borrow_mut(|all| {
         let scratch = all[0].get_or_insert_default();
@@ -438,6 +443,7 @@ pub fn summarize_in<'s>(
         every_file_is_a_module,
         jsdoc: JsDoc::Ignored,
         attach_comments: false,
+        is_before_typescript_7_1: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         parse_into_arena(all[0].get_or_insert_default(), how, memory, text, atoms)
@@ -528,6 +534,7 @@ pub fn with_summary_in_place<'s, R>(
         every_file_is_a_module,
         jsdoc: JsDoc::Ignored,
         attach_comments,
+        is_before_typescript_7_1: false,
     };
     // `then` may parse another text.
     let mut scratch = take_scratch();

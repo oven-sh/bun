@@ -505,6 +505,9 @@ pub struct PlanOptions {
     /// they're `Request::libs`. That way this reads the same declaration of `Element` as the project's own compiler.
     /// The configuration file is also interpreted the way that compiler does. See `resolve::INSTALLED_VERSION`.
     pub prefers_project_typescript_libs: bool,
+    /// `a ** b as T ** c` is no syntax error. `bun lint` reads the trees of the programs, and typescript-eslint's parser
+    /// and oxlint accept it.
+    pub parses_as_before_typescript_7_1: bool,
     /// Selects what a request's programs share, parsed once and kept until the end (`program::Run`). Off (`bun check`):
     /// the declaration files. On (`bun lint`): every file, including sources, because a typed run over a monorepo loads
     /// the same sources for a hundred programs.
@@ -1500,6 +1503,7 @@ pub fn check_provided_then<R>(
     });
     disk.script_kinds = script_kinds.collect();
     disk.script_kinds_by_extension = request.script_kinds_by_extension.to_vec();
+    disk.parses_as_before_typescript_7_1 = request.plan_options.parses_as_before_typescript_7_1;
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let report = check_request(&disk, request);

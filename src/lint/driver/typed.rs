@@ -536,6 +536,7 @@ fn check_and_lint_in(
             rejects_broken_configurations: matches!(project, Project::Including(_)),
             // typescript-eslint uses the project's own compiler. tsgolint bundles its own library files.
             prefers_project_typescript_libs: matches!(project, Project::Nearest),
+            parses_as_before_typescript_7_1: true,
             ..Default::default()
         },
         // A syntax error in one file doesn't stop the others from being linted.

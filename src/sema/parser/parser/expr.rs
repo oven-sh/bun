@@ -737,10 +737,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         self.lx.rescan_greater_than();
                     }
                     // Before TypeScript 7.1, only a higher precedence counted.
-                    let binds_before = match self.options.dialect.typescript_5 {
-                        true => self.token().binary_precedence() > last_precedence,
-                        false => should_consume_binary_operator(self.token(), last_precedence),
-                    };
+                    let options = self.options;
+                    let binds_before =
+                        match options.dialect.typescript_5 || options.is_before_typescript_7_1 {
+                            true => self.token().binary_precedence() > last_precedence,
+                            false => should_consume_binary_operator(self.token(), last_precedence),
+                        };
                     if binds_before && !self.is_flow() {
                         return left;
                     }

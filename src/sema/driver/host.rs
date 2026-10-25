@@ -275,6 +275,8 @@ pub struct Disk {
     pub(crate) script_kinds: Vec<(Vec<u8>, ScriptKind)>,
     /// `Request::script_kinds_by_extension`
     pub(crate) script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
+    /// `PlanOptions::parses_as_before_typescript_7_1`
+    pub(crate) parses_as_before_typescript_7_1: bool,
     pub(crate) before_read: Option<BeforeRead>,
     /// `Host::extended_config`. The projects of a build often extend the same file.
     extended_configs: bun_threading::Guarded<FxHashMap<Vec<u8>, CachedConfig>>,
@@ -528,6 +530,7 @@ impl Disk {
             bundled_libs: None,
             script_kinds: Vec::new(),
             script_kinds_by_extension: Vec::new(),
+            parses_as_before_typescript_7_1: false,
             before_read: None,
             scripts_of_page: None,
             content_mapper_processes: None,
@@ -1369,6 +1372,7 @@ impl Host for UncachedDisk<'_> {
             atoms,
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
+            false,
         )
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
@@ -1541,6 +1545,7 @@ impl Host for Disk {
             atoms,
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
+            self.parses_as_before_typescript_7_1,
         )
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {

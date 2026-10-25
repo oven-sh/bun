@@ -149,6 +149,8 @@ pub struct Options {
     /// Records what a formatter needs to attach comments to nodes: `enclosing_node`, `preceding_node` and
     /// `following_node` of `hir::Comment`, and the HTML-like comments of a script.
     pub attach_comments: bool,
+    /// Accepts `a ** b as T ** c`, which TypeScript rejects since 7.1, as `Dialect::typescript_5` does.
+    pub is_before_typescript_7_1: bool,
 }
 
 /// A part of a text, parsed like acorn's `parseExpressionAt`: whatever follows it isn't checked, and only one token of

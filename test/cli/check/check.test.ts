@@ -9249,6 +9249,53 @@ let l = st.actions; l = 1;
       expect(exitCode).toBe(1);
     });
 
+    // `types.ts` is checked first. `first` and `second` are circular, and the argument of `extend` leads to `made`. The
+    // resolution of `use(null!)` asks for the type of `v` once, for the argument. That leads to `made` and `use(null!)`
+    // again, which asks for `v` a second time and finds the cycle.
+    test("a call asks for the type of an annotated parameter when it compares the argument", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          ...JSON.parse(tsconfig),
+          files: ["pair.ts", "made.ts", "use.ts", "types.ts", "svc.ts", "lib.ts"],
+        }),
+        "lib.ts": `export declare class Schema<Out> { out: Out; transform<U>(f: (v: Out) => U): void; }
+export declare function flag(): Schema<boolean>;
+export declare function object<S>(s: S): Schema<S>;
+export declare function lazy<S>(f: () => S): Schema<S>;
+`,
+        "use.ts": `import { Made } from "./made";\nexport function use(v: Made) {}\n`,
+        "pair.ts": `import { lazy } from "./lib";
+import { Svc } from "./svc";
+export const first = second.extend({ kids: lazy(() => new Svc().held) });
+export const second = first.omit("name");
+`,
+        "made.ts": `import { flag, object } from "./lib";
+import "./types";
+import { use } from "./use";
+export const made = object({ id: flag().transform(v => use(null!)) });
+export type Made = typeof made;
+`,
+        "svc.ts": `import { first } from "./pair";
+import { made } from "./made";
+export class Svc { constructor(public dep = first) {} held = made; }
+`,
+        "types.ts": `import { second } from "./pair";\nexport type Second = typeof second;\n`,
+      });
+      const own =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+      expect(stdout.split("\n")).toEqual([
+        `made.ts(4,14): error TS7022: 'made' implicitly has type 'any' ${own}`,
+        "made.ts(4,51): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+        "made.ts(5,13): error TS2456: Type alias 'Made' circularly references itself.",
+        `pair.ts(3,14): error TS7022: 'first' implicitly has type 'any' ${own}`,
+        "pair.ts(3,22): error TS2448: Block-scoped variable 'second' used before its declaration.",
+        `pair.ts(4,14): error TS7022: 'second' implicitly has type 'any' ${own}`,
+        "use.ts(2,21): error TS2502: 'v' is referenced directly or indirectly in its own type annotation.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // tsc asks for the type of a parameter when there's an argument to compare with it. `use()` has none, so the default
     // of `f` isn't checked there, and `createStore(..)` isn't resolved a second time inside its own resolution.
     test("a call without an argument for a parameter doesn't check the default of that parameter", async () => {

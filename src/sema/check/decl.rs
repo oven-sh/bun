@@ -4794,7 +4794,7 @@ impl<'p, 's> Checker<'p, 's> {
                 cold_path();
                 self.get_type_of_parameter(param);
                 if let Some((file, p)) = param.declaration
-                    && Self::is_typed_by_default(&self.hir(file)[p])
+                    && Self::is_typed_by_declaration(&self.hir(file)[p])
                 {
                     self.type_of_param(file, p);
                 }
@@ -4804,10 +4804,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// True if the type of `parameter` comes from checking its default.
-    fn is_typed_by_default(parameter: &Param) -> bool {
-        parameter.ty.is_none()
-            && parameter.default.is_some()
+    /// True if the type of `parameter` comes from its annotation or from checking its default.
+    fn is_typed_by_declaration(parameter: &Param) -> bool {
+        (parameter.ty.is_some() || parameter.default.is_some())
             && !parameter.flags.contains(Flags::REST)
     }
 
@@ -5154,7 +5153,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns the parameter of `func` at `i` with its declared type. For `actual` and `is_untyped_in_js`, see
-    /// `sig_params_of_declaration`. Unless `is_asked`, the type that a default gives is `UNRESOLVED` if it isn't known.
+    /// `sig_params_of_declaration`. Unless `is_asked`, the type that an annotation or a default gives is `UNRESOLVED` if it
+    /// isn't known.
     fn declared_parameter(
         &mut self,
         file: FileId,
@@ -5180,7 +5180,7 @@ impl<'p, 's> Checker<'p, 's> {
         let name_of_declaration = (file, value_declaration.pat);
         let is_left_out = !is_asked
             && actual.is_none()
-            && Self::is_typed_by_default(value_declaration)
+            && Self::is_typed_by_declaration(value_declaration)
             && (self.p.pat_types.get(&self.task, &name_of_declaration)).is_none();
         if !has_argument {
             self.eager.push(self.stack.len());

@@ -257,6 +257,8 @@ impl DevServer {
             }
 
             self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);
+
+            self.fail_loaded_routes_above_client_entry_points(&gts.client_bits);
         } else if !self.incremental_result.failures_removed.is_empty() {
             let mut payload: Vec<u8> = Vec::with_capacity(
                 ::core::mem::size_of::<MessageId>()
@@ -313,6 +315,30 @@ impl DevServer {
         for i in 0..self.incremental_result.html_routes_hard_affected.len() {
             let index = self.incremental_result.html_routes_hard_affected[i];
             self.fail_loaded_route(index);
+        }
+    }
+
+    /// A trace lists no route for the client entry point of a router type, so this reads the files that the trace visited.
+    pub(super) fn fail_loaded_routes_above_client_entry_points(
+        &mut self,
+        visited_client_files: &DynamicBitSet,
+    ) {
+        if visited_client_files.count() == 0 {
+            return;
+        }
+        for i in 0..self.route_bundles.len() {
+            let route_bundle::Data::Framework(framework) = &self.route_bundles[i].data else {
+                continue;
+            };
+            let route_type = self.router.route_ptr(framework.route_index).r#type;
+            let Some(client_file) = self.router.type_ptr_const(route_type).client_file else {
+                continue;
+            };
+            let client_file = from_opaque_file_id::<{ bake::Side::Client }>(client_file);
+            if visited_client_files.is_set(client_file.get() as usize) {
+                self.route_bundles[i].invalidate_client_bundle(&mut self.source_maps);
+                self.fail_loaded_route(route_bundle::Index::init(i as u32));
+            }
         }
     }
 

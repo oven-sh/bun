@@ -1136,6 +1136,212 @@ devTest("a route keeps the build error of a file that its router's server entry 
     await dev.fetch("/").equals("index 2");
   },
 });
+// A page tells the dev server the route that `history.pushState` took it to. The route gets a record and no bundle.
+async function navigateWithPushState(dev: Dev, pathname: string) {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  dev.on("hmr", function onMessage(data: Uint8Array) {
+    if (data[0] !== "n".charCodeAt(0)) return;
+    dev.off("hmr", onMessage);
+    resolve();
+  });
+  dev.socket!.send("n" + pathname);
+  await promise;
+}
+async function statusesAndTitles(dev: Dev, paths: string[]) {
+  const responses: [string, number, string][] = [];
+  for (const path of paths) {
+    responses.push([path, ...(await statusAndTitle(dev, path))]);
+  }
+  return responses;
+}
+// Each route of a router type loads the client entry point in the browser. No import leads from a route file to it.
+const clientEntryPointRouter = (root: string, serverEntryPoint: string, clientEntryPoint: string) =>
+  ({ root, style: "nextjs-pages", serverEntryPoint, clientEntryPoint }) as const;
+// With `?modules`, a page answers with the URL of its browser script.
+const renderPageOrModules = `
+  export function render(req, meta) {
+    const body = new URL(req.url).searchParams.has("modules") ? meta.modules.join("\\n") : meta.pageModule.default;
+    return new Response(body, { headers: { "content-type": "text/html" } });
+  }
+`;
+const scriptUrl = (dev: Dev, path: string) => dev.fetch(path + "?modules").text();
+// What the modules of a browser script log, or "reload" for the script that only reloads its page.
+async function scriptLogs(dev: Dev, url: string) {
+  const text = await dev.fetch(url).text();
+  if (text.startsWith("try{location.reload()}")) return "reload";
+  return [...new Set(text.match(/log:[a-z0-9 ]+/g))].sort();
+}
+for (const [name, file, broken, fixed, fixedLogs, env] of [
+  [
+    "the client entry point",
+    "client.ts",
+    `import "./client-dep"; import "./client.css"; console.log("log:client" +);`,
+    `import "./client-dep"; import "./client.css"; console.log("log:client v2");`,
+    ["log:client v2", "log:dep"],
+  ],
+  [
+    "a module that the client entry point imports",
+    "client-dep.ts",
+    `console.log("log:dep" +);`,
+    `console.log("log:dep v2");`,
+    ["log:client", "log:dep v2"],
+  ],
+  [
+    "a stylesheet that the client entry point imports",
+    "client.css",
+    `body { color`,
+    `body { color: blue; }`,
+    ["log:client", "log:dep"],
+  ],
+  // With 1, the default of debug builds, the dev server answers from the recorded failure and does not bundle again.
+  [
+    "a module that the client entry point imports, with BUN_ASSUME_PERFECT_INCREMENTAL=1",
+    "client-dep.ts",
+    `console.log("log:dep" +);`,
+    `console.log("log:dep v2");`,
+    ["log:client", "log:dep v2"],
+    { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  ],
+] as [string, string, string, string, string[], Record<string, string>?][]) {
+  devTest(`a build error in ${name} shows on the next request of each loaded route of the router type`, {
+    framework: {
+      fileSystemRouterTypes: [
+        clientEntryPointRouter("routes", "./server.ts", "./client.ts"),
+        // Two router types can have the same client entry point.
+        clientEntryPointRouter("shared", "./shared-server.ts", "./client.ts"),
+        clientEntryPointRouter("control", "./control-server.ts", "./control-client.ts"),
+      ],
+    },
+    files: {
+      "server.ts": renderPageOrModules,
+      "shared-server.ts": renderPageOrModules,
+      "control-server.ts": renderPageOrModules,
+      "client.ts": `import "./client-dep"; import "./client.css"; console.log("log:client");`,
+      "client-dep.ts": `console.log("log:dep");`,
+      "client.css": `body { color: red; }`,
+      "control-client.ts": `console.log("log:control");`,
+      "routes/index.ts": `export default "index";`,
+      "routes/second.ts": `export default "second";`,
+      "routes/third.ts": `export default "third";`,
+      "shared/shared.ts": `export default "shared";`,
+      "control/control.ts": `export default "control";`,
+    },
+    env,
+    async test(dev) {
+      expect(await statusesAndTitles(dev, ["/", "/second", "/shared", "/control"])).toEqual([
+        ["/", 200, "index"],
+        ["/second", 200, "second"],
+        ["/shared", 200, "shared"],
+        ["/control", 200, "control"],
+      ]);
+      const script = await scriptUrl(dev, "/");
+      const controlScript = await scriptUrl(dev, "/control");
+      expect(await scriptLogs(dev, script)).toEqual(["log:client", "log:dep"]);
+      await navigateWithPushState(dev, "/third");
+
+      await dev.write(file, broken, { errors: null });
+      // A page that a browser loaded before the save reloads when it asks for its script. A control page does not.
+      expect(await scriptLogs(dev, script)).toBe("reload");
+      expect(await scriptLogs(dev, controlScript)).toEqual(["log:control"]);
+      expect(await statusesAndTitles(dev, ["/shared", "/", "/second", "/third", "/", "/control"])).toEqual([
+        ["/shared", 500, "Bun - Build Failed"],
+        ["/", 500, "Bun - Build Failed"],
+        ["/second", 500, "Bun - Build Failed"],
+        // No request had loaded `/third` before the save.
+        ["/third", 500, "Bun - Build Failed"],
+        ["/", 500, "Bun - Build Failed"],
+        // The control router type has its own client entry point.
+        ["/control", 200, "control"],
+      ]);
+      // Two requests at once. In the release default mode, each of them bundles its route again.
+      expect(await Promise.all([statusAndTitle(dev, "/"), statusAndTitle(dev, "/second")])).toEqual([
+        [500, "Bun - Build Failed"],
+        [500, "Bun - Build Failed"],
+      ]);
+
+      await dev.write(file, fixed);
+      expect(await statusesAndTitles(dev, ["/", "/second", "/third", "/shared", "/control"])).toEqual([
+        ["/", 200, "index"],
+        ["/second", 200, "second"],
+        ["/third", 200, "third"],
+        ["/shared", 200, "shared"],
+        ["/control", 200, "control"],
+      ]);
+      expect(await scriptLogs(dev, await scriptUrl(dev, "/"))).toEqual(fixedLogs);
+    },
+  });
+}
+// With a parse error and no import, the client entry point leaves nothing to put in a browser script.
+devTest("a build error in a client entry point with no imports fails the route before a request builds its script", {
+  framework: { fileSystemRouterTypes: [clientEntryPointRouter("routes", "./server.ts", "./client.ts")] },
+  files: {
+    "server.ts": renderPageOrModules,
+    "client.ts": `console.log("log:client");`,
+    "routes/index.ts": `export default "index";`,
+  },
+  async test(dev) {
+    expect(await statusAndTitle(dev, "/")).toEqual([200, "index"]);
+    const script = await scriptUrl(dev, "/");
+
+    await dev.write("client.ts", `console.log("log:client" +);`, { errors: null });
+    expect(await scriptLogs(dev, script)).toBe("reload");
+    expect(await statusAndTitle(dev, "/")).toEqual([500, "Bun - Build Failed"]);
+
+    await dev.write("client.ts", `console.log("log:client v2");`);
+    expect(await statusAndTitle(dev, "/")).toEqual([200, "index"]);
+    expect(await scriptLogs(dev, await scriptUrl(dev, "/"))).toEqual(["log:client v2"]);
+  },
+});
+// The save's bundle parses client-dep.ts only. mid.ts is already bundled, so nothing visits broken.ts.
+devTest("a save that makes the client entry point import a module with a broken import fails the loaded routes", {
+  framework: {
+    fileSystemRouterTypes: [
+      clientEntryPointRouter("routes", "./server.ts", "./client.ts"),
+      clientEntryPointRouter("failed", "./failed-server.ts", "./failed-client.ts"),
+    ],
+  },
+  files: {
+    "server.ts": renderPageOrModules,
+    "failed-server.ts": renderPageOrModules,
+    "client.ts": `import "./client-dep"; console.log("log:client");`,
+    "client-dep.ts": `console.log("log:dep");`,
+    "failed-client.ts": `import "./mid"; console.log("log:failed client");`,
+    "mid.ts": `import "./broken"; console.log("log:mid");`,
+    "broken.ts": `console.log("log:broken" +);`,
+    "routes/index.ts": `export default "index";`,
+    "routes/second.ts": `export default "second";`,
+    "failed/failed.ts": `export default "failed";`,
+  },
+  async test(dev) {
+    expect(await statusesAndTitles(dev, ["/failed", "/", "/second"])).toEqual([
+      ["/failed", 500, "Bun - Build Failed"],
+      ["/", 200, "index"],
+      ["/second", 200, "second"],
+    ]);
+    const script = await scriptUrl(dev, "/");
+    expect(await scriptLogs(dev, script)).toEqual(["log:client", "log:dep"]);
+
+    await dev.write("client-dep.ts", `import "./mid"; console.log("log:dep v2");`, { errors: null });
+    expect(await scriptLogs(dev, script)).toBe("reload");
+    expect(await statusesAndTitles(dev, ["/", "/second"])).toEqual([
+      ["/", 500, "Bun - Build Failed"],
+      ["/second", 500, "Bun - Build Failed"],
+    ]);
+
+    await dev.write("broken.ts", `console.log("log:fixed");`);
+    expect(await statusesAndTitles(dev, ["/", "/second", "/failed"])).toEqual([
+      ["/", 200, "index"],
+      ["/second", 200, "second"],
+      ["/failed", 200, "failed"],
+    ]);
+    expect(await scriptLogs(dev, await scriptUrl(dev, "/"))).toEqual([
+      "log:client",
+      "log:dep v2",
+      "log:fixed",
+      "log:mid",
+    ]);
+  },
+});
 devTest("build error in a file imported by a 'use client' component", {
   framework: minimalFramework,
   files: {

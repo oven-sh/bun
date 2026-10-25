@@ -91,6 +91,8 @@ async function doWrites(
   await Bun.write(s3file, "x", { acl: "publik" });
   // @ts-expect-error - not an option of an S3 write or of a file write
   await Bun.write(s3file, "x", { bogus: true });
+  // @ts-expect-error - the runtime does not apply a type of the call: the content type comes from the S3File
+  await Bun.write(s3file, "x", { type: "text/plain" });
   // @ts-expect-error - a number is not data
   await Bun.write(s3file, 123);
   // @ts-expect-error - null is not data: the runtime throws ERR_INVALID_ARG_TYPE

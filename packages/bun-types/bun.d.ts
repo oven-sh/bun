@@ -2223,13 +2223,14 @@ declare module "bun" {
    * Upload `input` to an {@link S3File}.
    *
    * `options` applies to this write only: `destination` keeps its own options.
-   * An option that is set replaces the same option of `destination`, with two
-   * exceptions:
+   * An option that is set replaces the same option of `destination`, with one
+   * exception: `partSize`, `queueSize` and `retry` are applied to a stream
+   * `input`. For a `BunFile` or an `S3File` `input`, those of `destination`
+   * are used.
    *
-   * - `type` is not applied. The content type comes from `destination`: its
-   *   `type` when one is set, or else the extension of its key.
-   * - `partSize`, `queueSize` and `retry` are applied to a stream `input`. For
-   *   a `BunFile` or an `S3File` `input`, those of `destination` are used.
+   * `options` takes no `type`. The content type of the upload comes from
+   * `destination`: its `type` when one is set, or else the extension of its
+   * key. To set it, use {@link S3File.write} or the `type` option of `file()`.
    *
    * @param destination The S3 file to write to
    * @param input The data to upload
@@ -2247,7 +2248,9 @@ declare module "bun" {
     destination: S3File,
     input:
       Blob | ArrayBufferView | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream | Response | Request,
-    options?: S3Options & {
+    options?: Omit<S3Options, "type"> & {
+      // Spelled like the file signatures, without `| undefined`: with it, a function typed `typeof Bun.write`
+      // that takes `options?: { createPath?: boolean }` does not compile under exactOptionalPropertyTypes.
       /**
        * Has no effect on an S3 upload. The value must still be a file mode from 0 to 0o777.
        */

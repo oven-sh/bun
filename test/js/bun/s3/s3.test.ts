@@ -1547,14 +1547,24 @@ describe.concurrent("Bun.write(S3File, input, options)", () => {
   });
 
   it("does not apply a type of the call", async () => {
+    // The signature takes no `type` for this reason, so the type comes in through a variable.
+    const options: S3Options = { type: "text/x-call" };
     const typed = client.file(randomUUIDv7(), { type: "text/x-file" });
-    await Bun.write(typed, "x", { type: "text/x-call" });
+    await Bun.write(typed, "x", options);
     const byExtension = client.file(`${randomUUIDv7()}.json`);
-    await Bun.write(byExtension, "{}", { type: "text/x-call" });
+    await Bun.write(byExtension, "{}", options);
+    // S3File.write() does apply it.
+    const byMethod = client.file(randomUUIDv7());
+    await byMethod.write("x", { type: "text/x-call" });
 
-    expect({ typed: (await typed.stat()).type, byExtension: (await byExtension.stat()).type }).toEqual({
+    expect({
+      typed: (await typed.stat()).type,
+      byExtension: (await byExtension.stat()).type,
+      byMethod: (await byMethod.stat()).type,
+    }).toEqual({
       typed: "text/x-file",
       byExtension: "application/json;charset=utf-8",
+      byMethod: "text/x-call",
     });
   });
 

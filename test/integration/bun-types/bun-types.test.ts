@@ -1212,6 +1212,28 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("Bun.write options", () => {
+    // Each signature of Bun.write() spells `mode` and `createPath` the same way, so that the options of
+    // each one fit the file options. One that adds `| undefined` fails here.
+    typeTest("a function typed as Bun.write takes the file options with exactOptionalPropertyTypes", {
+      options: { exactOptionalPropertyTypes: true },
+      files: {
+        "write-options.ts": `
+          const write: typeof Bun.write = async (
+            destination: unknown,
+            input: unknown,
+            options?: { mode?: number; createPath?: boolean },
+          ) => (options?.createPath === false ? 0 : 1);
+          write("a.txt", "x", { mode: 0o600 });
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        expect(diagnostics.filter(d => d.line?.startsWith("write-options.ts"))).toEqual([]);
+      },
+    });
+  });
+
   describe("Bunland reaching for JSX", () => {
     typeTest("Bun.markdown.react() returns type compatible with React.ReactElement", {
       packages: ["@types/react", "@types/react-dom"],

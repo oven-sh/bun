@@ -1,9 +1,7 @@
-use std::any::Any;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use bun_collections::HashMap;
-use bun_threading::{Guarded, RwLock};
+use bun_threading::Guarded;
 
 use crate::mutex::{Condition, Mutex};
 use crate::shape::StructShape;
@@ -51,58 +49,136 @@ fn is_boxed(bits: u64) -> bool {
     bits & 0xfff8_0000_0000_0000 == QNAN && (bits >> TAG_SHIFT) & TAG_MASK != 0
 }
 
-/// Append-only table of interned values. Handles are never reused, so a slot's handle
-/// stays valid for the life of the process and equal values compare equal by handle.
-struct Interner<K: std::hash::Hash + Eq, V: ?Sized> {
-    index: Guarded<HashMap<K, u64>>,
-    values: RwLock<Vec<Arc<V>>>,
+/// A pointer that a slot owned and that a concurrent reader may still be about to use.
+#[allow(dead_code, reason = "each variant is only held until it drops")]
+enum Retired {
+    String(Box<Arc<[u16]>>),
+    BigInt(Box<Arc<str>>),
+    Struct(Arc<SharedBlock>),
+    Mutex(Arc<Mutex>),
+    Condition(Arc<Condition>),
 }
 
-impl<K: std::hash::Hash + Eq, V: ?Sized> Interner<K, V> {
-    fn new() -> Self {
-        Self {
-            index: Guarded::new(HashMap::new()),
-            values: RwLock::new(Vec::new()),
+/// The 48-bit datum for a thin pointer.
+fn pointer_datum<T>(ptr: *const T) -> u64 {
+    let addr = ptr as usize as u64;
+    assert!(addr <= DATUM_MASK, "pointer does not fit in 48 bits");
+    addr
+}
+
+/// Slot bits for `v` that own one strong count of whatever `v` points at. Strings and BigInts
+/// are boxed so the datum is a thin pointer. Pass the bits to [`SharedBlock::retire`] or
+/// [`release`] exactly once, or store them in a slot.
+fn encode_owned(v: &Value) -> u64 {
+    match v {
+        Value::String(s) => boxed(
+            TAG_STRING,
+            pointer_datum(Box::into_raw(Box::new(Arc::clone(s)))),
+        ),
+        Value::BigInt(s) => boxed(
+            TAG_BIGINT,
+            pointer_datum(Box::into_raw(Box::new(Arc::clone(s)))),
+        ),
+        Value::Struct(b) => boxed(TAG_STRUCT, pointer_datum(Arc::into_raw(Arc::clone(b)))),
+        Value::Mutex(m) => boxed(TAG_MUTEX, pointer_datum(Arc::into_raw(Arc::clone(m)))),
+        Value::Condition(c) => boxed(TAG_CONDITION, pointer_datum(Arc::into_raw(Arc::clone(c)))),
+        _ => encode_plain(v),
+    }
+}
+
+/// Slot bits for a value that owns nothing: a primitive, or the address of an object that the
+/// caller keeps alive. Strings and BigInts have no such form because they are boxed per store.
+fn encode_plain(v: &Value) -> u64 {
+    match v {
+        Value::Undefined => boxed(TAG_SPECIAL, 0),
+        Value::Null => boxed(TAG_SPECIAL, 1),
+        Value::Bool(false) => boxed(TAG_SPECIAL, 2),
+        Value::Bool(true) => boxed(TAG_SPECIAL, 3),
+        Value::Number(n) => {
+            if n.is_nan() {
+                QNAN
+            } else {
+                n.to_bits()
+            }
+        }
+        Value::Struct(b) => boxed(TAG_STRUCT, pointer_datum(Arc::as_ptr(b))),
+        Value::Mutex(m) => boxed(TAG_MUTEX, pointer_datum(Arc::as_ptr(m))),
+        Value::Condition(c) => boxed(TAG_CONDITION, pointer_datum(Arc::as_ptr(c))),
+        Value::String(_) | Value::BigInt(_) => unreachable!("strings and BigInts are boxed"),
+    }
+}
+
+/// Takes over the count that `bits` owns, if it owns one.
+///
+/// # Safety
+/// `bits` came from [`encode_owned`], and nothing else will release the same count.
+unsafe fn own(bits: u64) -> Option<Retired> {
+    if !is_boxed(bits) {
+        return None;
+    }
+    let addr = (bits & DATUM_MASK) as usize;
+    // SAFETY: per the contract, `addr` is the pointer `encode_owned` made for this tag, and its
+    // count belongs to the caller now.
+    unsafe {
+        match (bits >> TAG_SHIFT) & TAG_MASK {
+            TAG_STRING => Some(Retired::String(Box::from_raw(addr as *mut Arc<[u16]>))),
+            TAG_BIGINT => Some(Retired::BigInt(Box::from_raw(addr as *mut Arc<str>))),
+            TAG_STRUCT => Some(Retired::Struct(Arc::from_raw(addr as *const SharedBlock))),
+            TAG_MUTEX => Some(Retired::Mutex(Arc::from_raw(addr as *const Mutex))),
+            TAG_CONDITION => Some(Retired::Condition(Arc::from_raw(addr as *const Condition))),
+            _ => None,
         }
     }
+}
 
-    fn intern(&self, key: K, value: Arc<V>) -> u64 {
-        let mut index = self.index.lock();
-        if let Some(&h) = index.get(&key) {
-            return h;
+/// Frees bits that were never stored in a slot, so no reader can have seen them.
+fn release(bits: u64) {
+    // SAFETY: `bits` is fresh from `encode_owned` and unpublished, so this is the only owner.
+    drop(unsafe { own(bits) });
+}
+
+/// Reads a boxed string or BigInt datum.
+///
+/// # Safety
+/// `bits` has the tag for `T`, came from a slot, and a [`ReadGuard`] taken before that slot load
+/// is still held (or the caller owns the box).
+unsafe fn boxed_ref<'a, T>(bits: u64) -> &'a T {
+    // SAFETY: per the contract the box has not been freed.
+    unsafe { &*((bits & DATUM_MASK) as usize as *const T) }
+}
+
+/// The value `bits` holds, with a new strong count of any object.
+///
+/// # Safety
+/// `bits` came from a slot load made while a [`ReadGuard`] taken before the load is still held,
+/// or the caller owns the count `bits` carries (it just swapped the bits out of the slot).
+unsafe fn decode(bits: u64) -> Value {
+    if !is_boxed(bits) {
+        return Value::Number(f64::from_bits(bits));
+    }
+    let datum = bits & DATUM_MASK;
+    // SAFETY: for each pointer tag the allocation is live per the contract, so taking a new
+    // strong count (or cloning the boxed Arc) is sound.
+    unsafe {
+        match (bits >> TAG_SHIFT) & TAG_MASK {
+            TAG_SPECIAL => match datum {
+                0 => Value::Undefined,
+                1 => Value::Null,
+                2 => Value::Bool(false),
+                _ => Value::Bool(true),
+            },
+            TAG_STRING => Value::String(Arc::clone(boxed_ref::<Arc<[u16]>>(bits))),
+            TAG_BIGINT => Value::BigInt(Arc::clone(boxed_ref::<Arc<str>>(bits))),
+            TAG_STRUCT => Value::Struct(arc_from_datum(datum)),
+            TAG_MUTEX => Value::Mutex(arc_from_datum(datum)),
+            TAG_CONDITION => Value::Condition(arc_from_datum(datum)),
+            _ => Value::Undefined,
         }
-        let mut values = self.values.write();
-        let h = values.len() as u64;
-        assert!(h <= DATUM_MASK, "shared string table exhausted");
-        values.push(value);
-        index.insert(key, h);
-        h
     }
-
-    fn get(&self, h: u64) -> Arc<V> {
-        Arc::clone(&self.values.read()[h as usize])
-    }
-}
-
-fn strings() -> &'static Interner<Arc<[u16]>, [u16]> {
-    static T: OnceLock<Interner<Arc<[u16]>, [u16]>> = OnceLock::new();
-    T.get_or_init(Interner::new)
-}
-
-fn bigints() -> &'static Interner<Arc<str>, str> {
-    static T: OnceLock<Interner<Arc<str>, str>> = OnceLock::new();
-    T.get_or_init(Interner::new)
-}
-
-/// The address a slot stores for `a`.
-fn pointer_datum<T>(a: &Arc<T>) -> u64 {
-    let ptr = Arc::as_ptr(a) as usize as u64;
-    assert!(ptr <= DATUM_MASK, "pointer does not fit in 48 bits");
-    ptr
 }
 
 /// # Safety
-/// `datum` came from [`pointer_datum`] of an `Arc<T>` that some block still keeps alive.
+/// `datum` is the address of a live `Arc<T>` allocation.
 unsafe fn arc_from_datum<T>(datum: u64) -> Arc<T> {
     let ptr = datum as usize as *const T;
     // SAFETY: the caller guarantees the allocation is live, so taking a new strong count is sound.
@@ -112,19 +188,71 @@ unsafe fn arc_from_datum<T>(datum: u64) -> Arc<T> {
     }
 }
 
-/// A fixed-length block of atomic slots. Whatever it refers to is kept alive for as
-/// long as it lives, so a slot may hold a bare pointer without a per-slot refcount.
+/// Whether the slot bits `cur` hold the value `expected`. Numbers compare by bits after NaN
+/// canonicalization, strings and BigInts by content, objects by identity.
+///
+/// # Safety
+/// As [`decode`].
+unsafe fn holds(cur: u64, expected: &Value) -> bool {
+    let tag = (cur >> TAG_SHIFT) & TAG_MASK;
+    // SAFETY: forwarded; the tag is checked before the datum is read.
+    unsafe {
+        match expected {
+            Value::String(e) => {
+                is_boxed(cur) && tag == TAG_STRING && **boxed_ref::<Arc<[u16]>>(cur) == **e
+            }
+            Value::BigInt(e) => {
+                is_boxed(cur) && tag == TAG_BIGINT && **boxed_ref::<Arc<str>>(cur) == **e
+            }
+            _ => cur == encode_plain(expected),
+        }
+    }
+}
+
+/// Counts the readers that are between loading a slot and taking their own count.
+struct ReadGuard<'a>(&'a AtomicUsize);
+
+impl Drop for ReadGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// A fixed-length block of atomic slots. A slot that holds a string, BigInt, struct, mutex or
+/// condition owns one strong count of it, and overwriting the slot releases that count once no
+/// reader can still be using the old pointer.
+///
+/// Why that is safe: a reader does `readers += 1`, loads the slot, takes its own count, then
+/// `readers -= 1`, all sequentially consistent. A writer swaps the slot (so the old pointer is
+/// no longer reachable from it), then, holding the `garbage` lock, pushes the old pointer and
+/// frees the whole list only if `readers` is zero. A reader that loaded the old pointer loaded it
+/// before the swap in the SeqCst order, and incremented `readers` before that load. The writer's
+/// zero read comes after the swap (the lock orders it after every earlier push), and a counter
+/// that reads zero has seen every earlier increment matched by its decrement, so that reader has
+/// already taken its own count and is done with the pointer. Readers that start later load the
+/// new bits. If readers are in flight the list waits for the next overwrite or for the block to
+/// drop, so a block under constant read pressure defers reclamation.
 pub struct SharedBlock {
     slots: Box<[AtomicU64]>,
     /// Present for a shared struct: what its slots are called.
     shape: Option<Arc<StructShape>>,
-    /// Address and owner of every object a slot has ever held.
-    kept: Guarded<Vec<(usize, Arc<dyn Any + Send + Sync>)>>,
+    readers: AtomicUsize,
+    garbage: Guarded<Vec<Retired>>,
 }
 
 impl std::fmt::Debug for SharedBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "SharedBlock(len={})", self.slots.len())
+    }
+}
+
+impl Drop for SharedBlock {
+    fn drop(&mut self) {
+        for slot in &mut self.slots {
+            // SAFETY: `&mut self` means no reader exists, and each slot owns its count. The
+            // `garbage` list drops with the other fields.
+            drop(unsafe { own(*slot.get_mut()) });
+        }
     }
 }
 
@@ -144,21 +272,14 @@ impl SharedBlock {
         Arc::new(Self {
             slots: (0..len).map(|_| AtomicU64::new(undefined)).collect(),
             shape,
-            kept: Guarded::new(Vec::new()),
+            readers: AtomicUsize::new(0),
+            garbage: Guarded::new(Vec::new()),
         })
     }
 
     /// The field names, if this block is a shared struct and not a shared array.
     pub fn shape(&self) -> Option<&Arc<StructShape>> {
         self.shape.as_ref()
-    }
-
-    fn keep<T: Send + Sync + 'static>(&self, a: &Arc<T>) {
-        let addr = Arc::as_ptr(a) as usize;
-        let mut kept = self.kept.lock();
-        if !kept.iter().any(|(p, _)| *p == addr) {
-            kept.push((addr, Arc::clone(a) as Arc<dyn Any + Send + Sync>));
-        }
     }
 
     #[allow(
@@ -169,97 +290,90 @@ impl SharedBlock {
         self.slots.len()
     }
 
-    fn encode(&self, v: &Value) -> u64 {
-        match v {
-            Value::Undefined => boxed(TAG_SPECIAL, 0),
-            Value::Null => boxed(TAG_SPECIAL, 1),
-            Value::Bool(false) => boxed(TAG_SPECIAL, 2),
-            Value::Bool(true) => boxed(TAG_SPECIAL, 3),
-            Value::Number(n) => {
-                if n.is_nan() {
-                    QNAN
-                } else {
-                    n.to_bits()
-                }
-            }
-            Value::String(s) => boxed(TAG_STRING, strings().intern(Arc::clone(s), Arc::clone(s))),
-            Value::BigInt(s) => boxed(TAG_BIGINT, bigints().intern(Arc::clone(s), Arc::clone(s))),
-            Value::Struct(b) => {
-                self.keep(b);
-                boxed(TAG_STRUCT, pointer_datum(b))
-            }
-            Value::Mutex(m) => {
-                self.keep(m);
-                boxed(TAG_MUTEX, pointer_datum(m))
-            }
-            Value::Condition(c) => {
-                self.keep(c);
-                boxed(TAG_CONDITION, pointer_datum(c))
-            }
-        }
+    fn enter(&self) -> ReadGuard<'_> {
+        self.readers.fetch_add(1, Ordering::SeqCst);
+        ReadGuard(&self.readers)
     }
 
-    fn decode(&self, bits: u64) -> Value {
-        if !is_boxed(bits) {
-            return Value::Number(f64::from_bits(bits));
-        }
-        let datum = bits & DATUM_MASK;
-        match (bits >> TAG_SHIFT) & TAG_MASK {
-            TAG_SPECIAL => match datum {
-                0 => Value::Undefined,
-                1 => Value::Null,
-                2 => Value::Bool(false),
-                _ => Value::Bool(true),
-            },
-            TAG_STRING => Value::String(strings().get(datum)),
-            TAG_BIGINT => Value::BigInt(bigints().get(datum)),
-            // SAFETY: each datum came from `pointer_datum` of an Arc held in some block's
-            // `kept`. That list is only ever appended to, so the Arc outlives every slot that
-            // names it, and the block owning this slot outlives `&self`.
-            TAG_STRUCT => Value::Struct(unsafe { arc_from_datum(datum) }),
-            // SAFETY: as for `TAG_STRUCT`.
-            TAG_MUTEX => Value::Mutex(unsafe { arc_from_datum(datum) }),
-            // SAFETY: as for `TAG_STRUCT`.
-            TAG_CONDITION => Value::Condition(unsafe { arc_from_datum(datum) }),
-            _ => Value::Undefined,
-        }
+    /// Releases the count that `old` owned, which a swap or a compare-exchange just took out of
+    /// a slot, as soon as no reader can still be using it. See the type comment.
+    fn retire(&self, old: u64) {
+        // SAFETY: the slot owned `old` and the caller removed it, so nothing else releases it.
+        let Some(retired) = (unsafe { own(old) }) else {
+            return;
+        };
+        let batch = {
+            let mut garbage = self.garbage.lock();
+            garbage.push(retired);
+            if self.readers.load(Ordering::SeqCst) != 0 {
+                return;
+            }
+            std::mem::take(&mut *garbage)
+        };
+        drop(batch);
     }
 
     /// Sequentially consistent read of slot `i`.
     pub fn load(&self, i: usize) -> Value {
-        self.decode(self.slots[i].load(Ordering::SeqCst))
+        let _guard = self.enter();
+        // SAFETY: the guard was taken before the load.
+        unsafe { decode(self.slots[i].load(Ordering::SeqCst)) }
     }
 
     /// Sequentially consistent write of slot `i`.
     pub fn store(&self, i: usize, v: &Value) {
-        let bits = self.encode(v);
-        self.slots[i].store(bits, Ordering::SeqCst);
+        let old = self.slots[i].swap(encode_owned(v), Ordering::SeqCst);
+        self.retire(old);
     }
 
     /// Writes `v` and returns the previous value.
     pub fn exchange(&self, i: usize, v: &Value) -> Value {
-        let bits = self.encode(v);
-        self.decode(self.slots[i].swap(bits, Ordering::SeqCst))
+        let old = self.slots[i].swap(encode_owned(v), Ordering::SeqCst);
+        // SAFETY: the swap handed this thread the slot's count, which `retire` has not released.
+        let previous = unsafe { decode(old) };
+        self.retire(old);
+        previous
     }
 
     /// Writes `new` if the slot currently holds `expected`. Returns the value that was read.
     pub fn compare_exchange(&self, i: usize, expected: &Value, new: &Value) -> Value {
-        let expected = self.encode(expected);
-        let new = self.encode(new);
-        match self.slots[i].compare_exchange(expected, new, Ordering::SeqCst, Ordering::SeqCst) {
-            Ok(old) | Err(old) => self.decode(old),
+        let new_bits = encode_owned(new);
+        let slot = &self.slots[i];
+        let guard = self.enter();
+        let (seen, replaced) = loop {
+            let cur = slot.load(Ordering::SeqCst);
+            // SAFETY: the guard was taken before this load.
+            if !unsafe { holds(cur, expected) } {
+                // SAFETY: as above.
+                break (unsafe { decode(cur) }, None);
+            }
+            // Equal content can sit behind different bits, so swap on the exact bits observed
+            // and look again if the slot changed in between.
+            if slot
+                .compare_exchange(cur, new_bits, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                // SAFETY: as above; the swap made `cur` ours, and `retire` has not run yet.
+                break (unsafe { decode(cur) }, Some(cur));
+            }
+        };
+        drop(guard);
+        match replaced {
+            Some(old) => self.retire(old),
+            None => release(new_bits),
         }
+        seen
     }
 
-    /// Unordered read, for plain `obj.field` access.
+    /// Plain `obj.field` read. Slots are sequentially consistent whatever the caller asks for,
+    /// because reclaiming an overwritten pointer relies on it.
     pub fn load_relaxed(&self, i: usize) -> Value {
-        self.decode(self.slots[i].load(Ordering::Relaxed))
+        self.load(i)
     }
 
-    /// Unordered write, for plain `obj.field = v` access.
+    /// Plain `obj.field = v` write; sequentially consistent for the reason given on `load_relaxed`.
     pub fn store_relaxed(&self, i: usize, v: &Value) {
-        let bits = self.encode(v);
-        self.slots[i].store(bits, Ordering::Relaxed);
+        self.store(i, v);
     }
 }
 
@@ -294,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn strings_intern_and_keep_lone_surrogates() {
+    fn strings_keep_lone_surrogates() {
         let b = SharedBlock::new(2);
         let lone: Arc<[u16]> = vec![0xd800u16, 0x61].into();
         b.store(0, &Value::String(lone.clone()));
@@ -385,5 +499,139 @@ mod tests {
             t.join().unwrap();
         }
         assert!(matches!(b.load(0), Value::Number(n) if n == 16000.0));
+    }
+
+    #[test]
+    fn overwriting_a_slot_drops_the_old_child() {
+        let outer = SharedBlock::new(1);
+        let inner = SharedBlock::new(1);
+        let weak = Arc::downgrade(&inner);
+        outer.store(0, &Value::Struct(inner.clone()));
+        assert_eq!(Arc::strong_count(&inner), 2);
+        outer.store(0, &Value::Number(1.0));
+        assert_eq!(Arc::strong_count(&inner), 1);
+        drop(inner);
+        assert_eq!(weak.strong_count(), 0);
+    }
+
+    #[test]
+    fn exchange_and_dropping_the_block_release_children() {
+        let outer = SharedBlock::new(1);
+        let inner = SharedBlock::new(0);
+        outer.store(0, &Value::Struct(inner.clone()));
+        let old = outer.exchange(0, &Value::Null);
+        assert!(matches!(&old, Value::Struct(got) if Arc::ptr_eq(got, &inner)));
+        drop(old);
+        assert_eq!(Arc::strong_count(&inner), 1);
+        outer.store(0, &Value::Struct(inner.clone()));
+        drop(outer);
+        assert_eq!(Arc::strong_count(&inner), 1);
+    }
+
+    #[test]
+    fn overwritten_strings_are_freed_and_nothing_accumulates() {
+        let b = SharedBlock::new(1);
+        let first = utf16("first");
+        let weak = Arc::downgrade(&first);
+        b.store(0, &Value::String(first));
+        assert_eq!(weak.strong_count(), 1);
+        b.store(0, &Value::Number(0.0));
+        assert_eq!(weak.strong_count(), 0);
+        // The block holds no table of what it once stored.
+        for n in 0..1000 {
+            b.store(0, &Value::String(utf16(&format!("unique {n}"))));
+            b.store(0, &Value::BigInt(format!("{n}").into()));
+            assert!(b.garbage.lock().is_empty());
+        }
+    }
+
+    #[test]
+    fn compare_exchange_compares_string_content() {
+        let b = SharedBlock::new(2);
+        b.store(0, &Value::String(utf16("hi")));
+        let seen = b.compare_exchange(0, &Value::String(utf16("hi")), &Value::String(utf16("bye")));
+        assert!(is_str(&seen, "hi"));
+        assert!(is_str(&b.load(0), "bye"));
+
+        let replacement = utf16("never stored");
+        let weak = Arc::downgrade(&replacement);
+        let seen = b.compare_exchange(
+            0,
+            &Value::String(utf16("nope")),
+            &Value::String(replacement),
+        );
+        assert!(is_str(&seen, "bye"));
+        assert!(is_str(&b.load(0), "bye"));
+        // A failed exchange drops the replacement it had prepared.
+        assert_eq!(weak.strong_count(), 0);
+
+        // A number never equals a string, and BigInts compare by content too.
+        let seen = b.compare_exchange(0, &Value::Number(1.0), &Value::Null);
+        assert!(is_str(&seen, "bye"));
+        b.store(1, &Value::BigInt("12345678901234567890".into()));
+        let seen = b.compare_exchange(
+            1,
+            &Value::BigInt(String::from("12345678901234567890").into()),
+            &Value::Bool(true),
+        );
+        assert!(matches!(seen, Value::BigInt(n) if &*n == "12345678901234567890"));
+        assert!(matches!(b.load(1), Value::Bool(true)));
+    }
+
+    #[test]
+    fn compare_exchange_on_objects_compares_identity() {
+        let b = SharedBlock::new(1);
+        let (one, two) = (SharedBlock::new(0), SharedBlock::new(0));
+        b.store(0, &Value::Struct(one.clone()));
+        let seen = b.compare_exchange(0, &Value::Struct(two.clone()), &Value::Null);
+        assert!(matches!(&seen, Value::Struct(got) if Arc::ptr_eq(got, &one)));
+        b.compare_exchange(0, &Value::Struct(one.clone()), &Value::Struct(two.clone()));
+        assert!(matches!(b.load(0), Value::Struct(got) if Arc::ptr_eq(&got, &two)));
+        assert_eq!(Arc::strong_count(&one), 2);
+    }
+
+    #[test]
+    fn concurrent_stores_and_loads_of_strings_and_children() {
+        let (threads, rounds) = if cfg!(miri) { (3, 12) } else { (6, 1500) };
+        let shared = SharedBlock::new(1);
+        let child = SharedBlock::new(1);
+        child.store(0, &Value::Number(5.0));
+        let workers: Vec<_> = (0..threads)
+            .map(|t| {
+                let (shared, child) = (shared.clone(), child.clone());
+                std::thread::spawn(move || {
+                    for n in 0..rounds {
+                        match (t + n) % 4 {
+                            0 => shared.store(0, &Value::String(utf16(&format!("t{t} n{n}")))),
+                            1 => shared.store(0, &Value::Struct(child.clone())),
+                            2 => {
+                                let _ = shared.exchange(0, &Value::Struct(SharedBlock::new(1)));
+                            }
+                            _ => {
+                                let seen = shared.load(0);
+                                let again = shared.compare_exchange(0, &seen, &Value::Null);
+                                drop((seen, again));
+                            }
+                        }
+                        match shared.load(0) {
+                            Value::String(s) => assert!(!s.is_empty()),
+                            Value::Struct(b) => {
+                                assert!(matches!(b.load(0), Value::Number(_) | Value::Undefined));
+                            }
+                            Value::Null => {}
+                            other => panic!("{other:?}"),
+                        }
+                    }
+                })
+            })
+            .collect();
+        for w in workers {
+            w.join().unwrap();
+        }
+        // With every reader gone, the next overwrite frees whatever was deferred.
+        shared.store(0, &Value::Struct(child.clone()));
+        shared.store(0, &Value::Null);
+        assert!(shared.garbage.lock().is_empty());
+        assert_eq!(Arc::strong_count(&child), 1);
     }
 }

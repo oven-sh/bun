@@ -3,7 +3,7 @@
 //! A [`SharedBlock`] is a fixed-length array of atomic 64-bit slots. Each worker's
 //! JS object for a shared struct is a thin view over one block, so reads and writes
 //! reach the same memory with no copy. A slot holds a NaN-boxed [`Value`]: a
-//! primitive, an interned string, a reference to another block, or a sync primitive.
+//! primitive, a boxed string, a reference to another block, or a sync primitive.
 
 mod mutex;
 mod shape;

@@ -660,17 +660,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match (binding.data, expr.data) {
             (BData::BObject(bound), ExprData::EObject(object)) if object.was_originally_macro => {
                 let bound = bound.get();
-                // A rest element, or a key that is not one flat string, can read any property.
+                let is_flat =
+                    |key: &Expr| matches!(key.data, ExprData::EString(key) if key.next.is_none());
+                let mut narrow = true;
                 for property in bound.properties() {
-                    if property.flags.contains(flags::Property::IsSpread)
-                        || !matches!(property.key.data, ExprData::EString(key) if key.next.is_none())
-                    {
+                    if property.flags.contains(flags::Property::IsSpread) {
                         return expr;
                     }
+                    // A key that is not one flat string can read any property.
+                    narrow &= is_flat(&property.key);
                 }
                 let mut kept = G::PropertyList::init_capacity(bound.properties().len());
                 let mut kept_from: BumpVec<'a, u32> = BumpVec::new_in(self.arena);
                 for property in bound.properties() {
+                    if !is_flat(&property.key) {
+                        continue;
+                    }
                     let Some(name) = property.key.as_string_literal(self.arena) else {
                         continue;
                     };
@@ -683,6 +688,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         kind,
                         property.default_value.is_some(),
                     );
+                    if !narrow {
+                        continue;
+                    }
                     match kept_from.iter().position(|&from| from == query.i) {
                         // The pattern binds this key again. Keep the whole value.
                         Some(at) => kept[at].value = Some(query.expr),
@@ -694,6 +702,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             kept.push(copy);
                         }
                     }
+                }
+                if !narrow {
+                    return expr;
                 }
                 self.new_expr(
                     E::Object {
@@ -749,7 +760,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     fn admit_const_value(&mut self, ref_: Ref, kind: LocalKind, has_default: bool, value: Expr) {
         if let Some(value) = js_ast::ConstValue::new(kind, has_default, value) {
-            debug_assert!(self.symbols[ref_.inner_index() as usize].kind == SymbolKind::Constant);
             self.const_values.put(ref_, value).expect("oom");
         }
     }

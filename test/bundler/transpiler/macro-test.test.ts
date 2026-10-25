@@ -443,13 +443,14 @@ describe("a macro result that is bound to a name", () => {
   // The inliner takes a `const` primitive from a macro at each position. It takes no `let` and no `var`: the
   // program can assign to them.
   test.concurrent("the inliner takes a const primitive and no let or var", async () => {
-    const from = `import { num, hello, no, pagePath } from "./m.ts" with { type: "macro" };\n`;
+    const from = `import { num, hello, no, pagePath, pair } from "./m.ts" with { type: "macro" };\n`;
     using dir = tempDir("macro-bound-inline", {
       "m.ts": `
         export const num = () => 21;
         export const hello = () => "Hello";
         export const no = () => false;
         export const pagePath = () => "./page.ts";
+        export const pair = () => ({ a: 1, b: 2 });
       `,
       "page.ts": `export default "the page";`,
       "first.ts": from + `const n = num(); const s = hello(); export default [n, n, s, s];`,
@@ -459,6 +460,7 @@ describe("a macro result that is bound to a name", () => {
       "after-let.ts": from + `let i = num(); const k = 5; export default [i, k, k];`,
       "flag-const.ts": from + `const DEV = no(); export default DEV ? "dev" : "prod";`,
       "flag-var.ts": from + `var DEV = no(); export default DEV ? "dev" : "prod";`,
+      "computed.ts": from + `const key = () => "b"; const { a, [key()]: v } = pair(); export default [a, a, v];`,
       "import-const.ts": from + `const page = pagePath(); export default import(page);`,
       "import-let.ts": from + `let page = pagePath(); export default import(page);`,
     });
@@ -470,6 +472,7 @@ describe("a macro result that is bound to a name", () => {
       "after-let",
       "flag-const",
       "flag-var",
+      "computed",
       "import-const",
       "import-let",
     ];
@@ -501,6 +504,8 @@ describe("a macro result that is bound to a name", () => {
     expect(await out("after-let")).toContain(`[i, 5, 5]`);
     expect(await out("flag-const")).toContain(`= "prod"`);
     expect(await out("flag-var")).toContain(`DEV ? "dev" : "prod"`);
+    // A computed key keeps each property of the object. The leaf beside it is still a `const` primitive.
+    expect(await out("computed")).toContain(`[1, 1, v]`);
     // The bundler follows an `import()` of a `const` string. It cannot follow a `let`.
     expect(await out("import-const")).toContain(`"the page"`);
     expect(await out("import-let")).toContain(`import(page)`);

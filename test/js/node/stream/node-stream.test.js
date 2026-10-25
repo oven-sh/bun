@@ -1942,9 +1942,9 @@ describe("stream operators argument validation (nodejs/node#59529)", () => {
   });
 });
 
-// Node defines the operator methods when lib/stream.js loads, and every internal user of Readable loads it.
-// In Bun, net, tls, crypto, child_process, worker_threads, _http_incoming and the _stream_* modules reach the
-// class and never load node:stream. Each script below runs in a fresh process that has not loaded node:stream.
+// Node defines the operator methods when lib/stream.js loads, and its net, tls, crypto, child_process and
+// worker_threads load that file. In Bun those modules, _http_incoming and the _stream_* modules reach the class
+// and never load node:stream. Each script below runs in a fresh process that has not loaded node:stream.
 // On the main thread a read of process.stdout, process.stderr or process.stdin loads it. console.log does not.
 describe("Readable operators in a process that has not loaded node:stream", () => {
   const lengths = {
@@ -2139,6 +2139,53 @@ describe("Readable operators in a process that has not loaded node:stream", () =
         "new toArray() throws": "ERR_ILLEGAL_CONSTRUCTOR",
         "forEach(123) throws": "nothing",
         "forEach(123) rejects with": "ERR_INVALID_ARG_TYPE",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a global replaced during the first call is not used after it is restored", async () => {
+    const result = await run(`
+      const Readable = require("node:_stream_readable");
+      const replaced = [
+        [Math, "floor"],
+        [Number, "isNaN"],
+        [Array.prototype, "push"],
+        [Function.prototype, "bind"],
+        [Object, "defineProperty"],
+      ];
+      const callsAfterRestore = {};
+      let restored = false;
+      const originals = replaced.map(([object, key]) => {
+        const original = object[key];
+        callsAfterRestore[key] = 0;
+        object[key] = function (...args) {
+          if (restored) callsAfterRestore[key]++;
+          return Reflect.apply(original, this, args);
+        };
+        return original;
+      });
+      const collect = () =>
+        Readable.from([1.5, 2.5, 3.5])
+          .map(n => n * 2, { concurrency: 2 })
+          .drop(1)
+          .take(1)
+          .toArray();
+      collect().then(async first => {
+        replaced.forEach(([object, key], i) => {
+          object[key] = originals[i];
+        });
+        restored = true;
+        const second = await collect();
+        console.log(JSON.stringify({ first, second, callsAfterRestore }));
+      });
+    `);
+    expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+      stdout: {
+        first: [5],
+        second: [5],
+        callsAfterRestore: { floor: 0, isNaN: 0, push: 0, bind: 0, defineProperty: 0 },
       },
       stderr: "",
       exitCode: 0,

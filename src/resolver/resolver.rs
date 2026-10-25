@@ -161,13 +161,12 @@ mod bun_paths {
 }
 // bun_core::strings shim — re-export the canonical `immutable/paths` helpers
 // (`without_trailing_slash_windows_path` / `path_contains_node_modules_folder` /
-// `without_leading_path_separator` / `char_is_any_slash`) instead of locally
+// `char_is_any_slash`) instead of locally
 // re-implementing them. The previous local copies diverged from the spec
 // (single-strip vs. while-loop, `is_sep_any` vs. platform `SEP`).
 mod strings {
     pub(super) use bun_paths::strings::paths::{
-        char_is_any_slash, path_contains_node_modules_folder, without_leading_path_separator,
-        without_trailing_slash_windows_path,
+        char_is_any_slash, path_contains_node_modules_folder, without_trailing_slash_windows_path,
     };
     pub(super) use bun_paths::strings::*;
 }
@@ -3683,11 +3682,16 @@ impl<'a> Resolver<'a> {
             return MatchStatus::NotFound;
         }
 
+        // A `*` capture can root this package-relative path (a separator, or a drive on Windows), and the join resets on a rooted part.
+        let relative = strings::trim_left(&esm_resolution.path, b"/\\");
+        if bun_paths::Platform::Loose.is_absolute(relative)
+            || (cfg!(windows) && bun_paths::resolve_path::windows_volume_name_len(relative).0 > 0)
+        {
+            return MatchStatus::NotFound;
+        }
+
         let abs_esm_path: &[u8] = match self.fs_ref().abs_buf_checked(
-            &[
-                abs_package_path,
-                strings::without_leading_path_separator(&esm_resolution.path),
-            ],
+            &[abs_package_path, relative],
             bufs!(esm_absolute_package_path_joined),
         ) {
             Some(p) => p,

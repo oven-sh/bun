@@ -467,10 +467,8 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     path
 }
 
-/// On Windows `/` is a separator too, and a join treats a part that still starts with one as rooted.
 pub fn without_leading_path_separator(this: &[u8]) -> &[u8] {
-    let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
-    strings::trim_left(this, separators)
+    strings::trim_left(this, &[crate::SEP])
 }
 
 pub use bun_core::strings::remove_leading_dot_slash;

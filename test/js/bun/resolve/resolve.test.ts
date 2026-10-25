@@ -805,23 +805,44 @@ describe("package.json exports and imports key order", () => {
     });
   });
 
-  // The "*" of a tie captures text that starts with "/". On Windows that is a separator too, and the
-  // capture must not become the root of the path when the target puts it directly after "./".
-  it.concurrent('a "*" capture that starts with "/" stays inside the package', () => {
-    using dir = tempDir("resolver-pattern-slash-capture", {
+  // A "*" capture is text from the specifier. It can start with a separator or, on Windows, with a drive.
+  // The join with the package directory must not take it as a new root.
+  it.concurrent('a rooted "*" capture does not leave the package', () => {
+    using dir = tempDir("resolver-pattern-rooted-capture", {
       "package.json": JSON.stringify({ name: "host" }),
+      "outside.js": "module.exports = 1;",
+      ...pkg("all", { "./*": "./*" }, "inside.js"),
       ...pkg("tie", { "./a/b/": "./nomatch/", "./a/b*": "./*.js" }, "file.js"),
-      ...pkg("no-folder-key", { "./a*": "./*.js" }, "file.js"),
     });
     const root = String(dir);
     const modules = join(root, "node_modules");
+    // The path of outside.js from the root of its drive, with "/" separators and no leading one.
+    const drive = isWindows ? root.slice(0, 2) : "";
+    const outside = join(root, "outside.js").slice(drive.length).replaceAll("\\", "/").replace(/^\/+/, "");
+    const escapes: Record<string, string> = {
+      slash: `all//${outside}`,
+      backslash: `all/\\${outside}`,
+    };
+    if (isWindows) {
+      escapes.drive = `all/${drive}/${outside}`;
+      escapes.driveRelative = `all/${drive}inside.js`;
+    }
+    const resolved: Record<string, string> = {};
+    const notFound: Record<string, string> = {};
+    for (const [name, spec] of Object.entries(escapes)) {
+      resolved[name] = resolveOrCode(spec, root);
+      notFound[name] = "ERR_MODULE_NOT_FOUND";
+    }
 
     expect({
+      inside: resolveOrCode("all/inside.js", root),
+      // The capture of a tie starts with "/". It resolves, and it stays in the package.
       tie: resolveOrCode("tie/a/b/file", root),
-      noFolderKey: resolveOrCode("no-folder-key/a/file", root),
+      ...resolved,
     }).toEqual({
+      inside: join(modules, "all/inside.js"),
       tie: join(modules, "tie/file.js"),
-      noFolderKey: join(modules, "no-folder-key/file.js"),
+      ...notFound,
     });
   });
 

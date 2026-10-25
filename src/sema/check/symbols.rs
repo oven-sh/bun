@@ -393,7 +393,11 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => {}
             }
-            return stored_type;
+            // `getTypeOfVariableOrParameterOrProperty` returns its own result, whatever a resolution inside it assigned.
+            return match is_variable_or_property(flags, value_declaration) {
+                true => ty,
+                false => stored_type,
+            };
         }
         // `getTypeOfAccessors`: `links.resolvedType` is assigned only if it's nil, and the caller
         // gets that value. `getTypeOfVariableOrParameterOrProperty` returns its own.

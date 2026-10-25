@@ -295,11 +295,6 @@ impl<'p, 's> Checker<'p, 's> {
             self.resolution_start = self.stack.len();
         }
         let serial = self.work;
-        if !is_in_progress {
-            // Drop what a resolution inside `re_resolve_signature` left behind.
-            self.signatures_resolved_within
-                .retain(|r| !(r.0 == file && r.1 == call));
-        }
         // `getResolvedSignature` would return it. Here the call is resolved again, and the result isn't used.
         let is_assigned =
             (self.signatures_resolved_within.iter()).any(|r| r.0 == file && r.1 == call);
@@ -487,6 +482,8 @@ impl<'p, 's> Checker<'p, 's> {
         let resolved = self.with_return_type(resolved);
         self.resolved_meanwhile.pop();
         let _ = self.leave(Query::Call(file, call));
+        self.signatures_resolved_within
+            .retain(|r| !(r.0 == file && r.1 == call));
         self.calls_resolved_afresh[at].1 = Some(resolved);
         Some(resolved)
     }

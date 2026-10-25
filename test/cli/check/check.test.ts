@@ -8879,6 +8879,71 @@ export const x80 = x30.extend({ self: x41 });
       }
     });
 
+    // `x0` is resolved three times, each inside the one before. The innermost one ends first and assigns its type. The
+    // one around it is in a cycle, and `x0.o` in m0.ts, which asked for it, gets `any`.
+    test("a circular resolution of a variable returns any, whatever a resolution inside it assigned", async () => {
+      using dir = project({
+        "lib.ts": `export declare class S<O> { o: O; transform<U>(f: (v: O) => U): S<U>; extend<E>(e: E): S<O & E>; refine(f: (v: O) => boolean): S<O>; }
+export declare function lazy<T>(f: () => T): S<T>;
+export declare function obj<T>(s: T): S<T>;
+export declare function num(x: number): number;
+`,
+        "m0.ts": `import { lazy, obj, num } from "./lib";
+import { x0, x5 } from "./m1";
+export const x1 = lazy(() => [num(x0.o)]);
+export const x4 = obj({ a: lazy(() => x4) }).extend({ c: num(x5.o) });
+`,
+        "m1.ts": `import { lazy, obj } from "./lib";
+import { x1, x4 } from "./m0";
+export const x0 = x2.refine(v => !!v);
+export const x2 = obj({ a: lazy(() => x1), b: x4.transform(v => v.nope) });
+export const x5 = x0.transform(v => 1);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "m0.ts(3,14): error TS7022: 'x1' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "m0.ts(3,24): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "m0.ts(4,14): error TS7022: 'x4' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "m0.ts(4,33): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "m1.ts(3,14): error TS7022: 'x0' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "m1.ts(3,19): error TS2448: Block-scoped variable 'x2' used before its declaration.",
+          "m1.ts(3,19): error TS2454: Variable 'x2' is used before being assigned.",
+          "m1.ts(4,14): error TS7022: 'x2' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "m1.ts(4,33): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "m1.ts(4,60): error TS7006: Parameter 'v' implicitly has an 'any' type.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    // The argument of `router` in m1.ts is first checked in the mode that skips generic functions. The callee of
+    // `keys()` leads to `c11` again, and that resolution of `keys()` finds `p` to be `any` and assigns its signature.
+    test("a call keeps the signature that a resolution inside the check of its callee assigned", async () => {
+      using dir = project({
+        "lib.ts": `export type Def = { [k: string]: number | Router<any> };
+export declare class Router<D extends Def> { def: D; }
+export declare function router<D extends Def>(d: D): Router<D>;
+`,
+        "m0.ts": `import { router } from "./lib"; import { c11 } from "./m1";
+declare const flag: boolean;
+export class C00 { p = [router({ b: flag ? new C00().p : c11 })]; }
+`,
+        "m1.ts": `import { router } from "./lib"; import { C00 } from "./m0";
+export const c11 = router({ b: new C00().p.keys() });
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "m0.ts(3,20): error TS7022: 'p' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "m0.ts(3,54): error TS2729: Property 'p' is used before its initialization.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // b.ts is checked first. The call of `router` is resolved a second time inside its first resolution, without
     // constraint checks, so there it succeeds. The outer resolution fails, and `resolveCall` assigns the signature of a
     // failed call before it reports, so `one` is a `Router<Def>` for the outer call of `merge`.

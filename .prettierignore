@@ -51,4 +51,5 @@ test/js/bun/structs/shared-struct.test.ts
 test/js/bun/structs/struct-typescript.test.ts
 test/js/bun/structs/struct.test.ts
 test/js/bun/structs/sync.test.ts
+test/js/bun/structs/vm.test.ts
 test/js/bun/structs/fixtures/exported-struct.ts

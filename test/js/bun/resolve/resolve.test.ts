@@ -2380,6 +2380,7 @@ describe.concurrent("when the process is short of descriptors", () => {
   afterAll(() => fixture?.[Symbol.dispose]());
 
   // Runs bun in `cwd` with 256 descriptors. An argument that is not a string is JSON for the script.
+  // `stdout` is the JSON that the script prints, or the text of a script that did not get that far.
   async function runWithFewDescriptors(cwd: string, args: (string | object)[], env: NodeJS.Dict<string> = {}) {
     const argv = args.map(arg => (typeof arg === "string" ? arg : JSON.stringify(arg)));
     await using proc = Bun.spawn({
@@ -2389,8 +2390,12 @@ describe.concurrent("when the process is short of descriptors", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout: JSON.parse(stdout || "null"), stderr, exitCode };
+    const [text, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let stdout: unknown = text;
+    try {
+      stdout = JSON.parse(text);
+    } catch {}
+    return { stdout, stderr, exitCode };
   }
 
   const noDescriptor = { error: expect.stringContaining("EMFILE while resolving") };

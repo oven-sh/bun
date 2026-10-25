@@ -104,10 +104,8 @@ async function overHttp2(port: number, fixture: Fixture): Promise<Outcome> {
   const client = await RawH2.connect(port, false);
   try {
     client.headers(1, baseHeaders("/"));
-    const ended = client.body(1).then(
-      () => true,
-      () => false,
-    );
+    // The stream ends with its last DATA frame, with a reset, or with the connection.
+    const ended = Promise.race([client.body(1).then(() => true), client.rst(1).then(() => false)]).catch(() => false);
     // If the response ends and the probe has not run, the fixture has nothing more to print.
     ended.then(fixture.finish);
     const order = await probeOrder(fixture, () => {

@@ -30,6 +30,8 @@ let ws: ServerWebSocket<unknown> | undefined;
 // last turn whose timer ran.
 let armed = 0;
 let fired = 0;
+// The test has closed stdin.
+let ended = false;
 
 const probes: Record<string, { entries: number; run(): void }> = {
   // ws.close() runs close() before it returns, between the event loop's enter() and exit().
@@ -96,7 +98,7 @@ function release() {
 }
 
 function arm() {
-  if (probed) return;
+  if (probed || ended) return;
   const turn = ++armed;
   setTimeout(() => {
     fired = turn;
@@ -323,4 +325,5 @@ console.log(server.port);
 // The test writes "sent" when it has sent the rest of a request body. It closes stdin when
 // the response has ended.
 for await (const line of console) if (line === "sent") release();
+ended = true;
 server.stop(true);

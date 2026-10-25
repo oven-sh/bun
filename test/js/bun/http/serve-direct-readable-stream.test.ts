@@ -1214,6 +1214,15 @@ describe("jobs of the script that the socket's writable callback runs for a stre
       expect(await serve("stream", "statement")).toEqual(completed(afterTheScript));
     });
 
+    test.concurrent("run when pull() throws, and the response is cut off", async () => {
+      expect(await serve("stream that throws", "statement")).toEqual({
+        order: afterTheScript,
+        response: "cut off",
+        stderr: expect.stringContaining("thrown by pull()"),
+        exitCode: 0,
+      });
+    });
+
     // On Windows, libuv runs the timers of a turn before it polls: a timer that comes due
     // in a callback is not the next callback of the loop there.
     describe.skipIf(isWindows)("run before the next callback of the loop", () => {
@@ -1245,15 +1254,6 @@ describe("jobs of the script that the socket's writable callback runs for a stre
         );
       },
     );
-  });
-
-  test.concurrent("run when pull() throws, and the response is cut off", async () => {
-    expect(await serveBodyJobs({ body: "stream that throws", probe: "statement" })).toEqual({
-      order: afterTheScript,
-      response: "cut off",
-      stderr: expect.stringContaining("thrown by pull()"),
-      exitCode: 0,
-    });
   });
 
   // The client reads half of response A and then sends request B on a second connection.

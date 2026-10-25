@@ -8446,6 +8446,39 @@ describe("css tests", () => {
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
+  describe("url", () => {
+    // Two `url()` values with the same text are equal, so rules that differ
+    // only in the selector merge.
+    minify_test(".a{background:url(a.png)}.b{background:url(a.png)}", ".a,.b{background:url(a.png)}");
+    minify_test('.a{background:url(a.png)}.b{background:url("a.png")}', ".a,.b{background:url(a.png)}");
+    minify_test(".a{mask:url(a.svg#m)}.b{mask:url(a.svg#m)}", ".a,.b{mask:url(a.svg#m)}");
+    minify_test(".a{cursor:url(a.cur),auto}.b{cursor:url(a.cur),auto}", ".a,.b{cursor:url(a.cur),auto}");
+    minify_test(".a{--i:url(a.png)}.b{--i:url(a.png)}", ".a,.b{--i:url(a.png)}");
+    minify_test(
+      '.a{background-image:image-set("a.png" 1x,"b.png" 2x)}.b{background-image:image-set("a.png" 1x,"b.png" 2x)}',
+      '.a,.b{background-image:image-set("a.png" 1x,"b.png" 2x)}',
+    );
+
+    // Rules with different urls stay apart.
+    minify_test(
+      ".a{background:url(a.png)}.b{background:url(b.png)}",
+      ".a{background:url(a.png)}.b{background:url(b.png)}",
+    );
+    minify_test(".a{--i:url(a.png)}.b{--i:url(b.png)}", ".a{--i:url(a.png)}.b{--i:url(b.png)}");
+    minify_test(
+      '.a{background-image:image-set("a.png" 1x,"b.png" 2x)}.b{background-image:image-set("a.png" 1x,"c.png" 2x)}',
+      '.a{background-image:image-set("a.png" 1x,"b.png" 2x)}.b{background-image:image-set("a.png" 1x,"c.png" 2x)}',
+    );
+
+    // Two `border-image` declarations with one url: the first is the value
+    // for Chrome 80, which has no `dvh`, so it stays.
+    prefix_test(
+      ".a { border-image: url(x.png) 30 / 1vh; border-image: url(x.png) 30 / 1dvh }",
+      '.a { border-image: url("x.png") 30 / 1vh; border-image: url("x.png") 30 / 1dvh; }',
+      { chrome: 80 << 16 },
+    );
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(

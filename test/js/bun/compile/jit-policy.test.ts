@@ -129,6 +129,53 @@ describe("compile jitPolicy", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The scale covers every tier. The DFG->FTL tier-up reads it too, so a function that reaches the DFG inside
+  // the window is not FTL-compiled on the normal schedule (oven-sh/WebKit#898).
+  const ftlSources = {
+    "probe.js": `
+      const { noInline } = require("bun:jsc");
+      if (process.env.SCALE) Bun.unsafe.setJITPolicy(Number(process.env.SCALE));
+      function probe(n) { return (n * 31 + 7) | 0; }
+      noInline(probe);
+      let acc = 0;
+      for (let i = 0; i < 250; i++) acc += probe(i);
+      process.stdout.write(String(acc));
+    `,
+  };
+  // Deterministic tier-up: no compiler thread, and each tier a few calls away. Each call adds 15 to a
+  // counter. FTL at 1000 counts (67 calls) in the normal policy, 8000 (534 calls) inside an 8x window.
+  const ftlEnv = {
+    ...bunEnv,
+    BUN_JSC_useConcurrentJIT: "0",
+    BUN_JSC_thresholdForJITAfterWarmUp: "20",
+    BUN_JSC_thresholdForJITSoon: "20",
+    BUN_JSC_thresholdForOptimizeAfterWarmUp: "40",
+    BUN_JSC_thresholdForOptimizeSoon: "40",
+    BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "1000",
+    BUN_JSC_thresholdForFTLOptimizeSoon: "1000",
+    BUN_JSC_reportFTLCompileTimes: "1",
+  };
+  async function ftlCompilesOfProbe(dir: string, scale: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "probe.js"],
+      env: { ...ftlEnv, SCALE: scale },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("966625");
+    expect(exitCode).toBe(0);
+    return [...stderr.matchAll(/^Optimized probe#.* using FTL /gm)].length;
+  }
+
+  test.concurrent("Bun.unsafe.setJITPolicy defers the top tier (FTL) too", async () => {
+    using dir = tempDir("jit-policy-ftl", ftlSources);
+    // Control: in the normal policy, probe reaches the FTL within 250 calls.
+    expect(await ftlCompilesOfProbe(String(dir), "")).toBe(1);
+    expect(await ftlCompilesOfProbe(String(dir), "8")).toBe(0);
+  });
+
   test("Bun.unsafe.setJITPolicy validates its argument", () => {
     // Outside a compiled executable the policy is already 1: a harmless no-op.
     expect(Bun.unsafe.setJITPolicy(1)).toBeUndefined();

@@ -495,6 +495,7 @@ pub mod windows_stdio {
     pub(super) fn line_source(fd: Fd) -> LineSource {
         let mut mode: w::DWORD = 0;
         if GetConsoleMode(fd.native(), &mut mode) == 0 {
+            // A read at an offset moves the file pointer on Windows, so a regular file has no block source here.
             return LineSource::Bytes;
         }
         // Console hosts before Windows Terminal 1.19 cut a typed line to the size of the read.
@@ -2723,7 +2724,7 @@ static STDIN_LINE_LOCK: crate::Mutex<()> = crate::Mutex::new(());
 enum LineSource {
     /// One byte per read. A pipe or a socket cannot give bytes back.
     Bytes,
-    /// One byte per read, on a terminal in raw mode, where Enter is a lone CR.
+    /// One byte per read, on a terminal in raw mode. Enter is a lone CR there, and only a rejected answer ends at it.
     RawTerminal,
     /// A terminal in line mode gives one typed line to one read.
     TerminalLine,
@@ -2741,14 +2742,14 @@ struct StdinLine {
     chunk_pos: usize,
     chunk_len: usize,
     #[cfg(unix)]
-    chunk_offset: libc::off_t,
+    chunk_offset: i64,
 }
 
 impl StdinLine {
     fn begin(fd: Fd) -> Self {
         let lock = STDIN_LINE_LOCK.lock();
         #[cfg(unix)]
-        let (source, chunk_offset) = stdin_unix::line_source(fd.native());
+        let (source, chunk_offset) = stdin_unix::line_source(fd);
         #[cfg(windows)]
         let source = windows_stdio::line_source(fd);
         Self {
@@ -2772,7 +2773,7 @@ impl StdinLine {
             let filled = self.fill_chunk()?;
             #[cfg(unix)]
             {
-                self.chunk_offset += self.chunk_len as libc::off_t;
+                self.chunk_offset += self.chunk_len as i64;
             }
             self.chunk_len = filled;
             self.chunk_pos = 0;
@@ -2788,8 +2789,8 @@ impl StdinLine {
     fn fill_chunk(&mut self) -> crate::CrateResult<usize> {
         #[cfg(unix)]
         if self.source == LineSource::File {
-            let offset = self.chunk_offset + self.chunk_len as libc::off_t;
-            return stdin_unix::pread(self.fd.native(), &mut self.chunk, offset);
+            let offset = self.chunk_offset + self.chunk_len as i64;
+            return output_sink().pread(self.fd, &mut self.chunk, offset);
         }
         output_sink().read(self.fd, &mut self.chunk)
     }
@@ -2814,24 +2815,24 @@ impl StdinLine {
 impl Drop for StdinLine {
     fn drop(&mut self) {
         if self.source == LineSource::File {
-            stdin_unix::seek(
-                self.fd.native(),
-                self.chunk_offset + self.chunk_pos as libc::off_t,
-            );
+            let line_end = self.chunk_offset + self.chunk_pos as i64;
+            // No caller can take an error from a destructor. On a failure the offset stays before the line.
+            let _ = output_sink().lseek(self.fd, line_end, libc::SEEK_SET);
         }
     }
 }
 
 #[cfg(unix)]
 mod stdin_unix {
-    use super::LineSource;
+    use super::{LineSource, output_sink};
+    use crate::Fd;
     use core::ffi::c_int;
     use core::mem::MaybeUninit;
 
-    pub(super) fn line_source(fd: c_int) -> (LineSource, libc::off_t) {
+    pub(super) fn line_source(fd: Fd) -> (LineSource, i64) {
         if super::is_stdin_tty() {
-            let source = match is_canonical(fd) {
-                Some(true) if !holds_raw_mode_input(fd) => LineSource::TerminalLine,
+            let source = match is_canonical(fd.native()) {
+                Some(true) if !holds_raw_mode_input(fd.native()) => LineSource::TerminalLine,
                 Some(false) => LineSource::RawTerminal,
                 _ => LineSource::Bytes,
             };
@@ -2868,43 +2869,11 @@ mod stdin_unix {
         false
     }
 
-    fn regular_file_offset(fd: c_int) -> Option<libc::off_t> {
-        let mut stat = MaybeUninit::<libc::stat>::zeroed();
-        // SAFETY: `stat` is valid for one `stat`, and all-zero is a valid one.
-        let stat = unsafe {
-            if libc::fstat(fd, stat.as_mut_ptr()) != 0 {
-                return None;
-            }
-            stat.assume_init()
-        };
-        if !crate::S::ISREG(stat.st_mode as u32) {
+    fn regular_file_offset(fd: Fd) -> Option<i64> {
+        if !output_sink().is_regular_file(fd) {
             return None;
         }
-        // SAFETY: no pointer arguments.
-        let offset = unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) };
-        (offset >= 0).then_some(offset)
-    }
-
-    pub(super) fn pread(
-        fd: c_int,
-        buf: &mut [u8],
-        offset: libc::off_t,
-    ) -> crate::CrateResult<usize> {
-        loop {
-            // SAFETY: `buf` is valid for `buf.len()` bytes.
-            let read = unsafe { libc::pread(fd, buf.as_mut_ptr().cast(), buf.len(), offset) };
-            if read >= 0 {
-                return Ok(read as usize);
-            }
-            if crate::ffi::errno() != libc::EINTR {
-                return Err(crate::CrateError::Unexpected);
-            }
-        }
-    }
-
-    pub(super) fn seek(fd: c_int, offset: libc::off_t) {
-        // SAFETY: no pointer arguments.
-        unsafe { libc::lseek(fd, offset, libc::SEEK_SET) };
+        output_sink().lseek(fd, 0, libc::SEEK_CUR).ok()
     }
 }
 

@@ -9492,6 +9492,9 @@ bun_core::link_impl_OutputSink! {
         tty_winsize(fd) => sink_tty_winsize(fd),
         is_terminal(fd) => isatty(fd),
         read(fd, buf) => read(fd, buf).map_err(|_| bun_core::Error::Unexpected),
+        pread(fd, buf, offset) => pread(fd, buf, offset).map_err(|_| bun_core::Error::Unexpected),
+        lseek(fd, offset, whence) => lseek(fd, offset, whence).map_err(|_| bun_core::Error::Unexpected),
+        is_regular_file(fd) => fstat(fd).is_ok_and(|stat| is_regular_file(stat.st_mode as Mode)),
     }
 }
 

@@ -192,7 +192,7 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = ({f: y}).f", "x = y");
       ts.expectPrintedMin_("x = new ({f: C}).f()", "x = new C");
     });
-    it("bails out when the index is a call/assignment target", () => {
+    it("bails out when the index is a call, assignment or delete target", () => {
       // `[obj.m][0]()` calls through a Reference into the temporary array,
       // so `this` is the array. `obj.m()` passes `obj`, and `(0, obj.m)()`
       // and `y()` pass nothing.
@@ -223,6 +223,12 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_('"foo"[2] = 1', '"foo"[2] = 1');
       ts.expectPrintedMin_('["a", "b"][1] = 1', '["a", "b"][1] = 1');
       ts.expectPrintedMin_("({ a: [obj.p][0] } = {})", "({ a: [obj.p][0] } = {})");
+
+      // `delete [x][0]` removes a slot of the temporary, not `x`. Same for `"s"[n]`.
+      ts.expectPrintedMin_("x = delete [obj.p][0]", "x = delete [obj.p][0]");
+      ts.expectPrintedMin_("x = delete [y][0]", "x = delete [y][0]");
+      ts.expectPrintedMin_("x = delete [a, b][1]", "x = delete [a, b][1]");
+      ts.expectPrintedMin_('x = delete "foo"[2]', 'x = delete "foo"[2]');
     });
     it("preserves runtime semantics when inlining from a literal index", async () => {
       const src = `
@@ -244,6 +250,7 @@ describe("Bun.Transpiler", () => {
         check("this",       () => [obj.m][0](), "=> false");
         var o2 = { p: 1 };
         check("assign",     () => ([o2.p][0] = 5, o2.p), "=> 1");
+        check("delete",     () => (delete [o2.p][0], o2.p), "=> 1");
         var ab = { b: class {} };
         check("new obj",    () => new ({ f: ab?.b }).f() instanceof ab.b, "=> true");
       `;
@@ -265,6 +272,7 @@ describe("Bun.Transpiler", () => {
         "chain pure: ok",
         "this: ok",
         "assign: ok",
+        "delete: ok",
         "new obj: ok",
       ]);
       expect(exitCode).toBe(0);

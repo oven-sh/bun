@@ -383,6 +383,52 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  test(
+    "takes back the problems of a document once a configuration change makes it one not to lint",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        "bunfig.toml": '[lint.rules]\n"no-var" = "error"\n',
+        "a.js": "",
+        "b.js": "",
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const a = join(String(dir), "a.js");
+      open(client, a, "var a = 1;\n");
+      expect((await client.diagnostics(a)).params.diagnostics.map((it: any) => it.code)).toEqual(["no-var"]);
+
+      await Bun.write(
+        join(String(dir), "bunfig.toml"),
+        '[lint]\nignorePatterns = ["a.js"]\n[lint.rules]\n"no-var" = "error"\n',
+      );
+      client.notify("workspace/didChangeWatchedFiles", {
+        changes: [{ uri: uriOf(String(dir), "bunfig.toml"), type: 2 }],
+      });
+      expect((await client.diagnostics(a)).params).toEqual({ uri: uriOf(a), version: 1, diagnostics: [] });
+
+      // Once: a change to the ignored document publishes nothing more. The folder's thread is past it once it has
+      // linted the second document.
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(a), version: 2 },
+        contentChanges: [{ text: "var b = 2;\n" }],
+      });
+      const b = join(String(dir), "b.js");
+      open(client, b, "var b = 1;\n");
+      expect((await client.diagnostics(b)).params.diagnostics.map((it: any) => it.code)).toEqual(["no-var"]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      const aboutA = client.received.filter(
+        it => it.method === "textDocument/publishDiagnostics" && it.params.uri === uriOf(a),
+      );
+      expect(aboutA.map(it => it.params.diagnostics.length)).toEqual([1, 0]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   // Plugins run in a VM, which the server has only on Unix; there what else is printed is kept off the client's pipe.
   test.skipIf(isWindows)(
     "runs the plugins of the folder, keeps what they print off standard output, and ends their VM on exit",

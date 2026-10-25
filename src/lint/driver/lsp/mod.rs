@@ -741,11 +741,12 @@ impl Worker<'_, '_> {
                     return server.publish(&document, Vec::new());
                 };
                 if linted.files == 0 {
-                    // Not one to lint: the problems it had as one are taken back, once.
-                    let had_problems =
-                        (self.known.get(&document.uri)).is_some_and(|it| !it.messages.is_empty());
+                    // Not one to lint: the problems it had as one are taken back, once. A generation earlier it may
+                    // have been one, and its Worker's `known` is gone with it.
+                    let is_cleared =
+                        (self.known.get(&document.uri)).is_some_and(|it| it.messages.is_empty());
                     self.note(&document, None);
-                    if had_problems {
+                    if !is_cleared {
                         server.publish(&document, Vec::new());
                     }
                     return;

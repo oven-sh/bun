@@ -153,6 +153,25 @@ await writer.end();
 await Bun.write(s3file, "Hello World!");
 ```
 
+Bun sends the `contentDisposition`, `contentEncoding` and `tagging` that you pass to `s3.file()` or to `new S3Client()` with every upload of that file or client. An option that you pass to the upload call overrides the default for that upload. An empty string sends no header. Bun does not apply these defaults to a presigned URL.
+
+```ts s3.ts icon="/icons/typescript.svg"
+// Set the header once, on the file. Bun sends it with each upload of the file.
+const archive = s3.file("data.json.gz", {
+  contentEncoding: "gzip",
+});
+await archive.write(compressedData);
+
+// Or set it on the client, for every object that the client writes.
+const client = new Bun.S3Client({ contentDisposition: "attachment" });
+await client.write("report.pdf", pdfData);
+
+// An empty string sends no Content-Disposition header for this upload.
+await client.write("preview.png", imageData, { contentDisposition: "" });
+```
+
+`contentEncoding` labels the bytes that you pass. Bun does not compress them.
+
 #### Object tags
 
 To tag an object when you create it, pass the `tagging` option. Bun sends the tags as the `x-amz-tagging` header of the `PutObject` request, or of the `CreateMultipartUpload` request for a multipart upload. A bucket lifecycle rule can select objects by tag, so an app can tag a staged upload and let the bucket expire it.

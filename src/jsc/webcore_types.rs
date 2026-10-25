@@ -843,6 +843,8 @@ pub mod store {
         pub request_payer: bool,
         /// The `x-amz-tagging` value of a write, encoded as `k=v&k2=v2`.
         pub tagging: Option<Box<[u8]>>,
+        /// The string headers that the file gives each write. A file that gives none shares its client's.
+        pub header_defaults: Option<std::sync::Arc<bun_s3_signing::PutHeaderDefaults>>,
     }
 
     impl S3 {
@@ -859,6 +861,10 @@ pub mod store {
                     .map(|c| c.estimated_size())
                     .unwrap_or(0)
                 + self.tagging.as_ref().map_or(0, |t| t.len())
+                + self
+                    .header_defaults
+                    .as_deref()
+                    .map_or(0, bun_s3_signing::PutHeaderDefaults::estimated_size)
         }
 
         pub fn path(&self) -> &[u8] {
@@ -891,6 +897,7 @@ pub mod store {
                 storage_class: None,
                 request_payer: false,
                 tagging: None,
+                header_defaults: None,
             }
         }
 
@@ -899,10 +906,11 @@ pub mod store {
             &'a self,
             content_type: Option<&'a [u8]>,
         ) -> bun_s3_signing::PutHeaders<'a> {
+            let defaults = self.header_defaults.as_deref();
             bun_s3_signing::PutHeaders {
                 content_type,
-                content_disposition: None,
-                content_encoding: None,
+                content_disposition: defaults.and_then(|d| d.content_disposition.as_deref()),
+                content_encoding: defaults.and_then(|d| d.content_encoding.as_deref()),
                 acl: self.acl,
                 storage_class: self.storage_class,
                 request_payer: self.request_payer,

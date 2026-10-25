@@ -310,6 +310,11 @@ declare module "bun" {
      * The Content-Disposition header value.
      * Controls how the file is presented when downloaded.
      *
+     * A value given to `s3.file()` or to `new S3Client()` is the default of
+     * every upload of that file or client. The upload call overrides it. An
+     * empty string sends no header. A default does not apply to a presigned
+     * URL.
+     *
      * @example
      * ```ts
      * // Setting attachment disposition with filename
@@ -332,6 +337,11 @@ declare module "bun" {
      * The Content-Encoding header value.
      * Specifies what content encodings have been applied to the object,
      * for example to indicate that it has been compressed.
+     *
+     * A value given to `s3.file()` or to `new S3Client()` is the default of
+     * every upload of that file or client. The upload call overrides it. An
+     * empty string sends no header. The value labels the bytes that you pass:
+     * Bun does not compress them.
      *
      * @example
      * ```ts

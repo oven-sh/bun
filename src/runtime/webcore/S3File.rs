@@ -1,5 +1,5 @@
 use crate::node::{PathLike, PathOrBlob};
-use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
+use crate::webcore::blob::store::{Store, StoreExt as _};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
@@ -235,6 +235,7 @@ fn finish_s3_blob(
     s3.storage_class = aws_options.storage_class;
     s3.request_payer = aws_options.request_payer;
     s3.tagging = aws_options.tagging.take();
+    s3.header_defaults = bun_s3_signing::PutHeaderDefaults::merged(aws_options);
 
     let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {
@@ -457,7 +458,7 @@ pub(crate) fn get_presign_url_from(
 
     let store = s3_store(this, global, "presign")?;
     let s3 = store.data.as_s3();
-    // `acl`/`storage_class`/`content_*` deliberately stay at their `None`
+    // `acl`/`storage_class` deliberately stay at their `None`
     // defaults here — they are only seeded from the store when extra_options
     // is provided (via `getCredentialsWithOptions` below).
     let mut credentials_with_options = s3::S3CredentialsWithOptions {
@@ -487,12 +488,14 @@ pub(crate) fn get_presign_url_from(
                 expires = expires_ as usize;
             }
         }
-        // A tagging default would oblige whoever uses the URL to send the header.
+        // Named fields, not `..s3.defaults()`: a presigned URL takes no header default, now or later.
         credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
             s3.get_credentials(),
             &S3Defaults {
-                tagging: None,
-                ..s3.defaults()
+                acl: s3.acl,
+                storage_class: s3.storage_class,
+                request_payer: s3.request_payer,
+                ..Default::default()
             },
             Some(options),
             global,

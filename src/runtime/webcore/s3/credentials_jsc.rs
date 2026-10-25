@@ -3,13 +3,14 @@
 //! a `jsc.JSValue`; `s3_signing/` is JSC-free.
 
 use core::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StringJsc as _};
 
 use bun_s3_signing::{
-    ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, StorageClass,
-    encode_uri_component,
+    ACL, MultiPartUploadOptions, PutHeaderDefaults, S3Credentials, S3CredentialsWithOptions,
+    StorageClass, encode_uri_component,
 };
 use bun_url::URL;
 
@@ -33,6 +34,28 @@ pub(crate) fn get_truthy_string_utf8(
     let Some(js_value) = opts.get_truthy(global, key)? else {
         return Ok(None);
     };
+    Ok(string_value_utf8(js_value, global, key, strict)?.filter(|utf8| !utf8.is_empty()))
+}
+
+/// Like [`get_truthy_string_utf8`], but the empty string is a value: it clears a client or file default.
+fn get_header_string_utf8(
+    opts: JSValue,
+    global: &JSGlobalObject,
+    key: &[u8],
+) -> JsResult<Option<bun_core::Utf8Bytes<'static>>> {
+    let Some(js_value) = opts.get(global, key)? else {
+        return Ok(None);
+    };
+    string_value_utf8(js_value, global, key, true)
+}
+
+/// The steps of [`get_truthy_string_utf8`] after the property read. The empty string is `Some`.
+fn string_value_utf8(
+    js_value: JSValue,
+    global: &JSGlobalObject,
+    key: &[u8],
+    strict: bool,
+) -> JsResult<Option<bun_core::Utf8Bytes<'static>>> {
     if js_value.is_empty_or_undefined_or_null() {
         return Ok(None);
     }
@@ -43,7 +66,7 @@ pub(crate) fn get_truthy_string_utf8(
         return Ok(None);
     }
     let str = BunString::from_js(js_value, global)?;
-    if str.tag() == BunStringTag::Empty || str.tag() == BunStringTag::Dead {
+    if str.tag() == BunStringTag::Dead {
         return Ok(None);
     }
     Ok(Some(str.into_utf8()))
@@ -63,6 +86,8 @@ pub(crate) struct S3Defaults<'a> {
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
     pub tagging: Option<&'a [u8]>,
+    /// The string headers of a write. A presign takes none.
+    pub headers: Option<&'a Arc<PutHeaderDefaults>>,
 }
 
 pub(crate) fn get_credentials_with_options(
@@ -72,17 +97,27 @@ pub(crate) fn get_credentials_with_options(
     global_object: &JSGlobalObject,
 ) -> JsResult<S3CredentialsWithOptions> {
     bun_analytics::features::s3.fetch_add(1, Ordering::Relaxed);
+    // No `..`: a default that is added later cannot be left out here.
+    let &S3Defaults {
+        options: default_options,
+        acl,
+        storage_class,
+        request_payer,
+        tagging,
+        headers,
+    } = defaults;
     // get ENV config
     // `S3Credentials`
     // carries an intrusive ref-count and is not `Copy`; `Clone` performs a
     // deep field copy with a fresh ref-count.
     let mut new_credentials = S3CredentialsWithOptions {
         credentials: this.clone(),
-        options: defaults.options,
-        acl: defaults.acl,
-        storage_class: defaults.storage_class,
-        request_payer: defaults.request_payer,
-        tagging: defaults.tagging.map(Box::<[u8]>::from),
+        options: default_options,
+        acl,
+        storage_class,
+        request_payer,
+        tagging: tagging.map(Box::<[u8]>::from),
+        inherited: headers.cloned(),
         ..Default::default()
     };
 
@@ -233,8 +268,7 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.storage_class = Some(storage_class);
             }
 
-            if let Some(utf8) =
-                get_truthy_string_utf8(opts, global_object, b"contentDisposition", true)?
+            if let Some(utf8) = get_header_string_utf8(opts, global_object, b"contentDisposition")?
             {
                 if contains_newline_or_cr(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(
@@ -253,9 +287,7 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.content_type = Some(utf8);
             }
 
-            if let Some(utf8) =
-                get_truthy_string_utf8(opts, global_object, b"contentEncoding", true)?
-            {
+            if let Some(utf8) = get_header_string_utf8(opts, global_object, b"contentEncoding")? {
                 if contains_newline_or_cr(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(
                         "contentEncoding must not contain newline characters (CR/LF)"

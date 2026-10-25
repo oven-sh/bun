@@ -5,6 +5,7 @@ use std::borrow::Cow;
 
 use bun_collections::MultiArrayList;
 use bun_core::{ThreadLock, ZStr, feature_flags, output as Output, strings, zstr};
+use bun_paths::strings::NodeModulesScope;
 use bun_sys::{self as sys, Fd};
 use bun_threading::Mutex;
 
@@ -98,6 +99,15 @@ pub type ChangedFilePath = Option<&'static ZStr>;
 
 // ─── Watcher ──────────────────────────────────────────────────────────────
 
+/// What the owner of a `Watcher` takes for a package path.
+#[derive(Clone, Copy)]
+pub enum NodeModulesRule {
+    /// Any path with a `node_modules` component.
+    WholePath,
+    /// The same, but a root in a package folder is a project: `NodeModulesScope::below_root`.
+    BelowProjectRoot,
+}
+
 pub struct Watcher {
     // This will always be [MAX_COUNT]WatchEvent,
     // We avoid statically allocating because it increases the binary size.
@@ -118,6 +128,8 @@ pub struct Watcher {
     /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
     pub(crate) watchloop_handle: bun_core::AtomicCell<bool>,
     pub(crate) cwd: &'static [u8],
+    /// Never written after `init`, so every thread reads it without the mutex.
+    node_modules_scope: NodeModulesScope,
     pub(crate) thread: Option<std::thread::JoinHandle<()>>,
     /// Main thread clears this in `shutdown`; watcher thread polls it in
     /// `watch_loop` and the platform `watch_loop_cycle`.
@@ -162,7 +174,7 @@ impl Watcher {
     /// actually start the watcher thread.
     ///
     /// ```ignore
-    /// let watcher = Watcher::init(instance_of_t, fs)?;
+    /// let watcher = Watcher::init(instance_of_t, top_level_dir, node_modules_rule)?;
     /// // on error: watcher.shutdown(false);
     /// watcher.start()?;
     ///
@@ -175,6 +187,7 @@ impl Watcher {
     pub fn init<T: WatcherContext>(
         ctx: *mut T,
         top_level_dir: &'static [u8],
+        node_modules_rule: NodeModulesRule,
     ) -> Result<Box<Watcher>, crate::Error> {
         fn on_file_update_wrapped<T: WatcherContext>(
             ctx_opaque: *mut (),
@@ -196,6 +209,10 @@ impl Watcher {
             watchlist: WatchList::default(),
             mutex: Mutex::default(),
             cwd: top_level_dir,
+            node_modules_scope: match node_modules_rule {
+                NodeModulesRule::WholePath => NodeModulesScope::WHOLE_PATH,
+                NodeModulesRule::BelowProjectRoot => NodeModulesScope::below_root(top_level_dir),
+            },
             ctx: ctx.cast::<()>(),
             on_file_update: on_file_update_wrapped::<T>,
             on_error: on_error_wrapped::<T>,
@@ -783,11 +800,19 @@ impl Watcher {
         Ok(FdOwnership::Watcher)
     }
 
-    /// Not `node_modules` or a directory inside it, and not outside the root directory.
+    /// Not a package directory by `node_modules_scope`, and not outside the root directory.
     #[inline]
     fn is_eligible_directory(&self, dir: &[u8]) -> bool {
-        !bun_paths::strings::dir_is_or_is_inside_node_modules(dir)
+        !self
+            .node_modules_scope
+            .dir_is_or_is_inside_node_modules(dir)
             && strings::contains(dir, self.top_level_dir())
+    }
+
+    /// For a caller that offers files to this watcher.
+    #[inline]
+    pub fn node_modules_scope(&self) -> &NodeModulesScope {
+        &self.node_modules_scope
     }
 
     #[inline]

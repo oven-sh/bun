@@ -105,7 +105,7 @@ Use `bun --hot` to enable hot reloading when executing code with Bun. Unlike `--
 bun --hot server.ts
 ```
 
-Starting from the entrypoint (`server.ts` in this example), Bun builds a registry of all imported source files (excluding those in `node_modules`) and watches them for changes. When a file changes, Bun performs a "soft reload". Bun re-evaluates all files, but global state (notably, the `globalThis` object) persists.
+Starting from the entrypoint (`server.ts` in this example), Bun builds a registry of all imported source files (excluding those in `node_modules`) and watches them for changes. If you start Bun in a package folder of `node_modules` or below one, the files of that package are watched too (on Windows, not yet when the folder is entered through a link). When a file changes, Bun performs a "soft reload". Bun re-evaluates all files, but global state (notably, the `globalThis` object) persists.
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
 // make TypeScript happy

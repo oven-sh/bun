@@ -12,7 +12,7 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 
 let watchee: Subprocess;
 
@@ -960,6 +960,401 @@ describe("a path that only holds the letters node_modules", () => {
       },
     );
   });
+});
+
+// A project can be a package folder of node_modules: a package that is worked
+// on in place, a tool that runs from its install folder. Each of its files
+// has a `node_modules` component in its path, so the watcher took all of them
+// for package files. The watcher now counts `node_modules` from the package
+// folder that holds the folder bun starts in.
+describe("a project in a package folder of node_modules", () => {
+  const keepAlive = "setInterval(() => {}, 1e6);\n";
+  const util = (v: number) => `export const v = ${v};\n`;
+  const pkg = (name: string) => ({
+    "package.json": JSON.stringify({ name, main: "index.js" }),
+    "index.js": `module.exports = ${JSON.stringify(name)};\n`,
+  });
+
+  // A case here starts two watchers at once, so it does not use `watchee`.
+  // `await using _ = watchers`, after the folders of a case, ends its watchers
+  // before the folders are removed. `afterEach` ends those of a case that
+  // timed out.
+  const started: Subprocess[] = [];
+  const watchers = {
+    async [Symbol.asyncDispose]() {
+      for (const proc of started.splice(0)) {
+        proc.kill("SIGKILL");
+        await proc.exited;
+      }
+    },
+  };
+  afterEach(() => watchers[Symbol.asyncDispose]());
+
+  // Starts `bun ...args` in `cwd`. With `trace`, the watcher writes there the
+  // watched paths that saw an event, before the reload that an event starts.
+  function start<Err extends "inherit" | "pipe" = "inherit">(
+    cwd: string,
+    args: readonly string[],
+    { trace, stderr }: { trace?: string; stderr?: Err } = {},
+  ) {
+    const proc = spawn({
+      cwd,
+      cmd: [bunExe(), ...args],
+      env: trace ? { ...bunEnv, BUN_WATCHER_TRACE: trace } : bunEnv,
+      stdout: "pipe",
+      stderr: stderr ?? "inherit",
+      stdin: "ignore",
+    });
+    started.push(proc);
+    return { proc: proc as Subprocess<"ignore", "pipe", Err>, stdout: stdoutWaiter(proc) };
+  }
+
+  // The paths of `trace`, relative to `cwd`. A path that starts with `..` is
+  // outside the project, one with a `node_modules` component is in a package
+  // of the project. The folder of a file is watched with the file, and either
+  // of the two can be the one that reports a change.
+  function eventPaths(trace: string, cwd: string) {
+    const seen = readFileSync(trace, "utf8")
+      .split("\n")
+      .filter(line => line.length > 0)
+      .flatMap(line => Object.keys(JSON.parse(line).files))
+      .map(path => relative(cwd, path).replaceAll("\\", "/"));
+    return [...new Set(seen)].sort();
+  }
+  const isPackagePath = (path: string) => path.startsWith("..") || path.split("/").includes("node_modules");
+  const saw = (seen: string[], file: string) => seen.includes(file) || seen.includes(dirname(file));
+
+  // The module loader does not offer an entry in a package to the watcher.
+  // The watcher gets it when the entry has run, before the event loop first
+  // turns: "idle" says that it has it.
+  const idle = (n: number) => `setTimeout(() => console.log("idle", ${n}), 1);\n`;
+
+  // The project has a package of its own. Beside it are a hoisted package and
+  // a folder whose name only starts like the name of the project. All three
+  // are rewritten before the import of the project, so a watcher that had one
+  // of them would report it no later than the import.
+  //
+  // The folder bun starts in decides. In node_modules itself, in a scope
+  // folder and in a dot folder, every folder is a package: there only the
+  // entry is watched, which is named on the command line. A package has no
+  // fixed place in a dot folder, so there the project is the start folder.
+  for (const [flag, folder, store] of [
+    ["--watch", "node_modules/my-pkg", "node_modules"],
+    ["--hot", "node_modules/@scope/my-pkg", "node_modules/@scope"],
+    ["--hot", "node_modules/.store/app-npm-1.0.0/package", "node_modules/.store"],
+  ] as const) {
+    it(`${flag} reloads an import of a project in ${folder} and watches no package; in ${store} only the entry`, async () => {
+      const sibling = `${basename(folder)}-2`;
+      const entry = (n: number) =>
+        `import { v } from "./src/util.js";\nconsole.log("run", ${n}, v);\n${idle(n)}${keepAlive}`;
+      using dir = tempDir("watch-project", {
+        [folder]: {
+          "main.js": `import { v } from "./src/util.js";
+import nested from "nested";
+import hoisted from "hoisted";
+import sibling from "../${sibling}/index.js";
+console.log("run", v, nested, hoisted, sibling);
+${keepAlive}`,
+          "src/util.js": util(1),
+          "node_modules/nested": pkg("nested"),
+        },
+        "node_modules/hoisted": pkg("hoisted"),
+        [folder + "-2"]: pkg("sibling"),
+      });
+      using storeDir = tempDir("watch-store", {
+        [store]: { "my-pkg": { "main.js": entry(1), "src/util.js": util(7) } },
+      });
+      await using _ = watchers;
+      const [root, storeRoot] = [String(dir), String(storeDir)];
+      const [cwd, storeCwd] = [join(root, folder), join(storeRoot, store)];
+      const [trace, storeTrace] = [join(root, "trace.jsonl"), join(storeRoot, "trace.jsonl")];
+
+      const project = start(cwd, [flag, "--no-clear-screen", "main.js"], { trace });
+      const inStore = start(storeCwd, [flag, "--no-clear-screen", "my-pkg/main.js"], { trace: storeTrace });
+      await Promise.all([project.stdout.waitFor("run 1 nested hoisted sibling"), inStore.stdout.waitFor("idle 1")]);
+      await Promise.all([
+        editUntil(project.stdout, "run 2 nested hoisted sibling", async () => {
+          await Bun.write(join(cwd, "node_modules/nested/index.js"), pkg("nested")["index.js"]);
+          await Bun.write(join(cwd, "node_modules/added.js"), "");
+          await Bun.write(join(root, "node_modules/hoisted/index.js"), pkg("hoisted")["index.js"]);
+          await Bun.write(join(cwd, "..", sibling, "index.js"), pkg("sibling")["index.js"]);
+          await Bun.write(join(cwd, "src/util.js"), util(2));
+        }),
+        editUntil(inStore.stdout, "run 2 7", async () => {
+          await Bun.write(join(storeCwd, "my-pkg/src/util.js"), util(7));
+          await Bun.write(join(storeCwd, "my-pkg/main.js"), entry(2));
+        }),
+      ]);
+
+      const [seen, seenInStore] = [eventPaths(trace, cwd), eventPaths(storeTrace, storeCwd)];
+      expect({
+        project: { util: saw(seen, "src/util.js"), packages: seen.filter(isPackagePath) },
+        inStore: {
+          entry: seenInStore.includes("my-pkg/main.js"),
+          src: seenInStore.filter(path => path.startsWith("my-pkg/src")),
+        },
+      }).toEqual({
+        project: { util: true, packages: [] },
+        inStore: { entry: true, src: [] },
+      });
+    });
+  }
+
+  // The file loader asks the rule itself, before it opens the file. `require`
+  // goes the way of `import`. A save by rename puts a new file at the path,
+  // which the watch on the folder reports. Not on Windows: a rename over a
+  // watched file fails there with EPERM (#41045). Each file is in a folder of
+  // its own, so that a change of one of them is not reported by the folder of
+  // another.
+  it("--hot reloads a file of the file loader, a required module and a module saved by rename", async () => {
+    const legacy = (v: number) => `module.exports = ${v};\n`;
+    using dir = tempDir("watch-project", {
+      "node_modules/my-pkg": {
+        "main.js": `import { v } from "./src/util.js";
+import asset from "./assets/data.bin";
+import packageAsset from "nested/data.bin";
+const legacy = require("./lib/legacy.cjs");
+const packageLegacy = require("nested/legacy.cjs");
+console.log("run", v, legacy, packageLegacy, typeof asset, typeof packageAsset);
+${keepAlive}`,
+        "src/util.js": util(1),
+        "assets/data.bin": "1\n",
+        "lib/legacy.cjs": legacy(1),
+        "node_modules/nested/package.json": JSON.stringify({ name: "nested" }),
+        "node_modules/nested/data.bin": "1\n",
+        "node_modules/nested/legacy.cjs": legacy(7),
+      },
+    });
+    await using _ = watchers;
+    const root = String(dir);
+    const cwd = join(root, "node_modules/my-pkg");
+    const trace = join(root, "trace.jsonl");
+    const { stdout } = start(cwd, ["--hot", "--no-clear-screen", "main.js"], { trace });
+    await stdout.waitFor("run 1 1 7 string string");
+    await editUntil(stdout, "run 2 2 7 string string", async () => {
+      await Bun.write(join(cwd, "node_modules/nested/data.bin"), "1\n");
+      await Bun.write(join(cwd, "node_modules/nested/legacy.cjs"), legacy(7));
+      await Bun.write(join(cwd, "assets/data.bin"), "2\n");
+      await Bun.write(join(cwd, "lib/legacy.cjs"), legacy(2));
+      if (isWindows) {
+        await Bun.write(join(cwd, "src/util.js"), util(2));
+      } else {
+        await Bun.write(join(cwd, "src/util.js.tmp"), util(2));
+        renameSync(join(cwd, "src/util.js.tmp"), join(cwd, "src/util.js"));
+      }
+    });
+    const seen = eventPaths(trace, cwd);
+    expect({
+      util: saw(seen, "src/util.js"),
+      asset: saw(seen, "assets/data.bin"),
+      legacy: saw(seen, "lib/legacy.cjs"),
+      packages: seen.filter(isPackagePath),
+    }).toEqual({ util: true, asset: true, legacy: true, packages: [] });
+  });
+
+  // The rule is the one of the folder bun started in, for as long as the
+  // process runs. A program that moves into a package folder does not turn
+  // the package into a project, and a project that moves out of its package
+  // folder stays a project.
+  it("--hot keeps the rule of the folder it started in after process.chdir()", async () => {
+    using dir = tempDir("watch-project", {
+      "plain": {
+        "main.js": `import { v } from "./src/util.js";
+process.chdir(import.meta.dir + "/node_modules/late");
+const { default: late } = await import("late");
+console.log("run", v, late);
+${keepAlive}`,
+        "src/util.js": util(1),
+        "node_modules/late": pkg("late"),
+      },
+      "node_modules/my-pkg": {
+        "main.js": `process.chdir(import.meta.dir + "/../..");
+const { v } = await import("./src/lazy.js");
+console.log("run", v);
+${keepAlive}`,
+        "src/lazy.js": util(1),
+      },
+    });
+    await using _ = watchers;
+    const root = String(dir);
+    const [plainCwd, projectCwd] = [join(root, "plain"), join(root, "node_modules/my-pkg")];
+    const [plainTrace, projectTrace] = [join(root, "plain.jsonl"), join(root, "project.jsonl")];
+
+    const plain = start(plainCwd, ["--hot", "--no-clear-screen", "main.js"], { trace: plainTrace });
+    const project = start(projectCwd, ["--hot", "--no-clear-screen", "main.js"], { trace: projectTrace });
+    await Promise.all([plain.stdout.waitFor("run 1 late"), project.stdout.waitFor("run 1")]);
+    await Promise.all([
+      editUntil(plain.stdout, "run 2 late", async () => {
+        await Bun.write(join(plainCwd, "node_modules/late/index.js"), pkg("late")["index.js"]);
+        await Bun.write(join(plainCwd, "src/util.js"), util(2));
+      }),
+      editUntil(project.stdout, "run 2", () => Bun.write(join(projectCwd, "src/lazy.js"), util(2))),
+    ]);
+
+    const [seenInPlain, seenInProject] = [eventPaths(plainTrace, plainCwd), eventPaths(projectTrace, projectCwd)];
+    expect({
+      plain: { util: saw(seenInPlain, "src/util.js"), packages: seenInPlain.filter(isPackagePath) },
+      project: { lazy: saw(seenInProject, "src/lazy.js") },
+    }).toEqual({
+      plain: { util: true, packages: [] },
+      project: { lazy: true },
+    });
+  });
+
+  // Bun starts in a folder of the package: the project is the package, not
+  // the start folder. Not on Windows: that watcher takes no file outside the
+  // folder bun starts in, whatever the project is (#9547).
+  it.skipIf(isWindows)("--watch started below the package folder reloads a file beside the start folder", async () => {
+    using dir = tempDir("watch-project", {
+      "node_modules/my-pkg": {
+        "src/main.js": `import { v } from "../lib/util.js";\nconsole.log("run", v);\n${keepAlive}`,
+        "lib/util.js": util(1),
+      },
+    });
+    await using _ = watchers;
+    const project = join(String(dir), "node_modules/my-pkg");
+    const { stdout } = start(join(project, "src"), ["--watch", "--no-clear-screen", "main.js"]);
+    await stdout.waitFor("run 1");
+    await editUntil(stdout, "run 2", () => Bun.write(join(project, "lib/util.js"), util(2)));
+  });
+
+  // The physical path of a package of the isolated linker. The test file is
+  // loaded like an import, so it was not watched either.
+  it("test --watch runs again after an edit to an import and to the test file", async () => {
+    const folder = "node_modules/.bun/my-pkg@1.0.0/node_modules/my-pkg";
+    const testFile = (n: number) =>
+      `import { test } from "bun:test";\nimport { v } from "./src/util.js";\ntest("run", () => console.log("run", ${n}, v));\n`;
+    using dir = tempDir("watch-project", { [folder]: { "main.test.js": testFile(1), "src/util.js": util(1) } });
+    await using _ = watchers;
+    const cwd = join(String(dir), folder);
+    const { stdout } = start(cwd, ["test", "--watch", "main.test.js"]);
+    await stdout.waitFor("run 1 1");
+    await editUntil(stdout, "run 1 2", () => Bun.write(join(cwd, "src/util.js"), util(2)));
+    await editUntil(stdout, "run 2 2", () => Bun.write(join(cwd, "main.test.js"), testFile(2)));
+  });
+
+  // `--check` offers the watcher each file that the type checker reads, by
+  // the same rule. `imported.ts` has the error, so only the type checker has
+  // read it. The declarations of the package are written first. The project
+  // has no lib files, which keeps the check fast.
+  it("--watch --check checks again after an edit to an import, and watches no package", async () => {
+    const imported = (n: string) => `import type { T } from "typed";\nexport const n: T = ${n};\n`;
+    const types = "export type T = number;\n";
+    const globals = ["Array<T>", "Boolean", "CallableFunction", "Function", "IArguments", "NewableFunction"]
+      .concat(["Number", "Object", "RegExp", "String"])
+      .map(name => `interface ${name} {}\n`);
+    using dir = tempDir("watch-project", {
+      "node_modules/my-pkg": {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { strict: true, noEmit: true, noLib: true, types: [], moduleResolution: "bundler" },
+        }),
+        "globals.d.ts":
+          globals.join("") +
+          "declare var console: { log(...args: unknown[]): void };\n" +
+          "declare function setInterval(fn: () => void, ms: number): unknown;\n",
+        "main.ts": `import { n } from "./lib/imported";\nconsole.log("run", n);\n${keepAlive}`,
+        "lib/imported.ts": imported(`"1"`),
+        "node_modules/typed/package.json": JSON.stringify({ name: "typed", types: "./types.d.ts" }),
+        "node_modules/typed/types.d.ts": types,
+      },
+    });
+    await using _ = watchers;
+    const project = join(String(dir), "node_modules/my-pkg");
+    const trace = join(String(dir), "trace.jsonl");
+    const args = ["--watch", "--check", "--no-clear-screen", "main.ts"];
+    const { proc, stdout } = start(project, args, { trace, stderr: "pipe" });
+    await streamWaiter(proc.stderr).waitFor("TS2322");
+    await editUntil(stdout, "run 1", async () => {
+      await Bun.write(join(project, "node_modules/typed/types.d.ts"), types);
+      await Bun.write(join(project, "lib/imported.ts"), imported("1"));
+    });
+    const seen = eventPaths(trace, project);
+    expect({ imported: saw(seen, "lib/imported.ts"), packages: seen.filter(isPackagePath) }).toEqual({
+      imported: true,
+      packages: [],
+    });
+  });
+
+  // `bun build --watch` watches every file, and the folder of each one by
+  // this rule. A save by rename puts a new file at the path. Linux learns of
+  // it from the watch on the folder alone. Every system reports it on that
+  // watch, which the trace names by the path of the folder: "" here. Not on
+  // Windows: a rename over a watched file fails there with EPERM (#41045).
+  it.skipIf(isWindows)("build --watch rebuilds after a save by rename, which the folder reports", async () => {
+    const source = (v: number) => `console.log("build ${v}");\n`;
+    using dir = tempDir("watch-project", { "node_modules/my-pkg": { "main.js": source(1) } });
+    await using _ = watchers;
+    const cwd = join(String(dir), "node_modules/my-pkg");
+    const trace = join(String(dir), "trace.jsonl");
+    const { stdout } = start(cwd, ["build", "--watch", "--no-clear-screen", "main.js"], { trace });
+    await stdout.waitFor("build 1");
+    await editUntil(stdout, "build 2", async () => {
+      await Bun.write(join(cwd, "main.js.tmp"), source(2));
+      renameSync(join(cwd, "main.js.tmp"), join(cwd, "main.js"));
+    });
+    expect(eventPaths(trace, cwd)).toContain("");
+  });
+
+  // `./sub/thing` is a folder at first, so the lookup of a file of that name
+  // fails in `sub`, and the resolver asks the watcher to watch `sub`. That
+  // watch is what makes the resolver read `sub` again. Without it the next
+  // reload still takes the folder, after `sub/thing.js` is there.
+  it("--hot finds a file that is added to a folder of the project in which a lookup failed", async () => {
+    const entry = (n: number) => `import v from "./sub/thing";\nconsole.log("run", ${n}, v);\n${idle(n)}${keepAlive}`;
+    using dir = tempDir("watch-project", {
+      "node_modules/my-pkg": { "main.js": entry(1), "sub/thing/index.js": `export default "folder";\n` },
+    });
+    await using _ = watchers;
+    const cwd = join(String(dir), "node_modules/my-pkg");
+    const { stdout } = start(cwd, ["--hot", "--no-clear-screen", "main.js"]);
+    await stdout.waitFor("idle 1");
+    await editUntil(stdout, "run 2 file", async () => {
+      await Bun.write(join(cwd, "sub/thing.js"), `export default "file";\n`);
+      await Bun.write(join(cwd, "main.js"), entry(2));
+    });
+  });
+
+  // The owner of a watcher picks the rule. The dev server keeps the rule of
+  // the whole path: its bundler decides what a package file is by the whole
+  // path too. The lookup of `./sub/thing` fails in `sub` for both. The
+  // watcher holds a descriptor for each folder it watches.
+  it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
+    "--watch watches a folder of the project in which a lookup failed, the dev server does not",
+    async () => {
+      using dir = tempDir("watch-project", {
+        "node_modules/my-pkg": {
+          "main.js": `import "./sub/thing";\nconsole.log("run 1");\n${keepAlive}`,
+          "sub/thing/index.js": "",
+          "index.html": `<!doctype html><script type="module" src="./main.js"></script>`,
+          "server.js": `import index from "./index.html";
+const server = Bun.serve({ port: 0, development: true, routes: { "/": index } });
+console.log("listening", server.url.href);
+`,
+        },
+      });
+      await using _ = watchers;
+      const cwd = join(realpathSync(String(dir)), "node_modules/my-pkg");
+
+      const run = start(cwd, ["--watch", "--no-clear-screen", "main.js"]);
+      const server = start(cwd, ["server.js"]);
+      await Promise.all([run.stdout.waitFor("run 1"), server.stdout.waitFor("listening ")]);
+
+      // The dev server resolves the imports of the page when it bundles it.
+      const url = /listening (\S+)/.exec(server.stdout.output())![1];
+      const page = await (await fetch(url)).text();
+      const script = await fetch(new URL(/src="([^"]+)"/.exec(page)![1], url));
+      expect({ status: script.status, isBundle: (await script.text()).includes("run 1") }).toEqual({
+        status: 200,
+        isBundle: true,
+      });
+
+      const sub = join(cwd, "sub");
+      expect({
+        watch: openPaths(run.proc.pid).includes(sub),
+        devServer: openPaths(server.proc.pid).includes(sub),
+      }).toEqual({ watch: true, devServer: false });
+    },
+  );
 });
 
 // A --watch reload is an execve of the same binary. Linux marks every fd

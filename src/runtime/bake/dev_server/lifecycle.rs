@@ -150,7 +150,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // not dereference it until `start()` spawns the watcher thread, by which point
     // every `DevServer` field is initialized (`assume_init` below precedes
     // `bun_watcher.start()`).
-    let bun_watcher = match Watcher::init::<DevServer>(p, top_level_dir) {
+    // The whole path: `BundleV2::should_add_watcher` and the HMR lowering (`is_in_node_modules`) decide by it too.
+    let node_modules_rule = bun_watcher::NodeModulesRule::WholePath;
+    let bun_watcher = match Watcher::init::<DevServer>(p, top_level_dir, node_modules_rule) {
         Ok(w) => w,
         Err(err) => {
             return Err(global.throw_error(

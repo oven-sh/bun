@@ -3413,9 +3413,12 @@ fn transpile_source_code_of_any_provenance(
                 if !unsafe { &*jsc_vm }.is_watcher_enabled() {
                     break 'auto_watch;
                 }
+                // SAFETY: as for the `&mut` below. The scope is never written after `Watcher::init`.
+                let scope = unsafe { &*(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() }
+                    .node_modules_scope();
                 // `add_file` declines package files too. Asking first saves the open below.
                 if !bun_paths::is_absolute(path.text)
-                    || bun_paths::strings::path_is_inside_node_modules(path.text)
+                    || scope.file_is_inside_node_modules(path.text)
                 {
                     break 'auto_watch;
                 }

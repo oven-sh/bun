@@ -8711,7 +8711,7 @@ describe("css tests", () => {
         killSignal: "SIGKILL",
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
+      expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
 
       const output = Bun.file(join(String(dir), "out", "s.css"));
       expect(output.size).toBeLessThan(10 * source.length);

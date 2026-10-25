@@ -14029,6 +14029,30 @@ ${Array.from({ length: 3000 }, (_, i) => `function f${i + 1}() { return pick(f${
       expect(exitCode).toBe(1);
     });
 
+    // The call fails because of `other`, so afterwards `D` is `unknown` in the type of `this`.
+    test("an expression returned by a function with a circular return type isn't checked again", async () => {
+      using dir = project({
+        "a.ts": `type Computed = { [k: string]: (() => any) | string };
+declare function define<D = {}, C extends Computed = {}>(o: {
+  data?(this: { start: number }): D;
+  computed?: C & ThisType<D & C>;
+  watch?: { [K in keyof D]?: (now: D[K]) => void };
+}): D & C;
+export const a = define({
+  data() { return { n: this.start }; },
+  computed: { double() { return this.n * 2; } },
+  watch: { n(now) {}, other() {} },
+});
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(9,15): error TS7023: 'double' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(10,23): error TS2353: Object literal may only specify known properties, and 'other' does not exist in type '{ n?: ((now: number) => void) | undefined; }'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS7022 and TS7023 when `return f()` checks the callee while another resolution is in progress", async () => {
       using dir = project({
         "a.ts": `export function p1() { const a = (x = (b() as any)) => x; function b() { return a(); } }

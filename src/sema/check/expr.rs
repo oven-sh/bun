@@ -530,6 +530,10 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     self.drop_reported();
                 }
+                if !is_uncached && self.is_innermost_tainted() {
+                    cold_path();
+                    self.keep_type_of_returned_expression_in_cycle(file, e, ty);
+                }
                 let is_final = !(self.frames.last()).is_some_and(|it| it.has_read_members_in_place);
                 let left = self.leave_inline();
                 if let Err(open) = left {
@@ -562,6 +566,36 @@ impl<'p, 's> Checker<'p, 's> {
             self.rechecked_exprs.insert((file, e), ty);
         }
         ty
+    }
+
+    /// `checkExpressionCached` assigns `links.resolvedType` no matter what's in progress, and `checkReturnStatement`
+    /// finds it. Where `popTypeResolution` finds a cycle, `getReturnTypeOfSignature` resolves to `anyType`, and the
+    /// returned expression keeps its type and isn't checked again, when `this` or a parameter may have another type.
+    /// So the innermost frame, of `e` with the type `ty`, is final if it's directly under such a resolution and depends
+    /// on nothing but cycles.
+    #[inline(never)]
+    fn keep_type_of_returned_expression_in_cycle(&mut self, file: FileId, e: ExprId, ty: TypeId) {
+        let [.., resolution, returned] = &self.frames[..] else {
+            return;
+        };
+        let since = |at: u64| at >= returned.serial;
+        if !resolution.circular
+            || returned.incomplete_flow
+            || since(self.limit_at)
+            || since(self.rejected_at)
+            || since(self.any_signature_read_at)
+            || since(self.members_in_place_hit_at)
+            || !self.check_mode().is_empty()
+            || !matches!(self.stack[self.stack.len() - 2], Query::Return(..))
+            || !self.is_checked_by_check_expression_cached(file, e)
+            || (self.types().object_flags(ty)).contains(ObjectFlags::HAS_UNRESOLVED)
+        {
+            return;
+        }
+        if let Some(returned) = self.frames.last_mut() {
+            returned.tainted = false;
+            returned.drops_reported = false;
+        }
     }
 
     /// Records that `e`'s `links.resolvedType` was assigned at `maxSerializationLevel`. See

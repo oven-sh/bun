@@ -109,15 +109,21 @@ test("the child sends a message and exits on its own", async () => {
   const child = fork(__filename, ["child-that-exits", parentIsBusy]);
   children.push(child);
   const events = [];
+  const closed = Promise.withResolvers();
   child.on("message", message => {
     events.push(`message:${message}`);
-    // The child exits once it sees this file. Staying in the handler until it is dead leaves the
-    // channel's end and the exit both pending.
-    fs.writeFileSync(parentIsBusy, "");
-    blockUntilDead(child.pid);
+    try {
+      // The child exits once it sees this file. Staying in the handler until it is dead leaves
+      // the channel's end and the exit both pending.
+      fs.writeFileSync(parentIsBusy, "");
+      blockUntilDead(child.pid);
+    } catch (error) {
+      closed.reject(error);
+    }
   });
   child.on("disconnect", () => events.push("disconnect"));
   child.on("exit", code => events.push(`exit:${code}`));
-  await once(child, "close");
+  child.on("close", closed.resolve);
+  await closed.promise;
   assert.deepStrictEqual(events, ["message:bye", "disconnect", "exit:3"]);
 });

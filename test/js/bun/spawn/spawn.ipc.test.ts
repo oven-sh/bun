@@ -338,9 +338,12 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
       serialization: mode,
       ipc(message, subprocess) {
         received.push(message);
-        if (message === "first") {
+        if (message !== "first") return;
+        try {
           writeFileSync(parentIsBusy, "");
           blockUntilDead(subprocess.pid);
+        } catch (error) {
+          disconnected.reject(error);
         }
       },
       onDisconnect: () => disconnected.resolve(),

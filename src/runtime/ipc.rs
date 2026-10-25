@@ -1239,8 +1239,8 @@ impl SendQueue {
     }
 
     /// The peer process has exited: closes what is left of the channel and reports the close now,
-    /// for the owner to report before the exit (node's order). A channel with input the loop has
-    /// yet to read stays open for that read; its close follows the exit.
+    /// for the owner to report before the exit (node's order). A channel with unread input is not
+    /// closed here; the owner's deferred close follows the exit.
     pub(crate) fn close_after_peer_exit(&self) {
         log!("SendQueue#closeAfterPeerExit");
         if self.socket_is_open() {

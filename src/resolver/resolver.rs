@@ -1773,7 +1773,7 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    /// `None` for a file or a link in node_modules: it keeps the settings of the path as spelled.
+    /// `None` when the file or its link is in node_modules: it keeps the settings of the path as spelled.
     #[cold]
     #[inline(never)]
     fn settings_dir_of_real_path(
@@ -1781,14 +1781,15 @@ impl<'a> Resolver<'a> {
         real: &[u8],
         found_in: DirInfoRef,
     ) -> Option<DirInfoRef> {
+        // The flags of a directory that a link leads to describe the link, not the directory.
         let entry_dir = found_in.abs_real_path;
-        let in_node_modules = if entry_dir.is_empty() {
+        let entry_in_node_modules = if entry_dir.is_empty() {
             found_in.is_node_modules() || found_in.is_inside_node_modules()
         } else {
             strings::path_contains_node_modules_folder(entry_dir)
                 || bun_paths::basename(entry_dir) == b"node_modules"
         };
-        if in_node_modules {
+        if entry_in_node_modules || strings::path_contains_node_modules_folder(real) {
             return None;
         }
         self.dir_info_cached(Fs::PathName::init(real).dir)

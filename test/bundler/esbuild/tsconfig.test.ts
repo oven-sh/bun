@@ -1238,6 +1238,50 @@ describe("bundler", () => {
       backend,
       run: { stdout: "preact preact" },
     });
+    // The same link to a file, behind a directory link. The second directory link leads to a
+    // node_modules directory.
+    (isWindows ? itBundled.skip : itBundled)(
+      `tsconfig/SymlinkedDependencyFileBehindDirectoryLinkKeepsTsconfigAboveLink-${backend}`,
+      {
+        files: {
+          "/apps/web/entry.tsx": /* tsx */ `
+            import { Widget } from "jsxlib";
+            import { Panel } from "./vendored/panel";
+            console.log(<a />, Widget(), Panel());
+          `,
+          ...jsxRuntimeStubs,
+          "/apps/web/tsconfig.json": jsxImportSource("preact"),
+          "/store/node_modules/jsxlib/package.json": `{ "name": "jsxlib", "version": "1.0.0" }`,
+          "/cache/tsconfig.json": jsxImportSource("solid-js"),
+          "/cache/jsxlib@1.0.0/index.tsx": `export const Widget = () => <section />;`,
+          "/cache/panel.tsx": `export const Panel = () => <section />;`,
+        },
+        symlinks: {
+          "/apps/web/node_modules/jsxlib": "/store/node_modules/jsxlib",
+          "/store/node_modules/jsxlib/index.tsx": "/cache/jsxlib@1.0.0/index.tsx",
+          "/apps/web/vendored": "/store/node_modules",
+          "/store/node_modules/panel.tsx": "/cache/panel.tsx",
+        },
+        backend,
+        run: { stdout: "preact preact preact" },
+      },
+    );
+    // The link is outside node_modules and the file is inside it.
+    (isWindows ? itBundled.skip : itBundled)(`tsconfig/SymlinkedFileInNodeModulesKeepsTsconfigAboveLink-${backend}`, {
+      files: {
+        "/apps/web/entry.tsx": /* tsx */ `
+          import { Widget } from "./widget";
+          console.log(<a />, Widget());
+        `,
+        ...jsxRuntimeStubs,
+        "/apps/web/tsconfig.json": jsxImportSource("preact"),
+        "/vendor/tsconfig.json": jsxImportSource("solid-js"),
+        "/vendor/node_modules/lib/widget.tsx": `export const Widget = () => <section />;`,
+      },
+      symlinks: { "/apps/web/widget.tsx": "/vendor/node_modules/lib/widget.tsx" },
+      backend,
+      run: { stdout: "preact preact" },
+    });
     itBundled(`tsconfig/SymlinkedDirectoryEntryPoint-${backend}`, {
       files: {
         ...linkedPackage,
@@ -1451,16 +1495,15 @@ describe("bundler", () => {
       stderr: "pipe",
     });
     const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    const html = await Bun.file(join(application, "dist", "index.html"))
-      .text()
-      .catch(() => stderr);
+    // The output files exist only after a build that passed.
+    expect(exitCode, stderr).toBe(0);
+    const html = await Bun.file(join(application, "dist", "index.html")).text();
     const script = html.match(/<script type="module" src="\/([^"]*_bun[^"]*\.js)"><\/script>/);
     const client = script ? await Bun.file(join(application, "dist", script[1])).text() : "";
     expect({
       server: html.match(/server ([\w-]+)/)?.[1],
       client: ["preact", "solid-js"].filter(name => client.includes(`"${name}"`)),
     }).toEqual({ server: "solid-js", client: ["solid-js"] });
-    expect(exitCode).toBe(0);
   });
   // The settings of a linked file are in its real directory. A build that cannot read that
   // directory reports it, also when the file imports nothing.

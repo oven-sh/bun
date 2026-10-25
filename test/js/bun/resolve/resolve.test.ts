@@ -711,8 +711,9 @@ describe("wildcard exports with @ in matched subpath", () => {
   });
 });
 
-// Node treats an "exports" or "imports" key as a pattern only when the key has exactly one "*":
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/resolve.js#L634
+// Node treats an "exports" or "imports" key as a pattern only when the key has exactly one "*",
+// and the pattern matches only when "*" takes at least one character of the specifier:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/resolve.js#L631-L634
 // Each table below is what Node does, and it also runs on Node when Node is installed.
 describe("package.json exports and imports pattern keys", () => {
   const node = nodeExeAtLeast("18.0.0");
@@ -729,9 +730,44 @@ describe("package.json exports and imports pattern keys", () => {
     "nul/*/*": null,
     "nul/*": "./src/nul.js",
     "ms/*/*/": "./src/ms/*.js",
+    "e/*": "./src/e/*.js",
+    "g*": "./src/g/file*.js",
+    "k/a*": "./src/k/one*.js",
+    "k/*": "./src/k/two/*.js",
+    "c/d*": null,
+    "c/*": "./src/c/*.js",
+    "lg/x*": "./src/lg/star*.js",
+    "lg/": "./src/lg/dir/",
+    "f/*.js": "./src/f/*.js",
+    "tps/*": "./src/tps/*index.js",
+    "x/exact": "./src/x/exact.js",
+    "x/*": "./src/x/other.js",
+    "only": "./src/only.js",
   };
   // Includes the files that only a wrong match reaches, so that a wrong match loads a file.
-  const sources = ["src/two/q/q.js", "src/sh2/b/b.js", "src/sh1.js", "src/nul.js", "src/ms/q.js"];
+  const sources = [
+    "src/two/q/q.js",
+    "src/sh2/b/b.js",
+    "src/sh1.js",
+    "src/nul.js",
+    "src/ms/q.js",
+    "src/e/.js",
+    "src/e/x.js",
+    "src/g/file.js",
+    "src/g/file1.js",
+    "src/k/one.js",
+    "src/k/oneb.js",
+    "src/k/two/a.js",
+    "src/c/d.js",
+    "src/c/dx.js",
+    "src/lg/star.js",
+    "src/lg/dir/x.js",
+    "src/f/deep/y.js",
+    "src/tps/a/index.js",
+    "src/x/exact.js",
+    "src/x/other.js",
+    "src/only.js",
+  ];
 
   // The same keys three times: the exports of the dependency "pat", the "#" imports of the
   // package "host", and the exports of "host" for a self-reference. Every file exports its path.
@@ -758,8 +794,9 @@ describe("package.json exports and imports pattern keys", () => {
     return tempDir("resolver-pattern-keys", files);
   }
 
-  // [subpath, the file it loads, or null when it must not resolve]
-  type Row = [subpath: string, file: string | null];
+  // [subpath, the file it loads, or null when it must not resolve]. "bun only" marks a row that
+  // Bun resolves on purpose and Node does not.
+  type Row = [subpath: string, file: string | null, where?: "bun only"];
   const everyRoute = (rows: Row[]): Row[] =>
     rows.flatMap(([subpath, file]): Row[] => [
       [`pat/${subpath}`, file && `node_modules/pat/${file}`],
@@ -777,7 +814,36 @@ describe("package.json exports and imports pattern keys", () => {
     ["sh/q", "src/sh1.js"],
   ]);
 
-  describe.each([["a key with more than one '*' is not a pattern", moreThanOneStar]])("%s", (_, rows: Row[]) => {
+  const emptyCapture: Row[] = [
+    ...everyRoute([
+      ["e/", null],
+      ["e/x", "src/e/x.js"],
+      ["g", null],
+      ["g1", "src/g/file1.js"],
+      // "./k/a*" does not match "./k/a", so "./k/*" does.
+      ["k/a", "src/k/two/a.js"],
+      ["k/ab", "src/k/oneb.js"],
+      // A null target blocks only what its key matches.
+      ["c/d", "src/c/d.js"],
+      ["c/dx", null],
+      ["f/deep/y.js", "src/f/deep/y.js"],
+      ["x/exact", "src/x/exact.js"],
+      ["x/zzz", "src/x/other.js"],
+    ]),
+    // Bun retries "pkg/name.js" as "pkg/name". The retry must not match "./g*" with nothing
+    // for "*", and it still finds the exact key "./only".
+    ["pat/g.js", null],
+    ["pat/only.js", "node_modules/pat/src/only.js", "bun only"],
+    // A specifier that ends in "/" still matches when "*" takes "a/".
+    ["pat/tps/a/", "node_modules/pat/src/tps/a/index.js"],
+    // "./lg/x*" does not match "./lg/x", so the folder key "./lg/" does. Node has no folder keys.
+    ["pat/lg/x", "node_modules/pat/src/lg/dir/x.js", "bun only"],
+  ];
+
+  describe.each([
+    ["a key with more than one '*' is not a pattern", moreThanOneStar],
+    ["'*' takes at least one character", emptyCapture],
+  ])("%s", (_, rows: Row[]) => {
     const specifiers = rows.map(([specifier]) => specifier);
 
     test.concurrent("Bun.resolveSync", () => {
@@ -822,7 +888,10 @@ describe("package.json exports and imports pattern keys", () => {
         .split("\n")
         .map(line => line.split(" ").map((field, i) => (i === 0 || field.endsWith(".js") ? field : null)));
       expect({ loaded, stderr, exitCode }).toEqual({
-        loaded: rows.map(([specifier, file]) => [specifier, file, file]),
+        loaded: rows.map(([specifier, file, where]) => {
+          const onNode = where === "bun only" ? null : file;
+          return [specifier, onNode, onNode];
+        }),
         stderr: "",
         exitCode: 0,
       });

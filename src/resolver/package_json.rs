@@ -1808,19 +1808,18 @@ impl<'a> ESModule<'a> {
                     let pattern_base = &expansion.key[0..star];
                     // If patternBase is not null and matchKey starts with but is not equal
                     // to patternBase, then
-                    if strings::starts_with(match_key, pattern_base) {
+                    // Node tests the length first, so "*" takes at least one character:
+                    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/resolve.js#L631
+                    if match_key.len() >= expansion.key.len()
+                        && strings::starts_with(match_key, pattern_base)
+                    {
                         // Let patternTrailer be the substring of expansionKey from the index
                         // after the first "*" character.
                         let pattern_trailer = &expansion.key[star + 1..];
                         debug_assert!(!strings::contains_char(pattern_trailer, b'*'));
 
-                        // If patternTrailer has zero length, or if matchKey ends with
-                        // patternTrailer and the length of matchKey is greater than or
-                        // equal to the length of expansionKey, then
-                        if pattern_trailer.is_empty()
-                            || (strings::ends_with(match_key, pattern_trailer)
-                                && match_key.len() >= expansion.key.len())
-                        {
+                        // If matchKey ends with patternTrailer, then
+                        if strings::ends_with(match_key, pattern_trailer) {
                             let target = &expansion.value;
                             let subpath = &match_key
                                 [pattern_base.len()..match_key.len() - pattern_trailer.len()];

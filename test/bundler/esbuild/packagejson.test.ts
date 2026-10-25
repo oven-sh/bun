@@ -1461,8 +1461,28 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg1/file.js": `console.log('SUCCESS')`,
       "/Users/user/project/node_modules/pkg1/file2.js": `console.log('SUCCESS')`,
     },
+    // Bun follows Node here and not esbuild, from which this test is ported: "*" takes at
+    // least one character, so "pkg1/foo" does not match "./foo*". esbuild loads ./file.js.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/resolve.js#L631
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/foo". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("packagejson/ExportsWildcardNonEmptyCapture", {
+    files: {
+      "/Users/user/project/src/entry.js": `import 'pkg1/foo2'`,
+      "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
+        {
+          "exports": {
+            "./foo*": "./file*.js"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/pkg1/file.js": `console.log('FAILURE')`,
+      "/Users/user/project/node_modules/pkg1/file2.js": `console.log('SUCCESS')`,
+    },
     run: {
-      stdout: "SUCCESS\nSUCCESS",
+      stdout: "SUCCESS",
     },
   });
   // A key with more than one "*" is not a pattern (Node). esbuild does not resolve this import either.
@@ -2243,11 +2263,11 @@ describe("bundler", () => {
 
 describe("bundler", () => {
   // An exports pattern target may spell ".." as "..*": the literal segment passes the
-  // pre-substitution target validation because it is not exactly "..", and a specifier that
-  // equals the pattern base ("pkg1/x" against the key "./x*") substitutes an empty string
-  // for "*", turning "./..*/..*/outside.js" into "./../../outside.js". The resolved path must
-  // be re-validated after substitution so the import fails instead of loading a file that
-  // lives above the package directory. The plain "pkg1" import must keep working.
+  // pre-substitution target validation because it is not exactly "..". An empty string for
+  // "*" would turn "./..*/..*/outside.js" into "./../../outside.js". "*" takes at least one
+  // character, so "pkg1/x" does not match the key "./x*" and the import fails instead of
+  // loading a file that lives above the package directory. The plain "pkg1" import must
+  // keep working.
   itBundled("packagejson/ExportsPatternTargetRejectsParentSegmentsAfterSubstitution", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -2257,11 +2277,32 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg1/package.json": `{ "exports": { ".": "./index.js", "./x*": "./..*/..*/outside.js" } }`,
       "/Users/user/project/node_modules/pkg1/index.js": `console.log('SUCCESS')`,
       // Lives two directories above the package. It must never be reachable through pkg1's
-      // exports map; if the substituted target is not re-validated, resolution lands here.
+      // exports map. If the key "./x*" matched "pkg1/x", resolution would land here.
       "/Users/user/project/outside.js": `console.log('FAILURE')`,
     },
     bundleErrors: {
       "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/x". Maybe you need to "bun install"?`],
+    },
+  });
+  // The same target shape with a capture that is not empty: "pkg1/x/y" matches the key "./x*"
+  // with "/y" for "*", which turns "./..*/outside.js" into "./../y/outside.js". The resolved
+  // path must be re-validated after substitution so the import fails instead of loading a
+  // file that lives outside the package directory. This check is Bun's own (#31417): Node
+  // v26.3.0 and esbuild 0.21.5 load the file.
+  itBundled("packagejson/ExportsPatternTargetRejectsParentSegmentsAfterSubstitutionOfCapture", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import 'pkg1'
+        import 'pkg1/x/y'
+      `,
+      "/Users/user/project/node_modules/pkg1/package.json": `{ "exports": { ".": "./index.js", "./x*": "./..*/outside.js" } }`,
+      "/Users/user/project/node_modules/pkg1/index.js": `console.log('SUCCESS')`,
+      // Lives in a sibling of the package directory. It must never be reachable through pkg1's
+      // exports map; if the substituted target is not re-validated, resolution lands here.
+      "/Users/user/project/node_modules/y/outside.js": `console.log('FAILURE')`,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/x/y". Maybe you need to "bun install"?`],
     },
   });
 });

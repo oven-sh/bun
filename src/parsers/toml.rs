@@ -2194,8 +2194,8 @@ impl<'a, 'log> Parser<'a, 'log> {
         if obj.properties.len() > LINEAR_KEY_LIMIT {
             return self.insert_spilled_key(table, seg, value);
         }
-        // `as_property` compares UTF-8 bytes correctly against both 8-bit
-        // and UTF-16 stored keys.
+        // The duplicate check must use the UTF-8 key bytes: `as_property`
+        // compares correctly against both 8-bit and UTF-16 stored keys.
         if obj.as_property(seg.text).is_some() {
             return Err(self
                 .scanner

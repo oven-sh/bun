@@ -2874,6 +2874,16 @@ describe.concurrent("a .npmrc of many credential lines is read in time in propor
           i => `@scope${i}:registry=https://host${i}.example.com/\n//other${i}.example.com/:_auth=\n`,
         ),
     ],
+    [
+      "registries under a path, and a token for another host each",
+      () =>
+        numbered(
+          lines / 2,
+          i =>
+            `@scope${i}:registry=https://host${i}.example.com/org/project/_packaging/feed/npm/registry/\n` +
+            `//other${i}.example.com/:_authToken=token${i}\n`,
+        ),
+    ],
   ])(
     "%s",
     async (_, npmrc) => {

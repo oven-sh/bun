@@ -615,16 +615,51 @@ pub mod registry {
                 credentials,
             }))
         }
+    }
+
+    /// Every credential key of `.npmrc`, in the order it was read.
+    #[derive(Default)]
+    pub(crate) struct UrlAuthList {
+        entries: Vec<UrlAuth>,
+        /// The position of the first entry of each key, if there are more than `SCAN_MAX` entries.
+        by_key: bun_collections::StringHashMap<u32>,
+    }
+
+    impl UrlAuthList {
+        /// A lookup scans up to this many entries. More entries than that get a hash table.
+        const SCAN_MAX: usize = 32;
+
+        pub(crate) fn new(entries: Vec<UrlAuth>) -> UrlAuthList {
+            let mut by_key = bun_collections::StringHashMap::new();
+            if entries.len() > Self::SCAN_MAX {
+                for (position, entry) in entries.iter().enumerate() {
+                    // A scan finds the first entry of a key.
+                    bun_core::handle_oom(by_key.get_or_put_value(&entry.key, position as u32));
+                }
+            }
+            UrlAuthList { entries, by_key }
+        }
+
+        pub(crate) fn is_empty(&self) -> bool {
+            self.entries.is_empty()
+        }
+
+        fn get(&self, key: &[u8]) -> Option<&UrlAuth> {
+            if self.entries.len() > Self::SCAN_MAX {
+                return Some(&self.entries[*self.by_key.get(key)? as usize]);
+            }
+            self.entries.iter().find(|entry| *entry.key == *key)
+        }
 
         /// Walks the path like npm does. `url` must be a WHATWG serialization, from `Scope::url` or
         /// `normalize_tarball_url`.
-        pub(crate) fn find_entry<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a UrlAuth> {
-            if list.is_empty() || !url.has_http_like_protocol() {
+        pub(crate) fn find_entry(&self, url: &URL) -> Option<&UrlAuth> {
+            if self.is_empty() || !url.has_http_like_protocol() {
                 return None;
             }
             bun_ini::RegistryKey::from_parsed(url)
                 .walk()
-                .find_map(|key| list.iter().find(|entry| *entry.key == *key))
+                .find_map(|key| self.get(key))
         }
     }
 

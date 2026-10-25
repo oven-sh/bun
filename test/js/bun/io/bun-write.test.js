@@ -1796,6 +1796,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 (isWindows ? describe.skip : describe.concurrent)("Bun.write(file, file) on a non-blocking fd", () => {
   const size = 1024 * 1024;
   const pattern = Buffer.alloc(size, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+  // Larger than a pipe on a kernel with 64 KiB pages, so a copy into a pipe that nothing reads cannot finish.
+  const big = Buffer.alloc(4 * size, pattern);
 
   // fs.promises.stat is a pool job like the copy. The first one starts a pool thread. The second
   // one is queued after the copy, which gives the copy time to reach its first syscall before the
@@ -1831,6 +1833,17 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     }
   `;
 
+  // Runs in the child while the copy waits. The sleep is the window that the CPU time is measured
+  // in: a copy that waits uses about 60 ms in a debug build, a copy that asks again and again uses
+  // the window.
+  const idleWhileItWaits = `
+    const before = process.cpuUsage();
+    await Bun.sleep(1000);
+    const { user, system } = process.cpuUsage(before);
+    const cpuMs = Math.round((user + system) / 1000);
+    process.stderr.write(JSON.stringify(cpuMs < 250 ? { idle: true } : { cpuMs }) + "\\n");
+  `;
+
   const sh = (pipeline, script, env = {}) => ({
     cmd: ["sh", "-c", pipeline],
     env: { ...bunEnv, ...env, BUN: bunExe(), SCRIPT: script },
@@ -1838,12 +1851,11 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     stdout: "pipe",
     stderr: "pipe",
   });
+  // The child as a stage of a pipeline. sh returns the status of the last stage only, so this
+  // stage reports the status of the child.
+  const bun = `{ "$BUN" -e "$SCRIPT"; echo "{\\"exit\\":$?}" >&2; }`;
   // The reader of the child's stdout starts only when the test sends a line on sh's stdin (fd 3).
   const gatedReader = `{ read -r go <&3; exec cat; }`;
-  async function releaseReader(proc) {
-    proc.stdin.write("go\n");
-    await proc.stdin.flush();
-  }
 
   // Reads a stream as it arrives. `until` resolves when `done(text so far)` holds or the stream ends.
   function collect(stream) {
@@ -1896,92 +1908,80 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     return fifo;
   }
 
-  // Sends "hel", then "lo\n" only after "hel" came out of the copy, so the copy finds its source
-  // empty part-way. A copy that has already settled ends the wait too.
-  async function feedInTwoPieces(send, arrived, stderr) {
-    await send("hel");
-    await Promise.race([arrived("hel"), stderr.until(reported(2))]);
-    await send("lo\n");
-    await Promise.race([arrived("hello\n"), stderr.until(reported(2))]);
+  // Sends each piece only after the one before it came out of the copy, so the copy finds its
+  // source empty part-way. `settled` resolves when the copy has ended: that ends the wait too.
+  async function feedInPieces(pieces, send, arrived, settled) {
+    let sent = "";
+    for (const piece of pieces) {
+      await send(piece);
+      sent += piece;
+      await Promise.race([arrived(sent), settled]);
+    }
   }
 
-  function expectWholeFile(bytes, err, prefilled) {
-    expect({
-      piped: bytes.length,
-      intact: pattern.equals(bytes.subarray(prefilled)),
-      reports: reports(err),
-    }).toEqual({
-      piped: prefilled + size,
-      intact: true,
-      reports: [{ ready: prefilled }, { resolved: size }],
-    });
-  }
-
-  async function expectWholeFileThroughPipe(proc) {
+  // The child's stdout is a pipe that nothing reads until the child has sent every report that
+  // comes before the outcome. The copy fills the pipe and has to wait.
+  async function expectWholeFileThroughPipe(proc, whileItWaits = []) {
     const stderr = collect(proc.stderr);
-    const prefilled = await ready(stderr);
-    expect(prefilled).toBeGreaterThan(0);
-    await releaseReader(proc);
+    await stderr.until(reported(1 + whileItWaits.length));
+    proc.stdin.write("go\n");
+    await proc.stdin.flush();
     const [bytes, err, exitCode] = await Promise.all([proc.stdout.bytes(), stderr.all(), proc.exited]);
-    expectWholeFile(bytes, err, prefilled);
+    expect({ piped: bytes.length, intact: big.equals(bytes), reports: reports(err) }).toEqual({
+      piped: big.length,
+      intact: true,
+      reports: [{ ready: 0 }, ...whileItWaits, { resolved: big.length }, { exit: 0 }],
+    });
     expect(exitCode).toBe(0);
   }
 
-  it("a file to a full stdout pipe", async () => {
-    using dir = tempDir("bun-write-nonblocking-pipe", { "source.bin": pattern });
+  // Linux: sendfile fills the pipe and then fails with EAGAIN. The read/write loop continues at
+  // that byte and waits. macOS has only the loop.
+  it("a file to a stdout pipe that fills during the copy", async () => {
+    using dir = tempDir("bun-write-nonblocking-pipe", { "source.bin": big });
     const source = `Bun.file(${JSON.stringify(join(String(dir), "source.bin"))})`;
     await using proc = Bun.spawn(
-      sh(`exec 3<&0; "$BUN" -e "$SCRIPT" | ${gatedReader}`, child(fillStdout, "Bun.stdout", source)),
+      sh(`exec 3<&0; ${bun} | ${gatedReader}`, child("void process.stdout;", "Bun.stdout", source, idleWhileItWaits)),
     );
-    await expectWholeFileThroughPipe(proc);
+    await expectWholeFileThroughPipe(proc, [{ idle: true }]);
   });
 
-  // Linux knows the type of fd 1 and uses sendfile for it. It knows nothing about fd 3, tries
-  // copy_file_range, and falls back to the read/write loop, which is the only loop on macOS.
-  it("a file to a full pipe on Bun.file(3)", async () => {
-    using dir = tempDir("bun-write-nonblocking-fd3", { "source.bin": pattern });
-    const source = `Bun.file(${JSON.stringify(join(String(dir), "source.bin"))})`;
-    await using proc = Bun.spawn(
-      sh(`exec 3<&0; "$BUN" -e "$SCRIPT" 3>&1 | ${gatedReader}`, child(fillStdout, "Bun.file(3)", source)),
-    );
-    await expectWholeFileThroughPipe(proc);
-  });
-
-  it("a stdin pipe to a full stdout pipe", async () => {
-    using dir = tempDir("bun-write-nonblocking-pipes", { "source.bin": pattern });
+  // Linux: the same for splice.
+  it("a stdin pipe to a stdout pipe that fills during the copy", async () => {
+    using dir = tempDir("bun-write-nonblocking-pipes", { "source.bin": big });
     await using proc = Bun.spawn(
       sh(
-        `exec 3<&0; cat "$SOURCE" | "$BUN" -e "$SCRIPT" | ${gatedReader}`,
-        child(fillStdout, "Bun.stdout", "Bun.stdin"),
-        {
-          SOURCE: join(String(dir), "source.bin"),
-        },
+        `exec 3<&0; cat "$SOURCE" | ${bun} | ${gatedReader}`,
+        child("void process.stdout;", "Bun.stdout", "Bun.stdin"),
+        { SOURCE: join(String(dir), "source.bin") },
       ),
     );
     await expectWholeFileThroughPipe(proc);
   });
 
-  // A splice between two pipes does not block if either is non-blocking, so an empty stdin fails it too.
-  it("a stdin pipe that has no data yet, once fd 1 is non-blocking", async () => {
+  // A splice between two pipes does not block if either is non-blocking, so an empty stdin fails
+  // it too. Linux only: a read/write loop blocks in the read of stdin.
+  it.skipIf(!isLinux)("a stdin pipe that has no data yet, once fd 1 is non-blocking", async () => {
     // The first stage turns two lines from the test into the two pieces.
     const pieces = `{ read -r a; printf '%s' "$a"; read -r b; printf '%s\\n' "$b"; }`;
     await using proc = Bun.spawn(
-      sh(`${pieces} | "$BUN" -e "$SCRIPT" | cat`, child("void process.stdout;", "Bun.stdout", "Bun.stdin")),
+      sh(`${pieces} | ${bun} | cat`, child("void process.stdout;", "Bun.stdout", "Bun.stdin")),
     );
     const [stdout, stderr] = [collect(proc.stdout), collect(proc.stderr)];
     await ready(stderr);
-    await feedInTwoPieces(
+    await feedInPieces(
+      ["hel", "lo\n"],
       async piece => {
         proc.stdin.write(piece.trimEnd() + "\n");
         await proc.stdin.flush();
       },
       text => stdout.until(out => out.includes(text)),
-      stderr,
+      stderr.until(reported(2)),
     );
     const [out, err, exitCode] = await Promise.all([stdout.all(), stderr.all(), proc.exited]);
     expect({ stdout: out, reports: reports(err) }).toEqual({
       stdout: "hello\n",
-      reports: [{ ready: 0 }, { resolved: 6 }],
+      reports: [{ ready: 0 }, { resolved: 6 }, { exit: 0 }],
     });
     expect(exitCode).toBe(0);
   });
@@ -2001,7 +2001,15 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     const prefilled = await ready(stderr);
     expect(prefilled).toBeGreaterThan(0);
     const [bytes, err, exitCode] = await Promise.all([proc.stdout.bytes(), stderr.all(), proc.exited]);
-    expectWholeFile(bytes, err, prefilled);
+    expect({
+      piped: bytes.length,
+      intact: pattern.equals(bytes.subarray(prefilled)),
+      reports: reports(err),
+    }).toEqual({
+      piped: prefilled + size,
+      intact: true,
+      reports: [{ ready: prefilled }, { resolved: size }],
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -2021,14 +2029,16 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         if (source < 1024) throw new Error("the FIFO is on fd " + source);
       `;
       await using proc = Bun.spawn(
-        sh(`ulimit -n 2048 2>/dev/null; "$BUN" -e "$SCRIPT" | cat`, child(open, "Bun.stdout", "Bun.file(source)")),
+        sh(`ulimit -n 2048 2>/dev/null; ${bun} | cat`, child(open, "Bun.stdout", "Bun.file(source)", idleWhileItWaits)),
       );
       const [stdout, stderr] = [collect(proc.stdout), collect(proc.stderr)];
-      await ready(stderr);
-      await feedInTwoPieces(
+      // The first piece goes out after the child measured the wait for it.
+      await stderr.until(reported(2));
+      await feedInPieces(
+        ["hel", "lo\n"],
         async piece => void fs.writeSync(writer, piece),
         text => stdout.until(out => out.includes(text)),
-        stderr,
+        stderr.until(reported(3)),
       );
       // The copy now waits for more. The end of the file has to wake it.
       fs.closeSync(writer);
@@ -2036,7 +2046,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       const [out, err, exitCode] = await Promise.all([stdout.all(), stderr.all(), proc.exited]);
       expect({ stdout: out, reports: reports(err) }).toEqual({
         stdout: "hello\n",
-        reports: [{ ready: 0 }, { resolved: 6 }],
+        reports: [{ ready: 0 }, { idle: true }, { resolved: 6 }, { exit: 0 }],
       });
       expect(exitCode).toBe(0);
     } finally {
@@ -2046,8 +2056,6 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
   });
 
   it("a reader that takes a part of a full FIFO and leaves fails the copy with EPIPE", async () => {
-    // Larger than a pipe on a kernel with 64 KiB pages, so the copy cannot finish before the reader leaves.
-    const big = Buffer.alloc(4 * size, pattern);
     using dir = tempDir("bun-write-nonblocking-fifo-dest", { "source.bin": big });
     const source = `Bun.file(${JSON.stringify(join(String(dir), "source.bin"))})`;
     const fifo = mkfifo(dir, "dest.fifo");
@@ -2087,7 +2095,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       }).toEqual({
         tookPartOfTheFile: true,
         intact: true,
-        reports: [{ ready: prefilled }, { rejected: isLinux ? "EPIPE sendfile" : "EPIPE write" }],
+        reports: [{ ready: prefilled }, { rejected: "EPIPE write" }],
       });
       expect(exitCode).toBe(0);
     } finally {
@@ -2095,76 +2103,53 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     }
   });
 
-  // Nothing arrives on stdin, so the copy must also see that the pipe it waits for has no reader
-  // any more. A wait for stdin alone would never end. Linux only: the copy is a sendfile there,
-  // and a read/write loop first reads the empty stdin.
-  it.skipIf(!isLinux)("an idle stdin socket does not hide that the reader of a full stdout pipe left", async () => {
-    using dir = tempDir("bun-write-nonblocking-order", {});
-    const gate = mkfifo(dir, "gate.fifo");
-    // Linux opens a FIFO for both directions without a peer. The reader below holds the pipe until a line arrives here.
-    const gateFd = fs.openSync(gate, fs.constants.O_RDWR);
-    try {
-      await using proc = Bun.spawn(
-        sh(`"$BUN" -e "$SCRIPT" | { read -r go < "$GATE"; }`, child(fillStdout, "Bun.stdout", "Bun.stdin"), {
-          GATE: gate,
-        }),
-      );
-      const stderr = collect(proc.stderr);
-      const prefilled = await ready(stderr);
-      expect(prefilled).toBeGreaterThan(0);
-      fs.writeSync(gateFd, "go\n");
-      const [err, exitCode] = await Promise.all([stderr.all(), proc.exited]);
-      expect(reports(err)).toEqual([{ ready: prefilled }, { rejected: "EPIPE sendfile" }]);
-      expect(exitCode).toBe(0);
-    } finally {
-      fs.closeSync(gateFd);
-    }
-  });
-
-  // splice (Linux) does not report the closed stdout while stdin is empty. The copy has to sleep
-  // until stdin has data: a copy that asks again and again uses a whole core.
-  it.skipIf(!isLinux)("an idle stdin pipe after the reader of stdout left costs no CPU", async () => {
-    using dir = tempDir("bun-write-nonblocking-idle", {});
-    const gate = mkfifo(dir, "gate.fifo");
-    const gateFd = fs.openSync(gate, fs.constants.O_RDWR);
-    // Runs in the child once the copy has started. The sleep is the window that the CPU time is
-    // measured in: a debug build that waits uses about 60 ms, a copy that spins uses the window.
-    const measureCpu = `
-      for (;;) {
-        try {
-          fs.writeSync(1, "-");
-        } catch (e) {
-          if (e.code === "EPIPE") break;
-          throw e;
-        }
-        await Bun.sleep(1);
-      }
-      const before = process.cpuUsage();
-      await Bun.sleep(1000);
-      const { user, system } = process.cpuUsage(before);
-      const cpuMs = Math.round((user + system) / 1000);
-      process.stderr.write(JSON.stringify(cpuMs < 250 ? { idle: true } : { cpuMs }) + "\\n");
+  // One socket is stdin and stdout of the child, as inetd and `socat EXEC:` start a server, so the
+  // use of process.stdout makes stdin non-blocking too. Bun opens a path destination itself and
+  // copies into it with the loop of node:fs. The file at the path is shorter than the source and
+  // its size is already known: the copy still goes to the end of the source.
+  // Linux only: on macOS fcopyfile refuses a source that is not a regular file (#14054).
+  it.skipIf(!isLinux)("a stdin socket to a path, once the same socket on fd 1 is non-blocking", async () => {
+    using dir = tempDir("bun-write-nonblocking-to-path", { "out.txt": "older" });
+    const path = join(String(dir), "out.txt");
+    const setup = `
+      void process.stdout;
+      const flags = fs.readFileSync("/proc/self/fdinfo/0", "utf8").match(/^flags:\\s*([0-7]+)/m)[1];
+      if (!(parseInt(flags, 8) & fs.constants.O_NONBLOCK)) throw new Error("stdin is blocking");
+      const destination = Bun.file(${JSON.stringify(path)});
+      if (destination.size !== 5) throw new Error("the destination has " + destination.size + " bytes");
     `;
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `exec "$BUN" -e "$SCRIPT" <&3 >&3 3<&-`],
+      env: { ...bunEnv, BUN: bunExe(), SCRIPT: child(setup, "destination", "Bun.stdin") },
+      stdio: ["ignore", "ignore", "pipe", "socket-fd"],
+    });
+    // Reading .stdio gives the fd to the caller.
+    const socket = proc.stdio[3];
+    let socketOpen = true;
     try {
-      // The first stage keeps stdin open and empty until the test sends a line, then passes it on.
-      await using proc = Bun.spawn(
-        sh(
-          `{ read -r line; echo "$line"; } | "$BUN" -e "$SCRIPT" | { read -r go < "$GATE"; }`,
-          child("void process.stdout;", "Bun.stdout", "Bun.stdin", measureCpu),
-          { GATE: gate },
-        ),
-      );
       const stderr = collect(proc.stderr);
-      await ready(stderr);
-      fs.writeSync(gateFd, "go\n");
-      await stderr.until(reported(2));
-      proc.stdin.write("data\n");
-      await proc.stdin.flush();
+      let settled = false;
+      const outcome = stderr.until(reported(2)).finally(() => (settled = true));
+      // The first piece is in the socket before the copy starts. The next two end the sized part
+      // of the loop and the part after it, and each finds the socket empty first.
+      await feedInPieces(
+        ["hel", "lo", " world\n"],
+        async piece => void fs.writeSync(socket, piece),
+        async text => {
+          while (!settled && fs.readFileSync(path, "utf8") !== text) await Bun.sleep(1);
+        },
+        outcome,
+      );
+      fs.closeSync(socket);
+      socketOpen = false;
       const [err, exitCode] = await Promise.all([stderr.all(), proc.exited]);
-      expect(reports(err)).toEqual([{ ready: 0 }, { idle: true }, { rejected: "EPIPE splice" }]);
+      expect({ reports: reports(err), content: fs.readFileSync(path, "utf8") }).toEqual({
+        reports: [{ ready: 0 }, { resolved: 12 }],
+        content: "hello world\n",
+      });
       expect(exitCode).toBe(0);
     } finally {
-      fs.closeSync(gateFd);
+      if (socketOpen) fs.closeSync(socket);
     }
   });
 });

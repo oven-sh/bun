@@ -9391,6 +9391,38 @@ fn wait_until(fd: Fd, events: i16) -> Maybe<()> {
     }
 }
 
+/// `read` that treats `fd` as blocking even when its description has O_NONBLOCK: on EAGAIN it waits, then reads again.
+#[cfg(unix)]
+#[inline]
+pub fn read_retrying(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    loop {
+        match read(fd, buf) {
+            Err(e) if e.is_retry() => {
+                if wait_until_readable(fd).is_err() {
+                    return Err(e);
+                }
+            }
+            result => return result,
+        }
+    }
+}
+
+/// The `write` counterpart of [`read_retrying`].
+#[cfg(unix)]
+#[inline]
+pub fn write_retrying(fd: Fd, bytes: &[u8]) -> Maybe<usize> {
+    loop {
+        match write(fd, bytes) {
+            Err(e) if e.is_retry() => {
+                if wait_until_writable(fd).is_err() {
+                    return Err(e);
+                }
+            }
+            result => return result,
+        }
+    }
+}
+
 /// Writes all of `bytes` to stdout or stderr, for a caller that has to know whether they got there. `Output` doesn't say.
 pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
     while !bytes.is_empty() {

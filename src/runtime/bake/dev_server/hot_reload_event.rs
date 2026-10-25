@@ -205,16 +205,7 @@ impl HotReloadEvent {
             return;
         }
 
-        if let Some(map) = &dev.has_tailwind_plugin_hack {
-            for abs_path in map.keys() {
-                let Some(file) = dev.client_graph.bundled_files.get(abs_path) else {
-                    continue;
-                };
-                if file.file_kind() == FileKind::Css {
-                    bun_core::handle_oom(entry_points.append_css(abs_path));
-                }
-            }
-        }
+        bun_core::handle_oom(dev.append_tailwind_stylesheets(entry_points));
     }
 
     pub(crate) fn reset(&mut self) {

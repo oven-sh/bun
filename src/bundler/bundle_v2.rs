@@ -445,11 +445,19 @@ pub mod bv2_impl {
             }
         }
 
+        /// The loaders are for a file that the dev server bundles again in its client graph and in its server graph: see `requested_file_loader`.
+        #[derive(Copy, Clone, Default)]
+        pub struct EntryPoint {
+            pub flags: EntryPointFlags,
+            pub client_loader: Option<bun_ast::Loader>,
+            pub server_loader: Option<bun_ast::Loader>,
+        }
+
         /// TYPE_ONLY moved down; bundler
         /// reads `.set` (count/keys/values) in `enqueue_entry_points_dev_server`.
         #[derive(Default)]
         pub struct EntryPointList {
-            pub set: bun_collections::StringArrayHashMap<EntryPointFlags>,
+            pub set: bun_collections::StringArrayHashMap<EntryPoint>,
         }
         impl EntryPointList {
             pub fn empty() -> Self {
@@ -3136,7 +3144,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// The dev server passes `Loader::Html` for the html file of a route: its extension need not be `.html`.
+        /// The dev server passes `Loader::Html` for the html file of a route, whose extension need not be `.html`, and the loader that its importers ask for when it bundles a file again.
         fn requested_file_loader(&self, path: &Fs::Path<'_>, loader: Option<Loader>) -> Loader {
             loader.unwrap_or_else(|| {
                 path.loader(&self.transpiler.options.loaders)
@@ -3640,7 +3648,8 @@ pub mod bv2_impl {
                 .ensure_unused_capacity(num_entry_points)?;
 
             debug_assert_eq!(files.set.keys().len(), files.set.values().len());
-            for (abs_path, flags) in files.set.keys().iter().zip(files.set.values().iter()) {
+            for (abs_path, entry) in files.set.keys().iter().zip(files.set.values().iter()) {
+                let flags = entry.flags;
                 // Ensure we have the proper conditions set for client-side entrypoints.
                 // SAFETY: hold the transpiler as a `*mut` across the loop body
                 // so it doesn't keep `self` borrowed through the plugin
@@ -3652,7 +3661,7 @@ pub mod bv2_impl {
                         &raw mut *self.transpiler
                     };
                 let server_target = self.transpiler.options.target;
-                let client_loader = flags.html().then_some(Loader::Html);
+                let client_loader = flags.html().then_some(Loader::Html).or(entry.client_loader);
 
                 struct TargetCheck {
                     should_dispatch: bool,
@@ -3668,12 +3677,12 @@ pub mod bv2_impl {
                     TargetCheck {
                         should_dispatch: flags.server(),
                         target: server_target,
-                        loader: None,
+                        loader: entry.server_loader,
                     },
                     TargetCheck {
                         should_dispatch: flags.ssr(),
                         target: Target::ServerComponentsSsr,
-                        loader: None,
+                        loader: entry.server_loader,
                     },
                 ];
 
@@ -3745,7 +3754,7 @@ pub mod bv2_impl {
                         &mut resolved,
                         true,
                         self.transpiler.options.target,
-                        None,
+                        entry.server_loader,
                     )?;
                 }
                 if flags.ssr() {
@@ -3753,7 +3762,7 @@ pub mod bv2_impl {
                         &mut resolved,
                         true,
                         Target::ServerComponentsSsr,
-                        None,
+                        entry.server_loader,
                     )?;
                 }
             }
@@ -7194,6 +7203,7 @@ pub mod bv2_impl {
                     continue;
                 }
 
+                let mut is_cached_html_link = false;
                 if let Some(dev_server) = self.dev_server_handle() {
                     'brk: {
                         if path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)
@@ -7270,7 +7280,11 @@ pub mod bv2_impl {
                                     import_record.path.is_disabled = true;
                                 }
                             }
-                            continue 'outer;
+                            if loader != Loader::Html {
+                                continue 'outer;
+                            }
+                            // The code below can force the file loader for this link. The dev server keeps it on the edge of the import.
+                            is_cached_html_link = true;
                         }
                     }
                 }
@@ -7297,6 +7311,9 @@ pub mod bv2_impl {
                     break 'brk resolved_loader;
                 };
                 import_record.loader = Some(import_record_loader);
+                if is_cached_html_link {
+                    continue;
+                }
 
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()

@@ -17,7 +17,7 @@ use bun_core::strings;
 use super::{
     CLIENT_PREFIX, ChunkKind, DevServer, EntryPointList, FileKind, GraphTraceState,
     SerializedFailure, TraceImportGoal, packed_map, route_bundle, serialized_failure,
-    source_map_store,
+    source_map_store, to_opaque_file_id,
 };
 use crate::bake::dev_server::{CachedFileIndex, HotUpdateContext};
 use crate::bake::{self, Side};
@@ -65,6 +65,8 @@ pub(crate) struct Edge<const SIDE: bake::Side> {
     /// Previous edge in the "dependencies" linked list for the `imported` file.
     /// Enables O(1) removal from the middle of the list.
     pub(crate) prev_dependency: Option<EdgeIndex>,
+    /// The loader that the importer asks for. `None` stands for the loader of the extension, and for two imports that disagree.
+    pub(crate) loader: Option<bun_ast::Loader>,
 }
 
 /// Heads of one file's two edge linked lists.
@@ -382,6 +384,49 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         index: FileIndex<SIDE>,
     ) -> Option<route_bundle::Index> {
         self.bundled_files.values()[index.get() as usize].html_route_bundle_index
+    }
+
+    /// The loader to bundle a file again with: the one loader that every importer asks for. `None` leaves the choice to the file's extension.
+    pub(crate) fn rebundle_loader(&mut self, index: usize) -> Option<bun_ast::Loader> {
+        if self.bundled_files.values()[index]
+            .html_route_bundle_index
+            .is_some()
+        {
+            return Some(bun_ast::Loader::Html);
+        }
+        if self.is_framework_entry_point(index) {
+            return None;
+        }
+        let mut it = self.edge_lists[index].first_dep;
+        let loader = self.edges[it?.get() as usize].loader?;
+        while let Some(edge_index) = it {
+            let edge = &self.edges[edge_index.get() as usize];
+            if edge.loader != Some(loader) {
+                return None;
+            }
+            it = edge.next_dependency;
+        }
+        Some(loader)
+    }
+
+    /// A file that a framework route bundles with the loader of its extension, whatever its importers ask for.
+    fn is_framework_entry_point(&mut self, index: usize) -> bool {
+        match SIDE {
+            Side::Server => self.bundled_files.values()[index].is_route,
+            Side::Client => {
+                // SAFETY: `self` is the client graph here, so the router and the server graph are disjoint sibling fields.
+                let (router, server_graph) = unsafe {
+                    let dev = self.owner();
+                    (&(*dev).router, &(*dev).server_graph)
+                };
+                let id = to_opaque_file_id::<{ Side::Client }>(FileIndex::init(index as u32));
+                router.types.iter().any(|ty| ty.client_file == Some(id))
+                    || server_graph
+                        .bundled_files
+                        .get(&self.bundled_files.keys()[index])
+                        .is_some_and(|file| file.is_route)
+            }
+        }
     }
 
     // ── per-bundle scratch accessors (kept for existing call sites) ────────
@@ -912,7 +957,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             // Note: snapshot the three fields we need so the shared borrow
             // on `ctx.import_records` ends before `process_edge_attachment`
             // takes `&mut ctx`.
-            let (flags, src, key) = {
+            let (flags, src, loader, key) = {
                 let ir = &ctx.import_records[index.get() as usize].as_slice()[i];
                 // If an `onResolve` plugin resolved the import, `ir.path` is still the specifier.
                 let path = if ir.source_index.is_valid() {
@@ -920,7 +965,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 } else {
                     &ir.path
                 };
-                (ir.flags, ir.source_index, path.key_for_incremental_graph())
+                (
+                    ir.flags,
+                    ir.source_index,
+                    ir.loader,
+                    path.key_for_incremental_graph(),
+                )
             };
             let _ = self.process_edge_attachment(
                 ctx,
@@ -929,6 +979,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 file_index,
                 flags,
                 src,
+                loader,
                 key,
                 EdgeAttachmentMode::JsOrHtml,
             )?;
@@ -955,11 +1006,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         while let Some(idx) = queue.pop() {
             let records_len = ctx.import_records[idx.get() as usize].len();
             for i in 0..records_len {
-                let (flags, src, key) = {
+                let (flags, src, loader, key) = {
                     let ir = &ctx.import_records[idx.get() as usize].as_slice()[i];
                     (
                         ir.flags,
                         ir.source_index,
+                        ir.loader,
                         ir.path.key_for_incremental_graph(),
                     )
                 };
@@ -970,6 +1022,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     file_index,
                     flags,
                     src,
+                    loader,
                     key,
                     EdgeAttachmentMode::Css,
                 )?;
@@ -990,6 +1043,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         file_index: FileIndex<SIDE>,
         ir_flags: bun_ast::ImportRecordFlags,
         ir_source_index: bun_ast::Index,
+        ir_loader: Option<bun_ast::Loader>,
         key: &[u8],
         mode: EdgeAttachmentMode,
     ) -> Result<EdgeAttachmentResult, crate::Error> {
@@ -1039,14 +1093,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         let gop = quick_lookup.get_or_put(imported_file_index)?;
         if gop.found_existing {
+            let ei = gop.value_ptr.edge_index;
             // Ends the walk of circular `@import`s. Each css root walks on its own, because two roots
             // of one bundle can import the same file and both need the edge.
             if gop.value_ptr.seen {
+                // Two imports of one file by one importer that ask for two loaders ask for none.
+                if self.edges[ei.get() as usize].loader != ir_loader {
+                    self.edges[ei.get() as usize].loader = None;
+                }
                 return Ok(EdgeAttachmentResult::Stop);
             }
             gop.value_ptr.seen = true;
-            let ei = gop.value_ptr.edge_index;
             self.edges[ei.get() as usize].next_import = *new_imports;
+            self.edges[ei.get() as usize].loader = ir_loader;
             *new_imports = Some(ei);
         } else {
             // A new edge is needed to represent the dependency and import.
@@ -1057,6 +1116,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 prev_dependency: None,
                 imported: imported_file_index,
                 dependency: file_index,
+                loader: ir_loader,
             })?;
             if let Some(dep) = first_dep {
                 self.edges[dep.get() as usize].prev_dependency = Some(edge);
@@ -1637,12 +1697,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             let dep = self.edges[edge_index.get() as usize];
             it = dep.next_dependency;
             debug_assert_eq!(dep.imported.get(), index.get());
+            let loader = self.rebundle_loader(dep.dependency.get() as usize);
             let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
             let file = &self.bundled_files.values()[dep.dependency.get() as usize];
-            let loader = file
-                .html_route_bundle_index
-                .is_some()
-                .then_some(bun_ast::Loader::Html);
             let mut enqueue = |target| {
                 bun_core::handle_oom(
                     bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(
@@ -1676,11 +1733,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
     /// See `EntryPointList::append_html`.
     fn append_client_entry_point(
-        &self,
+        &mut self,
         entry_points: &mut EntryPointList,
         index: usize,
     ) -> Result<(), crate::Error> {
         debug_assert!(matches!(SIDE, Side::Client));
+        let loader = self.rebundle_loader(index);
         let abs_path = &self.bundled_files.keys()[index];
         if self.bundled_files.values()[index]
             .html_route_bundle_index
@@ -1688,8 +1746,18 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         {
             entry_points.append_html(abs_path)
         } else {
-            entry_points.append_js(abs_path, bake::Graph::Client)
+            entry_points.append_js(abs_path, bake::Graph::Client, loader)
         }
+    }
+
+    pub(crate) fn append_css_entry_point(
+        &mut self,
+        entry_points: &mut EntryPointList,
+        index: usize,
+    ) -> Result<(), crate::Error> {
+        debug_assert!(matches!(SIDE, Side::Client));
+        let loader = self.rebundle_loader(index);
+        entry_points.append_css(&self.bundled_files.keys()[index], loader)
     }
 
     /// `IncrementalGraph(side).invalidate` (spec :1589). Given a set of paths,
@@ -1717,7 +1785,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             self.bundled_files.values()[index].content,
                             Content::CssRoot(_),
                         ) {
-                            entry_points.append_css(owned_path)?;
+                            self.append_css_entry_point(entry_points, index)?;
                         }
                         let mut it = self.edge_lists[index].first_dep;
                         while let Some(edge_index) = it {
@@ -1728,10 +1796,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 self.bundled_files.values()[dep.get() as usize].content,
                                 Content::CssRoot(_),
                             ) {
-                                let k = bun_ptr::RawSlice::new(
-                                    &*self.bundled_files.keys()[dep.get() as usize],
-                                );
-                                entry_points.append_css(k.slice())?;
+                                self.append_css_entry_point(entry_points, dep.get() as usize)?;
                             }
                             it = entry.next_dependency;
                         }
@@ -1742,15 +1807,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             let entry = self.edges[edge_index.get() as usize];
                             let dep = entry.dependency;
                             self.stale_files.set(dep.get() as usize);
-                            let k = bun_ptr::RawSlice::new(
-                                &*self.bundled_files.keys()[dep.get() as usize],
-                            );
-                            let k = k.slice();
                             if matches!(
                                 self.bundled_files.values()[dep.get() as usize].content,
                                 Content::CssRoot(_),
                             ) {
-                                entry_points.append_css(k)?;
+                                self.append_css_entry_point(entry_points, dep.get() as usize)?;
                             } else {
                                 self.append_client_entry_point(entry_points, dep.get() as usize)?;
                             }
@@ -1766,12 +1827,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     }
                 },
                 Side::Server => {
+                    let loader = self.rebundle_loader(index);
                     let f = &self.bundled_files.values()[index];
                     if f.is_rsc {
-                        entry_points.append_js(owned_path, bake::Graph::Server)?;
+                        entry_points.append_js(owned_path, bake::Graph::Server, loader)?;
                     }
                     if f.rebundles_for_ssr_graph() {
-                        entry_points.append_js(owned_path, bake::Graph::Ssr)?;
+                        entry_points.append_js(owned_path, bake::Graph::Ssr, loader)?;
                     }
                 }
             }

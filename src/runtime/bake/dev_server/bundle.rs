@@ -55,7 +55,7 @@ impl DevServer {
                         None => true,
                     };
                     if stale {
-                        entry_points.append_js(path, bake::Graph::Client)?;
+                        entry_points.append_js(path, bake::Graph::Client, None)?;
                     }
                 }
             }
@@ -64,14 +64,24 @@ impl DevServer {
             }
         }
 
-        if let Some(map) = &self.has_tailwind_plugin_hack {
-            for abs_path in map.keys() {
-                let Some(file) = self.client_graph.bundled_files.get(abs_path) else {
-                    continue;
-                };
-                if file.kind == FileKind::Css {
-                    entry_points.append_css(abs_path).expect("oom");
-                }
+        self.append_tailwind_stylesheets(entry_points)
+    }
+
+    /// The Tailwind plugin scans the sources of a bundle, so each bundle builds its stylesheets again.
+    pub(crate) fn append_tailwind_stylesheets(
+        &mut self,
+        entry_points: &mut EntryPointList,
+    ) -> crate::Result<()> {
+        let Some(map) = &self.has_tailwind_plugin_hack else {
+            return Ok(());
+        };
+        for abs_path in map.keys() {
+            let Some(index) = self.client_graph.bundled_files.get_index(abs_path) else {
+                continue;
+            };
+            if self.client_graph.bundled_files.values()[index].kind == FileKind::Css {
+                self.client_graph
+                    .append_css_entry_point(entry_points, index)?;
             }
         }
         Ok(())
@@ -150,7 +160,7 @@ impl DevServer {
                 .is_set(file_index.get() as usize),
         };
         if stale {
-            entry_points.append_js(&file_names[file_index.get() as usize], SIDE.graph())?;
+            entry_points.append_js(&file_names[file_index.get() as usize], SIDE.graph(), None)?;
         }
         Ok(())
     }
@@ -181,7 +191,7 @@ impl RouteIndexAndRecurseFlag {
 /// Bake needs to specify which graph (client/server/ssr) each entry point is.
 #[derive(Default)]
 pub(crate) struct EntryPointList {
-    pub(crate) set: bun_collections::StringArrayHashMap<entry_point_list::Flags>,
+    pub(crate) set: bun_collections::StringArrayHashMap<entry_point_list::Entry>,
 }
 
 pub(crate) mod entry_point_list {
@@ -198,6 +208,14 @@ pub(crate) mod entry_point_list {
             const HTML = 1 << 4;
         }
     }
+
+    /// The loaders are `IncrementalGraph::rebundle_loader` for the client graph and for the server graph, which the SSR graph shares.
+    #[derive(Default, Copy, Clone)]
+    pub(crate) struct Entry {
+        pub(crate) flags: Flags,
+        pub(crate) client_loader: Option<bun_ast::Loader>,
+        pub(crate) server_loader: Option<bun_ast::Loader>,
+    }
 }
 
 impl EntryPointList {
@@ -205,21 +223,42 @@ impl EntryPointList {
         EntryPointList::default()
     }
 
-    pub(crate) fn append_js(&mut self, abs_path: &[u8], side: bake::Graph) -> crate::Result<()> {
+    /// `loader`: see `entry_point_list::Entry`.
+    pub(crate) fn append_js(
+        &mut self,
+        abs_path: &[u8],
+        side: bake::Graph,
+        loader: Option<Loader>,
+    ) -> crate::Result<()> {
+        use entry_point_list::Flags;
+        let (flags, client_loader, server_loader) = match side {
+            bake::Graph::Server => (Flags::SERVER, None, loader),
+            bake::Graph::Client => (Flags::CLIENT, loader, None),
+            bake::Graph::Ssr => (Flags::SSR, None, loader),
+        };
         self.append(
             abs_path,
-            match side {
-                bake::Graph::Server => entry_point_list::Flags::SERVER,
-                bake::Graph::Client => entry_point_list::Flags::CLIENT,
-                bake::Graph::Ssr => entry_point_list::Flags::SSR,
+            entry_point_list::Entry {
+                flags,
+                client_loader,
+                server_loader,
             },
         )
     }
 
-    pub(crate) fn append_css(&mut self, abs_path: &[u8]) -> crate::Result<()> {
+    /// `loader`: see `entry_point_list::Entry`.
+    pub(crate) fn append_css(
+        &mut self,
+        abs_path: &[u8],
+        loader: Option<Loader>,
+    ) -> crate::Result<()> {
         self.append(
             abs_path,
-            entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS,
+            entry_point_list::Entry {
+                flags: entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS,
+                client_loader: loader,
+                server_loader: None,
+            },
         )
     }
 
@@ -227,7 +266,10 @@ impl EntryPointList {
     pub(crate) fn append_html(&mut self, abs_path: &[u8]) -> crate::Result<()> {
         self.append(
             abs_path,
-            entry_point_list::Flags::CLIENT | entry_point_list::Flags::HTML,
+            entry_point_list::Entry {
+                flags: entry_point_list::Flags::CLIENT | entry_point_list::Flags::HTML,
+                ..Default::default()
+            },
         )
     }
 
@@ -235,13 +277,15 @@ impl EntryPointList {
     pub(crate) fn append(
         &mut self,
         abs_path: &[u8],
-        flags: entry_point_list::Flags,
+        entry: entry_point_list::Entry,
     ) -> crate::Result<()> {
         let gop = self.set.get_or_put(abs_path)?;
         if gop.found_existing {
-            *gop.value_ptr |= flags;
+            gop.value_ptr.flags |= entry.flags;
+            gop.value_ptr.client_loader = entry.client_loader.or(gop.value_ptr.client_loader);
+            gop.value_ptr.server_loader = entry.server_loader.or(gop.value_ptr.server_loader);
         } else {
-            *gop.value_ptr = flags;
+            *gop.value_ptr = entry;
         }
         Ok(())
     }
@@ -448,10 +492,14 @@ impl DevServer {
         let start_data = bv2.start_from_bake_dev_server(&{
             let mut bt = bundler::bake_types::EntryPointList::empty();
             for (k, v) in entry_points.set.iter() {
-                bun_core::handle_oom(
-                    bt.set
-                        .put(k, bundler::bake_types::EntryPointFlags(v.bits())),
-                );
+                bun_core::handle_oom(bt.set.put(
+                    k,
+                    bundler::bake_types::EntryPoint {
+                        flags: bundler::bake_types::EntryPointFlags(v.flags.bits()),
+                        client_loader: v.client_loader,
+                        server_loader: v.server_loader,
+                    },
+                ));
             }
             bt
         })?;

@@ -1575,6 +1575,22 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
 
+// The key is `sourceURL`, with a query string if it had one. Except a `blob:` URL: it has no
+// directory, whichever file `sourceURL` is.
+static JSString* dirnameOfRequireMapKey(Zig::GlobalObject* globalObject, JSString* requireMapKey, const WTF::String& sourceURL)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
+    if (index == WTF::notFound)
+        return jsEmptyString(vm);
+    auto key = requireMapKey->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!key->startsWith(StringView(sourceURL).left(index + 1)))
+        return jsEmptyString(vm);
+    RELEASE_AND_RETURN(scope, JSC::jsSubstring(globalObject, requireMapKey, 0, index));
+}
+
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSModuleGraph* graph,
@@ -1598,15 +1614,9 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
-        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
-        JSString* dirname;
+        JSString* dirname = dirnameOfRequireMapKey(globalObject, requireMapKey, sourceURL);
+        RETURN_IF_EXCEPTION(scope, {});
         JSString* filename = requireMapKey;
-        if (index != WTF::notFound) {
-            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
-            dirname = jsEmptyString(vm);
-        }
         // The process's entry point is module "."; a graph has no such module.
         if (!graph && requireMap->size() == 0) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
@@ -1730,15 +1740,9 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
-        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
-        JSString* dirname;
+        JSString* dirname = dirnameOfRequireMapKey(globalObject, requireMapKey, sourceURL);
+        RETURN_IF_EXCEPTION(scope, {});
         JSString* filename = requireMapKey;
-        if (index != WTF::notFound) {
-            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
-            dirname = jsEmptyString(vm);
-        }
         // The process's entry point is module "."; a graph has no such module.
         if (!graph && requireMap->size() == 0) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));

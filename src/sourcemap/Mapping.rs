@@ -394,7 +394,12 @@ impl Lookup {
             let mut buf = bun_paths::path_buffer_pool::get();
             // `platform::Auto` is
             // cfg-selected (Posix on unix, Windows on windows).
-            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
+            let dir = if bun_paths::is_absolute(base_filename) {
+                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename)
+            } else {
+                // A `blob:` URL or a plugin's virtual module has none. The frame shows `name` as written.
+                bun_core::top_level_dir()
+            };
             // `name` comes from the source map and can be any length. A path too long for `buf` is too long to open.
             let path = bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::platform::Loose,

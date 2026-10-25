@@ -164,6 +164,53 @@ test("blob: can be imported", async () => {
   }).toThrow();
 });
 
+test.concurrent("blob: import() in a Bun.file() with a relative path resolves beside the file", async () => {
+  using dir = tempDir("blob-relative-file-import", {
+    "main.js": `
+      const { load } = await import(URL.createObjectURL(Bun.file("sub/entry.mjs")));
+      console.log(await load());`,
+    "sub/entry.mjs": `export const load = async () => (await import("./dep.mjs")).default;`,
+    "sub/dep.mjs": `export default "beside entry.mjs";`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "beside entry.mjs\n", stderr: "", exitCode: 0 });
+});
+
+test.concurrent("blob: a CommonJS Bun.file() is the same module to import() as to require()", async () => {
+  using dir = tempDir("blob-file-commonjs", {
+    "main.js": `
+      const out = [];
+      for (const path of ["top.cjs", "sub/nested.cjs", process.cwd() + "/sub/nested.cjs"]) {
+        for (const load of [async url => (await import(url)).default, require]) {
+          const url = URL.createObjectURL(Bun.file(path));
+          const { filename, ...rest } = await load(url);
+          out.push({ ...rest, filename: filename === url ? "the blob: URL" : filename });
+        }
+      }
+      console.log(JSON.stringify(out));`,
+    "top.cjs": "module.exports = { filename: __filename, dirname: __dirname, path: module.path };",
+    "sub/nested.cjs": "module.exports = { filename: __filename, dirname: __dirname, path: module.path };",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(new Array(6).fill({ filename: "the blob: URL", dirname: "", path: "" }));
+  expect(exitCode).toBe(0);
+});
+
 test("blob: can reliable get type from fetch #10072", async () => {
   using server = Bun.serve({
     fetch() {

@@ -16112,6 +16112,81 @@ export const x91 = { get a() { return x30; }, get b() { return this.a;}}
       expect(exitCode).toBe(1);
     });
 
+    // The first pass of `router` infers the error type for `a`, because `x31.a` is in progress. A conditional type over the
+    // error type is the error type, so `a` of `x22` is accepted and `b` is the first property that isn't.
+    test("a member of an object literal keeps the error type of a getter in progress in every pass of a call", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["m0.ts"] }),
+        "rpc.ts": `export interface Parser<T> { parse(v: unknown): T }
+export type Out<P> = P extends Parser<infer T> ? T : never;
+export class Proc<K extends "query" | "mutation", Ctx, In, R> { constructor(public kind: K, public run: (o: { ctx: Ctx; input: In }) => R) {} }
+export class Builder<Ctx extends object, In = void> {
+}
+export type Def = { [k: string]: Proc<any, any, any, any> | Router<any> };
+export class Router<D extends Def> {
+  constructor(public def: D) {}
+}
+export type Caller<D> = { [K in keyof D]: D[K] extends Proc<any, any, infer I, infer R> ? (...a: I extends void ? [] : [input: I]) => Promise<Awaited<R>> : D[K] extends Router<infer E> ? Caller<E> : never };
+export function router<D extends Def>(d: D) { return new Router(d); }
+export function init<Ctx extends object>() { return { procedure: new Builder<Ctx>(), merge: <A extends Def, B extends Def>(a: Router<A>, b: Router<B>) => a.merge(b) }; }
+export type Inputs<R> = R extends Router<infer D> ? { [K in keyof D]: D[K] extends Proc<any, infer I, any> ? I : Inputs<D[K]> } : never;
+export type Outputs<R> = R extends Router<infer D> ? { [K in keyof D]: D[K] extends Proc<any, infer O> ? Awaited<O> : Outputs<D[K]> } : never;
+const mk = <T>(f: (v: unknown) => T) => ({ parse: f });
+export const v = {
+  str: () => mk(x => String(x)), num: () => mk(x => Number(x)), lit: <const T>(t: T) => mk(() => t),
+};
+export interface User { id: number; role: "admin" | "user" } export interface Post { id: number; authorId: number }
+export interface Context { user: User | null; db: { users: User[]; posts: Post[] } }
+`,
+        "base.ts": `import { init } from "./rpc"; import type { Context } from "./rpc";
+export const t = init<Context>();
+export const pub = t.procedure;
+export const authed = pub.use(({ ctx }) => { if (!ctx.user) throw new Error("no"); });
+export const admin = authed.use(async ({ ctx }) => ({ isAdmin: ctx.user.role === "admin", at: 1 }));
+`,
+        "types.ts": `import type { Inputs, Caller, Out } from "./rpc"; import { t, admin } from "./base";
+import type { x40 } from "./m4";
+export type T57 = Caller<(typeof x40)["def"]>;
+export type T58 = Partial<unknown>;
+`,
+        "m0.ts": `import { x10 as rx10 } from "./m1";
+import { x30 } from "./m3";
+export const x02 = rx10.use(async ({ ctx }) => {  return { more: x30.b }; });
+`,
+        "m1.ts": `import type { Inputs, Outputs, Out } from "./rpc"; import { t, admin } from "./base";
+import { x02 } from "./m0";
+import { x40 } from "./m4";
+export const x10 = x02.use(async ({ ctx }) => {  return { more: (null! as Outputs<typeof x40>) }; });
+`,
+        "m2.ts": `import { v, Router } from "./rpc"; import { t, admin } from "./base";
+import { x31 } from "./m3";
+import type { T58 } from "./types";
+export function x21(x: unknown) { return x21Impl(); }
+function x21Impl() { return x31; }
+export const x22 = { get a() { return v.num(); }, get b() { return this.a; } };
+`,
+        "m3.ts": `import "./u0";
+import * as Nm4 from "./m4";
+export const x30 = { get a() { return Nm4.x40; }, get b() { return this.a; } };
+export const x31 = { get a() { return Nm4.x40; } };
+`,
+        "m4.ts": `import { v, router, Router } from "./rpc"; import { t, admin } from "./base";
+import { x30, x31 } from "./m3";
+export const x40 = router({ a: x31.a, b: x30.b });
+`,
+        "u0.ts": `import { x21, x22 } from "./m2";
+import type { T57 } from "./types";
+(x22) satisfies T57;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      const lines = stdout.split("\n");
+      expect(lines[lines.findIndex(line => line.startsWith("u0.ts(3,7): error TS1360:")) + 1]).toBe(
+        "  Types of property 'b' are incompatible.",
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // `x30` is resolved three times, one resolution inside the other. The innermost one finds `use` being resolved, so `u`
     // has no contextual type there. Its result isn't stored, and `return r` in `x20`, which is kept, doesn't report TS7006.
     test("a returned expression that is kept in a cycle does not report what a resolution inside it found that is resolved again", async () => {

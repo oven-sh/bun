@@ -3849,7 +3849,11 @@ impl<'p, 's> Checker<'p, 's> {
                     | ExprKind::TaggedTemplate(_)
                     | ExprKind::Jsx(_)
             ),
-            Query::LiteralProp(..) => !self.is_resolution(q),
+            // The type of an object literal reads the types of its members from their queries, so every pass has to
+            // see the same ones.
+            Query::LiteralProp(..) => {
+                of != CheckedAgain::GetterInProgress && !self.is_resolution(q)
+            }
             _ => false,
         };
         let Some(at) = self.stack.iter().rposition(|q| !is_part(q)) else {

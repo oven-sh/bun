@@ -5417,9 +5417,15 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return TypeId::ANY;
         }
+        // `getTypeOfAccessors`: `if links.resolvedType == nil`. When two visits of an accessor nest, the inner one assigns.
+        if matches!(self.hir(file)[p].kind, PropKind::Getter | PropKind::Setter)
+            && let Some(known) = self.p.literal_prop_types.get(&self.task, &(file, p))
+        {
+            return known;
+        }
         match left {
             Ok(_) if !is_final => ty,
-            // When two visits of `p` nest, the outer one assigns last, as for an expression.
+            // When two visits of any other `p` nest, the outer one assigns last, as for an expression.
             Ok(stored) => (self.p.literal_prop_types).rewrite(&self.task, (file, p), ty, stored),
             Err(open) => {
                 self.cache_provisionally(Query::LiteralProp(file, p), u64::from(ty.0), open);

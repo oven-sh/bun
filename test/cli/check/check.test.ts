@@ -8643,6 +8643,36 @@ export const a: never = cart.count.a;
       }
     });
 
+    // The call to `String` starts a new resolution stack, so both getters are visited a second time inside their first
+    // visit. The inner visit of `first` ends in the cycle and assigns `any`. The outer one gets `string`, but
+    // `getTypeOfAccessors` only assigns if the symbol has no type yet.
+    test("a getter of an object literal keeps the type that a visit inside its first visit assigned", async () => {
+      using dir = project({
+        "a.ts": `declare function defineStore<S = {}, G extends Record<string, unknown> = {}>(o: { view: G & ThisType<S & G> }): S & G;
+declare function pick<T, K extends keyof T>(o: T, k: K): T[K];
+export const cart = defineStore({
+  view: {
+    get ids() { return pick(this, "on"); },
+    get first() { return String(this.ids) + this.coupon; },
+  },
+});
+export const first: never = cart.first;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(2,58): error TS2577: Return type annotation circularly references itself.",
+          "a.ts(5,9): error TS7023: 'ids' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          `a.ts(5,35): error TS2345: Argument of type '"on"' is not assignable to parameter of type '"first" | "ids"'.`,
+          "a.ts(6,9): error TS7023: 'first' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "a.ts(6,50): error TS2339: Property 'coupon' does not exist on type '{ readonly ids: any; readonly first: any; }'.",
+          "a.ts(9,14): error TS2322: Type 'any' is not assignable to type 'never'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("TS7053 prints an aliased intersection with a class by its members", async () => {
       using dir = project({
         "a.ts": `class User { id = 1 }

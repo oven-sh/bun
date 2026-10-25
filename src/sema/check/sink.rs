@@ -847,6 +847,8 @@ impl Checker<'_, '_> {
             && diagnostic.file != NOWHERE.0
             && self.reports_semantic_errors(diagnostic.file)
             && self.defers_to_earlier_file(owner, diagnostic.file)
+            // A record's cycle is closed already, and that took into account which files can reach it.
+            && (q.syntax().is_some() || matches!(q, Query::AliasTarget(_)))
         {
             let members = std::iter::once(crate::util::fx_hash(&q));
             self.task.close_cycle(|| false, members);

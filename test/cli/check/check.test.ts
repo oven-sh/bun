@@ -8911,6 +8911,38 @@ export function f3<T>(x: T) { switch (n) { case 2: return f2(x); default: return
       expect(exitCode).toBe(1);
     });
 
+    // `f2<Box>(x)` in `f0` fails, and its own instantiation ends in the cycle as `any`. `f2<Box>(box)` succeeds and has the
+    // remembered instantiation, which has no return type yet. So it asks `f2`, which is in progress, and `v1` is circular.
+    test("the circular return type of a call that no candidate accepts isn't assigned for other calls", async () => {
+      using dir = project({
+        "lib.ts": `export type Ast = {}; export interface Box { b: number }
+export declare const ast: Ast; export declare const box: Box; export declare const n: number; export declare const flag: boolean;
+export class C { run(x: Ast): Ast { return x; } }
+`,
+        "m0.ts": `import { box, flag, C } from "./lib"; import type { Box } from "./lib";
+import { f2 } from "./m1";
+export let v1 = flag ? f2<Box>(box) : new C().run(box);
+`,
+        "m1.ts": `import { n } from "./lib"; import type { Ast, Box } from "./lib";
+import { v1 } from "./m0";
+export function f0<T>(x: T) { switch (n) { case 2: return f2(); default: return f2<Box>(x); } }
+export function f2<T extends Ast>(x: T) { switch (n) { case 2: return f1<Ast>(x); default: return v1; } }
+export function f1<T>(x: T) { switch (n) { case 2: return f0(); default: return { a: f1(x) }; } }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").map(line => line.slice(0, line.indexOf(": ", line.indexOf("error"))))).toEqual([
+        "m0.ts(3,12): error TS7022",
+        "m1.ts(3,17): error TS7023",
+        "m1.ts(3,59): error TS2554",
+        "m1.ts(3,89): error TS2345",
+        "m1.ts(4,17): error TS7023",
+        "m1.ts(5,17): error TS7023",
+        "m1.ts(5,59): error TS2554",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("TS7053 prints an aliased intersection with a class by its members", async () => {
       using dir = project({
         "a.ts": `class User { id = 1 }

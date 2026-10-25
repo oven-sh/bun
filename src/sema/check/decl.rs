@@ -5484,8 +5484,18 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match self.resolve_return_type_once(sig, resolve) {
             Ok((ty, left)) => self.assign_return_type(sig, ty, left),
-            Err(circular) => circular,
+            Err(circular) => self.assign_circular_return_type(sig, circular),
         }
+    }
+
+    /// `assign_return_type` for the `Err` of `resolve_return_type_once`. Only `popTypeResolution` ends in `any`, which is
+    /// assigned. Nothing is assigned where `pushTypeResolution` fails.
+    fn assign_circular_return_type(&mut self, sig: SigId, circular: TypeId) -> TypeId {
+        if circular != TypeId::ANY {
+            return circular;
+        }
+        let stored = self.cycle_result();
+        (self.p.resolved_return_types).insert(&self.task, sig, circular, stored)
     }
 
     /// `sig.resolvedReturnType`
@@ -5565,11 +5575,10 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.left_a_cycle {
             return Ok((ty, left));
         }
-        let stored = self.cycle_result();
         if let Some((file, func, _)) = self.sig_decl(self.types().sig_origin(sig)) {
             self.report_circular_return_type(Some(Query::ReturnOfSignature(sig)), file, func);
         }
-        Err((self.p.resolved_return_types).insert(&self.task, sig, TypeId::ANY, stored))
+        Err(TypeId::ANY)
     }
 
     /// True if `mapper` maps any type parameter to another type. A declared type or signature has

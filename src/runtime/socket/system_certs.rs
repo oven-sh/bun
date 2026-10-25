@@ -1,13 +1,10 @@
 //! The system certificate store on Linux and the other non-Apple Unixes, for `--use-system-ca` and `tls.getCACertificates('system')`:
 //! `us_load_system_certificates_posix`, called once per process from `root_certs.cpp`.
 //!
-//! Sources are the ones Node's `GetOpenSSLSystemCertificates` reads: `$SSL_CERT_FILE` else OpenSSL's default file, and
-//! every regular file directly in `$SSL_CERT_DIR` else OpenSSL's default directory (`/etc/ssl/cert.pem` and
-//! `/etc/ssl/certs` in BoringSSL). A variable that is set but empty turns its source off. Each distro's CA tool writes
-//! its trust output there. Its input trees (`/usr/share/ca-certificates`) are not read: a certificate there can be
-//! one the administrator deselected. Distros alias the output heavily, so each file is read once per inode, each
-//! directory walked once per inode, and each certificate kept once per DER encoding. PEM framing and X.509 parsing
-//! stay in BoringSSL.
+//! Sources are what Node's `GetOpenSSLSystemCertificates` reads: `$SSL_CERT_FILE` else OpenSSL's default file, and every
+//! regular file directly in `$SSL_CERT_DIR` else OpenSSL's default directory. A variable that is set but empty turns
+//! its source off. A CA tool's input tree such as `/usr/share/ca-certificates` is not read: it can hold a deselected CA.
+//! Distros alias the output heavily, so each file is read once per inode and each certificate kept once per DER encoding.
 
 use core::ffi::{c_char, c_long, c_void};
 use core::ptr;

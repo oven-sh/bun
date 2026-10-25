@@ -1,19 +1,7 @@
 //! Fetched when a client-side error happens. This performs two actions
 //! - Logs the remapped stack trace to the console.
 //! - Replies with the remapped stack trace.
-//! Payload:
-//! - `u32`: Responding message ID (echoed back)
-//! - `u32`: Length of message
-//! - `[n]u8`: Message
-//! - `u32`: Length of error name
-//! - `[n]u8`: Error name
-//! - `u32`: Number of stack frames. For each
-//!   - `u32`: Line number (0 for unavailable)
-//!   - `u32`: Column number (0 for unavailable)
-//!   - `u32`: Length of file name (0 for unavailable)
-//!   - `[n]u8`: File name
-//!   - `u32`: Length of function name (0 for unavailable)
-//!   - `[n]u8`: Function name
+//! `onRuntimeError` in `client/overlay.ts` writes the payload and reads the reply.
 
 use bun_alloc::ArenaVecExt as _;
 
@@ -253,7 +241,11 @@ impl ErrorReportRequest {
                     if runtime_lines.is_none() {
                         let file = &result.entry_files[index as usize - 1];
                         if let Some(source_map) = file.get() {
-                            let json_encoded_source_code = source_map.quoted_contents();
+                            let quoted = source_map.quoted_contents();
+                            let json_encoded_source_code = quoted
+                                .strip_prefix(b"\"")
+                                .and_then(|rest| rest.strip_suffix(b"\""))
+                                .unwrap_or(quoted);
                             // First line of interest is two above the target line.
                             let target_line = frame.position.line.zero_based() as usize;
                             first_line_of_interest = target_line.saturating_sub(2);
@@ -275,27 +267,12 @@ impl ErrorReportRequest {
         }
 
         // Stack traces can often end with random runtime frames that are not relevant.
-        'trim_runtime_frames: {
-            // Ensure that trimming will not remove ALL frames.
-            let mut all_runtime = true;
-            for frame in frames.iter() {
-                // Pointer-identity check on the borrowed RUNTIME_NAME slice.
-                let is_runtime = frame.position.is_invalid()
-                    && frame.source_url.byte_slice().as_ptr() == RUNTIME_NAME.as_ptr();
-                if !is_runtime {
-                    all_runtime = false;
-                    break;
-                }
-            }
-            if all_runtime {
-                break 'trim_runtime_frames;
-            }
-
-            // Move all frames up.
-            frames.retain(|frame| {
-                !(frame.position.is_invalid()
-                    && frame.source_url.byte_slice().as_ptr() == RUNTIME_NAME.as_ptr())
-            });
+        let is_runtime = |frame: &ZigStackFrame<'_>| {
+            frame.position.is_invalid() && frame.source_url.byte_slice() == RUNTIME_NAME
+        };
+        // Ensure that trimming will not remove ALL frames.
+        if !frames.iter().all(is_runtime) {
+            frames.retain(|frame| !is_runtime(frame));
         }
 
         let mut exception = ZigException {
@@ -337,6 +314,7 @@ impl ErrorReportRequest {
         let mut out: Vec<u8> = Vec::new();
 
         _ = out.write_int_le::<u32>(exception.stack.frames_len as u32);
+        let mut relative_path_buf = path_buffer_pool::get();
         for frame in exception.stack.frames() {
             _ = out.write_int_le::<i32>(frame.position.line.one_based());
             _ = out.write_int_le::<i32>(frame.position.column.one_based());
@@ -345,16 +323,9 @@ impl ErrorReportRequest {
             _ = out.write_int_le::<u32>(function_name.len() as u32);
             out.extend_from_slice(function_name);
 
-            let src_to_write: &[u8] = frame.source_url.byte_slice();
-            if strings::has_prefix_comptime(src_to_write, b"/") {
-                let mut relative_path_buf = path_buffer_pool::get();
-                let file = dev.relative_path(&mut relative_path_buf, src_to_write);
-                _ = out.write_int_le::<u32>(file.len() as u32);
-                out.extend_from_slice(file);
-            } else {
-                _ = out.write_int_le::<u32>(src_to_write.len() as u32);
-                out.extend_from_slice(src_to_write);
-            }
+            let file = dev.relative_path(&mut relative_path_buf, frame.source_url.byte_slice());
+            _ = out.write_int_le::<u32>(file.len() as u32);
+            out.extend_from_slice(file);
         }
 
         if let Some(mut lines) = runtime_lines {
@@ -421,8 +392,14 @@ fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::K
     if after_prefix.len() < MIN_LEN {
         return None;
     }
-    let hex = &after_prefix[after_prefix.len() - MIN_LEN..][..core::mem::size_of::<u64>() * 2];
-    Some(source_map_store::Key::init(parse_hex_to_int::<u64>(hex)?))
+    let (label, id) = after_prefix.split_at(after_prefix.len() - MIN_LEN);
+    let id = parse_hex_to_int::<u64>(&id[..core::mem::size_of::<u64>() * 2])?;
+    // A route's script URL is its key plus the route bundle index. A hot chunk's is `hmr-<key>.js`.
+    Some(source_map_store::Key::init(if label == b"hmr-" {
+        id
+    } else {
+        id & !u64::from(u32::MAX)
+    }))
 }
 
 /// Instead of decoding the entire file, just decode the desired section.

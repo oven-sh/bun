@@ -628,11 +628,12 @@ uint32_t Compiler::findMember(uint32_t object, const AtomString& key)
         return none;
     }
     auto& byKey = m_membersByKey.ensure(object, [&] {
-        MembersByKey map;
-        for (auto& member : members)
-            map.add(member.key.impl(), member.value);
-        return map;
-    }).iterator->value;
+                                    MembersByKey map;
+                                    for (auto& member : members)
+                                        map.add(member.key.impl(), member.value);
+                                    return map;
+                                })
+                      .iterator->value;
     auto found = byKey.find(key.impl());
     return found == byKey.end() ? none : found->value;
 }
@@ -1451,7 +1452,8 @@ static bool readOptions(JSGlobalObject* globalObject, JSValue value, ReaderOptio
         RETURN_IF_EXCEPTION(scope, false);
         if (option.isUndefined())
             continue;
-        bool* flag = name.string() == "formats"_s ? &options.assertsFormats : name.string() == "strict"_s ? &options.isStrict : nullptr;
+        bool* flag = name.string() == "formats"_s ? &options.assertsFormats : name.string() == "strict"_s ? &options.isStrict
+                                                                                                          : nullptr;
         if (flag) {
             if (!option.isBoolean()) {
                 throwTypeError(globalObject, scope, makeString("Expected options."_s, name.string(), " to be a boolean"_s));

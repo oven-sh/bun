@@ -54,8 +54,11 @@ public:
     }
 
 private:
-    enum class NumberSpelling : uint8_t { RoundTrip, Stringified };
-    enum Accepted : uint8_t { AcceptsArrays = 1, AcceptsObjects = 2, AcceptsUndefined = 4 };
+    enum class NumberSpelling : uint8_t { RoundTrip,
+        Stringified };
+    enum Accepted : uint8_t { AcceptsArrays = 1,
+        AcceptsObjects = 2,
+        AcceptsUndefined = 4 };
 
     struct TaggedArms {
         AtomString key;
@@ -282,7 +285,7 @@ private:
                     continue;
                 uint32_t index = indexOfKey.add(member.key, keys.size()).iterator->value;
                 if (index == keys.size())
-                    keys.append(TagKey { member.key, { }, { } });
+                    keys.append(TagKey { member.key, {}, {} });
                 keys[index].positions.append(position);
                 keys[index].tags.append(member.node);
             }
@@ -302,7 +305,7 @@ private:
         if (!chosen)
             return std::nullopt;
 
-        TaggedArms result { chosen->key, chosen->tags, { }, { } };
+        TaggedArms result { chosen->key, chosen->tags, {}, {} };
         size_t next = 0;
         for (uint32_t position = 0; position < arms.size(); ++position) {
             bool isTagged = next < chosen->positions.size() && chosen->positions[next] == position;

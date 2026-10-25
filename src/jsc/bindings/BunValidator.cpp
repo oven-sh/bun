@@ -131,8 +131,7 @@ static EncodedJSValue createValidator(JSGlobalObject* globalObject, CallFrame* c
         if (isValid.isTrue() && !state->fillsDefaults())
             return JSValue::encode(copy);
         throwValidationError(globalObject, state->planText(), copy);
-        return {};
-    }, check);
+        return {}; }, check);
 
     JSFunction* validateCopy = createValidateFunction(vm, globalObject, plan.copyRef(), onRefused, onCopyNotCopied);
     RETURN_IF_EXCEPTION(scope, {});
@@ -145,8 +144,7 @@ static EncodedJSValue createValidator(JSGlobalObject* globalObject, CallFrame* c
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSValue copy = copyForValidation(globalObject, state->plan(), callFrame->argument(0));
         RETURN_IF_EXCEPTION(scope, {});
-        RELEASE_AND_RETURN(scope, JSValue::encode(callWith(globalObject, validateCopy, copy)));
-    }, validateCopy);
+        RELEASE_AND_RETURN(scope, JSValue::encode(callWith(globalObject, validateCopy, copy))); }, validateCopy);
 
     JSFunction* validate = createValidateFunction(vm, globalObject, plan.copyRef(), onBailout, onBailout);
     RETURN_IF_EXCEPTION(scope, {});
@@ -164,8 +162,7 @@ static EncodedJSValue createValidator(JSGlobalObject* globalObject, CallFrame* c
         RETURN_IF_EXCEPTION(scope, {});
         JSValue copy = callWith(globalObject, validate, parsed);
         RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(callFrame->argumentCount() < 2 ? copy : parsed);
-    }, validate, parseJSON);
+        return JSValue::encode(callFrame->argumentCount() < 2 ? copy : parsed); }, validate, parseJSON);
 
     JSFunction* parse = createParseFunction(vm, globalObject, plan.copyRef(), onRefused, onBailout, onOtherArguments);
     RETURN_IF_EXCEPTION(scope, {});
@@ -180,8 +177,7 @@ static EncodedJSValue createValidator(JSGlobalObject* globalObject, CallFrame* c
         RETURN_IF_EXCEPTION(scope, {});
         if (isValid.isTrue())
             RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr)));
-        RELEASE_AND_RETURN(scope, JSValue::encode(collectValidationIssues(globalObject, state->planText(), copy)));
-    }, check);
+        RELEASE_AND_RETURN(scope, JSValue::encode(collectValidationIssues(globalObject, state->planText(), copy))); }, check);
 
     JSObject* validateForStandardSchema = JSNativeStdFunction::create(vm, globalObject, 1, "validate"_s, [state, check, validateCopy](JSGlobalObject* globalObject, CallFrame* callFrame) -> EncodedJSValue {
         VM& vm = globalObject->vm();
@@ -192,8 +188,7 @@ static EncodedJSValue createValidator(JSGlobalObject* globalObject, CallFrame* c
         RETURN_IF_EXCEPTION(scope, {});
         JSValue result = isValid.isTrue() ? callWith(globalObject, validateCopy, copy) : collectValidationIssues(globalObject, state->planText(), copy);
         RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(createResult(vm, globalObject, isValid.isTrue() ? "value"_s : "issues"_s, result));
-    }, check, validateCopy);
+        return JSValue::encode(createResult(vm, globalObject, isValid.isTrue() ? "value"_s : "issues"_s, result)); }, check, validateCopy);
 
     constexpr unsigned frozen = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     JSObject* standard = constructEmptyObject(globalObject);

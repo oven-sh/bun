@@ -312,7 +312,8 @@ private:
     void fillArray(uint32_t index, const ArrayNode& array)
     {
         Vector<uint32_t> children = writeNodeList(m_program.lists.span().subspan(array.firstPrefix, array.prefixCount));
-        uint32_t rest = array.rest == none ? m_unknown : array.rest == falseSchema && array.prefixCount ? none : writeNode(array.rest);
+        uint32_t rest = array.rest == none ? m_unknown : array.rest == falseSchema && array.prefixCount ? none
+                                                                                                        : writeNode(array.rest);
         Plan::Node& node = at(index);
         node.shape = array.prefixCount ? Shape::Tuple : Shape::Array;
         node.required = std::min(array.minItems, array.prefixCount);
@@ -595,7 +596,8 @@ private:
             at(rest) = std::exchange(at(index), Plan::Node {});
             at(index).rules.append(makeRuleOverNode(RuleKind::Every, rest));
         }
-        at(index).shape = value.string == "undefined"_s ? Shape::Undefined : value.string == "bigint"_s ? Shape::BigInt : Shape::AnyObject;
+        at(index).shape = value.string == "undefined"_s ? Shape::Undefined : value.string == "bigint"_s ? Shape::BigInt
+                                                                                                        : Shape::AnyObject;
     }
 
     void addStringRule(uint32_t index, uint32_t data, Plan::Rule&& rule)

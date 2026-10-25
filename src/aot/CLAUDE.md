@@ -7,15 +7,15 @@ How the compiler works is explained in [`docs/bundler/aot-internals.mdx`](../../
 
 The compiler lives in two repositories, and they are one product: change whichever side is the right place for the change.
 
-| Part | Where |
-| --- | --- |
-| Front end: resolve, parse, check types, lower to IR, link | `src/aot`, `src/sema` (the type checker), `src/bundler/aot` |
-| What an executable holds, trimming | `src/exe_format`, `src/standalone_graph`, `src/trim`, `scripts/build/trim` |
-| Bun's own modules, which are compiled too | `src/js`, `src/builtin_sources` |
-| The host's side of compiled programs | `src/jsc/bindings/BunCompiled*`, `src/resolver/compiled_program.rs` |
-| Engine: IR, flow analysis, passes, code generation, stubs, image, runtime | `Source/JavaScriptCore/aot` in oven-sh/WebKit (`vendor/WebKit`, or `$BUN_WEBKIT_PATH`) |
-| B3 and Air, the back end | `Source/JavaScriptCore/b3` in oven-sh/WebKit |
-| Tests | `test/aot` here ([`README.md`](../../test/aot/README.md)), `aot/tests` in the engine (its `README.md`) |
+| Part                                                                      | Where                                                                                                  |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Front end: resolve, parse, check types, lower to IR, link                 | `src/aot`, `src/sema` (the type checker), `src/bundler/aot`                                            |
+| What an executable holds, trimming                                        | `src/exe_format`, `src/standalone_graph`, `src/trim`, `scripts/build/trim`                             |
+| Bun's own modules, which are compiled too                                 | `src/js`, `src/builtin_sources`                                                                        |
+| The host's side of compiled programs                                      | `src/jsc/bindings/BunCompiled*`, `src/resolver/compiled_program.rs`                                    |
+| Engine: IR, flow analysis, passes, code generation, stubs, image, runtime | `Source/JavaScriptCore/aot` in oven-sh/WebKit (`vendor/WebKit`, or `$BUN_WEBKIT_PATH`)                 |
+| B3 and Air, the back end                                                  | `Source/JavaScriptCore/b3` in oven-sh/WebKit                                                           |
+| Tests                                                                     | `test/aot` here ([`README.md`](../../test/aot/README.md)), `aot/tests` in the engine (its `README.md`) |
 
 The IR's schema (`aot/ir/schema/*.def` in the engine) is the contract between the two halves. Both sides generate their readers and writers from it. Nothing that is generated is checked in.
 
@@ -35,13 +35,13 @@ An engine change reaches Bun's CI through a prebuilt engine: push the WebKit bra
 
 Pick the smallest loop that can show your change.
 
-| You changed | Loop | Time |
-| --- | --- | --- |
-| A pass, an analysis, code generation | build `testaot`, then `testaot <folder or file of aot/tests>` | seconds after the build |
-| Lowering in `src/aot` | `cargo test -p bun_aot --test ir_tests` (`test/aot/ir`) | a minute |
-| Anything, and you want whole programs without building Bun | `JSC=.. FRONT_END=.. TESTAOT=.. PLAIN=.. test/aot/shell/quick.py <programs>` | seconds a program |
-| Anything | `bun bd test test/aot/<file>`, `AOT_PROGRAMS=<name> bun bd test test/aot/<folder file>` | |
-| Text only (names, lists, switch statements) | `bun test test/aot/plain-english.test.ts test/aot/test-files-self-skip.test.ts test/aot/a-switch-of-the-compiler-names-every-enumerator.test.ts` with any Bun; `AOT_ENGINE_DIRECTORY=<WebKit>/Source/JavaScriptCore/aot` for the engine's text | ten seconds |
+| You changed                                                | Loop                                                                                                                                                                                                                                           | Time                    |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| A pass, an analysis, code generation                       | build `testaot`, then `testaot <folder or file of aot/tests>`                                                                                                                                                                                  | seconds after the build |
+| Lowering in `src/aot`                                      | `cargo test -p bun_aot --test ir_tests` (`test/aot/ir`)                                                                                                                                                                                        | a minute                |
+| Anything, and you want whole programs without building Bun | `JSC=.. FRONT_END=.. TESTAOT=.. PLAIN=.. test/aot/shell/quick.py <programs>`                                                                                                                                                                   | seconds a program       |
+| Anything                                                   | `bun bd test test/aot/<file>`, `AOT_PROGRAMS=<name> bun bd test test/aot/<folder file>`                                                                                                                                                        |                         |
+| Text only (names, lists, switch statements)                | `bun test test/aot/plain-english.test.ts test/aot/test-files-self-skip.test.ts test/aot/a-switch-of-the-compiler-names-every-enumerator.test.ts` with any Bun; `AOT_ENGINE_DIRECTORY=<WebKit>/Source/JavaScriptCore/aot` for the engine's text | ten seconds             |
 
 Look at what the compiler did:
 
@@ -145,31 +145,31 @@ These are settled. Each was argued, and most were learned by building the opposi
 
 Read this before you propose something. "Measured" means it was built and run on real programs.
 
-| Idea | What happened |
-| --- | --- |
-| An object that leaves its layout becomes an ordinary JSObject | Measured twice. A typed store went from 12 to 220 instructions, because every proof about a layout then needs a test |
-| Cutting the inliner's budget to save size | Measured "free" on one application, a loss on others. An inliner budget also moved 800 benchmark rows back and forth: change it only with all three program sizes in view |
-| More inlining to cut instruction fetch | Fewer calls, but the copies crowd the L2 cache: more fetch misses, no fewer cycles |
-| Everything compiled as hot code | A server +4.7% requests per second for +47% code. Rejected: a trade |
-| Ordering stubs or functions by static reference counts, by call graph, by first use | Five different orders, none better than the plain one. What is referenced often is not what runs often |
-| One copy of each stub family instead of one per register | 2% fewer branch sites: not worth the moves it adds |
-| Splitting functions into hot and cold halves by arithmetic alone | The cold arms that do run end up a page away |
-| Turning the image's outliner off | A few branch sites fewer for +2.8% code |
-| A linker order file, `madvise(WILLNEED)`, read-ahead on a helper thread | Faster from a cold disk, level when warm, 160 MB more in the page cache. Rejected: make the binary smaller |
-| A cache of compiled functions between builds | Rejected: a fresh build has to be fast |
-| A heap snapshot at build time | Rejected: the image is read-only data, and start-up must not depend on what the build machine did |
-| A second, cheaper type inference for untyped code beside the checker | Two producers of types. Rejected before it could disagree with the first |
-| Value numbering, loop hoisting and dead-code removal in the front end | Deleted unrun: B3 does it once it is told the real effects |
-| Static likely/unlikely hints in the IR's own cost estimate | They cost instructions: several readers give an "unlikely" arm slower code. The hints go to B3 alone |
-| Throwing at run time on a value that does not fit its declared type | It was fast, and it broke normal TypeScript |
-| Moving rarely used fields out of line | -13% bytes for +2.8% instructions: a trade |
-| Adding a guess wherever one is possible | A guess that fails costs three branch sites (the jump out, the call, the jump back) where no guess costs one. Sort failing guesses by where they came from before adding more |
-| A special opcode or fast path for one framework's hot function | Benchmark-shaped. Rejected |
-| A fixed low address for the heap or for tables, to shorten addresses | Loses ASLR. Rejected |
-| Checking one binary against itself with a hash at start | It proves nothing and costs start-up |
-| Shipping the compiler as a separate download | Settled: one binary |
-| Judging a server change by instructions alone | Three batches cut a server's instructions by 2.8% and its cycles rose by 0.8%, with 10% more code |
-| Judging by one pair of builds | Code placement alone moves a route by 3%, the flow analysis' visiting order by 5% |
+| Idea                                                                                | What happened                                                                                                                                                                 |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An object that leaves its layout becomes an ordinary JSObject                       | Measured twice. A typed store went from 12 to 220 instructions, because every proof about a layout then needs a test                                                          |
+| Cutting the inliner's budget to save size                                           | Measured "free" on one application, a loss on others. An inliner budget also moved 800 benchmark rows back and forth: change it only with all three program sizes in view     |
+| More inlining to cut instruction fetch                                              | Fewer calls, but the copies crowd the L2 cache: more fetch misses, no fewer cycles                                                                                            |
+| Everything compiled as hot code                                                     | A server +4.7% requests per second for +47% code. Rejected: a trade                                                                                                           |
+| Ordering stubs or functions by static reference counts, by call graph, by first use | Five different orders, none better than the plain one. What is referenced often is not what runs often                                                                        |
+| One copy of each stub family instead of one per register                            | 2% fewer branch sites: not worth the moves it adds                                                                                                                            |
+| Splitting functions into hot and cold halves by arithmetic alone                    | The cold arms that do run end up a page away                                                                                                                                  |
+| Turning the image's outliner off                                                    | A few branch sites fewer for +2.8% code                                                                                                                                       |
+| A linker order file, `madvise(WILLNEED)`, read-ahead on a helper thread             | Faster from a cold disk, level when warm, 160 MB more in the page cache. Rejected: make the binary smaller                                                                    |
+| A cache of compiled functions between builds                                        | Rejected: a fresh build has to be fast                                                                                                                                        |
+| A heap snapshot at build time                                                       | Rejected: the image is read-only data, and start-up must not depend on what the build machine did                                                                             |
+| A second, cheaper type inference for untyped code beside the checker                | Two producers of types. Rejected before it could disagree with the first                                                                                                      |
+| Value numbering, loop hoisting and dead-code removal in the front end               | Deleted unrun: B3 does it once it is told the real effects                                                                                                                    |
+| Static likely/unlikely hints in the IR's own cost estimate                          | They cost instructions: several readers give an "unlikely" arm slower code. The hints go to B3 alone                                                                          |
+| Throwing at run time on a value that does not fit its declared type                 | It was fast, and it broke normal TypeScript                                                                                                                                   |
+| Moving rarely used fields out of line                                               | -13% bytes for +2.8% instructions: a trade                                                                                                                                    |
+| Adding a guess wherever one is possible                                             | A guess that fails costs three branch sites (the jump out, the call, the jump back) where no guess costs one. Sort failing guesses by where they came from before adding more |
+| A special opcode or fast path for one framework's hot function                      | Benchmark-shaped. Rejected                                                                                                                                                    |
+| A fixed low address for the heap or for tables, to shorten addresses                | Loses ASLR. Rejected                                                                                                                                                          |
+| Checking one binary against itself with a hash at start                             | It proves nothing and costs start-up                                                                                                                                          |
+| Shipping the compiler as a separate download                                        | Settled: one binary                                                                                                                                                           |
+| Judging a server change by instructions alone                                       | Three batches cut a server's instructions by 2.8% and its cycles rose by 0.8%, with 10% more code                                                                             |
+| Judging by one pair of builds                                                       | Code placement alone moves a route by 3%, the flow analysis' visiting order by 5%                                                                                             |
 
 ## Working style that paid off
 

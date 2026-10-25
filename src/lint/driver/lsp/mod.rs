@@ -23,7 +23,7 @@ use crate::fmt::Formatted;
 use crate::paths;
 use crate::results::FileResult;
 use crate::run::{Environment, Fatal, Script, Stream};
-use answers::{FIX_ALL, Places, QUICK_FIX, wants};
+use answers::{Directives, FIX_ALL, Places, QUICK_FIX, wants};
 use bun_core::strings;
 use bun_lint::js_plugin::{Engine, Vm, Work};
 use bun_lint::linter::LintMessage;
@@ -214,7 +214,7 @@ struct Client {
 }
 
 /// What the user has set in the editor.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 struct Settings {
     lints: bool,
     formats: bool,
@@ -250,8 +250,11 @@ impl Settings {
 struct Known {
     serial: u64,
     had_types: bool,
-    is_oxlint: bool,
+    /// How a comment turns a rule off in the document's language, if one can.
+    directives: Option<Directives>,
     messages: Vec<LintMessage>,
+    /// The text with every fix applied, once a code action has asked for it. `Some(None)`: there is none.
+    fixed: Option<Option<Vec<u8>>>,
 }
 
 /// What all threads share.
@@ -561,12 +564,19 @@ impl<'s> Server<'s> {
             root,
             environment,
             no_engine,
+            format_options: None,
             known: FxHashMap::default(),
             told: Vec::new(),
         };
-        let options = self.features().lint.then(|| self.lint_options_of(root));
+        let Settings { lints, formats, .. } = *self.settings.lock();
+        let options = lints.then(|| self.lint_options_of(root));
         if let Some(Err(why)) = &options {
             worker.tell_once(why.clone(), |why| self.show_error(Half::Lint, why));
+        }
+        match formats.then(|| self.format_options_of(root)) {
+            Some(Ok(options)) => worker.format_options = Some(options),
+            Some(Err(why)) => worker.tell_once(why, |why| self.show_error(Half::Format, why)),
+            None => {}
         }
         let all = |session: Option<&Session>| {
             let mut job = first;
@@ -598,6 +608,9 @@ struct Worker<'w, 's> {
     environment: &'w Environment<'w>,
     /// The engine, if it is one that refuses.
     no_engine: Option<&'w NoEngine>,
+    /// The flags of `bun fmt` in the root, read once per generation. `None`: formatting is off, or they could not be
+    /// read, which the user was told.
+    format_options: Option<crate::fmt::cli::Options>,
     /// By URI.
     known: FxHashMap<Vec<u8>, Known>,
     /// What the user has been told, which is not said again.
@@ -664,11 +677,31 @@ impl Worker<'_, '_> {
         let known = Known {
             serial: document.serial,
             had_types: result.as_ref().is_some_and(|it| it.had_types),
-            is_oxlint: (result.as_ref().and_then(|it| it.linted.as_ref()))
-                .is_some_and(|it| it.config.language.is_oxlint),
+            directives: (result.as_ref().and_then(|it| it.linted.as_ref()))
+                .and_then(|it| Directives::of(&it.config, &document.path)),
             messages: result.map(|it| it.messages).unwrap_or_default(),
+            fixed: None,
         };
         self.known.insert(document.uri.clone(), known);
+    }
+
+    /// The text of `document` with every fix applied, found once per [`Document::serial`]. `None`: nothing is fixed.
+    fn fixed(&mut self, session: &Session, document: &Document, with_types: bool) -> Option<&[u8]> {
+        let is_found = (self.known.get(&document.uri)).is_some_and(|it| it.fixed.is_some());
+        if !is_found {
+            let how = How {
+                with_types,
+                fixes: true,
+            };
+            let fixed = self.lint(session, document, how).flatten();
+            let text = (fixed.as_ref().filter(|it| it.is_fixed))
+                .and_then(FileResult::text_to_write)
+                .map(<[u8]>::to_vec);
+            if let Some(known) = self.known.get_mut(&document.uri) {
+                known.fixed = Some(text);
+            }
+        }
+        self.known.get(&document.uri)?.fixed.as_ref()?.as_deref()
     }
 
     fn handle(&mut self, session: Option<&Session>, job: Job) {
@@ -753,7 +786,7 @@ impl Worker<'_, '_> {
         let with_types = known.had_types;
         let fixable = known.messages.iter().filter(|it| it.fix.is_some()).count();
         let mut actions = match wants(only, QUICK_FIX) {
-            true => places.quick_fixes(&known.messages, range, known.is_oxlint),
+            true => places.quick_fixes(&known.messages, range, known.directives),
             false => Vec::new(),
         };
         // Beside the fix of one problem, if there are others.
@@ -762,20 +795,11 @@ impl Worker<'_, '_> {
             (QUICK_FIX, has_a_fix && fixable > 1),
             (FIX_ALL, fixable > 0 && wants(only, FIX_ALL)),
         ];
-        if kinds.iter().any(|it| it.1) {
-            let how = How {
-                with_types,
-                fixes: true,
-            };
-            let fixed = self.lint(session, document, how).flatten();
-            if let Some(fixed) = fixed
-                .as_ref()
-                .filter(|it| it.is_fixed)
-                .and_then(FileResult::text_to_write)
-            {
-                let kinds = kinds.iter().filter(|it| it.1);
-                actions.extend(kinds.map(|it| places.fix_all(it.0, fixed)));
-            }
+        if kinds.iter().any(|it| it.1)
+            && let Some(fixed) = self.fixed(session, document, with_types)
+        {
+            let kinds = kinds.iter().filter(|it| it.1);
+            actions.extend(kinds.map(|it| places.fix_all(it.0, fixed)));
         }
         actions
     }
@@ -783,13 +807,7 @@ impl Worker<'_, '_> {
     /// The edits that format `document`. `None`: it cannot be formatted, or is not to be.
     fn format(&mut self, document: &Document, range: Option<Range>) -> Option<Vec<Json>> {
         let server = self.server;
-        let mut options = match server.format_options_of(self.root) {
-            Ok(options) => options,
-            Err(why) => {
-                self.tell_once(why, |why| server.show_error(Half::Format, why));
-                return None;
-            }
-        };
+        let mut options = self.format_options.clone()?;
         let places = server.places(document);
         let range =
             range.map(|(start, end)| (places.lines.offset(start), places.lines.offset(end)));
@@ -812,8 +830,14 @@ impl Worker<'_, '_> {
         match formatted {
             Formatted::Text(text) => Some(places.edits_to(&text, range)),
             Formatted::Unchanged => Some(Vec::new()),
-            Formatted::Failed { stderr } => {
+            Formatted::NotFormatted { stderr } => {
                 server.tell("window/logMessage", 2, stderr.trim_ascii_end());
+                None
+            }
+            Formatted::Failed { stderr } => {
+                let why = stderr.trim_ascii_end();
+                let why = why.strip_prefix(b"error: ").unwrap_or(why);
+                self.tell_once(why.to_vec(), |why| server.show_error(Half::Format, why));
                 None
             }
         }
@@ -904,6 +928,11 @@ impl<'d> Desk<'d, '_, '_> {
         for root in &self.roots {
             root.change(|queue| queue.generation += 1);
         }
+        self.lint_all();
+    }
+
+    /// Every document is linted again, or has no diagnostics any more while linting is off.
+    fn lint_all(&mut self) {
         let lints = self.server.settings.lock().lints;
         let documents: Vec<Arc<Document>> = self.documents.values().cloned().collect();
         for document in &documents {
@@ -995,9 +1024,10 @@ impl<'d> Desk<'d, '_, '_> {
         if let Some(settings) = params.get(b"initializationOptions") {
             server.settings.lock().read(settings, server.features());
         }
-        let formats = Json::Bool(server.settings.lock().formats);
+        let Settings { lints, formats, .. } = *server.settings.lock();
+        let formats = Json::Bool(formats);
         let kinds = [QUICK_FIX, FIX_ALL].map(rpc::text).to_vec();
-        let actions = match server.features().lint {
+        let actions = match lints {
             true => object([("codeActionKinds", Json::Array(kinds))]),
             false => Json::Bool(false),
         };
@@ -1220,10 +1250,18 @@ impl<'d> Desk<'d, '_, '_> {
             }
             b"workspace/didChangeWatchedFiles" => self.look_again(),
             b"workspace/didChangeConfiguration" => {
-                if let Some(settings) = dig(params, &["settings", "bun"]) {
-                    server.settings.lock().read(settings, server.features());
+                let Some(settings) = dig(params, &["settings", "bun"]) else {
+                    return;
+                };
+                let before = *server.settings.lock();
+                let mut after = before;
+                after.read(settings, server.features());
+                if after == before {
+                    return;
                 }
-                self.look_again();
+                *server.settings.lock() = after;
+                // The configurations of the folders are as they were: their engines go on.
+                self.lint_all();
             }
             b"workspace/didChangeWorkspaceFolders" => {
                 let list = |key: &str| {

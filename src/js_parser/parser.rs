@@ -1072,12 +1072,9 @@ impl ExprIn {
 pub(crate) enum ExprParent {
     #[default]
     Other,
-    /// A declaration that this value initializes: `const x = <this>`.
-    /// Currently this is only used when unwrapping a call to `require()`
-    /// with `__toESM()`.
+    /// `const x = <this>`, read when a call to `require()` is unwrapped with `__toESM()`.
     Declaration,
-    /// A call or a tagged template that this is the target or the tag of.
-    /// Both pass the object of a property access as `this`.
+    /// `<this>()` or a template with the tag `<this>`. A property access passes its object as `this`.
     CallOrTemplate,
 }
 

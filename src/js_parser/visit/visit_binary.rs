@@ -112,11 +112,7 @@ impl BinaryExpressionVisitor {
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     ) -> Expr {
-        // `v.e: StoreRef<E::Binary>` is the safe arena back-reference (Copy).
-        // Snapshot the handle for the tail re-wrap, then take the working
-        // `&mut` via `StoreRef::DerefMut` — the arena-backref invariant is
-        // encapsulated there. The borrow is on the `v.e` field only, so
-        // `v.loc` reads below split-borrow cleanly.
+        // `e_handle` is for the tail re-wrap. `e_` borrows `v.e` alone, so `v.loc` stays readable.
         let e_handle: StoreRef<E::Binary> = v.e;
         let is_callee_or_tag = v.is_callee_or_tag;
         let e_ = &mut *v.e;
@@ -238,8 +234,7 @@ impl BinaryExpressionVisitor {
                     };
                     match simplified_left.filter(|left| !left.is_empty()) {
                         Some(simplified_left) => e_.left = simplified_left,
-                        // Nothing is left of the left operand. A callee or a tag
-                        // keeps this comma in place, so that "this" stays unbound.
+                        // A callee or a tag keeps the comma in place, so that "this" stays unbound.
                         None if is_callee_or_tag && e_.right.has_value_for_this_in_call() => {
                             e_.left = Expr {
                                 data: prefill::data::ZERO,

@@ -77,8 +77,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 42: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 44: A fold keeps `(0, x)` where it leaves a property access as the target of a call
-/// or as the tag of a template, and `{ f: x }.f` is not inlined as a tag.
+/// Version 44: A fold keeps `(0, x)` for a property access that it leaves as a callee or a tag.
 const EXPECTED_VERSION: u32 = 44;
 
 /// Source files smaller than this are not written to / read from the on-disk

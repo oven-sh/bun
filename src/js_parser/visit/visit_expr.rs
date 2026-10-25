@@ -1542,6 +1542,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut e_.no);
             p.is_control_flow_dead = old;
 
+            // "(1 ? fn : 2)()" => "fn()"
+            // "(1 ? this.fn : 2)" => "this.fn"
+            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
             *e = Self::live_branch(p, e_.test, e_.yes, side_effects.side_effects, in_);
         } else {
             // "false ? dead : live"
@@ -1551,15 +1554,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = old;
             p.visit_expr(&mut e_.no);
 
+            // "(a, false) ? b : c" => "a, c"
+            // "(1 ? fn : 2)()" => "fn()"
+            // "(1 ? this.fn : 2)" => "this.fn"
+            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
             *e = Self::live_branch(p, e_.test, e_.no, side_effects.side_effects, in_);
         }
     }
 
-    /// What is left of a `?:` whose test has a known value.
-    /// "(1 ? fn : 2)()" => "fn()"
-    /// "(1 ? this.fn : 2)" => "this.fn"
-    /// "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-    /// "(a, false) ? b : c" => "a, c"
+    /// The branch that is left of a `?:` whose test has a known value.
     fn live_branch(
         p: &mut Self,
         test: Expr,
@@ -1577,13 +1580,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.unwrapped_by_fold(live, in_.is_callee_or_tag(), test.loc)
     }
 
-    /// What a fold leaves when it replaces `(0, x)`, `true && x` or `true ? x : y`
-    /// by the operand `x`. A call or a tagged template passes the object of a
-    /// property access as `this`, so there the operand stays `(0, x)`.
-    ///
-    /// esbuild has no such check in its folds since 0.16.5. It marks a call or a
-    /// template whose callee or tag is a property access in the source, and its
-    /// printer adds `(0, ...)` to every other property access in that position.
+    /// `(0, x)` where a bare property access `x` would pass `this`. In esbuild's printer since 0.16.5.
     pub(crate) fn unwrapped_by_fold(
         &mut self,
         operand: Expr,
@@ -1598,8 +1595,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         operand
     }
 
-    /// `(0, x)`, `a && x`, `a || x`, `a ?? x`, `o.p ??= x` and `a ? x : y`: a fold
-    /// can replace each of these by `x`, through `Expr::unwrapped_by_fold`.
+    /// A node that a fold can replace by its operand `x`: `(0, x)`, `a && x`, `a ?? x`, `a ? x : y`.
     fn is_wrapper_around_operand(data: &Data) -> bool {
         match data {
             Data::EIf(_) => true,

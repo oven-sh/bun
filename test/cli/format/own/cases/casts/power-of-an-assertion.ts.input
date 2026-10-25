@@ -1,0 +1,3 @@
+x = a ** b as T ** c;
+x = a ** b satisfies T ** c;
+x = a ** b as T as U ** c ** d;

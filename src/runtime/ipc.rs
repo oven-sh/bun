@@ -939,6 +939,8 @@ pub(crate) struct SendQueue {
     /// A user disconnect() waiting for the handle queue to flush; reported as disconnected meanwhile, cleared by any real close.
     pub(crate) close_after_flush: Cell<bool>,
     pub(crate) pending_after_close: Cell<bool>,
+    /// The peer exited, or a send found it gone, with input still queued: the close waits until the loop has read this many more bytes.
+    input_before_close: Cell<Option<u32>>,
     pub(crate) write_in_progress: Cell<bool>,
     pub close_event_sent: Cell<bool>,
 
@@ -971,6 +973,13 @@ impl SendQueueOwner {
                     .as_mut()
                     .global(),
             ),
+        }
+    }
+
+    fn report_held_exit(self) {
+        if let SendQueueOwner::Subprocess(p) = self {
+            // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
+            unsafe { p.as_ref() }.report_held_exit();
         }
     }
 
@@ -1064,6 +1073,7 @@ impl SendQueue {
             pending_close: Cell::new(false),
             close_after_flush: Cell::new(false),
             pending_after_close: Cell::new(false),
+            input_before_close: Cell::new(None),
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
             #[cfg(windows)]
@@ -1164,6 +1174,7 @@ impl SendQueue {
         self.keep_alive.with_mut(|k| k.disable());
         let was_open = self.socket_is_open();
         self.socket.set(SocketUnion::Closed);
+        self.input_before_close.set(None);
         // Only enqueue the close notification for the open→closed transition.
         // `closeSocket` (via `SendQueue.deinit` during the owner's finalizer)
         // can reach this path again with the socket already `.closed`; the
@@ -1196,6 +1207,15 @@ impl SendQueue {
             // SAFETY: caller contract — the queued task owns a ref on `this`.
             let sq = unsafe { &*this };
             sq.deferred_scheduled.set(false);
+            if !sq.input_is_left_before_close() {
+                // The exit report that waited for this input goes out before the close is reported.
+                if let Some(owner) = sq.owner.get() {
+                    owner.report_held_exit();
+                }
+                if sq.input_before_close.take().is_some() {
+                    sq.pending_close.set(true);
+                }
+            }
             if sq.pending_close.replace(false) {
                 log!("SendQueue#closeSocketTask");
                 sq.close_socket(CloseReason::Normal, CloseFrom::User);
@@ -1264,7 +1284,7 @@ impl SendQueue {
         let _ = unsafe { bun_core::heap::take(windows) };
     }
 
-    pub(crate) fn close_socket_next_tick(&self, next_tick: bool) {
+    pub(crate) fn close_socket_next_tick(&self) {
         log!("SendQueue#closeSocketNextTick");
         if !self.socket_is_open() {
             self.socket.set(SocketUnion::Closed);
@@ -1275,12 +1295,49 @@ impl SendQueue {
         if self.pending_close.get() {
             return; // close already requested
         }
-        if !next_tick {
-            self.close_socket(CloseReason::Normal, CloseFrom::User);
-            return;
-        }
         self.pending_close.set(true);
         self.schedule_deferred();
+    }
+
+    /// The exit of the child was reported, so the channel closes, unless the close waits for queued input.
+    pub(crate) fn close_after_exit_report(&self) {
+        log!("SendQueue#closeAfterExitReport");
+        if self.input_before_close.get().is_none() {
+            self.close_socket_next_tick();
+        }
+    }
+
+    /// True when a close has to wait for input that only the loop reads. It waits for what is queued now and no more: another process can hold the peer's end and keep writing, so neither EOF nor an empty queue has to come.
+    pub(crate) fn wait_for_queued_input(&self) -> bool {
+        if self.input_before_close.get().is_some() {
+            return true;
+        }
+        if self.pending_close.get() {
+            return false;
+        }
+        let queued = self.queued_input_len();
+        if queued == 0 {
+            return false;
+        }
+        self.input_before_close.set(Some(queued));
+        self.update_ref(&self.get_global_this());
+        true
+    }
+
+    /// Whether the loop has yet to read input that a close waits for.
+    fn input_is_left_before_close(&self) -> bool {
+        matches!(self.input_before_close.get(), Some(left) if left > 0)
+            && !self.pending_close.get()
+            && self.queued_input_len() > 0
+    }
+
+    /// How many bytes a read of the channel can still return. Always 0 on Windows, where this wait is not implemented.
+    fn queued_input_len(&self) -> u32 {
+        #[cfg(unix)]
+        if let SocketUnion::Open(socket) = *self.socket.get() {
+            return socket.queued_input_len();
+        }
+        0
     }
 
     /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.
@@ -1292,7 +1349,7 @@ impl SendQueue {
             self.close_after_flush.set(true);
             return;
         }
-        self.close_socket_next_tick(true);
+        self.close_socket_next_tick();
     }
 
     fn start_message(
@@ -1450,7 +1507,19 @@ impl SendQueue {
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
     }
 
+    /// The loop read `len` bytes while a close waits for input. The task that ends the wait is queued before the handlers of the read run, because one of them can wait for the exit report in a nested tick.
+    fn count_input_before_close(&self, len: usize) {
+        if let Some(left) = self.input_before_close.get() {
+            let read = u32::try_from(len).unwrap_or(u32::MAX);
+            self.input_before_close.set(Some(left.saturating_sub(read)));
+            self.schedule_deferred();
+        }
+    }
+
     fn should_ref(&self) -> bool {
+        if self.input_before_close.get().is_some() {
+            return true; // the loop has yet to read what the close waits for
+        }
         if self.waiting_for_ack.get().is_some() {
             return true; // waiting to receive an ack/nack from the other side
         }
@@ -1525,7 +1594,7 @@ impl SendQueue {
         match next {
             Next::Nothing => {
                 if self.close_after_flush.get() && !waiting_for_ack && self.queue.get().is_empty() {
-                    self.close_socket_next_tick(true);
+                    self.close_socket_next_tick();
                 }
                 self.update_ref(global);
             }
@@ -1617,7 +1686,9 @@ impl SendQueue {
             Done::Partial | Done::NoProgress => {}
             Done::Error => {
                 // error. close socket.
-                self.close_socket(CloseReason::Failure, CloseFrom::User);
+                if self.input_before_close.get().is_none() {
+                    self.close_socket(CloseReason::Failure, CloseFrom::User);
+                }
             }
         }
         self.update_ref(&global_this);
@@ -1800,6 +1871,15 @@ impl SendQueue {
                     socket.write(data)
                 }
             });
+            // The peer is gone. What it sent before that is read before the close.
+            if n < 0
+                && matches!(
+                    bun_sys::last_errno(),
+                    libc::EPIPE | libc::ECONNRESET | libc::ENOTCONN
+                )
+            {
+                self.wait_for_queued_input();
+            }
             self.on_write_complete(n);
         }
     }
@@ -2481,6 +2561,7 @@ pub(crate) mod IPCHandlers {
             // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
             // `*mut EventLoop` so `&mut EventLoop` isn't held across `on_data2`.
             let _scope = global_this.bun_vm().enter_event_loop_scope();
+            send_queue.count_input_before_close(all_data.len());
             on_data2(send_queue, all_data);
         }
 
@@ -2550,7 +2631,7 @@ pub(crate) mod IPCHandlers {
 
         pub(crate) fn on_read_error(send_queue: &SendQueue, err: bun_sys::E) {
             log!("NewNamedPipeIPCHandler#onReadError {:?}", err);
-            send_queue.close_socket_next_tick(true);
+            send_queue.close_socket_next_tick();
         }
 
         /// `nread` is the byte count libuv reported into the slice handed out

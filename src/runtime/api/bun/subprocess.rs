@@ -226,6 +226,8 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
+        /// The child exited with IPC input unread: its exit is reported after the loop has read the channel.
+        const EXIT_REPORT_HELD             = 1 << 1;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
         const FINALIZED                    = 1 << 3;
         const DEREF_ON_STDIN_DESTROYED     = 1 << 4;
@@ -298,7 +300,24 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn resource_usage(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        if self.exit_report_is_held() {
+            return Ok(JSValue::UNDEFINED);
+        }
         self.create_resource_usage_object(cx.global())
+    }
+
+    fn exit_report_is_held(&self) -> bool {
+        self.flags.get().contains(Flags::EXIT_REPORT_HELD)
+    }
+
+    /// The status that JS sees: a child whose exit report is held still runs.
+    fn visible_status(&self) -> &Status {
+        const RUNNING: &Status = &Status::Running;
+        if self.exit_report_is_held() {
+            RUNNING
+        } else {
+            &self.process().status
+        }
     }
 
     pub(crate) fn create_resource_usage_object(
@@ -539,7 +558,7 @@ impl Subprocess<'_> {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
     ) -> JsResult<JSValue> {
-        if self.process().has_exited() {
+        if !matches!(self.visible_status(), Status::Running) {
             // rely on GC to clean everything up in this case
             return Ok(JSValue::UNDEFINED);
         }
@@ -663,7 +682,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn has_killed(&self) -> bool {
-        self.process().has_killed()
+        !self.exit_report_is_held() && self.process().has_killed()
     }
 
     pub(crate) fn try_kill(&self, sig: SignalCode) -> bun_sys::Result<()> {
@@ -716,7 +735,7 @@ impl Subprocess<'_> {
     ) -> JsResult<bool> {
         bun_output::scoped_log!(IPC, "Subprocess#doSend");
 
-        let context = if self.has_exited() {
+        let context = if !matches!(self.visible_status(), Status::Running) {
             crate::ipc_host::FromEnum::SubprocessExited
         } else {
             crate::ipc_host::FromEnum::Subprocess
@@ -735,11 +754,6 @@ impl Subprocess<'_> {
             context,
             self.pid() as u32,
         )
-    }
-
-    pub(crate) fn disconnect_ipc(&self, next_tick: bool) {
-        let Some(ipc_data) = self.ipc() else { return };
-        ipc_data.close_socket_next_tick(next_tick);
     }
 
     pub(crate) fn disconnect(&self) {
@@ -860,12 +874,7 @@ impl Subprocess<'_> {
         let jsc_vm = global_this.bun_vm().as_mut();
         this_jsvalue.ensure_still_alive();
         self.pid_rusage.set(Some(*rusage));
-        let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
-
-        // `deref()` and `disconnect_ipc(true)` run at the tail of this body.
-        // R-2: now that both take `&self`, scopeguard would no longer alias —
-        // kept explicit at the tail for now (no early returns in this body).
 
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             Self::timer_all().remove(self.event_loop_timer.as_ptr());
@@ -877,6 +886,14 @@ impl Subprocess<'_> {
         // thunk so the auto-killer's `(*process).deref()` keeps mutable
         // provenance (no `&Process → *mut` round-trip).
         unsafe { (*jsc_vm).on_subprocess_exit(NonNull::new_unchecked(process)) };
+
+        // The loop has yet to read what the child sent last: `report_held_exit` reports the exit after that read.
+        let report_is_held = self.ipc().is_some_and(|ipc| ipc.wait_for_queued_input());
+        if report_is_held {
+            self.update_flags(|f| f.insert(Flags::EXIT_REPORT_HELD));
+            // A step below can run the loop, and that read can report the exit and release the ref of the exit handler.
+            self.ref_();
+        }
 
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
             // Deliver EOF to the terminal reader without closing the Terminal.
@@ -1014,6 +1031,31 @@ impl Subprocess<'_> {
             }
         }
 
+        if report_is_held {
+            self.deref();
+            return;
+        }
+        self.report_exit(this_jsvalue, status);
+    }
+
+    /// The loop has read what the child sent last, or the channel closes without that read: the exit that waited is reported.
+    pub(crate) fn report_held_exit(&self) {
+        if !self.exit_report_is_held() {
+            return;
+        }
+        self.update_flags(|f| f.remove(Flags::EXIT_REPORT_HELD));
+        let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
+        let status = self.process().status.clone();
+        self.report_exit(this_jsvalue, &status);
+    }
+
+    /// Settles `exited`, calls `onExit`, then closes the channel and releases the ref that the exit handler held.
+    fn report_exit(&self, this_jsvalue: JSValue, status: &Status) {
+        let global_this = self.global_this;
+        let global_this = global_this.get();
+        let jsc_vm = global_this.bun_vm().as_mut();
+        this_jsvalue.ensure_still_alive();
+        let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         let mut did_update_has_pending_activity = false;
 
         // Kept as raw `*mut` so the enter guard and the body can both call
@@ -1111,7 +1153,9 @@ impl Subprocess<'_> {
         if !did_update_has_pending_activity {
             self.update_has_pending_activity();
         }
-        self.disconnect_ipc(true);
+        if let Some(ipc_data) = self.ipc() {
+            ipc_data.close_after_exit_report();
+        }
         self.deref();
     }
 
@@ -1245,6 +1289,10 @@ impl Subprocess<'_> {
         if exit_handler_pending {
             self.deref();
         }
+        if self.exit_report_is_held() {
+            self.update_flags(|f| f.remove(Flags::EXIT_REPORT_HELD));
+            self.deref();
+        }
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             Self::timer_all().remove(self.event_loop_timer.as_ptr());
         }
@@ -1280,7 +1328,7 @@ impl Subprocess<'_> {
         }
 
         let global_this = cx.global();
-        match &self.process().status {
+        match self.visible_status() {
             Status::Exited(exit) => {
                 JSPromise::resolved_promise_value(global_this, JSValue::js_number(exit.code as f64))
             }
@@ -1301,7 +1349,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn get_exit_code(&self) -> Option<u8> {
-        if let Status::Exited(exited) = &self.process().status {
+        if let Status::Exited(exited) = self.visible_status() {
             return Some(exited.code);
         }
         None
@@ -1319,7 +1367,7 @@ impl Subprocess<'_> {
 
     /// The name of the signal that ended the process, its number if it has no name, else `null`.
     pub(crate) fn signal_code_to_js(&self, global: &JSGlobalObject) -> JSValue {
-        let Some(signal) = self.process().status.signal() else {
+        let Some(signal) = self.visible_status().signal() else {
             return JSValue::NULL;
         };
         match signal.name() {
@@ -1380,6 +1428,7 @@ impl Subprocess<'_> {
 
     pub(crate) fn handle_ipc_close(&self) {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCClose");
+        debug_assert!(!self.exit_report_is_held());
         let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
         let _keep = jsc::EnsureStillAlive(this_jsvalue);
         let global_this = self.global_this;

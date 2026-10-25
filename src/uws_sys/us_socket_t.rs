@@ -494,6 +494,10 @@ impl us_socket_t {
             _ => QueuedInput::None,
         }
     }
+
+    pub(crate) fn queued_input_len(&self) -> u32 {
+        u32::try_from(c::us_socket_queued_input_len(self)).unwrap_or(0)
+    }
 }
 
 /// Raw externs. Private — every operation has a typed method on `us_socket_t`.
@@ -602,6 +606,7 @@ mod c {
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_ssl_send_rejected(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_queued_input(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_queued_input_len(s: &us_socket_t) -> c_int;
 
         /// ssl_ctx is required (the whole point); sni may be null.
         pub(super) fn us_socket_adopt_tls(

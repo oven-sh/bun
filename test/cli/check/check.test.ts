@@ -9123,6 +9123,34 @@ call.x;
       }
     });
 
+    // m1.ts is checked first. The message of its error prints the type of `c0`, which infers the return type of `go`. The
+    // call of `num` there fails, and its message prints that type again, so `str(1)` is first resolved two messages deep,
+    // where errors are discarded.
+    test("the error of a call that's first resolved while a message inside another file's message is printed isn't lost", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true }, "files": ["m2.ts", "m1.ts"] }
+`,
+        "m1.ts": `import { c0 } from "./m2";
+declare function arr<T>(...x: T[]): T[];
+export async function c1() { return arr(c0, 1); }
+`,
+        "m2.ts": `import { c1 } from "./m1";
+declare function tap<T>(x: T, f?: (x: T) => void): T;
+declare function num<T extends number>(x: T): { n: T };
+declare function str<T extends string>(x: T): T[];
+declare const flag: boolean;
+export const c0 = tap({ go() { if (flag) return tap(num(c1()), x => {}); return str(1); } });
+`,
+      });
+      for (const threads of ["1", "8"]) {
+        const { stdout, exitCode } = await check(dir, ["--threads", threads]);
+        expect(stdout.split("\n")).toContain(
+          "m2.ts(6,85): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.",
+        );
+        expect(exitCode).toBe(1);
+      }
+    });
+
     // `f3<Ast>(x)` fails, so its signature comes from `createSignatureInstantiation` and no other call has it. `f3(ast)`
     // infers the same type argument and gets the signature that `getSignatureInstantiation` remembers. In the cycle the
     // second one resolves to `any` first. If the first one took that, `f1` would return `Ast` and `+` would be an error.

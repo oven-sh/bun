@@ -341,6 +341,13 @@ impl<'p, 's> Checker<'p, 's> {
             self.signatures_resolved_within
                 .retain(|r| !(r.0 == file && r.1 == call));
         }
+        // The errors of a resolution at `maxSerializationLevel` are discarded. The check of the call's own file resolves
+        // it again and reports them, so it must not find the signature, not even that of a resolution inside this one.
+        if self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL
+            && self.task.file != Some(file)
+        {
+            self.mark_tainted_from(self.frames.len() - 1);
+        }
         // tsgo stores `links.resolvedSignature` even while `contextualBindingPatterns` is
         // non-empty.
         let left = self.leave(Query::Call(file, call));

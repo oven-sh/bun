@@ -3293,7 +3293,7 @@ fn parse_runtime_root(
         });
     manager.lockfile = lockfile;
     if parse_log.errors > 0 {
-        parse_log.append_to_with_recycled(log, true);
+        parse_log.append_to(log);
     }
     result
 }

@@ -2452,9 +2452,8 @@ impl PackageManifest {
         let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
             Err(_) => {
-                let mut cloned_log = bun_ast::Log::init();
-                log.clone_to_with_recycled(&mut cloned_log, true);
-                *log = cloned_log;
+                // It knows a source by its address, and `json_buffer` is about to be freed.
+                log.line_column_tracker = None;
                 return Ok(None);
             }
         };

@@ -20,18 +20,6 @@ use std::borrow::Cow;
 // infallible (`Vec::push` / `io::Write` on `Vec<u8>` cannot fail in Rust).
 use bun_core::Output;
 
-// TODO: swap to `bun_core::StringBuilder` once `clone_with_builder` is
-// reshaped to use `append_raw` (canonical's `append` borrows `&mut self`, which
-// breaks the `'static` slice pass-through this stub fakes).
-#[derive(Default)]
-pub struct StringBuilder;
-impl StringBuilder {
-    pub fn count(&mut self, s: &[u8]) {
-        let _ = s;
-    }
-    pub fn allocate(&mut self) {}
-}
-
 // Discriminants are wire-stable for serialization.
 #[repr(u8)]
 #[derive(
@@ -624,24 +612,14 @@ impl Loc {
 // Location
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Owns its bytes: a diagnostic outlives the [`Source`] it describes.
+#[derive(Clone)]
 pub struct Location {
-    // Field ordering optimized to reduce padding:
-    // - 16-byte fields first: string (ptr+len), ?string (ptr+len+null flag)
-    // - 8-byte fields next: usize
-    // - 4-byte fields last: i32
-    // This eliminates padding between differently-sized fields.
-    //
-    // `file` / `namespace` / `line_text` are `Cow` (not `Str`) because
-    // `Location::clone()` must deep-dupe them so a
-    // `BuildMessage`/`ResolveMessage` that outlives the
-    // `Source` it borrowed from doesn't read poisoned memory. The
-    // borrowed arm covers a CSS diagnostic, where the slice points into
-    // the bundle's arena.
-    pub file: Cow<'static, [u8]>,
-    pub namespace: Cow<'static, [u8]>,
+    pub file: Box<[u8]>,
+    pub namespace: Box<[u8]>,
     /// Text on the line, avoiding the need to refetch the source code. It may be prefixed by the
     /// preceding lines, which are printed too.
-    pub line_text: Option<Cow<'static, [u8]>>,
+    pub line_text: Option<Box<[u8]>>,
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
     pub length: usize,
@@ -658,32 +636,11 @@ pub struct Location {
     pub column: i32,
 }
 
-// NOT `#[derive(Clone)]`. `file` / `namespace` / `line_text` are
-// `Cow<'static, [u8]>` whose `Borrowed` arm may carry a lifetime-erased view
-// into a `Source` (see `css_parser.rs`, `error.rs`,
-// `JSBundler.rs`). The derived `Cow::clone` would re-borrow that pointer, so a
-// `BuildMessage` cloned via `Option<Location>::clone()` / `Vec<Data>::clone()`
-// could outlive the source buffer and read poisoned memory. Instead,
-// every `Clone` of a `Location` deep-dupes its borrowed bytes.
-impl Clone for Location {
-    fn clone(&self) -> Self {
-        Location {
-            file: Cow::Owned(self.file.to_vec()),
-            namespace: Cow::Owned(self.namespace.to_vec()),
-            line: self.line,
-            column: self.column,
-            length: self.length,
-            line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
-            offset: self.offset,
-        }
-    }
-}
-
 impl Default for Location {
     fn default() -> Self {
         Location {
-            file: Cow::Borrowed(b""),
-            namespace: Cow::Borrowed(b"file"),
+            file: Box::default(),
+            namespace: Box::from(b"file".as_slice()),
             line_text: None,
             length: 0,
             offset: 0,
@@ -735,60 +692,6 @@ impl Location {
         cost
     }
 
-    pub fn count(&self, builder: &mut StringBuilder) {
-        builder.count(self.file.as_ref().into_str());
-        builder.count(self.namespace.as_ref().into_str());
-        if let Some(text) = &self.line_text {
-            builder.count(text.as_ref().into_str());
-        }
-    }
-
-    pub(crate) fn clone(&self) -> Location {
-        // The trait `Clone` impl above does the deep-dupe (so the duped bytes
-        // outlive the original `Source.contents`); this inherent shim forwards
-        // to it.
-        <Self as Clone>::clone(self)
-    }
-
-    pub(crate) fn clone_with_builder(&self, _string_builder: &mut StringBuilder) -> Location {
-        // The local
-        // `StringBuilder` stub above is a no-op that returns its input, so a
-        // `Cow::Borrowed(append(s))` would alias `self`'s storage and dangle
-        // after `self.msgs.clear()` in `append_to_with_recycled`. Deep-copy
-        // here instead — same end-state as the real builder, just without the
-        // single-buffer packing.
-        Location {
-            file: Cow::Owned(self.file.to_vec()),
-            namespace: Cow::Owned(self.namespace.to_vec()),
-            line: self.line,
-            column: self.column,
-            length: self.length,
-            line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
-            offset: self.offset,
-        }
-    }
-
-    // No Drop impl needed.
-
-    pub fn init(
-        file: Str,
-        namespace: Str,
-        line: i32,
-        column: i32,
-        length: u32,
-        line_text: Option<Str>,
-    ) -> Location {
-        Location {
-            file: Cow::Borrowed(file),
-            namespace: Cow::Borrowed(namespace),
-            line,
-            column,
-            length: length as usize,
-            line_text: line_text.map(Cow::Borrowed),
-            offset: length as usize,
-        }
-    }
-
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
         Self::init_or_null_impl(_source, r, None)
     }
@@ -810,9 +713,8 @@ impl Location {
         tracker: Option<&mut LineColumnTracker>,
     ) -> Option<Location> {
         if let Some(source) = _source {
-            // Owned: a `BuildMessage` outlives the path of a virtual source.
-            let file = Cow::Owned(source.path.text.to_vec());
-            let namespace = Cow::Owned(source.path.namespace.to_vec());
+            let file = Box::from(source.path.text);
+            let namespace = Box::from(source.path.namespace);
             if r.is_empty() {
                 return Some(Location {
                     file,
@@ -820,7 +722,7 @@ impl Location {
                     line: -1,
                     column: -1,
                     length: 0,
-                    line_text: Some(Cow::Borrowed(b"")),
+                    line_text: Some(Box::default()),
                     offset: 0,
                 });
             }
@@ -859,13 +761,7 @@ impl Location {
                 } else {
                     1
                 },
-                // `source_backing` in `Transpiler::parse_*` is RAII and
-                // drops on the parse-error path *before* `process_fetch_log`
-                // moves the `Msg` into a `BuildMessage`, so own the bytes here
-                // instead of borrowing `source.contents`. `full_line` is
-                // bounded (≤ ~120 bytes) and only materialized on diagnostic
-                // paths.
-                line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
+                line_text: Some(Box::from(bun_core::trim_left(full_line, b"\n\r"))),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
             });
         }
@@ -900,72 +796,6 @@ impl Data {
             cost += loc.memory_cost();
         }
         cost
-    }
-
-    // `text` is `Cow<'static, [u8]>`: `Owned` frees on `Drop`, `Borrowed` is a
-    // `&'static` literal — nothing to free. No explicit `Drop` body needed.
-
-    pub fn clone_line_text(&self, should: bool) -> Data {
-        if !should || self.location.is_none() || self.location.as_ref().unwrap().line_text.is_none()
-        {
-            return self.clone();
-        }
-
-        let new_line_text = self
-            .location
-            .as_ref()
-            .unwrap()
-            .line_text
-            .as_deref()
-            .unwrap()
-            .to_vec();
-        let mut new_location = self.location.clone().unwrap();
-        new_location.line_text = Some(Cow::Owned(new_line_text));
-        Data {
-            text: self.text.clone(),
-            location: Some(new_location),
-        }
-    }
-
-    pub fn clone(&self) -> Data {
-        Data {
-            text: if !self.text.is_empty() {
-                // `Cow::clone` only deep-copies the `Owned` arm; force the dupe
-                // so a `Borrowed` `text` (rare today, but the type permits it)
-                // can't alias recycled storage in the cloned `Msg`.
-                Cow::Owned(self.text.to_vec())
-            } else {
-                Cow::Borrowed(b"")
-            },
-            location: self.location.as_ref().map(Location::clone),
-        }
-    }
-
-    pub(crate) fn clone_with_builder(&self, builder: &mut StringBuilder) -> Data {
-        Data {
-            text: if !self.text.is_empty() {
-                // The local `StringBuilder`
-                // is a no-op stub (returns its input), so a bare `Cow::clone`
-                // would leave a `Borrowed` arm aliasing `self`'s storage and
-                // dangle after `self.msgs.clear()` in
-                // `append_to_with_recycled`. Deep-copy — same end-state as the
-                // real builder, just without the single-buffer packing.
-                Cow::Owned(self.text.to_vec())
-            } else {
-                Cow::Borrowed(b"")
-            },
-            location: self
-                .location
-                .as_ref()
-                .map(|l| l.clone_with_builder(builder)),
-        }
-    }
-
-    pub fn count(&self, builder: &mut StringBuilder) {
-        builder.count(&self.text);
-        if let Some(loc) = &self.location {
-            loc.count(builder);
-        }
     }
 
     pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
@@ -1192,6 +1022,7 @@ impl BabyString {
 // Msg
 // ───────────────────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct Msg {
     pub kind: Kind,
     pub data: Data,
@@ -1223,52 +1054,6 @@ impl Msg {
     }
 
     // `to_js`/`from_js` live as extension-trait methods in `bun_logger_jsc`.
-
-    pub fn count(&self, builder: &mut StringBuilder) {
-        self.data.count(builder);
-        for note in self.notes.iter() {
-            note.count(builder);
-        }
-    }
-
-    pub fn clone(&self) -> Msg {
-        let mut notes = Vec::with_capacity(self.notes.len());
-        for n in self.notes.iter() {
-            notes.push(n.clone());
-        }
-        Msg {
-            kind: self.kind,
-            data: self.data.clone(),
-            metadata: self.metadata,
-            notes: notes.into_boxed_slice(),
-            redact_sensitive_information: self.redact_sensitive_information,
-        }
-    }
-
-    pub(crate) fn clone_with_builder(
-        &self,
-        notes: &mut [Data],
-        builder: &mut StringBuilder,
-    ) -> Msg {
-        Msg {
-            kind: self.kind,
-            data: self.data.clone_with_builder(builder),
-            metadata: self.metadata,
-            notes: if !self.notes.is_empty() {
-                'brk: {
-                    for (i, note) in self.notes.iter().enumerate() {
-                        notes[i] = note.clone_with_builder(builder);
-                    }
-                    break 'brk notes[0..self.notes.len()].to_vec().into_boxed_slice();
-                }
-            } else {
-                Box::default()
-            },
-            redact_sensitive_information: self.redact_sensitive_information,
-        }
-    }
-
-    // No explicit Drop body needed beyond field drops.
 
     pub fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -1454,16 +1239,6 @@ pub struct Log {
     pub msgs: Vec<Msg>,
     pub level: Level,
 
-    pub clone_line_text: bool,
-
-    /// Owned backing storage for `Location.{file,line_text}` (and similar)
-    /// that came from transient buffers (e.g. native-plugin C strings): a
-    /// side-vector of `Box<[u8]>` owned by the `Log`; [`Log::dupe`] returns a
-    /// lifetime-erased borrow into the just-pushed box. The borrow is valid
-    /// for the life of `self` because `Box<[u8]>` is heap-stable across `Vec`
-    /// growth. See PORTING.md §Allocators (arena pattern).
-    pub owned_strings: Vec<Box<[u8]>>,
-
     /// Incremental line/column scanner for the messages this log creates, so
     /// a flood of diagnostics against one source doesn't rescan it from byte
     /// 0 for every message; see [`LineColumnTracker`]. Boxed and allocated
@@ -1484,31 +1259,8 @@ impl Default for Log {
             } else {
                 Level::Warn
             },
-            clone_line_text: false,
-            owned_strings: Vec::new(),
             line_column_tracker: None,
         }
-    }
-}
-
-impl Log {
-    /// Copy `s` into
-    /// storage owned by this `Log` and return a `&'static [u8]` view. The
-    /// returned slice is valid for as long as `self` lives (the box is never
-    /// moved out of `owned_strings`); `'static` is a lifetime erasure matching
-    /// the `Str` alias used by `Location`/`Msg`. NOT a leak — the bytes free
-    /// when the `Log` drops.
-    pub fn dupe(&mut self, s: &[u8]) -> &'static [u8] {
-        if s.is_empty() {
-            return b"";
-        }
-        let boxed: Box<[u8]> = Box::from(s);
-        // SAFETY: ARENA — `boxed` is about to be pushed into `self.owned_strings`
-        // and never removed; its heap allocation is stable across the `Vec`'s
-        // growth, so the returned slice is valid for the life of `self`.
-        let view: &'static [u8] = unsafe { bun_collections::detach_lifetime(&boxed[..]) };
-        self.owned_strings.push(boxed);
-        view
     }
 }
 
@@ -1640,47 +1392,13 @@ impl Log {
 
     // `to_js`/`to_js_aggregate_error`/`to_js_array` live in `bun_logger_jsc`.
 
-    pub fn clone_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
-        let dest_start = other.msgs.len();
-        other.msgs.extend(self.msgs.iter().map(Msg::clone));
-        other.warnings += self.warnings;
-        other.errors += self.errors;
-
-        if recycled {
-            let mut string_builder = StringBuilder;
-            let mut notes_count: usize = 0;
-            for msg in &self.msgs {
-                msg.count(&mut string_builder);
-                notes_count += msg.notes.len();
-            }
-
-            string_builder.allocate();
-            let mut notes_buf = vec![Data::default(); notes_count];
-            let mut note_i: usize = 0;
-
-            // Index instead of zipping `self.msgs` with the tail of
-            // `other.msgs` to satisfy borrowck.
-            for (k, msg) in self.msgs.iter().enumerate() {
-                let j = dest_start + k;
-                other.msgs[j] =
-                    msg.clone_with_builder(&mut notes_buf[note_i..], &mut string_builder);
-                note_i += msg.notes.len();
-            }
-        }
-    }
-
-    pub fn append_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
-        self.clone_to_with_recycled(other, recycled);
-        self.msgs.clear();
-        self.msgs.shrink_to_fit();
-        // See `append_to` — keep `owned_strings` backing alive for the moved msgs.
-        other.owned_strings.append(&mut self.owned_strings);
+    /// Moves the messages and the counts of `self` to the end of `other`.
+    pub fn append_to(&mut self, other: &mut Log) {
+        other.msgs.append(&mut self.msgs);
+        other.warnings += core::mem::take(&mut self.warnings);
+        other.errors += core::mem::take(&mut self.errors);
         // See `reset` — the scan cache goes with the messages.
         self.line_column_tracker = None;
-    }
-
-    pub fn append_to_maybe_recycled(&mut self, other: &mut Log, source: &Source) {
-        self.append_to_with_recycled(other, source.contents_is_recycled)
     }
 
     // TODO: remove `deinit` because it does not de-initialize the log; it clears it
@@ -1719,9 +1437,7 @@ impl Log {
             Kind::Warn => self.warnings += 1,
             _ => {}
         }
-        let data = self
-            .tracked_range_data(source, r, text)
-            .clone_line_text(self.clone_line_text);
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind,
             data,
@@ -1732,7 +1448,7 @@ impl Log {
     }
 
     #[inline]
-    fn add_resolve_error_with_level<const DUPE_TEXT: bool, const IS_ERR: bool>(
+    fn add_resolve_error_msg(
         &mut self,
         source: Option<&Source>,
         r: Range,
@@ -1746,28 +1462,12 @@ impl Log {
         // `alloc_print`. `fmt::Arguments` is opaque, so callers must pass
         // `specifier_arg` explicitly.
         let specifier = BabyString::r#in(&text, specifier_arg);
-        if IS_ERR {
-            self.errors += 1;
-        } else {
-            self.warnings += 1;
-        }
+        self.errors += 1;
 
-        let data = if DUPE_TEXT {
-            'brk: {
-                let mut _data = self.tracked_range_data(source, r, text);
-                if let Some(loc) = &mut _data.location {
-                    if let Some(_line) = loc.line_text.as_deref() {
-                        loc.line_text = Some(Cow::Owned(_line.to_vec()));
-                    }
-                }
-                break 'brk _data;
-            }
-        } else {
-            self.tracked_range_data(source, r, text)
-        };
+        let data = self.tracked_range_data(source, r, text);
 
         let msg = Msg {
-            kind: if IS_ERR { Kind::Err } else { Kind::Warn },
+            kind: Kind::Err,
             data,
             metadata: Metadata::Resolve(MetadataResolve {
                 specifier,
@@ -1790,16 +1490,7 @@ impl Log {
         import_kind: ImportKind,
         err: crate::Error,
     ) {
-        // Always dupe the line_text from the source to ensure the Location data
-        // outlives the source's backing memory (which may be arena-allocated).
-        self.add_resolve_error_with_level::<true, true>(
-            source,
-            r,
-            args,
-            specifier_arg,
-            import_kind,
-            err,
-        )
+        self.add_resolve_error_msg(source, r, args, specifier_arg, import_kind, err)
     }
 
     #[cold]
@@ -1811,7 +1502,7 @@ impl Log {
         specifier_arg: &[u8],
         import_kind: ImportKind,
     ) {
-        self.add_resolve_error_with_level::<true, true>(
+        self.add_resolve_error_msg(
             source,
             r,
             args,
@@ -1927,9 +1618,7 @@ impl Log {
             return;
         }
         self.warnings += 1;
-        let data = self
-            .tracked_range_data(source, r, text)
-            .clone_line_text(self.clone_line_text);
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Warn,
             data,
@@ -2005,15 +1694,12 @@ impl Log {
         let data = Data {
             text: alloc_print(args),
             location: Some(Location {
-                // `Location.file` borrows the lifetime-erased `Str`; see the
-                // module-level OWNERSHIP note.
-                file: Cow::Borrowed(filepath),
+                file: Box::from(filepath),
                 line: i32::try_from(line).expect("int cast"),
                 column: i32::try_from(col).expect("int cast"),
                 ..Default::default()
             }),
-        }
-        .clone_line_text(self.clone_line_text);
+        };
 
         self.add_msg(Msg {
             kind: Kind::Warn,

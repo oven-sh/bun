@@ -351,7 +351,7 @@ pub struct Bufs {
     pub(crate) dir_entry_paths_to_resolve: [core::mem::MaybeUninit<DirEntryResolveQueueItem>; 256],
     pub(crate) open_dirs: [FD; 256],
     pub(crate) resolve_without_remapping: PathBuffer,
-    pub(crate) index: PathBuffer,
+    pub(crate) entry_abs_path: PathBuffer,
     pub(crate) dir_info_uncached_filename: PathBuffer,
     pub(crate) node_bin_path: PathBuffer,
     pub(crate) dir_info_uncached_path: PathBuffer,
@@ -3825,17 +3825,10 @@ impl<'a> Resolver<'a> {
                     return MatchStatus::NotFound;
                 }
 
-                let absolute_out_path: &[u8] = entry_query
-                    .entry()
-                    .abs_path_or_fill(|| {
-                        Interned::from_static(
-                            self.fs_ref()
-                                .dirname_store
-                                .append_slice(abs_esm_path)
-                                .expect("unreachable"),
-                        )
-                    })
-                    .as_bytes();
+                let Some(absolute_out_path) = Self::entry_abs_path(entry_query.entry()) else {
+                    esm_resolution.status = Status::ModuleNotFound;
+                    return MatchStatus::NotFound;
+                };
                 let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
                     pkg.module_type
                 } else {
@@ -3991,22 +3984,9 @@ impl<'a> Resolver<'a> {
         query: &crate::fs::EntryLookup<'static>,
         out: &mut MatchResult,
     ) -> bool {
-        let Ok(abs_path) = query.entry().abs_path_or_try_fill(|| {
-            let parts = [query.entry().dir, query.entry().base()];
-            let abs = self
-                .fs_ref()
-                .abs_buf_checked(&parts, bufs!(remap_path))
-                .ok_or(())?;
-            Ok::<_, ()>(Interned::from_static(
-                self.fs_ref()
-                    .dirname_store
-                    .append_slice(abs)
-                    .expect("unreachable"),
-            ))
-        }) else {
+        let Some(abs_path) = Self::entry_abs_path(query.entry()) else {
             return false;
         };
-        let abs_path: &[u8] = abs_path.as_bytes();
         let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
             pkg.module_type
         } else {
@@ -5440,22 +5420,9 @@ impl<'a> Resolver<'a> {
             if unsafe { lookup.entry().kind(rfs, self.store_fd) }
                 == Fs::file_system::EntryKind::File
             {
-                let Ok(out_buf) = lookup.entry().abs_path_or_try_fill(|| {
-                    let parts = [dir_info.abs_path, &base[..]];
-                    let out_buf_ = self
-                        .fs_ref()
-                        .abs_buf_checked(&parts, bufs!(index))
-                        .ok_or(())?;
-                    Ok::<_, ()>(Interned::from_static(
-                        self.fs_ref()
-                            .dirname_store
-                            .append_slice(out_buf_)
-                            .expect("unreachable"),
-                    ))
-                }) else {
+                let Some(out_buf) = Self::entry_abs_path(lookup.entry()) else {
                     return MatchStatus::NotFound;
                 };
-                let out_buf: &[u8] = out_buf.as_bytes();
 
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug
@@ -5944,24 +5911,12 @@ impl<'a> Resolver<'a> {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
 
-                let Ok(abs_path) = query.entry().abs_path_or_try_fill(|| {
-                    let abs_path_parts = [query.entry().dir, query.entry().base()];
-                    let joined = self
-                        .fs_ref()
-                        .abs_buf_checked(&abs_path_parts, bufs!(load_as_file))
-                        .ok_or(())?;
-                    Ok::<_, ()>(Interned::from_static(
-                        self.fs_ref()
-                            .dirname_store
-                            .append_slice(joined)
-                            .expect("unreachable"),
-                    ))
-                }) else {
+                let Some(abs_path) = Self::entry_abs_path(query.entry()) else {
                     dec_ret!(None);
                 };
 
                 dec_ret!(Some(LoadResult {
-                    path: abs_path.as_bytes(),
+                    path: abs_path,
                     dirname_fd: plain_dirname_fd,
                     file_fd: query.entry().cache().fd,
                 }));
@@ -6031,34 +5986,11 @@ impl<'a> Resolver<'a> {
                                 ));
                             }
 
+                            let Some(abs_path) = Self::entry_abs_path(query.entry()) else {
+                                dec_ret!(None);
+                            };
                             dec_ret!(Some(LoadResult {
-                                path: query
-                                    .entry()
-                                    .abs_path_or_fill(|| {
-                                        let entry_dir = query.entry().dir;
-                                        // the trailing separator CAN be missing here
-                                        if !entry_dir.is_empty()
-                                            && entry_dir[entry_dir.len() - 1] == SEP
-                                        {
-                                            let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
-                                            Interned::from_static(
-                                                self.fs_ref()
-                                                    .filename_store
-                                                    .append_parts(&parts)
-                                                    .expect("unreachable"),
-                                            )
-                                        } else {
-                                            let parts: [&[u8]; 3] =
-                                                [entry_dir, SEP_STR.as_bytes(), &buffer[..]];
-                                            Interned::from_static(
-                                                self.fs_ref()
-                                                    .filename_store
-                                                    .append_parts(&parts)
-                                                    .expect("unreachable"),
-                                            )
-                                        }
-                                    })
-                                    .as_bytes(),
+                                path: abs_path,
                                 dirname_fd: ts_dirname_fd,
                                 file_fd: query.entry().cache().fd,
                             }));
@@ -6133,17 +6065,7 @@ impl<'a> Resolver<'a> {
 
                 // now that we've found it, we allocate it.
                 return Some(LoadResult {
-                    path: query
-                        .entry()
-                        .abs_path_or_fill(|| {
-                            Interned::from_static(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(&buffer[..])
-                                    .expect("unreachable"),
-                            )
-                        })
-                        .as_bytes(),
+                    path: Self::entry_abs_path(query.entry())?,
                     dirname_fd,
                     file_fd: query.entry().cache().fd,
                 });
@@ -6151,6 +6073,30 @@ impl<'a> Resolver<'a> {
         }
 
         None
+    }
+
+    /// The path of a directory entry: `entry.dir` joined with the name the
+    /// directory has for it, interned on first use. `None` when the two do not
+    /// fit a path buffer.
+    ///
+    /// This is the only writer of the path memo on `Entry`. A lookup reaches an
+    /// entry by any path to its directory and any case of its name, and each
+    /// of them gets this one spelling.
+    pub fn entry_abs_path(entry: &Fs::file_system::Entry) -> Option<&'static [u8]> {
+        entry
+            .abs_path_or_try_fill(|| {
+                let parts = [entry.dir, entry.base()];
+                let joined = Fs::FileSystem::get()
+                    .abs_buf_checked(&parts, bufs!(entry_abs_path))
+                    .ok_or(())?;
+                Ok::<_, ()>(Interned::from_static(
+                    Fs::file_system::DirnameStore::instance()
+                        .append_slice(joined)
+                        .expect("unreachable"),
+                ))
+            })
+            .ok()
+            .map(Interned::as_bytes)
     }
 
     fn dir_info_uncached(

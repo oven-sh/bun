@@ -1221,8 +1221,7 @@ pub struct BundleOptions<'a> {
     pub allow_runtime: bool,
 
     pub trim_unused_imports: Option<bool>,
-    /// Of the tsconfig.json of the top-level directory, for a source that no directory holds.
-    /// A file takes `Resolver::unused_import_flags_ts` of its own directory.
+    /// Of the top-level tsconfig.json, for a source that no directory holds.
     pub unused_import_flags_ts: TSUnusedImportFlags,
     pub(crate) mark_builtins_as_external: bool,
     pub server_components: bool,

@@ -158,14 +158,11 @@ pub struct TSConfigJSON {
     pub jsx: options::jsx::Pragma,
     pub(crate) jsx_flags: JsxFieldSet,
 
-    /// `importsNotUsedAsValues`, `preserveValueImports` and `verbatimModuleSyntax` as
-    /// written. `None`: the key is absent, so `extends` inherits it. For the first,
-    /// `Some(true)` is `"preserve"` or `"error"`.
+    /// `None`: the key is absent, so `extends` inherits it. `Some(true)`: `"preserve"` or `"error"`.
     pub(crate) preserve_imports_not_used_as_values: Option<bool>,
     pub(crate) preserve_value_imports: Option<bool>,
     pub(crate) verbatim_module_syntax: Option<bool>,
-    /// The three settings above as the parser reads them. Set by
-    /// `fold_unused_import_flags` once the `extends` chain is merged.
+    /// The three settings above, folded by `fold_unused_import_flags` after the `extends` merge.
     unused_import_flags: TSUnusedImportFlags,
 
     pub emit_decorator_metadata: bool,
@@ -270,9 +267,7 @@ impl TSConfigJSON {
         self.unused_import_flags
     }
 
-    /// `verbatimModuleSyntax` is both flags. Each of the two settings that it replaced is
-    /// one. Call it after the last write to the three settings: `parse`, and the merge of
-    /// an `extends` chain.
+    /// `verbatimModuleSyntax` is both flags. Call it after `parse` and after the `extends` merge.
     pub(crate) fn fold_unused_import_flags(&mut self) {
         self.unused_import_flags = if self.verbatim_module_syntax == Some(true) {
             TSUnusedImportFlags::all()

@@ -6753,9 +6753,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// What the TypeScript files of `dir_info` do with an unused import: what the nearest
-    /// tsconfig.json says, and nothing inside node_modules. A package was not written for the
-    /// settings of the project that installs it. esbuild's `tsConfigForDir` has the same rule.
+    /// Of the nearest tsconfig.json, and none inside node_modules, as esbuild's `tsConfigForDir`.
     pub fn unused_import_flags_ts(&mut self, dir_info: &DirInfo::DirInfo) -> TSUnusedImportFlags {
         if dir_info.is_inside_node_modules() {
             return TSUnusedImportFlags::empty();

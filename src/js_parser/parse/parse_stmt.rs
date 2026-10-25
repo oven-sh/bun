@@ -1309,16 +1309,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     p.lexer.expect_or_insert_semicolon()?;
 
-                    // export {type Foo} from 'bar';
-                    // export {} from 'bar';
-                    // ->
-                    // nothing, or `export {} from 'bar'` when tsconfig keeps the statement
-                    // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
                     let valueless_clause =
                         Self::IS_TYPESCRIPT_ENABLED && export_clause.clauses.is_empty();
-                    if valueless_clause && p.options.unused_import_flags_ts.drops_valueless_clause()
-                    {
-                        return Ok(p.s(S::TypeScript {}, loc));
+                    if Self::IS_TYPESCRIPT_ENABLED {
+                        // export {type Foo} from 'bar';
+                        // ->
+                        // nothing
+                        // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
+                        if valueless_clause
+                            && p.options.unused_import_flags_ts.drops_valueless_clause()
+                        {
+                            return Ok(p.s(S::TypeScript {}, loc));
+                        }
                     }
 
                     if parsed_path.is_macro {
@@ -1493,8 +1495,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
                 let import_clause = p.parse_import_clause()?;
-                // "import {} from 'mod'"
-                // "import { type Foo } from 'mod'"
+                // "import {} from 'mod'" and "import { type Foo } from 'mod'" bind no value
                 if Self::IS_TYPESCRIPT_ENABLED
                     && import_clause.items.is_empty()
                     && p.options.unused_import_flags_ts.drops_valueless_clause()
@@ -1681,10 +1682,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         T::TOpenBrace => {
                             let import_clause = p.parse_import_clause()?;
 
-                            // "import d, {} from 'mod'"
-                            // "import d, { type T } from 'mod'"
-                            // The default name decides the statement. The empty clause
-                            // goes with the same test as in the `{` arm above.
+                            // "import d, {} from 'mod'": the clause goes as in the `{` arm
                             stmt.has_items_clause = Self::IS_TYPESCRIPT_ENABLED
                                 && !(import_clause.items.is_empty()
                                     && p.options.unused_import_flags_ts.drops_valueless_clause());
@@ -1711,9 +1709,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let path = p.parse_path()?;
         p.lexer.expect_or_insert_semicolon()?;
 
-        // Nothing may act on these two records before `ImportScanner::scan` decides. A
-        // `declare` block is dropped whole, so its statement never reaches the scanner. A
-        // clause with no value binding stays only because tsconfig keeps the statement.
+        // Not an import until `ImportScanner::scan` keeps it. It never sees a `declare` block.
         let valueless_clause =
             stmt.has_items_clause && stmt.items.is_empty() && stmt.default_name.is_none();
         let starts_unused = opts.is_typescript_declare || (valueless_clause && !SCAN_ONLY);

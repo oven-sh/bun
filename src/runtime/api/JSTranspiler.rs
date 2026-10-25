@@ -56,9 +56,7 @@ pub(crate) struct JSTranspiler {
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
-/// What the `tsconfig` option says about the unused imports of a TypeScript file.
-/// `trimUnusedImports: true` still removes the unused names. The statement stays, as a
-/// bare import, when tsconfig keeps it.
+/// Of the `tsconfig` option. `trimUnusedImports` still removes the names, not the statement.
 fn unused_import_flags_ts(tsconfig: Option<&TSConfigJSON>) -> options::TSUnusedImportFlags {
     tsconfig.map_or(
         options::TSUnusedImportFlags::empty(),

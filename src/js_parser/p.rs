@@ -4115,8 +4115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Only assert above; do not actually pop.
     }
 
-    /// `starts_unused`: the record is created with `IS_UNUSED` set, and stays so unless
-    /// `ImportScanner::scan` keeps the statement.
+    /// `starts_unused`: the record is `IS_UNUSED` until `ImportScanner::scan` keeps the statement.
     pub(crate) fn process_import_statement(
         &mut self,
         stmt_: S::Import,

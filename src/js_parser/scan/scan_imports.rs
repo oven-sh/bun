@@ -81,66 +81,22 @@ impl<'a> ImportScanner<'a> {
                         continue;
                     }
 
-                    // A file that becomes CommonJS at runtime cannot hold an import statement
-                    // (`reject_import_statements`), so the tsconfig.json settings keep nothing
-                    // there: its unused imports go as they do with no setting.
+                    // A file that becomes CommonJS at runtime cannot hold an import statement.
                     let unused_import_flags = if will_transform_to_common_js {
                         TSUnusedImportFlags::empty()
                     } else {
                         p.options.unused_import_flags_ts
                     };
-
-                    // We implement TypeScript's "preserveValueImports" tsconfig.json setting
-                    // to support the use case of compiling partial modules for compile-to-
-                    // JavaScript languages such as Svelte. These languages try to reference
-                    // imports in ways that are impossible for TypeScript and esbuild to know
-                    // about when they are only given a partial module to compile. Here is an
-                    // example of some Svelte code that contains a TypeScript snippet:
-                    //
-                    //   <script lang="ts">
-                    //     import Counter from './Counter.svelte';
-                    //     export let name: string = 'world';
-                    //   </script>
-                    //   <main>
-                    //     <h1>Hello {name}!</h1>
-                    //     <Counter />
-                    //   </main>
-                    //
-                    // Tools that use esbuild to compile TypeScript code inside a Svelte
-                    // file like this only give esbuild the contents of the <script> tag.
-                    // The "preserveValueImports" setting avoids removing unused import
-                    // names, which means additional code appended after the TypeScript-
-                    // to-JavaScript conversion can still access those unused imports.
-                    //
-                    // There are three scenarios where we don't do this:
-                    //
-                    //   * If we're bundling, then we know we aren't being used to compile
-                    //     a partial module. The parser is seeing the entire code for the
-                    //     module so it's safe to remove unused imports. And also we don't
-                    //     want the linker to generate errors about missing imports if the
-                    //     imported file is also in the bundle.
-                    //
-                    //   * If identifier minification is enabled, then using esbuild as a
-                    //     partial-module transform library wouldn't work anyway because
-                    //     the names wouldn't match. And that means we're minifying so the
-                    //     user is expecting the output to be as small as possible. So we
-                    //     should omit unused imports.
-                    //
-                    //   * If the output is not a transform (`Options::transform_only`), then
-                    //     the runtime links it as the bundler would. A type that was imported
-                    //     without `type` has no export to link to.
-                    //
-                    // In all three the statement still stays, as a bare import.
                     let keep_values_ts =
                         unused_import_flags.contains(TSUnusedImportFlags::KEEP_VALUES);
                     let mut did_remove_star_loc = false;
                     let keep_unused_imports = !p.options.features.trim_unused_imports
                         || (!will_transform_to_common_js
                             && p.options.keeps_unused_import_names_ts());
-                    // Without trimming (JavaScript, or TypeScript that keeps unused names),
-                    // exports deleted on request (`replace_exports`) still take the imports
-                    // that only they used: a binding goes when its only uses were in them. An
-                    // import that nothing used stays, for its side effects.
+                    // Without trimming (JavaScript), exports deleted on request
+                    // (`replace_exports`) still take the imports that only they used: a binding
+                    // goes when its only uses were in them. An import that nothing used stays, for
+                    // its side effects.
                     let only_deleted_exports_uses =
                         keep_unused_imports && p.options.features.replace_exports.count() > 0;
                     macro_rules! removable {
@@ -291,8 +247,7 @@ impl<'a> ImportScanner<'a> {
                             // SAFETY: arena-owned slice; see above.
                             && st.items.slice().is_empty()
                             && st.default_name.is_none();
-                        // A TypeScript clause counts as an import even when it is empty:
-                        // `import {} from 'x'` is type-only, `import 'x'` is not.
+                        // An empty TypeScript clause is an import too: `import {} from 'x'`.
                         if unused_after_deleted_exports
                             || (!keep_unused_imports
                                 && is_typescript_enabled
@@ -322,8 +277,7 @@ impl<'a> ImportScanner<'a> {
 
                     let _ = did_remove_star_loc;
 
-                    // The statement stays, so a record that `t_import` created unused is
-                    // a real request for its module from here on.
+                    // The statement stays: a record that `t_import` created unused is live now.
                     record!().flags.remove(import_record::Flags::IS_UNUSED);
 
                     let namespace_ref = st.namespace_ref;

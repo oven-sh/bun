@@ -238,8 +238,7 @@ impl<'a> BundleV2<'a> {
         self.graph.path_to_source_index_map(target)
     }
 
-    /// `ParseTask::unused_import_flags_ts` for a task that no resolver result describes: the
-    /// setting of the tsconfig.json of the top-level directory, and none inside node_modules.
+    /// For a task with no resolver result: the top-level tsconfig.json, none in node_modules.
     pub(crate) fn root_unused_import_flags_ts(
         &mut self,
         target: options::Target,

@@ -77,8 +77,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 42: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 44: A TypeScript import or `export from` whose clause binds no value
-/// (`import {} from "x"`, `import { type as } from "x"`, `export {} from "x"`) is dropped.
+/// Version 44: A TypeScript `import {} from "x"` or `export {} from "x"` is dropped.
 const EXPECTED_VERSION: u32 = 44;
 
 /// Source files smaller than this are not written to / read from the on-disk

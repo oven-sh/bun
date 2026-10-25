@@ -3957,8 +3957,7 @@ struct LoaderResult<'a> {
     specifier: &'a [u8],
     /// Always `None` for non-JS-like loaders (not needed there).
     package_json: Option<&'a bun_resolver::package_json::PackageJSON>,
-    /// `Resolver::unused_import_flags_ts` for the directory of `path`. For a source that no
-    /// directory holds, that of the top-level directory.
+    /// `Resolver::unused_import_flags_ts` of the directory of `path`, or of the top-level one.
     unused_import_flags_ts: TSUnusedImportFlags,
 }
 
@@ -4606,8 +4605,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     });
 
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
-    // A plugin's source has no directory to read: the top-level setting, and none under
-    // node_modules.
+    // A plugin's source has no directory: the top-level setting, and none under node_modules.
     let unused_import_flags_ts = if path.is_node_module() {
         TSUnusedImportFlags::empty()
     } else {

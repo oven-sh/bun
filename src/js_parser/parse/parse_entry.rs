@@ -152,8 +152,7 @@ pub struct Options<'a> {
     /// Keeps every directive in the AST, in its original position and with its original text.
     /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
     pub keep_directives: bool,
-    /// From the tsconfig.json that governs the file. Empty for a file inside node_modules
-    /// and for a declaration file.
+    /// From the tsconfig.json that governs the file. Empty in node_modules and in a `.d.ts`.
     pub unused_import_flags_ts: options::TSUnusedImportFlags,
     pub use_define_for_class_fields: bool,
     pub suppress_warnings_about_weird_code: bool,
@@ -175,8 +174,7 @@ pub struct Options<'a> {
     pub jsc_builtin_syntax: bool,
     pub output_format: options::Format,
 
-    /// The output is text for another tool (`bun build --no-bundle`) and Bun does not
-    /// link it. Off by default: a new parse site gets output that links.
+    /// The output is text that Bun does not link (`bun build --no-bundle`). Off by default.
     pub transform_only: bool,
 
     /// Used for inlining the state of import.meta.main during visiting
@@ -364,8 +362,7 @@ impl<'a> Options<'a> {
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
-    /// `KEEP_VALUES` prints an unused import name only in transform output. The runtime
-    /// and a bundle link what is printed, so there the name goes and the statement stays.
+    /// Only transform output prints a name that `KEEP_VALUES` keeps. Everything else is linked.
     pub(crate) fn keeps_unused_import_names_ts(&self) -> bool {
         self.ts
             && self.transform_only
@@ -613,8 +610,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // With a tsconfig.json setting that keeps unused imports, a statement that
-        // survives the parse survives the transform too, and the guess below is wrong.
+        // With a tsconfig flag set, a statement that survives the parse survives the transform.
         if TS && p.options.unused_import_flags_ts.is_empty() {
             for import_record in p.import_records.items_mut() {
                 // Mark everything as unused
@@ -2112,8 +2108,7 @@ impl<'a> Parser<'a> {
             }
 
             for item in p.import_records.items() {
-                // skip if they did import it. An unused record is not an import: its
-                // statement binds no value, or a `declare` block holds it.
+                // skip if they did import it
                 if !item.flags.contains(ImportRecordFlags::IS_UNUSED)
                     && (item.path.text == b"bun:test"
                         || item.path.text == b"@jest/globals"

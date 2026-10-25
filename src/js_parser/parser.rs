@@ -109,40 +109,23 @@ pub mod options {
         }
     }
     bitflags::bitflags! {
-        /// What a TypeScript file does with an import that no value uses. tsconfig
-        /// `verbatimModuleSyntax` sets both bits. `importsNotUsedAsValues: "preserve" | "error"`
-        /// sets `KEEP_STMT` and `preserveValueImports` sets `KEEP_VALUES`.
-        ///
-        /// | input                               | neither        | `KEEP_STMT`    | `KEEP_VALUES`                   | both                            |
-        /// |-------------------------------------|----------------|----------------|---------------------------------|---------------------------------|
-        /// | `import 'foo'`                      | `import 'foo'` | `import 'foo'` | `import 'foo'`                  | `import 'foo'`                  |
-        /// | `import * as unused from 'foo'`     | (removed)      | `import 'foo'` | `import * as unused from 'foo'` | `import * as unused from 'foo'` |
-        /// | `import { unused } from 'foo'`      | (removed)      | `import 'foo'` | `import { unused } from 'foo'`  | `import { unused } from 'foo'`  |
-        /// | `import { type unused } from 'foo'` | (removed)      | `import 'foo'` | (removed)                       | `import {} from 'foo'`          |
-        /// | `import {} from 'foo'`              | (removed)      | `import 'foo'` | (removed)                       | `import {} from 'foo'`          |
-        ///
-        /// The `KEEP_VALUES` columns are what a transform prints (`Options::transform_only`).
-        /// The runtime and a bundle link what is printed, and a type that was imported
-        /// without `type` has no export to link to. There `KEEP_VALUES` keeps the statement
-        /// and the unused names go, so those two columns read `import 'foo'`.
+        /// What a TypeScript file does with an import that no value uses, from tsconfig.json.
         #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
         pub struct TSUnusedImportFlags: u8 {
-            /// Keep the statement, for the side effects of the module, when no binding is left.
+            /// `importsNotUsedAsValues: "preserve" | "error"`: the statement stays, as `import 'x'`.
             const KEEP_STMT = 1 << 0;
-            /// Keep a value binding that nothing uses.
+            /// `preserveValueImports`: an unused value name stays. `verbatimModuleSyntax` is both.
             const KEEP_VALUES = 1 << 1;
         }
     }
     impl TSUnusedImportFlags {
-        /// A TypeScript import or `export from` whose clause binds no value
-        /// (`import {} from 'x'`, `import { type T } from 'x'`, `export {} from 'x'`) is
-        /// type-only. It goes unless the statement itself is kept.
+        /// A TypeScript clause that binds no value (`import {} from 'x'`) is type-only.
         #[inline]
         pub const fn drops_valueless_clause(self) -> bool {
             !self.contains(Self::KEEP_STMT)
         }
 
-        /// The settings do not reach a declaration file: TypeScript emits nothing for one.
+        /// TypeScript emits nothing for a declaration file, so the settings do not reach one.
         pub fn is_declaration_file(path: &[u8]) -> bool {
             path.ends_with(b".d.ts") || path.ends_with(b".d.mts") || path.ends_with(b".d.cts")
         }

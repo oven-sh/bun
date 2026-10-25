@@ -416,7 +416,12 @@ impl<'p, 's> Checker<'p, 's> {
                 self.p.symbol_types.rewrite(&self.task, sym, ty, stored);
             }
             Ok(stored) => {
-                self.p.symbol_types.insert(&self.task, sym, ty, stored);
+                let assigned = self.p.symbol_types.insert(&self.task, sym, ty, stored);
+                // A resolution inside this one assigned another type, which every later request gets. Each pass of
+                // `resolveCall` checks the arguments again, so an argument that's being checked with `ty` isn't cached.
+                if assigned != ty && matches!(value_declaration, Some((_, Decl::Var(_)))) {
+                    self.note_argument_is_checked_again();
+                }
             }
             Err(_)
                 if is_variable_or_property(flags, value_declaration)

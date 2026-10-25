@@ -9163,6 +9163,29 @@ const x01 = inc({ select: ["id"] }) satisfies typeof x01;
       expect(exitCode).toBe(1);
     });
 
+    // The first request for `c0` returns the object type it computed, but a resolution inside it has made `c0` `any`.
+    // `arr(c0, 1)` fails with the object type. The signature of the failed call is inferred from the arguments once more,
+    // now with `any`, so the outer call is reported with `any[]`, once.
+    test("an argument is checked again with the type that a resolution inside the variable's resolution assigned", async () => {
+      using dir = project({
+        "a.ts": `declare function arr<T>(...x: T[]): T[];
+declare function num<T extends number>(x: T): { n: T };
+function c1() { return arr(arr(c0, 1), 1); }
+const c0 = num(c1());
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(3,10): error TS7023: 'c1' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "a.ts(3,36): error TS2345: Argument of type 'number' is not assignable to parameter of type '{ n: any; }'.",
+          "a.ts(3,40): error TS2345: Argument of type 'number' is not assignable to parameter of type 'any[]'.",
+          "a.ts(4,7): error TS7022: 'c0' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // tsc asks for the type of a parameter when there's an argument to compare with it. `use()` has none, so the default
     // of `f` isn't checked there, and `createStore(..)` isn't resolved a second time inside its own resolution.
     test("a call without an argument for a parameter doesn't check the default of that parameter", async () => {

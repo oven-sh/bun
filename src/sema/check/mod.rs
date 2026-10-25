@@ -3800,6 +3800,29 @@ impl<'p, 's> Checker<'p, 's> {
         self.mark_tainted_by_pattern_from(from);
     }
 
+    /// If the innermost expressions are part of an argument of the call that's being resolved, and not of another call
+    /// in it, no type is stored for them, as in `note_members_in_place_read_above`.
+    fn note_argument_is_checked_again(&mut self) {
+        let is_part = |&q: &Query| match q {
+            Query::Expr(file, e) => !matches!(
+                self.hir(file)[e].kind,
+                ExprKind::Call(_)
+                    | ExprKind::New(_)
+                    | ExprKind::TaggedTemplate(_)
+                    | ExprKind::Jsx(_)
+            ),
+            Query::LiteralProp(..) => true,
+            _ => false,
+        };
+        if let Some(call) = self.stack.iter().rposition(|q| !is_part(q))
+            && let Query::Call(file, e) = self.stack[call]
+            && let ExprKind::Call(c) | ExprKind::New(c) = self.hir(file)[e].kind
+            && self.stack.get(call + 1) != Some(&Query::Expr(file, self.hir(file)[c].callee))
+        {
+            self.note_members_in_place_read_above(call + 1);
+        }
+    }
+
     /// `mark_tainted_from` for the case where an identifier declared in a pattern in
     /// `contextual_binding_patterns` evaluated to `any`. Not counted in `taints`.
     fn mark_tainted_by_pattern_from(&mut self, from: usize) {

@@ -2,7 +2,7 @@ import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
-import { join, resolve, sep } from "path";
+import { dirname, join, relative, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 
@@ -2255,3 +2255,338 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+/** Makes `link` a link to the directory `target`. Both are paths from `root`. */
+function linkDirectory(root: string, target: string, link: string) {
+  const from = join(root, link);
+  mkdirSync(dirname(from), { recursive: true });
+  // A junction takes an absolute target.
+  symlinkSync(isWindows ? join(root, target) : relative(dirname(from), join(root, target)), from, "junction");
+}
+
+/** Runs fixture.mjs in `cwd`. `stdout` is what it printed, parsed when it is JSON. */
+async function runFixture(cwd: string, args: string[] = [], env = bunEnv) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs", ...args],
+    env,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const printed = (): unknown => {
+    try {
+      return JSON.parse(stdout);
+    } catch {
+      return stdout;
+    }
+  };
+  return { stdout: printed(), stderr: stripAsanWarning(stderr), exitCode };
+}
+
+// A directory can be reached by more than one path: through a link to it, and by where it is. The isolated
+// linker and a workspace both put a link in node_modules. A specifier that is not found makes the resolver
+// read the directory again, and names the directory by the path the specifier went through.
+describe.concurrent("a directory read through a link and by its own path, after a miss in one of them", () => {
+  // `files` is the directory that changes. Each of `read` is a specifier of it that is resolved before the
+  // change, and `missed` is the one that does not find a file in it after the change.
+  const cases: {
+    name: string;
+    files: string;
+    links: [target: string, link: string][];
+    read: string[];
+    missed: string;
+  }[] = [
+    {
+      name: "a workspace package that is named, then missed by its path",
+      files: "packages/lib",
+      links: [["packages/lib", "node_modules/lib"]],
+      read: ["lib"],
+      missed: "./packages/lib",
+    },
+    {
+      name: "a workspace package that is read by its path, then missed through the link",
+      files: "packages/lib",
+      links: [["packages/lib", "node_modules/lib"]],
+      read: ["./packages/lib", "lib"],
+      missed: "./node_modules/lib",
+    },
+    {
+      name: "a subdirectory of a workspace package",
+      files: "packages/lib/sub",
+      links: [["packages/lib", "node_modules/lib"]],
+      read: ["lib/sub"],
+      missed: "./packages/lib/sub",
+    },
+    {
+      name: "a package in node_modules that is named, then missed through a link",
+      files: "node_modules/lib",
+      links: [["node_modules/lib", "links/lib"]],
+      read: ["lib", "./links/lib"],
+      missed: "./links/lib",
+    },
+    {
+      name: "a link outside node_modules, then missed by its path",
+      files: "vendor/lib",
+      links: [["vendor/lib", "links/lib"]],
+      read: ["./links/lib"],
+      missed: "./vendor/lib",
+    },
+    {
+      name: "a directory that two links go to",
+      files: "packages/lib",
+      links: [
+        ["packages/lib", "node_modules/lib"],
+        ["packages/lib", "links/lib"],
+      ],
+      read: ["lib", "./links/lib"],
+      missed: "./packages/lib",
+    },
+    {
+      name: "a package in node_modules with no link",
+      files: "node_modules/lib",
+      links: [],
+      read: ["lib"],
+      missed: "./node_modules/lib",
+    },
+  ];
+
+  const prelude = String.raw`
+    import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+    import { join, relative } from "node:path";
+
+    const [files, missed, ...read] = process.argv.slice(2);
+    const every = [...new Set([...read, missed])];
+    const root = process.cwd();
+    const resolved = specifier => {
+      try {
+        return relative(join(root, files), Bun.resolveSync(specifier, root)).replaceAll("\\", "/");
+      } catch (error) {
+        return "throws " + error.code;
+      }
+    };
+    /** What each of "spellings" gives for each of "names" in the directory. */
+    const asked = (spellings, names) =>
+      Object.fromEntries(spellings.map(spelling => [spelling, names.map(name => resolved(spelling + name))]));
+  `;
+
+  describe.each(cases)("$name", ({ files, links, read, missed }) => {
+    const every = [...read, missed];
+    const each = (spellings: string[], answers: string[]) =>
+      Object.fromEntries(spellings.map(spelling => [spelling, answers]));
+    const project = (script: string) => {
+      const dir = tempDir("resolve-link-miss", {
+        "package.json": JSON.stringify({ name: "root" }),
+        // With no node_modules above it, a name that is not found is looked for in the registry.
+        "node_modules/.keep": "",
+        [`${links[0]?.[0] ?? files}/package.json`]: JSON.stringify({ name: "lib", version: "1.0.0" }),
+        [`${files}/package.json`]: JSON.stringify({ name: "lib", main: "./a.ts" }),
+        [`${files}/a.ts`]: "export default 1;",
+        [`${files}/c.ts`]: "export default 1;",
+        [`${files}/gen/x.ts`]: "export default 1;",
+        "fixture.mjs": prelude + script,
+      });
+      for (const [target, link] of links) linkDirectory(String(dir), target, link);
+      return dir;
+    };
+
+    test("has the files that changed, by each path", async () => {
+      using dir = project(String.raw`
+        const before = asked(read, ["", "/c"]);
+        rmSync(join(root, files, "c.ts"));
+        writeFileSync(join(root, files, "c.tsx"), "export default 2;");
+        writeFileSync(join(root, files, "d.ts"), "export default 3;");
+        writeFileSync(join(root, files, "package.json"), JSON.stringify({ name: "lib", main: "./d.ts" }));
+        const miss = resolved(missed + "/nope");
+        console.log(JSON.stringify({ before, miss, after: asked(every, ["", "/c", "/d"]) }));
+      `);
+      expect(await runFixture(String(dir), [files, missed, ...read])).toEqual({
+        stdout: {
+          before: each(read, ["a.ts", "c.ts"]),
+          miss: "throws ERR_MODULE_NOT_FOUND",
+          after: each(every, ["d.ts", "c.tsx", "d.ts"]),
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("is gone and then back, by each path, when a directory in it is removed and made again", async () => {
+      using dir = project(String.raw`
+        const before = asked(read, ["/gen/x"]);
+        rmSync(join(root, files, "gen"), { recursive: true });
+        const removed = { miss: resolved(missed + "/gen/nope"), ...asked(every, ["/gen/x"]) };
+        mkdirSync(join(root, files, "gen"));
+        writeFileSync(join(root, files, "gen", "x.ts"), "export default 2;");
+        writeFileSync(join(root, files, "gen", "y.ts"), "export default 2;");
+        const made = { miss: resolved(missed + "/gen/nope"), ...asked(every, ["/gen/x", "/gen/y"]) };
+        console.log(JSON.stringify({ before, removed, made }));
+      `);
+      expect(await runFixture(String(dir), [files, missed, ...read])).toEqual({
+        stdout: {
+          before: each(read, ["gen/x.ts"]),
+          removed: { miss: "throws ERR_MODULE_NOT_FOUND", ...each(every, ["throws ERR_MODULE_NOT_FOUND"]) },
+          made: { miss: "throws ERR_MODULE_NOT_FOUND", ...each(every, ["gen/x.ts", "gen/y.ts"]) },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+});
+
+// When the resolver reads a directory a second time, it keeps what it knows about each name that is still there.
+describe.concurrent("a directory that is read again", () => {
+  /**
+   * Builds app/index.ts, runs `change`, and builds again. Prints the path above each module and the value.
+   * The bundle thread reads a directory again for a build that it takes after it found no build waiting. It
+   * can take a build right after the one before, and that build does not find added.ts, so it is run again.
+   */
+  const buildTwice = (change: string) => String.raw`
+    import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+
+    const built = async () => {
+      const result = await Bun.build({ entrypoints: ["./app/index.ts"], throw: false });
+      if (!result.success) return { errors: result.logs.map(log => log.message) };
+      const text = await result.outputs[0].text();
+      return { modules: text.match(/^\/\/ .+$/gm), value: text.match(/"(V\d)"/)?.[1] };
+    };
+    const first = await built();
+    ${change}
+    writeFileSync("app/added.ts", 'console.log("added");');
+    writeFileSync("app/index.ts", 'import "./added";\n' + readFileSync("app/index.ts", "utf8"));
+    let second;
+    do second = await built();
+    while (second.errors?.some(message => message.includes('"./added"')));
+    console.log(JSON.stringify({ first, second }));
+  `;
+  /** Resolves `first` from app, runs `change`, misses each of `misses`, and resolves `second`. */
+  const resolveTwice = (first: string, change: string, misses: string[], second: string) => String.raw`
+    import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+    import { join, relative } from "node:path";
+
+    const root = process.cwd();
+    const resolved = specifier => {
+      try {
+        return relative(root, Bun.resolveSync(specifier, join(root, "app"))).replaceAll("\\", "/");
+      } catch (error) {
+        return "throws " + error.code;
+      }
+    };
+    const first = resolved(${JSON.stringify(first)});
+    ${change}
+    const misses = ${JSON.stringify(misses)}.map(resolved);
+    console.log(JSON.stringify({ first, misses, second: resolved(${JSON.stringify(second)}) }));
+  `;
+
+  describe("with a file renamed to the same name in another case", () => {
+    const files = {
+      "app/Button.ts": `export const v = "V1";`,
+      "app/index.ts": `import { v } from "./Button";\nconsole.log(v);`,
+    };
+
+    // Where the filesystem ignores case the old name still opens the file, so only the path was wrong there.
+    test("Bun.build bundles it by its new name", async () => {
+      using dir = tempDir("resolve-reread-case-build", {
+        ...files,
+        "fixture.mjs": buildTwice(String.raw`
+          renameSync("app/Button.ts", "app/button.ts");
+          writeFileSync("app/button.ts", 'export const v = "V2";');
+          writeFileSync("app/index.ts", 'import { v } from "./button";\nconsole.log(v);');
+        `),
+      });
+      expect(await runFixture(String(dir))).toEqual({
+        stdout: {
+          first: { modules: ["// app/Button.ts", "// app/index.ts"], value: "V1" },
+          second: { modules: ["// app/added.ts", "// app/button.ts", "// app/index.ts"], value: "V2" },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("Bun.resolveSync gives its new name after a miss in the directory", async () => {
+      using dir = tempDir("resolve-reread-case-resolve", {
+        ...files,
+        "fixture.mjs": resolveTwice(
+          "./Button",
+          `renameSync("app/Button.ts", "app/button.ts");`,
+          ["./nope"],
+          "./button",
+        ),
+      });
+      expect(await runFixture(String(dir))).toEqual({
+        stdout: { first: "app/Button.ts", misses: ["throws ERR_MODULE_NOT_FOUND"], second: "app/button.ts" },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  describe.skipIf(isWindows)("with a link to a file that a file replaced", () => {
+    const files = {
+      "target/c.ts": `export const v = "V1";`,
+      "app/index.ts": `import { v } from "./c";\nconsole.log(v);`,
+    };
+    const replace = `
+      unlinkSync("app/c.ts");
+      writeFileSync("app/c.ts", 'export const v = "V2";');
+    `;
+
+    test("Bun.build bundles the file", async () => {
+      using dir = tempDir("resolve-reread-file-link-build", { ...files, "fixture.mjs": buildTwice(replace) });
+      symlinkSync(join("..", "target", "c.ts"), join(String(dir), "app", "c.ts"));
+      expect(await runFixture(String(dir))).toEqual({
+        stdout: {
+          first: { modules: ["// target/c.ts", "// app/index.ts"], value: "V1" },
+          second: { modules: ["// app/added.ts", "// app/c.ts", "// app/index.ts"], value: "V2" },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("Bun.resolveSync gives the file after a miss in the directory", async () => {
+      using dir = tempDir("resolve-reread-file-link-resolve", {
+        ...files,
+        "fixture.mjs": resolveTwice("./c", replace, ["./nope"], "./c"),
+      });
+      symlinkSync(join("..", "target", "c.ts"), join(String(dir), "app", "c.ts"));
+      expect(await runFixture(String(dir))).toEqual({
+        stdout: { first: "target/c.ts", misses: ["throws ERR_MODULE_NOT_FOUND"], second: "app/c.ts" },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  test.skipIf(isWindows)(
+    "with a link to a directory that a directory replaced, Bun.resolveSync gives the file in the directory",
+    async () => {
+      using dir = tempDir("resolve-reread-directory-link", {
+        "target/lib/x.ts": `export const v = "V1";`,
+        "fixture.mjs": resolveTwice(
+          "./lib/x",
+          `
+            unlinkSync("app/lib");
+            mkdirSync("app/lib");
+            writeFileSync("app/lib/x.ts", 'export const v = "V2";');
+          `,
+          // One for the directory that had the link, and one for the path that was the link.
+          ["./nope", "./lib/nope"],
+          "./lib/x",
+        ),
+      });
+      linkDirectory(String(dir), "target/lib", "app/lib");
+      expect(await runFixture(String(dir))).toEqual({
+        stdout: {
+          first: "target/lib/x.ts",
+          misses: ["throws ERR_MODULE_NOT_FOUND", "throws ERR_MODULE_NOT_FOUND"],
+          second: "app/lib/x.ts",
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});

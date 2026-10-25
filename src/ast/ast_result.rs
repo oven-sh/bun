@@ -256,19 +256,13 @@ pub struct DynamicImportItem {
 }
 pub type DynamicImportAliases = ArrayHashMap<u32, DynamicImportUse, AutoContext, AstAlloc>;
 pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
-/// The value of a binding that the parser prints in place of each read of
-/// that binding. The binding is a `const`, so it cannot change. The value is
-/// a primitive, so a copy of it is the same value.
-///
-/// An object or an array that a macro returned is admitted too. Each read of
-/// such a binding makes a new object (#7196).
+/// Printed in place of each read of a `const`. A macro object or array is copied per read (#7196).
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct ConstValue(Expr);
 
 impl ConstValue {
-    /// `has_default` is true for a destructuring leaf that has a default:
-    /// `const [x = 5] = [undefined]` binds 5, not the `undefined` leaf.
+    /// `has_default`: a destructuring leaf with a default binds the default over `undefined`.
     #[inline]
     pub fn new(kind: LocalKind, has_default: bool, value: Expr) -> Option<Self> {
         let admit = kind == LocalKind::KConst

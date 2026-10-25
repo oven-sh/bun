@@ -649,12 +649,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         j
     }
 
-    /// Records the `const` leaves of a destructured macro result. Returns the
-    /// result without the properties and items that `binding` cannot read.
-    ///
-    /// A narrowed object or array is a new node. The node of `expr` can have
-    /// another reader: a macro can return one object at two places, and a
-    /// pattern can bind one key two times.
+    /// Records the `const` leaves of a destructured macro result and narrows it to the bound parts.
     pub(crate) fn visit_binding_and_expr_for_macro(
         &mut self,
         binding: Binding,
@@ -750,8 +745,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The only writer of `const_values`. `ConstValue::new` tests the kind and the
-    /// value. `visit_decl` tests the position.
+    /// The only writer of `const_values`.
     #[inline]
     fn admit_const_value(&mut self, ref_: Ref, kind: LocalKind, has_default: bool, value: Expr) {
         if let Some(value) = js_ast::ConstValue::new(kind, has_default, value) {
@@ -770,9 +764,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match decl.binding.data {
             BData::BIdentifier(id) => {
                 let id_ref = id.r#ref;
-                // A declaration whose initializer held a macro call is exempt from the
-                // const-local prefix: `log(); const n = macro(); other(n)` gives the macro
-                // `other` the literal, and `let i = macro(); const n = 1;` still inlines `n`.
+                // A macro result is exempt from the const-local prefix and does not end it.
                 let is_macro = Self::ALLOW_MACROS && could_be_macro;
                 if kind == LocalKind::KConst
                     && (is_macro || !self.vis_scope().is_after_const_local_prefix)
@@ -1894,10 +1886,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         | StmtData::SDebugger(_)
                         | StmtData::STypeScript(_) => continue,
                         StmtData::SLocal(mut local) => {
-                            // "using" / "await using" declarations have disposal
-                            // side-effects on scope exit and are never in
-                            // `const_values`. Skip them, so that the scan reaches
-                            // the declarations below them.
+                            // `using` has disposal side effects on scope exit and is never in `const_values`.
                             if local.kind.is_using() {
                                 continue;
                             }

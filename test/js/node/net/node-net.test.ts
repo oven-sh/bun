@@ -1234,7 +1234,10 @@ it.if(isWindows)("should not leak when connect({path}) fails asynchronously whil
 
 // A connect can fail inside the native call: connect(2) to a unix socket path
 // that does not exist, or the bind() of a `localAddress` that is not local.
-it.concurrent("should not leak when a connect fails inside the native call", async () => {
+// TEMPORARY, reverted before review: 50 concurrent copies on release lanes, for
+// numbers from the lanes that cannot be run locally (macOS, Windows).
+const copies = Array.from({ length: isDebug || isASAN ? 1 : 50 }, (_, copy) => copy);
+it.concurrent.each(copies)("should not leak when a connect fails inside the native call (copy %i)", async () => {
   // The native connect takes a reference on the socket for the attempt and
   // roots its JS wrapper. A failure inside the call finds the socket still
   // detached, so the error path has no reference of its own to drop: the

@@ -23,6 +23,8 @@ interface SharedStructObject {
 
 /** A fixed-length array that can be shared between workers without copying. */
 interface SharedArray {
+  // Brands the type, so that a typed array does not match the SharedArray overloads of `Atomics`.
+  readonly [Symbol.toStringTag]: "SharedArray";
   readonly length: number;
   [index: number]: SharedValue;
 }

@@ -3155,7 +3155,7 @@ impl<'p, 's> Checker<'p, 's> {
         compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> MapperId {
         if !self.has_type_variables(ty) {
-            return self.mapper_of_context_not_mentioned_in(ty);
+            return self.mapper_of_no_type_parameters(ty);
         }
         let mut pairs = Vec::new();
         let mentioned = self.params_mentioned_in(ty, &n.params);
@@ -3166,27 +3166,15 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if pairs.is_empty() {
-            return self.mapper_of_context_not_mentioned_in(ty);
+            return self.mapper_of_no_type_parameters(ty);
         }
         self.types().mapper(pairs)
-    }
-
-    /// Returns an inference context's mapper for a `ty` that mentions none of its type parameters.
-    /// It isn't nil, so `instantiateType` replaces what has `ObjectFlags::HAS_OTHER_INSTANTIATION`.
-    /// Only type parameters are looked up in a mapper, so the pair maps nothing.
-    fn mapper_of_context_not_mentioned_in(&self, ty: TypeId) -> MapperId {
-        let flags = self.types().object_flags(ty);
-        if flags.contains(ObjectFlags::HAS_OTHER_INSTANTIATION) {
-            self.types().mapper_of(&[(TypeId::NEVER, TypeId::UNKNOWN)])
-        } else {
-            MapperId::IDENTITY
-        }
     }
 
     /// `context.mapper`, for what `ty` mentions (`InferenceTypeMapper.Map`).
     pub(super) fn fixing_mapper(&mut self, n: &mut Inference, ty: TypeId) -> MapperId {
         if !self.may_mention_type_parameter(ty) {
-            return self.mapper_of_context_not_mentioned_in(ty);
+            return self.mapper_of_no_type_parameters(ty);
         }
         let mentioned = self.params_mentioned_in(ty, &n.params);
         let mut pairs = Vec::new();
@@ -3202,7 +3190,7 @@ impl<'p, 's> Checker<'p, 's> {
             pairs.push((n.params[i], self.get_inferred_type(n, i, true)));
         }
         if pairs.is_empty() {
-            return self.mapper_of_context_not_mentioned_in(ty);
+            return self.mapper_of_no_type_parameters(ty);
         }
         self.types().mapper(pairs)
     }

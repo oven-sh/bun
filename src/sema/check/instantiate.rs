@@ -541,8 +541,24 @@ impl<'p, 's> Checker<'p, 's> {
             false
         });
         pairs.retain(|pair| pair.0 != pair.1 && !own.contains(&pair.0));
-        let mapper = self.types().mapper(pairs);
+        let mapper = match pairs.is_empty() {
+            true => self.mapper_of_no_type_parameters(t),
+            false => self.types().mapper(pairs),
+        };
         (self.instantiate(t, mapper), mapper)
+    }
+
+    /// A tsgo function mapper, for a `ty` whose type parameters it maps to themselves. It isn't
+    /// nil, so `instantiateType` walks `ty` and replaces what has
+    /// `ObjectFlags::HAS_OTHER_INSTANTIATION`. Only type parameters are looked up in a mapper, so
+    /// the pair maps nothing.
+    pub(super) fn mapper_of_no_type_parameters(&self, ty: TypeId) -> MapperId {
+        let flags = self.types().object_flags(ty);
+        if flags.contains(ObjectFlags::HAS_OTHER_INSTANTIATION) {
+            self.types().mapper_of(&[(TypeId::NEVER, TypeId::UNKNOWN)])
+        } else {
+            MapperId::IDENTITY
+        }
     }
 
     /// `getRestrictiveInstantiation`, with `getRestrictiveTypeParameter`. Restrictive type

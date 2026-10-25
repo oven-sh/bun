@@ -1777,7 +1777,10 @@ impl<'p, 's> Checker<'p, 's> {
                 pairs.push((param, second));
             }
             context.outer_return_context = Some(clone);
-            let mapper = c.types().mapper(pairs);
+            let mapper = match pairs.is_empty() {
+                true => c.mapper_of_no_type_parameters(ty),
+                false => c.types().mapper(pairs),
+            };
             c.instantiate(ty, mapper)
         })
         .unwrap_or(ty)

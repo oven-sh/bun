@@ -12417,6 +12417,79 @@ export type U2 = Tn<string | boolean, 1000>;
       expect(exitCode).toBe(1);
     });
 
+    test("walks a type with no type parameters under the restrictive and permissive mappers, so both sides of an `infer` check name the same instance", async () => {
+      // TanStack Table's `ColumnDef<TFeatures, TData>` with a supabase-js query result as `TData`: a
+      // mapped type whose instance was first stored under another alias's key (`Copy<Item>` under
+      // `S`). `UnionToIntersection` compares that instance with `infer R`, whose inference was
+      // instantiated and so names the instance under its own key. tsgo's restrictive and permissive
+      // mappers walk the check type and name that one too. A walk that's skipped leaves two
+      // identities of one type, the relation goes structural through `Row` and `Column` back to
+      // `ColumnDef`, and the same conditional type is entered again with the same arguments until
+      // the depth limit.
+      const web = (
+        fn: string,
+      ) => `type UnionToIntersection<T> = (T extends any ? ${fn} : never) extends ((x: infer R) => any) ? R : never;
+type Features<TF, TMap extends object> = [TF] extends [never] ? never : UnionToIntersection<TMap[keyof TMap]> & {};
+
+interface ColumnDef_A<TF, TD> { ea?: boolean; getA?: (originalRow: TD, row: Row<TF, TD>) => any }
+interface ColumnDef_B<TF, TD> { eb?: boolean; getB?: (originalRow: TD, row: Row<TF, TD>) => any }
+interface ColumnDef_FeatureMap<TF, TD> { a: ColumnDef_A<TF, TD>; b: ColumnDef_B<TF, TD> }
+type ColumnDef<TF, TD> = { id?: string } & Features<TF, ColumnDef_FeatureMap<TF, TD>>;
+
+interface Row_Core<TF, TD> { column: Column<TF, TD>; original: TD }
+interface Row_FeatureMap<TF, TD> { a: { ra: () => void } }
+type Row<TF, TD> = Row_Core<TF, TD> & Features<TF, Row_FeatureMap<TF, TD>>;
+
+interface Column_Core<TF, TD> { columnDef: ColumnDef<TF, TD> }
+interface Column_FeatureMap<TF, TD> { a: { ca: () => void } }
+type Column<TF, TD> = Column_Core<TF, TD> & Features<TF, Column_FeatureMap<TF, TD>>;
+`;
+      using dir = project({
+        // \`FieldOf\` declares an \`infer\` parameter that the false branch doesn't use, so its result
+        // could contain type variables, as supabase-js's query parser's results could. The restrictive
+        // mapper maps \`R\`, which has no constraint, to itself.
+        "a.ts": `type FieldOf<S extends string> = S extends [infer A] ? never : { name: S };
+type PSF<F extends { name: string }> = { [K in F["name"]]: number };
+type Item = PSF<FieldOf<"id">>;
+type Copy<T> = { [K in keyof T]: T[K] };
+type S = Copy<Item>;
+${web("(x: T) => any")}
+declare const probe: ColumnDef<{}, S>;
+export { probe };
+`,
+        "b.ts": `type FieldOf<S extends string> = S extends [infer A] ? never : { id: number; name: S };
+type Item = FieldOf<"id">;
+type Copy<T> = { [K in keyof T]: T[K] };
+type S = Copy<Item>;
+${web("(x: T) => any")}
+declare const a: Row<{}, S>;
+export const probe: Row<{}, Copy<Item>> = a;
+`,
+        // With the function type behind an alias, the permissive check, which comes first, runs into
+        // the cycle by itself.
+        "c.ts": `type Copy<T> = { [K in keyof T]: T[K] };
+type S = Copy<{ id: number }>;
+type Fn<T> = (x: T) => any;
+${web("Fn<T>")}
+declare const probe: ColumnDef<{}, S>;
+export { probe };
+`,
+        // The same instance in a type that is infinite: the limit still reports it, once.
+        "d.ts": `type FieldOf<S extends string> = S extends [infer A] ? never : { name: S };
+type PSF<F extends { name: string }> = { [K in F["name"]]: number };
+type Item = PSF<FieldOf<"id">>;
+type Copy<T> = { [K in keyof T]: T[K] };
+type S = Copy<Item>;
+type Loop<T> = T extends any ? Loop<[T]> : never;
+declare const loop: Loop<S>;
+export { loop };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe("d.ts(6,32): error TS2589: Type instantiation is excessively deep and possibly infinite.");
+      expect(exitCode).toBe(1);
+    });
+
     test("computes keyof of a mapped type with an `as` clause again after the intersection it reads is reduced", async () => {
       const filler = [0, 1, 2].map(
         i => `type F${i}<T> = T extends any ? { v${i}: T } : never;\ndeclare let f${i}: F${i}<N>;\n`,

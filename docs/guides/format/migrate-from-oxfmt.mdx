@@ -94,7 +94,7 @@ note: Using .oxfmtrc.json. .prettierrc is ignored. Use --config to pick it.
 
 ---
 
-Your editor's oxc extension can use Bun too: set its server command to `bun fmt --no-script --lsp`. `--no-script` keeps a `fmt` script in `package.json` from running instead. In a [canary build](/installation#canary-builds), the same server lints as well. See [Editor integration](/format#editor-integration).
+Your editor can format with Bun too. In VS Code, the Bun extension starts `bun fmt --no-script --lsp`, a language server that formats on save; in Neovim and Helix, a few lines of config start it. In a [canary build](/installation#canary-builds), the same server lints as well. See [Editor integration](/format#editor-integration).
 
 ---
 

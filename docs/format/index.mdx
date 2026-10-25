@@ -283,7 +283,7 @@ The Bun extension for VS Code starts it for you. In Neovim:
 
 ```lua init.lua icon="file-code"
 vim.api.nvim_create_autocmd("FileType", {
-  pattern = { "javascript", "javascriptreact", "typescript", "typescriptreact", "json", "jsonc", "css", "html", "markdown", "yaml" },
+  pattern = { "javascript", "javascriptreact", "typescript", "typescriptreact", "toml", "json", "jsonc", "css", "html", "markdown", "yaml" },
   callback = function(args)
     vim.lsp.start({
       name = "bun",
@@ -308,21 +308,8 @@ args = ["fmt", "--no-script", "--lsp"]
 
 [[language]]
 name = "typescript"
-language-servers = ["bun"]
+language-servers = [{ name = "typescript-language-server", except-features = ["format"] }, "bun"]
 auto-format = true
-```
-
-In Zed, `settings.json`:
-
-```json settings.json icon="file-json"
-{
-  "lsp": {
-    "bun": { "binary": { "path": "bun", "arguments": ["fmt", "--no-script", "--lsp"] } }
-  },
-  "languages": {
-    "TypeScript": { "language_servers": ["bun", "..."], "formatter": { "language_server": { "name": "bun" } } }
-  }
-}
 ```
 
 ## Git hooks

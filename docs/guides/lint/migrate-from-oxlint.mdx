@@ -138,7 +138,7 @@ If the project also has an ESLint config, Bun uses the oxlint config. Pick the o
 
 ---
 
-Your editor's oxc extension can use Bun too: set its server command to `bun fmt --no-script --lsp`, which lints and formats in a canary build and formats in every other. `--no-script` keeps a `fmt` script in `package.json` from running instead. See [Editor integration](/lint#editor-integration).
+Your editor can lint with Bun too. In VS Code, the Bun extension starts `bun fmt --no-script --lsp`, a language server that lints and formats in a [canary build](/installation#canary-builds) and formats in every other; in Neovim and Helix, a few lines of config start it. See [Editor integration](/lint#editor-integration).
 
 ---
 

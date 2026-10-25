@@ -1,4 +1,4 @@
-//! `bun lint --lsp` and `bun fmt --no-script --lsp`: a language server on standard input and output.
+//! `bun lint --no-script --lsp` and `bun fmt --no-script --lsp`: a language server on standard input and output.
 //!
 //! The thread that reads the messages keeps the documents. Each workspace folder has a thread that lints and formats what is
 //! in it, with the folder as the working directory and its `bunfig.toml`: as `bun lint` does there. It keeps the
@@ -37,7 +37,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use text::{Encoding, Lines, Range};
 
-/// What the server does: `bun lint --lsp` does both, `bun fmt --lsp` formats, and lints where the build has `bun lint`.
+/// What the server does: `bun lint --no-script --lsp` does both, `bun fmt --no-script --lsp` formats, and lints where the
+/// build has `bun lint`.
 #[derive(Copy, Clone)]
 pub struct Features {
     pub format: bool,

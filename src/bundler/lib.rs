@@ -423,7 +423,7 @@ bun_dispatch::link_interface! {
         fn origin_host() -> &'static [u8];
         fn origin_path() -> &'static [u8];
         fn loaders() -> *const bun_collections::StringArrayHashMap<bun_ast::Loader>;
-        fn eval_source() -> Option<*const bun_ast::Source>;
+        fn eval_source() -> Option<*const bun_ast::Source<'static>>;
         // The path of the entry module, `None` when there is none (`bun bake`).
         fn main() -> Option<&'static [u8]>;
         fn read_dir_info_package_json(dir: &[u8]) -> Option<*const bun_resolver::PackageJSON>;

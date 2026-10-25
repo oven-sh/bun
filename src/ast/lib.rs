@@ -6,12 +6,7 @@
 // macro's `LocalKey` wrapper. All are `Cell<*mut _>` / `Cell<bool>` (no
 // destructor, const init).
 #![feature(thread_local)]
-//! TODO: OWNERSHIP — almost every byte-slice field in this module has
-//! mixed/ambiguous ownership. Strings are sometimes literals, sometimes heap
-//! copies, sometimes slices into `Source.contents` or a `StringBuilder` arena.
-//! They are kept as `&'static [u8]` to avoid lifetime params; a real ownership
-//! story (likely `bun_core::String` or a `'source` lifetime threaded through
-//! `Location`/`Data`/`Msg`) is still needed.
+//! A [`Source`] borrows for `'a`. A diagnostic owns its bytes, so a [`Log`] may outlive the `Source`.
 
 use core::fmt;
 use std::borrow::Cow;
@@ -402,41 +397,9 @@ impl fmt::Debug for Ref {
 /// A [`Source`]'s path paired with its raw bytes (used by virtual-module
 /// injection: `BundleV2`'s `additional_files`, `Bun.build` inputs).
 #[derive(Clone, Copy)]
-pub struct PathContentsPair {
-    pub path: bun_paths::fs::Path<'static>,
-    pub contents: &'static [u8],
-}
-
-type Str = &'static [u8];
-// `Str` is a lifetime-erased byte-slice alias; see the module-level OWNERSHIP
-// note for the real ownership story.
-
-/// `[]const u8` parameter shim — accepts `&str` / `&[u8]` (any lifetime)
-/// and erases to the crate-wide `Str` (`&'static [u8]`) lie so callers in either
-/// string flavour compile against the same signatures.
-/// Removable together with `Str` once a `'source` lifetime is threaded through
-/// (see the module-level OWNERSHIP note).
-pub trait IntoStr {
-    fn into_str(self) -> Str;
-}
-impl IntoStr for &[u8] {
-    #[inline]
-    fn into_str(self) -> Str {
-        // SAFETY: lifetime erasure; see module-level OWNERSHIP note.
-        unsafe { bun_collections::detach_lifetime(self) }
-    }
-}
-impl IntoStr for &str {
-    #[inline]
-    fn into_str(self) -> Str {
-        self.as_bytes().into_str()
-    }
-}
-impl<const N: usize> IntoStr for &[u8; N] {
-    #[inline]
-    fn into_str(self) -> Str {
-        self[..].into_str()
-    }
+pub struct PathContentsPair<'a> {
+    pub path: bun_paths::fs::Path<'a>,
+    pub contents: &'a [u8],
 }
 
 /// Owned/borrowed → `Cow<'static, [u8]>` for `Data.text`. Superset of the old
@@ -1447,8 +1410,8 @@ impl Log {
         })
     }
 
-    #[inline]
-    fn add_resolve_error_msg(
+    #[cold]
+    pub fn add_resolve_error(
         &mut self,
         source: Option<&Source>,
         r: Range,
@@ -1481,19 +1444,6 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_resolve_error(
-        &mut self,
-        source: Option<&Source>,
-        r: Range,
-        args: fmt::Arguments<'_>,
-        specifier_arg: &[u8],
-        import_kind: ImportKind,
-        err: crate::Error,
-    ) {
-        self.add_resolve_error_msg(source, r, args, specifier_arg, import_kind, err)
-    }
-
-    #[cold]
     pub fn add_resolve_error_with_text_dupe(
         &mut self,
         source: Option<&Source>,
@@ -1502,7 +1452,7 @@ impl Log {
         specifier_arg: &[u8],
         import_kind: ImportKind,
     ) {
-        self.add_resolve_error_msg(
+        self.add_resolve_error(
             source,
             r,
             args,
@@ -1513,7 +1463,7 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_error(&mut self, source: Option<&Source>, r: Range, text: Str) {
+    pub fn add_range_error(&mut self, source: Option<&Source>, r: Range, text: &'static [u8]) {
         self.errors += 1;
         let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
@@ -1549,7 +1499,7 @@ impl Log {
     #[inline]
     pub fn add_error_fmt<'a>(
         &mut self,
-        source: impl Into<Option<&'a Source>>,
+        source: impl Into<Option<&'a Source<'a>>>,
         l: Loc,
         args: fmt::Arguments<'_>,
     ) {
@@ -1613,7 +1563,7 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_warning(&mut self, source: Option<&Source>, r: Range, text: Str) {
+    pub fn add_range_warning(&mut self, source: Option<&Source>, r: Range, text: &'static [u8]) {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
@@ -1667,7 +1617,7 @@ impl Log {
     #[cold]
     pub fn add_warning_fmt_line_col(
         &mut self,
-        filepath: Str,
+        filepath: &[u8],
         line: u32,
         col: u32,
         args: fmt::Arguments<'_>,
@@ -1678,7 +1628,7 @@ impl Log {
     #[cold]
     pub fn add_warning_fmt_line_col_with_notes(
         &mut self,
-        filepath: Str,
+        filepath: &[u8],
         line: u32,
         col: u32,
         args: fmt::Arguments<'_>,
@@ -1788,7 +1738,7 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_warning(&mut self, source: Option<&Source>, l: Loc, text: Str) {
+    pub fn add_warning(&mut self, source: Option<&Source>, l: Loc, text: &'static [u8]) {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
@@ -1813,7 +1763,7 @@ impl Log {
         &mut self,
         source: Option<&Source>,
         l: Loc,
-        warn: Str,
+        warn: &'static [u8],
         note_args: fmt::Arguments<'_>,
     ) {
         if !Kind::Warn.should_print(self.level) {
@@ -1840,7 +1790,7 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_debug(&mut self, source: Option<&Source>, r: Range, text: Str) {
+    pub fn add_range_debug(&mut self, source: Option<&Source>, r: Range, text: &'static [u8]) {
         if !Kind::Debug.should_print(self.level) {
             return;
         }
@@ -1912,7 +1862,7 @@ impl Log {
 
     // TODO(dylan-conway): rename and replace `addError`
     #[cold]
-    pub fn add_error_opts(&mut self, text: Str, opts: AddErrorOptions<'_>) {
+    pub fn add_error_opts(&mut self, text: &'static [u8], opts: AddErrorOptions<'_>) {
         self.errors += 1;
         let data = self.tracked_range_data(
             opts.source,
@@ -2019,7 +1969,7 @@ impl Log {
 
 #[derive(Clone, Copy, Default)]
 pub struct AddErrorOptions<'a> {
-    pub source: Option<&'a Source>,
+    pub source: Option<&'a Source<'a>>,
     pub loc: Loc,
     pub len: i32,
     pub redact_sensitive_information: bool,
@@ -2133,29 +2083,22 @@ pub fn usize2loc(loc: usize) -> Loc {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
-pub struct Source {
-    pub path: bun_paths::fs::Path<'static>,
+pub struct Source<'a> {
+    pub path: bun_paths::fs::Path<'a>,
 
-    /// `Cow` so `source_from_file` / `File::to_source_at` can hand
-    /// back a heap buffer without leaking (PORTING.md §Forbidden). Borrowed
-    /// arm covers parser/transpiler-fed
-    /// arena slices (via `IntoStr`). Prefer the `.contents()` accessor at
-    /// call-sites — it derefs to `&[u8]` regardless of arm.
-    pub contents: Cow<'static, [u8]>,
+    /// `Owned` when the `Source` read the file itself ([`source_from_file`]).
+    pub contents: Cow<'a, [u8]>,
     pub contents_is_recycled: bool,
 
     /// Lazily-generated human-readable identifier name that is non-unique
     /// Avoid accessing this directly most of the  time
     ///
-    /// `Cow` because the cached value is produced by
-    /// `MutableString::ensure_valid_identifier` (owned `Box<[u8]>`); per
-    /// PORTING.md §Forbidden this cannot be `&'static [u8]` + leak.
-    pub identifier_name: Cow<'static, [u8]>,
+    pub identifier_name: Cow<'a, [u8]>,
 
     pub index: Index,
 }
 
-impl Default for Source {
+impl Default for Source<'_> {
     fn default() -> Self {
         Source {
             path: bun_paths::fs::Path::default(),
@@ -2372,7 +2315,14 @@ impl LineColumnTracker {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceTooLarge;
 
-impl Source {
+impl<'a> Source<'a> {
+    /// # Safety: what `self` borrows must outlive every read through the result.
+    #[inline]
+    pub unsafe fn into_static(self) -> Source<'static> {
+        // SAFETY: the types differ only in the lifetime, which is the caller's contract.
+        unsafe { core::mem::transmute::<Source<'a>, Source<'static>>(self) }
+    }
+
     /// Borrowed view of the source bytes. Provided as a method so callers that
     /// were written against a future owning-`contents` shape (`Vec<u8>`/`Cow`)
     /// don't need to change when the field type flips.
@@ -2420,8 +2370,8 @@ impl Source {
         bytes == 0x6d73_6100 // "\0asm"
     }
 
-    pub fn init_empty_file(filepath: impl IntoStr) -> Source {
-        let path = bun_paths::fs::Path::init(filepath.into_str());
+    pub fn init_empty_file(filepath: &'a (impl AsRef<[u8]> + ?Sized)) -> Source<'a> {
+        let path = bun_paths::fs::Path::init(filepath.as_ref());
         Source {
             path,
             contents: Cow::Borrowed(b""),
@@ -2429,7 +2379,7 @@ impl Source {
         }
     }
 
-    pub fn init_recycled_file(file: &PathContentsPair) -> crate::Result<Source> {
+    pub fn init_recycled_file(file: &PathContentsPair<'a>) -> crate::Result<Source<'a>> {
         let mut source = Source {
             path: file.path,
             contents: Cow::Borrowed(file.contents),
@@ -2440,19 +2390,25 @@ impl Source {
         Ok(source)
     }
 
-    pub fn init_path_string(path_string: impl IntoStr, contents: impl IntoStr) -> Source {
-        let path = bun_paths::fs::Path::init(path_string.into_str());
+    pub fn init_path_string(
+        path_string: &'a (impl AsRef<[u8]> + ?Sized),
+        contents: &'a (impl AsRef<[u8]> + ?Sized),
+    ) -> Source<'a> {
+        let path = bun_paths::fs::Path::init(path_string.as_ref());
         Source {
             path,
-            contents: Cow::Borrowed(contents.into_str()),
+            contents: Cow::Borrowed(contents.as_ref()),
             ..Default::default()
         }
     }
 
     /// `init_path_string` with heap-owned contents — used by `source_from_file`
     /// so the read buffer is dropped with the `Source` instead of leaked.
-    pub fn init_path_string_owned(path_string: impl IntoStr, contents: Vec<u8>) -> Source {
-        let path = bun_paths::fs::Path::init(path_string.into_str());
+    pub fn init_path_string_owned(
+        path_string: &'a (impl AsRef<[u8]> + ?Sized),
+        contents: Vec<u8>,
+    ) -> Source<'a> {
+        let path = bun_paths::fs::Path::init(path_string.as_ref());
         Source {
             path,
             contents: Cow::Owned(contents),
@@ -2607,7 +2563,10 @@ pub struct ToSourceOptions {
 /// Read `path` (rooted at cwd) into memory and wrap it in a `Source`.
 ///
 /// MOVE_DOWN from `bun_sys::File::to_source` (T1 cannot name T2).
-pub fn source_from_file(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Maybe<Source> {
+pub fn source_from_file(
+    path: &bun_core::ZStr,
+    opts: ToSourceOptions,
+) -> bun_sys::Maybe<Source<'_>> {
     source_from_file_at(bun_sys::Fd::cwd(), path, opts)
 }
 
@@ -2618,21 +2577,18 @@ fn source_from_file_at(
     dir_fd: bun_sys::Fd,
     path: &bun_core::ZStr,
     opts: ToSourceOptions,
-) -> bun_sys::Maybe<Source> {
+) -> bun_sys::Maybe<Source<'_>> {
     let mut bytes = bun_sys::file::File::read_from(dir_fd, path)?;
     if opts.convert_bom {
         if let Some(bom) = bun_core::strings::BOM::detect(&bytes) {
             bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
         }
     }
-    // `path` is caller-owned; goes through the `IntoStr` borrow shim
-    // (same as every other `Source` constructor). `bytes` is owned by the
-    // returned `Source` via `Cow::Owned` — no leaking.
     Ok(Source::init_path_string_owned(path.as_bytes(), bytes))
 }
 
 /// `source_from_file_at` rooted at the process CWD.
-pub fn to_source(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
+pub fn to_source(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source<'_>> {
     source_from_file(path, opts)
 }
 
@@ -3130,10 +3086,7 @@ mod location_tests {
         let text = b"dir/file.yaml".to_vec();
         let namespace = b"virtual".to_vec();
         let source = Source {
-            path: bun_paths::fs::Path::init_with_namespace(
-                text.as_slice().into_str(),
-                namespace.as_slice().into_str(),
-            ),
+            path: bun_paths::fs::Path::init_with_namespace(text.as_slice(), namespace.as_slice()),
             contents: Cow::Borrowed(b"a: [1, 2\n"),
             ..Default::default()
         };

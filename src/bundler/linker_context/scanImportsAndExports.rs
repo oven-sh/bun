@@ -1868,7 +1868,7 @@ mod __css_validation {
             all_import_records: *mut [ImportRecordList<'bump>],
             all_css_asts: *mut [CssCol],
             all_symbols: &'a symbol::Map,
-            all_sources: *mut [Source],
+            all_sources: *mut [Source<'a>],
             log: &'a mut Log,
         }
 

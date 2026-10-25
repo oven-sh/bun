@@ -314,7 +314,8 @@ test.concurrent("load() preserves caller-preset filename and paths (#29253)", as
 
 test.concurrent("Module.prototype.load can be hooked like in Node", async () => {
   // Both prototype objects share one slot, so assigning on either is seen
-  // by instances; assigning on an instance shadows it for that instance only.
+  // by instances. Assigning on an instance or a derived object shadows it
+  // there only.
   using dir = tempDir("module-load-hook", {
     "leaf.js": `module.exports = "ok";`,
     "driver.js": `
@@ -343,11 +344,17 @@ test.concurrent("Module.prototype.load can be hooked like in Node", async () => 
       const d = new Module(target, module);
       d.load(target);
 
+      // An object derived from the prototype must get an own property, not
+      // reach the shared slot.
+      const derived = Object.create(Module.prototype);
+      derived.load = () => {};
+
       console.log(JSON.stringify({
         seen,
         aExports: a.exports,
         bHasOwn: Object.prototype.hasOwnProperty.call(b, "load"),
         cHasOwn: Object.prototype.hasOwnProperty.call(c, "load"),
+        derivedHasOwn: Object.prototype.hasOwnProperty.call(derived, "load"),
         restored: Module.prototype.load === original,
       }));
     `,
@@ -369,6 +376,7 @@ test.concurrent("Module.prototype.load can be hooked like in Node", async () => 
     aExports: "ok",
     bHasOwn: true,
     cHasOwn: false,
+    derivedHasOwn: true,
     restored: true,
   });
   expect(exitCode).toBe(0);

@@ -623,6 +623,9 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
 
 // `Module.prototype.load` is backed by one slot shared by both prototype
 // objects, so assigning it on either is seen by every instance, as in Node.
+// The property is a CustomValue, so JSC only calls the setter when the
+// receiver is the prototype itself. A write through an instance or a derived
+// object adds an own property on the receiver instead (JSObject::putInlineSlow).
 JSC_DEFINE_CUSTOM_GETTER(getterLoadFunction,
     (JSC::JSGlobalObject * globalObject,
         JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -638,11 +641,6 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoadFunction,
         JSC::PropertyName propertyName))
 {
     auto& vm = globalObject->vm();
-    // Assigning on an instance shadows the prototype for that instance only.
-    if (auto* module = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue))) {
-        module->putDirect(vm, propertyName, JSValue::decode(value), 0);
-        return true;
-    }
     globalObject->putDirect(vm,
         WebCore::clientData(vm)->builtinNames().overridableLoadPrivateName(),
         JSValue::decode(value), 0);

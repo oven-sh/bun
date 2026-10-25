@@ -11071,6 +11071,40 @@ export function f(o: { a?: number }, k: string) {
       expect(exitCode).toBe(1);
     });
 
+    // The return type is inferred first. The walk for `last` asks if the `switch (true)` is exhaustive, which checks
+    // `st !== 0` in `CheckModeTypeOnly`, where `st` is `2` and incomplete. In the check of the clause it's `0 | 2`.
+    test("a comparison that's only checked for its type reports nothing after a walk that ended with an incomplete type", async () => {
+      using dir = project({
+        "a.ts": `export function f() {
+  let st: 0 | 1 | 2 | 3 = 0;
+  let last;
+  switch (prev?.kind) {
+    case "num":
+      while ((tok = next()).kind !== "eof") { }
+      if (tok != null) return;
+      try {
+        try { st = 2; while (tok?.kind === "num" || tok?.kind === "str") { } } finally { while (c); switch (st) { } }
+        switch (true) {
+          case st !== 0:
+            switch (st) {
+              case 0: const is = tok?.kind === "num" || tok?.kind === "str"; last = tok; break;
+              case 1: st = 0;
+            }
+        }
+      } catch { }
+  }
+  return [tok, prev, last, acc];
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").filter(line => !line.includes("TS2304"))).toEqual([
+        "a.ts(13,20): error TS2678: Type '0' is not comparable to type '2'.",
+        "a.ts(14,20): error TS2678: Type '1' is not comparable to type '2'.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("a shared flow node in a `finally` block has the type of its first visit", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

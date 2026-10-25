@@ -837,6 +837,94 @@ describe("zlib.zstd", () => {
     expect(compressed.toString("base64")).toEqual(compressedString);
   });
 
+  // With workers, one ZSTD_compressStream2(ZSTD_e_continue) call returns after any progress: at
+  // most one job of input, with room left in the output. Every driver reads input left beside
+  // free output as the end of the stream, so it dropped the rest of the chunk with no error.
+  // The input is longer than one 512 KiB job. Only the sync function sends its chunk with the
+  // finishing flush, which makes zstd take all of it.
+  it("a zstd compressor with workers takes a chunk that is longer than one job", async () => {
+    const script = `
+      const zlib = require("node:zlib");
+      const { promisify } = require("node:util");
+      const { Readable, Writable } = require("node:stream");
+      const { pipeline } = require("node:stream/promises");
+      const { fromSync, pullSync, bytesSync, from, pull, bytes } = require("node:stream/iter");
+      const iter = require("node:zlib/iter");
+
+      const params = { [zlib.constants.ZSTD_c_nbWorkers]: 1, [zlib.constants.ZSTD_c_jobSize]: 512 * 1024 };
+      const input = Buffer.alloc(768 * 1024, "abcdefghij");
+
+      // Feeds a compressor stream and resolves with its whole output.
+      const throughStream = feed => {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const stream = zlib.createZstdCompress({ params });
+        const chunks = [];
+        stream.on("data", chunk => chunks.push(chunk));
+        stream.on("error", reject);
+        stream.on("end", () => resolve(Buffer.concat(chunks)));
+        feed(stream);
+        return promise;
+      };
+      const drivers = {
+        zstdCompressSync: () => zlib.zstdCompressSync(input, { params }),
+        zstdCompress: () => promisify(zlib.zstdCompress)(input, { params }),
+        "end(input)": () => throughStream(stream => stream.end(input)),
+        "write(input), end()": () => throughStream(stream => { stream.write(input); stream.end(); }),
+        "write(input), flush(), end()": () => throughStream(stream => { stream.write(input); stream.flush(); stream.end(); }),
+        "pipeline() of 300 KiB chunks": async () => {
+          const parts = [input.subarray(0, 300 * 1024), input.subarray(300 * 1024, 600 * 1024), input.subarray(600 * 1024)];
+          const chunks = [];
+          const sink = new Writable({ write(chunk, encoding, callback) { chunks.push(chunk); callback(); } });
+          await pipeline(Readable.from(parts), zlib.createZstdCompress({ params }), sink);
+          return Buffer.concat(chunks);
+        },
+        compressZstdSync: () => Buffer.from(bytesSync(pullSync(fromSync(input), iter.compressZstdSync({ params })))),
+        compressZstd: async () => Buffer.from(await bytes(pull(from(input), iter.compressZstd({ params })))),
+      };
+
+      const out = {};
+      for (const [name, compress] of Object.entries(drivers)) {
+        try {
+          const decompressed = zlib.zstdDecompressSync(await compress());
+          out[name] = decompressed.equals(input) ? "round-trips" : "decompresses to " + decompressed.length + " of " + input.length + " bytes";
+        } catch (e) {
+          out[name] = "throws " + (e.code ?? e.message);
+        }
+      }
+      // An error from zstd still ends the write: the frame is promised 1000 bytes and gets more.
+      out.wrongPledgedSrcSize = await new Promise(done =>
+        zlib.zstdCompress(input, { params, pledgedSrcSize: 1000 }, err => done(err ? err.code : "no error")),
+      );
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--experimental-stream-iter", "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let out;
+    try {
+      out = JSON.parse(stdout);
+    } catch {
+      out = { stdout, stderr };
+    }
+    expect({ out, exitCode }).toEqual({
+      out: {
+        zstdCompressSync: "round-trips",
+        zstdCompress: "round-trips",
+        "end(input)": "round-trips",
+        "write(input), end()": "round-trips",
+        "write(input), flush(), end()": "round-trips",
+        "pipeline() of 300 KiB chunks": "round-trips",
+        compressZstdSync: "round-trips",
+        compressZstd: "round-trips",
+        wrongPledgedSrcSize: "ZSTD_error_srcSize_wrong",
+      },
+      exitCode: 0,
+    });
+  });
+
   it("zstdDecompressSync", () => {
     const roundtrip = zlib.zstdDecompressSync(compressedBuffer);
     expect(roundtrip.toString()).toEqual(inputString);

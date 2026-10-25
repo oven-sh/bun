@@ -1,20 +1,33 @@
 // The server and the client of "a HEADERS frame that has no connection credit waits for it". They are two
 // processes so that the client can block its thread: it then sends no ACK and no MAX_DATA while the server writes.
+//
+//   server <key> <cert> <flight>
+//   client <port> <flight> <streams> <connection window>
+//
+// <flight> says what the server sends while the client is blocked, and so where its last packet ends:
+//   "bodies"               The response headers went out before. The last packet ends inside a body, so a part of
+//                          that body is in a packet and its DATA frame has a length.
+//   "headers-and-bodies"   The last packet ends inside a header block, so the body behind it is in no packet yet.
 import { createPrivateKey } from "node:crypto";
 import { readFileSync, readSync, writeSync } from "node:fs";
 import { connect, listen, type SessionOptions } from "node:quic";
 
 const print = (line: string) => void writeSync(1, line + "\n");
-// Sizes that no packet holds a whole number of, so that the last packet of a flight ends inside a body.
-const bodySize = (i: number) => 380 + (i % 5) * 9;
-// "X" has an 8-bit Huffman code, so QPACK sends this value as it is. The first size fits into a stream's buffer
-// in lsquic next to nothing else, and the second size does not fit into it at all.
+const flight = process.argv[2] === "server" ? process.argv[5] : process.argv[4];
+// "X" has an 8-bit Huffman code, so QPACK sends such a value as it is. No packet holds a whole number of these
+// header blocks or bodies, so a flight ends inside one of them.
+const responseHeaders = (i: number) =>
+  flight === "bodies"
+    ? { ":status": "200" }
+    : { ":status": "200", "x-filler": Buffer.alloc(480 + (i % 5) * 9, "X").toString() };
+const bodySize = (i: number) => (flight === "bodies" ? 380 + (i % 5) * 9 : 30);
+// The first size fits into a stream's buffer in lsquic next to nothing else. The second size does not fit into it.
 const trailerSizes = [1100, 1400];
 const [trailers, trailersForAPacket] = trailerSizes.map(size => ({ "x-filler": Buffer.alloc(size, "X").toString() }));
 
 if (process.argv[2] === "server") {
   const [keyPath, certPath] = process.argv.slice(3);
-  const responses: [stream: any, body: Buffer][] = [];
+  const responses: [stream: any, i: number][] = [];
   const wantTrailers: any[] = [];
   let creditIsUsedUp = false;
   const endpoint = await listen(
@@ -27,20 +40,24 @@ if (process.argv[2] === "server") {
       sni: { "*": { keys: [createPrivateKey(readFileSync(keyPath))], certs: [readFileSync(certPath)] } },
       transportParams: { maxIdleTimeout: 20, initialMaxStreamsBidi: 1000 },
       onheaders(this: any, headers: Record<string, string>) {
-        if (headers[":path"] !== "/go") {
-          // The client counts these to know that every request arrived.
-          this.sendHeaders({ ":status": "200" });
-          responses.push([this, Buffer.alloc(bodySize(Number(headers[":path"].slice(1))), "b")]);
+        const path = headers[":path"];
+        // The client sends this after every other request, and waits for the answer.
+        if (path === "/sync") return void this.sendHeaders({ ":status": "204" }, { terminal: true });
+        if (path !== "/go") {
+          const i = Number(path.slice(1));
+          if (flight === "bodies") this.sendHeaders(responseHeaders(i));
+          responses.push([this, i]);
           return;
         }
         // The client's last request. Its packet acknowledged everything that the server sent, and the client reads
-        // nothing from now on. One pass of the engine writes every body: more than the congestion window holds, so
-        // the window fills and stays full.
+        // nothing from now on. One pass of the engine writes the whole flight: more than the congestion window
+        // holds, so the window fills and stays full.
         const { stats } = this.session;
         const sentBefore = stats.bytesSent;
         const lostBefore = stats.pktLost;
-        for (const [stream, body] of responses) {
-          stream.writer.writeSync(body);
+        for (const [stream, i] of responses) {
+          if (flight !== "bodies") stream.sendHeaders(responseHeaders(i));
+          stream.writer.writeSync(Buffer.alloc(bodySize(i), "b"));
           stream.writer.endSync();
         }
         const useUpTheCredit = () => {
@@ -48,17 +65,17 @@ if (process.argv[2] === "server") {
           // of the flight back, so the window does not fill on a machine that is this slow.
           const flightIsOver = stats.bytesSent - sentBefore + 4096n >= stats.cwnd || stats.pktLost - lostBefore > 2n;
           if (!flightIsOver) return void setImmediate(useUpTheCredit);
-          const flight = wantTrailers.splice(0);
-          // The last response of the flight has the end of its body in lsquic's buffer.
-          const last = flight.pop();
+          const sent = wantTrailers.splice(0);
+          // The last response of the flight has the end of its message in lsquic's buffer.
+          const last = sent.pop();
           // lsquic keeps up to 10 packets for a connection that may not send. These trailers fill them.
-          for (const stream of flight.splice(0, 16)) stream.sendTrailers(trailers);
+          for (const stream of sent.splice(0, 16)) stream.sendTrailers(trailers);
           // Now there is no packet, and these trailers need one: they wait outside of the stream's buffer, while the
           // connection still has credit. The priority puts this stream first when the client's ACK gives packets.
           last?.setPriority({ level: "high" });
           last?.sendTrailers(trailersForAPacket);
           // The trailers of the other responses go to their streams' buffers and take all the credit that is left.
-          for (const stream of flight) stream.sendTrailers(trailers);
+          for (const stream of sent) stream.sendTrailers(trailers);
           creditIsUsedUp = true;
           print("ready");
         };
@@ -72,7 +89,7 @@ if (process.argv[2] === "server") {
   );
   print(String(endpoint.address!.port));
 } else {
-  const [port, streams, window] = process.argv.slice(3).map(Number);
+  const [port, , streams, window] = process.argv.slice(3).map(Number);
   const session = await connect(
     { address: "127.0.0.1", port } as any,
     {
@@ -91,25 +108,30 @@ if (process.argv[2] === "server") {
     ":scheme": "https",
     ":authority": "localhost",
   });
-  let started = 0;
-  const everyResponseStarted = Promise.withResolvers<void>();
   const responses = Array.from({ length: streams }, async (_, i) => {
     const response: { bytes: number; trailers?: number; failed?: string } = { bytes: 0 };
     try {
       const stream: any = await session.createBidirectionalStream({
         headers: request(`/${i}`),
-        onheaders: () => void (++started === streams && everyResponseStarted.resolve()),
+        onheaders() {},
         ontrailers: (received: Record<string, string>) => void (response.trailers = received["x-filler"]?.length),
       } as any);
       for await (const batch of stream) for (const chunk of batch) response.bytes += chunk.byteLength;
       await stream.closed;
     } catch (error: any) {
       response.failed = String(error?.code ?? error);
-      everyResponseStarted.resolve();
     }
     return response;
   });
-  await everyResponseStarted.promise;
+  // The server has every request when it answers this one.
+  const synced = Promise.withResolvers<void>();
+  const sync: any = await session.createBidirectionalStream({
+    headers: request("/sync"),
+    onheaders: () => synced.resolve(),
+  } as any);
+  sync.closed.catch(() => {});
+  session.closed.then(synced.resolve, synced.resolve);
+  await synced.promise;
   const go: any = await session.createBidirectionalStream({ headers: request("/go") } as any);
   go.closed.catch(() => {});
   // The request leaves when the node:quic callback that resumed this code returns.

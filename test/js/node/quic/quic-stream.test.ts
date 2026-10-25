@@ -430,7 +430,7 @@ test("a HEADERS frame that has no connection credit waits for it", async () => {
     }
   }
 
-  await using server = spawn("server", join(keysDir, "agent1-key.pem"), join(keysDir, "agent1-cert.pem"));
+  await using server = spawn("server", join(keysDir, "agent1-key.pem"), join(keysDir, "agent1-cert.pem"), "bodies");
   const serverLines = lines(server.stdout);
   const port = Number((await serverLines.next()).value);
   const serverExited = server.exited.then(() => ({
@@ -438,7 +438,7 @@ test("a HEADERS frame that has no connection credit waits for it", async () => {
   }));
   // More responses than the server's first flight holds. The connection window is more than twice that flight, so
   // the client's first ACK comes with no MAX_DATA.
-  await using client = spawn("client", port, 170, 130_000);
+  await using client = spawn("client", port, "bodies", 170, 130_000);
   expect((await Promise.race([serverLines.next(), serverExited])).value).toBe("ready");
   client.stdin.write("x");
   client.stdin.flush();

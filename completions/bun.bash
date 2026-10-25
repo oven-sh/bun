@@ -38,7 +38,11 @@ _read_scripts_in_package_json() {
     local working_dir="${PWD}";
 
     for ((; line < ${#words[@]}; line+=1)); do
-        [[ "${words[${line}]}" == "--cwd" ]] && working_dir="${words[$((line + 1))]}";
+        [[ "${words[${line}]}" == "--cwd" ]] && {
+            working_dir="${words[$((line + 1))]}";
+            # readline splits `--cwd=dir` at the `=`
+            [[ "${working_dir}" == "=" ]] && working_dir="${words[$((line + 2))]}";
+        }
     done
 
     [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
@@ -109,6 +113,7 @@ _bun_ltrim_colon_completions() {
 _bun_completions() {
     local -a words;
     local cword cur_word prev;
+    COMPREPLY=();
     _bun_reassemble_comp_words;
     cur_word="${words[${cword}]}";
     prev="${words[$(( cword - 1 ))]}";

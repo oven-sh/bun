@@ -470,6 +470,7 @@ describe("bun", () => {
         "src/index.ts": "",
         "src/other.ts": "",
         "test/a.test.ts": "",
+        "sub/package.json": JSON.stringify({ scripts: { "lint:fix": "echo fix" } }),
         // bun.fish asks `bun getcompletes` for the scripts and bins. This one has no answer.
         "bin/bun": "#!/bin/sh\n",
       };
@@ -495,6 +496,20 @@ describe("bun", () => {
             .sort();
         }
         return replies;
+      }
+
+      // The command line for one <TAB> press: `words` is what readline made of the line.
+      const defaultWordbreaks = ` \t\n"'><=;|&(:`;
+      function bash(words: string[], wordbreaks: string) {
+        return [
+          "bash",
+          "--norc",
+          "--noprofile",
+          "-c",
+          `source ./bun.bash; COMP_WORDBREAKS="$1"; COMP_WORDS=(${words.join(" ")}); COMP_CWORD=${words.length - 1}; _bun_completions; printf '%s\\n' "\${COMPREPLY[@]}"`,
+          "bash",
+          wordbreaks,
+        ];
       }
 
       // The script needs associative arrays. macOS has bash 3.2.
@@ -523,24 +538,38 @@ describe("bun", () => {
           "bun run build:": ["nightly", "release"],
           "bun --loader .ts:j": ["js", "json", "jsx"],
           "bun --inspect=localhost:6499 run d": ["dev"],
+          "bun --cwd=sub run li": ["lint:fix"],
           // As before.
           "bun add --p": ["--peer", "--production"],
           "bun r": ["remove", "repl", "run"],
           "bun te": ["test"],
         };
-        const replies = await offered(String(dir), Object.keys(expected), line => {
-          // bash's default COMP_WORDBREAKS has ':' and '=', so readline makes them words of their own.
-          const words = line.split(" ").flatMap(word => word.split(/([:=])/).filter(Boolean));
-          return [
-            "bash",
-            "--norc",
-            "--noprofile",
-            "-c",
-            `source ./bun.bash; COMP_WORDS=(${words.join(" ")}); COMP_CWORD=${words.length - 1}; _bun_completions; printf '%s\\n' "\${COMPREPLY[@]}"`,
-          ];
-        });
+        // bash's default COMP_WORDBREAKS has ':' and '=', so readline makes them words of their own.
+        const replies = await offered(String(dir), Object.keys(expected), line =>
+          bash(
+            line.split(" ").flatMap(word => word.split(/([:=])/).filter(Boolean)),
+            defaultWordbreaks,
+          ),
+        );
         expect(replies).toEqual(expected);
       });
+
+      // A .bashrc can take ':' out of COMP_WORDBREAKS. Then the words arrive whole and stay whole.
+      test.concurrent.skipIf(bashVersion < 4)(
+        "bash completes a script name with ':' when ':' is not a word break",
+        async () => {
+          using dir = tempDir("completions-bash-colon", { ...project, "bun.bash": await script("bash") });
+          const expected = {
+            "bun run build:r": ["build:release"],
+            "bun run build:": ["build:nightly", "build:release"],
+            "bun run te": ["test/", "test:unit"],
+          };
+          const replies = await offered(String(dir), Object.keys(expected), line =>
+            bash(line.split(" "), defaultWordbreaks.replace(":", "")),
+          );
+          expect(replies).toEqual(expected);
+        },
+      );
 
       test.concurrent.skipIf(!Bun.which("fish"))("fish offers files, also after a flag or a script", async () => {
         using dir = tempDir("completions-fish-tab", { ...project, "bun.fish": await script("fish") });

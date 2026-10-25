@@ -18,10 +18,12 @@ globalThis.__filename = "/fuzzilli.js";
 // process.execve replaces the process image on success, which kills the REPRL
 // child, so fuzzed scripts must not be able to reach the real implementation.
 // process.kill delivers a real signal: aimed at this pid it kills the REPRL
-// child, and aimed at pid 0 or -1 it kills the fuzzer and every other REPRL
-// child in the process group. process.kill validates its arguments in C++ and
-// then calls process._kill to deliver the signal, so replacing _kill keeps the
-// validation and drops only the syscall.
+// child, and aimed at pid 0 (the process group) or -1 (every process it may
+// signal) it kills the fuzzer and every other REPRL child. process.kill
+// validates its arguments in C++ and then calls process._kill to deliver the
+// signal, so replacing _kill keeps the validation and drops only the syscall.
+// This covers the main global only: a Worker and a ShadowRealm have their own
+// process object with the native _kill.
 Object.assign(process, {
   execve() {},
   _kill() {

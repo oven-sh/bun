@@ -1,8 +1,8 @@
 // Drives the fuzzilli REPRL loop with in-process mocks for the control/data
 // FDs so the real src/js/eval/fuzzilli-reprl.ts source can be exercised in a
-// normal (non-fuzzilli) build. The payload comes from argv. Each payload calls
-// an API that ends the process outside of normal exception handling, so the
-// REPRL wrapper must stub that API out before it runs fuzzed scripts.
+// normal (non-fuzzilli) build. The payload comes from argv. The fixture prints
+// the status the wrapper reports for each exec cycle: 0 when the script
+// returned, 1 << 8 when it threw.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -27,7 +27,7 @@ let controlStream = Buffer.concat(controlChunks);
 // Data-read pipe (fd 102): the payload for each exec cycle.
 let dataStream = Buffer.concat(payloads);
 
-let statusWrites = 0;
+const statuses: number[] = [];
 
 const realFstatSync = fs.fstatSync;
 const realReadSync = fs.readSync;
@@ -57,7 +57,7 @@ const realWriteSync = fs.writeSync;
 (fs as any).writeSync = function (fd: any, buffer: any, ...rest: any[]) {
   if (fd === REPRL_CWFD) {
     if (Buffer.isBuffer(buffer) && buffer.length === 4 && buffer.toString() !== "HELO") {
-      statusWrites++;
+      statuses.push(buffer.readUInt32LE(0));
     }
     return Buffer.isBuffer(buffer) ? buffer.length : String(buffer).length;
   }
@@ -74,5 +74,5 @@ const reprlSource = fs.readFileSync(
 (0, eval)(reprlSource);
 
 const liveAfterPayload = (globalThis as any).stillAlive === true;
-realWriteSync.call(fs, 1, `STATUS_WRITES=${statusWrites} LIVE=${liveAfterPayload}\n`);
-process.exit(statusWrites === 2 && liveAfterPayload ? 0 : 1);
+realWriteSync.call(fs, 1, `STATUSES=${statuses.join(",")} LIVE=${liveAfterPayload}\n`);
+process.exit(statuses.length === 2 && liveAfterPayload ? 0 : 1);

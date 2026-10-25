@@ -824,6 +824,79 @@ describe.concurrent("otp", () => {
       exitCode: 0,
     });
   });
+
+  // A thread that the command never joins reads the key of this step, so nothing can hold the terminal
+  // in line mode for it. The thread takes the lone CR that Enter is on a raw-mode terminal.
+  // Linux only: the opener is `xdg-open` from PATH there, which the test replaces.
+  test.skipIf(!isLinux)("web login opens the auth url at Enter on a terminal left in raw mode", async () => {
+    const otp = "616161";
+    using dir = tempDir("publish-web-login-raw-terminal", {
+      "package.json": JSON.stringify({ name: "otp-pkg-12", version: "12.12.12" }),
+      "opener/xdg-open": `#!/bin/sh\nprintf '%s' "$1" > "$OPENED.tmp" && mv "$OPENED.tmp" "$OPENED"\n`,
+    });
+    const packageDir = String(dir);
+    const opened = join(packageDir, "opened.txt");
+    chmodSync(join(packageDir, "opener", "xdg-open"), 0o755);
+
+    using mock = mockRegistry((req, recorded, mock) => {
+      if (req.method === "PUT") {
+        if (recorded.otp === otp) {
+          return new Response("OK", { status: 200 });
+        }
+        return Response.json(
+          { authUrl: `http://localhost:${mock.port}/auth`, doneUrl: `http://localhost:${mock.port}/done` },
+          { status: 401, headers: { "www-authenticate": "OTP" } },
+        );
+      }
+      if (recorded.pathname === "/done") {
+        // The login is complete when the opener ran. Until then, bun asks again at once.
+        return existsSync(opened)
+          ? Response.json({ token: otp })
+          : new Response("{}", { status: 202, headers: { "retry-after": "0" } });
+      }
+      return new Response("unexpected url", { status: 500 });
+    });
+    await write(join(packageDir, "bunfig.toml"), mockBunfig(mock));
+
+    let output = "";
+    const decoder = new TextDecoder();
+    const asked = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 200,
+      rows: 50,
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("to open in browser")) asked.resolve();
+      },
+    });
+    terminal.setRawMode(true);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "publish"],
+      cwd: packageDir,
+      env: { ...env, OPENED: opened, PATH: [join(packageDir, "opener"), env.PATH ?? ""].join(delimiter) },
+      terminal,
+    });
+    // Fail with the child's output if it exits before it asks.
+    const exitedEarly = proc.exited.then(code => {
+      throw new Error(`bun publish exited before the web login (code ${code}):\n${output}`);
+    });
+    exitedEarly.catch(() => {});
+
+    await Promise.race([asked.promise, exitedEarly]);
+    terminal.write("\r");
+
+    const exitCode = await proc.exited;
+    expect({
+      opened: readFileSync(opened, "utf8"),
+      puts: mock.requests.filter(r => r.method === "PUT"),
+      exitCode,
+    }).toEqual({
+      opened: `http://localhost:${mock.port}/auth`,
+      puts: [request("PUT", "/otp-pkg-12"), request("PUT", "/otp-pkg-12", { authType: "legacy", otp })],
+      exitCode: 0,
+    });
+  });
 });
 
 // npm prints the header of every response that has no `x-local-cache`.

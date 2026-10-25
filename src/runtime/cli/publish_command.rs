@@ -894,7 +894,8 @@ impl PublishCommand {
         loop {
             match bun_sys::read(Fd::stdin(), &mut input) {
                 Ok(0) | Err(_) => return,
-                Ok(len) if strings::contains_char(&input[..len], b'\n') => break,
+                // Enter is a lone CR on a terminal that a parent process holds in raw mode.
+                Ok(len) if strings::index_of_any(&input[..len], b"\r\n").is_some() => break,
                 Ok(_) => continue,
             }
         }

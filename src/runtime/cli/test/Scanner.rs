@@ -34,8 +34,7 @@ pub(crate) struct Scanner<'a> {
     pub(crate) search_count: usize,
     /// The directory being iterated; its fd closes once every child `ScanEntry` has been opened.
     current_dir: Option<Rc<Dir>>,
-    /// The path the scan took to the directory being iterated. `Entry.dir` is the path its
-    /// listing was first read by, which is another one when a link and its target share it.
+    /// Path walked to the directory being iterated. `Entry.dir` is the path it was first read by.
     walked_dir: &'static [u8],
 }
 
@@ -388,8 +387,7 @@ impl<'a> Scanner<'a> {
                 });
             }
             fs::EntryKind::File => {
-                // already seen it! `abs_path` marks the file at the path of `entry`. Reached by
-                // another path to its directory, it is another test file.
+                // already seen it! By another path than that of `entry`, it is another test file.
                 if !entry.abs_path().is_empty() && self.reached_by_own_path(entry) {
                     return;
                 }
@@ -422,8 +420,7 @@ impl<'a> Scanner<'a> {
                     return;
                 }
 
-                // Marks `entry` as seen when `path` is its own. The file is kept as `path`, the
-                // one the filters saw.
+                // Marks `entry` as seen when `path` is its own. The file is kept as `path`.
                 let entry_path = if self.reached_by_own_path(entry) {
                     bun_resolver::Resolver::entry_abs_path(entry)
                 } else {

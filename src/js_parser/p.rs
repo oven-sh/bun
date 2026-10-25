@@ -2249,8 +2249,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let value = self.new_expr(&*str_ptr, loc);
                                 return self.wrap_inlined_enum(value, name);
                             }
-                            // Only a property access can fold. Every other read keeps
-                            // the `E::ImportIdentifier` below.
+                            // Only a property access can fold.
                             js_ast::ts::Data::Namespace(map)
                                 if opts.is_property_access_target() =>
                             {
@@ -4790,9 +4789,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         scope
     }
 
-    /// The only writer of `TSNamespaceScope::arg_ref`. `handle_identifier` finds
-    /// the block's members by this ref when a reference resolves to a proxy for
-    /// an export of a sibling block.
+    /// The only writer of `arg_ref`. `handle_identifier` looks up the block's members by it.
     pub(crate) fn set_ts_namespace_arg(
         &mut self,
         mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope>,

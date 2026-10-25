@@ -2891,12 +2891,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             Err(_) => return WriteResult::Fail,
         };
         // `buffer` Drop frees.
-        if matches!(&buffer, BlobOrStringOrBuffer::Blob(b) if b.needs_to_read_file()) {
+        let Some(data) = buffer.in_memory_view() else {
             let _ = global.throw(format_args!(
-                "File blob not supported yet in this function."
+                "{} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first",
+                if IS_END { "Socket.end" } else { "Socket.write" },
             ));
             return WriteResult::Fail;
-        }
+        };
 
         // Rust can't reference an outer `const` generic in a nested `const` item
         // (E0401), so precompute the full label per branch.
@@ -2928,7 +2929,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let byte_length: usize = 'brk: {
             if length_value.is_undefined() {
-                break 'brk buffer.slice().len();
+                break 'brk data.len();
             }
             if !length_value.is_any_int() {
                 let _ = global.throw_invalid_argument_type(label, "byteLength", "integer");
@@ -2952,7 +2953,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             usize::try_from(l).expect("int cast")
         };
 
-        let mut bytes = buffer.slice();
+        let mut bytes = data;
 
         if byte_offset > bytes.len() {
             let _ = global.throw_range_error(

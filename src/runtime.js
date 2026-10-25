@@ -376,8 +376,10 @@ var __structInstances = /* @__PURE__ */ new WeakSet();
 
 var __structSharedInstances = /* @__PURE__ */ new WeakSet();
 var __structSharedInstances = /* @__PURE__ */ new WeakSet();
-var __structIsShareable = v => (v !== null && typeof v === "object" ? __structSharedInstances.has(v) : typeof v !== "function");
-var __structIsShareable = v => (v !== null && typeof v === "object" ? __structSharedInstances.has(v) : typeof v !== "function");
+var __structIsShareable = v =>
+  v !== null && typeof v === "object" ? __structSharedInstances.has(v) : typeof v !== "function";
+var __structIsShareable = v =>
+  v !== null && typeof v === "object" ? __structSharedInstances.has(v) : typeof v !== "function";
 
 var __structBrandMethods = proto => {
   for (var key of Reflect.ownKeys(proto)) {
@@ -432,7 +434,7 @@ var __structLayoutFor = ctor => {
       shared = info.shared;
     }
   }
-  for (var i = chain.length; i--; ) for (var n of chain[i].fields) names.push(n);
+  for (var i = chain.length; i--;) for (var n of chain[i].fields) names.push(n);
   __structLayout.set(ctor, (layout = { names, shared }));
   if (shared) {
     // Shared structs have a null prototype and no instance methods.
@@ -450,11 +452,14 @@ var __structLayoutFor = ctor => {
 
 export var __structBase = (parent, fields, shared) => {
   var parentInfo;
-  for (var c = parent; typeof c === "function" && !parentInfo; c = Object.getPrototypeOf(c)) parentInfo = __structInfo.get(c);
+  for (var c = parent; typeof c === "function" && !parentInfo; c = Object.getPrototypeOf(c))
+    parentInfo = __structInfo.get(c);
   if (parent != null && !parentInfo)
     throw new TypeError("A " + (shared ? "shared struct" : "struct") + " can only extend another struct");
   if (parentInfo && parentInfo.shared !== shared)
-    throw new TypeError("A " + (shared ? "shared struct" : "struct") + " can only extend a " + (shared ? "shared struct" : "struct"));
+    throw new TypeError(
+      "A " + (shared ? "shared struct" : "struct") + " can only extend a " + (shared ? "shared struct" : "struct"),
+    );
   if (parentInfo) {
     for (var f of fields)
       if (parentInfo.all.includes(f)) throw new TypeError("Duplicate struct field '" + String(f) + "'");

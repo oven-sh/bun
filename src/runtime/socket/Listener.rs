@@ -1026,6 +1026,10 @@ impl Listener {
             Some((local_addr_bytes.to_vec().into_boxed_slice(), local_port))
         };
 
+        // SAFETY: the caller passes live sockets, owned by their JS wrappers.
+        let refused = prev_maybe_tcp.is_some_and(|prev| unsafe { !(*prev).can_reconnect() })
+            || prev_maybe_tls.is_some_and(|prev| unsafe { !(*prev).can_reconnect() });
+
         #[cfg(windows)]
         let mut connection = connection;
         #[cfg(windows)]
@@ -1039,6 +1043,7 @@ impl Listener {
             // `connection` match drops.
             let mut pipe_name_len: Option<usize> = None;
             let is_named_pipe = match &mut connection {
+                _ if refused => false,
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
                 UnixOrHost::Unix(slice) => match normalize_pipe_name(slice, buf.as_mut_slice()) {
                     Some(name) => {
@@ -1271,7 +1276,7 @@ impl Listener {
         // A SecureContext's ctx was already cloned above; build the SSL_CTX from
         // SSLConfig only if no SecureContext was passed. doConnect hands
         // `socket.owned_ssl_ctx` to the per-VM connect group.
-        if ssl_enabled && owned_ssl_ctx.is_none() {
+        if ssl_enabled && owned_ssl_ctx.is_none() && !refused {
             if let Some(ssl_cfg) = socket_config.ssl.as_ref() {
                 // Per-VM weak `SSLContextCache`: identical configs (including the
                 // common `tls:true` / `{servername}`-only / `{ALPNProtocols}`-only
@@ -1307,7 +1312,7 @@ impl Listener {
         if ssl_enabled {
             connect_finish::<true>(
                 cx,
-                prev_maybe_tls,
+                Previous::new(prev_maybe_tls, refused),
                 handlers,
                 connection,
                 local_binding,
@@ -1322,7 +1327,7 @@ impl Listener {
         } else {
             connect_finish::<false>(
                 cx,
-                prev_maybe_tcp,
+                Previous::new(prev_maybe_tcp, refused),
                 handlers,
                 connection,
                 local_binding,
@@ -1434,10 +1439,29 @@ impl Drop for Listener {
     }
 }
 
+/// What `connect_finish` does with the handle `node:net` dials through.
+#[derive(Clone, Copy)]
+enum Previous<const IS_SSL: bool> {
+    None,
+    Reuse(*mut NewSocket<IS_SSL>),
+    /// `!can_reconnect()`: nothing is dialed, and the attempt fails with EISCONN on a wrapper of its own.
+    Refused,
+}
+
+impl<const IS_SSL: bool> Previous<IS_SSL> {
+    fn new(previous: Option<*mut NewSocket<IS_SSL>>, refused: bool) -> Self {
+        match previous {
+            _ if refused => Self::Refused,
+            Some(previous) => Self::Reuse(previous),
+            None => Self::None,
+        }
+    }
+}
+
 // Note: hoisted from the body of connect_inner; dispatched via const generic.
 fn connect_finish<const IS_SSL: bool>(
     cx: &bun_jsc::JsThread<'_>,
-    maybe_previous: Option<*mut NewSocket<IS_SSL>>,
+    previous: Previous<IS_SSL>,
     handlers: Rc<Handlers>,
     connection: UnixOrHost,
     local_binding: Option<(Box<[u8]>, u16)>,
@@ -1450,7 +1474,8 @@ fn connect_finish<const IS_SSL: bool>(
     promise_value: JSValue,
 ) -> JsResult<JSValue> {
     let vm = handlers.vm;
-    let socket: bun_ptr::ThisPtr<NewSocket<IS_SSL>> = if let Some(prev_ptr) = maybe_previous {
+    let refused = matches!(previous, Previous::Refused);
+    let socket: bun_ptr::ThisPtr<NewSocket<IS_SSL>> = if let Previous::Reuse(prev_ptr) = previous {
         // SAFETY: caller passes a live NewSocket<IS_SSL>, owned by its JS wrapper.
         let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
         debug_assert!(prev.this_value.get().is_not_empty());
@@ -1517,6 +1542,13 @@ fn connect_finish<const IS_SSL: bool>(
     socket_ref
         .poll_ref
         .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+    if refused {
+        let errno = bun_sys::SystemErrno::EISCONN as c_int;
+        let handled = NewSocket::<IS_SSL>::handle_connect_error(socket, errno, 0);
+        NewSocket::deref(&socket);
+        handled?;
+        return Ok(promise_value);
+    }
     // Note: `do_connect` reads `self.connection` directly so no second
     // borrow is needed here.
     // An already-open fd socket runs `on_open` synchronously; what settling

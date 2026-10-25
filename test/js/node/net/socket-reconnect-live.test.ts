@@ -136,3 +136,141 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
     expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
   });
 });
+
+// A TLS socket that adopts the fd of the socket it wraps leaves two handles over one native socket: its own, which
+// the native socket reports to, and the wrapped socket's. Neither can drop that socket for a new dial on its own.
+// Node calls connect(2) on the fd it has: EISCONN, except that Linux answers 0 the first time and 'connect' fires again.
+// A dial here opens a new fd, so there is no kernel to ask and the answer is EISCONN every time.
+describe.concurrent("socket.connect() through a handle that shares its transport", () => {
+  // Runs the scenarios in one child, one after the other. Each returns the sockets it made.
+  async function run(scenarios: Record<string, string>) {
+    const script = `
+      const net = require("node:net");
+      const tls = require("node:tls");
+      const { once } = require("node:events");
+      const { Duplex } = require("node:stream");
+      const next = (socket, event) => new Promise(done => socket.once(event, done));
+      const scenarios = {
+        ${Object.entries(scenarios)
+          .map(([name, body]) => `${JSON.stringify(name)}: async ({ server, target, watch }) => { ${body} }`)
+          .join(",\n")}
+      };
+      (async () => {
+        const results = {};
+        for (const name in scenarios) {
+          const events = [];
+          const watch = (name, socket) => {
+            socket.on("connect", () => events.push(name + " connect"));
+            socket.on("error", err => events.push(name + " " + err.code));
+            return next(socket, "close");
+          };
+          const uncaught = err => events.push("uncaught " + err.code);
+          process.on("uncaughtException", uncaught);
+          let accepted = 0;
+          const server = net.createServer(c => (accepted++, c.on("error", () => {})));
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          const sockets = await scenarios[name]({ server, target: { host: "127.0.0.1", port: server.address().port }, watch });
+          // Closed native sockets are freed at the end of a loop turn. Had the dial closed one behind a handle, these read it.
+          await new Promise(done => setImmediate(() => setImmediate(done)));
+          for (const socket of sockets) socket._handle?.remoteAddress, socket.getProtocol?.();
+          results[name] = { events, accepted };
+          for (const socket of sockets) socket.destroy();
+          server.close();
+          process.off("uncaughtException", uncaught);
+        }
+        console.log(JSON.stringify(results));
+      })();
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { results: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  it("fails with EISCONN on the wrapped socket and dials nothing", async () => {
+    const wrapped = (connect: string) => `
+      const plain = net.connect(target);
+      await once(plain, "connect");
+      const secure = tls.connect({ socket: plain });
+      const closed = Promise.all([watch("plain", plain), watch("secure", secure)]);
+      ${connect}
+      await Promise.race([closed, next(plain, "connect")]);
+      return [plain, secure];
+    `;
+    const { results, stderr, exitCode } = await run({
+      "an address": wrapped(`plain.connect(target);`),
+      "an address and TLS options": wrapped(`plain[Symbol.for("::buntls::")] = () => ({}); plain.connect(target);`),
+      "an address and unusable TLS options": wrapped(
+        `plain[Symbol.for("::buntls::")] = () => ({ ca: "garbage" }); plain.connect(target);`,
+      ),
+      "a path": wrapped(`plain.connect({ path: "/nowhere.sock" });`),
+      "an fd": wrapped(`plain.connect({ fd: 0 });`),
+      "an fd adopted between connect() and its dial": `
+        const plain = net.connect(target);
+        // Ahead of the listener by which tls.connect() adopts the fd.
+        plain.once("connect", () => plain.connect(target));
+        const secure = tls.connect({ socket: plain });
+        await Promise.all([watch("plain", plain), watch("secure", secure)]);
+        return [plain, secure];
+      `,
+      "an accepted socket wrapped as the server side": `
+        const peer = net.connect(target).on("error", () => {});
+        const [plain] = await once(server, "connection");
+        const secure = new tls.TLSSocket(plain, { isServer: true, secureContext: tls.createSecureContext({}) });
+        const closed = Promise.all([watch("plain", plain), watch("secure", secure)]);
+        plain.connect(target);
+        await Promise.race([closed, next(plain, "connect")]);
+        return [plain, secure, peer];
+      `,
+    });
+    const refused = { events: ["secure EISCONN", "plain EISCONN"], accepted: 1 };
+    expect({ results, stderr, exitCode }).toEqual({
+      results: {
+        "an address": refused,
+        "an address and TLS options": refused,
+        "an address and unusable TLS options": refused,
+        "a path": refused,
+        "an fd": refused,
+        "an fd adopted between connect() and its dial": {
+          events: ["secure connect", "plain connect", "secure EISCONN", "plain EISCONN"],
+          accepted: 1,
+        },
+        "an accepted socket wrapped as the server side": { events: ["plain EISCONN"], accepted: 1 },
+      },
+      stderr,
+      exitCode: 0,
+    });
+  });
+
+  // `_handle` is public. Destroying `other` then closes the handle it was given, and its owners hear of that.
+  it("fails with EISCONN on another socket that was given the handle", async () => {
+    const given = (transport: string, owner: string) => `
+      const plain = net.connect(target);
+      await once(plain, "connect");
+      const secure = tls.connect({ socket: ${transport} }).on("error", () => {});
+      const other = new tls.TLSSocket();
+      other._handle = ${owner}._handle;
+      const closed = Promise.all([watch("other", other), next(secure, "close")]);
+      other.connect(target);
+      await Promise.race([closed, next(other, "connect")]);
+      return [plain, secure, other];
+    `;
+    const { results, stderr, exitCode } = await run({
+      "of the wrapped socket": given("plain", "plain"),
+      "of the TLS socket": given("plain", "secure"),
+      "of a TLS socket over a Duplex": given(
+        "new Duplex({ read() {}, write(chunk, encoding, cb) { cb(); } })",
+        "secure",
+      ),
+    });
+    const refused = { events: ["other EISCONN"], accepted: 1 };
+    expect({ results, stderr, exitCode }).toEqual({
+      results: {
+        "of the wrapped socket": refused,
+        "of the TLS socket": refused,
+        "of a TLS socket over a Duplex": refused,
+      },
+      stderr,
+      exitCode: 0,
+    });
+  });
+});

@@ -4894,6 +4894,16 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     }
 }
 
+/// `false` when `pread` on `fd` fails with `ESPIPE`: the file has no position (a pipe, a terminal, an eventfd).
+/// A `preadv` of no iovec asks that without a read: the kernel checks the file and returns before it calls the
+/// driver. Every other answer is `true`, so an fd keeps `pread` unless the kernel refuses it.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn reads_at_offset(fd: Fd) -> bool {
+    // SAFETY: the kernel reads no iovec when the count is 0.
+    let answer = unsafe { linux_syscall::preadv(fd, core::ptr::null(), 0, 0) };
+    answer != Err(libc::ESPIPE)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.StatFS` / `bun.sys.statfs`.
 // On POSIX `bun.StatFS` aliases `struct statfs` (Linux/macOS/FreeBSD); on

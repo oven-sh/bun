@@ -213,11 +213,23 @@ impl Lazy {
                 is_nonblocking = false;
             }
 
+            // The kernel refuses `pread` (`ESPIPE`) on a blocking fd that has no position: an eventfd, a timerfd, an input device. It is read like a blocking FIFO.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            let is_fifo = sys::S::ISFIFO(mode)
+                || (!is_nonblocking
+                    && !file.is_atty.unwrap_or(false)
+                    && (sys::S::ISCHR(mode) || (mode & sys::S::IFMT) == 0)
+                    && !sys::reads_at_offset(fd)
+                    // Not a terminal passed by number: when it has a second reader, a read after `poll` can wait. It needs its own `O_NONBLOCK` description, as stdio gets.
+                    && !(sys::S::ISCHR(mode) && fd.stdio_tag().is_none() && sys::isatty(fd)));
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            let is_fifo = sys::S::ISFIFO(mode);
+
             // pollable: `S.ISFIFO(mode) or S.ISSOCK(mode)`
-            this.pollable = (sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode))
+            this.pollable = (is_fifo || sys::S::ISSOCK(mode))
                 || is_nonblocking
                 || file.is_atty.unwrap_or(false);
-            this.file_type = if sys::S::ISFIFO(mode) {
+            this.file_type = if is_fifo {
                 FileType::Pipe
             } else if sys::S::ISSOCK(mode) {
                 FileType::Socket

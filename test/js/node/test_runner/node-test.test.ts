@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -520,4 +520,83 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "ok", exitCode: 0 });
+});
+
+describe("node:test and a failure that is a thenable", () => {
+  test.concurrent(
+    "should fail a test whose error is a promise, another thenable, or has a then() method",
+    async () => {
+      const { exitCode, stderr } = await runTests(["30-thenable-failures.js"]);
+      const verdicts = stderr
+        .split("\n")
+        .filter(line => /^\((pass|fail)\) /.test(line))
+        .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+      expect(verdicts).toEqual([
+        "(fail) throws a promise",
+        "(fail) throws a thenable",
+        "(fail) rejects with a thenable",
+        "(fail) throws a rejected promise",
+        "(fail) calls done() with a promise",
+        "(fail) has a subtest that throws a promise",
+        "(pass) has a todo subtest that throws a promise",
+        "(fail) a beforeEach hook that throws a promise > fails the test",
+        "(fail) an afterEach hook that throws a thenable > fails the test",
+        "(fail) has a before hook that throws a promise",
+        "(fail) has an after hook that throws a promise",
+        "(fail) fails an assertion while Error.prototype.then exists",
+        "(fail) times out while Error.prototype.then exists",
+        "(fail) has a failing subtest while Error.prototype.then exists",
+      ]);
+      // The error of a test is the value that it threw, and the cause of "1 subtest failed" is the error of the subtest.
+      expect(stderr).toContain("error\nPromise { <resolved> }\n(fail) throws a promise");
+      expect(stderr).toContain("cause: Promise { <resolved> }");
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should report the failure of the last attempt under --retry",
+    async () => {
+      using dir = tempDir("node-test-retry", {
+        "retry.test.js": `
+const { test } = require("node:test");
+let attempt = 0;
+let endFirstAttempt;
+const firstAttemptCanEnd = new Promise(resolve => (endFirstAttempt = resolve));
+// An uncaught error ends the first attempt while its body still waits.
+// The body of the first attempt returns while the second attempt runs.
+test("fails in its last attempt", async () => {
+  attempt++;
+  if (attempt === 1) {
+    setTimeout(() => {
+      throw new Error("the uncaught error of the first attempt");
+    }, 1);
+    await firstAttemptCanEnd;
+    return;
+  }
+  endFirstAttempt();
+  await null;
+  await null;
+  throw new Error("the error of the last attempt");
+});
+`,
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), "test", "--retry=1", "retry.test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("error: the error of the last attempt");
+      expect(stderr).toContain("(fail) fails in its last attempt");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("0 pass"),
+      });
+    },
+    30_000,
+  );
 });

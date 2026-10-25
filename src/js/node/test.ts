@@ -2263,7 +2263,9 @@ async function runOwnBeforeHooks(node: TestNode) {
   }
 }
 
-async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
+type TestOutcome = { __proto__: null; failure: unknown } | undefined;
+
+async function executeTestNode(node: TestNode, fn: TestFn): Promise<TestOutcome> {
   // Runs a single test (top-level or subtest): inherited beforeEach hooks, the
   // body, pending subtests, the plan check, inherited afterEach hooks, and the
   // test's own after hooks. Returns the failure (if any) instead of throwing.
@@ -2393,7 +2395,8 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   node.passed = failure === undefined;
   node.error = failure ?? (acceptedXfail ? bodyFailure : null);
   reportNodeToRunParent(node, started);
-  return failure;
+  // In a box: an async function that returns a thenable settles as that thenable does.
+  return failure === undefined ? undefined : { __proto__: null, failure };
 }
 
 function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo: boolean): Promise<undefined> {
@@ -2406,7 +2409,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
     let failure: unknown;
     try {
       await runOwnBeforeHooks(parent);
-      failure = await executeTestNode(child, fn);
+      failure = (await executeTestNode(child, fn))?.failure;
     } catch (err) {
       failure = err;
     }
@@ -2545,7 +2548,7 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
     // plain describe so bun:test has no todo scope to consult.
     const todoBefore = node.todoFlag;
     executeTestNode(node, fn).then(
-      failure => {
+      outcome => {
         // A runtime t.skip()/t.todo() overrides bun:test's pass/fail accounting
         // (Node counts these as skip/todo even when the body threw); a declared
         // todo body's failure must reach bun:test's own todo accounting instead.
@@ -2554,7 +2557,7 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
         } else if (node.todoFlag && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
           markCurrentResult(true, done);
         } else {
-          done(failure);
+          done(outcome?.failure);
           return;
         }
         done(undefined);

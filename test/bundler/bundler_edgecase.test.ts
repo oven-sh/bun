@@ -2189,8 +2189,8 @@ describe("bundler", () => {
           for (0;; )
             break;
           0;
-          0;
-          log.push(name2);
+          const { name } = __toCommonJS(exports_b);
+          log.push(name);
           return log.join(" ");
         }
         console.log(f(true, "name"));

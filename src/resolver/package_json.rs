@@ -1182,7 +1182,13 @@ impl<'a> Visitor<'a> {
             );
 
             // safe to use "/" on windows. exports in package.json does not use "\\"
-            if strings::ends_with(&key, b"/") || strings::contains_char(&key, b'*') {
+            // A key with more than one "*" is never a pattern:
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/resolve.js#L634
+            let is_expansion_key = match strings::index_of_char(&key, b'*') {
+                Some(star) => !strings::contains_char(&key[star as usize + 1..], b'*'),
+                None => strings::ends_with(&key, b"/"),
+            };
+            if is_expansion_key {
                 expansion_keys.push(MapEntry {
                     value: value.clone(),
                     key: key.clone(),
@@ -1806,6 +1812,7 @@ impl<'a> ESModule<'a> {
                         // Let patternTrailer be the substring of expansionKey from the index
                         // after the first "*" character.
                         let pattern_trailer = &expansion.key[star + 1..];
+                        debug_assert!(!strings::contains_char(pattern_trailer, b'*'));
 
                         // If patternTrailer has zero length, or if matchKey ends with
                         // patternTrailer and the length of matchKey is greater than or

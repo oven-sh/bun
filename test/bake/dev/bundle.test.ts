@@ -918,8 +918,8 @@ devTest("build error in a file imported by a 'use client' component", {
 // chunk does not say that the file lost its directive.
 {
   const framework = { ...minimalFramework, serverComponents: separateSSRGraph };
-  // Holds the loads of `hold` until `until` is loaded `times` times for the server: what is not held is
-  // bundled first.
+  // Holds the loads of `hold` until `until` is loaded `times` times for the server. The dev server receives
+  // the chunks in the order in which the bundler queued the files, so what the held loads lead to comes last.
   const holdLoad = (hold: string, until: string, times: number) => `
     export default [
       {
@@ -935,11 +935,12 @@ devTest("build error in a file imported by a 'use client' component", {
       },
     ];
   `;
-  // The second load of Inner.ts for the server is the first one for the SSR graph.
-  for (const [first, held] of [
-    ["its client reference", "Outer[.]ts"],
-    ["the import of the SSR graph", "Inner[.]ts"],
-  ]) {
+  // The second load of Inner.ts for the server is the first one for the SSR graph. The keys of `serverManifest`
+  // are in the order in which the dev server received the client references, so they show the forced order.
+  for (const [first, held, manifest] of [
+    ["its client reference", "Outer[.]ts", ["Inner.ts#inner", "Outer.ts#Outer"]],
+    ["the import of the SSR graph", "Inner[.]ts", ["Outer.ts#Outer", "Inner.ts#inner"]],
+  ] as const) {
     devTest(`a client component that another one imports keeps its client reference (${first} is bundled first)`, {
       framework,
       pluginFile: holdLoad(held, "Inner[.]ts", 2),
@@ -954,12 +955,12 @@ devTest("build error in a file imported by a 'use client' component", {
             Response.json({
               outer: typeof Outer.Outer,
               inner: typeof Inner.inner,
-              manifest: Object.keys(serverManifest).sort(),
+              manifest: Object.keys(serverManifest),
             });
         `,
       },
       async test(dev) {
-        const clientReferences = { outer: "object", inner: "object", manifest: ["Inner.ts#inner", "Outer.ts#Outer"] };
+        const clientReferences = { outer: "object", inner: "object", manifest };
         expect(await dev.fetch("/").json()).toEqual(clientReferences);
         await dev.write("Inner.ts", `"use client"; export const inner = 2;`, { errors: null });
         expect(await dev.fetch("/").json()).toEqual(clientReferences);

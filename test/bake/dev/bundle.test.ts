@@ -1779,7 +1779,7 @@ devTest("finds a module that moved before any build read it", {
 });
 
 // page1 reaches the barrel through wrapper.js. The build of page2 parses the barrel again, fails to
-// open it, and builds each importer up to page1 again.
+// open it, and builds each importer up to page1 again. No build has read c.js.
 devTest("reports a removed package to a page that imports a file beside its barrel", {
   files: {
     "page1.html": emptyHtmlFile({ scripts: ["page1.ts"] }),
@@ -1789,11 +1789,13 @@ devTest("reports a removed package to a page that imports a file beside its barr
       console.log(w);
     `,
     "page2.ts": `
+      import { c } from 'lib/c';
       import { a } from 'lib';
-      console.log(a);
+      console.log(c, a);
     `,
     ...abPackage("lib", abBarrel),
     "node_modules/lib/wrapper.js": `import { a } from './index.js'; export const w = 'W_' + a;`,
+    "node_modules/lib/c.js": `export const c = "C";`,
   },
   async test(dev) {
     expect((await dev.fetch("/page1")).status).toBe(200);

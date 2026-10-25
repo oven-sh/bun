@@ -1618,9 +1618,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         bv2: &mut bun_bundler::BundleV2<'_>,
     ) -> Result<(), bun_alloc::AllocError> {
         let Some(index) = self.get_file_index(abs_path) else {
-            // No build bundled this file, but the resolver's listing of its directory still names it.
+            // No build bundled this file. If its directory is still there, the listing of it is stale.
             let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
-            let _ = bv2.transpiler.resolver.bust_dir_cache(dirname);
+            if bun_sys::exists(dirname) {
+                let _ = bv2.transpiler.resolver.bust_dir_cache(dirname);
+            }
             return Ok(());
         };
 

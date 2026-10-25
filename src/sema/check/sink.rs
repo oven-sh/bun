@@ -809,7 +809,10 @@ impl Checker<'_, '_> {
             frame.drops_reported && !(frame.incomplete_flow && self.is_in_flow_loop());
         if drops_reported {
             // A frame that drops its own drops these too, unless it turns out to be final after all.
-            if !self.frames.last().is_some_and(|outer| outer.drops_reported) {
+            // Not those of a query that TypeScript wouldn't have made here.
+            if !self.frames.last().is_some_and(|outer| outer.drops_reported)
+                || self.is_requested_eagerly(self.frames.len())
+            {
                 self.reported.truncate(from);
             }
         } else if !frame.tainted {

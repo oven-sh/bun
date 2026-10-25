@@ -586,6 +586,7 @@ impl<'p, 's> Checker<'p, 's> {
             || since(self.any_signature_read_at)
             || since(self.members_in_place_hit_at)
             || !self.check_mode().is_empty()
+            || self.is_under_eager_request_without_result()
             || !match self.stack[self.stack.len() - 2] {
                 Query::Return(..) => true,
                 // `getTypeOfAccessors` calls `getReturnTypeFromBody` itself.

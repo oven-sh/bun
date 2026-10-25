@@ -15467,6 +15467,60 @@ export {};
       expect(exitCode).toBe(1);
     });
 
+    // A signature's parameter types are computed when the signature is, before TypeScript asks for them. Such a request
+    // can run into a cycle that TypeScript doesn't find there. It has no result then, and TypeScript's own request repeats
+    // the round: an expression returned on the way has to be checked again, and what the first round reported is dropped.
+    test("a returned expression isn't kept from a request for a parameter's type that TypeScript makes later", async () => {
+      const circular =
+        "implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.";
+      const own =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      using annotated = project({
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["generic.ts", "plain.ts", "schema.ts"] }),
+        "lib.ts": `export declare class Z<T> { _out: T; transform<U>(f: (v: T) => U): Z<U>; }
+export declare const str: Z<string>;
+export type Infer<S extends Z<any>> = S["_out"];
+export declare const flag: boolean;
+`,
+        "generic.ts": `import { flag } from "./lib"; import { plain } from "./plain";
+export function generic<T>(s: T) { return flag ? s : plain(null!); }
+`,
+        "plain.ts": `import { flag } from "./lib"; import { Out } from "./schema"; import { generic } from "./generic";
+export function plain(v: Out) { return flag ? v : generic(1); }
+`,
+        "schema.ts": `import { str, Infer } from "./lib"; import { generic } from "./generic";
+export const schema = str.transform(v => generic(1));
+export type Out = Infer<typeof schema>;
+`,
+      });
+      using defaulted = project({
+        "a.ts": `function c() { return { w: [v, f()] }; }
+function f(p = c().keys()) { return p; }
+const v = c();
+`,
+      });
+      for (const threads of ["1", "8"]) {
+        const first = await check(annotated, ["--threads", threads]);
+        expect(first.stdout.split("\n")).toEqual([
+          `generic.ts(2,17): error TS7023: 'generic' ${circular}`,
+          `plain.ts(2,17): error TS7023: 'plain' ${circular}`,
+          "plain.ts(2,23): error TS2502: 'v' is referenced directly or indirectly in its own type annotation.",
+          `schema.ts(2,14): error TS7022: 'schema' implicitly has type 'any' ${own}`,
+          `schema.ts(2,37): error TS7024: Function ${circular}`,
+          "schema.ts(3,13): error TS2456: Type alias 'Out' circularly references itself.",
+        ]);
+        expect(first.exitCode).toBe(1);
+        const second = await check(defaulted, ["--threads", threads]);
+        expect(second.stdout.split("\n")).toEqual([
+          `a.ts(1,10): error TS7023: 'c' ${circular}`,
+          `a.ts(2,10): error TS7023: 'f' ${circular}`,
+          `a.ts(2,12): error TS7022: 'p' implicitly has type 'any' ${own}`,
+          `a.ts(3,7): error TS7022: 'v' implicitly has type 'any' ${own}`,
+        ]);
+        expect(second.exitCode).toBe(1);
+      }
+    });
+
     test("reports TS7022 and TS7023 when `return f()` checks the callee while another resolution is in progress", async () => {
       using dir = project({
         "a.ts": `export function p1() { const a = (x = (b() as any)) => x; function b() { return a(); } }

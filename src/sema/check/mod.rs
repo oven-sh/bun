@@ -3053,6 +3053,13 @@ impl<'p, 's> Checker<'p, 's> {
         self.eager.contains(&i) && !self.loop_values.contains(&i)
     }
 
+    /// True if a query in progress that TypeScript wouldn't have made there (`eager`) has no result. TypeScript makes it
+    /// later, with other queries in progress, so what's checked under it now is checked again then.
+    fn is_under_eager_request_without_result(&self) -> bool {
+        let has_no_result = |&at: &usize| self.frames.get(at).is_some_and(|frame| frame.tainted);
+        self.eager.iter().any(has_no_result)
+    }
+
     /// `pushTypeResolution` when the query is already in progress at `i`. Every resolution from
     /// there up is in the cycle and resolves to `any`. Returns false and marks nothing if
     /// TypeScript doesn't search that far down, or wouldn't have made the query.

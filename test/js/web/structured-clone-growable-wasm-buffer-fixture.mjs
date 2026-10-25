@@ -15,20 +15,29 @@ import {
 const page = 65536;
 const maximum = 64;
 
-// What one clone can do. A clone that follows the page rule adds one page to the memory.
-const report = clone => {
+// Asks one clone for one byte more, then for one page more. The second grow adds one page to the memory.
+const probe = clone => {
   const length = clone.byteLength;
   const attempt = newLength => {
     try {
       clone.grow(newLength);
       return clone.byteLength === length + page ? "grows" : `grew to ${clone.byteLength} bytes`;
     } catch (e) {
-      const refused = e.message === `grow failed with new byte length ${newLength}` && clone.byteLength === length;
-      return refused ? e.name : `${e.name}: ${e.message}`;
+      return e instanceof RangeError && clone.byteLength === length ? "RangeError" : `${e.name}: ${e.message}`;
     }
   };
-  const kind = clone.growable ? "growable" : "fixed length";
-  return `${kind}, 1 byte more: ${attempt(length + 1)}, 1 page more: ${attempt(length + page)}`;
+  return {
+    "1 byte more": attempt(length + 1),
+    "1 page more": `${clone.growable ? "growable" : "fixed length"}, ${attempt(length + page)}`,
+  };
+};
+
+// Turns { route: clone } into { "1 byte more": { route: outcome }, "1 page more": { route: outcome } }.
+const probeEach = clones => {
+  const result = { "1 byte more": {}, "1 page more": {} };
+  for (const [route, clone] of Object.entries(clones))
+    for (const [request, outcome] of Object.entries(probe(clone))) result[request][route] = outcome;
+  return result;
 };
 
 if (isMainThread) {
@@ -61,11 +70,12 @@ if (isMainThread) {
 
   const subject = create();
   const source = subject.memory.toResizableBuffer();
-  const result = {};
+  let result;
 
   if (process.argv[2] === "worker") {
-    // The Worker grows the memory from its own thread.
-    setEnvironmentData("buffer", source);
+    // workerData and the environment data travel in one message. A second reference to one object in a
+    // message is not a second clone, so the environment data gets a buffer object of its own.
+    setEnvironmentData("buffer", structuredClone(source));
     const worker = new Worker(fileURLToPath(import.meta.url), { workerData: source });
     const fromWorker = new Promise((resolve, reject) => {
       worker.once("message", resolve);
@@ -73,26 +83,24 @@ if (isMainThread) {
       worker.once("exit", code => reject(new Error(`the Worker exited with code ${code}`)));
     });
     worker.postMessage(source);
-    const { routes, buffer } = await fromWorker;
-    Object.assign(result, routes, { "parentPort.postMessage": report(buffer) });
+    // The Worker grows the memory from its own thread, then sends its buffer back.
+    const { probed, buffer } = await fromWorker;
+    const back = probeEach({ "parentPort.postMessage": buffer });
+    result = {
+      "1 byte more": { ...probed["1 byte more"], ...back["1 byte more"] },
+      "1 page more": { ...probed["1 page more"], ...back["1 page more"] },
+    };
     await worker.terminate();
   } else {
-    result.structuredClone = {
-      "the buffer": report(structuredClone(source)),
-      "a length-tracking Uint8Array": report(structuredClone(new Uint8Array(source)).buffer),
-      "a DataView in an object": report(structuredClone({ views: [new DataView(source)] }).views[0].buffer),
-      "a clone of a clone": report(structuredClone(structuredClone(source))),
-    };
-
     const { port1, port2 } = new MessageChannel();
     port1.postMessage(source);
     const received = receiveMessageOnPort(port2).message;
     const event = new Promise((resolve, reject) => {
-      port2.onmessage = ({ data }) => resolve(report(data));
+      port2.onmessage = ({ data }) => resolve(data);
       port2.onmessageerror = reject;
     });
     port1.postMessage(source);
-    result.MessageChannel = { receiveMessageOnPort: report(received), "message event": await event };
+    const delivered = await event;
     port1.close();
     port2.close();
 
@@ -102,14 +110,25 @@ if (isMainThread) {
       listeners.map(
         listener =>
           new Promise((resolve, reject) => {
-            listener.onmessage = ({ data }) => resolve(report(data));
+            listener.onmessage = ({ data }) => resolve(data);
             listener.onmessageerror = reject;
           }),
       ),
     );
     sender.postMessage(source);
-    result.BroadcastChannel = await broadcast;
+    const [first, second] = await broadcast;
     for (const channel of [sender, ...listeners]) channel.close();
+
+    result = probeEach({
+      "structuredClone of the buffer": structuredClone(source),
+      "structuredClone of a length-tracking Uint8Array": structuredClone(new Uint8Array(source)).buffer,
+      "structuredClone of a DataView in an object": structuredClone({ views: [new DataView(source)] }).views[0].buffer,
+      "structuredClone of a clone": structuredClone(structuredClone(source)),
+      "MessageChannel, receiveMessageOnPort": received,
+      "MessageChannel, message event": delivered,
+      "BroadcastChannel, first listener": first,
+      "BroadcastChannel, second listener": second,
+    });
 
     const plain = new SharedArrayBuffer(8, { maxByteLength: 2 * page });
     structuredClone(plain).grow(9);
@@ -128,11 +147,11 @@ if (isMainThread) {
 } else {
   parentPort.once("message", buffer => {
     parentPort.postMessage({
-      routes: {
-        workerData: report(workerData),
-        environmentData: report(getEnvironmentData("buffer")),
-        postMessage: report(buffer),
-      },
+      probed: probeEach({
+        workerData,
+        environmentData: getEnvironmentData("buffer"),
+        "worker.postMessage": buffer,
+      }),
       buffer,
     });
   });

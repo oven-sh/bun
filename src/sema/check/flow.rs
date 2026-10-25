@@ -5526,8 +5526,6 @@ impl<'p, 's> Checker<'p, 's> {
             // `initialType`.
             start == Start::Known
                 || start == Start::Unsettled && self.assumes_initialized(file, e, declared)
-        } else if self.is_union(declared) {
-            false
         } else {
             match symbol.decls[..] {
                 // `isAlias`: assumed to be initialized at the start of the file.
@@ -5540,7 +5538,7 @@ impl<'p, 's> Checker<'p, 's> {
                 [Decl::Param(pat)] => {
                     matches!(bound.pat_parent[pat.idx()], PatParent::Param(p) if hir[p].default.is_none())
                 }
-                _ => is_dominated_by_declaration,
+                _ => is_dominated_by_declaration && !self.is_union(declared),
             }
         };
         if !is_plain
@@ -5650,7 +5648,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         if self.flow_analysis_disabled.contains(&file) {
             cold_path();
-            return TypeId::ERROR;
+            return self.type_without_flow_analysis(file, declared);
         }
         let bound = self.bound(file);
         let flow = bound.flow_of_expr(e);
@@ -5712,12 +5710,20 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    fn type_without_flow_analysis(&mut self, file: FileId, declared: TypeId) -> TypeId {
+        if self.is_inferred_file(file) {
+            self.convert_auto_to_any(declared)
+        } else {
+            TypeId::ERROR
+        }
+    }
+
     /// `getFlowTypeOfReferenceEx`, once the `FlowState` is set up.
     fn get_flow_type_of_reference(&mut self, walk: &mut Walk, flow: FlowId) -> TypeId {
         let (file, e, declared) = (walk.reference.file, walk.reference.at, walk.declared);
         if self.flow_analysis_disabled.contains(&file) {
             cold_path();
-            return TypeId::ERROR;
+            return self.type_without_flow_analysis(file, declared);
         }
         self.flow_invocation_count += 1;
         let outer = std::mem::replace(&mut self.walk_declared, declared);
@@ -5736,7 +5742,7 @@ impl<'p, 's> Checker<'p, 's> {
             cold_path();
             self.disable_flow_analysis(file);
             self.report_flow_control_error(&walk.reference);
-            return TypeId::ERROR;
+            return self.type_without_flow_analysis(file, declared);
         }
         if walk.steps >= MAX_STEPS {
             cold_path();
@@ -8363,7 +8369,7 @@ impl<'p, 's> Checker<'p, 's> {
         sense: bool,
     ) -> TypeId {
         if self.flow_analysis_disabled.contains(&reference.file) {
-            return TypeId::ERROR;
+            return self.type_without_flow_analysis(reference.file, declared);
         }
         self.flow_invocation_count += 1;
         let start = if before.is_none() {
@@ -8376,7 +8382,7 @@ impl<'p, 's> Checker<'p, 's> {
             if walk.too_deep {
                 self.disable_flow_analysis(reference.file);
                 self.report_flow_control_error(reference);
-                return TypeId::ERROR;
+                return self.type_without_flow_analysis(reference.file, declared);
             }
             if walk.steps >= MAX_STEPS {
                 declared

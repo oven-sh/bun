@@ -13,6 +13,8 @@ pub enum Helper {
     Export,
     ExportSetter,
     ReturnValue,
+    CommonJs,
+    Esm,
     Require,
 }
 
@@ -34,6 +36,17 @@ pub enum Shape {
     ExportDefinesGettersAndBoundSetters,
     ExportSetterStoresBoundReturnValue,
     ReturnValueReturnsArgument,
+    CommonJsRunsCallbackOnce,
+    CommonJsRunsCallbackOnceThenDropsIt,
+    CommonJsRunsFirstKeyOnce,
+    CommonJsRunsFirstOwnNameOnce,
+    CommonJsRunsFirstOwnNameOnceThenDropsIt,
+    CommonJsRunsFirstOwnNameAgainAfterThrow,
+    EsmRunsFunctionOnce,
+    EsmRunsFunctionOnceRethrows,
+    EsmRunsFirstKeyOnce,
+    EsmRunsFirstOwnNameOnce,
+    EsmRunsFirstOwnNameOnceRethrows,
     RequireFactoryPrefersRequire,
 }
 
@@ -56,10 +69,26 @@ impl Shape {
             Shape::ExportDefinesGettersAndBoundSetters => Helper::Export,
             Shape::ExportSetterStoresBoundReturnValue => Helper::ExportSetter,
             Shape::ReturnValueReturnsArgument => Helper::ReturnValue,
+            Shape::CommonJsRunsCallbackOnce => Helper::CommonJs,
+            Shape::CommonJsRunsCallbackOnceThenDropsIt => Helper::CommonJs,
+            Shape::CommonJsRunsFirstKeyOnce => Helper::CommonJs,
+            Shape::CommonJsRunsFirstOwnNameOnce => Helper::CommonJs,
+            Shape::CommonJsRunsFirstOwnNameOnceThenDropsIt => Helper::CommonJs,
+            Shape::CommonJsRunsFirstOwnNameAgainAfterThrow => Helper::CommonJs,
+            Shape::EsmRunsFunctionOnce => Helper::Esm,
+            Shape::EsmRunsFunctionOnceRethrows => Helper::Esm,
+            Shape::EsmRunsFirstKeyOnce => Helper::Esm,
+            Shape::EsmRunsFirstOwnNameOnce => Helper::Esm,
+            Shape::EsmRunsFirstOwnNameOnceRethrows => Helper::Esm,
             Shape::RequireFactoryPrefersRequire => Helper::Require,
         }
     }
 }
+
+const GET_OWN_PROPERTY_NAMES: (&str, Reference) = (
+    "__getOwnPropNames",
+    Reference::Global(&["Object", "getOwnPropertyNames"]),
+);
 
 const DEFINE_PROPERTY: (&str, Reference) = (
     "__defProp",
@@ -174,6 +203,126 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
         text: "v => v",
         references: &[],
         origin: "bun 1.3.10 to 1.4.3",
+    },
+    PublishedFunction {
+        shape: Shape::CommonJsRunsCallbackOnce,
+        text: "(callback, module2) => () => {\nif (!module2) {\nmodule2 = {exports: {}};\ncallback(module2.exports, module2);\n}\nreturn module2.exports;\n}",
+        references: &[],
+        origin: "esbuild 0.8 to 0.9",
+    },
+    PublishedFunction {
+        shape: Shape::CommonJsRunsCallbackOnce,
+        text: "(callback, module2) => () => (module2 || (module2 = {exports: {}}, callback(module2.exports, module2)), module2.exports)",
+        references: &[],
+        origin: "esbuild 0.8 to 0.9",
+    },
+    PublishedFunction {
+        shape: Shape::CommonJsRunsCallbackOnce,
+        text: "(cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports)",
+        references: &[],
+        origin: "bun 1.0.0 to 1.4.3; rolldown 1.0.0-beta.18 to 1.0.0-rc.15",
+    },
+    PublishedFunction {
+        shape: Shape::CommonJsRunsCallbackOnceThenDropsIt,
+        text: "(cb, mod) => () => (\nmod || (cb((mod = { exports: {} }).exports, mod), cb = null), mod.exports\n)",
+        references: &[],
+        origin: "rolldown 1.0.0-rc.17 to 1.2.12",
+    },
+    PublishedFunction {
+        shape: Shape::CommonJsRunsFirstKeyOnce,
+        text: "(cb, mod) => function __require() {\nreturn mod || (0, cb[Object.keys(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n}",
+        references: &[],
+        origin: "esbuild 0.12 to 0.13",
+    },
+    PublishedFunction {
+        shape: Shape::CommonJsRunsFirstKeyOnce,
+        text: "(cb, mod) => function() {\nreturn mod || (0, cb[Object.keys(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n}",
+        references: &[],
+        origin: "esbuild 0.12 to 0.13",
+    },
+    PublishedFunction {
+        shape: Shape::CommonJsRunsFirstOwnNameOnce,
+        text: "(cb, mod) => function __require() {\nreturn mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n}",
+        references: &[GET_OWN_PROPERTY_NAMES],
+        origin: "esbuild 0.14 to 0.27",
+    },
+    PublishedFunction {
+        shape: Shape::CommonJsRunsFirstOwnNameOnce,
+        text: "(cb, mod) => function() {\nreturn mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n}",
+        references: &[GET_OWN_PROPERTY_NAMES],
+        origin: "esbuild 0.14 to 0.27; rolldown 1.0.0-beta.18 to 1.0.0-rc.15",
+    },
+    PublishedFunction {
+        shape: Shape::CommonJsRunsFirstOwnNameOnceThenDropsIt,
+        text: "(cb, mod) =>\nfunction () {\nreturn (\nmod || ((0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), cb = null), mod.exports\n);\n}",
+        references: &[GET_OWN_PROPERTY_NAMES],
+        origin: "rolldown 1.0.0-rc.17 to 1.2.12",
+    },
+    PublishedFunction {
+        shape: Shape::CommonJsRunsFirstOwnNameAgainAfterThrow,
+        text: "(cb, mod) => function __require() {\ntry {\nreturn mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n} catch (e) {\nthrow mod = 0, e;\n}\n}",
+        references: &[GET_OWN_PROPERTY_NAMES],
+        origin: "esbuild 0.28",
+    },
+    PublishedFunction {
+        shape: Shape::CommonJsRunsFirstOwnNameAgainAfterThrow,
+        text: "(cb, mod) => function() {\ntry {\nreturn mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n} catch (e) {\nthrow mod = 0, e;\n}\n}",
+        references: &[GET_OWN_PROPERTY_NAMES],
+        origin: "esbuild 0.28",
+    },
+    PublishedFunction {
+        shape: Shape::EsmRunsFunctionOnce,
+        text: "(fn, res) => () => (fn && (res = fn((fn = 0))), res)",
+        references: &[],
+        origin: "bun 1.0.0 to 1.4.0; rolldown 1.0.0-beta.18 to 1.1.0",
+    },
+    PublishedFunction {
+        shape: Shape::EsmRunsFunctionOnceRethrows,
+        text: "(fn, res, err) => () => {\nif (fn)\ntry {\nres = fn((fn = 0));\n} catch (e) {\nerr = [e];\n}\nif (err) throw err[0];\nreturn res;\n}",
+        references: &[],
+        origin: "bun 1.4.1 to 1.4.3",
+    },
+    PublishedFunction {
+        shape: Shape::EsmRunsFunctionOnceRethrows,
+        text: "(fn, res, err) => () => {\nif (err) throw err[0];\ntry {\nreturn (fn && (res = fn((fn = 0))), res);\n} catch (e) {\nthrow ((err = [e]), e);\n}\n}",
+        references: &[],
+        origin: "rolldown 1.1.3 to 1.2.12",
+    },
+    PublishedFunction {
+        shape: Shape::EsmRunsFirstKeyOnce,
+        text: "(fn, res) => function __init() {\nreturn fn && (res = (0, fn[Object.keys(fn)[0]])(fn = 0)), res;\n}",
+        references: &[],
+        origin: "esbuild 0.12 to 0.13",
+    },
+    PublishedFunction {
+        shape: Shape::EsmRunsFirstKeyOnce,
+        text: "(fn, res) => function() {\nreturn fn && (res = (0, fn[Object.keys(fn)[0]])(fn = 0)), res;\n}",
+        references: &[],
+        origin: "esbuild 0.12 to 0.13",
+    },
+    PublishedFunction {
+        shape: Shape::EsmRunsFirstOwnNameOnce,
+        text: "(fn, res) => function __init() {\nreturn fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;\n}",
+        references: &[GET_OWN_PROPERTY_NAMES],
+        origin: "esbuild 0.14 to 0.27",
+    },
+    PublishedFunction {
+        shape: Shape::EsmRunsFirstOwnNameOnce,
+        text: "(fn, res) => function() {\nreturn fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;\n}",
+        references: &[GET_OWN_PROPERTY_NAMES],
+        origin: "esbuild 0.14 to 0.27; rolldown 1.0.0-beta.18 to 1.1.0",
+    },
+    PublishedFunction {
+        shape: Shape::EsmRunsFirstOwnNameOnceRethrows,
+        text: "(fn, res, err) => function __init() {\nif (err) throw err[0];\ntry {\nreturn fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;\n} catch (e) {\nthrow err = [e], e;\n}\n}",
+        references: &[GET_OWN_PROPERTY_NAMES],
+        origin: "esbuild 0.28",
+    },
+    PublishedFunction {
+        shape: Shape::EsmRunsFirstOwnNameOnceRethrows,
+        text: "(fn, res, err) => function() {\nif (err) throw err[0];\ntry {\nreturn fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;\n} catch (e) {\nthrow err = [e], e;\n}\n}",
+        references: &[GET_OWN_PROPERTY_NAMES],
+        origin: "esbuild 0.28; rolldown 1.1.3 to 1.2.12",
     },
     PublishedFunction {
         shape: Shape::RequireFactoryPrefersRequire,

@@ -19,6 +19,7 @@ pub(super) fn describe_link_error(loaded: &LoadedBuild<'_, '_>, error: &LinkErro
     let name_of = |name| String::from_utf8_lossy(loaded.atoms.bytes(name)).into_owned();
     let module_of = |module: ProgramModule| match module {
         ProgramModule::File(file) => path(file),
+        ProgramModule::Inner { file, .. } => format!("a module inside {}", path(file)),
         ProgramModule::Face(file) => format!("the face of {}", path(file)),
         ProgramModule::Check(file) => format!("the check of {}", path(file)),
         ProgramModule::Runtime(module) => format!("{module:?}"),

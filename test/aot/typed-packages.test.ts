@@ -1,18 +1,18 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { appendFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { openTypesFlags } from "./open-types";
 import { built, slot, spawned, told, unsupported } from "./run-programs";
+import { installSmallRenderer } from "./typed-packages/small-renderer/install";
 
-const host = join(import.meta.dir, "typed-packages", "react-reconciler-host");
-const typedVersion = join(host, "typed-bundle");
-const typedFile = "node_modules/react-reconciler/cjs/react-reconciler.production.ts";
+// The file under the "aot" condition of the package small-renderer.
+const typedFile = "node_modules/small-renderer/index.aot.ts";
 // As the map file has it, where a backslash is written twice.
 const typedModulePath = isWindows
   ? "B:\\\\~BUN\\\\root\\\\" + typedFile.replaceAll("/", "\\\\")
   : "/$bunfs/root/" + typedFile;
-const flags = ["--define", `process.env.NODE_ENV="production"`, "--outfile", "app"];
+const flags = ["--outfile", "app"];
 
 describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
   const folders: string[] = [];
@@ -21,16 +21,7 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
   function project(name: string) {
     const folder = String(tempDir(name, {}));
     folders.push(folder);
-    for (const file of ["main.ts", "with-look-alikes.ts", "modules.d.ts", "tsconfig.json"])
-      cpSync(join(host, file), join(folder, file));
-    mkdirSync(join(folder, "node_modules"));
-    for (const name of ["react", "scheduler"])
-      cpSync(join(host, "stand-ins", name), join(folder, "node_modules", name), { recursive: true });
-    cpSync(typedVersion, join(folder, "node_modules", "react-reconciler"), { recursive: true });
-    writeFileSync(
-      join(folder, "node_modules", "react-reconciler", "package.json"),
-      JSON.stringify({ name: "react-reconciler", version: "0.33.0", main: "index.js" }),
-    );
+    installSmallRenderer(folder);
     return folder;
   }
 
@@ -48,35 +39,34 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
     return found;
   }
   const hot = [
-    "beginWork",
-    "completeWork",
-    "bubbleProperties",
-    "createWorkInProgress",
-    "markUpdateLaneFromFiberToRoot",
-    "getRootForUpdatedFiber",
-    "propagateParentContextChanges",
-    "propagateContextChanges",
-    "checkIfContextChanged",
-    "areHookInputsEqual",
-    "updateWorkInProgressHook",
-    "renderWithHooks",
-    "commitRoot",
-    "commitMutationEffectsOnFiber",
-    "commitHookEffectListMount",
-    "commitHookEffectListUnmount",
+    "begin",
+    "complete",
+    "copyToWorkOn",
+    "markLane",
+    "schedule",
+    "markReaders",
+    "readContext",
+    "hasSameInputs",
+    "copyNextHook",
+    "renderComponent",
+    "reconcile",
+    "renderTree",
+    "commit",
+    "commitHostChanges",
+    "runEffects",
   ];
   function expectTyped(map: string) {
     const { typed, untyped } = compiledOf(map, typedModulePath);
-    expect(typed.bytes).toBeGreaterThan(200_000);
+    expect(typed.bytes).toBeGreaterThan(30_000);
     expect(untyped.bytes).toBeLessThan(typed.bytes / 50);
     expect(hot.filter(name => !typed.names.has(name) || untyped.names.has(name))).toEqual([]);
   }
 
   test(
-    "the typed react-reconciler is compiled typed",
+    "the package is compiled typed",
     () =>
       slot(async () => {
-        const folder = project("aot-typed-reconciler");
+        const folder = project("aot-typed-package");
         const map = join(folder, "app.map");
         const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts"], folder, {
           ...bunEnv,
@@ -116,13 +106,11 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
   };
   for (const [installedTypes, install] of Object.entries(typesInstalled))
     test(
-      `the typed react-reconciler is compiled typed with ${installedTypes}`,
+      `the package is compiled typed with ${installedTypes}`,
       () =>
         slot(async () => {
-          expect(readFileSync(join(typedVersion, "cjs", "react-reconciler.production.ts"), "utf8")).toContain(
-            `type int32 = import("bun").int32;`,
-          );
-          const folder = project("aot-typed-reconciler-types");
+          const folder = project("aot-typed-package-types");
+          expect(readFileSync(join(folder, typedFile), "utf8")).toContain(`import type { int32 } from "bun";`);
           const options = JSON.parse(readFileSync(join(folder, "tsconfig.json"), "utf8"));
           Object.assign(options.compilerOptions, install(folder));
           writeFileSync(join(folder, "tsconfig.json"), JSON.stringify(options));
@@ -139,10 +127,10 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
     );
 
   test(
-    "the reconciler runs as plain Bun beside look-alikes of its records",
+    "the package runs as plain Bun beside look-alikes of its records",
     () =>
       slot(async () => {
-        const folder = project("aot-typed-reconciler-look-alikes");
+        const folder = project("aot-typed-package-look-alikes");
         const build = await spawned(
           [bunExe(), "build", "--compile", "--aot", ...flags, "with-look-alikes.ts"],
           folder,
@@ -165,7 +153,7 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
     "the records that an update walks stay closed in a program with look-alikes",
     () =>
       slot(async () => {
-        const folder = project("aot-typed-reconciler-records");
+        const folder = project("aot-typed-package-records");
         const build = await spawned(
           [bunExe(), "build", "--compile", "--aot", ...openTypesFlags, ...flags, "with-look-alikes.ts"],
           folder,
@@ -181,29 +169,17 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
         );
         // The data from outside is explained, which shows that the report is read.
         expect(said).toMatch(/^aot: unproven-type: unexpected-shape at with-look-alikes\.ts:/m);
-        const walked = [
-          "FiberNode",
-          "FiberRootNode",
-          "Hook",
-          "HookQueue",
-          "Effect",
-          "FunctionComponentUpdateQueue",
-          "Update",
-          "UpdateQueue",
-          "SharedQueue",
-          "ContextDependency",
-          "StackCursor",
-        ];
+        const walked = ["TreeNode", "Root", "Hook", "Queue", "Update", "Effect", "ContextRead", "Element", "Context"];
         expect(walked.filter(name => open.has(name))).toEqual([]);
       }),
     600_000,
   );
 
   test(
-    "a package of TypeScript files that has no full types falls back to untyped, says why, and the compile line counts it",
+    "a package with a type error falls back to untyped, says why, and the compile line counts it",
     () =>
       slot(async () => {
-        const folder = project("aot-typed-reconciler-falls");
+        const folder = project("aot-typed-package-falls");
         appendFileSync(join(folder, typedFile), `\nexport const wrong: number = "a string";\n`);
         const map = join(folder, "app.map");
         const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts"], folder, {
@@ -212,7 +188,7 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
         });
         built(build);
         const said = build.stdout + build.stderr;
-        expect(said).toContain("TS100009: 'react-reconciler' has 1 type error (");
+        expect(said).toContain("TS100009: 'small-renderer' has 1 type error (");
         expect(said).toContain("TS2322: Type 'string' is not assignable to type 'number'.");
         expect(said).toMatch(/compile +app(\.exe)? +1 file compiled without types/);
         const { typed, untyped } = compiledOf(map, typedModulePath);

@@ -4,7 +4,7 @@ use bun_sema::hir::{ExprId, ExprKind, Flags, FnBody, FnKind};
 use smallvec::{SmallVec, smallvec};
 
 use crate::ir::generated::IllTypedCause;
-use crate::ir::{DeclaredType, TypeTable};
+use crate::ir::{DeclaredType, Primitives, TypeTable};
 use crate::lower::{CheckerTypeId, FileLowering};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -120,6 +120,18 @@ impl FileLowering<'_, '_, '_, '_> {
             expression = operand;
         }
         matches!(self.hir[expression].kind, ExprKind::NonNull(_))
+    }
+
+    /// Whether the checker's type of the expression has no number in it.
+    pub(super) fn has_no_number(&mut self, expression: ExprId) -> bool {
+        let Ok(ty) = self.queries.expression_type(expression) else {
+            return false;
+        };
+        let mapped = self.map_type_at(ty, self.hir[expression].pos);
+        let ty = self.fragment.types.get(mapped.ty);
+        mapped.is_checked
+            && !ty.primitives.contains(Primitives::NUMBER)
+            && ty.integer_range().is_none()
     }
 
     pub(super) fn find_cause(

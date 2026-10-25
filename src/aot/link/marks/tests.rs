@@ -498,21 +498,16 @@ fn data_record_keeps_its_layout() {
 }
 
 #[test]
-fn expected_result_keeps_its_layouts_and_site() {
+fn expected_result_keeps_its_layouts() {
     with_test_files(|projects, [main, ..]| {
         let layout_keys = [1, 2].map(test_object_type_key);
         let mut unit = TestUnit::new(main);
-        let module = unit.module;
-        let texts = [&b"Retained"[..], b"Dropped"].map(|text| unit.fragment.strings.intern(text));
-        let sites = texts.map(|text| unit.fragment.add_type_site(create_type_site(module, text)));
         let mut expected_results = Vec::new();
-        for (layout_key, site) in layout_keys.into_iter().zip(sites) {
+        for layout_key in layout_keys {
             let layout = unit.fragment.declare_layout(layout_key);
             let expected = ExpectedResult {
                 ty: TypeTable::OBJECT,
                 layouts: vec![layout],
-                site: Some(site),
-                validation: Vec::new(),
             };
             expected_results.push(unit.fragment.add_expected_result(expected));
         }
@@ -531,9 +526,6 @@ fn expected_result_keeps_its_layouts_and_site() {
         assert!(marked.errors.is_empty(), "{:?}", marked.errors);
         let marks = marked.unit_marks(main);
         assert_eq!(marks.expected_results, [true, false]);
-        assert_eq!(marks.type_sites, [true, false]);
-        assert!(marks.strings[texts[0].index()]);
-        assert!(!marks.strings[texts[1].index()]);
         assert!(marked.has_layout(layout_keys[0]));
         assert!(!marked.has_layout(layout_keys[1]));
     });

@@ -10,7 +10,7 @@ aot=$1 jit=$2 cores=${3:-0-15} out=${4:-against-the-jit}
 [ -x "$aot" ] && [ -x "$jit" ] || { sed -n 2,6p "$0"; exit 2; }
 mkdir -p "$out"
 rm -f "$out/one-core.jsonl" "$out/four-cores.jsonl"
-servers=${SERVERS:-bun,hono,elysia,node,koa,koa-typed,tanstack,tanstack-typed,express,express-typed,fastify,fastify-typed,fastify-schemas}
+servers=${SERVERS:-bun,hono,elysia,node,koa,tanstack,express,fastify,fastify-schemas}
 routes=${ROUTES:-text,async,params,json,hand,typed,post,stream}
 # The name of the event differs by processor, and a name that perf takes may still count nothing.
 misses=

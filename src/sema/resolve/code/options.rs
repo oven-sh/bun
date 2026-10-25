@@ -7,7 +7,6 @@ pub struct ExtensionOrders {
     pub require: Vec<Vec<u8>>,
     pub node_modules_import: Vec<Vec<u8>>,
     pub node_modules_require: Vec<Vec<u8>>,
-    pub main_field: Vec<Vec<u8>>,
 }
 
 #[derive(Clone, Debug)]
@@ -15,8 +14,6 @@ pub struct CodeOptions {
     pub working_directory: Vec<u8>,
     pub conditions: Vec<Vec<u8>>,
     pub custom_conditions: Vec<Vec<u8>>,
-    pub main_fields: Vec<Vec<u8>>,
-    pub has_default_main_fields: bool,
     pub prefers_module_field: bool,
     pub extension_orders: ExtensionOrders,
     pub preserves_symlinks: bool,
@@ -55,8 +52,6 @@ impl CodeOptions {
             working_directory: working_directory.to_vec(),
             conditions: byte_strings(&["bun", "node", "node-addons"]),
             custom_conditions: Vec::new(),
-            main_fields: byte_strings(&["module", "main", "jsnext:main"]),
-            has_default_main_fields: true,
             prefers_module_field: false,
             extension_orders: ExtensionOrders::bun_run(),
             preserves_symlinks: false,
@@ -85,8 +80,8 @@ impl CodeOptions {
         }
     }
 
-    pub(super) fn matches_condition(&self, condition: &[u8], search: CodeSearch<'_>) -> bool {
-        let kind_condition: &[u8] = match search.kind {
+    pub(super) fn matches_condition(&self, condition: &[u8], kind: CodeImportKind) -> bool {
+        let kind_condition: &[u8] = match kind {
             EntryPoint | Import => b"import",
             Require => b"require",
         };
@@ -111,7 +106,6 @@ impl ExtensionOrders {
             node_modules_require: byte_strings(&[
                 ".jsx", ".cjs", ".js", ".mjs", ".mts", ".tsx", ".ts", ".cts", ".json", ".node",
             ]),
-            main_field: byte_strings(&[".js", ".cjs", ".cts", ".tsx", ".ts", ".jsx", ".json"]),
         }
     }
 
@@ -130,11 +124,7 @@ mod tests {
     use super::*;
 
     fn is_match(options: &CodeOptions, condition: &str, kind: CodeImportKind) -> bool {
-        let search = CodeSearch {
-            kind,
-            extensions: &[],
-        };
-        options.matches_condition(condition.as_bytes(), search)
+        options.matches_condition(condition.as_bytes(), kind)
     }
 
     #[test]

@@ -146,6 +146,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         let value = self.lower_tail_expression(expression);
+        let value = self.expect_returned_parse(expression, value);
         let value = self.await_in_async_generator(value);
         self.emit_return(value, Some(expression));
     }

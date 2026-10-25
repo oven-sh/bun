@@ -1,6 +1,6 @@
 // `await body.json()` gives the same whether or not it goes to a declared type, whatever holds the body: a string, bytes, a Blob, a stream of bytes or of strings, a file, a request or a response that came over the network.
 // The bodies are drawn from a fixed seed: JSON that fits the type and JSON that does not, behind byte order marks of every kind, with lone surrogates, with bytes that are no UTF-8, cut short, blank and empty.
-// STATISTIC: TypedResultsSelected >= 6
+// STATISTIC: TypedResultsSelected >= 9
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,9 @@ async function requestAnnotated(body: Request): Promise<unknown> {
   const order: Order = await body.json();
   return order;
 }
+async function requestReturned(body: Request): Promise<Order> {
+  return await body.json();
+}
 async function responseCast(body: Response): Promise<unknown> {
   return (await body.json()) as Order;
 }
@@ -26,12 +29,18 @@ async function responseAnnotated(body: Response): Promise<unknown> {
   const order: Order = await body.json();
   return order;
 }
+async function responseReturned(body: Response): Promise<Order> {
+  return await body.json();
+}
 async function blobCast(body: Blob): Promise<unknown> {
   return (await body.json()) as Order;
 }
 async function blobAnnotated(body: Blob): Promise<unknown> {
   const order: Order = await body.json();
   return order;
+}
+async function blobReturned(body: Blob): Promise<Order> {
+  return await body.json();
 }
 async function untyped(body: any): Promise<unknown> {
   return await body.json();
@@ -148,7 +157,13 @@ const server = Bun.serve({
     if (way === "/echo") return new Response(await request.bytes());
     return Response.json(
       await tell(() =>
-        way === "/cast" ? requestCast(request) : way === "/annotated" ? requestAnnotated(request) : untyped(request),
+        way === "/cast"
+          ? requestCast(request)
+          : way === "/annotated"
+            ? requestAnnotated(request)
+            : way === "/returned"
+              ? requestReturned(request)
+              : untyped(request),
       ),
     );
   },
@@ -193,7 +208,7 @@ const blobs: [string, (body: Body, at: number) => Blob][] = [
 ];
 
 let differences = 0;
-async function sweep(name: string, readers: [Read, Read, Read]) {
+async function sweep(name: string, readers: [Read, Read, Read, Read]) {
   let digest = 0;
   let thrown = 0;
   for (let round = 0; round < 240; round++) {
@@ -201,14 +216,14 @@ async function sweep(name: string, readers: [Read, Read, Read]) {
     const at = below(body.length + 1);
     const answers: string[] = [];
     for (const read of readers) answers.push(await tell(() => read(body, at)));
-    if (answers.some(answer => answer !== answers[2]) && differences++ < 20)
+    if (answers.some(answer => answer !== answers[3]) && differences++ < 20)
       console.log(
         name,
         "DIFFERS for",
         typeof body === "string" ? JSON.stringify(body) : Array.from(body, byte => byte.toString(16)).join(" "),
         answers,
       );
-    if (answers[2]!.startsWith("threw")) thrown++;
+    if (answers[3]!.startsWith("threw")) thrown++;
     for (const answer of answers)
       for (let at = 0; at < answer.length; at++) digest = (Math.imul(digest, 31) + answer.charCodeAt(at)) | 0;
   }
@@ -218,25 +233,28 @@ for (const [name, make] of requests)
   await sweep(name, [
     (body, at) => requestCast(make(body, at)),
     (body, at) => requestAnnotated(make(body, at)),
+    (body, at) => requestReturned(make(body, at)),
     (body, at) => untyped(make(body, at)),
   ]);
 for (const [name, make] of responses)
   await sweep(name, [
     async (body, at) => responseCast(await make(body, at)),
     async (body, at) => responseAnnotated(await make(body, at)),
+    async (body, at) => responseReturned(await make(body, at)),
     async (body, at) => untyped(await make(body, at)),
   ]);
 for (const [name, make] of blobs)
   await sweep(name, [
     (body, at) => blobCast(make(body, at)),
     (body, at) => blobAnnotated(make(body, at)),
+    (body, at) => blobReturned(make(body, at)),
     (body, at) => untyped(make(body, at)),
   ]);
 const asked =
   (way: string): Read =>
   async body =>
     JSON.parse(await (await fetch(server.url + way, post(body))).text());
-await sweep("a request of a server", [asked("cast"), asked("annotated"), asked("untyped")]);
+await sweep("a request of a server", [asked("cast"), asked("annotated"), asked("returned"), asked("untyped")]);
 console.log(differences, "differences");
 server.stop(true);
 rmSync(folder, { recursive: true });

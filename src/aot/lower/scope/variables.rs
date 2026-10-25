@@ -6,6 +6,7 @@ use super::{BindingRef, ScopeSlot};
 use crate::ir::generated::{Variable, VariableFlags, VariableInitialization};
 use crate::ir::{ClassSlot, DeclaredType, VariableId, VariableKey};
 use crate::lower::{FileLowering, class, function};
+use crate::modules::ModuleRef;
 
 impl FileLowering<'_, '_, '_, '_> {
     pub(crate) fn ensure_variable(&mut self, key: VariableKey) -> VariableId {
@@ -21,6 +22,16 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             VariableKey::PrivateState { part, .. } => self.create_private_state_variable(part),
             VariableKey::ModuleExports(_) => self.create_untyped_variable(known::exports),
+            VariableKey::InnerModuleExports(callback) => {
+                let module = self.fragment.declare_module(ModuleRef::Inner {
+                    file: callback.file,
+                    callback: callback.function,
+                });
+                Variable {
+                    module,
+                    ..self.create_untyped_variable(known::exports)
+                }
+            }
             VariableKey::SyntheticExport(_) | VariableKey::Copy(_) => {
                 unreachable!("link defines the variable of an export")
             }

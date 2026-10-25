@@ -1,4 +1,4 @@
-use super::support::{TestProgram, check_only, disk, load_with_tsconfig_override, with_program};
+use super::support::{TestProgram, check_only, disk, with_program};
 use crate::{Diagnostic, host};
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -415,35 +415,6 @@ fn include_reason_uses_governing_options() {
             .iter()
             .any(|line| strings::contains(line, b"lib/a.ts"));
         assert!(names_reference, "{:?}", reasons.concat().as_bstr());
-    });
-}
-
-const NEAREST_CONFIG: &str =
-    r#"{ "compilerOptions": { "noLib": true, "paths": { "@lib": ["./one.ts"] } } }"#;
-const OVERRIDE_CONFIG: &str =
-    r#"{ "compilerOptions": { "noLib": true, "paths": { "@lib": ["./two.ts"] } } }"#;
-
-#[test]
-fn tsconfig_override_governs_every_file() {
-    let main = "export { default } from '@lib'; import './lib/a.ts';";
-    let files = [
-        ("main.ts", main),
-        ("one.ts", "export default 1;"),
-        ("two.ts", "export default 2;"),
-        A,
-        LIB_CONFIG,
-        (CONFIG, NEAREST_CONFIG),
-        ("other.json", OVERRIDE_CONFIG),
-    ];
-    load_with_tsconfig_override(&files, "./main.ts", "other.json", |loaded| {
-        let program = loaded.expect("the program loads");
-        let files = program.files();
-        let [main, two, a] = ["main.ts", "two.ts", "lib/a.ts"].map(|path| program.file(path));
-        assert_eq!(files.options.config_path, project_path("other.json"));
-        assert_eq!(files.module(main).edges, [two, a]);
-        assert_eq!(files.module(main).code_edges, [two, a]);
-        assert!(governing_options(program, "main.ts").is_none());
-        assert!(governing_options(program, "lib/a.ts").is_none());
     });
 }
 

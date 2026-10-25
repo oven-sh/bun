@@ -827,7 +827,12 @@ fn list(path: &[u8]) -> Directory {
     };
     let mut listing = Entries::default();
     let mut entries = bun_sys::iterate_dir(directory.fd());
-    while let Ok(Some(entry)) = entries.next() {
+    loop {
+        let entry = match entries.next() {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(_) => return Directory::Unreadable,
+        };
         let name = entry.name.slice_u8();
         // The entry kind from the directory listing avoids a system call per file.
         let is_link = match entry.kind {

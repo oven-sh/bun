@@ -1,12 +1,13 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, CommonJsVariable, InitialState, SymbolId};
-use bun_sema::hir::{ExprId, ExprKind, MemberKey, PropKey, PropKind, StmtId};
+use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, Decl, InitialState, ScopeId, SymbolId};
+use bun_sema::check::aot::FunctionRef;
+use bun_sema::hir::{ExprId, ExprKind, FnId, MemberKey, PatKind, PropKey, PropKind, StmtId};
 use smallvec::SmallVec;
 
 use super::variables::BodyForm;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{ImportPhase, NullishAccess};
-use crate::ir::{FunctionKey, ValueId, VariableId, VariableKey};
+use crate::ir::{FunctionKey, ModuleId, ValueId, VariableId, VariableKey};
 use crate::lower::captures::Capture;
 use crate::lower::member::{PropertyName, Reference};
 use crate::lower::scope::{BindingForm, BindingRef, Storage};
@@ -16,18 +17,41 @@ use crate::modules::{Member, ModuleRef, Shape, Site, SyntheticExportId, View};
 impl FileLowering<'_, '_, '_, '_> {
     /// The variable that holds `module.exports` of a module whose exports are one value.
     pub(super) fn ensure_exports_variable(&mut self, module: ModuleRef) -> Option<VariableId> {
-        let ModuleRef::File(exporter) = module else {
-            return None;
+        let key = match module {
+            ModuleRef::File(file) => VariableKey::ModuleExports(file),
+            ModuleRef::Inner { file, callback } => VariableKey::InnerModuleExports(FunctionRef {
+                file,
+                function: callback,
+            }),
+            _ => return None,
         };
-        Some(self.ensure_variable(VariableKey::ModuleExports(exporter)))
+        Some(self.ensure_variable(key))
     }
 
-    /// The same of the file itself. `None`: its exports are not one value.
-    pub(super) fn ensure_own_exports_variable(&mut self) -> Option<VariableId> {
-        let own_module = ModuleRef::File(self.file);
-        match self.inputs.modules.shape(own_module) {
-            Shape::Value | Shape::AsToday => self.ensure_exports_variable(own_module),
+    /// The same, and `None` where the exports of the module are not one value.
+    pub(super) fn ensure_whole_exports_variable(
+        &mut self,
+        module: ModuleRef,
+    ) -> Option<VariableId> {
+        match self.inputs.modules.shape(module) {
+            Shape::Value | Shape::AsToday => self.ensure_exports_variable(module),
             Shape::EsModule | Shape::Names => None,
+        }
+    }
+
+    fn top_scope_of(&self, key: FunctionKey) -> Option<ScopeId> {
+        let bound = self.bound;
+        match key {
+            FunctionKey::Source(source) => Some(bound.fns[source.function.idx()].scope),
+            FunctionKey::ImplicitConstructor(class)
+            | FunctionKey::InstanceInitializer(class)
+            | FunctionKey::StaticInitializer(class) => Some(bound.class_scope[class.class.idx()]),
+            FunctionKey::AccessorGetter { member, .. }
+            | FunctionKey::AccessorSetter { member, .. }
+            | FunctionKey::PrivateNameTest { member, .. } => bound
+                .member_class(member)
+                .map(|class| bound.class_scope[class.idx()]),
+            _ => None,
         }
     }
 
@@ -53,6 +77,28 @@ impl FileLowering<'_, '_, '_, '_> {
             },
             _ => None,
         }
+    }
+
+    fn inner_parameter(&self, callback: FnId, index: usize) -> Option<SymbolId> {
+        let parameter = self.hir[callback].params.iter().nth(index)?;
+        let pattern = self.hir[parameter].pat;
+        let PatKind::Ident(_) = self.hir[pattern].kind else {
+            return None;
+        };
+        Some(self.bound.declared_symbol(Decl::Param(pattern)))
+    }
+
+    /// `exports` and `module` of the callback of `__commonJS((exports, module) => { .. })`.
+    pub(super) fn inner_parameters(&self, callback: FnId) -> [Option<SymbolId>; 2] {
+        [
+            self.inner_parameter(callback, 0),
+            self.inner_parameter(callback, 1),
+        ]
+    }
+
+    fn names_symbol(&self, name: ExprId, symbol: Option<SymbolId>) -> bool {
+        matches!(self.hir[name].kind, ExprKind::Ident(_))
+            && symbol.is_some_and(|symbol| self.bound.binding(name) == Binding::Symbol(symbol))
     }
 
     fn find_described_value(&self, descriptor: ExprId) -> Option<ExprId> {
@@ -82,13 +128,50 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    /// The module that the code of the function belongs to: the file, or the inner module of a bundle that is written around it.
+    pub(in crate::lower) fn current_module(&self) -> ModuleRef {
+        let file = &*self.file;
+        let modules = file.inputs.modules;
+        let own_file = ModuleRef::File(file.file);
+        if modules.inner_modules(file.file).is_empty() {
+            return own_file;
+        }
+        let mut next = file.top_scope_of(self.key);
+        while let Some(scope) = next {
+            if let CodeUnit::Function(function) = file.bound.code_unit(scope)
+                && let Some(inner) = modules.inner_module(file.file, function)
+            {
+                return inner;
+            }
+            next = file.bound.runtime_parent_scope(file.hir, scope).some();
+        }
+        own_file
+    }
+
+    pub(in crate::lower) fn current_module_id(&mut self) -> ModuleId {
+        let module = self.current_module();
+        self.file.fragment.declare_module(module)
+    }
+
     /// `return e` there ends the evaluation of a CommonJS module, and nobody gets `e`.
     pub(in crate::lower) fn drops_returned_value(&self) -> bool {
-        self.is_module_body() && self.file.body_form() == BodyForm::Plain
+        match self.key {
+            FunctionKey::ModuleBody(_) => self.file.body_form() == BodyForm::Plain,
+            _ => self.is_module_body(),
+        }
     }
 
     pub(in crate::lower) fn is_module_body(&self) -> bool {
-        matches!(self.key, FunctionKey::ModuleBody(_))
+        let file = &*self.file;
+        match self.key {
+            FunctionKey::ModuleBody(_) => true,
+            FunctionKey::Source(source) => file
+                .inputs
+                .modules
+                .inner_module(file.file, source.function)
+                .is_some(),
+            _ => false,
+        }
     }
 
     pub(super) fn get_own_exports(&mut self) -> ValueId {
@@ -171,7 +254,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let is_read = match self.file.inputs.modules.holder(self.file.file, holder) {
             Some(_) => self.is_stored_for(holder),
             // A name that holds the one value of a module, whose members are variables all the same.
-            None => self.file.scopes.form(holder) == BindingForm::Stored,
+            None => {
+                self.file.scopes.form(holder) == BindingForm::Stored
+                    && !self.is_inner_parameter(holder)
+            }
         };
         if !is_read {
             return None;
@@ -216,9 +302,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let file = &*self.file;
         let (object, _) = file.hir.member_key(access)?;
         let object = file.skip_type_syntax(object);
-        let own_exports = View::Exports(ModuleRef::File(file.file));
         let view = file.find_view(object);
-        view.or_else(|| self.is_exports_mention(object).then_some(own_exports))
+        view.or_else(|| self.find_exports_mention(object).map(View::Exports))
     }
 
     /// `this` of a call of a bound member. A module without an object has only functions that do not look at it.
@@ -232,31 +317,63 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         receiver.unwrap_or_else(|| self.builder.undefined())
     }
 
-    // `module.exports`, as it is written.
-    fn is_module_exports_access(&self, access: ExprId) -> bool {
-        let file = &*self.file;
-        let key = file.hir.member_key(access);
-        key.is_some_and(|(_, key)| key == MemberKey::Name(known::exports))
-            && file.body_form() == BodyForm::Plain
-            && file.builtins.builtin_of_expression(access) == Some(BuiltinId::ModuleObjectExports)
+    fn is_inner_parameter(&self, symbol: SymbolId) -> bool {
+        match self.current_module() {
+            ModuleRef::Inner { callback, .. } => {
+                self.file.inner_parameters(callback).contains(&Some(symbol))
+            }
+            _ => false,
+        }
     }
 
-    // `exports`, `module.exports` or `this` at the top of the module.
-    fn is_exports_mention(&self, expression: ExprId) -> bool {
+    // `module.exports`, as it is written, of the module that the code belongs to.
+    fn find_module_exports_access(&self, access: ExprId) -> Option<ModuleRef> {
         let file = &*self.file;
-        if file.body_form() != BodyForm::Plain {
-            return false;
+        let (object, key) = file.hir.member_key(access)?;
+        if key != MemberKey::Name(known::exports) {
+            return None;
         }
-        match file.hir[expression].kind {
-            // The table of built-ins also follows a stable `var u = exports`. It says nothing of a name that is stored to.
-            ExprKind::Ident(_) => {
-                file.bound.binding(expression) == Binding::CommonJs(CommonJsVariable::Exports)
-                    || file.builtins.builtin_of_expression(expression)
-                        == Some(BuiltinId::ModuleObjectExports)
+        match self.current_module() {
+            module @ ModuleRef::Inner { callback, .. } => {
+                let object = file.skip_type_syntax(object);
+                file.names_symbol(object, file.inner_parameter(callback, 1))
+                    .then_some(module)
             }
-            ExprKind::This => self.is_this_of_module(),
-            _ => self.is_module_exports_access(expression),
+            module @ ModuleRef::File(_) => {
+                let is_own = file.body_form() == BodyForm::Plain
+                    && file.builtins.builtin_of_expression(access)
+                        == Some(BuiltinId::ModuleObjectExports);
+                is_own.then_some(module)
+            }
+            _ => None,
         }
+    }
+
+    // `exports`, `module.exports` or `this` at the top of the module that the code belongs to.
+    fn find_exports_mention(&self, expression: ExprId) -> Option<ModuleRef> {
+        let file = &*self.file;
+        if let Some(module) = self.find_module_exports_access(expression) {
+            return Some(module);
+        }
+        let module = self.current_module();
+        let is_mention = match (module, file.hir[expression].kind) {
+            (ModuleRef::Inner { callback, .. }, ExprKind::Ident(_)) => {
+                file.names_symbol(expression, file.inner_parameter(callback, 0))
+            }
+            // The table of built-ins also follows a stable `var u = exports`. It says nothing of a name that is stored to.
+            (ModuleRef::File(_), ExprKind::Ident(_)) => {
+                let names_exports = file.bound.binding(expression)
+                    == Binding::CommonJs(CommonJsVariable::Exports)
+                    || file.builtins.builtin_of_expression(expression)
+                        == Some(BuiltinId::ModuleObjectExports);
+                file.body_form() == BodyForm::Plain && names_exports
+            }
+            (ModuleRef::File(_), ExprKind::This) => {
+                file.body_form() == BodyForm::Plain && self.is_this_of_module()
+            }
+            _ => false,
+        };
+        is_mention.then_some(module)
     }
 
     /// A read of `module.exports` is a read of the variable, and of one of the five names what the name stands for.
@@ -264,8 +381,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(value) = self.try_lower_module_field(expression) {
             return Some(value);
         }
-        if self.is_module_exports_access(expression) {
-            let module = ModuleRef::File(self.file.file);
+        if let Some(module) = self.find_module_exports_access(expression) {
             let value = emit_module_value(self, module);
             // Only whether it is an object can be asked of it.
             return Some(value.unwrap_or_else(|| self.builder.boolean(true)));
@@ -285,12 +401,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     /// `module.exports = value` stores the variable. Where the module has no object, the statement that stores is lowered as a whole.
     fn lower_module_exports_reference(&mut self, access: ExprId) -> Option<Reference> {
-        let module = ModuleRef::File(self.file.file);
-        if !self.is_module_exports_access(access) || self.file.is_asked_of_module_object(module) {
+        let module = self.find_module_exports_access(access)?;
+        if self.file.is_asked_of_module_object(module) {
             return None;
         }
         let holder = None;
-        Some(match self.file.ensure_own_exports_variable() {
+        Some(match self.file.ensure_whole_exports_variable(module) {
             Some(variable) => Reference::ModuleVariable { variable, holder },
             None => Reference::Discarded { holder },
         })
@@ -301,11 +417,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         access: ExprId,
     ) -> Option<ValueId> {
-        let module = ModuleRef::File(self.file.file);
-        if !self.is_module_exports_access(access) || self.file.is_asked_of_module_object(module) {
+        let module = self.find_module_exports_access(access)?;
+        if self.file.is_asked_of_module_object(module) {
             return None;
         }
-        let variable = self.file.ensure_own_exports_variable()?;
+        let variable = self.file.ensure_whole_exports_variable(module)?;
         let undefined = self.builder.undefined();
         self.builder.put_module_variable(variable, undefined);
         Some(self.builder.boolean(true))
@@ -346,24 +462,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         Some(self.builder.boolean(true))
     }
 
-    // `module.exports = value` and `exports = module.exports = value`: the value.
-    fn find_exports_store(&self, expression: ExprId) -> Option<ExprId> {
+    // `module.exports = value` and `exports = module.exports = value`: the module and the value.
+    fn find_exports_store(&self, expression: ExprId) -> Option<(ModuleRef, ExprId)> {
         let file = &*self.file;
         let (target, value) = find_plain_store(file, expression)?;
-        if self.is_module_exports_access(target) {
-            return Some(value);
+        if let Some(module) = self.find_module_exports_access(target) {
+            return Some((module, value));
         }
         let (inner_target, inner_value) = find_plain_store(file, value)?;
-        let names_exports = self.is_module_exports_access(inner_target)
-            && matches!(file.hir[target].kind, ExprKind::Ident(_))
-            && self.is_exports_mention(target);
-        names_exports.then_some(inner_value)
+        let module = self.find_module_exports_access(inner_target)?;
+        let names_exports = matches!(file.hir[target].kind, ExprKind::Ident(_))
+            && self.find_exports_mention(target) == Some(module);
+        names_exports.then_some((module, inner_value))
     }
 
-    /// `module.exports = { a, b: v, c() {} }` of a module without an object, and `export = { .. }` of TypeScript, which is the same statement: all values, then the stores. A name that nobody reads has no variable.
+    /// `export = { .. }` of TypeScript is `module.exports = { .. }` as a statement.
     pub(in crate::lower) fn try_lower_export_assignment(&mut self, literal: ExprId) -> bool {
+        self.try_lower_exported_literal(ModuleRef::File(self.file.file), literal)
+    }
+
+    // `module.exports = { a, b: v, c() {} }` of a module without an object: all values, then the stores. A name that nobody reads has no variable.
+    fn try_lower_exported_literal(&mut self, module: ModuleRef, literal: ExprId) -> bool {
         let hir = self.file.hir;
-        let module = ModuleRef::File(self.file.file);
         match self.file.inputs.modules.shape(module) {
             Shape::Names => {}
             Shape::Value | Shape::EsModule | Shape::AsToday => return false,
@@ -419,7 +539,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     /// A statement that stores `module.exports` of a module without an object: a literal gives each of its names its value.
     pub(in crate::lower) fn try_lower_exports_statement(&mut self, expression: ExprId) -> bool {
         let store = self.find_exports_store(expression);
-        store.is_some_and(|value| self.try_lower_export_assignment(value))
+        store.is_some_and(|(module, value)| self.try_lower_exported_literal(module, value))
     }
 }
 
@@ -429,6 +549,10 @@ pub(in crate::lower) fn emit_module_value(
     module: ModuleRef,
 ) -> Option<ValueId> {
     match lowering.file.inputs.modules.shape(module) {
+        // `init_x()` of a bundle answers nothing: what the module exports are bindings of the file.
+        Shape::EsModule if matches!(module, ModuleRef::Inner { .. }) => {
+            Some(lowering.builder.undefined())
+        }
         Shape::EsModule => Some(lowering.emit_evaluated_namespace(module)),
         Shape::Value | Shape::AsToday if lowering.file.is_asked_of_module_object(module) => {
             let module = lowering.file.fragment.declare_module(module);

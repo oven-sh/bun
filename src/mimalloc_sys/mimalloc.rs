@@ -155,14 +155,12 @@ pub enum Option {
     page_max_reclaim = 41,
     page_cross_thread_max_reclaim = 42,
     purge_holes = 50,
-    purge_holes_min_interval = 52,
     hand_out_last_freed = 56,
 }
 
 unsafe extern "C" {
     // `mi_option_*` take only by-value `#[repr(C)]` enum + scalar args and
     // mutate mimalloc-internal global state; no pointer invariants → `safe fn`.
-    pub safe fn mi_option_get(option: Option) -> c_long;
     pub safe fn mi_option_set(option: Option, value: c_long);
     pub safe fn mi_option_set_default(option: Option, value: c_long);
     pub fn mi_malloc_usable_size(p: *const c_void) -> usize;

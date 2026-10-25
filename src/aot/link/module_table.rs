@@ -83,7 +83,7 @@ fn add_requested_records(
         for request in context.graph.requests_of(requester) {
             let target = context.module(request.target);
             match target {
-                ProgramModule::Face(_) | ProgramModule::Check(_) => {
+                ProgramModule::Inner { .. } | ProgramModule::Face(_) | ProgramModule::Check(_) => {
                     if known_modules.insert(target) {
                         modules.push(target);
                     }
@@ -123,12 +123,13 @@ fn find_module_origin(
     module: ProgramModule,
 ) -> ModuleOrigin {
     let file = match module {
-        ProgramModule::File(file) | ProgramModule::Face(file) | ProgramModule::Check(file) => {
-            match file.project {
-                ProjectId::Application => file.file,
-                ProjectId::Runtime => return ModuleOrigin::Runtime,
-            }
-        }
+        ProgramModule::File(file)
+        | ProgramModule::Inner { file, .. }
+        | ProgramModule::Face(file)
+        | ProgramModule::Check(file) => match file.project {
+            ProjectId::Application => file.file,
+            ProjectId::Runtime => return ModuleOrigin::Runtime,
+        },
         ProgramModule::Runtime(_) => return ModuleOrigin::Runtime,
         ProgramModule::External { .. } => return ModuleOrigin::Dependency,
     };
@@ -153,7 +154,7 @@ mod tests {
     use crate::link::testing::{Projects, find_file, with_projects};
     use crate::lower::{FragmentBuilder, ModuleFragment};
     use crate::modules::ModuleRef;
-
+    use bun_sema::hir::FnId;
     fn application_module(projects: &Projects<'_, '_>, module: ModuleRef) -> ProgramModule {
         key_context(projects, ProjectId::Application).module(module)
     }
@@ -309,14 +310,28 @@ mod tests {
         ];
         with_projects(&files, |projects| {
             let [index, legacy] = ["index.ts", "legacy.cjs"].map(|name| find_file(projects, name));
-            let declared = [ModuleRef::Check(index), ModuleRef::Face(legacy)];
+            let inner = |callback| ModuleRef::Inner {
+                file: legacy,
+                callback: FnId(callback),
+            };
+            let declared = [
+                ModuleRef::Check(index),
+                ModuleRef::Face(legacy),
+                inner(4),
+                inner(2),
+            ];
             let names = ["index.ts", "legacy.cjs"];
             let mut units = names.map(|name| create_unit(projects, name, &declared));
             units.sort_unstable_by_key(|unit| unit.file);
             let table = collect_modules(projects, &units);
 
             let records_of_index = [ModuleRef::File(index), ModuleRef::Check(index)];
-            let records_of_legacy = [ModuleRef::File(legacy), ModuleRef::Face(legacy)];
+            let records_of_legacy = [
+                ModuleRef::File(legacy),
+                inner(2),
+                inner(4),
+                ModuleRef::Face(legacy),
+            ];
             for records in [&records_of_index[..], &records_of_legacy[..]] {
                 let records = records
                     .iter()

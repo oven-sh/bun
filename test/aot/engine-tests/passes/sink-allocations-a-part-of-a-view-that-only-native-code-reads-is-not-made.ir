@@ -1,0 +1,104 @@
+# A native function whose row says that it only reads or writes the contents of a view takes an address and a count. A part of a view that goes nowhere else is not made: the call takes the view it was cut out of, and where the part starts and ends.
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" declared={type=anything} initialization=Undefined
+function f0 name="straightIntoTheCall" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: int[0, 100], v4: int[0, 100]):
+    v5 = TypedArrayRange v2, v3, v4 valueType=Uint8Array<int[0, 255], pristine[Names]>
+    v6 = CallBuiltin v0, v1, v5 overload=TextEncoderPrototypeEncodeInto/0
+    v7 = PropGet v6 key="written"
+    Return v7
+}
+# CHECK-LABEL: function f0 name="straightIntoTheCall"
+# CHECK-NOT: TypedArrayRange
+# CHECK: [[counts]]: {{*}} = CallBuiltin -, v1, v2, v3, v4 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0 builtinCallForm=Fields
+# CHECK-NOT: TypedArrayRange
+
+function f1 name="theWholeViewOnTheOtherWay" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=int[0, 100]}, {type=int[0, 100]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: int[0, 100], v4: int[0, 100], v5: boolean):
+    Branch v5 -> taken b1(), notTaken b2(v2)
+  b1():
+    v6 = TypedArrayRange v2, v3, v4 valueType=Uint8Array<int[0, 255], pristine[Names]>
+    Jump -> next b2(v6)
+  b2(v7: Uint8Array<int[0, 255], pristine[Names]>):
+    v8 = CallBuiltin v0, v1, v7 overload=TextEncoderPrototypeEncodeInto/0
+    v9 = PropGet v8 key="written"
+    Return v9
+}
+# CHECK-LABEL: function f1 name="theWholeViewOnTheOtherWay"
+# CHECK-NOT: TypedArrayRange
+# CHECK: overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0 builtinCallForm=Fields
+# CHECK-NOT: TypedArrayRange
+
+function f2 name="keptOnOneWay" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=int[0, 100]}, {type=int[0, 100]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: int[0, 100], v4: int[0, 100], v5: boolean):
+    v6 = TypedArrayRange v2, v3, v4 valueType=Uint8Array<int[0, 255], pristine[Names]>
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v6 variable=g0
+    v8 = Integer integer=0
+    Return v8
+  b2():
+    v9 = CallBuiltin v0, v1, v6 overload=TextEncoderPrototypeEncodeInto/0
+    v10 = PropGet v9 key="written"
+    Return v10
+}
+# CHECK-LABEL: function f2 name="keptOnOneWay"
+# CHECK: b1():
+# CHECK: TypedArrayRange v2, v3, v4
+# CHECK: b2():
+# CHECK-NOT: TypedArrayRange
+# CHECK: overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0 builtinCallForm=Fields
+
+function f3 name="theCountsAreKept" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=object}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: int[0, 100], v4: int[0, 100]):
+    v5 = TypedArrayRange v2, v3, v4 valueType=Uint8Array<int[0, 255], pristine[Names]>
+    v6 = CallBuiltin v0, v1, v5 overload=TextEncoderPrototypeEncodeInto/0
+    Return v6
+}
+# CHECK-LABEL: function f3 name="theCountsAreKept"
+# CHECK-NOT: TypedArrayRange
+# CHECK: v6: object = CallBuiltin -, v1, v2, v3, v4 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0
+# CHECK-NEXT: Return v6
+
+function f4 name="madeOnlyOnTheRareWay" parameters=[{type=TextEncoder}, {type=anything}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=int[0, 100]}, {type=int[0, 100]}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: anything, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: int[0, 100], v4: int[0, 100], v5: boolean, v6: boolean):
+    Branch v5 -> taken b1(), notTaken b4(v2)
+  b1():
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = TypedArrayRange v2, v3, v4 valueType=Uint8Array<int[0, 255], pristine[Names]>
+    Jump -> next b4(v7)
+  b3() frequency=Unlikely:
+    v8 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    Jump -> next b4(v8)
+  b4(v9: Uint8Array):
+    v10 = TypeTest v1 testedType=string
+    Branch v10 -> taken b5(| 0), notTaken b6()
+  b5(v11: string):
+    v12 = CallBuiltin v0, v11, v9 overload=TextEncoderPrototypeEncodeInto/0
+    v13 = PropGet v12 key="written"
+    Return v13
+  b6() frequency=Rare:
+    v14 = CallBuiltin v0, v1, v9 overload=TextEncoderPrototypeEncodeInto/0 builtinCallForm=AnyReceiver
+    Return v14
+}
+# CHECK-LABEL: function f4 name="madeOnlyOnTheRareWay"
+# CHECK: b2():
+# CHECK-NOT: TypedArrayRange
+# CHECK: overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0 builtinCallForm=Fields
+# CHECK: frequency=Rare
+# CHECK: TypedArrayRange
+
+function f5 name="theCountsWereTakenApartBefore" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: int[0, 100], v4: int[0, 100]):
+    v5 = TypedArrayRange v2, v3, v4 valueType=Uint8Array<int[0, 255], pristine[Names]>
+    v6 = CallBuiltin v0, v1, v5 overload=TextEncoderPrototypeEncodeInto/0 builtinCallForm=Fields
+    v7 = ResultAt v6 index=1
+    Return v7
+}
+# CHECK-LABEL: function f5 name="theCountsWereTakenApartBefore"
+# CHECK-NOT: TypedArrayRange
+# CHECK: CallBuiltin -, v1, v2, v3, v4 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0 builtinCallForm=Fields

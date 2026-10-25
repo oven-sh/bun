@@ -14,7 +14,7 @@ use bun_sema::check::aot::{
 };
 use bun_sema::fold::FoldInputs;
 use bun_sema::program::Files;
-use bun_sema::resolve::Host;
+use bun_sema::resolve::{AOT_CONDITION, Host};
 use bun_sema::session::Session;
 use bun_sema_driver::host::from_native;
 use bun_sema_driver::{
@@ -95,7 +95,9 @@ pub(crate) fn describe_checker_queries(
 
     let entry_points = [from_native(entry_point)];
     let directory = strings::without_trailing_slash(dirname::<Posix>(&entry_points[0]));
-    let host = DiskWithBuiltinModules::new(requested_threads, directory);
+    let conditions = [AOT_CONDITION.to_vec()];
+    let host =
+        DiskWithBuiltinModules::new(global.bun_vm(), requested_threads, directory, &conditions);
     let threads = NonZeroUsize::new(host.threads()).unwrap_or(NonZeroUsize::MIN);
     let limits = LimitValues::for_host();
     // Printed paths are the loader's, which are real paths.

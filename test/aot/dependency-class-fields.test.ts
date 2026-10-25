@@ -1,13 +1,12 @@
 import { expect } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { readBuildReport } from "./harness/build-report";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-test("the full types of a package defines its fields, as the JavaScript it stands for does", async () => {
-  const javascript = `class Base { set z(v) { this.seen = v; } }\nexport class A extends Base { x; y = 1; }\nexport class B extends Base { z = 2; }\nexport function keys() { return Object.keys(new A()).join(",") + " " + Object.keys(new B()).join(","); }\n`;
-  using dir = tempDir("aot-fields-of-a-typed-version", {
+test("the file under a package's aot condition defines its fields whatever the application's tsconfig.json says", async () => {
+  using dir = tempDir("aot-fields-of-an-aot-package", {
     "package.json": JSON.stringify({ name: "app" }),
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
@@ -24,31 +23,21 @@ test("the full types of a package defines its fields, as the JavaScript it stand
       name: "fields",
       version: "1.0.0",
       type: "module",
-      main: "index.js",
-      types: "index.d.ts",
+      exports: { ".": { types: "./index.d.ts", aot: "./index.aot.ts", default: "./index.js" } },
     }),
-    "node_modules/fields/index.js": javascript,
+    "node_modules/fields/index.js": `class Base { set z(v) { this.seen = v; } }\nexport class A extends Base { x; y = 1; }\nexport class B extends Base { z = 2; }\nexport function keys() { return Object.keys(new A()).join(",") + " " + Object.keys(new B()).join(","); }\n`,
     "node_modules/fields/index.d.ts": `export declare function keys(): string;\n`,
-    ".full-types/fields/full-types.json": JSON.stringify({
-      format: 1,
-      name: "fields",
-      version: "1.0.0",
-      when: {},
-      basis: {},
-      lay: { "index.js": createHash("sha256").update(javascript).digest("hex"), "index.sound.ts": "new" },
-      needs: [],
-    }),
-    ".full-types/fields/lay/index.js": `export * from "./index.sound.ts";\n`,
-    ".full-types/fields/lay/index.sound.ts": `class Base { declare seen: number | undefined; set z(v: number) { this.seen = v; } }\nexport class A extends Base { x: number | undefined; y: number = 1; }\nexport class B extends Base { // @ts-expect-error\n  z: number = 2; }\nexport function keys(): string { return Object.keys(new A()).join(",") + " " + Object.keys(new B()).join(","); }\n`,
+    "node_modules/fields/index.aot.ts": `class Base { declare seen: number | undefined; set z(v: number) { this.seen = v; } }\nexport class A extends Base { x: number | undefined; y: number = 1; }\nexport class B extends Base { // @ts-expect-error\n  z: number = 2; }\nexport function keys(): string { return Object.keys(new A()).join(",") + " " + Object.keys(new B()).join(","); }\n`,
   });
   const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
-  const {
-    stdout: printed,
-    stderr: errors,
-    exitCode: built,
-  } = await run([bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile], String(dir));
+  const report = join(String(dir), "report.json");
+  const { stderr: errors, exitCode: built } = await run(
+    [bunExe(), "build", "--compile", "--aot", "--aot-report=" + report, "./main.ts", "--outfile", outfile],
+    String(dir),
+  );
   expect({ errors: built ? errors : "", built }).toEqual({ errors: "", built: 0 });
-  expect(printed + errors).toContain("full types");
+  expect(errors).not.toContain("fields");
+  expect(readBuildReport(report).statistics.TypedVersionsUsed).toBe(1);
   const { stdout, exitCode } = await run([outfile], String(dir));
   expect({ stdout, exitCode }).toEqual({ stdout: "x,y z\n", exitCode: 0 });
 }, 120_000);

@@ -6,12 +6,13 @@ use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, BuiltinName, MemberLookup};
 use crate::builtins::{builtin_class_of, builtin_value_of};
 use crate::ir::generated::{ExpectedResult, LimitId};
-use crate::ir::{ExpectedResultId, Primitives, TypeId, TypeTable};
+use crate::ir::{ExpectedResultId, Primitives, TypeId, TypeTable, ValueId};
 
 impl FileLowering<'_, '_, '_, '_> {
     // `const config: Config = JSON.parse(text)`, `JSON.parse(text) as Order`: the parse may build its answer with the layouts of the type that it is written under.
+    // So may `return JSON.parse(text)` and `return await response.json()` in a function that declares what it returns.
     fn note_what_a_parse_may_build(&mut self, answer: ExprId) {
-        let Ok(Some(written)) = self.queries.contextual_type(answer) else {
+        let Ok(Some(written)) = self.queries.contextual_type_of_settled_value(answer) else {
             return;
         };
         let position = self.hir[answer].pos;
@@ -63,6 +64,36 @@ impl FileLowering<'_, '_, '_, '_> {
         if hir.list_at(hir[id].type_args).is_empty() && self.calls_parser_of_receiver(callee) {
             self.note_what_a_parse_may_build(awaiting);
         }
+    }
+
+    fn is_untyped_parse(&mut self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        let (call, is_awaited) = match hir[expression].kind {
+            ExprKind::Await(operand) => (self.skip_type_syntax(operand), true),
+            _ => (expression, false),
+        };
+        let ExprKind::Call(id) = hir[call].kind else {
+            return false;
+        };
+        let callee = self.skip_type_syntax(hir[id].callee);
+        hir.list_at(hir[id].type_args).is_empty()
+            && match is_awaited {
+                true => self.calls_parser_of_receiver(callee),
+                false => self.builtins.builtin_of_expression(callee) == Some(BuiltinId::JSONParse),
+            }
+    }
+
+    // An async function converts what it returns to `Order | PromiseLike<Order>`, which names no layout. A parse answers an `Order`.
+    fn type_of_returned_parse(&mut self, returned: ExprId) -> Option<TypeId> {
+        if !self.is_untyped_parse(returned) || self.queries.contextual_type(returned) != Ok(None) {
+            return None;
+        }
+        let written = self
+            .queries
+            .contextual_type_of_settled_value(returned)
+            .ok()??;
+        let ty = self.result_type(written, self.hir[returned].pos);
+        (ty != TypeTable::ANYTHING).then_some(ty)
     }
 
     fn find_expected_result(&mut self, call: ExprId) -> Option<ExpectedResultId> {
@@ -123,12 +154,7 @@ impl FileLowering<'_, '_, '_, '_> {
             self.gave_up(limit, position);
             return None;
         };
-        let expected = ExpectedResult {
-            ty,
-            layouts,
-            site: None,
-            validation: Vec::new(),
-        };
+        let expected = ExpectedResult { ty, layouts };
         // A built-in may build what its type argument says: `response.json<T>()`.
         let builtin_types = self.inputs.builtin_types;
         let is_builtin = target
@@ -144,6 +170,13 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn expect_returned_parse(&mut self, returned: ExprId, value: ValueId) -> ValueId {
+        match self.file.type_of_returned_parse(returned) {
+            Some(ty) => self.expect_type(value, ty),
+            None => value,
+        }
+    }
+
     pub(crate) fn find_expected_result(&mut self, call: ExprId) -> Option<ExpectedResultId> {
         self.file.find_expected_result(call)
     }

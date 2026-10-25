@@ -15,6 +15,8 @@ mod paths;
 mod program_reach;
 pub(crate) mod removable;
 mod runtime_reach;
+#[cfg(test)]
+mod runtime_reach_tests;
 mod summary;
 pub mod testing;
 #[cfg(test)]
@@ -36,9 +38,12 @@ use self::program_reach::LeftOutCode;
 use self::runtime_reach::loads_modules_by_computed_names;
 use crate::builtins::{BuiltinId, BuiltinNames, Platforms, RuntimeModule, table};
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView};
+use crate::diagnostics::{
+    Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView, ShownPosition,
+    log_diagnostic_at,
+};
 use crate::emit::{ProgramBytes, emit_from, emit_with_external_bodies};
-use crate::engine::{self, EngineOptions, EngineRequest, EngineResult, feature_of};
+use crate::engine::{self, EngineOptions, EngineRequest, EngineResult, feature_of, position_of};
 use crate::ir::Program;
 use crate::ir::generated::{FeatureUseKind, UnseenCodeCause};
 use crate::known_helpers::KnownHelpers;
@@ -50,8 +55,8 @@ use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
 use crate::options::{Options, PathOptions};
-use crate::report::SourceTexts;
-use crate::statistics::{LimitValues, Stage, StageClock, StatisticId, Statistics};
+use crate::report::{ModuleLocator, SourceTexts};
+use crate::statistics::{LimitId, LimitValues, Stage, StageClock, StatisticId, Statistics};
 use bun_ast::{Kind, Loader, Log, Msg};
 use bun_core::ZBox;
 use bun_sema::atom::Interner;
@@ -66,6 +71,7 @@ use bun_sema_driver::{
 };
 use bun_sys::{Fd, File};
 use bun_trim::Feature;
+use core::cell::Cell;
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::collections::VecDeque;
@@ -107,15 +113,32 @@ pub struct Compilation {
 /// What the programs that are compiled say about the Workers that they start.
 #[derive(Default)]
 pub(crate) struct StartedWorkers {
+    /// What `find_embedded_files_that_start_workers` found, and the `copies` that the engine saw passed to `new Worker()`.
     pub files: Vec<WorkerFile>,
+    /// What `find_embedded_code_files` found.
+    pub copies: Vec<WorkerFile>,
+    /// Files that a Worker may start from and that the build did not compile for it.
+    pub left_out: Vec<WorkerFile>,
     /// The files of the application that the programs hold, each once, with the sizes of their texts.
     pub held_texts: Vec<(Vec<u8>, usize)>,
     pub writes_preload: bool,
 }
 
 impl StartedWorkers {
+    /// The bytes that a plugin answers for a file are not the code on disk, so no Worker file is compiled from it.
+    pub(crate) fn remove_sources(&mut self, source_paths: &[Vec<u8>]) {
+        self.files
+            .retain(|file| !source_paths.contains(&file.source_path));
+        self.copies
+            .retain(|file| !source_paths.contains(&file.source_path));
+        self.left_out
+            .retain(|file| !source_paths.contains(&file.source_path));
+    }
+
     fn add(&mut self, further: StartedWorkers) {
         self.files.extend(further.files);
+        self.copies.extend(further.copies);
+        self.left_out.extend(further.left_out);
         self.held_texts.extend(further.held_texts);
         self.held_texts.shared_sort_unstable();
         self.held_texts.dedup();
@@ -310,32 +333,10 @@ pub fn emit_program(
     Ok(EmittedProgram { bytes, summary })
 }
 
-// The allocator gives free pages, and the free blocks inside pages that are still in use, back to the system. That lowers the
-// most memory a build ever holds only while the build stands near it. Further down the stages take the same memory again a
-// moment later, and all that is given back interrupts all the threads. What a stage frees when it ends stands right behind a
-// peak: that is given back as ever.
-// In milliseconds.
-#[derive(Copy, Clone)]
-struct PaceOfGivingBack {
-    delay: core::ffi::c_long,
-    interval: core::ffi::c_long,
-}
-
-impl PaceOfGivingBack {
-    const NEVER: PaceOfGivingBack = PaceOfGivingBack {
-        delay: 3_600_000,
-        interval: 3_600_000,
-    };
-
-    fn now() -> PaceOfGivingBack {
-        use bun_alloc::mimalloc::{Option, mi_option_get};
-        PaceOfGivingBack {
-            delay: mi_option_get(Option::purge_delay),
-            interval: mi_option_get(Option::purge_holes_min_interval),
-        }
-    }
-}
-
+// The allocator gives the free blocks inside pages that are still in use back to the system. That lowers the most memory a
+// build ever holds only while the build stands near it. Further down the stages take the same blocks again a moment later,
+// and every block that is given back interrupts all the threads. What a stage frees when it ends stands right behind a peak:
+// that is given back as ever.
 /// While a build runs the allocator also hands out the memory that was freed last.
 struct KeepsFreeBlocksBelowThePeak {
     is_over: Arc<AtomicBool>,
@@ -345,10 +346,9 @@ struct KeepsFreeBlocksBelowThePeak {
 static BUILDS_THAT_KEEP_FREE_BLOCKS: AtomicUsize = AtomicUsize::new(0);
 
 impl KeepsFreeBlocksBelowThePeak {
-    const PERCENT_OF_PEAK: usize = 95;
+    const PERCENT_OF_PEAK: usize = 85;
     const TIME_BEHIND_THE_PEAK: Duration = Duration::from_millis(1500);
     const TIME_BETWEEN_LOOKS: Duration = Duration::from_millis(20);
-    const TIME_BEHIND_THE_BUILD: Duration = Duration::from_millis(1000);
 
     fn begin() -> KeepsFreeBlocksBelowThePeak {
         let is_over = Arc::new(AtomicBool::new(false));
@@ -370,7 +370,6 @@ impl KeepsFreeBlocksBelowThePeak {
     }
 
     fn watch(is_over: &AtomicBool) {
-        let usual = PaceOfGivingBack::now();
         let mut gives_back = true;
         let mut was_near_peak_at = Instant::now();
         while !is_over.load(Ordering::Acquire) {
@@ -381,39 +380,16 @@ impl KeepsFreeBlocksBelowThePeak {
             let should_give_back = was_near_peak_at.elapsed() < Self::TIME_BEHIND_THE_PEAK;
             if should_give_back != gives_back {
                 gives_back = should_give_back;
-                Self::give_back(gives_back, usual);
+                Self::give_back(gives_back);
             }
             std::thread::park_timeout(Self::TIME_BETWEEN_LOOKS);
         }
-        Self::give_back(true, usual);
-        Self::give_back_what_the_build_frees();
+        Self::give_back(true);
     }
 
-    // A process that ends with the build gives its memory back on one thread, and whoever waits for it waits for that too.
-    // While the executable is written most threads have nothing to do.
-    fn give_back_what_the_build_frees() {
-        let began_at = Instant::now();
-        while began_at.elapsed() < Self::TIME_BEHIND_THE_BUILD
-            && BUILDS_THAT_KEEP_FREE_BLOCKS.load(Ordering::Acquire) == 0
-        {
-            bun_alloc::mimalloc::mi_collect(true);
-            std::thread::sleep(Self::TIME_BETWEEN_LOOKS);
-        }
-    }
-
-    fn give_back(gives_back: bool, usual: PaceOfGivingBack) {
-        use bun_alloc::mimalloc::{Option, mi_collect, mi_option_set_default};
-        let pace = match gives_back {
-            true => usual,
-            false => PaceOfGivingBack::NEVER,
-        };
+    fn give_back(gives_back: bool) {
+        use bun_alloc::mimalloc::{Option, mi_option_set_default};
         mi_option_set_default(Option::purge_holes, gives_back.into());
-        mi_option_set_default(Option::purge_delay, pace.delay);
-        mi_option_set_default(Option::purge_holes_min_interval, pace.interval);
-        // What was freed meanwhile has waited long enough.
-        if gives_back {
-            mi_collect(true);
-        }
     }
 
     fn resident_now_and_at_most() -> (usize, usize) {
@@ -446,6 +422,7 @@ impl Drop for KeepsFreeBlocksBelowThePeak {
         self.is_over.store(true, Ordering::Release);
         if let Some(watcher) = self.watcher.take() {
             watcher.thread().unpark();
+            let _ = watcher.join();
         }
     }
 }
@@ -541,7 +518,8 @@ pub fn compile(
     log: &mut Log,
 ) -> Result<Compilation, BuildFailed> {
     let said_before = (log.msgs.len(), log.warnings, log.errors);
-    match compile_with_options(options, provider, log) {
+    let runs_before = ENGINE_RUNS.get();
+    let mut compiled = match compile_with_options(options, provider, log) {
         // The declarations that a build brings along hold no program to what its project has not installed.
         Err(failure) if failure.brought_bun_types && !failure.is_internal_error => {
             log.msgs.truncate(said_before.0);
@@ -553,7 +531,18 @@ pub fn compile(
             compile_with_options(&options, provider, log)
         }
         compiled => compiled,
+    };
+    if let Ok(compiled) = &mut compiled {
+        let runs = ENGINE_RUNS.get() - runs_before;
+        let statistics = &mut compiled.summary.statistics;
+        statistics.count(StatisticId::EngineRuns, runs);
     }
+    compiled
+}
+
+thread_local! {
+    // How often this thread has run the engine, also for programs that a build then threw away. A build runs it on the thread that called `compile`.
+    static ENGINE_RUNS: Cell<u64> = const { Cell::new(0) };
 }
 
 fn compile_with_options(
@@ -606,22 +595,42 @@ fn add_programs_of_worker_files(
     provider: &dyn SourceProvider,
     log: &mut Log,
 ) -> Result<Result<Compilation, Vec<WorkerFile>>, BuildFailed> {
-    let mut pending: VecDeque<WorkerFile> =
-        core::mem::take(&mut first.started_workers.files).into();
+    let mut files = core::mem::take(&mut first.started_workers.files);
+    // A file that was followed to one Worker is not a guess, and it has options if any of its Workers has.
+    files.sort_by_key(|file| file.is_guess);
+    for index in 0..files.len() {
+        let mut same = files
+            .iter()
+            .filter(|it| it.source_path == files[index].source_path);
+        files[index].has_options = same.any(|it| it.has_options);
+    }
+    let mut pending: VecDeque<WorkerFile> = files.into();
     let mut found: Vec<WorkerFile> = Vec::new();
     let mut are_one_program = !splits;
     while let Some(file) = pending.pop_front() {
         let mut entry_points = first.summary.entry_points.iter();
-        if entry_points.any(|it| it.source_path == file.source_path) || found.contains(&file) {
+        let is_known = entry_points.any(|it| it.source_path == file.source_path)
+            || found.iter().any(|it| it.source_path == file.source_path);
+        // A guess is worth one small program, not a second build of everything else.
+        let is_guess = file.is_guess;
+        let index = first.summary.entry_points.len();
+        // The host loads what `preload` names into the global of the Worker.
+        let must_be_one_program =
+            are_one_program || (first.started_workers.writes_preload && file.has_options);
+        if is_known {
+            continue;
+        }
+        if is_guess && must_be_one_program {
+            first.started_workers.left_out.push(file);
             continue;
         }
         found.push(file);
-        let index = first.summary.entry_points.len();
-        are_one_program |= first.started_workers.writes_preload;
+        are_one_program = must_be_one_program;
         if are_one_program {
             continue;
         }
         let said_before = log.msgs.len();
+        let counted_before = (log.warnings, log.errors);
         let own = options_with_worker_files(options, &found[found.len() - 1..]);
         let own = options_with_entry_points(&own, &[options.entry_points.len()]);
         let of_one_load = ProgramsOfOneLoad {
@@ -633,6 +642,13 @@ fn add_programs_of_worker_files(
         let compiled = compile_programs(&own, Some(of_one_load), provider, log);
         forget_repeated_messages(log, said_before);
         let program = match compiled {
+            // The file was not written for a Worker. It stays a plain embedded file.
+            Err(_) if is_guess => {
+                log.msgs.truncate(said_before);
+                (log.warnings, log.errors) = counted_before;
+                first.started_workers.left_out.extend(found.pop());
+                continue;
+            }
             Err(failure) if failure.is_one_program => None,
             Err(failure) => return Err(failure),
             Ok(mut compiled) => compiled.programs.pop().map(|it| it.1),
@@ -645,19 +661,46 @@ fn add_programs_of_worker_files(
                 if !starts_node_workers || names(&program.engine, Feature::WorkerConstructor) =>
             {
                 pending.extend(program.started_workers.files.iter().cloned());
+                let counted = program.summary.statistics.values();
+                first.summary.statistics.add_values(counted);
                 add_program(&mut first, program);
             }
+            _ if is_guess => first.started_workers.left_out.extend(found.pop()),
             _ => are_one_program = true,
         }
     }
-    if found.is_empty() {
-        return Ok(Ok(first));
-    }
     first.summary.folders.shared_sort_unstable();
     first.summary.folders.dedup();
-    match are_one_program {
-        true => Ok(Err(found)),
-        false => Ok(Ok(first)),
+    found.retain(|file| !(are_one_program && file.is_guess));
+    if are_one_program && !found.is_empty() {
+        return Ok(Err(found));
+    }
+    warn_about_worker_files_left_out(&mut first, log);
+    Ok(Ok(first))
+}
+
+// A Worker that gets the path of such a file fails to load, so the build says where that can happen.
+fn warn_about_worker_files_left_out(compiled: &mut Compilation, log: &mut Log) {
+    const MAX_FILES_NAMED: usize = 3;
+    let mut files = core::mem::take(&mut compiled.started_workers.left_out);
+    let entry_points = &compiled.summary.entry_points;
+    files.retain(|file| !(entry_points.iter()).any(|it| it.source_path == file.source_path));
+    // Without a place: only native code might start such a Worker, and there is nothing to change in the program.
+    files.retain(|file| file.started_at.is_some());
+    let key = |file: &WorkerFile| (file.started_at.clone(), file.source_path.clone());
+    files.sort_by_cached_key(key);
+    files.dedup_by_key(|file| key(file));
+    for files in files.chunk_by(|a, b| a.started_at == b.started_at) {
+        let named = files.iter().take(MAX_FILES_NAMED);
+        let mut list = named
+            .map(|file| [&b"\""[..], &file.source_path[..], &b"\""[..]].concat())
+            .collect::<Vec<_>>()
+            .join(&b", "[..]);
+        if let Some(more) = files.len().checked_sub(MAX_FILES_NAMED + 1) {
+            list.extend_from_slice(format!(" and {} more", more + 1).as_bytes());
+        }
+        let place = files[0].started_at.as_ref();
+        log_diagnostic_at(log, Code::WorkerFileNotCompiled, &[&list[..]], place);
     }
 }
 
@@ -923,6 +966,56 @@ fn compile_programs<'a>(
     let mut started_workers = core::mem::take(&mut build.started_workers);
     started_workers.held_texts.shared_sort_unstable();
     started_workers.writes_preload = compiled.iter().any(|it| it.2.writes_preload);
+    let mut reported: Vec<WorkerFile> = Vec::new();
+    for (_, engine, output) in &compiled {
+        let mut locator = ModuleLocator::new(&output.texts);
+        for record in engine.worker_entries() {
+            let path = engine.text(record.path);
+            let mut copies = started_workers.copies.iter();
+            let Some(copy) = copies.find(|it| it.embedded_path == path) else {
+                continue;
+            };
+            let started_at = position_of(record.witness.location).and_then(|position| {
+                Some(ShownPosition {
+                    position: locator.position_of(position)?,
+                    line_text: locator.source_line(position),
+                })
+            });
+            reported.push(WorkerFile {
+                is_guess: record.is_guess != 0,
+                has_options: record.has_options != 0,
+                started_at,
+                ..copy.clone()
+            });
+        }
+    }
+    reported.sort_unstable();
+    // A file that one program only starts Workers with is no guess.
+    let mut certain: Vec<&[u8]> = (started_workers.files.iter())
+        .chain(reported.iter().filter(|it| !it.is_guess))
+        .map(|it| &it.source_path[..])
+        .collect();
+    certain.sort_unstable();
+    let is_certain = |file: &WorkerFile| certain.binary_search(&&file.source_path[..]).is_ok();
+    let mut guessed: Vec<&[u8]> = (reported.iter().filter(|it| !is_certain(it)))
+        .map(|it| &it.source_path[..])
+        .collect();
+    guessed.dedup();
+    // Many code files are more likely pages that a server sends than Workers, so none of them is compiled.
+    let keeps_guesses = guessed.len() as u64 <= build.limits.get(LimitId::MaxGuessedWorkerFiles);
+    let is_kept: Vec<bool> = (reported.iter())
+        .map(|it| keeps_guesses || is_certain(it))
+        .collect();
+    if !keeps_guesses {
+        let limit = LimitId::MaxGuessedWorkerFiles;
+        build.statistics.gave_up(limit, None);
+    }
+    for (file, is_kept) in reported.into_iter().zip(is_kept) {
+        match is_kept {
+            true => started_workers.files.push(file),
+            false => started_workers.left_out.push(file),
+        }
+    }
     let mut started_workers = Some(started_workers);
     build.clock.add_to(&mut build.statistics);
     build.diagnostics.write_to(log);
@@ -1173,6 +1266,7 @@ impl<'a> Build<'a> {
         output: &FrontEndOutput,
     ) -> EngineResult {
         self.clock.stop();
+        ENGINE_RUNS.set(ENGINE_RUNS.get() + 1);
         let leftovers = core::mem::take(&mut self.leftovers);
         let started = Instant::now();
         let ((), engine) = run_beside(

@@ -276,8 +276,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `checkTypeRelatedToEx`. Reports at most one diagnostic, to `diagnostic_output` if given,
     /// otherwise to the sink. Most pairs are related, so a non-reporting run comes first. tsgo has
-    /// no such run, so this one doesn't cache failures. Without an `error_node` it's the only run,
-    /// as in tsgo. An undetermined result counts as related and reports nothing.
+    /// no such run, so this one caches its failures only if it succeeds. Without an `error_node`
+    /// it's the only run, as in tsgo. An undetermined result counts as related and reports nothing.
     pub(super) fn check_type_related_to_ex(
         &mut self,
         source: TypeId,

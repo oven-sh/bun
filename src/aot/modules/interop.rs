@@ -45,6 +45,13 @@ impl Interop {
         RequireResult::Namespace,
     );
 
+    /// The callback of `__commonJS(cb)` or `__esm(fn)`: a body and no export table, whichever helper wraps it.
+    pub(crate) const INNER_MODULE: Interop = Interop::new(
+        ModuleKind::CommonJs,
+        SyntheticExportRule::None,
+        RequireResult::ModuleExports,
+    );
+
     const fn new(
         kind: ModuleKind,
         export_rule: SyntheticExportRule,

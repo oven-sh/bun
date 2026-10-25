@@ -210,5 +210,8 @@
   "a declaration where an expression belongs, nested in itself": {
     "millionInstructions": 6900,
     "megabytes": 280
+  },
+  "all shapes as the entry points of one build, on four threads": {
+    "megabytes": 654
   }
 }

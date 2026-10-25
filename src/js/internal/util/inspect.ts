@@ -1650,29 +1650,29 @@ function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boole
 function copyTypedArray(name: string, value) {
   switch (name) {
     case "Uint8Array":
-      return new primordials.Uint8Array(value);
+      return new Uint8Array(value);
     case "Uint8ClampedArray":
-      return new primordials.Uint8ClampedArray(value);
+      return new Uint8ClampedArray(value);
     case "Uint16Array":
-      return new primordials.Uint16Array(value);
+      return new Uint16Array(value);
     case "Uint32Array":
-      return new primordials.Uint32Array(value);
+      return new Uint32Array(value);
     case "Int8Array":
-      return new primordials.Int8Array(value);
+      return new Int8Array(value);
     case "Int16Array":
-      return new primordials.Int16Array(value);
+      return new Int16Array(value);
     case "Int32Array":
-      return new primordials.Int32Array(value);
+      return new Int32Array(value);
     case "Float16Array":
-      return new primordials.Float16Array(value);
+      return new Float16Array(value);
     case "Float32Array":
-      return new primordials.Float32Array(value);
+      return new Float32Array(value);
     case "Float64Array":
-      return new primordials.Float64Array(value);
+      return new Float64Array(value);
     case "BigUint64Array":
-      return new primordials.BigUint64Array(value);
+      return new BigUint64Array(value);
     case "BigInt64Array":
-      return new primordials.BigInt64Array(value);
+      return new BigInt64Array(value);
   }
 }
 

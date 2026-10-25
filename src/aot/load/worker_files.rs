@@ -7,6 +7,7 @@ use bun_sema::program::{CodeAnswer, FileId, Files};
 use bun_sema_driver::host::to_native;
 
 use crate::builtins::{BuiltinId, RuntimeModule, table};
+use crate::diagnostics::ShownPosition;
 use crate::load::SourceKind;
 use crate::load::loaders::{loader_named_by_path, script_kind_of};
 use crate::load::module_paths::with_separators_of_host;
@@ -20,17 +21,24 @@ pub(crate) struct WorkerFile {
     pub source_path: Vec<u8>,
     /// What the import answers: the path of the copy in the executable.
     pub embedded_path: Vec<u8>,
+    /// The compiler lost track of the path and some Worker gets an unknown value, or another native function looks at the path too.
+    pub is_guess: bool,
+    /// The Worker may also get an options object.
+    pub has_options: bool,
+    /// Of a file that the engine reported: one `new Worker()` that may get the path.
+    pub started_at: Option<ShownPosition>,
 }
 
 struct Walk<'a, 's> {
     files: &'a Files<'s>,
     limits: &'a LimitValues,
-    loaders: &'a [(Vec<u8>, Loader)],
     constructor: Option<BuiltinId>,
     variables_left: u64,
     parameters_left: u64,
     pending: Vec<(FileId, ExprId)>,
-    copies: Vec<FileId>,
+    has_options: bool,
+    /// Each file with its `WorkerFile::has_options`.
+    copies: Vec<(FileId, bool)>,
 }
 
 // `import path from "./worker.js" with { type: "file" }; new Worker(path)`: the build has seen the code that the Worker runs. What the constructor is given is followed back through variables, parameters and exports to the import. In the order of their paths.
@@ -42,22 +50,78 @@ pub(crate) fn find_embedded_files_that_start_workers(
     let mut walk = Walk {
         files,
         limits,
-        loaders,
         constructor: table::find_name(b"Worker").and_then(table::global),
         variables_left: 0,
         parameters_left: 0,
         pending: Vec::new(),
+        has_options: false,
         copies: Vec::new(),
     };
     for &file in files.compiled_files() {
         walk.visit_file(file);
     }
     let mut found: Vec<WorkerFile> = (walk.copies.iter())
-        .filter_map(|&copy| walk.describe(copy))
+        .filter_map(|&(copy, has_options)| {
+            Some(WorkerFile {
+                has_options,
+                ..describe_embedded_file(files, loaders, copy)?
+            })
+        })
         .collect();
     found.sort_unstable();
     found.dedup();
     found
+}
+
+// Every code file that the program embeds with the `file` loader, sorted by path.
+pub(crate) fn find_embedded_code_files(
+    files: &Files<'_>,
+    loaders: &[(Vec<u8>, Loader)],
+) -> Vec<WorkerFile> {
+    let compiled = files.compiled_files().iter();
+    let mut copies: Vec<WorkerFile> = compiled
+        .filter_map(|&file| describe_embedded_file(files, loaders, file))
+        .collect();
+    copies.sort_unstable();
+    copies.dedup();
+    copies
+}
+
+/// `WorkerFile::source_path` of a file that the load knows as `path`.
+pub(crate) fn source_path_of(path: &[u8]) -> Vec<u8> {
+    with_separators_of_host(to_native(path), cfg!(windows))
+}
+
+fn describe_embedded_file(
+    files: &Files<'_>,
+    loaders: &[(Vec<u8>, Loader)],
+    copy: FileId,
+) -> Option<WorkerFile> {
+    let source = parsed_source(files, copy)?;
+    let path = files.module(copy).file_name();
+    let is_copy = source.kind == SourceKind::Data && source.loader == Loader::File;
+    let is_code =
+        loader_named_by_path(loaders, path).is_some_and(|loader| script_kind_of(loader).is_some());
+    if !is_copy || !is_code || source.is_from_plugin || source.plugin_module.is_some() {
+        return None;
+    }
+    let hir = files.hir(copy);
+    let embedded_path = hir.ids(hir.body).find_map(|statement| {
+        let StmtKind::ExportDefault(value) = hir[statement].kind else {
+            return None;
+        };
+        match hir[value].kind {
+            ExprKind::String(path) => Some(files.atoms.bytes(path).to_vec()),
+            _ => None,
+        }
+    })?;
+    Some(WorkerFile {
+        source_path: source_path_of(path),
+        embedded_path,
+        is_guess: false,
+        has_options: false,
+        started_at: None,
+    })
 }
 
 impl Walk<'_, '_> {
@@ -83,7 +147,9 @@ impl Walk<'_, '_> {
             if !starts_worker || !is_evaluated {
                 continue;
             }
-            if let Some(argument) = hir.ids(hir[call].args).next() {
+            let mut arguments = hir.ids(hir[call].args);
+            if let Some(argument) = arguments.next() {
+                self.has_options = arguments.next().is_some();
                 self.follow(file, argument);
             }
         }
@@ -213,7 +279,7 @@ impl Walk<'_, '_> {
             .is_some_and(|it| it.kind == SourceKind::Data && it.loader == Loader::File);
         if is_copy {
             if name == known::default {
-                self.copies.push(exporter);
+                self.copies.push((exporter, self.has_options));
             }
             return;
         }
@@ -253,30 +319,5 @@ impl Walk<'_, '_> {
                 _ => {}
             }
         }
-    }
-
-    fn describe(&self, copy: FileId) -> Option<WorkerFile> {
-        let files = self.files;
-        let source = parsed_source(files, copy)?;
-        let path = files.module(copy).file_name();
-        let is_code = loader_named_by_path(self.loaders, path)
-            .is_some_and(|loader| script_kind_of(loader).is_some());
-        if !is_code || source.is_from_plugin || source.plugin_module.is_some() {
-            return None;
-        }
-        let hir = files.hir(copy);
-        let embedded_path = hir.ids(hir.body).find_map(|statement| {
-            let StmtKind::ExportDefault(value) = hir[statement].kind else {
-                return None;
-            };
-            match hir[value].kind {
-                ExprKind::String(path) => Some(files.atoms.bytes(path).to_vec()),
-                _ => None,
-            }
-        })?;
-        Some(WorkerFile {
-            source_path: with_separators_of_host(to_native(path), cfg!(windows)),
-            embedded_path,
-        })
     }
 }

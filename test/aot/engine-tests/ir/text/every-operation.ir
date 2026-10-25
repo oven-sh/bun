@@ -443,9 +443,10 @@
 # CHECK-NEXT: v16 = NewArrayWithCapacity v1
 # CHECK-NEXT: v17 = TryPutByValDirect v0, v1, v2
 # CHECK-NEXT: v18 = TryPutIndex v0, v1, v2
+# CHECK-NEXT: v19 = TryPutDoubleIndex v0, v1, v3
 # CHECK-NEXT: GrowNewArray v11, v1
-# CHECK-NEXT: v20 = TruncateNewArray v11, v1
-# CHECK-NEXT: Return v20
+# CHECK-NEXT: v21 = TruncateNewArray v11, v1
+# CHECK-NEXT: Return v21
 # CHECK-NEXT: }
 # CHECK-NEXT: function f29 module=m2 role=Library thisType={type=anything} parameters=[{type=Map}, {type=Set}, {type=i32}] results=[{type=anything}]
 # CHECK-NEXT: b0(v0: Map, v1: Set, v2: i32):
@@ -909,9 +910,10 @@ function f28 module=m2 role=Library thisType={type=anything} parameters=[{type=A
     v16 = NewArrayWithCapacity v1
     v17 = TryPutByValDirect v0, v1, v2
     v18 = TryPutIndex v0, v1, v2
+    v19 = TryPutDoubleIndex v0, v1, v3
     GrowNewArray v11, v1
-    v20 = TruncateNewArray v11, v1
-    Return v20
+    v21 = TruncateNewArray v11, v1
+    Return v21
 }
 function f29 module=m2 role=Library thisType={type=anything} parameters=[{type=Map}, {type=Set}, {type=i32}] results=[{type=anything}] {
   b0(v0: Map, v1: Set, v2: i32):

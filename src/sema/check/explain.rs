@@ -77,7 +77,6 @@ pub struct RelatedExplained {
     pub text: Vec<u8>,
     pub args: Args,
     pub message_chain: Vec<MessageChain>,
-    pub class: DiagnosticClass,
 }
 
 /// A diagnostic formatted for display.
@@ -170,7 +169,6 @@ impl Explained {
                         text,
                         args: related.args,
                         message_chain,
-                        class,
                     }
                 })
                 .collect(),

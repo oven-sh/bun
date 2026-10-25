@@ -185,9 +185,9 @@ impl RecordBuilder<'_, '_, '_> {
             debug_assert_eq!(id.index(), records.len());
             records.push(match module {
                 ProgramModule::File(file) => self.build_file_record(units, index, file),
-                ProgramModule::Face(file) | ProgramModule::Check(file) => {
-                    self.build_further_record(index, module, file)
-                }
+                ProgramModule::Inner { file, .. }
+                | ProgramModule::Face(file)
+                | ProgramModule::Check(file) => self.build_further_record(index, module, file),
                 ProgramModule::Runtime(runtime_module) => {
                     let path = self.strings.intern(table::specifier_of(runtime_module));
                     let mut record = create_record(Interop::RUNTIME, path, path);
@@ -334,7 +334,7 @@ impl RecordBuilder<'_, '_, '_> {
             ProgramModule::Face(_) => {
                 record.exports = self.build_exports(project, graph.exports_of(own));
             }
-            ProgramModule::Check(_) => {}
+            ProgramModule::Inner { .. } | ProgramModule::Check(_) => {}
             ProgramModule::File(_) | ProgramModule::Runtime(_) | ProgramModule::External { .. } => {
                 unreachable!("the record belongs to a file")
             }

@@ -73,6 +73,7 @@ impl Checker<'_, '_> {
         elements.shared_sort_unstable_by_key(|&e| hir[e].pos);
         let first_jsx_tag_in_file = elements.first().copied();
         elements.retain(|e| !bound.is_unchecked(e.idx()));
+        elements.retain(|&e| !self.is_in_left_out_function(hir[e].pos));
         // `getJsxNamespaceContainerForImplicitImport` of TypeScript 7.1. Whichever element triggers the error, it's
         // reported at `firstJSXTagInFile`, even if that tag is never checked.
         if let (Some(spec), Some(first)) = (runtime, first_jsx_tag_in_file)

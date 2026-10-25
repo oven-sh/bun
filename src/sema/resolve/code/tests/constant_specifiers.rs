@@ -3,9 +3,7 @@ use super::*;
 use crate::hir::{ExportId, ExprId, ImportEqualsId, ImportId, StmtId};
 use crate::module_format::DeclaredModuleType::{CommonJs, Esm, Unknown};
 use crate::resolve::code::memory_host::{format_resolution, resolve_in};
-use crate::resolve::code::search::{
-    is_directory_specifier, join_unrooted, preserve_trailing_slash,
-};
+use crate::resolve::code::search::{join_unrooted, preserve_trailing_slash};
 
 const MODULE_NOT_FOUND: &str = "NotFound(ModuleNotFound)";
 const PACKAGE_NOT_FOUND: &str = "NotFound(PackageNotFound)";
@@ -139,6 +137,25 @@ fn external_kind_of_imports_target_is_unchanged() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn imports_target_that_host_does_not_claim_is_a_package() {
+    let installed = "/p/node_modules/dep/index.js";
+    let imports = r##"{"imports": {"#fs": "node:fs", "#dep": "dep", "#again": "#dep"}}"##;
+    let files = [("/p/package.json", imports), (installed, "")];
+    let host = MemoryHost::new(&files);
+    assert_eq!(import(&host, "#dep"), installed);
+    assert_eq!(import(&host, "#fs"), PACKAGE_NOT_FOUND);
+    assert_eq!(import(&host, "#again"), PACKAGE_NOT_FOUND);
+    for claim in [
+        HostResolution::Path(b"/bun/fs.ts".to_vec()),
+        HostResolution::Erased,
+    ] {
+        let host = MemoryHost::new(&files).runtime_module("node:fs", claim);
+        assert_eq!(entry_point(&host, "#fs"), MODULE_NOT_FOUND);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn host_is_asked_for_every_request() {
     let installed = "/p/node_modules/dep/index.js";
     let module = HostResolution::Module(HostModuleId(7));
@@ -224,15 +241,6 @@ fn empty_specifier_is_not_offered_to_host() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn dot_names_importer_directory() {
-    let host = empty_files(&["/p/b.ts", "/p/b/index.ts"]);
-    let import = |specifier| resolve_in(&host, &bun_run(), "/p/b/x.ts", specifier, Import);
-    assert_eq!(import("."), "/p/b/index.ts");
-    assert_eq!(import("../b"), "/p/b.ts");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
 fn bare_entry_point_is_package_then_relative() {
     let host = empty_files(&["/p/index.ts", "/p/util.ts", INSTALLED]);
     assert_eq!(entry_point(&host, "pkg"), INSTALLED);
@@ -288,6 +296,35 @@ fn only_module_not_found_follows_specifier_form() {
     let host = MemoryHost::new(&files);
     assert_eq!(import(&host, "pkg"), NOT_EXPORTED);
     assert_eq!(import(&host, "pkg/a"), "/p/node_modules/pkg/a.js");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn file_that_require_finds_is_kept_beside_imported_file() {
+    let (imported, required) = ("/p/x/esm.js", "/p/x/cjs.js");
+    let host = empty_files(&[imported, required]).required_in_place_of(imported, required);
+    let required_after_import = |prefers_module_field: bool| {
+        let options = CodeOptions {
+            prefers_module_field,
+            ..bun_run()
+        };
+        with_resolver(&host, &options, |resolver| {
+            assert_eq!(
+                resolver.file_required_in_place_of(imported.as_bytes()),
+                None
+            );
+            find_file(resolver, &import_request("/p/main.ts", "./x/esm.js"));
+            assert_eq!(
+                resolver.file_required_in_place_of(required.as_bytes()),
+                None
+            );
+            resolver
+                .file_required_in_place_of(imported.as_bytes())
+                .map(text)
+        })
+    };
+    assert_eq!(required_after_import(true), Some(required.to_owned()));
+    assert_eq!(required_after_import(false), None);
 }
 
 #[test]
@@ -399,67 +436,6 @@ fn loader_request_passes_kind_and_attributes() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn absolute_specifier_tries_paths_first() {
-    let sources = [("/p/src/a.ts", ""), ("/virtual/a.ts", "")];
-    let paths = r#"{"compilerOptions": {"paths": {"/virtual/*": ["./src/*"]}}}"#;
-    let config = [("/p/tsconfig.json", paths)];
-    let configured = MemoryHost::new(&[&sources[..], &config[..]].concat());
-    let plain = MemoryHost::new(&sources);
-    assert_eq!(import(&configured, "/virtual/a"), "/p/src/a.ts");
-    assert_eq!(import(&plain, "/virtual/a"), "/virtual/a.ts");
-    assert_eq!(import(&plain, "/virtual/b"), MODULE_NOT_FOUND);
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn paths_substitution_preserves_trailing_slash() {
-    let paths = r#"{"@/*": ["./src/*"], "rooted/*": ["/p/src/*"]}"#;
-    let config = format!(r#"{{"compilerOptions": {{"paths": {paths}}}}}"#);
-    let host = MemoryHost::new(&[
-        ("/p/tsconfig.json", config.as_str()),
-        ("/p/src/lib.ts", ""),
-        ("/p/src/lib/index.ts", ""),
-    ]);
-    for file in ["@/lib", "rooted/lib"] {
-        assert_eq!(import(&host, file), "/p/src/lib.ts", "{file}");
-    }
-    for directory in ["@/lib/", "rooted/lib/"] {
-        assert_eq!(
-            import(&host, directory),
-            "/p/src/lib/index.ts",
-            "{directory}"
-        );
-    }
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn rooted_exact_substitution_is_loaded_as_written() {
-    let paths = r#"{"exact": ["/lib/."], "pattern/*": ["/lib/*"]}"#;
-    let config = format!(r#"{{"compilerOptions": {{"paths": {paths}}}}}"#);
-    let file = [("/p/tsconfig.json", config.as_str()), ("/lib.ts", "")];
-    let directory = [("/lib/index.ts", "")];
-    let host = MemoryHost::new(&[&file[..], &directory[..]].concat());
-    assert_eq!(import(&host, "exact"), "/lib/index.ts");
-    assert_eq!(import(&host, "pattern/."), "/lib.ts");
-
-    let empty_directory = [("/lib/other.txt", "")];
-    let host = MemoryHost::new(&[&file[..], &empty_directory[..]].concat());
-    assert_eq!(import(&host, "exact"), PACKAGE_NOT_FOUND);
-    assert_eq!(import(&host, "pattern/."), "/lib.ts");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn absolute_specifier_is_normalized() {
-    let host = empty_files(&["/p/src.ts", "/p/src/index.ts"]);
-    assert_eq!(import(&host, "/p/x/../src"), "/p/src.ts");
-    assert_eq!(import(&host, "/p/src/x/.."), "/p/src/index.ts");
-    assert_eq!(import(&host, "/p/src/"), "/p/src/index.ts");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
 fn directory_defaults_to_working_directory() {
     let host = empty_files(&["/p/a.ts"]);
     let finds_file = |directory: &str| {
@@ -501,7 +477,7 @@ fn manifest_text_is_read_once() {
     let host = MemoryHost::new(&files);
     with_resolver(&host, &bun_run(), |resolver| {
         resolve_types(resolver);
-        resolver.resolve_code(&import_request("/p/main.ts", "pkg"));
+        resolver.enclosing_package(INSTALLED.as_bytes());
     });
     assert_eq!(host.reads(MANIFEST), 1);
 
@@ -528,8 +504,7 @@ fn project_resolver_shares_manifest_text() {
     let of_lib = resolvers.resolver_for(&program, &lib);
     of_lib.resolve_module_name(b"pkg", b"/p/lib/y.ts", ResolutionMode::Import);
     assert_eq!(host.reads(manifest), 1);
-    let answer = program.resolve_code(&import_request("/p/lib/y.ts", "pkg"));
-    assert_eq!(format_resolution(answer), installed);
+    program.enclosing_package(installed.as_bytes());
     assert_eq!(host.reads(manifest), 1);
 }
 
@@ -564,16 +539,6 @@ fn typescript_file_names_end_in_typescript_extensions() {
         "/p/a.ts.txt",
     ] {
         assert!(!is_typescript_file_name(path.as_bytes()), "{path}");
-    }
-}
-
-#[test]
-fn directory_specifier_needs_separator_or_dots() {
-    for specifier in [".", "..", "./", "a/", "a\\", "a/.", "a/..", "../.."] {
-        assert!(is_directory_specifier(specifier.as_bytes()), "{specifier}");
-    }
-    for specifier in ["", "a", "a.", "a..", "...", ".a", "./a", "a/.b"] {
-        assert!(!is_directory_specifier(specifier.as_bytes()), "{specifier}");
     }
 }
 

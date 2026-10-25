@@ -144,8 +144,8 @@
     "untyped": 238.7
   },
   "everyday-arrays/spread-as-a-copy": {
-    "typed": 743.2,
-    "untyped": 743
+    "typed": 330.1,
+    "untyped": 330.4
   },
   "everyday-arrays/spread-of-two": {
     "typed": 5,
@@ -226,6 +226,10 @@
   "everyday-classes/arrow-function-field": {
     "typed": 15,
     "untyped": 15
+  },
+  "everyday-classes/bound-method": {
+    "typed": 11.5,
+    "untyped": 18
   },
   "everyday-classes/constructor-function-with-a-prototype": {
     "typed": 6,
@@ -567,6 +571,10 @@
     "typed": 5,
     "untyped": 5
   },
+  "everyday-downleveled/bound-method.bind-in-the-constructor": {
+    "typed": 8,
+    "untyped": 8
+  },
   "everyday-downleveled/class.babel-create-class": {
     "typed": 130.2,
     "untyped": 126
@@ -883,6 +891,10 @@
     "typed": 14,
     "untyped": 14
   },
+  "everyday-numbers/number-from-a-boolean": {
+    "typed": 11,
+    "untyped": 11
+  },
   "everyday-numbers/number-or-null-added": {
     "typed": 14.5,
     "untyped": 14.5
@@ -1100,8 +1112,8 @@
     "untyped": 193.5
   },
   "everyday-requests-behind-middlewares/a-constructor-made-by-a-factory-below-another-keeps-state-under-symbols": {
-    "typed": 1528.8,
-    "untyped": 1629.5
+    "typed": 324.6,
+    "untyped": 343.7
   },
   "everyday-small-objects-run-by-a-loop/a-member-under-a-key-joined-from-constants": {
     "typed": 31.2,

@@ -200,13 +200,7 @@ export default b.declarations(
   extendAll(
     ["InternalForTesting", ...runtimeTranspilerFeatures],
     ...nativeBindings("Bindgen", "checker_queries_testing.bind.ts", "describeCheckerQueries"),
-    ...nativeBindings(
-      "Bindgen",
-      "code_resolver_testing.bind.ts",
-      "compareCodeResolution",
-      "describeCodeGraph",
-      "resolveComputedSpecifier",
-    ),
+    ...nativeBindings("Bindgen", "code_resolver_testing.bind.ts", "describeCodeGraph", "resolveComputedSpecifier"),
   ),
   extendAll(
     ["InternalForTesting", "Bundler", ...runtimeTranspilerFeatures],

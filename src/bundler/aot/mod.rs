@@ -30,6 +30,7 @@ pub use metafile::{MetafileFiles, MetafileOutput, write_metafile, write_metafile
 pub use options::expand_entry_points;
 use options::{OptionsInput, embedded_entry_point_names, options_from_bundler};
 use services::BundlerServices;
+pub use services::FileFinder;
 
 pub struct PluginSetup {
     pub plugins: NonNull<JSBundlerPlugin>,

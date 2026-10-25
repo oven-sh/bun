@@ -365,17 +365,5 @@ export default {
   TypedArrayPrototypeGetSymbolToStringTag: FunctionPrototypeCall.bind(
     Uint8Array.prototype.__lookupGetter__(SymbolToStringTag),
   ),
-  Uint8ClampedArray,
-  Uint8Array,
-  Uint16Array,
-  Uint32Array,
-  Int8Array,
-  Int16Array,
-  Int32Array,
-  Float16Array,
-  Float32Array,
-  Float64Array,
-  BigUint64Array,
-  BigInt64Array,
   uncurryThis,
 };

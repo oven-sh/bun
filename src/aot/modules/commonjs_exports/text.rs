@@ -2,6 +2,7 @@ use super::{Access, AccessKind, StoredValue};
 use crate::builtins::{BuiltinNames, ResolvedBuiltins};
 use crate::modules::namespace_members::{find_outermost_type_assertion, is_plain_name};
 use crate::modules::order::FileText;
+use crate::modules::wrapped::WrappedModules;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{
     AssignmentTarget, Binding, BindingInitializer, Bound, CodeUnit, CommonJsVariable, FnOwner,
@@ -39,6 +40,7 @@ enum Node {
 impl<'a, 's> Text<'a, 's> {
     pub(super) fn new(
         files: &'a Files<'s>,
+        wrapped: &'a WrappedModules,
         builtin_names: &'a BuiltinNames,
         file: FileId,
         builtins: &'a ResolvedBuiltins,
@@ -53,7 +55,7 @@ impl<'a, 's> Text<'a, 's> {
             decisions: &analysis.decisions,
             builtins,
             builtin_names,
-            places: FileText::new(files, file),
+            places: FileText::new(files, wrapped, file),
             functions_with_this: OnceCell::new(),
             first_returns: OnceCell::new(),
         }

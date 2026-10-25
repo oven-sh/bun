@@ -325,6 +325,22 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     return object;
 }
 
+// `bun build --compile --aot` folds reads of process.versions and process.release, so a compiled program must not change them.
+static JSValue freezeInCompiledProgram(VM& vm, JSObject* processObject, JSValue created)
+{
+    if (!vm.hasCompiledCode() || !created.isObject()) [[likely]]
+        return created;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::objectConstructorFreeze(processObject->globalObject(), asObject(created));
+    scope.assertNoException();
+    return created;
+}
+
+static JSValue constructFrozenVersions(VM& vm, JSObject* processObject)
+{
+    return freezeInCompiledProgram(vm, processObject, constructVersions(vm, processObject));
+}
+
 static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
@@ -337,6 +353,11 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 
     RETURN_IF_EXCEPTION(scope, {});
     return release;
+}
+
+static JSValue constructFrozenRelease(VM& vm, JSObject* processObject)
+{
+    return freezeInCompiledProgram(vm, processObject, constructProcessReleaseObject(vm, processObject));
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
@@ -5316,7 +5337,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   ppid                             processPpid                                         CustomAccessor
   reallyExit                       Process_functionReallyExit                          Function 1
   ref                              Process_ref                                         Function 1
-  release                          constructProcessReleaseObject                       PropertyCallback
+  release                          constructFrozenRelease                              PropertyCallback
   report                           constructProcessReportObject                        PropertyCallback
   resourceUsage                    Process_functionResourceUsage                       Function 0
   revision                         constructRevision                                   PropertyCallback
@@ -5331,7 +5352,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   unref                            Process_unref                                       Function 1
   uptime                           Process_functionUptime                              Function 1
   version                          constructVersion                                    PropertyCallback
-  versions                         constructVersions                                   PropertyCallback
+  versions                         constructFrozenVersions                             PropertyCallback
 
 #if !OS(WINDOWS)
   getegid                          Process_functiongetegid                             Function 0

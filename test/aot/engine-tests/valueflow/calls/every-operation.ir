@@ -506,9 +506,10 @@ function f28 name="arrayIntrinsics" module=m2 role=Library parameters=[{type=Arr
     v16 = NewArrayWithCapacity v1
     v17 = TryPutByValDirect v0, v1, v2
     v18 = TryPutIndex v0, v1, v2
+    v19 = TryPutDoubleIndex v0, v1, v3
     GrowNewArray v11, v1
-    v20 = TruncateNewArray v11, v1
-    Return v20
+    v21 = TruncateNewArray v11, v1
+    Return v21
 }
 function f29 name="collectionIntrinsics" module=m2 role=Library parameters=[{type=Map}, {type=Set}, {type=i32}] results=[{type=anything}] {
   b0(v0: Map, v1: Set, v2: i32):

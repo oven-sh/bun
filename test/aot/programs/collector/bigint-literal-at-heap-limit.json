@@ -2,6 +2,5 @@
   "env": {
     "BUN_JSC_markedBlockCageSizeInMB": "64"
   },
-  "skipWithASAN": "ASAN changes how much fits in the heap",
   "skipInVariants": "the counts are tuned for the default build"
 }

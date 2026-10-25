@@ -1,6 +1,6 @@
-use bun_sema::bind::{Binding, Bound, ScopeId, ScopeKind};
+use bun_sema::bind::{Binding, Bound, Decl, ScopeId, ScopeKind, SymbolId};
 use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, ClassId, DecoratorOwner, ExprId, NodeData, ParamId};
+use bun_sema::hir::{self, ClassId, DecoratorOwner, ExprId, FnId, NodeData, ParamId};
 
 use crate::lower::scope::analysis::sort_unique;
 use crate::lower::scope::lexical_owners::scope_chain;
@@ -29,6 +29,21 @@ pub(super) fn collect_eval_variable_scopes(
     }
     sort_unique(&mut scopes);
     scopes
+}
+
+pub(super) fn collect_inner_module_parameters(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    callbacks: &[FnId],
+) -> Vec<SymbolId> {
+    let parameters = callbacks
+        .iter()
+        .flat_map(|&callback| hir[callback].params.iter());
+    let symbols =
+        parameters.map(|parameter| bound.declared_symbol(Decl::Param(hir[parameter].pat)));
+    let mut symbols: Vec<SymbolId> = symbols.filter(|symbol| symbol.is_some()).collect();
+    sort_unique(&mut symbols);
+    symbols
 }
 
 pub(super) fn collect_implicit_uses(

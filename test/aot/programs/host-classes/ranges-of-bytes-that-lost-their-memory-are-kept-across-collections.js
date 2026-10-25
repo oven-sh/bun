@@ -1,5 +1,5 @@
 // The buffer of a view is transferred between view.subarray(n) and the use of the range, three thousand times, with collections in between: the ranges that are kept stay what they were.
-// IR= 1 writeHeld CompilerHelpersStartOfRangeOfBytes
+// IR+ = TypedArrayRange
 const impostor = { got: null, encodeInto(text, destination) { this.got = destination; return { read: -1, written: destination.length }; } };
 const real = new TextEncoder();
 let page = new Uint8Array(8), at = 0;

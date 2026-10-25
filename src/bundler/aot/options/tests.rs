@@ -375,21 +375,6 @@ fn disabled_addons_remove_condition() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn written_main_fields_replace_defaults() {
-    let code = convert_code(|options| {
-        options.main_fields = Box::new([Box::from(&b"custom"[..])]);
-        options.transform_options = Arc::new(api::TransformOptions {
-            main_fields: vec![Box::from(&b"custom"[..])],
-            ..Default::default()
-        });
-    });
-    assert_eq!(code.main_fields, byte_lists(&["custom"]));
-    assert!(!code.has_default_main_fields);
-    assert!(convert_code(|_| {}).has_default_main_fields);
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
 fn symbolic_link_option_is_copied() {
     assert!(!convert_code(|_| {}).preserves_symlinks);
     assert!(convert_code(|options| options.preserve_symlinks = true).preserves_symlinks);

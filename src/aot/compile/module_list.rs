@@ -244,7 +244,10 @@ impl Collector<'_, '_> {
         original: &[u8],
     ) -> Option<ModuleImport> {
         let target = match module {
-            ModuleRef::File(target) | ModuleRef::Face(target) | ModuleRef::Check(target) => target,
+            ModuleRef::File(target)
+            | ModuleRef::Inner { file: target, .. }
+            | ModuleRef::Face(target)
+            | ModuleRef::Check(target) => target,
             ModuleRef::Runtime(_) | ModuleRef::External { .. } => return None,
         };
         let loader = self.sources.loader(target);

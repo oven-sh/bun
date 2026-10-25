@@ -1,9 +1,10 @@
 use bun_ast::Kind;
 use bun_core::fmt::QuotedFormatter;
 use bun_sema::atom::Interner;
-use bun_sema::check::aot::Effect;
+use bun_sema::check::aot::{DiagnosticClass, Effect};
 use bun_sema::fold::{FoldError, FoldErrorKind};
-use bun_sema::hir::{File, StmtKind};
+use bun_sema::hir::{self, DiagnosticKind, File, StmtKind};
+use bun_sema::messages::{self, Category};
 use bun_sema::module_format::CommonJsEvidence;
 use bun_sema::node::NodeData;
 use bun_sema::program::FileId;
@@ -11,8 +12,10 @@ use bun_sema::resolve::CodeFailure;
 use bun_sema_driver::host::to_native;
 use bun_sema_driver::{BuildDiagnostic, EntryPointFailure, Incomplete, LoadFailure, log_message};
 
-use super::sink::append_location;
-use super::{Diagnostic, Diagnostics, ProgramView, Severity, Span, SpanLocator};
+use super::sink::{append_location, to_log_message};
+use super::{
+    Diagnostic, Diagnostics, ProgramView, Severity, Span, SpanLocator, new_driver_diagnostic,
+};
 use crate::builtins::table;
 use crate::diagnostic_codes::Code;
 use crate::emit::EmitError;
@@ -83,7 +86,23 @@ impl Diagnostics {
     pub(crate) fn add_module_failures(&mut self, view: ProgramView<'_, '_>, modules: &ModuleGraph) {
         let atoms = &view.files().atoms;
         let mut locator = SpanLocator::new(view);
+        let mut files_with_syntax_errors = Vec::new();
         for failure in modules.errors().iter().chain(modules.failures()) {
+            // The build stops here, before the check that reports syntax errors. A file that does not parse exports
+            // little, so its syntax errors say why the name is missing.
+            if let ModuleFailureKind::ExportNotFound { exporter, .. } = failure.kind
+                && let ModuleRef::File(exporter) = exporter
+                && failure.effect() == FailureEffect::StopsBuild
+                && syntax_errors_of(view.files().hir(exporter))
+                    .next()
+                    .is_some()
+            {
+                if !files_with_syntax_errors.contains(&exporter) {
+                    files_with_syntax_errors.push(exporter);
+                    self.add_syntax_errors(&mut locator, exporter);
+                }
+                continue;
+            }
             let span = Some(Span {
                 file: failure.importer,
                 start: failure.start,
@@ -117,6 +136,24 @@ impl Diagnostics {
                 FailureEffect::ThrowsAtSite => Severity::Warning,
             };
             self.add_with_locator(Some(&mut locator), diagnostic);
+        }
+    }
+
+    fn add_syntax_errors(&mut self, locator: &mut SpanLocator<'_, '_>, file: FileId) {
+        let view = locator.view();
+        for error in syntax_errors_of(view.files().hir(file)) {
+            let mut text = Vec::new();
+            if let Some((_, template)) = messages::message(error.code) {
+                messages::format(&mut text, template, &error.args);
+            }
+            let reported = new_driver_diagnostic(error.code, Category::Error, text, &[]);
+            let end = match error.end {
+                0 | hir::Diagnostic::NO_LENGTH => error.start,
+                end => end,
+            };
+            let start = error.start;
+            let located = locator.locate(Span { file, start, end }, reported);
+            self.add_message(error.code, to_log_message(&located, Severity::Error));
         }
     }
 
@@ -181,6 +218,11 @@ pub(crate) fn code_of_failure(failure: CodeFailure) -> Code {
         CodeFailure::UnsupportedDirectoryImport => Code::UnsupportedDirectoryImport,
         CodeFailure::QueryString => Code::QueryStringInSpecifier,
     }
+}
+
+fn syntax_errors_of<'a>(hir: &'a File<'_>) -> impl Iterator<Item = &'a hir::Diagnostic> {
+    (hir.diagnostics.iter())
+        .filter(|it| it.kind == DiagnosticKind::Parse && it.class == DiagnosticClass::EarlyError)
 }
 
 pub(super) fn fold_error_diagnostic(
@@ -263,9 +305,10 @@ fn commonjs_notes(
 
 fn module_name<'a>(view: ProgramView<'a, '_>, module: ModuleRef) -> &'a [u8] {
     match module {
-        ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Check(file) => {
-            view.sources.module_paths(file).display_path
-        }
+        ModuleRef::File(file)
+        | ModuleRef::Inner { file, .. }
+        | ModuleRef::Face(file)
+        | ModuleRef::Check(file) => view.sources.module_paths(file).display_path,
         ModuleRef::Runtime(module) => table::specifier_of(module),
         ModuleRef::External { specifier, .. } => view.files().atoms.bytes(specifier),
     }

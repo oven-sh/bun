@@ -208,40 +208,29 @@
 # CHECK-NEXT: v24:{{*}}= JSONFindMember v23 string="y"
 # CHECK-NEXT: v25:{{*}}= ResultAt v24 index=1
 # CHECK-NEXT: v26:{{*}}= JSONMemberRepeats v25 string="y"
-# CHECK-NEXT: v27:{{*}}= JSONKeyRepeats v23, v25
-# CHECK-NEXT: v28:{{*}}= JSONKeyHasEscapes v25
-# CHECK-NEXT: v29:{{*}}= JSONHasStackSpace
-# CHECK-NEXT: v30:{{*}}= JSONObjectBegin layout=L0
-# CHECK-NEXT: v31:{{*}}= JSONObjectKey v30 layout=L0 field=1
-# CHECK-NEXT: v32:{{*}}= Undefined
-# CHECK-NEXT: v33:{{*}}= JSONParseExtraMembers v25, v32, v31 layout=L0
-# CHECK-NEXT: v34:{{*}}= ResultAt v33 index=1
-# CHECK-NEXT: v35:{{*}}= ResultAt v33 index=2
-# CHECK-NEXT: v36:{{*}}= ResultAt v33 index=3
-# CHECK-NEXT: v37:{{*}}= JSONAddExtraMember v34, v1, v0, v36 layout=L0
-# CHECK-NEXT: v38:{{*}}= ResultAt v37
-# CHECK-NEXT: v39:{{*}}= ResultAt v37 index=1
-# CHECK-NEXT: v40:{{*}}= Double number=1
-# CHECK-NEXT: v41:{{*}}= NewObject -, v0, v40 layout=L0 fields=[0, 1]
-# CHECK-NEXT: v42:{{*}}= JSONObjectFinish v39, v41, v38 layout=L0
-# CHECK-NEXT: v43:{{*}}= JSONSourceClose v4, v35
-# CHECK-NEXT: Return v41
+# CHECK-NEXT: v27:{{*}}= JSONKeyHasEscapes v25
+# CHECK-NEXT: v28:{{*}}= JSONHasStackSpace
+# CHECK-NEXT: v29:{{*}}= JSONObjectBegin layout=L0
+# CHECK-NEXT: v30:{{*}}= JSONObjectKey v29 layout=L0 field=1
+# CHECK-NEXT: v31:{{*}}= Undefined
+# CHECK-NEXT: v32:{{*}}= JSONParseExtraMembers v25, v31, v30 layout=L0
+# CHECK-NEXT: v33:{{*}}= ResultAt v32 index=1
+# CHECK-NEXT: v34:{{*}}= ResultAt v32 index=2
+# CHECK-NEXT: v35:{{*}}= ResultAt v32 index=3
+# CHECK-NEXT: v36:{{*}}= Double number=1
+# CHECK-NEXT: v37:{{*}}= NewObject -, v0, v36 layout=L0 fields=[0, 1]
+# CHECK-NEXT: v38:{{*}}= JSONObjectFinish v35, v37, v33 layout=L0
+# CHECK-NEXT: v39:{{*}}= JSONSourceClose v4, v34
+# CHECK-NEXT: Return v37
 # CHECK-NEXT: b3():
 # CHECK-NEXT: JSONSourceAbandon v4
 # CHECK-NEXT: Return
 # CHECK-NEXT: b4():
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
-# CHECK-NEXT: function f11 name="validate" module=m0 thisType={type=anything} parameters=[{type=object}, {type=number}] results=[{type=anything}]
-# CHECK-NEXT: b0(v0: object, v1: number):
+# CHECK-NEXT: function f11 name="expectRows" module=m0 thisType={type=anything} parameters=[{type=object}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: object):
 # CHECK-NEXT: ExpectRows v0 layout=L0
-# CHECK-NEXT: v3:{{*}}= IsPlainDataObject v0
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v4:{{*}}):
-# CHECK-NEXT: v5:{{*}}= GetOwnDataProperty v0, v4 key="x"
-# CHECK-NEXT: v6:{{*}}= CloneAs v0, v4, v5, v1 layout=L0 fields=[0, 1] allocationSite=1
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b2():
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
 # CHECK-NEXT: function f12 name="serialize" module=m0 thisType={type=anything} parameters=[{type=boolean}, {type=int}, {type=number}, {type=string}, {type=anything}] results=[{type=anything}]
@@ -636,40 +625,29 @@ function f10 name="parse" module=m0 thisType={type=anything} parameters=[{type=a
     v24 = JSONFindMember v23 string="y"
     v25 = ResultAt v24 index=1
     v26 = JSONMemberRepeats v25 string="y"
-    v27 = JSONKeyRepeats v23, v25
-    v28 = JSONKeyHasEscapes v25
-    v29 = JSONHasStackSpace
-    v30 = JSONObjectBegin layout=L0
-    v31 = JSONObjectKey v30 layout=L0 field=1
-    v32 = Undefined
-    v33 = JSONParseExtraMembers v25, v32, v31 layout=L0
-    v34 = ResultAt v33 index=1
-    v35 = ResultAt v33 index=2
-    v36 = ResultAt v33 index=3
-    v37 = JSONAddExtraMember v34, v1, v0, v36 layout=L0
-    v38 = ResultAt v37
-    v39 = ResultAt v37 index=1
-    v40 = Double number=1
-    v41 = NewObject -, v0, v40 layout=L0 fields=[0, 1]
-    v42 = JSONObjectFinish v39, v41, v38 layout=L0
-    v43 = JSONSourceClose v4, v35
-    Return v41
+    v27 = JSONKeyHasEscapes v25
+    v28 = JSONHasStackSpace
+    v29 = JSONObjectBegin layout=L0
+    v30 = JSONObjectKey v29 layout=L0 field=1
+    v31 = Undefined
+    v32 = JSONParseExtraMembers v25, v31, v30 layout=L0
+    v33 = ResultAt v32 index=1
+    v34 = ResultAt v32 index=2
+    v35 = ResultAt v32 index=3
+    v36 = Double number=1
+    v37 = NewObject -, v0, v36 layout=L0 fields=[0, 1]
+    v38 = JSONObjectFinish v35, v37, v33 layout=L0
+    v39 = JSONSourceClose v4, v34
+    Return v37
   b3():
     JSONSourceAbandon v4
     Return
   b4():
     Return
 }
-function f11 name="validate" module=m0 thisType={type=anything} parameters=[{type=object}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: number):
+function f11 name="expectRows" module=m0 thisType={type=anything} parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
     ExpectRows v0 layout=L0
-    v3 = IsPlainDataObject v0
-    Branch v3 -> taken b1(| 0), notTaken b2()
-  b1(v4):
-    v5 = GetOwnDataProperty v0, v4 key="x"
-    v6 = CloneAs v0, v4, v5, v1 layout=L0 fields=[0, 1] allocationSite=1
-    Return v6
-  b2():
     Return
 }
 function f12 name="serialize" module=m0 thisType={type=anything} parameters=[{type=boolean}, {type=int}, {type=number}, {type=string}, {type=anything}] results=[{type=anything}] {

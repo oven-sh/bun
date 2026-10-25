@@ -16,7 +16,7 @@ use crate::builtins::{Intrinsic, Mutability, Resolved};
 use crate::ir::ClassSlot;
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::{class, parameters};
-use crate::modules::SiteAnswer;
+use crate::modules::{Member, ModuleRef, Site, SiteAnswer};
 
 // What `try_lower_module_call` asks before it looks at the callee.
 fn has_module_operation(site: &ImportSite, answer: SiteAnswer<'_>, argument_count: usize) -> bool {
@@ -128,11 +128,44 @@ impl Walker<'_, '_> {
         if matches!(self.hir[object].kind, ExprKind::Super) {
             self.use_this(context);
             self.use_home_object(context);
+        } else if self.names_variable_of_inner_module(access) {
+            return;
         } else {
             self.record_private_name(access, context);
             self.push_expressions([object], context);
         }
         self.push_expressions([index], context);
+    }
+
+    // `exports.a` and `module.exports.a` in the callback of `__commonJS((exports, module) => { .. })`, where `a` is a variable of the module.
+    fn names_variable_of_inner_module(&self, access: ExprId) -> bool {
+        if self.inner_module_parameters.is_empty() {
+            return false;
+        }
+        let hir = self.hir;
+        let mut root = access;
+        while let Some((object, _)) = hir.member_key(root) {
+            root = hir.skip_type_assertions(object);
+        }
+        let is_parameter = match self.bound.binding(root) {
+            Binding::Symbol(symbol) if matches!(hir[root].kind, ExprKind::Ident(_)) => {
+                self.inner_module_parameters.binary_search(&symbol).is_ok()
+            }
+            Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {
+                false
+            }
+        };
+        is_parameter
+            && match self.input.modules.member(self.input.file, access) {
+                Some(Member::OnObject) | None => false,
+                Some(
+                    Member::Variable(_)
+                    | Member::Copy(_)
+                    | Member::Binding(_)
+                    | Member::Undefined
+                    | Member::Marker(_),
+                ) => true,
+            }
     }
 
     fn visit_call(&mut self, expression: ExprId, call: CallId, context: Context) {
@@ -156,13 +189,26 @@ impl Walker<'_, '_> {
             }
             self.record_argument_read(&call, context);
             // Else the lowering emits the load of the module and never reads the callee.
-            if !self.walk.has_wrapper_parameters || !self.is_bound_module_call(expression, &call) {
+            let loads_module = self.evaluates_inner_module(expression, &call)
+                || (self.walk.has_wrapper_parameters
+                    && self.is_bound_module_call(expression, &call));
+            if !loads_module {
                 self.push_expressions([call.callee], context);
             }
         }
         self.push_expressions(self.hir.ids(call.args), context);
     }
 
+    // `require_a()`, where `var require_a = __commonJS(cb)`.
+    fn evaluates_inner_module(&self, expression: ExprId, call: &Call) -> bool {
+        if !call.args.is_empty() || self.input.modules.inner_modules(self.input.file).is_empty() {
+            return false;
+        }
+        match self.input.modules.site(self.input.file, expression) {
+            Some(Site::Evaluate { target, .. }) => matches!(target, ModuleRef::Inner { .. }),
+            Some(Site::AsToday) | None => false,
+        }
+    }
     // `require("./a")`, `require.resolve("./a")`, `module.require("./a")` in a file that keeps the five names as parameters, where nothing can put another value behind the name.
     fn is_bound_module_call(&self, expression: ExprId, call: &Call) -> bool {
         let (hir, bound) = (self.hir, self.bound);

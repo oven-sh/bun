@@ -509,28 +509,7 @@ impl Checker<'_, '_> {
         if self.is_any(called) {
             return;
         }
-        // `getInstantiatedConstructorsForTypeArguments`: the base constructors that accept the number of type arguments
-        // in the `extends` clause, instantiated with them.
-        let actual = self.types_from_nodes(file, hir[class].extends_args);
-        let mut sigs = Vec::new();
-        for sig in self.signatures(called, true) {
-            let type_params = self.sig_type_params(sig);
-            if actual.len() < self.min_type_argument_count(&type_params)
-                || actual.len() > type_params.len()
-            {
-                continue;
-            }
-            if type_params.is_empty() {
-                sigs.push(sig);
-                continue;
-            }
-            let filled = self.fill_sig_type_args(sig, &type_params, &actual);
-            let mapper = self.mapper_from(&type_params, &filled);
-            sigs.push(self.instantiate_sig(sig, mapper));
-        }
-        if !sigs.is_empty() {
-            self.report_call_resolution(file, e);
-        }
+        self.report_call_resolution(file, e);
     }
 
     /// `resolveTaggedTemplateExpression`

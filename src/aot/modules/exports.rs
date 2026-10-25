@@ -106,7 +106,9 @@ fn captured_resolution(modules: &ModuleSet, module: ModuleRef, name: Atom) -> Re
         ModuleRef::File(_) | ModuleRef::External { .. } if modules.is_uncompiled_code(module) => {
             Resolution::LiveName { module, name }
         }
-        ModuleRef::File(_) | ModuleRef::External { .. } => Resolution::Synthetic { module, name },
+        ModuleRef::File(_) | ModuleRef::Inner { .. } | ModuleRef::External { .. } => {
+            Resolution::Synthetic { module, name }
+        }
         // It shows the names of the file.
         ModuleRef::Face(file) => Resolution::Synthetic {
             module: ModuleRef::File(file),
@@ -137,13 +139,15 @@ enum Identity {
 }
 
 fn compare_module_identity(a: ModuleRef, b: ModuleRef) -> Identity {
-    use ModuleRef::{Check, External, Face, File, Runtime};
+    use ModuleRef::{Check, External, Face, File, Inner, Runtime};
     match (a, b) {
         _ if a == b => Identity::Same,
         (External { specifier: a, .. }, External { specifier: b, .. }) if a == b => {
             Identity::Unknown
         }
-        (File(_) | Face(_) | Check(_) | Runtime(_) | External { .. }, _) => Identity::Different,
+        (File(_) | Inner { .. } | Face(_) | Check(_) | Runtime(_) | External { .. }, _) => {
+            Identity::Different
+        }
     }
 }
 

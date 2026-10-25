@@ -23,6 +23,7 @@ use rustc_hash::FxHashMap;
 
 use self::int32_flows::Int32FlowKey;
 pub use self::shared::{InternalError, Severity};
+pub(crate) use self::sink::log_diagnostic_at;
 pub use self::sink::{log_diagnostic, log_internal_error};
 pub(crate) use self::spans::range_of_node;
 use crate::diagnostic_codes::Code;
@@ -52,6 +53,13 @@ pub struct SourcePosition {
     pub path: Vec<u8>,
     pub line: u32,
     pub column: u32,
+}
+
+/// A position with the text of its line, for a message that is written when the texts of the build are gone.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct ShownPosition {
+    pub position: SourcePosition,
+    pub line_text: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]

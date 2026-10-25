@@ -242,6 +242,12 @@ pub fn text_of_name(name: BuiltinName) -> &'static [u8] {
         [SYMBOL_NAME_TEXT_STARTS[index] as usize..SYMBOL_NAME_TEXT_STARTS[index + 1] as usize]
 }
 
+/// Whether native code puts a property under `name` on some object: a member of a built-in object, or what a constructor or a function defines on a new instance, on its result or on an operand.
+pub fn is_stored_by_native_code(name: BuiltinName) -> bool {
+    let index = name.0 as usize;
+    NAMES_STORED_BY_NATIVE_CODE[index / 8] >> (index % 8) & 1 != 0
+}
+
 pub fn is_symbol_name(name: BuiltinName) -> bool {
     name.0 as usize >= TEXT_NAME_COUNT
 }

@@ -3,7 +3,7 @@ export interface Row {
   entry: string;
   workloads: { name: string; arguments: string[] }[];
   ownPackages?: string[];
-  typedVersions?: string[];
+  typedPackages?: string[];
   typedSources?: boolean;
   typedFlags?: string[];
   libraries?: { name: string; entryPoints: string[]; flags?: string[]; added?: Record<string, string> }[];
@@ -47,13 +47,13 @@ export const rows: Row[] = [
   {
     name: "react-to-string",
     entry: "react-to-string.tsx",
-    typedVersions: ["react", "react-dom"],
+    typedPackages: ["react", "react-dom"],
     workloads: pages.map(page => ({ name: page, arguments: [page] })),
   },
   {
     name: "react-to-readable-stream",
     entry: "react-to-readable-stream.tsx",
-    typedVersions: ["react", "react-dom"],
+    typedPackages: ["react", "react-dom"],
     workloads: pages.map(page => ({ name: page, arguments: [page] })),
   },
   {
@@ -64,7 +64,7 @@ export const rows: Row[] = [
   {
     name: "react-reconciler",
     entry: "react-reconciler.tsx",
-    typedVersions: ["react", "react-reconciler"],
+    typedPackages: ["react", "react-reconciler"],
     workloads: ["reconciled", "painted"].map(how => ({ name: how, arguments: [how] })),
   },
   {
@@ -77,7 +77,7 @@ export const rows: Row[] = [
   {
     name: "seroval",
     entry: "seroval.ts",
-    typedVersions: ["seroval"],
+    typedPackages: ["seroval"],
     workloads: ["serialize", "json"].map(how => ({ name: how, arguments: [how] })),
   },
   {
@@ -95,7 +95,7 @@ export const rows: Row[] = [
   {
     name: "base64-js",
     entry: "base64-js.ts",
-    typedVersions: ["base64-js"],
+    typedPackages: ["base64-js"],
     workloads: ["encode", "decode"].map(how => ({ name: `${how} 48 KB`, arguments: [how] })),
   },
 ];

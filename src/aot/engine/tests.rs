@@ -48,6 +48,10 @@ fn expected_record(change: impl FnOnce(&mut CompileOptions)) -> CompileOptions {
         ..zeroed()
     };
     record.target.reference_width = ReferenceWidth::Narrow;
+    fill_feature_bits(
+        &mut record.target.features_kept_only_when_named,
+        &bun_trim::features_kept_only_when_named(),
+    );
     change(&mut record);
     record
 }

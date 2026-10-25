@@ -236,7 +236,6 @@ regression/issue/malformed-integrity-base64.test.ts
 regression/issue/pe-codesigning-integrity.test.ts
 bundler/bundler_compile_aot.test.ts
 bundler/compile-aot-heap-snapshot.test.ts
-bundler/compile-aot-typed-packages.test.ts
 cli/aot-builtin-modules-and-computed-paths.test.ts
 cli/aot-builtin-modules-and-names-handed-to-a-parameter.test.ts
 cli/aot-builtin-modules-and-node-module.test.ts

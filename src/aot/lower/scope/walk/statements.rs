@@ -1,7 +1,7 @@
 use bun_sema::bind::{CommonJsVariable, Decl, ModuleInstanceState, ScopeId, SymbolId};
 use bun_sema::hir::{Flags, Span, StmtId, StmtKind, VarDeclId, VarKind};
 
-use super::{Context, PatternRole, Task, WalkedFunctionId, WalkedLoop, Walker};
+use super::{Context, PatternRole, Task, WalkedLoop, Walker};
 use crate::lower::scope::ScopeSlot;
 
 impl Walker<'_, '_> {
@@ -10,9 +10,10 @@ impl Walker<'_, '_> {
             return;
         }
         // The module graph turned the statement into facts of the build, `exports.__esModule = true` or a getter that only names a variable of another module: it has no code, so nothing in it is a use and no function in it is created.
-        if context.function == WalkedFunctionId::MODULE_BODY
-            && self.input.modules.erased(self.input.file, statement)
-        {
+        let is_module_body = self.walk.functions[context.function.index()]
+            .creator
+            .is_none();
+        if is_module_body && self.input.modules.erased(self.input.file, statement) {
             return;
         }
         let (hir, bound) = (self.hir, self.bound);

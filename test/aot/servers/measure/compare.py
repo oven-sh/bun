@@ -21,7 +21,7 @@ import argparse, json, statistics
 
 import layers
 
-NAMES = {"api-bun": "API on Bun.serve", "api-thin": "API on the thin typed framework", "api-hono": "API on Hono", "api-elysia": "API on Elysia", "api-node": "API on node:http", "api-express": "API on Express", "api-fastify": "API on Fastify", "api-koa": "API on Koa", "bun": "Bun.serve", "thin": "thin typed framework", "hono": "Hono", "elysia": "Elysia", "node": "node:http", "express": "Express", "fastify": "Fastify", "fastify-schemas": "Fastify with schemas", "tanstack": "TanStack Start", "tanstack-typed": "TanStack Start with full types", "koa-typed": "Koa with full types", "express-typed": "Express with full types", "fastify-typed": "Fastify with full types"}
+NAMES = {"api-bun": "API on Bun.serve", "api-thin": "API on the thin typed framework", "api-hono": "API on Hono", "api-elysia": "API on Elysia", "api-node": "API on node:http", "api-express": "API on Express", "api-fastify": "API on Fastify", "api-koa": "API on Koa", "bun": "Bun.serve", "thin": "thin typed framework", "hono": "Hono", "elysia": "Elysia", "node": "node:http", "express": "Express", "fastify": "Fastify", "fastify-schemas": "Fastify with schemas", "tanstack": "TanStack Start"}
 MEMORY = (("ready_rss_mb", "RSS at ready, MB"), ("peak_rss_mb", "peak RSS, MB"), ("private_mb", "private memory, MB"), ("first_response_ms", "first response, ms"))
 
 parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])

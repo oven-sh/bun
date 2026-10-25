@@ -271,17 +271,17 @@ function attempt(label, action) {
   try { print(label + ": " + action()); } catch (error) { print(label + ": " + error.name + ": " + error.message); }
 }
 function readGlobals() {
-  return [typeof process.pid, new URL("http://host/path").pathname, Buffer.from("a").length, typeof navigator].join(" ");
+  return [typeof performance.timeOrigin, new URL("http://host/path").pathname, Buffer.from("a").length, typeof navigator].join(" ");
 }
 
 attempt("before", readGlobals);
-attempt("let process", () => vm.runInThisContext("let process = { pid: 'of the script' }; process.pid"));
+attempt("let performance", () => vm.runInThisContext("let performance = { timeOrigin: 'of the script' }; performance.timeOrigin"));
 attempt("class URL", () => new vm.Script("class URL { get pathname() { return 'of the script'; } } new URL().pathname").runInThisContext());
 attempt("const Buffer", () => vm.runInThisContext("const Buffer = { from: () => 'of the script' }; Buffer.from('a')"));
 attempt("let navigator", () => vm.runInThisContext("let navigator = 'of the script'; navigator"));
 attempt("after", readGlobals);
-attempt("in a later script", () => vm.runInThisContext("[typeof process.pid, new URL('http://host/path').pathname, Buffer.from('a').length, typeof navigator].join(' ')"));
-attempt("var process", () => vm.runInThisContext("var process = 'of the script'; typeof process"));
+attempt("in a later script", () => vm.runInThisContext("[typeof performance.timeOrigin, new URL('http://host/path').pathname, Buffer.from('a').length, typeof navigator].join(' ')"));
+attempt("var performance", () => vm.runInThisContext("var performance = 'of the script'; typeof performance"));
 attempt("function URL", () => vm.runInThisContext("function URL() { } typeof URL"));
 attempt("in a new context", () => vm.runInNewContext("let process = 'of the context'; class URL { } process"));
 //// script-declarations-over-every-global-validated.js
@@ -411,7 +411,7 @@ t(51, () => Object.defineProperty(Object.freeze({}), "x", { value: 1 })); t(52, 
 const print = console.log;
 ////= attempt-3
 const lists = JSON.parse(process.argv[2] ?? `{
-  "stored": ["allowedNodeEnvironmentFlags", "channel", "config", "features", "finalization", "release", "report", "stdin", "versions", "binding", "openStdin", "send", "disconnect", "hrtime", "memoryUsage", "pid", "arch", "aNameOfMyOwn"],
+  "stored": ["allowedNodeEnvironmentFlags", "channel", "config", "features", "finalization", "report", "stdin", "binding", "openStdin", "send", "disconnect", "hrtime", "memoryUsage", "pid", "arch", "aNameOfMyOwn"],
   "refused": ["exitCode", "debugPort"],
   "ofConsole": ["table", "Console", "aNameOfMyOwn"]
 }`);

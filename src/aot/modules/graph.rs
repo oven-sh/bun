@@ -15,13 +15,14 @@ use super::interop::{Interop, ModuleKind};
 use super::order::SiteKey;
 use super::plan::{Member, Plan, StoredSite};
 use super::unread_exports::remove_unread_data_exports;
+use super::wrapped::WrappedModules;
 use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::parallel::{InParallel, for_each_mut};
 use crate::load::ProjectId;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::SymbolId;
-use bun_sema::hir::ExprId;
+use bun_sema::hir::{ExprId, FnId};
 use bun_sema::import_sites::{ImportSiteKind, JsxImport};
 use bun_sema::program::FileId;
 use bun_sema::resolve::ExternalKind;
@@ -44,6 +45,7 @@ pub struct ModuleGraph {
     pub(super) rows: Vec<FileRow>,
     pub(super) record_files: Vec<FileId>,
     pub(super) left_out_files: Vec<FileId>,
+    pub(super) left_out_inner_modules: Vec<(FileId, FnId)>,
     pub(super) other_modules: Vec<ModuleRef>,
     pub(super) external_kinds: Vec<((FileId, Atom), ExternalKind)>,
     pub(super) synthetic_exports: Vec<SyntheticExport>,
@@ -51,6 +53,7 @@ pub struct ModuleGraph {
     pub(super) failures: Vec<ModuleFailure>,
     /// Ascending by file.
     pub(super) load_failures: Vec<(FileId, ModuleFailureId)>,
+    pub(super) wrapped: WrappedModules,
     pub(super) commonjs_exports: CommonJsExports,
     pub(super) plan: Plan,
 }
@@ -94,9 +97,10 @@ pub(super) fn find<K: Copy + Ord, V: Copy>(entries: &[(K, V)], key: K) -> Option
 
 fn is_among(files: &[FileId], module: ModuleRef) -> bool {
     match module {
-        ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Check(file) => {
-            files.binary_search(&file).is_ok()
-        }
+        ModuleRef::File(file)
+        | ModuleRef::Inner { file, .. }
+        | ModuleRef::Face(file)
+        | ModuleRef::Check(file) => files.binary_search(&file).is_ok(),
         ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
     }
 }
@@ -140,6 +144,7 @@ impl ModuleGraph {
     pub fn interop(&self, module: ModuleRef) -> Interop {
         match module {
             ModuleRef::File(file) => self.row(file).interop,
+            ModuleRef::Inner { .. } => Interop::INNER_MODULE,
             // A face that has the loader capture what the file exports goes by the rule of the file.
             ModuleRef::Face(file) if self.commonjs_exports.face_captures(file) => Interop {
                 export_rule: self.row(file).interop.export_rule,
@@ -171,6 +176,10 @@ impl ModuleGraph {
     /// What the text of the file asks for: what it imports, and then what its sites evaluate.
     pub fn requests(&self, file: FileId) -> &[ModuleRequest] {
         &self.row(file).requests
+    }
+
+    pub fn wrapped(&self) -> &WrappedModules {
+        &self.wrapped
     }
 
     pub fn commonjs(&self) -> &CommonJsExports {
@@ -274,16 +283,46 @@ impl ModuleGraph {
             let module = ModuleRef::File(row.file);
             row.requests.retain(|request| keeps(module, request));
         }
+        let plan = &mut self.plan;
+        #[allow(clippy::needless_collect)] // ends the borrow of `plan`
+        let inner_modules: Vec<ModuleRef> = plan
+            .inner_modules()
+            .iter()
+            .map(|&(file, callback)| ModuleRef::Inner { file, callback })
+            .collect();
+        for (module, requests) in inner_modules.into_iter().zip(&mut plan.inner_requests) {
+            requests.retain(|request| keeps(module, request));
+        }
+    }
+
+    /// Wrappers that no code calls that is left. They have no record. `finish_plan` has to follow.
+    pub fn leave_out_inner_modules(&mut self, modules: &[ModuleRef]) {
+        let mut left_out: Vec<(FileId, FnId)> = modules
+            .iter()
+            .filter_map(|&module| match module {
+                ModuleRef::Inner { file, callback } => Some((file, callback)),
+                _ => None,
+            })
+            .collect();
+        left_out.shared_sort_unstable();
+        self.limit_requests(|_, request| match request.target {
+            ModuleRef::Inner { file, callback } => {
+                left_out.binary_search(&(file, callback)).is_err()
+            }
+            _ => true,
+        });
+        self.left_out_inner_modules = left_out;
     }
 
     fn pass_requests_through(&mut self, left_out_files: &[FileId]) {
         let is_left_out = |file: FileId| left_out_files.binary_search(&file).is_ok();
-        let mut lists = Vec::with_capacity(self.rows.len());
+        let mut lists = Vec::with_capacity(self.rows.len() + self.plan.inner_requests.len());
         let mut seen = FxHashSet::default();
         // With each request: whether the file has written it itself.
         let mut pending: Vec<(ModuleRequest, bool)> = Vec::new();
         let is_import = |request: &&ModuleRequest| request.kind == ModuleRequestKind::Import;
-        for written in self.rows.iter().map(|row| &row.requests) {
+        let of_files = self.rows.iter().map(|row| &row.requests);
+        for written in of_files.chain(&self.plan.inner_requests) {
             let mut passed_on = Vec::with_capacity(written.len());
             seen.clear();
             pending.extend(written.iter().rev().map(|&request| (request, true)));
@@ -293,7 +332,7 @@ impl ModuleGraph {
                 };
                 match request.target {
                     // No site of it is left.
-                    ModuleRef::File(target)
+                    ModuleRef::File(target) | ModuleRef::Inner { file: target, .. }
                         if is_left_out(target) && request.kind == ModuleRequestKind::Require => {}
                     // The body that its sites are written in does not run.
                     ModuleRef::File(target) if is_left_out(target) => {
@@ -327,13 +366,22 @@ impl ModuleGraph {
             }
             lists.push(passed_on);
         }
-        for (row, requests) in self.rows.iter_mut().zip(lists) {
+        let mut lists = lists.into_iter();
+        for (row, requests) in self.rows.iter_mut().zip(&mut lists) {
             row.requests = requests;
         }
+        self.plan.inner_requests = lists.collect();
     }
 
     pub fn is_left_out(&self, module: ModuleRef) -> bool {
-        is_among(&self.left_out_files, module)
+        let is_inner_left_out = match module {
+            ModuleRef::Inner { file, callback } => {
+                let left_out = &self.left_out_inner_modules;
+                left_out.binary_search(&(file, callback)).is_ok()
+            }
+            _ => false,
+        };
+        is_inner_left_out || is_among(&self.left_out_files, module)
     }
 
     pub fn limit_exports(

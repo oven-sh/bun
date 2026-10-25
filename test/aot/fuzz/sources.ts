@@ -47,6 +47,10 @@
 //   strangers-where-a-type-names-a-class a hot loop reads a member of a field whose type names a class; instances arrive, then records with a field of that name, classes below and beside, objects without a prototype, proxies, null, by stores under unknown keys and casts (strangers-where-a-type-names-a-class.ts)
 //   names-asked-of-full-tables-and-texts-converted-again objects that keep a table of their names, from nearly empty to full of deleted places, asked by read, in, hasOwn, store and delete while they grow and shrink; hundreds of lasting texts whose lower and upper case forms are asked for again and again (names-asked-of-full-tables-and-texts-converted-again.ts)
 //   names-given-by-key-with-something-done-in-between objects of many births are given one to eleven hundred names by key, most of them literal texts that are another one in each turn; between two such stores a name is defined anew or deleted, the object is closed or put below a String object, a typed array, a proxy; then a collection; also stores by index below those
+//   arrays-shifted-during-gc arrays that had elements inserted or removed at the front are read, written, swapped, sorted and resized while garbage keeps the collector running
+//   sorts-with-hostile-comparators sort and toSorted of arrays and typed arrays of every kind of element, order and length, with a comparator that answers at random, NaN, one thing always or no number at all, and at one call throws, changes the array, its length or its kind of storage, or sorts it again
+//   bind-spread-flatmap-and-boolean-arithmetic bind in a constructor, spreads, flatMap, arithmetic on booleans and getters under computed keys, each many times at one place, with something unusual arriving in the middle
+//   prototype-chains-linked-by-hand constructor functions and classes linked by Object.setPrototypeOf, Object.create, __extends or util.inherits, often in a factory that takes the base; in the middle the chain or a method changes
 //   a-full-heap-is-let-go-and-built-ins-make-things objects are kept until no more fit, all or half of them are let go, and at once one built-in that makes things is called thousands of times: there is room again, so no call may fail (a-full-heap-is-let-go-and-built-ins-make-things.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
@@ -152,7 +156,7 @@ function everyBirthAndUse(): Source | undefined {
   const folder = join(import.meta.dir, "..", "generated", "births-and-uses");
   if (!existsSync(folder)) return;
   const names = readdirSync(folder)
-    .filter(name => name.endsWith(".ts") && name !== "run.ts" && !(process.env.AOT_FUZZ_BIRTHS_WITHOUT ?? "").split(",").includes(name))
+    .filter(name => name.endsWith(".ts") && !["run.ts", "also-with-types-erased.ts", "where-a-stretch-stands.ts"].includes(name) && !(process.env.AOT_FUZZ_BIRTHS_WITHOUT ?? "").split(",").includes(name))
     .sort();
   const differs = new Set(Object.values(JSON.parse(readFileSync(join(folder, "known-to-differ.json"), "utf8")) as Record<string, Record<string, string>>).flatMap(Object.keys));
   const tables = new Map<string, { name: string; file: string; text: string; flags?: string[] }[]>();
@@ -232,6 +236,42 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       const typed = seed % 3 === 1;
       const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
       return bed.accepts(program) && bed.allows(program.text) ? { source: "names-given-by-key-with-something-done-in-between", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "arrays-shifted-during-gc.ts"))) {
+    const { generate } = await import("./arrays-shifted-during-gc.ts");
+    sources["arrays-shifted-during-gc"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text) ? { source: "arrays-shifted-during-gc", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "bind-spread-flatmap-and-boolean-arithmetic.ts"))) {
+    const { generate } = await import("./bind-spread-flatmap-and-boolean-arithmetic.ts");
+    sources["bind-spread-flatmap-and-boolean-arithmetic"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text) ? { source: "bind-spread-flatmap-and-boolean-arithmetic", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "prototype-chains-linked-by-hand.ts"))) {
+    const { generate } = await import("./prototype-chains-linked-by-hand.ts");
+    sources["prototype-chains-linked-by-hand"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text) ? { source: "prototype-chains-linked-by-hand", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "sorts-with-hostile-comparators.ts"))) {
+    const { generate } = await import("./sorts-with-hostile-comparators.ts");
+    sources["sorts-with-hostile-comparators"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text) ? { source: "sorts-with-hostile-comparators", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
     };
   }
   if (existsSync(join(import.meta.dir, "unsound-types.ts"))) {

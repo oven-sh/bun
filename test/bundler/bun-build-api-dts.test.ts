@@ -23,7 +23,7 @@ export { join };
 `,
 };
 
-const WRITTEN = ["index.d.ts", "index.full.ts", "index.js", "join.d.ts"];
+const WRITTEN = ["index.aot.ts", "index.d.ts", "index.js", "join.d.ts"];
 const filesIn = (folder: string) => readdirSync(folder, { recursive: true }).map(String).sort();
 const described = (root: string, outputs: Bun.BuildArtifact[]) =>
   outputs
@@ -43,8 +43,8 @@ describe("Bun.build({ dts: true })", () => {
     expect(built.logs).toEqual([]);
     expect(filesIn(join(root, "out"))).toEqual(WRITTEN);
     expect(described(root, built.outputs)).toEqual([
+      ["/out/index.aot.ts", "asset", "ts"],
       ["/out/index.d.ts", "asset", "ts"],
-      ["/out/index.full.ts", "asset", "ts"],
       ["/out/index.js", "entry-point", "ts"],
       ["/out/join.d.ts", "asset", "ts"],
     ]);
@@ -58,8 +58,8 @@ export interface Options {
 export declare function greet(options: Options): string;
 export { join };
 `);
-    expect(read("index.full.ts")).toContain("function greet(options: Options): string {");
-    expect(read("index.full.ts")).toContain("function join(first: string, second: string): string {");
+    expect(read("index.aot.ts")).toContain("function greet(options: Options): string {");
+    expect(read("index.aot.ts")).toContain("function join(first: string, second: string): string {");
     expect(read("index.js")).toContain("function greet(options) {");
     expect(read("index.js")).not.toContain("debugId");
     const plain = await Bun.build({ entrypoints: [join(root, "src/index.ts")], tsconfig: join(root, "tsconfig.json") });
@@ -77,12 +77,12 @@ export { join };
     });
     expect(built.logs).toEqual([]);
     expect(described(root, built.outputs)).toEqual([
+      ["index.aot.ts", "asset", "ts"],
       ["index.d.ts", "asset", "ts"],
-      ["index.full.ts", "asset", "ts"],
       ["index.js", "entry-point", "ts"],
       ["join.d.ts", "asset", "ts"],
     ]);
-    const typed = built.outputs.find(output => output.path.endsWith("index.full.ts"))!;
+    const typed = built.outputs.find(output => output.path.endsWith("index.aot.ts"))!;
     expect(await typed.text()).toContain("function greet(options: Options): string {");
     expect(filesIn(root)).toEqual(before);
   });
@@ -132,7 +132,7 @@ export { join };
     expect(built.logs.map(log => [log.level, log.message])).toEqual([
       [
         "warn",
-        "the full types that bun compile compiles a package from are left out: they do not support minify.identifiers yet",
+        "the .aot.ts files that --aot compiles a package from are left out: they do not support minify.identifiers yet",
       ],
     ]);
     expect(filesIn(join(root, "out"))).toEqual(["index.d.ts", "index.js", "join.d.ts"]);
@@ -149,7 +149,7 @@ export { join };
       dts: true,
     });
     expect(built.logs).toEqual([]);
-    expect(filesIn(join(root, "out"))).toContain("index.full.ts");
+    expect(filesIn(join(root, "out"))).toContain("index.aot.ts");
   });
 
   test("two builds at once keep their files apart", async () => {

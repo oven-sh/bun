@@ -159,7 +159,7 @@ fn collect_synthetic_export_keys(
     }
     if let Some(application) = input.application {
         for export in application.graph.synthetic_exports() {
-            if let ModuleRef::File(_) = export.module
+            if let ModuleRef::File(_) | ModuleRef::Inner { .. } = export.module
                 && let Some(module) = application.local_module(export.module)
             {
                 keys.add((module, export.name), false);

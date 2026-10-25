@@ -20,7 +20,7 @@
     "testsFailed": 4,
     "alwaysFailing": 1,
     "accessesByName": 14,
-    "runtimeOperations": 13,
+    "runtimeOperations": 16,
     "callsNotExpected": 1
   },
   "a-long-array-is-searched-for-an-object": {
@@ -46,6 +46,14 @@
     "accessesByName": 160000,
     "runtimeOperations": 80745,
     "callsNotExpected": 10
+  },
+  "an-async-function-returns-parsed-json": {
+    "millionInstructions": 86,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 180420,
+    "callsNotExpected": 0
   },
   "an-async-generator-is-stepped-by-hand": {
     "millionInstructions": 65,

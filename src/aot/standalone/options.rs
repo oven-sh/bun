@@ -23,8 +23,6 @@ pub struct StandaloneBuild {
     pub working_directory: Vec<u8>,
     pub entry_points: Vec<Vec<u8>>,
     pub conditions: Vec<Vec<u8>>,
-    // Empty: the main fields of `bun run`.
-    pub main_fields: Vec<Vec<u8>>,
     pub preserves_symlinks: bool,
     pub tsconfig_override: Option<Vec<u8>>,
     pub loaders: Vec<(Vec<u8>, Loader)>,
@@ -42,7 +40,6 @@ impl StandaloneBuild {
             working_directory,
             entry_points,
             conditions: Vec::new(),
-            main_fields: Vec::new(),
             preserves_symlinks: false,
             tsconfig_override: None,
             loaders: Vec::new(),
@@ -75,10 +72,6 @@ impl StandaloneBuild {
         let mut code = CodeOptions::bun_run(working_directory);
         for condition in &self.conditions {
             code.add_custom_condition(condition);
-        }
-        if !self.main_fields.is_empty() {
-            code.main_fields.clone_from(&self.main_fields);
-            code.has_default_main_fields = false;
         }
         code.preserves_symlinks = self.preserves_symlinks;
         code.tsconfig_override = self
@@ -194,7 +187,6 @@ mod tests {
         assert!(!build.preserves_symlinks);
         assert!(!build.are_all_packages_external);
         assert!(build.conditions.is_empty());
-        assert!(build.main_fields.is_empty());
         assert!(build.loaders.is_empty());
         assert!(build.external_packages.is_empty());
         assert!(build.tsconfig_override.is_none());
@@ -340,26 +332,6 @@ mod tests {
         assert_eq!(
             build.options().paths.entry_point_names,
             byte_strings(&["a", "../lib/b.js", "../../other/c.js"])
-        );
-    }
-
-    #[test]
-    fn explicit_main_fields() {
-        let mut build = build_with_entry_points(&["a.ts"]);
-        build.main_fields = byte_strings(&["browser", "main"]);
-        let code = build.options().code;
-        assert_eq!(code.main_fields, build.main_fields);
-        assert!(!code.has_default_main_fields);
-    }
-
-    #[test]
-    fn default_main_fields() {
-        let code = build_with_entry_points(&["a.ts"]).options().code;
-        let defaults = CodeOptions::bun_run(b"/project");
-        assert_eq!(code.main_fields, defaults.main_fields);
-        assert_eq!(
-            code.has_default_main_fields,
-            defaults.has_default_main_fields
         );
     }
 }

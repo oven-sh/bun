@@ -1,10 +1,11 @@
 // An executable always runs on Bun, so a test that asks which runtime this is has one answer, and `bun build --compile --aot` gives it:
 // the arm for another runtime is not loaded, not checked and not compiled, and what it imports is not in the executable.
-// The name decides nothing: a parameter, a variable or an import called `Bun` is read when the program runs.
+// The name decides nothing: a parameter, a variable or an import called `Bun` or `process` is read when the program runs.
 //
 //   asksAndHolds     tests that are true on Bun, each written in every shape of `shapes`. The other arm requires a file that does not
 //                    exist, under a name of its own: a build that followed it would say so
 //   namedAlike       the same words about something else: the executable prints what `bun run` prints
+//   whatAnswersThem  cannot be replaced in an executable
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -22,15 +23,43 @@ const asksAndHolds = [
   `"Bun" in globalThis`,
   `globalThis?.Bun`,
   `globalThis.Bun != null`,
+  `typeof process !== "undefined"`,
+  `typeof process === "object"`,
+  `globalThis.process`,
+  `globalThis.process !== undefined`,
+  `"process" in globalThis`,
+  `process.isBun`,
+  `process.isBun === true`,
+  `process?.isBun`,
+  `"isBun" in process`,
+  `typeof process.versions === "object"`,
+  `process.versions !== null`,
+  `process.versions != null`,
+  `"versions" in process`,
   `process.versions.bun`,
+  `process.versions.bun !== undefined`,
   `typeof process.versions.bun === "string"`,
+  `process.versions?.bun`,
+  `process?.versions?.bun`,
+  `globalThis.process?.versions?.bun`,
+  `"bun" in process.versions`,
+  `process.versions.node`,
+  `typeof process.versions.node === "string"`,
+  `"node" in process.versions`,
+  `typeof process.release === "object"`,
+  `process.release.name === "node"`,
+  `process.release?.name !== "io.js"`,
   `typeof require === "function"`,
   `typeof module !== "undefined"`,
   `process.platform === ${JSON.stringify(process.platform)}`,
   `process.arch === ${JSON.stringify(process.arch)}`,
   `!process.browser`,
+  `typeof process !== "undefined" && typeof process.versions === "object" && process.versions !== null && typeof process.versions.bun === "string"`,
+  `typeof process !== "undefined" && "bun" in process.versions`,
+  `typeof process !== "undefined" && process.versions != null && process.versions.node != null`,
   `typeof Bun === "undefined" ? false : true`,
   `typeof Bun === "undefined" || !("Bun" in globalThis) ? 0 : 1`,
+  `typeof Bun === "undefined" || typeof process === "undefined" ? 0 : 1`,
 ];
 
 type Shape = (test: string, row: number, other: string) => string;
@@ -58,6 +87,28 @@ const shapes: Record<string, Shape> = {
   "in a function": (test, row, other) =>
     `function f${row}() { return (${test}) ? ${row} : ${other}; }\nconsole.log(f${row}());`,
 };
+
+test(
+  "the default import of node:process is the global",
+  () =>
+    slot(async () => {
+      const tests = asksAndHolds.filter(
+        test => /^(typeof )?process\b/.test(test) && !/platform|arch|browser|typeof process [!=]/.test(test),
+      );
+      const rows = tests.map(
+        (test, row) => `console.log((${test}) ? ${row} : await import("./for-another-runtime-${row}.js"));`,
+      );
+      using dir = tempDir("aot-which-runtime", {
+        "main.mjs": `import process from "node:process";\n` + rows.join("\n"),
+      });
+      const { plain, said, built, compiled } = await buildAndRun(String(dir), "main.mjs");
+      expect(tests.length).toBeGreaterThan(15);
+      expect([...said.matchAll(/for-another-runtime-(\d+)/g)].map(match => tests[Number(match[1])])).toEqual([]);
+      expect({ built, said: built ? "" : said }).toEqual({ built: true, said: "" });
+      expect({ stdout: compiled!.stdout, exitCode: compiled!.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+    }),
+  600_000,
+);
 
 const executableIn = (folder: string) => join(folder, isWindows ? "main.exe" : "main");
 
@@ -241,3 +292,46 @@ describe.concurrent("what is only named alike is read", () => {
     );
   }
 });
+
+const refusal = (what: string, how = "assign to") =>
+  `TypeError: Cannot ${how} ${what} because built-in objects are read-only in a compiled executable`;
+
+test(
+  "what answers them cannot be replaced in an executable",
+  () =>
+    slot(async () => {
+      const attempts: [string, string][] = [
+        [`globalThis.process = {}`, refusal("process")],
+        [`delete globalThis.process`, refusal("process", "delete")],
+        [`Object.defineProperty(globalThis, "process", { value: 1 })`, refusal("process")],
+        [`process.isBun = false`, refusal("process.isBun")],
+        [`delete process.isBun`, refusal("process.isBun", "delete")],
+        [`process.versions = {}`, refusal("process.versions")],
+        [`process.release = {}`, refusal("process.release")],
+        [`process.versions.bun = "0"`, "TypeError: Attempted to assign to readonly property."],
+        [`delete process.versions.bun`, "TypeError: Unable to delete property."],
+        [`process.versions.deno = "0"`, "TypeError: Attempting to define property on object that is not extensible."],
+        [`process.release.name = "other"`, "TypeError: Attempted to assign to readonly property."],
+      ];
+      const main = `"use strict";
+const attempts = [${attempts.map(([text]) => `() => { ${text}; }`).join(", ")}];
+const chosen = process.argv[2] === undefined ? attempts : [];
+for (const attempt of chosen) {
+  try { attempt(); console.log("done"); } catch (error) { console.log(String(error).split(" (bun compile")[0]); }
+}
+console.log(typeof process, process.isBun, typeof process.versions.bun, "deno" in process.versions, process.release.name, Object.isFrozen(process.versions), Object.isFrozen(process.release));
+process.title = "mine"; process.mine = 1; Bun.mine = 2;
+console.log(process.mine, Bun.mine);`;
+      using dir = tempDir("aot-which-runtime", { "main.cjs": main });
+      const { said, built, compiled } = await buildAndRun(String(dir), "main.cjs");
+      expect({ built, said: built ? "" : said }).toEqual({ built: true, said: "" });
+      expect(compiled!.stdout.split("\n")).toEqual([
+        ...attempts.map(([, answer]) => answer),
+        "object true string false node true true",
+        "1 2",
+        "",
+      ]);
+      expect(compiled!.exitCode).toBe(0);
+    }),
+  600_000,
+);

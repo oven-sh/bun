@@ -4,6 +4,7 @@ use crate::link::testing::{
     TestUnit, find_file, with_projects_without_bun_modules, with_test_files,
 };
 use crate::modules::{ExportBinding, ModuleFailureId, ModuleRef};
+use bun_sema::hir::FnId;
 
 #[test]
 fn bodies_of_the_entry_point_and_of_a_module_no_retained_code_names_are_roots() {
@@ -26,11 +27,17 @@ fn body_of_a_further_record_is_a_root() {
         main_unit.define_body(|_| {});
         let mut first_unit = TestUnit::new(first);
         first_unit.define_body(|_| {});
+        first_unit.define_function(3, |_| {});
         first_unit.define_function(4, |_| {});
+        first_unit.fragment.declare_module(ModuleRef::Inner {
+            file: first,
+            callback: FnId(3),
+        });
         first_unit.fragment.declare_module(ModuleRef::Check(first));
 
         let marked = mark_fragments(projects, [main_unit.finish(), first_unit.finish()]);
 
+        assert!(marked.has_source_function(first, 3));
         assert!(!marked.has_source_function(first, 4));
         assert_eq!(
             marked.undefined_functions(),

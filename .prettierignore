@@ -42,5 +42,3 @@ src/js/internal/repl/completion.ts
 src/js/internal/repl/await.ts
 src/js/internal/repl/acorn.ts
 src/js/internal/repl/acorn-walk.ts
-
-test/aot/typed-packages/react-reconciler-host/typed-bundle

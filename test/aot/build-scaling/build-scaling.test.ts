@@ -12,6 +12,11 @@
 // A shape that grows faster than 2.5 times today has its growth in the file, and may not pass that, on any platform: the aim is that no shape has one.
 // The file only goes down. Whoever means to accept a worse number edits it, where a reviewer sees it.
 //
+// One more build has all the shapes as its entry points, on four threads. The stages of a build run one after another, and a stage takes the memory that
+// the stage before it has freed, so the build needs what its largest stage needs. On one thread that is so by itself. On several threads it also takes
+// an allocator that hands what one thread has freed to the others, or back to the system. Only its memory is held against the budget, with less slack:
+// it wavers by a twentieth.
+//
 // Instructions are counted with perf_event_open on Linux and /usr/bin/time -l on macOS; where neither may be used only the memory is judged. The growth
 // of memory is judged only where the size adds enough of it to tell it from what the allocators keep for themselves. The budgets are those of Linux on x64 with glibc.
 //
@@ -84,6 +89,26 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<C
   }
 }
 
+const allShapesTogether = "all shapes as the entry points of one build, on four threads";
+const slackOfAllShapesTogether = 1.15;
+
+async function measureAllShapesTogether(carrier: string[]): Promise<Cost> {
+  const built = shapes.filter(shape => !shape.isRefused && !shape.isBundledFirst);
+  const files = built.flatMap((shape, index) =>
+    Object.entries(shape.write(shape.size * factor)).map(([path, text]) => [`shape-${index}/${path}`, text]),
+  );
+  using folder = tempDir("aot-build-scaling", Object.fromEntries(files));
+  const cwd = String(folder);
+  const entryPoints = built.map((shape, index) => `./shape-${index}/${shape.entry}`);
+  const executable = join(cwd, "program");
+  return await measureCommand(
+    cwd,
+    [bunExe(), "build", "--compile", "--aot", withThreads(4), ...carrier, ...entryPoints, "--outfile", executable],
+    900_000,
+    bunEnv,
+  );
+}
+
 const inMillions = (count: number) => Math.round(count / 1e6);
 const rounded = (times: number) => Math.round(times * 100) / 100;
 const lower = (a: number | undefined, b: number | undefined) =>
@@ -96,7 +121,11 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
       writeFileSync(
         budgetsPath,
         JSON.stringify(
-          Object.fromEntries(shapes.flatMap(({ name }) => (budgets[name] ? [[name, budgets[name]]] : []))),
+          Object.fromEntries(
+            [...shapes.map(shape => shape.name), allShapesTogether].flatMap(name =>
+              budgets[name] ? [[name, budgets[name]]] : [],
+            ),
+          ),
           null,
           2,
         ) + "\n",
@@ -178,4 +207,23 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
       1_800_000,
     );
   }
+
+  if (allShapesTogether.includes(wanted))
+    test.concurrent(
+      allShapesTogether,
+      async () => {
+        const megabytes = inMillions((await slot(() => measureAllShapesTogether(carrier))).peakBytes);
+        console.error(`SCALING ${allShapesTogether}: ${megabytes} MB`);
+        if (!holdsBudgets) return;
+        const budget = budgets[allShapesTogether];
+        if (mode === "accept" || !budget) {
+          budgets[allShapesTogether] = { megabytes };
+          expect(["accept", "lower"]).toContain(mode);
+          return;
+        }
+        if (mode === "lower") budget.megabytes = Math.min(budget.megabytes, megabytes);
+        expect(megabytes).toBeLessThanOrEqual(budget.megabytes * slackOfAllShapesTogether);
+      },
+      1_800_000,
+    );
 });

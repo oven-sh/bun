@@ -1,5 +1,5 @@
 use bun_sema::atom::{Atom, Interner};
-use bun_sema::fold::{Define, DefinePath, DefineRoot, DefineValue, RuntimeValueKind};
+use bun_sema::fold::{Constant, Define, DefinePath, DefineRoot, DefineValue, RuntimeValueKind};
 use bun_sema::session::Arena;
 
 use crate::builtins::{BuiltinId, BuiltinKind, Mutability, Platforms, table};
@@ -80,19 +80,61 @@ pub(crate) fn locked_builtin_defines<'s>(
     walk.defines
 }
 
-/// `Bun` says which runtime this is. ZigGlobalObject.lut.txt: the property is read-only and cannot be deleted, so no program replaces it.
+#[derive(Copy, Clone)]
+enum KnownValue {
+    Object,
+    True,
+    Text(&'static str),
+}
+
+/// The paths that programs test to find out which runtime they are on.
+/// `Bun` is read-only and cannot be deleted (ZigGlobalObject.lut.txt), so no program replaces it.
+/// The table locks `process` and the name after it, and BunProcess.cpp freezes `process.versions` and `process.release` in an executable.
+const RUNTIME_IDENTITY: [(&[&str], KnownValue); 7] = [
+    (&["Bun"], KnownValue::Object),
+    (&["process", "isBun"], KnownValue::True),
+    (&["process", "versions"], KnownValue::Object),
+    (
+        &["process", "versions", "bun"],
+        KnownValue::Text(bun_core::Global::package_json_version),
+    ),
+    (
+        &["process", "versions", "node"],
+        KnownValue::Text(bun_core::env::REPORTED_NODEJS_VERSION),
+    ),
+    (&["process", "release"], KnownValue::Object),
+    (&["process", "release", "name"], KnownValue::Text("node")),
+];
+
 pub(crate) fn runtime_identity_defines<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
-) -> [Define<'s>; 2] {
-    let (global_this, bun) = (atoms.intern(b"globalThis"), atoms.intern(b"Bun"));
-    [(bun, &[][..]), (global_this, &[bun][..])].map(|(root, members)| Define {
-        path: DefinePath {
-            root: DefineRoot::Global(root),
-            members: arena.alloc_slice_copy(members),
-        },
-        value: DefineValue::RuntimeValue(RuntimeValueKind::Object),
-    })
+) -> Vec<Define<'s>> {
+    let global_this = atoms.intern(b"globalThis");
+    let mut defines = Vec::with_capacity(2 * RUNTIME_IDENTITY.len());
+    for (names, known) in RUNTIME_IDENTITY {
+        let names: Vec<Atom> = names
+            .iter()
+            .map(|name| atoms.intern(name.as_bytes()))
+            .collect();
+        let value = match known {
+            KnownValue::Object => DefineValue::RuntimeValue(RuntimeValueKind::Object),
+            KnownValue::True => DefineValue::RuntimeConstant(Constant::Boolean(true)),
+            KnownValue::Text(text) => {
+                DefineValue::RuntimeConstant(Constant::String(atoms.intern(text.as_bytes())))
+            }
+        };
+        for (root, members) in [(names[0], &names[1..]), (global_this, &names[..])] {
+            defines.push(Define {
+                path: DefinePath {
+                    root: DefineRoot::Global(root),
+                    members: arena.alloc_slice_copy(members),
+                },
+                value,
+            });
+        }
+    }
+    defines
 }
 
 #[cfg(test)]
@@ -136,6 +178,8 @@ mod tests {
             (&["globalThis"], Object),
             (&["globalThis", "Map"], Function),
             (&["globalThis", "Reflect", "ownKeys"], Function),
+            (&["process"], Object),
+            (&["globalThis", "process"], Object),
         ];
         for &(path, kind) in rows {
             assert_eq!(kind_at(path), Some(kind), "{path:?}");
@@ -160,7 +204,20 @@ mod tests {
                 names.map(|name| atoms.bytes(name)).collect()
             })
             .collect();
-        assert_eq!(paths, [vec![&b"Bun"[..]], vec![b"globalThis", b"Bun"]]);
+        assert_eq!(paths.len(), 2 * RUNTIME_IDENTITY.len());
+        assert_eq!(paths[..2], [vec![&b"Bun"[..]], vec![b"globalThis", b"Bun"]]);
+        assert_eq!(paths[2], [&b"process"[..], b"isBun"]);
+        assert_eq!(paths[3], [&b"globalThis"[..], b"process", b"isBun"]);
+    }
+
+    #[test]
+    fn table_locks_runtime_identity_on_process() {
+        for (names, _) in &RUNTIME_IDENTITY[1..] {
+            assert_eq!(names[0], "process");
+            let name = table::find_name(names[1].as_bytes()).unwrap();
+            let location = table::own_member(BuiltinId::Process, name).unwrap();
+            assert!(table::is_locked(location), "{names:?}");
+        }
     }
 
     #[test]
@@ -175,7 +232,8 @@ mod tests {
             &["undefined"],
             &["Date", "now"],
             &["console"],
-            &["process"],
+            &["process", "platform"],
+            &["process", "isBun"],
             &["Bun"],
             &["Bun", "serve"],
             &["navigator"],

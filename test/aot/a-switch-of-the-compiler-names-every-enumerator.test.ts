@@ -64,7 +64,6 @@ const known: Record<string, string> = {
   "place/AOTSlotUses.cpp": "Opcode 1",
   "represent/AOTRepresentationRules.cpp": "Opcode 2",
   "runtime/AOTFrameArrays.h": "Entry 1",
-  "runtime/AOTHeapCellVisits.h": "CellVisitKind 1",
   "runtime/AOTPropertyCachesLeafOperations.cpp": "Kind 1",
   "runtime/AOTRuntimeCounters.h": "RuntimeCounterID 1",
   "runtime/AOTRuntimeTable.h": "Entry 2",

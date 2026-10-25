@@ -4,6 +4,7 @@
 // objects. The escape analysis kept a row of a bit for each object for each of them: over two gigabytes, where the build aborted.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { totalmem } from "os";
 import { join } from "path";
 import { compileCommand, withThreads } from "./harness/flags";
 import { withoutDebugInformation } from "./run-programs";
@@ -40,8 +41,14 @@ async function run(cmd: string[], cwd: string) {
   return { stdout, stderr, exitCode, signal: proc.signalCode };
 }
 
-// The back end takes most of a minute and gigabytes for a body of that size. A debug or ASAN build takes many times that.
-test.skipIf(isDebug || isASAN)(
+// The back end takes most of a minute and 7 GB for a body of that size. A debug or ASAN build takes many times that.
+const hasTooLittleMemory = totalmem() < 12 * 1024 ** 3;
+if (hasTooLittleMemory)
+  console.error(
+    "SKIPPED: test/aot/a-table-of-new-objects-in-hot-code-builds.test.ts: the build takes 7 GB, and this machine has less than 12 GB",
+  );
+
+test.skipIf(isDebug || isASAN || hasTooLittleMemory)(
   "a table of new objects whose entries all stay live builds where every function is hot",
   async () => {
     using folder = tempDir("aot-table-of-new-objects", files);

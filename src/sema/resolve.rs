@@ -3921,7 +3921,7 @@ impl<'h> Resolver<'h> {
             // Whatever is combined with `candidate` here is normalized afterwards.
             let normalized = normalized_for_lookup(candidate);
             let dir = normalized.as_deref().unwrap_or(candidate);
-            let version_paths = get_version_paths(&package.json, look);
+            let version_paths = get_version_paths(&package.json, look.tracer);
             // `getPackageFile`: only the first of these fields that has a value.
             let fields: &[&[u8]] = match (is_package_dir, look.declarations) {
                 (false, _) => &[],
@@ -4135,7 +4135,7 @@ impl<'h> Resolver<'h> {
         if !rest.is_empty()
             && !look.as_require
             && let Some(package) = package
-            && let Some(paths) = get_version_paths(&package.json, look)
+            && let Some(paths) = get_version_paths(&package.json, look.tracer)
             && let Some(found) = self.through_types_versions(paths, &package_dir, rest, &load, look)
         {
             return Found::File(found);
@@ -4838,32 +4838,37 @@ fn get_package_json_path_field(
 /// `GetVersionPaths`: finds the first entry of `typesVersions` in the `package.json` `json` whose range contains the
 /// compiler's version. Returns the range and the paths, which are an object. `None` means `Exists` is false. It's also
 /// false for an entry whose range is the empty string, which ends the search.
-fn get_version_paths<'j>(json: &'j Json, look: Look) -> Option<(&'j [u8], &'j Json)> {
+fn get_version_paths<'j>(json: &'j Json, tracer: Option<&Tracer>) -> Option<(&'j [u8], &'j Json)> {
+    let trace = |code: u32, args: &[Arg<'_>]| {
+        if let Some(tracer) = tracer {
+            tracer.write(code, args);
+        }
+    };
     let (types_versions, object) = (Arg::Bytes(b"typesVersions"), Arg::Bytes(b"object"));
     let Some(field) = json.get(b"typesVersions") else {
-        look.trace(6100, &[types_versions]);
+        trace(6100, &[types_versions]);
         return None;
     };
     let Some(versions) = field.as_object() else {
-        look.trace(
+        trace(
             6105,
             &[types_versions, object, Arg::Bytes(json_type(field))],
         );
         return None;
     };
-    look.trace(6206, &[types_versions]);
+    trace(6206, &[types_versions]);
     for (key, value) in versions {
         let Some(key_range) = try_parse_version_range(key) else {
-            look.trace(6209, &[Arg::Bytes(key)]);
+            trace(6209, &[Arg::Bytes(key)]);
             continue;
         };
         if !key_range.test(&TYPESCRIPT_VERSION) {
             continue;
         }
         if value.as_object().is_none() {
-            if look.tracer.is_some() {
+            if tracer.is_some() {
                 let name = [b"typesVersions['", key.as_slice(), b"']"].concat();
-                look.trace(
+                trace(
                     6105,
                     &[Arg::Bytes(&name), object, Arg::Bytes(json_type(value))],
                 );
@@ -4872,8 +4877,24 @@ fn get_version_paths<'j>(json: &'j Json, look: Look) -> Option<(&'j [u8], &'j Js
         }
         return (!key.is_empty()).then_some((key.as_slice(), value));
     }
-    look.trace(6207, &[Arg::Bytes(VERSION_MAJOR_MINOR)]);
+    trace(6207, &[Arg::Bytes(VERSION_MAJOR_MINOR)]);
     None
+}
+
+/// `GetVersionPaths(nil).GetPaths()` of the `package.json` `json`. An entry that isn't an array is skipped, and an
+/// element that isn't a string counts as the empty substitution.
+pub(crate) fn paths_of_types_versions(json: &Json) -> Option<Paths> {
+    let (_, mapping) = get_version_paths(json, None)?;
+    let substitutions = |targets: &[Json]| -> Vec<Vec<u8>> {
+        let texts = targets.iter().map(|it| it.as_str().unwrap_or_default());
+        texts.map(<[u8]>::to_vec).collect()
+    };
+    let entries = mapping.as_object()?.iter();
+    Some(
+        entries
+            .filter_map(|(key, value)| Some((key.clone(), substitutions(value.as_array()?))))
+            .collect(),
+    )
 }
 
 /// The key of `Caches::resolved`. Only the directory of `from` is used.

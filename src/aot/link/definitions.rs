@@ -77,6 +77,7 @@ fn find_writer(projects: &Projects<'_, '_>, exporter: ProgramModule) -> ExportWr
             true => ExportWriter::Body,
             false => ExportWriter::Loader,
         },
+        ProgramModule::Inner { .. } => ExportWriter::Body,
         ProgramModule::Face(_) | ProgramModule::Check(_) => ExportWriter::Face,
         ProgramModule::Runtime(_) | ProgramModule::External { .. } => ExportWriter::Loader,
     }
@@ -502,16 +503,19 @@ impl FamilyCloser<'_> {
     }
 
     fn reaches_any(&mut self, layout: u32, targets: &[u32]) -> bool {
+        if targets.contains(&layout) {
+            return true;
+        }
         self.visit += 1;
         let mut pending: SmallVec<[u32; 16]> = SmallVec::new();
         pending.push(layout);
         self.visit_of[layout as usize] = self.visit;
         while let Some(reached) = pending.pop() {
-            if targets.contains(&reached) {
-                return true;
-            }
             for &supertype in &self.above[reached as usize] {
                 if replace(&mut self.visit_of[supertype as usize], self.visit) != self.visit {
+                    if targets.contains(&supertype) {
+                        return true;
+                    }
                     pending.push(supertype);
                 }
             }

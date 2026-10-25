@@ -2776,6 +2776,9 @@ impl File<'_> {
     pub fn keyword_identifiers(&self) -> &[Node] {
         self.lazy.cells.keyword_identifiers.get_or_init(|| {
             let mut positions: Vec<u32> = self.keyword_identifier_positions.to_vec();
+            if positions.is_empty() {
+                return Box::default();
+            }
             positions.shared_sort_unstable();
             positions.dedup();
             let mut found = Vec::new();

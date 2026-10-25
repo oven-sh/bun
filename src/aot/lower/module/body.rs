@@ -26,6 +26,10 @@ pub(super) fn declare_module_body(file: &mut FileLowering<'_, '_, '_, '_>) -> Mo
         }
     }
     // Link finds the bodies of the further modules of the file by their keys.
+    let modules = file.inputs.modules;
+    for &callback in modules.inner_modules(file.file) {
+        file.declare_inner_module_body(callback);
+    }
     file.declare_face_body();
     file.declare_check_body();
     let data = match kind {

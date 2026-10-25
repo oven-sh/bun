@@ -6,11 +6,6 @@ export default b.module({ rustPath: "crate::code_resolver_testing" });
 const answersJSON = { returns: b.string.utf8.optional, capability: "js", throws: true } as const;
 const text = b.string.loose.utf8;
 
-export const compareCodeResolution = b.fn({
-  args: { root: text, conditions: text, preserveSymlinks: b.bool.optional, listsEverySite: b.bool },
-  ...answersJSON,
-});
-
 export const describeCodeGraph = b.fn({
   args: {
     entryPoints: text,

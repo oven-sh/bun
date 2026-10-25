@@ -201,10 +201,6 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
             .retain(|condition| condition != b"node-addons");
     }
 
-    if !options.transform_options.main_fields.is_empty() {
-        code.main_fields = owned_list(&options.main_fields);
-        code.has_default_main_fields = false;
-    }
     // An executable holds the file of a package that a bundle holds. `bun run` takes "main" where a package has both.
     code.prefers_module_field = !input.aot.runs_in_place;
     code.preserves_symlinks = options.preserve_symlinks;
@@ -217,7 +213,6 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     code.extension_orders.require = owned_list(&orders.default.default);
     code.extension_orders.node_modules_import = owned_list(&orders.node_modules.esm);
     code.extension_orders.node_modules_require = owned_list(&orders.node_modules.default);
-    code.extension_orders.main_field = owned_list(options.main_field_extension_order);
 
     let delimiter = if cfg!(windows) { b';' } else { b':' };
     code.node_paths = (input

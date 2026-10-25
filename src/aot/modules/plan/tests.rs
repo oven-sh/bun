@@ -450,7 +450,16 @@ fn a_request_to_a_file_that_is_left_out_goes() {
 fn a_module_that_the_graph_has_never_heard_of_has_neutral_answers() {
     with_plan(&[("main.mjs", "export {};")], |plan| {
         let file = plan.file("main.mjs");
+        let inner = ModuleRef::Inner {
+            file,
+            callback: FnId(7),
+        };
+        assert_eq!(plan.graph.shape(inner), Shape::AsToday);
+        assert!(plan.graph.requests_of(inner).is_empty());
         assert!(plan.graph.requests_of(ModuleRef::Face(file)).is_empty());
         assert!(plan.graph.requests_of(ModuleRef::Check(file)).is_empty());
+        assert!(!plan.graph.keeps_error(inner));
+        assert!(plan.graph.exports_of(inner).is_empty());
+        assert_eq!(plan.graph.inner_module(file, FnId(7)), None);
     });
 }

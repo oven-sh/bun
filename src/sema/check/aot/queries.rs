@@ -530,9 +530,20 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             |memo| &mut memo.contextual_types,
             |queries| {
                 queries.require_live_expression(expression)?;
-                queries.compute_contextual_type(expression)
+                queries.compute_contextual_type(expression, false)
             },
         )
+    }
+
+    /// `contextual_type` of an expression whose value is never a promise. `return` in an async function is written under
+    /// `Order | PromiseLike<Order>`: this answers `Order`.
+    pub fn contextual_type_of_settled_value(
+        &mut self,
+        expression: ExprId,
+    ) -> Result<Option<TypeId>, GaveUp> {
+        self.ask_expression(expression, |queries| {
+            queries.compute_contextual_type(expression, true)
+        })
     }
 
     pub fn is_written_under_type_variable(&mut self, expression: ExprId) -> Result<bool, GaveUp> {
@@ -555,7 +566,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    fn compute_contextual_type(&mut self, expression: ExprId) -> Result<Option<TypeId>, GaveUp> {
+    fn compute_contextual_type(
+        &mut self,
+        expression: ExprId,
+        is_settled: bool,
+    ) -> Result<Option<TypeId>, GaveUp> {
         let file = self.file;
         let outer = self.c.begin_recheck();
         let is_pushed = self.push_enclosing_literal_context(expression);
@@ -569,9 +584,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             self.c.pop_contextual_type();
         }
         self.c.end_recheck(outer);
-        let (Some(plain), Some(apparent)) = (plain, apparent) else {
+        let (Some(mut plain), Some(mut apparent)) = (plain, apparent) else {
             return Ok(None);
         };
+        if is_settled {
+            plain = self.c.awaited(plain);
+            apparent = self.c.awaited(apparent);
+        }
         let plain = self.without_nullish(plain)?;
         let apparent = self.without_nullish(apparent)?;
         if plain == TypeId::NEVER || apparent == TypeId::NEVER {

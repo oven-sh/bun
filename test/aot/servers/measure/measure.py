@@ -65,11 +65,6 @@ decoder validates by itself. They are built with `go build` and `cargo build --r
 GOMAXPROCS=1 and SERVER_THREADS=1 in the environment make them run on one thread, like the JavaScript of the other servers.
 TanStack Start has two extra routes, the pages / ("static") and /items ("list"). The expected page is whatever the first process
 returned, with timestamps removed; under load only the length of a page is compared.
-`tanstack-typed` is the same program with `.full-types/` beside it: the full types from packages/full-types of the packages it has
-installed (react, react-dom, seroval). Only an --aot build reads them. As a column it is held to the same pages as the plain one:
-`koa-typed`, `express-typed` and `fastify-typed` are those servers with the full types installed as packages, `node_modules/@oven/full-types-<name>`, as `bun add -d` would.
-
-    python3 measure.py --servers tanstack --column aot=/path/to/bun:--aot --column typed=/path/to/bun:--aot@tanstack-typed --out rows.jsonl
 
 A window runs under `perf stat -p <pid>`, which counts all threads of the server. Hardware counters are saved and restored on
 every context switch, which costs a server about 1%, and far more if its threads hand off work on every request. The first
@@ -120,9 +115,7 @@ import argparse, fcntl, functools, glob, json, multiprocessing, os, re, resource
 import layers
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SERVERS = ["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "fastify-schemas", "tanstack", "tanstack-typed", "koa-typed", "express-typed", "fastify-typed"]
-TANSTACK = ("tanstack", "tanstack-typed")
-TYPED_APP = {"koa-typed": "koa", "express-typed": "express", "fastify-typed": "fastify"}
+SERVERS = ["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "fastify-schemas", "tanstack"]
 API_SERVERS = ["api-bun", "api-thin", "api-hono", "api-elysia", "api-node", "api-express", "api-fastify", "api-koa"]
 EFFECT = {"effect": "./bun.ts", "effect-sources": "./bun.ts", "effect-plain": "./plain.ts"}
 PAGES = [{"name": "static", "method": "GET", "path": "/", "type": "text/html"}, {"name": "list", "method": "GET", "path": "/items", "type": "text/html"}]
@@ -243,7 +236,7 @@ class Server:
         self.folder = os.path.join(options.work, "lane-%d" % lane["server"], column["name"])
         self.copy = os.path.join("/dev/shm" if os.access("/dev/shm", os.W_OK) else options.work, "aot-servers-lane-%03d-column-%02d" % (lane["server"], options.columns.index(column) if column in options.columns else 99))
         os.makedirs(self.folder, exist_ok=True)
-        self.cwd = os.path.join(options.work, "tanstack") if server in TANSTACK else self.folder
+        self.cwd = os.path.join(options.work, "tanstack") if server == "tanstack" else self.folder
         self.process, self.rounds, self.max_private_mb, self.max_anon_mb, self.sampled = None, [], 0.0, 0.0, {}
 
     def kill(self):
@@ -679,25 +672,6 @@ def run_checked(command, **more):
     return run.stdout
 
 
-def add_typed_versions(folder, installed_as_packages=False):
-    """Copies the full types under packages/full-types that are for the installed versions to <folder>/.full-types, or to <folder>/node_modules/@oven/full-types-<name> as npm would install them. An --aot build finds them in both."""
-    typed_versions = os.path.join(HERE, "..", "..", "..", "..", "packages", "full-types")
-    added = []
-    for described in sorted(glob.glob(os.path.join(typed_versions, "*", "*", "full-types.json")) + glob.glob(os.path.join(typed_versions, "@*", "*", "*", "full-types.json"))):
-        name, version = os.path.split(os.path.relpath(os.path.dirname(described), typed_versions))
-        installed = os.path.join(folder, "node_modules", name, "package.json")
-        if os.path.exists(installed) and json.load(open(installed))["version"] == version:
-            target = os.path.join(folder, "node_modules", "@oven", "full-types-" + name.lstrip("@").replace("/", "__")) if installed_as_packages else os.path.join(folder, ".full-types", name)
-            shutil.copytree(os.path.join(os.path.dirname(described), "lay"), os.path.join(target, "lay"))
-            shutil.copy(described, target)
-            if installed_as_packages:
-                shutil.copy(os.path.join(os.path.dirname(described), "package.json"), target)
-            added.append("%s %s" % (name, version))
-    if not added:
-        sys.exit("no full types under %s is for a version installed in %s" % (os.path.normpath(typed_versions), folder))
-    print("full types: " + ", ".join(added), flush=True)
-
-
 @functools.lru_cache(maxsize=None)
 def accepts_layout_seed_flag(bun):
     """Older Buns reject the flag and read BUN_AOT_LAYOUT_SEED instead."""
@@ -777,7 +751,7 @@ def main():
     installer = next(column["bun"] for column in options.columns if column["flags"] != ["run"])
     folders = {}
     for name in ("app", "tanstack"):
-        if not any((server in TANSTACK) == (name == "tanstack") for server in servers if server not in NATIVE and server not in EFFECT):
+        if not any((server == "tanstack") == (name == "tanstack") for server in servers if server not in NATIVE and server not in EFFECT):
             continue
         folders[name] = os.path.join(options.work, name)
         shutil.rmtree(folders[name], ignore_errors=True)
@@ -800,20 +774,6 @@ def main():
     if "tanstack" in folders:
         shutil.copy(os.path.join(HERE, "..", "app", "shared.ts"), os.path.join(folders["tanstack"], "src", "utils", "shared.ts"))
         run_checked([installer, "node_modules/vite/bin/vite.js", "build"], cwd=folders["tanstack"], env=build_env)
-        folders["tanstack-typed"] = os.path.join(options.work, "tanstack-typed")
-        shutil.rmtree(folders["tanstack-typed"], ignore_errors=True)
-        shutil.copytree(folders["tanstack"], folders["tanstack-typed"], ignore=shutil.ignore_patterns("node_modules"))
-        os.symlink(os.path.realpath(os.path.join(folders["tanstack"], "node_modules")), os.path.join(folders["tanstack-typed"], "node_modules"))
-        add_typed_versions(folders["tanstack-typed"])
-    if any(program_of(column, server) in TYPED_APP for server in servers for column in options.columns):
-        folders["app-typed"] = os.path.join(options.work, "app-typed")
-        shutil.rmtree(folders["app-typed"], ignore_errors=True)
-        shutil.copytree(folders["app"], folders["app-typed"], ignore=shutil.ignore_patterns("node_modules"))
-        os.mkdir(os.path.join(folders["app-typed"], "node_modules"))
-        modules = os.path.realpath(os.path.join(folders["app"], "node_modules"))
-        for name in os.listdir(modules):
-            os.symlink(os.path.join(modules, name), os.path.join(folders["app-typed"], "node_modules", name))
-        add_typed_versions(folders["app-typed"], installed_as_packages=True)
     spec = json.loads(run_checked([installer, os.path.join(HERE, "..", "answers.ts")], env=build_env))
     run_checked(["cc", "-O2", "-pthread", "-o", os.path.join(options.work, "bin", "load"), os.path.join(HERE, "load.c")])
 
@@ -831,8 +791,8 @@ def main():
         # The bundler inlines process.env.NODE_ENV and defaults it to "development".
         for column in options.columns:
             program = program_of(column, server)
-            folder = folders[program if program in TANSTACK else "effect-sources" if program == "effect-sources" else "effect" if program in EFFECT else "app-typed" if program in TYPED_APP else "app"]
-            entry = "./serve.ts" if program in TANSTACK else EFFECT.get(program, "./%s.ts" % TYPED_APP.get(program, program))
+            folder = folders["tanstack" if program == "tanstack" else "effect-sources" if program == "effect-sources" else "effect" if program in EFFECT else "app"]
+            entry = "./serve.ts" if program == "tanstack" else EFFECT.get(program, "./%s.ts" % program)
             executable = os.path.join(options.work, "bin", "%s-%s" % (program, column["name"]))
             if column["flags"] == ["run"]:
                 if program in EFFECT and os.path.basename(column["bun"]).startswith("node"):
@@ -874,7 +834,7 @@ def main():
     for server in servers:
         routes = [
             route
-            for route in (spec["effectRoutes"] if server in EFFECT else spec["apiRoutes"] if server in API_SERVERS else spec["routes"]) + (PAGES if server in TANSTACK and not options.soak else []) + [refused for refused in spec["refusedRoutes"] if refused["name"] in options.routes.split(",") and server not in EFFECT and server not in API_SERVERS]
+            for route in (spec["effectRoutes"] if server in EFFECT else spec["apiRoutes"] if server in API_SERVERS else spec["routes"]) + (PAGES if server == "tanstack" and not options.soak else []) + [refused for refused in spec["refusedRoutes"] if refused["name"] in options.routes.split(",") and server not in EFFECT and server not in API_SERVERS]
             if (not options.routes or route["name"] in options.routes.split(",")) and (server not in NATIVE or route["name"] in NATIVE_ROUTES)
         ]
         for job in [routes] if options.soak else routes:

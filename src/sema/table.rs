@@ -4,8 +4,8 @@
 //! computed for one is stored in an array and needs no hashing. A cell starts at zero, meaning "not
 //! computed", and is written once. A read is one load.
 //!
-//! The memory comes zero-filled from the allocator, which for arrays of this size gets it from the
-//! operating system, so a page that's never touched is never resident.
+//! A page of cells that's never written is never read either, so it's never resident. See `FixedCells`
+//! and `Cells`.
 //!
 //! A table's third type parameter determines who writes an entry and when it becomes visible to
 //! whom: `Frozen`, `Buffered`, `FileLocal`. See `Policy`.
@@ -770,7 +770,8 @@ impl<I: Id, V: Packed, A: Alloc> ById<I, V, Frozen, A> {
     /// Returns `None` for an id with `LOCAL`, because no entry is ever published for one.
     #[inline]
     pub fn get(&self, key: &I) -> Option<V> {
-        let raw = self.cells.existing(key.number())?.load();
+        // Another thread may have just allocated the cells for another id.
+        let raw = self.cells.existing_acquire(key.number())?.load();
         (raw != Default::default()).then(|| V::unpack(raw))
     }
 

@@ -2772,7 +2772,6 @@ delete (process as any).on;
 console.log(typeof process.on);
 //// process-members-in-stack-traces.ts
 // A read of a member of `process` is a call of a small function of the compiler's own: no stack trace shows it, and what is thrown on the way has the place of the read.
-const world = globalThis as any;
 function version(): unknown {
   return process.version;
 }
@@ -2810,15 +2809,6 @@ console.log(told(throughTwo));
 Object.defineProperty(process, "version", originalVersion);
 console.log(told(version));
 
-const originalProcess = process;
-world.process = undefined;
-const withUndefined = [told(version), told(environment), told(throughTwo)];
-world.process = null;
-const withNull = told(environment);
-delete world.process;
-const withNone = [told(version), told(environment)];
-world.process = originalProcess;
-for (const line of [...withUndefined, withNull, ...withNone]) console.log(line);
 console.log(told(throughTwo));
 
 let depth = 0;

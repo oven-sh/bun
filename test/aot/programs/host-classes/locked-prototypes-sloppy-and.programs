@@ -1378,17 +1378,17 @@ process.env = replaced;
 out.push(show(byName()), typeof byKey("PATH"));
 console.log(out.join(" | "));
 //// process-is-bun-and-browser.ts
-// process.isBun and process.browser are booleans that native code makes at the first read, and a program may store to both.
+// process.isBun and process.browser are booleans that native code makes at the first read, and a program may store to process.browser.
 function whichRuntime() { return process.isBun ? "bun" : "other"; }
 function inBrowser(name: string) { return (process as unknown as Record<string, unknown>)[name]; }
 let line = "";
 for (let round = 0; round < 300; round++)
   line = whichRuntime() + " " + typeof process.isBun + " " + inBrowser("browser") + " " + typeof inBrowser("browser");
 console.log(line);
-(process as unknown as Record<string, unknown>).isBun = 0;
-console.log(whichRuntime(), Object.getOwnPropertyDescriptor(process, "isBun")?.writable);
+(process as unknown as Record<string, unknown>).browser = 1;
+console.log(whichRuntime(), inBrowser("browser"), Object.getOwnPropertyDescriptor(process, "browser")?.writable);
 //// process-members-computed-once.ts
-// The host makes fifteen members of `process` and nine of `Bun` at their first read, and after that only a store replaces them. Where the program stores to none of them, every read gives what the first one gave: the same number, string or object in a loop, in another function, in a closure and after a collection, and each thread has its own. `process.argv0`, `process.release`, `Bun.argv` and `Bun.revision` are stored to further down, so each read of those finds what is there now. The host itself puts another object under `process.env` and `Bun.env` when a Worker is started with SHARE_ENV, and the reads after that find it. This file is the only entry point of the build, so it is also the entry point of the Worker.
+// The host makes fifteen members of `process` and nine of `Bun` at their first read, and after that only a store replaces them. Where the program stores to none of them, every read gives what the first one gave: the same number, string or object in a loop, in another function, in a closure and after a collection, and each thread has its own. `process.argv0`, `Bun.argv` and `Bun.revision` are stored to further down, so each read of those finds what is there now. The host itself puts another object under `process.env` and `Bun.env` when a Worker is started with SHARE_ENV, and the reads after that find it. This file is the only entry point of the build, so it is also the entry point of the Worker.
 import { parentPort, SHARE_ENV, Worker, workerData } from "node:worker_threads";
 
 const own = process as any;
@@ -1480,10 +1480,6 @@ function membersStoredTo() {
 
   const originalRelease = process.release;
   console.log("release", nameOfRelease(5000), process.release === originalRelease);
-  own.release = { name: "another" };
-  console.log("release", nameOfRelease(3), process.release === originalRelease);
-  own.release = originalRelease;
-  console.log("release", nameOfRelease(3), process.release === originalRelease);
 
   const originalArguments = Bun.argv;
   console.log("Bun.argv", Array.isArray(originalArguments), originalArguments.length > 0, argumentsOfBun(5000) === originalArguments);

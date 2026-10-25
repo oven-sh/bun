@@ -261,34 +261,49 @@ const programs: Record<string, Program> = {
     },
     plain: "[object Object]\n",
   },
+  // As in the package: shimmer exports a function with the wrappers as members, and one of the objects it wraps is a prototype found at run time.
   "async-listener": {
     files: {
       "main.js": `
-        const { massWrap, wrap } = require("./shimmer.js");
-        const activator = original => function (...all) { console.log("wrapped"); return original.apply(this, all); };
+        const shimmer = require("./shimmer.js"), wrap = shimmer.wrap, massWrap = shimmer.massWrap;
+        function activator(original) {
+          return function () { console.log("wrapped"); return original.apply(this, arguments); };
+        }
         wrap(process, "nextTick", activator);
-        massWrap(require("node:dns"), ["lookup", "resolve"], activator);
-        massWrap(require("node:fs"), ["stat", "readdir"], activator);
         const asynchronizers = ["setTimeout", "setInterval"];
         if (global.setImmediate) asynchronizers.push("setImmediate");
         massWrap(global, asynchronizers, activator);
+        massWrap(require("node:dns"), ["lookup", "resolve"], activator);
+        massWrap(require("node:fs"), ["stat", "readdir"], activator);
+        const proto = Object.getPrototypeOf(require("node:zlib").Deflate.prototype);
+        if (proto._transform) wrap(proto, "_transform", activator);
+        else if (proto.write && proto.flush && proto.end) massWrap(proto, ["write", "flush", "end"], activator);
         setTimeout(() => console.log("ran"), 1);`,
       "shimmer.js": `
         function defineProperty(obj, name, value) {
           const enumerable = !!obj[name] && obj.propertyIsEnumerable(name);
           Object.defineProperty(obj, name, { configurable: true, enumerable, writable: true, value });
         }
+        function shimmer() {}
         function wrap(nodule, name, wrapper) {
           if (!nodule || !nodule[name]) return;
           const original = nodule[name], wrapped = wrapper(original, name);
           defineProperty(wrapped, "__original", original);
           defineProperty(nodule, name, wrapped);
+          return wrapped;
         }
         function massWrap(nodules, names, wrapper) {
-          if (!Array.isArray(nodules)) nodules = [nodules];
-          nodules.forEach(nodule => names.forEach(name => wrap(nodule, name, wrapper)));
+          if (!nodules) return;
+          else if (!Array.isArray(nodules)) nodules = [nodules];
+          nodules.forEach(function (nodule) {
+            names.forEach(function (name) {
+              wrap(nodule, name, wrapper);
+            });
+          });
         }
-        module.exports = { wrap, massWrap };`,
+        shimmer.wrap = wrap;
+        shimmer.massWrap = massWrap;
+        module.exports = shimmer;`,
     },
     plain: "wrapped\nran\n",
   },

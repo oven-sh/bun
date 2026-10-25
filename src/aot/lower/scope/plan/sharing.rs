@@ -1,4 +1,4 @@
-use bun_sema::bind::{InitialState, ScopeId, ScopeKind, SymbolId};
+use bun_sema::bind::{CodeUnit, InitialState, ScopeId, ScopeKind, SymbolId};
 use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::{ExprId, FnKind};
 use bun_sema::program::Sym;
@@ -52,8 +52,13 @@ pub(super) fn compute_sharing(
         if is_shared {
             sharing.shared.push(binding);
         }
+        let body_of = |function: WalkedFunctionId| context.module_bodies[function.index()];
+        let is_used_by_other_body = run.iter().any(|&(_, user)| body_of(user) != body_of(owner));
         let key = match binding {
             BindingRef::Symbol(symbol) if is_exported => Some(symbol_key(context, symbol)),
+            BindingRef::Symbol(_) | BindingRef::Slot(..) if is_used_by_other_body => {
+                find_variable_key_between_bodies(context, binding)
+            }
             BindingRef::Symbol(_) | BindingRef::Slot(..) => {
                 find_variable_key(context, binding).filter(|_| is_shared)
             }
@@ -205,6 +210,26 @@ fn find_variable_key(context: &Context<'_, '_>, binding: BindingRef) -> Option<V
     if !context.is_module_level_scope[context.scope_of(binding).idx()] {
         return None;
     }
+    create_variable_key(context, binding)
+}
+
+// The body of a module is called and never created, so it captures nothing.
+fn find_variable_key_between_bodies(
+    context: &Context<'_, '_>,
+    binding: BindingRef,
+) -> Option<VariableKey> {
+    let scope = context.scope_of(binding);
+    let is_entered_once = context.input.bound.code_unit(scope) == CodeUnit::File
+        && !context.walk.is_repeated_scope[scope.idx()];
+    let key = create_variable_key(context, binding).filter(|_| is_entered_once);
+    debug_assert!(
+        key.is_some(),
+        "an inner module names only what the top of its file declares"
+    );
+    key
+}
+
+fn create_variable_key(context: &Context<'_, '_>, binding: BindingRef) -> Option<VariableKey> {
     match binding {
         BindingRef::Symbol(symbol) => Some(symbol_key(context, symbol)),
         BindingRef::Slot(scope, ScopeSlot::Class(slot)) => {
@@ -277,11 +302,21 @@ fn collect_exported_symbols(context: &Context<'_, '_>, forms: &[BindingForm]) ->
     });
     let mut symbols: Vec<SymbolId> = own_variables.collect();
     // `__export(all, { n: () => n }); module.exports = __toCommonJS(all)`: whoever requires the module reads the binding `n` itself.
+    let callbacks = input.modules.inner_modules(input.file).iter();
+    let mut body_scopes: SmallVec<[ScopeId; 4]> = callbacks
+        .map(|callback| input.bound.fns[callback.idx()].scope)
+        .collect();
     if input.modules.kind(input.file) == ModuleKind::CommonJs {
+        body_scopes.push(context.file_scope);
+    }
+    if !body_scopes.is_empty() {
+        body_scopes.sort_unstable();
         let commonjs = input.modules.commonjs();
         for (symbol, &form) in (0..).map(SymbolId).zip(forms) {
             if form == BindingForm::Stored
-                && context.declaring_scope(symbol) == context.file_scope
+                && body_scopes
+                    .binary_search(&context.declaring_scope(symbol))
+                    .is_ok()
                 && commonjs.is_exported_binding(input.file, symbol)
             {
                 symbols.push(symbol);

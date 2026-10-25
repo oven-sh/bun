@@ -168,7 +168,8 @@ impl Build<'_> {
                     };
                     decide_roles(project.loaded, project.host, request, compiled_files)
                 }
-                // The test `every_module_of_bun_keeps_its_types` checks Bun's own modules when Bun is built.
+                // Bun's own modules keep their roles whatever type errors they have: lowering asks for each conversion whether
+                // the checker accepts it. The test `every_module_of_bun_keeps_its_types` lists the errors.
                 ProjectId::Runtime => keep_verified_roles(project.loaded, compiled_files),
             };
             if id == ProjectId::Application {
@@ -189,6 +190,7 @@ impl Build<'_> {
                 left_out_bodies,
             }
         });
+        self.count_aot_sources(loaded, &decided.application.roles);
         let reach_input = ReachInput {
             application: loaded.project(ProjectId::Application).loaded.files(),
             application_graph: &bound.projects.application.graph,
@@ -235,6 +237,16 @@ impl Build<'_> {
         });
         units.extend(worlds.units);
         units
+    }
+
+    /// The files under "aot" conditions that are compiled with their types. One that lost them to a type error does not count.
+    fn count_aot_sources(&mut self, loaded: &LoadedBuild<'_, '_>, roles: &RoleDecision) {
+        let files = loaded.project(ProjectId::Application).loaded.files();
+        let typed = (files.compiled_files().iter())
+            .filter(|&&file| files.compiled(file).is_some_and(|it| it.is_aot_source))
+            .filter(|&&file| roles.role(file) == FileRole::Checked);
+        let count = typed.count() as u64;
+        self.statistics.count(StatisticId::TypedVersionsUsed, count);
     }
 
     /// A typed package is checked and lowered by a program of its own, under the `compilerOptions` of its `package.json`.
@@ -431,11 +443,13 @@ impl Build<'_> {
         let view = world_build.project(id).view();
         for (file, lowered) in checked.lowered {
             let (Some(lowered), Some(file)) = (lowered, to_application[file.idx()]) else {
-                self.diagnostics.add_internal_error(InternalError {
-                    stage: Stage::Lower,
-                    message: b"a file of a typed package was not lowered by its own program"
-                        .to_vec(),
-                });
+                if !self.diagnostics.has_errors() {
+                    self.diagnostics.add_internal_error(InternalError {
+                        stage: Stage::Lower,
+                        message: b"a file of a typed package was not lowered by its own program"
+                            .to_vec(),
+                    });
+                }
                 continue;
             };
             self.diagnostics.add_buffer(view, lowered.diagnostics);

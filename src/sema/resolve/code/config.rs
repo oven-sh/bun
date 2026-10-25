@@ -1,5 +1,4 @@
-use super::files::is_in_node_modules;
-use super::search::{join_unrooted, preserve_trailing_slash};
+use super::search::is_in_node_modules;
 use super::*;
 use crate::atom::{Atom, Interner};
 use crate::hir::JsxPragmas;
@@ -76,18 +75,14 @@ pub struct TranspileSettings {
 
 pub(in crate::resolve) struct CodeConfig<'h> {
     pub base_url: Option<&'h [u8]>,
-    paths_base: &'h [u8],
-    paths: &'h [(&'h [u8], &'h [&'h [u8]])],
+    /// The keys of `paths`.
+    paths: &'h [&'h [u8]],
     pub settings: &'h TranspileSettings,
 }
 
 impl<'h> CodeConfig<'h> {
-    pub(in crate::resolve) fn has_paths(&self) -> bool {
-        !self.paths.is_empty()
-    }
-
     pub(in crate::resolve) fn can_match_prefix(&self, prefix: &[u8]) -> bool {
-        self.paths.iter().any(|&(key, _)| {
+        self.paths.iter().any(|&key| {
             let Some(star) = strings::index_of_char_usize(key, b'*') else {
                 return key.starts_with(prefix);
             };
@@ -95,58 +90,13 @@ impl<'h> CodeConfig<'h> {
             key_prefix.starts_with(prefix) || prefix.starts_with(key_prefix)
         })
     }
-
-    pub(in crate::resolve) fn path_candidates(&self, specifier: &[u8]) -> Vec<Vec<u8>> {
-        let exact = self.paths.iter().filter(|entry| entry.0 == specifier);
-        let mut candidates: Vec<Vec<u8>> = exact
-            .flat_map(|entry| code_substitutions(entry.1))
-            .map(|written| self.resolve_exact_substitution(written))
-            .collect();
-        if let Some((matched, substitutions)) = self.find_best_pattern(specifier) {
-            candidates.extend(code_substitutions(substitutions).map(|written| {
-                let text = strings::replace_owned(written, b"*", matched);
-                self.resolve_substitution(written, &text)
-            }));
-        }
-        candidates
-    }
-
-    fn find_best_pattern<'a>(&self, specifier: &'a [u8]) -> Option<(&'a [u8], &'h [&'h [u8]])> {
-        let mut best = None;
-        let mut best_lengths = None;
-        for &(key, substitutions) in self.paths {
-            let Some(matched) = match_pattern(key, specifier) else {
-                continue;
-            };
-            // Of two keys with equal prefixes, the longer one has the longer suffix.
-            let lengths = Some((strings::index_of_char_usize(key, b'*'), key.len()));
-            if lengths > best_lengths {
-                (best, best_lengths) = (Some((matched, substitutions)), lengths);
-            }
-        }
-        best
-    }
-
-    fn resolve_exact_substitution(&self, written: &[u8]) -> Vec<u8> {
-        match written.starts_with(b"/") {
-            true => written.to_vec(),
-            false => self.resolve_substitution(written, written),
-        }
-    }
-
-    fn resolve_substitution(&self, written: &[u8], text: &[u8]) -> Vec<u8> {
-        if is_rooted_disk_path(written) {
-            return preserve_trailing_slash(join(b"/", text), text);
-        }
-        let base = self.base_url.unwrap_or(self.paths_base);
-        join_unrooted(base, strings::trim_left(text, b"/\\"))
-    }
 }
 
 pub(in crate::resolve) struct ConfigCaches<'h> {
     by_directory: Memo<&'h [u8], Option<&'h CodeConfig<'h>>>,
     override_config: OnceLock<Option<&'h CodeConfig<'h>>>,
     default_settings: OnceLock<&'h TranspileSettings>,
+    aot_package_settings: Memo<&'h [u8], &'h TranspileSettings>,
     is_development: OnceLock<bool>,
 }
 
@@ -156,6 +106,7 @@ impl<'h> ConfigCaches<'h> {
             by_directory: Memo::new(are_small),
             override_config: OnceLock::new(),
             default_settings: OnceLock::new(),
+            aot_package_settings: Memo::new(are_small),
             is_development: OnceLock::new(),
         }
     }
@@ -214,11 +165,11 @@ struct ParsedConfig {
     extends: Option<Vec<u8>>,
     base_url: Option<Vec<u8>>,
     paths: Option<Paths>,
-    paths_base: Vec<u8>,
     jsx: JsxFields,
     emits_decorator_metadata: bool,
     experimental_decorators: bool,
     use_define_for_class_fields: Option<bool>,
+    has_compiler_options: bool,
 }
 
 impl ParsedConfig {
@@ -244,12 +195,12 @@ impl ParsedConfig {
         ParsedConfig {
             extends,
             paths: paths.map(|entries| parse_paths(entries, config_dir, has_base_url)),
-            paths_base: base_url.clone().unwrap_or_else(|| config_dir.to_vec()),
             base_url,
             jsx: JsxFields::parse(options),
             emits_decorator_metadata: bool_entry(options, b"emitDecoratorMetadata") == Some(true),
             experimental_decorators: bool_entry(options, b"experimentalDecorators") == Some(true),
             use_define_for_class_fields: bool_entry(options, b"useDefineForClassFields"),
+            has_compiler_options: true,
         }
     }
 
@@ -258,7 +209,6 @@ impl ParsedConfig {
         self.base_url = self.base_url.take().or(parent.base_url);
         if self.paths.is_none() {
             self.paths = parent.paths;
-            self.paths_base = parent.paths_base;
         }
         self.jsx.inherit(parent.jsx);
         self.emits_decorator_metadata |= parent.emits_decorator_metadata;
@@ -290,6 +240,9 @@ impl<'h> Resolver<'h> {
     }
 
     pub fn transpile_settings(&self, path: &[u8]) -> &'h TranspileSettings {
+        if self.is_aot_source_of_dependency(path) {
+            return self.aot_package_settings(dirname::<Posix>(path));
+        }
         let config = match self.transpiles_by_working_directory() {
             true => self.enclosing_code_config(&self.code_options().working_directory),
             false => self.enclosing_code_config(&self.code_host().directory_of(path)),
@@ -300,6 +253,45 @@ impl<'h> Resolver<'h> {
             Some(config) => config.settings,
             None => *default_settings.get_or_init(create_default),
         }
+    }
+
+    /// TypeScript in a package with the "aot" condition, unless the program runs inside that package.
+    fn is_aot_source_of_dependency(&self, path: &[u8]) -> bool {
+        let working_directory = &self.code_options().working_directory;
+        !is_javascript_file(self.host, path)
+            && (self.aot_package_directory(path)).is_some_and(|package| {
+                !contains_path(package, working_directory, self.host.is_case_sensitive())
+            })
+    }
+
+    /// The `compilerOptions` of the package's own `package.json` decide how its TypeScript runs. No `tsconfig.json`
+    /// and no flag of the program that installs it does, so the package answers alike in every program.
+    fn aot_package_settings(&self, directory: &[u8]) -> &'h TranspileSettings {
+        let by_directory = &self.config_caches().aot_package_settings;
+        if let Some(&known) = by_directory.get_ref(directory) {
+            return known;
+        }
+        // As `find_package_with_compiler_options` has it, which finds the options that the files are type checked under.
+        let stated = ancestors(directory)
+            .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
+            .map(|ancestor| inside(ancestor, b"package.json"))
+            .filter(|path| self.is_file(path))
+            .find_map(|path| self.read_config(&path).filter(|it| it.has_compiler_options));
+        let stated = stated.unwrap_or_default();
+        let options = self.code_options();
+        let is_development = (options.forced_jsx_development)
+            .or(stated.jsx.is_development)
+            .unwrap_or(options.jsx.is_development);
+        let settings = self.session.keep(TranspileSettings {
+            jsx: JsxSettings {
+                is_development,
+                ..stated.jsx.apply_to(&JsxSettings::default())
+            },
+            experimental_decorators: stated.experimental_decorators,
+            emits_decorator_metadata: stated.emits_decorator_metadata,
+            use_define_for_class_fields: stated.use_define_for_class_fields,
+        });
+        *by_directory.insert_ref(self.keep(directory), settings)
     }
 
     fn nearest_code_config(&self, directory: &[u8]) -> Option<&'h CodeConfig<'h>> {
@@ -345,14 +337,9 @@ impl<'h> Resolver<'h> {
         let session: &'h Session = self.session;
         let arena = session.arena();
         let entries = merged.paths.as_deref().unwrap_or_default();
-        let paths = entries.iter().map(|(key, substitutions)| {
-            let substitutions = substitutions.iter().map(|it| self.keep(it));
-            let substitutions: &'h [&'h [u8]] = arena.alloc_slice_fill_iter(substitutions);
-            (self.keep(key), substitutions)
-        });
+        let paths = entries.iter().map(|(key, _)| self.keep(key));
         let config: &'h CodeConfig<'h> = arena.alloc(CodeConfig {
             base_url: merged.base_url.as_deref().map(|it| self.keep(it)),
-            paths_base: self.keep(&merged.paths_base),
             paths: arena.alloc_slice_fill_iter(paths),
             settings: self.create_settings(&merged),
         });
@@ -468,18 +455,6 @@ fn is_relative_or_rooted(text: &[u8]) -> bool {
     path_is_relative(text)
         || matches!(text, [b'/' | b'\\', _, _, ..])
         || matches!(text, [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic())
-}
-
-fn code_substitutions<'a>(substitutions: &'a [&'a [u8]]) -> impl Iterator<Item = &'a [u8]> {
-    let written = substitutions.iter().copied();
-    written.filter(|it| !is_declaration_substitution(it))
-}
-
-fn is_declaration_substitution(written: &[u8]) -> bool {
-    SUPPORTED_DECLARATION_EXTENSIONS.iter().any(|extension| {
-        let start = written.len().checked_sub(extension.len());
-        start.is_some_and(|start| written[start..].eq_ignore_ascii_case(extension))
-    })
 }
 
 #[cfg(test)]

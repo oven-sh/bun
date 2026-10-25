@@ -859,12 +859,8 @@
   },
   "bytes/encode-into-the-rest-of-a-view": {
     "typed": 353.8,
-    "untyped": 711.1,
-    "jit": 1085.5,
-    "best": {
-      "typed": 353.8,
-      "untyped": 362.7
-    }
+    "untyped": 323.8,
+    "jit": 1085.5
   },
   "bytes/index-of-a-byte-from-a-start": {
     "typed": 301,
@@ -1217,8 +1213,8 @@
     "jit": 10
   },
   "guess/callee-is-another-function-wrong": {
-    "typed": 97,
-    "untyped": 86,
+    "typed": 10,
+    "untyped": 10,
     "jit": 116.3
   },
   "guess/method-of-one-receiver-right": {

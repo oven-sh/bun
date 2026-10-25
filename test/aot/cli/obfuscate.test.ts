@@ -269,6 +269,21 @@ outermostCaller(process.argv.length);
     });
   });
 
+  test.each(["--obfuscate", "--sourcemap=external"])("%s rejects --aot-symbols", async flag => {
+    using dir = tempDir("aot-obfuscate-with-symbols", program);
+    const { stdout, stderr, exitCode } = await spawned(
+      [bunExe(), "build", "--compile", "--aot", flag, "--aot-symbols", "app.ts", "--outfile", "app"],
+      String(dir),
+      env,
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr:
+        "error: --aot-symbols: cannot be used with --obfuscate or --sourcemap=external, which keep function names out of the executable\n",
+      exitCode: 1,
+    });
+  });
+
   test(
     "Bun.build writes the map for compile.obfuscate",
     () =>

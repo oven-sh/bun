@@ -21,8 +21,7 @@ const skipReason =
   (isArm64 ? "the programs state sizes and instructions of x86-64's code" : undefined);
 if (skipReason) console.error(`SKIPPED: test/aot/generated-code.test.ts: ${skipReason}`);
 
-// TODO: five expectations that shell/known-failures.txt lists are met again (calls/functions-that-call-themselves-last, escape-analysis/results-*).
-test.todo(
+(skipReason ? test.skip : test)(
   `the generated code is what the programs expect${skipReason ? ` (SKIPPED: ${skipReason})` : ""}`,
   async () => {
     const { stdout, stderr, exitCode } = await run(

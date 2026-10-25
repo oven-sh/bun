@@ -208,9 +208,15 @@
     "asan": 54064,
     "windows": 16711
   },
+  "aot/aot-condition.test.ts": {
+    "default": 2420
+  },
   "aot/aot-flag-runs-from-source.test.ts": {
     "default": 15654,
     "asan": 92695
+  },
+  "aot/aot-package-compiler-options.test.ts": {
+    "default": 3180
   },
   "aot/aot-recursive-untyped-functions-build-time.test.ts": {
     "default": 21393,
@@ -2599,12 +2605,6 @@
     "default": 442,
     "windows": 1065
   },
-  "aot/full-types-compiler-options.test.ts": {
-    "default": 2051
-  },
-  "aot/full-types-prove-every-int32.test.ts": {
-    "default": 7000
-  },
   "aot/function-declarations-in-switch-cases.test.ts": {
     "default": 17491,
     "asan": 30454,
@@ -3305,6 +3305,9 @@
   "aot/generated-left-half-way.test.ts": {
     "default": 300
   },
+  "aot/generated-library-entries-where-the-stack-ends.test.ts": {
+    "default": 10000
+  },
   "aot/generated-lists-of-numbers-through-one-map-or-filter.test.ts": {
     "default": 300
   },
@@ -3375,6 +3378,9 @@
   },
   "aot/generated-objects-with-very-many-fields.test.ts": {
     "default": 300
+  },
+  "aot/generated-odd-callables.test.ts": {
+    "default": 5000
   },
   "aot/generated-one-key-asked-in-every-way.test.ts": {
     "default": 300
@@ -3628,7 +3634,7 @@
   },
   "aot/heap-limit.test.ts": {
     "default": 32582,
-    "asan": 14884,
+    "asan": 110000,
     "windows": 25559
   },
   "aot/heat/cold-1.test.ts": {
@@ -3925,9 +3931,6 @@
     "default": 4873,
     "asan": 15319,
     "windows": 9283
-  },
-  "aot/int32-lanes-of-react-reconciler-cost-less-than-numbers.test.ts": {
-    "default": 49000
   },
   "aot/int32-without-strict-null-checks.test.ts": {
     "default": 699,
@@ -4231,10 +4234,6 @@
     "default": 4619,
     "windows": 8878
   },
-  "aot/load/typed-packages.test.ts": {
-    "default": 6927,
-    "windows": 12469
-  },
   "aot/load/unsupported-options.test.ts": {
     "default": 2836,
     "asan": 7208,
@@ -4244,6 +4243,9 @@
     "default": 31264,
     "asan": 110017,
     "windows": 42819
+  },
+  "aot/loader/aot-condition.test.ts": {
+    "default": 428
   },
   "aot/loader/code-and-types-answers.test.ts": {
     "default": 196,
@@ -4285,10 +4287,6 @@
   "aot/loader/project-roots.test.ts": {
     "default": 80,
     "windows": 152
-  },
-  "aot/loader/typed-versions.test.ts": {
-    "default": 111,
-    "windows": 180
   },
   "aot/lock-error-names-object-and-property.test.ts": {
     "default": 1096,
@@ -5819,6 +5817,27 @@
     "asan": 362,
     "windows": 60
   },
+  "aot/servers/budgets-of-bun.test.ts": {
+    "default": 12000
+  },
+  "aot/servers/budgets-of-elysia.test.ts": {
+    "default": 25000
+  },
+  "aot/servers/budgets-of-express.test.ts": {
+    "default": 30000
+  },
+  "aot/servers/budgets-of-fastify.test.ts": {
+    "default": 40000
+  },
+  "aot/servers/budgets-of-hono.test.ts": {
+    "default": 15000
+  },
+  "aot/servers/budgets-of-koa.test.ts": {
+    "default": 30000
+  },
+  "aot/servers/budgets-of-node.test.ts": {
+    "default": 20000
+  },
   "aot/servers/budgets.test.ts": {
     "default": 35,
     "windows": 58,
@@ -5843,17 +5862,11 @@
   "aot/servers/every-pass-changes-one-of-the-servers.test.ts": {
     "default": 95000
   },
-  "aot/servers/express-typed.test.ts": {
-    "default": 47500
-  },
   "aot/servers/express.test.ts": {
     "default": 47250
   },
   "aot/servers/fastify-schemas.test.ts": {
     "default": 48000
-  },
-  "aot/servers/fastify-typed.test.ts": {
-    "default": 49500
   },
   "aot/servers/fastify.test.ts": {
     "default": 48250
@@ -5885,9 +5898,6 @@
   },
   "aot/servers/hono.test.ts": {
     "default": 29250
-  },
-  "aot/servers/koa-typed.test.ts": {
-    "default": 42500
   },
   "aot/servers/koa.test.ts": {
     "default": 42000
@@ -6474,10 +6484,6 @@
   "aot/typed-parsing.test.ts": {
     "default": 7745,
     "windows": 10113
-  },
-  "aot/typed-react-costs-no-more-than-erased.test.ts": {
-    "default": 26138,
-    "windows": 4473
   },
   "aot/typed-version-in-a-strict-project.test.ts": {
     "default": 670,
@@ -7648,12 +7654,6 @@
     "windows": 4220,
     "windows-aarch64": 10020
   },
-  "bundler/compile-aot-full-types.test.ts": {
-    "default": 166,
-    "asan": 3260,
-    "windows": 369,
-    "windows-aarch64": 1070
-  },
   "bundler/compile-aot-crash.test.ts": {
     "default": 606,
     "asan": 410,
@@ -7681,12 +7681,6 @@
   "bundler/compile-aot-trim-build-api.test.ts": {
     "default": 5034,
     "windows": 767
-  },
-  "bundler/compile-aot-typed-packages.test.ts": {
-    "default": 72777,
-    "asan": 300066,
-    "windows": 41275,
-    "windows-aarch64": 53834
   },
   "bundler/compile-argv.test.ts": {
     "default": 5219,
@@ -8532,10 +8526,7 @@
     "windows-aarch64": 93
   },
   "cli/compile/compile-library-ecosystem.test.ts": {
-    "default": 27694
-  },
-  "cli/compile/compile-library-full-types-not-used.test.ts": {
-    "default": 14616
+    "default": 29160
   },
   "cli/compile/compile-library-javascript.test.ts": {
     "default": 1282

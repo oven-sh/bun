@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
-import { createHash } from "node:crypto";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { readBuildReport } from "./harness/build-report";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -299,34 +299,42 @@ const untypedArea = `export function area(side) { return side * side; }\n`;
 const untypedTwice = `function twice(n) { return n * 2; }\n`;
 const typedTwice = `import type { int32 } from "bun";\nfunction twice(n: int32): number { return n * 2; }\n`;
 
+const codesOf = (said: string) =>
+  [...new Set([...said.matchAll(/\b(?:error|warn|warning):? (TS\d+)/g)].map(match => match[1]))].sort();
+
+/** Builds and checks main.ts: the codes each of the two reports, and how many files under an "aot" condition it compiled with their types. */
+async function buildAndCheck(directory: string) {
+  const answers: Record<string, { codes: string[]; exitCode: number; aotFiles: number }> = {};
+  for (const [name, command] of Object.entries({
+    build: ["build", "--compile", "--aot", "./main.ts", "--outfile", join(directory, "out")],
+    check: ["check", "--aot", "main.ts"],
+  })) {
+    const report = join(directory, name + ".json");
+    const { said, exitCode } = await withoutBundler(directory, ...command, "--aot-report=" + report);
+    answers[name] = { codes: codesOf(said), exitCode, aotFiles: readBuildReport(report).statistics.TypedVersionsUsed };
+  }
+  return answers;
+}
+
 test.each([
-  [
-    "that type checks",
-    untypedArea,
-    `export function area(side: number): number { return side * side; }\n`,
-    [],
-    "typed",
-  ],
+  ["that type checks", untypedArea, `export function area(side: number): number { return side * side; }\n`, []],
   [
     "with a type error",
     untypedArea,
     `export function area(side: number): string { return side * side; }\n`,
     ["TS100009"],
-    "untyped",
   ],
   [
     "with an int32 that is not proven",
     untypedTwice + `export function area(side) { return (twice(side) * side) / 2; }\n`,
     typedTwice + `export function area(side: number): number { return (twice(side) * side) / 2; }\n`,
     ["TS100066"],
-    "typed",
   ],
   [
     "whose int32 is proven",
     untypedTwice + `export function area(side) { return (twice(1) * side * side) / 2; }\n`,
     typedTwice + `export function area(side: number): number { return (twice(1) * side * side) / 2; }\n`,
     [],
-    "typed",
   ],
   [
     "with an int32 that is not proven as its module is evaluated",
@@ -334,12 +342,11 @@ test.each([
     typedTwice +
       `declare const size: number;\nexport const start: number = twice(size);\nexport function area(side: number): number { return side * side; }\n`,
     ["TS100066"],
-    "typed",
   ],
 ])(
-  "bun check --aot says of full types %s what the build says",
-  async (_, javascript, typed, expected, outcome) => {
-    using dir = tempDir("aot-dependency-typed-version", {
+  "bun check --aot says of a file under the aot condition %s what the build says",
+  async (_, javascript, typed, codes) => {
+    using dir = tempDir("aot-dependency-aot-condition", {
       "package.json": JSON.stringify({ name: "app" }),
       "tsconfig.json": strict(),
       "main.ts": `import { area } from "shapes";\nconsole.log(area(2));\n`,
@@ -347,80 +354,36 @@ test.each([
         name: "shapes",
         version: "1.0.0",
         type: "module",
-        main: "index.js",
-        types: "index.d.ts",
+        exports: { ".": { types: "./index.d.ts", aot: "./index.aot.ts", default: "./index.js" } },
       }),
       "node_modules/shapes/index.js": javascript,
       "node_modules/shapes/index.d.ts": `export declare function area(side: number): number;\n`,
-      ".full-types/shapes/full-types.json": JSON.stringify({
-        format: 2,
-        name: "shapes",
-        version: "1.0.0",
-        when: {},
-        basis: {},
-        lay: { "index.js": createHash("sha256").update(javascript).digest("hex") },
-        needs: [],
-      }),
-      ".full-types/shapes/lay/index.js": typed,
+      "node_modules/shapes/index.aot.ts": typed,
     });
-    const codes = (said: string) =>
-      [...new Set([...said.matchAll(/\b(?:error|warn|warning):? (TS\d+)/g)].map(match => match[1]))].sort();
-    const built = await build(String(dir), "./main.ts");
-    const checked = await withoutBundler(String(dir), "check", "--aot", "main.ts");
-    expect({ build: codes(built.said), check: codes(checked.said) }).toEqual({ build: expected, check: expected });
-    expect({ build: built.exitCode === 0, check: checked.exitCode === 0 }).toEqual({
-      build: outcome !== "stops",
-      check: outcome !== "stops",
-    });
-    expect(checked.said.includes(`"shapes" 1.0.0 is compiled from its full types in .full-types/shapes`)).toBe(
-      outcome !== "untyped",
-    );
+    const expected = { codes, exitCode: 0, aotFiles: codes.includes("TS100009") ? 0 : 1 };
+    expect(await buildAndCheck(String(dir))).toEqual({ build: expected, check: expected });
   },
   120_000,
 );
 
-test.each([
-  ["for a build with a define", { "process.env.NODE_ENV": "production" }, "index.d.ts"],
-  ["of a package whose declarations are in @types", {}, "../@types/shapes/index.d.ts"],
-])(
-  "bun check --aot reads full types %s",
-  async (_, when, declarations) => {
-    using dir = tempDir("aot-dependency-typed-version", {
-      "package.json": JSON.stringify({ name: "app" }),
-      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: [] } }),
-      "main.ts": `import { area } from "shapes";\nconsole.log(area(2));\n`,
-      "node_modules/shapes/package.json": JSON.stringify({
-        name: "shapes",
-        version: "1.0.0",
-        type: "module",
-        main: "index.js",
-      }),
-      "node_modules/shapes/index.js": untypedArea,
-      [`node_modules/shapes/${declarations}`]: `export declare function area(side: number): number;\n`,
-      ".full-types/shapes/full-types.json": JSON.stringify({
-        format: 2,
-        name: "shapes",
-        version: "1.0.0",
-        when,
-        basis: {},
-        lay: { "index.js": createHash("sha256").update(untypedArea).digest("hex") },
-        needs: [],
-      }),
-      ".full-types/shapes/lay/index.js": `export function area(side: number): string { return side * side; }\n`,
-    });
-    const codes = (said: string) =>
-      [...new Set([...said.matchAll(/\b(?:error|warn|warning):? (TS\d+)/g)].map(match => match[1]))].sort();
-    const defines = Object.entries(when).map(([name, value]) => `--define=${name}=${JSON.stringify(value)}`);
-    const { stderr: built } = await run(
-      [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", join(String(dir), "out"), ...defines],
-      String(dir),
-    );
-    const checked = await withoutBundler(String(dir), "check", "--aot", ...defines, "main.ts");
-    expect({ build: codes(built), check: codes(checked.said) }).toEqual({ build: ["TS100009"], check: ["TS100009"] });
-    expect(checked.exitCode).toBe(0);
-  },
-  120_000,
-);
+test("bun check --aot reads the file under the aot condition of a package whose declarations are in @types", async () => {
+  using dir = tempDir("aot-dependency-aot-condition", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: [] } }),
+    "main.ts": `import { area } from "shapes";\nconsole.log(area(2));\n`,
+    "node_modules/shapes/package.json": JSON.stringify({
+      name: "shapes",
+      version: "1.0.0",
+      type: "module",
+      exports: { ".": { aot: "./index.aot.ts", default: "./index.js" } },
+    }),
+    "node_modules/shapes/index.js": untypedArea,
+    "node_modules/@types/shapes/index.d.ts": `export declare function area(side: number): number;\n`,
+    "node_modules/shapes/index.aot.ts": `export function area(side: number): string { return side * side; }\n`,
+  });
+  const expected = { codes: ["TS100009"], exitCode: 0, aotFiles: 0 };
+  expect(await buildAndCheck(String(dir))).toEqual({ build: expected, check: expected });
+}, 120_000);
 
 test("a type error beside a decorated class of a dependency does not stop the build either", async () => {
   using dir = tempDir("aot-dependency-decorated", {

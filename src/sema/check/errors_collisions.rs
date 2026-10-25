@@ -214,9 +214,7 @@ impl Checker<'_, '_> {
         file: FileId,
         m: MemberId,
     ) {
-        if language_version(self) < ScriptTarget::ESNext
-            || !self.module_options(file).use_define_for_class_fields
-        {
+        if language_version(self) <= ScriptTarget::ES2021 {
             let node = self.hir(file).node(m);
             let flag = CONTAINS_CLASS_WITH_PRIVATE_IDENTIFIERS;
             self.mark_enclosing_block_scope_containers(file, node, flag);

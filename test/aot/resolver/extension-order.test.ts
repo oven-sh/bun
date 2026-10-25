@@ -1,7 +1,6 @@
 import { isWindows, type DirectoryTree } from "harness";
 import { describe } from "../supported";
-import { packageFiles } from "./compare";
-import { testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
+import { packageFiles, testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 const orders = {
   import: [".tsx", ".jsx", ".mts", ".ts", ".mjs", ".js", ".cts", ".cjs", ".json"],

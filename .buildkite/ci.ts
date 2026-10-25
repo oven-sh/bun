@@ -923,7 +923,6 @@ const aotSources = [
   "src/jsc/bindings/BunCompilers.cpp",
   "src/jsc/bindings/RemovableFeatures.h",
   "src/jsc/bindings/RemovedFeature.cpp",
-  "packages/full-types/",
   ...aotTests.map(group => `test/${group}`),
   "scripts/build/aot",
   "scripts/build/trim/",
@@ -1035,7 +1034,7 @@ function getAotAlwaysDrawn({ os, arch, profile }: Platform, options: PipelineOpt
     "bundler/bun-build-api-dts",
     "bundler/bun-build-dts",
     "cli/compile/compile-library",
-    "aot/full-types-compiler-options",
+    "aot/aot-package-compiler-options",
   ];
 }
 

@@ -13,7 +13,9 @@ use crate::load::runtime_roots::{RuntimeRoots, collect_runtime_roots};
 use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
-use crate::load::worker_files::find_embedded_files_that_start_workers;
+use crate::load::worker_files::{
+    find_embedded_code_files, find_embedded_files_that_start_workers, source_path_of,
+};
 use crate::load::{PerProject, ProjectId, SourceKind, Sources};
 use crate::statistics::{LimitId, LimitValues, Stage, StatisticId, Statistics};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
@@ -265,6 +267,12 @@ impl<'a> Build<'a> {
                     if asset_reads == AssetReads::FinishedLater {
                         self.diagnostics.add_load_messages(shared.messages);
                     }
+                    let from_plugins = host.assets_from_plugins();
+                    let from_plugins: Vec<Vec<u8>> = from_plugins
+                        .iter()
+                        .map(|path| source_path_of(path))
+                        .collect();
+                    self.started_workers.remove_sources(&from_plugins);
                     return result;
                 }
                 drop(result);
@@ -295,9 +303,17 @@ impl<'a> Build<'a> {
 
         let files = application.files();
         self.started_workers = Default::default();
-        if !options.aot.checks_only && mentions_worker_constructor(files) {
-            self.started_workers.files =
-                find_embedded_files_that_start_workers(files, &self.limits, &options.load.loaders);
+        if !options.aot.checks_only {
+            self.started_workers.copies = find_embedded_code_files(files, &options.load.loaders);
+        }
+        if !self.started_workers.copies.is_empty() {
+            if mentions_worker_constructor(files) {
+                self.started_workers.files = find_embedded_files_that_start_workers(
+                    files,
+                    &self.limits,
+                    &options.load.loaders,
+                );
+            }
             self.started_workers.held_texts = texts_of_program_files(files)
                 .map(|(path, size)| (path.to_vec(), size))
                 .collect();

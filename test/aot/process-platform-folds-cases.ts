@@ -41,7 +41,7 @@ const elsewhere = here === "linux" ? "darwin" : "linux";
 const branchForThisPlatform = "the branch for this platform";
 const branchForAnotherPlatform = "the branch for another platform";
 
-const changes: Record<string, { text: string; restore?: string; evaluatesStrings?: true; isUnseen?: true }> = {
+const changes: Record<string, { text: string; evaluatesStrings?: true; isUnseen?: true }> = {
   "nothing": { text: `` },
   "an assignment": { text: `process.platform = "made up"; process.arch = "made up";` },
   "an assignment with a computed name": { text: `process[decoded("platform")] = "made up"; process[decoded("arch")] = "made up";` },
@@ -54,12 +54,11 @@ const changes: Record<string, { text: string; restore?: string; evaluatesStrings
   "Reflect.set": { text: `Reflect.set(process, "platform", "made up"); Reflect.set(process, "arch", "made up");` },
   "a getter": { text: `let asked = 0; Object.defineProperty(process, "platform", { get() { return ++asked % 2 ? "made up" : "${elsewhere}"; }, configurable: true });` },
   "delete": { text: `Reflect.deleteProperty(process, "platform"); delete globalThis.process.arch;` },
-  "a different object as process": { text: `const real = process; globalThis.process = { platform: "made up", arch: "made up" };`, restore: `globalThis.process = real;` },
   "new Function": { text: `new Function(decoded("process.platform = 'made up'; process.arch = 'made up';"))();`, evaluatesStrings: true, isUnseen: true },
   "a script": { text: `import vm from "node:vm";\nvm.runInThisContext(decoded("process.platform = 'made up'; process.arch = 'made up';"));`, evaluatesStrings: true, isUnseen: true },
 };
 
-const programThatChanges = ({ text, restore = "", evaluatesStrings }: (typeof changes)[string]): Program => ({
+const programThatChanges = ({ text, evaluatesStrings }: (typeof changes)[string]): Program => ({
   evaluatesStrings,
   files: {
     "main.mjs": `const opaque = value => new CustomEvent("opaque", { detail: value }).detail; // the compiler can't see through a value returned by native code
@@ -95,7 +94,6 @@ ${text}
 show("after");
 show("after, again");
 console.log(JSON.stringify([Object.getOwnPropertyDescriptor(process, "platform"), Object.getOwnPropertyDescriptor(process, "arch")]));
-${restore}
 `,
   },
 });

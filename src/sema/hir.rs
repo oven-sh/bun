@@ -3361,7 +3361,7 @@ impl<'s> File<'s> {
 /// `IsParenthesizedExpression` for the immediate parent of `e`.
 #[inline]
 pub fn is_parenthesized(hir: &File, e: ExprId) -> bool {
-    open_parenthesis(hir, e).is_some()
+    hir.expr_flags(e).contains(ExprFlags::PARENTHESIZED)
 }
 
 /// The start of the outermost parentheses around `e`, if any.

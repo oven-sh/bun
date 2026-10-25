@@ -2662,7 +2662,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         is_symlink: path.is_symlink,
                     }
                 };
-                let parse_options = ParseOptions {
+                let mut parse_options = ParseOptions {
                     // SAFETY: `arena_ptr` points at the `Box<Arena>` interior
                     // held by `arena_guard`; the guard outlives `parse_result`.
                     arena: unsafe { &*arena_ptr },
@@ -2717,6 +2717,12 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
                     replace_exports: Default::default(),
                 };
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                let own = unsafe { &mut (*jsc_vm).transpiler }
+                    .find_aot_package_config(parse_options.path.text, loader);
+                if let Some(own) = own {
+                    parse_options.apply_aot_package_config(&own);
+                }
 
                 // Both the file-only and transpiled arms hit the same
                 // `parse_maybe_return_file_only_allow_shared_buffer` body, so
@@ -4604,6 +4610,9 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
             // `lr.path` borrows `_specifier`, which the store immediately
             // heap-duplicates inside `transpile()`.
             return unsafe {
+                let aot_package_config = (*jsc_vm)
+                    .transpiler
+                    .find_aot_package_config(lr.path.text, concurrent_loader);
                 (*jsc_vm).transpiler_store.transpile(
                     jsc_vm,
                     global,
@@ -4612,6 +4621,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
                     referrer.clone(),
                     concurrent_loader,
                     lr.package_json,
+                    aot_package_config,
                     module_loader,
                 )
             };

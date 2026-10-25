@@ -219,6 +219,73 @@ fn trees_stay_without_frees_trees() {
 }
 
 #[test]
+fn aliases_of_an_export_table_are_listed_once() {
+    const NAMESPACES: usize = 6;
+    const ERRORS: usize = 5;
+    let lines = |count: usize, line: &dyn Fn(usize) -> String| -> String {
+        (0..count).map(line).collect::<Vec<String>>().join("\n")
+    };
+    let mut sources = vec![
+        (
+            "hidden.ts".to_owned(),
+            lines(ERRORS, &|i| {
+                format!("export interface H{i} {{ h{i}: number }}")
+            }),
+        ),
+        (
+            "makers.ts".to_owned(),
+            format!(
+                "import type * as hidden from \"./hidden\";\n{}",
+                lines(ERRORS, &|i| format!(
+                    "export function make{i}(): hidden.H{i} {{ return {{ h{i}: {i} }}; }}"
+                ))
+            ),
+        ),
+        // Each error is about an object literal that holds a type the file doesn't import, which is looked for among
+        // the exports of every namespace that it does import.
+        (
+            "main.ts".to_owned(),
+            format!(
+                "{}\nimport * as makers from \"./makers\";\nexport type Uses = [{}];\n{}\n",
+                lines(NAMESPACES, &|k| format!(
+                    "import * as X{k} from \"./n{k}\";"
+                )),
+                (0..NAMESPACES)
+                    .map(|k| format!("X{k}.N{k}"))
+                    .collect::<Vec<String>>()
+                    .join(", "),
+                lines(ERRORS, &|i| format!(
+                    "export const c{i}: number = {{ a: makers.make{i}() }};"
+                )),
+            ),
+        ),
+    ];
+    sources.extend((0..NAMESPACES).map(|k| {
+        (
+            format!("n{k}.ts"),
+            format!("export interface N{k} {{ p: number }}\n"),
+        )
+    }));
+    let files: Vec<(&str, &str)> = sources.iter().map(|it| (&it.0[..], &it.1[..])).collect();
+    with_program(&files, &["./main.ts"], 1, |program| {
+        let main = program.file("main.ts");
+        let read = AtomicUsize::new(0);
+        let report = check_all_files(program, LOWERING_PASS, &|checker, file| {
+            if file == main {
+                read.store(checker.tables_read_for_aliases(), Ordering::Relaxed);
+            }
+        });
+        assert_eq!(count_reported(&report, main, 2322), ERRORS);
+        let read = read.load(Ordering::Relaxed);
+        // The exports of each namespace, of `makers` and of the file itself, and the globals.
+        assert!(
+            (NAMESPACES..=NAMESPACES + 3).contains(&read),
+            "{read} tables"
+        );
+    });
+}
+
+#[test]
 fn task_numbers_differ_between_passes() {
     let files = [
         ("f.ts", "export function f() {\n  return 1;\n}\n"),

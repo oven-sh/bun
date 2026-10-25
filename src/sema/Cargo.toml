@@ -7,7 +7,8 @@ edition.workspace = true
 path = "lib.rs"
 
 [features]
-# The `.types` and `.symbols` baseline writers. Test-only: enabled by `bun_sema_standalone`, never by the product.
+# The `.types` and `.symbols` baseline writers. `bun_sema_baselines` enables it and `bun_runtime` depends on that crate, so
+# every build of Bun compiles it. Only `bun check --run-typescript-tests` of a canary or debug build runs it.
 baselines = []
 
 [dependencies]

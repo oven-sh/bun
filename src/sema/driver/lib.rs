@@ -4363,6 +4363,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             std::borrow::Cow::Borrowed(&module.hir.text[..])
         }
     };
+    // The text and the line starts of each file that related information in another file points into. Thousands of
+    // errors can point into one declaration file.
+    let related_files: ShardedMap<FileId, (Cow<'_, [u8]>, Vec<u32>)> = ShardedMap::default();
     let show = |file: FileId, errors: Vec<Explained>, found: &Guarded<Vec<Vec<Diagnostic>>>| {
         if errors.is_empty() || request.plan_options.skips_file_diagnostics {
             return;
@@ -4411,15 +4414,15 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                             };
                         }
                         let other = &program.files.modules[related_file.idx()];
-                        let text = &text_of(related_file)[..];
-                        located(
-                            other.file_name(),
-                            text,
-                            &compute_ecma_line_starts(text),
-                            start,
-                            end,
-                            reported,
-                        )
+                        let (text, starts) = match related_files.get_ref(&related_file) {
+                            Some(known) => known,
+                            None => {
+                                let text = text_of(related_file);
+                                let starts = compute_ecma_line_starts(&text);
+                                related_files.insert_ref(related_file, (text, starts))
+                            }
+                        };
+                        located(other.file_name(), text, starts, start, end, reported)
                     })
                     .collect();
                 let reported = Diagnostic {
@@ -4748,7 +4751,14 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     let components = &program.files.components;
                     let component = components.of_file.get(file.idx());
                     let component = component.and_then(|&at| components.all.get(at as usize));
-                    let same_component = component.map_or(&[][..], |it| it.files).iter();
+                    let same_component = component.map_or(&[][..], |it| it.files);
+                    // Every file before `next` is final, and both lists are in program order.
+                    let rank = |file: FileId| program.files.rank_of_file(file);
+                    let final_members =
+                        to_check.get(*next).map_or(same_component.len(), |&first| {
+                            same_component.partition_point(|&it| rank(it) < rank(first))
+                        });
+                    let same_component = same_component[final_members..].iter();
                     let same_component =
                         same_component.filter_map(|it| index_of_file.get(it).copied());
                     checker.set_first_in_order(

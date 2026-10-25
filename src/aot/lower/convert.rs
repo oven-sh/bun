@@ -141,6 +141,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         construct: Construct,
     ) -> ValueId {
         let description = self.described_int32_flow.take();
+        // A value with no number in its type cannot break the promise of an `int32`.
+        let is_promise = position.flags.contains(PositionFlags::IS_INT32_PROMISE);
+        let position = match source {
+            Some(source) if is_promise && self.file.has_no_number(source) => {
+                let flags = position.flags.without(PositionFlags::IS_INT32_PROMISE);
+                DeclaredType { flags, ..position }
+            }
+            _ => position,
+        };
         let target = self.file.find_target_type(position);
         if let (Some(source), Some(target)) = (source, target) {
             let kind = match construct {

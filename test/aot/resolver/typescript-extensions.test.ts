@@ -1,6 +1,7 @@
-import { describe } from "../supported";
-import { packageFiles } from "./compare";
-import { testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
+import { expect } from "bun:test";
+import { tempDir } from "harness";
+import { describe, test } from "../supported";
+import { packageFiles, testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 type RewriteFixture = [directory: string, files: string[], answers: Record<string, string | null>];
 
@@ -19,11 +20,11 @@ const projectFixtures: RewriteFixture[] = [
   ["dotted", ["a.b.ts"], { "a.b.js": "a.b.ts", "a.b": "a.b.ts" }],
 ];
 
-// Inside node_modules ".js" is still rewritten. ".mjs" and ".cjs" are not.
+// Under the "aot" condition the extensions are rewritten inside node_modules as they are outside.
 const nodeModulesFixtures: RewriteFixture[] = [
   ["only-ts", ["a.ts"], { "a.js": "a.ts", "a.mjs": null, "a.cjs": null }],
-  ["only-mts", ["a.mts"], { "a.js": "a.mts", "a.mjs": null, "a.cjs": null }],
-  ["only-cts", ["a.cts"], { "a.cjs": null, "a.js": null, "a.mjs": null }],
+  ["only-mts", ["a.mts"], { "a.js": "a.mts", "a.mjs": "a.mts", "a.cjs": null }],
+  ["only-cts", ["a.cts"], { "a.cjs": "a.cts", "a.js": null, "a.mjs": null }],
 ];
 
 const exportsMap = { ".": "./dist/index.js", "./m": "./dist/m.mjs" };
@@ -61,10 +62,9 @@ const cases: ResolutionCase[] = [
     files: packageFiles("exported", { exports: exportsMap }, ["dist/index.ts", "dist/m.mts"]),
     pins: [
       ["importer.ts", "exported", "node_modules/exported/dist/index.ts"],
-      ["importer.ts", "exported/m", null],
+      ["importer.ts", "exported/m", "node_modules/exported/dist/m.mts"],
     ],
   },
-  // A self-reference is not inside node_modules, so ".mjs" is rewritten too.
   {
     name: "targets of exports, self-reference",
     files: {
@@ -80,3 +80,11 @@ const cases: ResolutionCase[] = [
 ];
 
 describe("code resolution", () => testResolution(cases));
+
+test("without the aot condition .mjs and .cjs are not rewritten inside node_modules", () => {
+  using tree = tempDir("aot-resolver", packageFiles("pkg", {}, ["a.mts", "b.cts", "c.ts"]));
+  const resolve = (specifier: string) => Bun.resolveSync(specifier, String(tree)).slice(String(tree).length + 1);
+  expect(resolve("pkg/c.js").replaceAll("\\", "/")).toBe("node_modules/pkg/c.ts");
+  expect(() => resolve("pkg/a.mjs")).toThrow();
+  expect(() => resolve("pkg/b.cjs")).toThrow();
+});

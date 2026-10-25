@@ -1829,6 +1829,12 @@ pub(crate) mod strings_impl {
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
     #[inline]
     pub fn copy_latin1_into_utf8(buf: &mut [u8], latin1: &[u8]) -> EncodeIntoResult {
+        if latin1.len() <= 16 && latin1.len() <= buf.len() && copy_short_ascii(buf, latin1) {
+            return EncodeIntoResult {
+                read: latin1.len(),
+                written: latin1.len(),
+            };
+        }
         const MIN_LEN_FOR_SIMDUTF: usize = 64;
         if latin1.len() >= MIN_LEN_FOR_SIMDUTF
             && buf.len() >= simdutf::length::utf8::from::latin1(latin1)
@@ -1849,6 +1855,45 @@ pub(crate) mod strings_impl {
         copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
     }
 
+    /// Copies at most 16 bytes with two loads and two stores that overlap. Writes nothing and
+    /// returns false unless all of `src` is ASCII. `dst` is at least as long as `src`.
+    #[inline(always)]
+    fn copy_short_ascii(dst: &mut [u8], src: &[u8]) -> bool {
+        let n = src.len();
+        assert!(n <= 16 && n <= dst.len());
+        let (from, to) = (src.as_ptr(), dst.as_mut_ptr());
+        // SAFETY: every access below lies in the first `n` bytes of `src` or of `dst`.
+        unsafe {
+            if n >= 8 {
+                let first = from.cast::<u64>().read_unaligned();
+                let last = from.add(n - 8).cast::<u64>().read_unaligned();
+                if (first | last) & 0x8080_8080_8080_8080 != 0 {
+                    return false;
+                }
+                to.cast::<u64>().write_unaligned(first);
+                to.add(n - 8).cast::<u64>().write_unaligned(last);
+            } else if n >= 4 {
+                let first = from.cast::<u32>().read_unaligned();
+                let last = from.add(n - 4).cast::<u32>().read_unaligned();
+                if (first | last) & 0x8080_8080 != 0 {
+                    return false;
+                }
+                to.cast::<u32>().write_unaligned(first);
+                to.add(n - 4).cast::<u32>().write_unaligned(last);
+            } else if n > 0 {
+                // The first, the middle and the last of one, two or three bytes are all of them.
+                let (first, middle, last) = (*from, *from.add(n / 2), *from.add(n - 1));
+                if (first | middle | last) >= 0x80 {
+                    return false;
+                }
+                *to = first;
+                *to.add(n / 2) = middle;
+                *to.add(n - 1) = last;
+            }
+        }
+        true
+    }
+
     #[inline]
     fn copy_ascii_prefix(dst: &mut [u8], src: &[u8]) -> usize {
         debug_assert_eq!(dst.len(), src.len());
@@ -1859,26 +1904,32 @@ pub(crate) mod strings_impl {
         }
 
         const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
+        let n = src.len();
+        assert!(dst.len() >= n);
+        let (from, to) = (src.as_ptr(), dst.as_mut_ptr());
         let mut copied = 0usize;
-        let (dst_chunks, _) = dst.as_chunks_mut::<8>();
-        let (src_chunks, _) = src.as_chunks::<8>();
-        for (d, s) in dst_chunks.iter_mut().zip(src_chunks) {
-            let word = u64::from_ne_bytes(*s);
-            let mask = word & HIGH_BITS;
-            if mask != 0 {
-                let ascii = (mask.trailing_zeros() / 8) as usize;
-                d[..ascii].copy_from_slice(&s[..ascii]);
-                return copied + ascii;
+        // SAFETY: every access below lies in the first `n` bytes of `src` or of `dst`.
+        unsafe {
+            while copied + 8 <= n {
+                let word = from.add(copied).cast::<u64>().read_unaligned();
+                if word & HIGH_BITS != 0 {
+                    break;
+                }
+                to.add(copied).cast::<u64>().write_unaligned(word);
+                copied += 8;
             }
-            *d = word.to_ne_bytes();
-            copied += 8;
-        }
-        for (d, &s) in dst[copied..].iter_mut().zip(&src[copied..]) {
-            if s >= 0x80 {
-                return copied;
+            // The last word overlaps the one before it.
+            if copied + 8 > n && n >= 8 {
+                let word = from.add(n - 8).cast::<u64>().read_unaligned();
+                if word & HIGH_BITS == 0 {
+                    to.add(n - 8).cast::<u64>().write_unaligned(word);
+                    return n;
+                }
             }
-            *d = s;
-            copied += 1;
+            while copied < n && *from.add(copied) < 0x80 {
+                *to.add(copied) = *from.add(copied);
+                copied += 1;
+            }
         }
         copied
     }

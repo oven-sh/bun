@@ -22,13 +22,10 @@ pub(super) struct ExportsMap<'h> {
 #[derive(Debug)]
 pub(in crate::resolve) struct CodeManifest<'h> {
     pub(super) directory: &'h [u8],
-    pub(super) path: &'h [u8],
     pub(super) name: &'h [u8],
     version: &'h [u8],
     pub(super) module_type: DeclaredModuleType,
-    main_fields: &'h [(&'h [u8], &'h [u8])],
     pub(super) exports: Option<ExportsEntry<'h>>,
-    pub(super) imports: Option<ExportsEntry<'h>>,
     names_aot_condition: bool,
     side_effects: DeclaredSideEffects<'h>,
 }
@@ -52,15 +49,6 @@ impl<'h> ExportsEntry<'h> {
 }
 
 impl<'h> CodeManifest<'h> {
-    pub(super) fn main_field(&self, field: &[u8]) -> Option<&[u8]> {
-        let entry = self.main_fields.iter().find(|entry| entry.0 == field)?;
-        Some(entry.1)
-    }
-
-    pub(super) fn has_main_fields(&self) -> bool {
-        !self.main_fields.is_empty()
-    }
-
     fn package(&self) -> Option<EnclosingPackage<'h>> {
         let has_identity = !self.name.is_empty() && !self.version.is_empty();
         has_identity.then_some(EnclosingPackage {
@@ -110,16 +98,22 @@ impl<'h> Resolver<'h> {
             .find_map(|ancestor| self.code_manifest(ancestor)?.package())
     }
 
-    /// Whether the `exports` of the package that holds `path` name the "aot" condition.
+    /// Whether the `exports` or `imports` of the package that holds `path` name the "aot" condition.
     pub fn is_in_aot_package(&self, path: &[u8]) -> bool {
-        path.starts_with(b"/")
-            && ancestors(dirname::<Posix>(path))
-                .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
-                .find_map(|ancestor| {
-                    self.code_manifest(ancestor)
-                        .filter(|it| it.exports.is_some())
-                })
-                .is_some_and(|manifest| manifest.names_aot_condition)
+        self.aot_package_directory(path).is_some()
+    }
+
+    pub(super) fn aot_package_directory(&self, path: &[u8]) -> Option<&'h [u8]> {
+        if !path.starts_with(b"/") {
+            return None;
+        }
+        let manifest = ancestors(dirname::<Posix>(path))
+            .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
+            .find_map(|ancestor| {
+                self.code_manifest(ancestor)
+                    .filter(|it| it.exports.is_some() || it.names_aot_condition)
+            })?;
+        (manifest.names_aot_condition).then_some(manifest.directory)
     }
 
     pub fn is_same_package(&self, importer: &[u8], path: &[u8]) -> bool {
@@ -131,7 +125,7 @@ impl<'h> Resolver<'h> {
             return false;
         };
         let relative = path.strip_prefix(manifest.directory);
-        relative.is_some_and(|it| it.starts_with(b"/") && !files::is_in_node_modules(it))
+        relative.is_some_and(|it| it.starts_with(b"/") && !search::is_in_node_modules(it))
             && nearest(path).is_some_and(|other| std::ptr::eq(manifest, other))
     }
 
@@ -159,9 +153,7 @@ impl<'h> Resolver<'h> {
         let arena = session.arena();
         let text = self.read_manifest_text(&path)?;
         let json = self.code_host().parse_runtime_package_json(arena, &text)?;
-        let path = slice_in(&path, arena);
-        let main_fields = &self.code_options().main_fields;
-        let manifest = read_manifest(arena, directory, path, &json, main_fields)?;
+        let manifest = read_manifest(arena, directory, &json)?;
         let manifest: &'h CodeManifest<'h> = arena.alloc(manifest);
         Some(manifest)
     }
@@ -220,9 +212,7 @@ fn build_map<'h>(
 fn read_manifest<'h>(
     arena: &'h Arena,
     directory: &'h [u8],
-    path: &'h [u8],
     json: &Json,
-    main_fields: &[Vec<u8>],
 ) -> Option<CodeManifest<'h>> {
     json.as_object()?;
     let module_type = match non_empty_string_property(json, b"type") {
@@ -230,34 +220,24 @@ fn read_manifest<'h>(
         Some(b"module") => DeclaredModuleType::Esm,
         Some(_) | None => DeclaredModuleType::Unknown,
     };
-    let main_field_values: Vec<(&'h [u8], &'h [u8])> = main_fields
-        .iter()
-        .filter_map(|field| {
-            let value = non_empty_string_property(json, field)?;
-            Some((slice_in(field, arena), slice_in(value, arena)))
-        })
-        .collect();
     let subpath_table = |key: &[u8]| {
-        let root = build_exports_entry(arena, get_first(json, key)?);
-        match root {
-            ExportsEntry::Null => None,
-            _ => Some(root),
-        }
+        get_first(json, key)
+            .map(|table| build_exports_entry(arena, table))
+            .filter(|root| !matches!(root, ExportsEntry::Null))
     };
+    let exports = subpath_table(b"exports");
     let name = non_empty_string_property(json, b"name").unwrap_or_default();
     let version = non_empty_string_property(json, b"version").unwrap_or_default();
-    let exports = subpath_table(b"exports");
     Some(CodeManifest {
         directory,
-        path,
         name: slice_in(name, arena),
         version: slice_in(version, arena),
         module_type,
-        main_fields: slice_in(&main_field_values, arena),
-        names_aot_condition: exports
-            .is_some_and(|exports| names_condition(&exports, AOT_CONDITION)),
+        names_aot_condition: [exports, subpath_table(b"imports")]
+            .iter()
+            .flatten()
+            .any(|table| names_condition(table, AOT_CONDITION)),
         exports,
-        imports: subpath_table(b"imports"),
         side_effects: read_side_effects(arena, directory, json),
     })
 }
@@ -310,7 +290,6 @@ mod tests {
     use super::*;
 
     const DIRECTORY: &[u8] = b"/p/x";
-    const PATH: &[u8] = b"/p/x/package.json";
     const ROOT: &str = "/p/package.json";
     const NONE: &str = "none";
 
@@ -319,8 +298,7 @@ mod tests {
     }
 
     fn parse_manifest<'a>(arena: &'a Arena, text: &str) -> Option<CodeManifest<'a>> {
-        let main_fields = CodeOptions::bun_run(b"/p").main_fields;
-        read_manifest(arena, DIRECTORY, PATH, &json(text), &main_fields)
+        read_manifest(arena, DIRECTORY, &json(text))
     }
 
     fn render(entry: ExportsEntry<'_>) -> String {
@@ -357,11 +335,6 @@ mod tests {
         parse_manifest(&arena, text).unwrap().exports.map(render)
     }
 
-    fn render_imports(text: &str) -> Option<String> {
-        let arena = Arena::new();
-        parse_manifest(&arena, text).unwrap().imports.map(render)
-    }
-
     fn with_resolver<T>(host: &MemoryHost, run: impl FnOnce(&Resolver<'_>) -> T) -> T {
         let session = Session::new();
         let options = Options::default();
@@ -378,7 +351,9 @@ mod tests {
                 resolver.module_type_manifest(directory),
             ];
             found.map(|manifest| match manifest {
-                Some(manifest) => manifest.path.as_bstr().to_string(),
+                Some(manifest) => inside(manifest.directory, b"package.json")
+                    .as_bstr()
+                    .to_string(),
                 None => NONE.to_owned(),
             })
         })
@@ -427,7 +402,6 @@ mod tests {
         assert_eq!(esm.name, b"pkg");
         assert_eq!(esm.module_type, DeclaredModuleType::Esm);
         assert_eq!(esm.directory, DIRECTORY);
-        assert_eq!(esm.path, PATH);
 
         let commonjs = parse_manifest(&arena, r#"{"type": "commonjs"}"#).unwrap();
         assert_eq!(commonjs.name, b"");
@@ -494,41 +468,7 @@ mod tests {
         let empty = parse_manifest(&arena, "{}").unwrap();
         assert_eq!(empty.name, b"");
         assert_eq!(empty.module_type, DeclaredModuleType::Unknown);
-        assert!(!empty.has_main_fields());
-        assert!(empty.exports.is_none() && empty.imports.is_none());
-    }
-
-    #[test]
-    fn main_fields_follow_option_order() {
-        let arena = Arena::new();
-        let text = r#"{"main": "./cjs.js", "browser": "./web.js", "module": "./esm.js"}"#;
-        let manifest = parse_manifest(&arena, text).unwrap();
-        let by_default: [(&[u8], &[u8]); 2] = [(b"module", b"./esm.js"), (b"main", b"./cjs.js")];
-        assert_eq!(manifest.main_fields, by_default);
-        assert!(manifest.has_main_fields());
-        assert_eq!(manifest.main_field(b"main"), Some(&b"./cjs.js"[..]));
-        assert_eq!(manifest.main_field(b"module"), Some(&b"./esm.js"[..]));
-        assert_eq!(manifest.main_field(b"browser"), None);
-        assert_eq!(manifest.main_field(b"jsnext:main"), None);
-
-        let fields = [b"browser".to_vec()];
-        let manifest = read_manifest(&arena, DIRECTORY, PATH, &json(text), &fields).unwrap();
-        let custom: [(&[u8], &[u8]); 1] = [(b"browser", b"./web.js")];
-        assert_eq!(manifest.main_fields, custom);
-    }
-
-    #[test]
-    fn empty_and_non_string_main_fields_are_absent() {
-        let arena = Arena::new();
-        let text = r#"{"main": "", "module": {}, "jsnext:main": ["./a.js"]}"#;
-        let manifest = parse_manifest(&arena, text).unwrap();
-        assert!(!manifest.has_main_fields());
-        assert_eq!(manifest.main_field(b"main"), None);
-
-        let manifest = parse_manifest(&arena, r#"{"main": "", "module": "./esm.js"}"#).unwrap();
-        assert!(manifest.has_main_fields());
-        assert_eq!(manifest.main_field(b"main"), None);
-        assert_eq!(manifest.main_field(b"module"), Some(&b"./esm.js"[..]));
+        assert!(empty.exports.is_none());
     }
 
     #[test]
@@ -606,26 +546,6 @@ mod tests {
             (r#"["./a.js", 1, "./b.js"]"#, "[./a.js, invalid, ./b.js]"),
             (r#"[true, null, {"a": 0}]"#, "[invalid, null, {a: invalid}]"),
         ]);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn imports_keys_count_as_conditions() {
-        let manifests = [
-            (
-                r##"{"imports": {"#a": "./a.js", "#b/*": {"node": "./b/*.js"}}}"##,
-                Some("{#a: ./a.js, #b/*: {node: ./b/*.js}}"),
-            ),
-            (
-                r##"{"imports": {"#a": "./a.js", "./b": "./b.js"}}"##,
-                Some("invalid"),
-            ),
-            (r#"{"imports": null}"#, None),
-            (r#"{"exports": "./a.js"}"#, None),
-        ];
-        for (text, expected) in manifests {
-            assert_eq!(render_imports(text).as_deref(), expected, "{text}");
-        }
     }
 
     #[test]
@@ -741,7 +661,6 @@ mod tests {
             let manifest = resolver.code_manifest(DIRECTORY).unwrap();
             assert_eq!(manifest.name, b"x");
             assert_eq!(manifest.directory, DIRECTORY);
-            assert_eq!(manifest.path, PATH);
             for spelling in ["/p/x", "/p/x/", "/p/y/../x", "/p//x"] {
                 let found = resolver.code_manifest(spelling.as_bytes()).unwrap();
                 assert!(std::ptr::eq(manifest, found), "{spelling}");
@@ -760,7 +679,6 @@ mod tests {
         with_resolver(&host, |resolver| {
             let manifest = resolver.code_manifest(b"/").unwrap();
             assert_eq!(manifest.directory, b"/");
-            assert_eq!(manifest.path, b"/package.json");
         });
 
         let host = MemoryHost::new(&files[1..]);

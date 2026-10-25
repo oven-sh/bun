@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { readBuildReport } from "./harness/build-report";
 import { slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
@@ -29,24 +30,21 @@ function lay(root: string, typed: boolean) {
     const described = join(folder, "node_modules", "orders", "package.json");
     writeFileSync(
       described,
-      JSON.stringify(
-        JSON.parse(readFileSync(described, "utf8"), (key, value) => (key === "full-types" ? undefined : value)),
-      ),
+      JSON.stringify(JSON.parse(readFileSync(described, "utf8"), (key, value) => (key === "aot" ? undefined : value))),
     );
-    rmSync(join(folder, "node_modules", "orders", "index.full.ts"));
+    rmSync(join(folder, "node_modules", "orders", "index.aot.ts"));
   }
   return folder;
 }
 
 async function answerOf(folder: string) {
+  const report = join(folder, "report.json");
   const built = await spawned(
-    [bunExe(), "compile", "./programs/orders.ts", "--outfile", join(folder, "orders")],
+    [bunExe(), "compile", "./programs/orders.ts", "--outfile", join(folder, "orders"), "--aot-report=" + report],
     folder,
     environment,
   );
-  const said = (built.stdout + built.stderr)
-    .split(/\r?\n/)
-    .filter(line => /full types|without (its |their )?types/.test(line) && !/ full types, and /.test(line));
+  const said = (built.stdout + built.stderr).split(/\r?\n/).filter(line => /without (its |their )?types/.test(line));
   const ran = await spawned(
     [join(folder, isWindows ? "orders.exe" : "orders"), "1000", "0", "3", "2", "0"],
     folder,
@@ -58,6 +56,7 @@ async function answerOf(folder: string) {
     .map(line => JSON.parse(line));
   return {
     said,
+    aotFiles: readBuildReport(report).statistics.TypedVersionsUsed,
     exitCode: [built.exitCode, ran.exitCode],
     answer: result.answer,
     lastAnswer: result.lastAnswer,
@@ -67,7 +66,7 @@ async function answerOf(folder: string) {
 
 describe("the programs of typed-packages/measure", () => {
   test(
-    "answer alike with a package as installed and with its full-types file",
+    "answer alike with a package as installed and with its .aot.ts file",
     () =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", {});
@@ -75,15 +74,13 @@ describe("the programs of typed-packages/measure", () => {
         const typed = await answerOf(lay(String(dir), true));
         expect(asInstalled).toEqual({
           said: [],
+          aotFiles: 0,
           exitCode: [0, 0],
           answer: asInstalled.answer,
           lastAnswer: asInstalled.answer,
           turns: 2,
         });
-        expect(typed).toEqual({
-          ...asInstalled,
-          said: ['note: "orders" 1.0.0 is compiled from its full types in node_modules/orders'],
-        });
+        expect(typed).toEqual({ ...asInstalled, aotFiles: 1 });
       }),
     600_000,
   );

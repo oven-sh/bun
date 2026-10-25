@@ -6,13 +6,9 @@ const root = path.resolve(import.meta.dir, "..", "..", "..");
 
 // `git add` leaves out a new file in a folder that .gitignore matches, and `git status` does not show it, even where the
 // files beside it are tracked. A test written into such a folder runs where it was written and never in CI.
-test("no tracked file of the compiler, its tests or the full types of packages is ignored", () => {
+test("no tracked file of the compiler or its tests is ignored", () => {
   const { stdout, exitCode } = Bun.spawnSync({
-    cmd: ["git", "ls-files", "-z", "--cached", "--ignored", "--exclude-standard", "--"].concat(
-      "src/aot",
-      "test/aot",
-      "packages/full-types",
-    ),
+    cmd: ["git", "ls-files", "-z", "--cached", "--ignored", "--exclude-standard", "--", "src/aot", "test/aot"],
     cwd: root,
   });
   expect(stdout.toString().split("\0").filter(Boolean)).toEqual([]);

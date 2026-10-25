@@ -1,7 +1,6 @@
-// Do the tests have teeth? A test that was never seen to fail proves nothing: the programs about objects in the cells of other objects were all green for hours
-// while a freed cell was read, and a whole folder was green because none of its programs got the thing that it was written to attack.
+// Do the tests have teeth? A test that was never seen to fail proves nothing.
 //
-// `--aot-sabotage=<name>` (hidden) breaks one thing in a build on purpose: an emitter leaves out a barrier, the collector's visit leaves out a field, a pass leaves out one of the
+// `--aot-sabotage=<name>` (hidden) breaks one thing in a build on purpose: an emitter leaves out a barrier, a pass leaves out one of the
 // conditions under which it may change the code. An ordinary build holds
 // none of it. `bun compile --aot-list=registry` lists the names. For each name the table below has the programs that must notice, and this test passes only if
 // AT LEAST ONE RUN OF THEM DIFFERS FROM PLAIN BUN OR DIES. A sabotage that nothing sees fails here, and so does a name that the table lacks: each says which program is still to be written.
@@ -65,6 +64,11 @@ const noticedBy: Record<string, Row | Row[]> = {
   NoCallCollects: {
     folder: "collector",
     flags: ["--aot-validate"],
+    programs: ["young-cells-stored-into-old-arrays-survive.ts", "references-in-optional-fields-survive-collections.ts"],
+  },
+  StoresNeedNoBarrier: {
+    folder: "collector",
+    flags: [],
     programs: ["young-cells-stored-into-old-arrays-survive.ts", "references-in-optional-fields-survive-collections.ts"],
   },
   NoCallWrites: toldTheBackEnd(

@@ -146,6 +146,15 @@ fn lower_source_body(file: &mut FileLowering<'_, '_, '_, '_>, function: Function
         file.lower_left_out_function(function);
         return;
     }
+    if file
+        .inputs
+        .modules
+        .inner_module(file.file, source)
+        .is_some()
+    {
+        file.lower_inner_module_body(function, source);
+        return;
+    }
     match file.hir.runtime_function_kind(source) {
         FnKind::Constructor => file.lower_constructor(function, source),
         _ => file.lower_source_function(function, source),

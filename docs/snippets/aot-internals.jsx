@@ -1683,7 +1683,7 @@ export const Guard = () => (
         {"v32: number @Double = CallDirect v2, v23"}
       </text>
       <text x="38" y="327" fontSize="10" fontFamily="ui-monospace, Menlo, Consolas, monospace">
-        {"function=f1241, the generic version of dot"}
+        {"function=f1156, the generic version of dot"}
       </text>
       <rect
         x="400"

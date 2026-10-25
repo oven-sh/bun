@@ -9,10 +9,11 @@ mod text;
 pub(super) use self::faces::collect_seen_namespaces;
 use self::faces::{Faces, collect_members_of_namespaces};
 pub(super) use self::own_text::AliasTarget;
-use self::own_text::{OwnText, ScanInput, scan_own_text};
+use self::own_text::{InnerBody, OwnText, ScanInput, scan_own_text};
 use self::text::Text;
 use super::bindings::SyntheticExportId;
 use super::exports::{ExportTables, Resolution};
+use super::graph::find;
 use super::imports::{FileImports, PendingBinding};
 use super::interop::ModuleKind;
 use super::module_set::ModuleSet;
@@ -26,15 +27,23 @@ use crate::load::SourceKind;
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::SymbolId;
-use bun_sema::hir::{ExprId, StmtId};
+use bun_sema::hir::{ExprId, FnId, StmtId};
 use bun_sema::program::{FileId, Sym};
 use bun_sema::util::FxHashMap;
 use bun_sema::util::SharedSort;
+
+/// The callback of `__commonJS(cb)` that is a module of its own, and the name that holds what the helper gives.
+#[derive(Copy, Clone, Debug)]
+pub(super) struct InnerCommonJs {
+    pub holder: SymbolId,
+    pub callback: FnId,
+}
 
 pub(super) struct CommonJsInput<'a, 'b, 's> {
     pub bind: &'a BindInput<'b, 's>,
     pub scans: &'a Scans,
     pub modules: &'a ModuleSet,
+    pub inner_modules: &'a (dyn Fn(FileId) -> &'a [InnerCommonJs] + Sync),
     /// Somebody may look at the module while its body runs.
     pub half: &'a (dyn Fn(ModuleRef) -> bool + Sync),
     /// An ES module that something other than an import starts. Only such a module has a check.
@@ -112,32 +121,51 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
         is_entry_point[entry_point.file.idx()] = true;
     }
     let compiled_files = modules.compiled_files.iter();
-    let mut scanned: Vec<(FileId, Option<OwnText>)> =
-        compiled_files.map(|&file| (file, None)).collect();
+    let mut scanned: Vec<(FileId, Vec<OwnText>)> =
+        compiled_files.map(|&file| (file, Vec::new())).collect();
     for_each_mut(&mut scanned, bind.in_parallel, &|(file, found)| {
         let file = *file;
+        let inner_modules = (input.inner_modules)(file);
         let is_file_a_module = modules.interop(ModuleRef::File(file)).kind == ModuleKind::CommonJs
             && sources.kind(file) == SourceKind::Program
             && !is_library[file.idx()];
-        if !is_file_a_module {
+        if !is_file_a_module && inner_modules.is_empty() {
             return;
         }
         let Some(source) = parsed_source(files, file) else {
             return;
         };
-        let text = Text::new(files, builtin_names, file, &source.builtins);
-        *found = Some(scan_own_text(&ScanInput {
+        let inner_bodies = inner_modules.iter().filter_map(|inner| {
+            let written = modules.wrapped.of_callback(file, inner.callback)?;
+            Some(InnerBody {
+                holder: inner.holder,
+                callback: inner.callback,
+                exports_parameter: written.exports_parameter,
+                module_parameter: written.module_parameter,
+            })
+        });
+        let inner_bodies: Vec<InnerBody> = inner_bodies.collect();
+        let text = Text::new(
+            files,
+            &modules.wrapped,
+            builtin_names,
+            file,
+            &source.builtins,
+        );
+        *found = scan_own_text(&ScanInput {
             text: &text,
             sites: &scans.of(file).sites,
+            inner_modules: &inner_bodies,
+            is_file_a_module,
             is_entry_point: is_entry_point[file.idx()],
-            is_half: half(ModuleRef::File(file)),
+            half,
             certain_helper: &|callee| {
                 let known = bind.known_helpers.certain_callee(files, file, callee)?;
                 Some(known.shape.helper())
             },
-        }));
+        });
     });
-    let modules: Vec<OwnText> = scanned.into_iter().filter_map(|(_, found)| found).collect();
+    let modules: Vec<OwnText> = scanned.into_iter().flat_map(|(_, found)| found).collect();
     let numbered = modules.iter().zip(0..);
     let index = numbered
         .map(|(text, index)| (text.module(), index))
@@ -208,6 +236,8 @@ fn create_entries(text: &OwnText) -> ModuleEntries {
 #[derive(Copy, Clone, Debug)]
 struct OwnAccess {
     node: ExprId,
+    /// The number of the module.
+    module: usize,
     name: Atom,
     is_store_only: bool,
     says_marker: bool,
@@ -216,11 +246,10 @@ struct OwnAccess {
 /// Each list is sorted.
 #[derive(Default)]
 struct FileTable {
-    /// The number of the module that the file is.
-    module: usize,
-    /// The member accesses on the exports of the module, and the calls that are one store.
+    /// The member accesses on the exports of the modules that are written in the file, and the calls that are one store.
     accesses: Vec<OwnAccess>,
-    erased: Vec<StmtId>,
+    /// With the number of the module.
+    erased: Vec<(StmtId, usize)>,
     exported_bindings: Vec<SymbolId>,
 }
 
@@ -280,6 +309,12 @@ impl CommonJsExports {
             exports.bind_names_of_module(input.modules, tables, text);
         }
         exports.modules = modules;
+        for table in &mut exports.files {
+            table.accesses.sort_unstable_by_key(|access| access.node);
+            table.erased.sort_unstable();
+            table.exported_bindings.sort_unstable();
+            table.exported_bindings.dedup();
+        }
         for &module in &tables.commonjs.refused {
             exports.look_at(module);
         }
@@ -314,7 +349,7 @@ impl CommonJsExports {
 
     fn add_module(&mut self, module: usize, text: &OwnText) {
         let mut sources: Vec<ModuleRef> = Vec::new();
-        let mut exported_bindings = Vec::new();
+        let table = &mut self.files[text.file.idx()];
         for alias in &text.aliases {
             match alias.target {
                 AliasTarget::Member { module: source, .. } if !sources.contains(&source) => {
@@ -325,12 +360,13 @@ impl CommonJsExports {
                         .push(text.module());
                 }
                 AliasTarget::Member { .. } => {}
-                AliasTarget::Binding(symbol) => exported_bindings.push(symbol.id),
+                AliasTarget::Binding(symbol) => table.exported_bindings.push(symbol.id),
             }
         }
         self.name_sources.push(sources);
         let accesses = text.accesses.iter().map(|access| OwnAccess {
             node: access.node,
+            module,
             name: access.name,
             is_store_only: matches!(access.kind, AccessKind::Store(_)),
             says_marker: false,
@@ -341,21 +377,16 @@ impl CommonJsExports {
         let stores = stores.chain(markers);
         let stores = stores.map(|(node, name, says_marker)| OwnAccess {
             node,
+            module,
             name,
             is_store_only: true,
             says_marker,
         });
-        let mut table = FileTable {
-            module,
-            accesses: accesses.chain(stores).collect(),
-            erased: text.erased.clone(),
-            exported_bindings,
-        };
-        table.accesses.sort_unstable_by_key(|access| access.node);
-        table.erased.sort_unstable();
-        table.exported_bindings.sort_unstable();
-        table.exported_bindings.dedup();
-        self.files[text.file.idx()] = table;
+        table.accesses.extend(accesses.chain(stores));
+        let erased = text.erased.iter();
+        table
+            .erased
+            .extend(erased.map(|&statement| (statement, module)));
     }
 
     fn bind_names_of_module(&mut self, modules: &ModuleSet, tables: &ExportTables, text: &OwnText) {
@@ -406,7 +437,8 @@ impl CommonJsExports {
                 if text.is_none() {
                     let source = parsed_source(files, file);
                     text = source.map(|source| {
-                        Text::new(files, input.bind.builtin_names, file, &source.builtins)
+                        let (wrapped, names) = (&input.modules.wrapped, input.bind.builtin_names);
+                        Text::new(files, wrapped, names, file, &source.builtins)
                     });
                 }
                 let stored = text.as_ref().and_then(|text| {
@@ -590,8 +622,9 @@ impl CommonJsExports {
     pub fn own_member(&self, file: FileId, access: ExprId) -> Option<Member> {
         let table = self.table(file)?;
         let at = table.accesses.binary_search_by_key(&access, |it| it.node);
-        let (entry, text) = (table.accesses[at.ok()?], &self.modules[table.module]);
-        if !self.keeps_names(table.module) {
+        let entry = table.accesses[at.ok()?];
+        let text = &self.modules[entry.module];
+        if !self.keeps_names(entry.module) {
             return Some(Member::OnObject);
         }
         if entry.says_marker {
@@ -630,9 +663,10 @@ impl CommonJsExports {
 
     /// The statement has no code.
     pub fn erased(&self, file: FileId, statement: StmtId) -> bool {
-        self.table(file).is_some_and(|table| {
-            table.erased.binary_search(&statement).is_ok() && !self.has_object[table.module]
-        })
+        let module = self
+            .table(file)
+            .and_then(|table| find(&table.erased, statement));
+        module.is_some_and(|module| !self.has_object[module])
     }
 
     /// A binding of the top of a CommonJS file that a name of the module stands for. Other files read it, so it is a variable.

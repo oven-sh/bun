@@ -74,20 +74,32 @@ impl Checker<'_, '_> {
         }
     }
 
-    fn is_declared_in_compiled_files(&self, object_type: TypeId) -> bool {
-        if let TypeData::Ref { target, .. } = self.data(object_type) {
-            let declarations = self.files().decls_of(*target);
-            let mut files = declarations.iter().map(|&(file, _)| file);
-            return !declarations.is_empty() && files.all(|file| self.is_compiled_file(file));
+    fn is_declared_in_compiled_files(&mut self, object_type: TypeId) -> bool {
+        if self.is_stack_low() {
+            return false;
         }
-        if let TypeData::Anon {
-            origin: Origin::TypeLiteral(file, _),
-            ..
-        } = self.data(object_type)
-        {
-            return self.is_compiled_file(*file);
+        match self.data(object_type) {
+            TypeData::Ref { target, .. } => {
+                let declarations = self.files().decls_of(*target);
+                let mut files = declarations.iter().map(|&(file, _)| file);
+                !declarations.is_empty() && files.all(|file| self.is_compiled_file(file))
+            }
+            TypeData::Anon {
+                origin: Origin::TypeLiteral(file, _),
+                ..
+            } => self.is_compiled_file(*file),
+            TypeData::Anon {
+                origin: Origin::Mapped(..),
+                ..
+            } => match self.mapped_modifiers_type(object_type) {
+                Some(modified) => self.is_declared_in_compiled_files(modified),
+                None => false,
+            },
+            TypeData::Intersection(parts) => parts
+                .iter()
+                .all(|&part| self.is_declared_in_compiled_files(part)),
+            _ => false,
         }
-        false
     }
 
     pub(in crate::check) fn type_constructed_by_function(

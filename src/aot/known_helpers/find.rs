@@ -73,9 +73,15 @@ pub struct BindingValues {
 pub struct FileHelpers {
     functions: Box<[(FnId, KnownFunction)]>,
     bindings: Box<[(SymbolId, BindingValues)]>,
+    head_allows_reads_of_open_globals: bool,
 }
 
 impl FileHelpers {
+    /// What `Quiet::allows_reads_of_open_globals` is for the head of the file.
+    pub fn head_allows_reads_of_open_globals(&self) -> bool {
+        self.head_allows_reads_of_open_globals
+    }
+
     pub fn function(&self, function: FnId) -> Option<&KnownFunction> {
         find_by_key(&self.functions, function)
     }
@@ -774,6 +780,7 @@ impl<'a, 's> Finder<'a, 's> {
     }
 
     fn finish(self) -> FileHelpers {
+        let head_allows_reads_of_open_globals = !self.may_start_early();
         let accepted = self.matched.into_iter().filter_map(|(function, matched)| {
             (matched.verdict == Verdict::Accepted).then(|| {
                 let known = KnownFunction {
@@ -794,6 +801,7 @@ impl<'a, 's> Finder<'a, 's> {
         FileHelpers {
             functions: functions.into_boxed_slice(),
             bindings: bindings.into_boxed_slice(),
+            head_allows_reads_of_open_globals,
         }
     }
 }

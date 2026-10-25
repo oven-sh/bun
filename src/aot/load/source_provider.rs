@@ -11,6 +11,7 @@ use bun_ast::{ImportKind, Loader, Loc, Log};
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
 use bun_sema::hir_from_data::{DataModule, DataValue};
+use bun_sema::resolve::{FileSearch, FoundCode, Host, find_file_plainly};
 use bun_sema::session::Arena;
 use std::borrow::Cow;
 
@@ -93,6 +94,15 @@ pub trait SourceProvider: Sync {
 
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed>;
 
+    /// Which file runs for an import that no plugin has resolved.
+    fn find_file(&self, host: &dyn Host, search: &FileSearch<'_>) -> FoundCode {
+        find_file_plainly(host, search)
+    }
+
+    fn has_resolve_plugins(&self) -> bool {
+        true
+    }
+
     fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed>;
 
     fn has_load_plugin(&self, _module: ModuleName<'_>) -> bool {
@@ -166,6 +176,10 @@ impl SourceProvider for WithoutServices {
 
     fn resolve(&self, _request: &ResolveRequest<'_>, _log: &mut Log) -> Result<Resolution, Failed> {
         Ok(Resolution::NotHandled)
+    }
+
+    fn has_resolve_plugins(&self) -> bool {
+        false
     }
 
     fn load(&self, request: &LoadRequest<'_>, _log: &mut Log) -> Result<Loaded, Failed> {

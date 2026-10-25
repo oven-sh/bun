@@ -80,6 +80,7 @@ fn with_export_tables(
             bind: input,
             scans: &scans,
             modules: &modules,
+            inner_modules: &|_| &[],
             half: &|module| order.half(module),
             is_prefix_root: &|_| true,
         });

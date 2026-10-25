@@ -608,27 +608,10 @@ pub(super) fn heap_cause_sentence(cause: AllocationHeapCause) -> Option<&'static
 pub(super) fn interpreted_cause_sentence(reason: u32) -> Option<&'static str> {
     match InterpretedCause::from_wire(reason)? {
         InterpretedCause::None => None,
-        InterpretedCause::TooManyNodes => Some("the type has more parts than the limit allows"),
         InterpretedCause::RepeatedRecursion => Some("two members of a union are both recursive"),
-        InterpretedCause::MemberKeyIsNotText => Some("the key of a member is a symbol"),
         InterpretedCause::LayoutIsNotModeled => Some("no call in the program parses this type"),
-        InterpretedCause::MemberIsNotNamedField => {
-            Some("a member is not a named field of the object")
-        }
         InterpretedCause::FieldTypeIsNotTestable => {
             Some("a field's proven type can't be checked at run time")
-        }
-        InterpretedCause::RuleNamesNodes => {
-            Some("a rule tests the value by another type, and no code is generated for that yet")
-        }
-        InterpretedCause::RuleReadsGivenValue => {
-            Some("a rule reads the whole array or object, also what the type does not describe")
-        }
-        InterpretedCause::TupleLengthVaries => {
-            Some("the tuple has optional or rest elements, and no code is generated for that yet")
-        }
-        InterpretedCause::UniqueItemsAreRecursive => {
-            Some("the items that must be unique hold arrays of the same type")
         }
     }
 }

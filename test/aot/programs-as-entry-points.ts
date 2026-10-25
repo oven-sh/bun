@@ -17,7 +17,7 @@
 //   AOT_REDS=<file> ..                                                 gets a line for each program that is red: <name>, a tab, the way, a tab, what happened
 import { afterAll, describe, expect, test } from "bun:test";
 import { appendFileSync, copyFileSync, existsSync, readdirSync, readFileSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { dirname, join, normalize, relative, sep } from "path";
 import {
   besideOf,
@@ -42,6 +42,8 @@ const starter = "start-the-entry-point-named.ts";
 // Windows takes 32,767 characters.
 const longestCommandLine = isWindows ? 30_000 : 1_000_000;
 const redsExplained = 5;
+// The two builds of a part run at once, and the smallest machines that run them have 8 GB.
+const mostMegabytesOfABuild = 3200;
 
 type Options = { build?: string[]; entryPoints?: string[]; buildEnv?: object; env?: Record<string, string>; reference?: string; erased?: string; alone?: string; skipWithASAN?: string; todoOn?: Record<string, string> };
 const optionsOf = (path: string): Options => (existsSync(besideOf(path) + ".json") ? JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")) : {});
@@ -83,7 +85,7 @@ function canBeOneOfMany(path: string): boolean {
 async function spawnedFor(seconds: number, cmd: string[], cwd: string) {
   await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: seconds * 1000, killSignal: "SIGKILL" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode, signal: proc.signalCode };
+  return { stdout, stderr, exitCode, signal: proc.signalCode, megabytes: Math.round((proc.resourceUsage()?.maxRSS ?? 0) / 1e6) };
 }
 
 /** As an entry point is spelled for a build in `root`, and for the starter there. */
@@ -122,6 +124,8 @@ class Way {
   refused = new Map<string, string>();
   /** The smallest sets of programs that were not built together, though each half of the set was, with the command that says so. */
   notBuiltTogether: string[] = [];
+  /** The most memory that one of its builds had resident. */
+  mostMegabytes = 0;
   #executables = 0;
   constructor(
     readonly name: string,
@@ -142,6 +146,7 @@ class Way {
     if (programs.length > 1 && spelled.join(" ").length > longestCommandLine) return this.#buildHalves(root, programs);
     const executable = join(this.folder, `programs-${this.flags.length}-${this.#executables++}${isWindows ? ".exe" : ""}`);
     const ran = await spawnedFor(isASAN || isDebug || process.env.AOT_BUILD_FLAGS ? 1200 : 280, this.command(["./" + starter, ...spelled], executable), root);
+    this.mostMegabytes = Math.max(this.mostMegabytes, ran.megabytes);
     if (ran.exitCode === 0 && !/^error\b/m.test(ran.stderr)) {
       for (const path of programs) this.executableOf.set(path, executable);
       return;
@@ -242,6 +247,8 @@ export function programsAsEntryPoints(part = 1, parts = 1) {
       async () => {
         await Promise.all(ways.map((_, index) => buildOnce(index)));
         expect(ways.flatMap(way => way.notBuiltTogether)).toEqual([]);
+        console.error(`MEMORY: ${ways.map(way => `${way.name}: ${way.mostMegabytes} MB`).join(", ")}`);
+        if (isLinux && !isASAN && !isDebug && !process.env.AOT_BUILD_FLAGS) expect(Math.max(...ways.map(way => way.mostMegabytes))).toBeLessThan(mostMegabytesOfABuild);
       },
       1_500_000,
     );

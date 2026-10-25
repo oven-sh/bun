@@ -22,6 +22,8 @@ struct Context<'x, 's> {
     walk: &'x ScopeWalk,
     file_scope: ScopeId,
     scope_functions: Vec<Option<WalkedFunctionId>>,
+    // By function: the body of the module that creates it, directly or through other functions.
+    module_bodies: Vec<WalkedFunctionId>,
     is_module_level_scope: Vec<bool>,
     loop_updates: Vec<(ScopeId, ExprId)>,
     // The names that hold a required module of which only members are read, in order.
@@ -72,6 +74,7 @@ impl<'x, 's> Context<'x, 's> {
             scope_functions: Vec::with_capacity(count),
             is_module_level_scope: Vec::with_capacity(count),
             loop_updates: loop_updates::collect_loop_updates(input.hir, bound, walk),
+            module_bodies: find_module_bodies(walk),
             holders_without_value: collect_holders_without_value(input),
         };
         let has_module_variables = match input.modules.kind(input.file) {
@@ -128,6 +131,16 @@ impl<'x, 's> Context<'x, 's> {
             BindingRef::Slot(..) => false,
         }
     }
+}
+
+fn find_module_bodies(walk: &ScopeWalk) -> Vec<WalkedFunctionId> {
+    let mut bodies: Vec<WalkedFunctionId> = Vec::with_capacity(walk.functions.len());
+    for (id, function) in (0..).map(WalkedFunctionId).zip(&walk.functions) {
+        debug_assert!(function.creator.is_none_or(|creator| creator < id));
+        let creator = function.creator;
+        bodies.push(creator.map_or(id, |creator| bodies[creator.index()]));
+    }
+    bodies
 }
 
 fn collect_holders_without_value(input: &ScopeInput<'_, '_>) -> Vec<SymbolId> {

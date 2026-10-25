@@ -13,10 +13,10 @@ function attempt(what, run) {
 const hide = new Function("v", "return v" + String(process.argv[9] ?? "").slice(99)) as <T>(v: T) => T;
 const globals = globalThis as unknown as Record<string, unknown>;
 globals[hide("nobodyReadsThis")] = hide<unknown>(1);
-hide(process); hide(console); hide(Date); hide(Intl); hide(Buffer); hide(Error); hide(Promise); hide(URL);
+hide(navigator); hide(console); hide(Date); hide(Intl); hide(Buffer); hide(Error); hide(Promise); hide(URL);
 
-function argumentsAreListed(): unknown { return typeof process.argv; }
-function environmentIsObject(): unknown { return typeof process.env; }
+function agentIsText(): unknown { return typeof navigator.userAgent; }
+function platformIsText(): unknown { return typeof navigator.platform; }
 function logIsFunction(): unknown { return typeof console.log; }
 function nowIsNumber(): unknown { return typeof Date.now(); }
 function formats(): unknown { return typeof Intl.NumberFormat; }
@@ -26,10 +26,10 @@ function resolves(): unknown { return typeof Promise.resolve(1).then; }
 function parses(text: string): unknown { return URL.canParse(text); }
 function notANumber(value: number): unknown { return isNaN(value); }
 function whole(text: string): unknown { return parseInt(text, 10); }
-function sameObject(value: unknown): unknown { return [value === process, value === console, value === Intl, value === Date, value === Buffer]; }
+function sameObject(value: unknown): unknown { return [value === navigator, value === console, value === Intl, value === Date, value === Buffer]; }
 
 const uses: [string, () => unknown][] = [
-    ["process", () => argumentsAreListed()], ["process", () => environmentIsObject()], ["console", () => logIsFunction()], ["Date", () => nowIsNumber()], ["Intl", () => formats()],
+    ["navigator", () => agentIsText()], ["navigator", () => platformIsText()], ["console", () => logIsFunction()], ["Date", () => nowIsNumber()], ["Intl", () => formats()],
     ["Buffer", () => bytes("abc")], ["Error", () => isError(new TypeError("t"))], ["Promise", () => resolves()], ["URL", () => parses("http://a/")], ["isNaN", () => notANumber(NaN)], ["parseInt", () => whole("12px")],
 ];
 const print = console.log.bind(console);
@@ -44,10 +44,10 @@ const stringify = JSON.stringify;
 function globalsText(value: unknown): string { return typeof value === "symbol" ? "symbol" : typeof value === "bigint" ? "bigint" : String(stringify(value)); }
 
 for (const [name, run] of uses) attempt("as the realm made it, " + name + ":", run);
-for (const value of [process, console, Intl, Date, Buffer, {}, null, undefined, 0, "process"]) attempt("the same object:", () => sameObject(hide(value)));
+for (const value of [navigator, console, Intl, Date, Buffer, {}, null, undefined, 0, "navigator"]) attempt("the same object:", () => sameObject(hide(value)));
 
 const replacements: [string, unknown][] = [
-    ["an object of the program", { argv: 7, env: 7, log: 7, now: () => "mine", NumberFormat: 7, byteLength: () => "mine", resolve: () => ({ then: 7 }), canParse: () => "mine" }],
+    ["an object of the program", { userAgent: 7, platform: 7, log: 7, now: () => "mine", NumberFormat: 7, byteLength: () => "mine", resolve: () => ({ then: 7 }), canParse: () => "mine" }],
     ["undefined", undefined], ["null", null], ["zero", 0], ["a negative number", -1.5], ["NaN", NaN], ["an empty string", ""], ["true", true], ["false", false],
     ["a symbol", Symbol("s")], ["a bigint", 10n], ["a function", function () { return 1; }], ["another built-in object", Reflect], ["the built-in object of another name", Intl],
 ];
@@ -118,11 +118,11 @@ attempt("a name of the program, then a key in quotes", () => Object.defineProper
 attempt("a key in brackets", () => Object.defineProperties(console, { ["_stdout"]: anew(6) }) === console);
 attempt("a descriptor out of a getter", () => Object.defineProperties(console, { get _stderr() { return anew(7); } }) === console);
 attempt("a member that takes no new definition", () => Object.defineProperties(Bun, { $: { enumerable: false } }) === Bun);
-attempt("members that are there from the start", () => Object.defineProperties(process, { release: { enumerable: false }, versions: { enumerable: false } }) === process);
+attempt("members that are there from the start", () => Object.defineProperties(process, { config: { enumerable: false }, features: { enumerable: false } }) === process);
 attempt("no key", () => Object.defineProperties(process, {}) === process);
 attempt("no second operand", () => Object.defineProperties(process));
 const listed = [...Object.keys(process), ...Object.keys(console), ...Object.keys(Bun)];
-for (const name of ["allowedNodeEnvironmentFlags", "finalization", "markOfThisProgram", "0", "stdin", "_stdout", "_stderr", "$", "release", "versions"]) {
+for (const name of ["allowedNodeEnvironmentFlags", "finalization", "markOfThisProgram", "0", "stdin", "_stdout", "_stderr", "$", "config", "features"]) {
   console.log(name, listed.includes(name));
 }
 attempt("console.log", () => console.log("prints"));
@@ -233,12 +233,12 @@ console.log(new Emitter() === first, typeof process.pid, typeof console.log);
 //// the-global-object-a-key-that-is-a-symbol-or-a-text.cjs
 // The key may be a text at run time: the store replaces a built-in global, and every read behind it sees that.
 var few = process.argv.length < 100;
-var key = few ? "process" : Symbol.for("never");
-var kept = process;
-globalThis[key] = { pid: "replaced" };
-console.log(typeof process.pid, process.pid, kept === process);
-globalThis.process = kept;
-console.log(typeof process.pid);
+var key = few ? "navigator" : Symbol.for("never");
+var kept = navigator;
+globalThis[key] = { hardwareConcurrency: "replaced" };
+console.log(typeof navigator.hardwareConcurrency, navigator.hardwareConcurrency, kept === navigator);
+globalThis.navigator = kept;
+console.log(typeof navigator.hardwareConcurrency);
 //// the-global-object-a-registered-symbol-made-of-a-version.cjs
 // The shape of @opentelemetry/api global-utils.js: a store to the global object under a symbol that is made at run time.
 var major = "1.9.0".split(".")[0];
@@ -310,11 +310,11 @@ function Falls(options) {
   if (!(this instanceof Falls)) notes.push("called without new");
   for (var key in options) this[key] = options[key];
 }
-var kept = process;
-Falls({ process: { pid: "replaced" } });
-console.log(notes.join(), process.pid);
-globalThis.process = kept;
-console.log(typeof process.pid, new Falls({ a: 1 }).a);
+var kept = navigator;
+Falls({ navigator: { hardwareConcurrency: "replaced" } });
+console.log(notes.join(), navigator.hardwareConcurrency);
+globalThis.navigator = kept;
+console.log(typeof navigator.hardwareConcurrency, new Falls({ a: 1 }).a);
 //// the-global-object-as-this-the-name-of-the-function-is-assigned.cjs
 // The binding that the test reads is given another function.
 function Named(options) {
@@ -324,18 +324,18 @@ function Named(options) {
 }
 var original = Named;
 Named = Object;
-var kept = process;
-console.log(original({ process: { pid: "replaced" } }), process.pid);
-globalThis.process = kept;
-console.log(typeof process.pid);
+var kept = navigator;
+console.log(original({ navigator: { hardwareConcurrency: "replaced" } }), navigator.hardwareConcurrency);
+globalThis.navigator = kept;
+console.log(typeof navigator.hardwareConcurrency);
 //// the-global-object-as-this-the-test-names-another-function.cjs
 // The global object is an instance of Object.
 function Other(options) {
   if (!(this instanceof Object)) return new Other(options);
   for (var key in options) this[key] = options[key];
 }
-var kept = process;
-Other({ process: { pid: "replaced" } });
-console.log(process.pid);
-globalThis.process = kept;
-console.log(typeof process.pid);
+var kept = navigator;
+Other({ navigator: { hardwareConcurrency: "replaced" } });
+console.log(navigator.hardwareConcurrency);
+globalThis.navigator = kept;
+console.log(typeof navigator.hardwareConcurrency);

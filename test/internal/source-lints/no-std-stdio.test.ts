@@ -25,7 +25,6 @@ test("Rust sources linked into Bun do not use the streams of the standard librar
     ["src/libuv_sys/libuv.rs", 1],
     ["src/react_compiler/pipeline.rs", 4],
     ["src/router/lib.rs", 4],
-    ["src/sema/file_analysis/source_tests/erasure.rs", 2],
     ["src/trim/tests/trimming_invariants.rs", 1],
   ]);
   // Programs of their own.

@@ -1,12 +1,11 @@
-// IR= 1 madeInLoop CompilerHelpersEncodeIntoRangeOfBytes
-// IR= 1 madeInLoop CompilerHelpersStartOfRangeOfBytes
-// IR= 2 writeHeld CompilerHelpersEncodeIntoRangeOfBytes
-// IR= 1 writeHeld CompilerHelpersStartOfRangeOfBytes
-// IR= 2 intoOrKept CompilerHelpersRangeOfBytes
-// IR= 0 twice CompilerHelpers
-// IR= 0 inLoop CompilerHelpers
-// IR= 0 compared CompilerHelpers
-// view.subarray(begin) that goes into encoder.encodeInto(text, ..) where the compiler knows the view for a Uint8Array: the range is not made. Every state such a view may be in, every number, every text, and every other way the range may go.
+// IR= 2 madeInLoop _inRanges
+// IR= 1 writeHeld _inRanges
+// IR= 1 intoOrKept _inRanges
+// IR= 1 oneOfTwo _inRanges
+// IR= 1 compared _inRanges
+// IR= 0 twice _inRanges
+// IR= 0 inLoop _inRanges
+// view.subarray(begin) that goes into encoder.encodeInto(text, ..) where the compiler knows the view for a Uint8Array: the function takes the bytes, so the range is not made. Every state such a view may be in, every number, every text, and every other way the range may go.
 const lines = [];
 const bytesOf = view => { try { return Array.from(view).join(); } catch (error) { return "unreadable " + error.name; } };
 const describe = x => x === null || typeof x !== "object" ? String(x) : ArrayBuffer.isView(x) ? x.constructor.name + "@" + x.byteOffset + "+" + x.length : "read" in x ? x.read + "/" + x.written : Object.prototype.toString.call(x);

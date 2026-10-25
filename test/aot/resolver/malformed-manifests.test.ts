@@ -1,7 +1,6 @@
 import type { DirectoryTree } from "harness";
 import { describe } from "../supported";
-import { packageFiles } from "./compare";
-import { testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
+import { packageFiles, testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 // Without an answer the resolvers are only compared.
 type ManifestFixture = [name: string, text: string, answer?: "main.js" | "index.js"];

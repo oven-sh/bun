@@ -2616,15 +2616,16 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// Returns the name of `symbol` among `getExportsOfSymbol(parent)`, or an empty name if it isn't there.
     fn name_among_exports(&mut self, parent: Sym, symbol: Sym) -> Vec<u8> {
-        let (atoms, exports) = (self.c.atoms(), self.c.exports_of_symbol(parent));
+        let atoms = self.c.atoms();
         let can_name = |name: Atom| name != known::export_equals && !atoms.is_symbol_name(name);
         let own = self.c.files().symbol(symbol).name;
         if can_name(own)
-            && let Some(&(_, exported)) = exports.iter().find(|export| export.0 == own)
+            && let Some(exported) = self.c.export_of_symbol(parent, own)
             && self.c.is_same_reference(exported, symbol)
         {
             return self.text_of_symbol_table_key(own, symbol);
         }
+        let exports = self.c.exports_of_symbol(parent);
         let mut results = Vec::new();
         for &(name, exported) in exports.iter() {
             if can_name(name) && self.c.is_same_reference(exported, symbol) {
@@ -3832,15 +3833,12 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             }
         }
         // `getNamedMembers`: what a class declares precedes what it inherits. Its shape already has that order.
-        let properties: Vec<Prop<'s>> = match self.c.data(ty) {
+        let properties: Vec<&Prop> = match self.c.data(ty) {
             TypeData::Ref { .. }
             | TypeData::Anon {
                 origin: Origin::ClassStatic(_),
                 ..
-            } => {
-                let arena = self.c.arena;
-                (shape.props.iter().map(|prop| prop.clone_in(arena))).collect()
-            }
+            } => shape.props.iter().collect(),
             _ => self.ordered_properties(&shape.props),
         };
         let (abstract_signatures, construct): (Vec<SigId>, Vec<SigId>) = construct
@@ -3897,7 +3895,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         call: &[SigId],
         construct: &[SigId],
         index: &[IndexInfo],
-        properties: &[Prop],
+        properties: &[&Prop],
         mapper: MapperId,
     ) -> Node {
         let saved_flags = self.flags;
@@ -4051,7 +4049,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         call: &[SigId],
         construct: &[SigId],
         index: &[IndexInfo],
-        properties: &[Prop],
+        properties: &[&Prop],
         mapper: MapperId,
     ) -> Vec<Vec<u8>> {
         let no_truncation = self.flags & NO_TRUNCATION != 0;
@@ -4100,7 +4098,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             };
             elements.push(cat! { modifier, b"[", name, b": ", key.text, b"]: ", value.text, b";" });
         }
-        for (i, property) in properties.iter().enumerate() {
+        for (i, &property) in properties.iter().enumerate() {
             if self.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL != 0 {
                 if self.is_prototype_property(ty, property) {
                     continue;
@@ -4124,7 +4122,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                         b" more ...;"
                     });
                 }
-                let last = &properties[properties.len() - 1];
+                let last = properties[properties.len() - 1];
                 self.add_property_to_element_list(last, mapper, &mut elements);
                 break;
             }
@@ -4263,8 +4261,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getNamedMembers` sorts with `compareSymbols`: by the position of the first declaration,
     /// then the ones without a declaration, by name.
-    fn ordered_properties(&mut self, props: &[Prop]) -> Vec<Prop<'s>> {
-        let mut keyed: Vec<((u8, (bool, u32, u32), &'p [u8]), &Prop)> =
+    fn ordered_properties<'a>(&mut self, props: &'a [Prop<'a>]) -> Vec<&'a Prop<'a>> {
+        let mut keyed: Vec<((u8, (bool, u32, u32), &'p [u8]), &'a Prop<'a>)> =
             Vec::with_capacity(props.len());
         for prop in props {
             let name = self.c.atoms().bytes(prop.name);
@@ -4274,8 +4272,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             });
         }
         keyed.shared_sort_by(|a, b| a.0.cmp(&b.0));
-        let arena = self.c.arena;
-        (keyed.into_iter().map(|entry| entry.1.clone_in(arena))).collect()
+        keyed.into_iter().map(|entry| entry.1).collect()
     }
 
     /// Returns the syntax of the name in the declaration `literal_prop` of an object literal property.

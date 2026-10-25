@@ -450,6 +450,27 @@ mod tests {
             "!globalThis?.Bun",
             "globalThis.Bun == null",
             "!(typeof Bun !== 'undefined' && 'Bun' in globalThis)",
+            "typeof process === 'undefined'",
+            "typeof process !== 'object'",
+            "!globalThis.process",
+            "!process.isBun",
+            "process.isBun !== true",
+            "!process?.isBun",
+            "typeof process.versions !== 'object'",
+            "process.versions === null",
+            "process.versions == null",
+            "!process.versions.bun",
+            "!process.versions?.bun",
+            "!process?.versions?.bun",
+            "!globalThis.process?.versions?.bun",
+            "typeof process.versions.bun !== 'string'",
+            "!('bun' in process.versions)",
+            "!('node' in process.versions)",
+            "typeof process.versions.node !== 'string'",
+            "process.release.name !== 'node'",
+            "process.release?.name === 'io.js'",
+            "!(typeof process !== 'undefined' && typeof process.versions === 'object' && process.versions !== null && typeof process.versions.bun === 'string')",
+            "!(typeof process !== 'undefined' && 'bun' in process.versions)",
         ] {
             for source in [
                 format!("if ({test}) import('./other');"),
@@ -467,6 +488,23 @@ mod tests {
     }
 
     #[test]
+    fn default_import_of_the_process_module_is_the_global() {
+        for test in [
+            "!process",
+            "!process.isBun",
+            "!process.versions.bun",
+            "!('bun' in process.versions)",
+            "process.release.name !== 'node'",
+        ] {
+            let from = |module: &str| {
+                format!("import process from '{module}'; if ({test}) import('./other');").leak()
+            };
+            assert_eq!(count_import_sites(from("node:process")), 1, "{test}");
+            assert_eq!(count_import_sites(from("./mine")), 2, "{test}");
+        }
+    }
+
+    #[test]
     fn import_behind_name_that_is_not_the_global_is_followed() {
         for source in [
             "function f(Bun: any) { if (typeof Bun === 'undefined') import('./other'); }",
@@ -477,6 +515,14 @@ mod tests {
             "if (!Bun.mine) import('./other');",
             "if (!('mine' in Bun)) import('./other');",
             "if (!global.Bun) import('./other');",
+            "function f(process: any) { if (!process.isBun) import('./other'); }",
+            "function f(process: any) { if (!('bun' in process.versions)) import('./other'); }",
+            "const process = { versions: {} as any }; if (!process.versions.bun) import('./other');",
+            "if (!process.versions.deno) import('./uses-no-deno');",
+            "if (!('deno' in process.versions)) import('./uses-no-deno');",
+            "if (!process.release.lts) import('./other');",
+            "if (process.isBun) import('./for-bun');",
+            "if (!global.process) import('./other');",
         ] {
             assert_eq!(count_import_sites(source), 1, "{source}");
         }
@@ -549,7 +595,7 @@ mod tests {
         let atoms = Interner::new_in(&sessions.application);
         let fold = fold_inputs_with_facts(&sessions, &atoms, &LimitValues::for_host(), NO_FACTS);
         let arena = sessions.application.arena();
-        let source = "Bun = false; globalThis.Bun = false; delete globalThis.Bun;";
+        let source = "Bun = false; globalThis.Bun = false; delete globalThis.Bun; process.isBun = false; delete process.versions.bun; delete process.isBun;";
         let analysis = analyze(source, &fold.application, arena, &atoms);
         assert!(analysis.errors.is_empty());
         for index in 0..64 {
@@ -590,6 +636,39 @@ mod tests {
         assert_eq!(last_value_at(through_global, below, arena, &atoms), object);
         assert_eq!(last_value_at(&[b"Bun"], at, arena, &atoms), Some(undefined));
         assert_eq!(last_value_at(through_global, at, arena, &atoms), object);
+
+        let text = |text: &[u8]| Constant::String(atoms.intern(text));
+        let define = |names: &[&[u8]], value: Constant| Define {
+            path: global_path(names, arena, &atoms),
+            value: DefineValue::Constant(value),
+        };
+        let version = text(bun_core::Global::package_json_version.as_bytes());
+        let (bun, node): (&[&[u8]], &[&[u8]]) = (
+            &[b"process", b"versions", b"bun"],
+            &[b"process", b"versions", b"node"],
+        );
+        let platform = define(&[b"process", b"platform"], text(b"linux"));
+        assert_eq!(
+            last_value_at(&[b"process"], platform, arena, &atoms),
+            object
+        );
+        assert_eq!(
+            last_value_at(bun, define(bun, version), arena, &atoms),
+            Some(DefineValue::RuntimeConstant(version))
+        );
+        assert_eq!(
+            last_value_at(node, define(node, text(b"0.0.0")), arena, &atoms),
+            Some(DefineValue::Constant(text(b"0.0.0")))
+        );
+        let release = define(&[b"process", b"release"], Constant::Undefined);
+        assert_eq!(
+            last_value_at(&[b"process", b"release"], release, arena, &atoms),
+            Some(undefined)
+        );
+        assert_eq!(
+            last_value_at(&[b"process", b"release", b"name"], release, arena, &atoms),
+            None
+        );
     }
 
     #[test]

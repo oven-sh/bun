@@ -44,31 +44,21 @@ fn text(bytes: &[u8]) -> String {
     bstr::BStr::new(bytes).to_string()
 }
 
-fn render_candidates(config: Option<&CodeConfig<'_>>, specifier: &str) -> String {
-    match config {
-        Some(config) => text(&bstr::join(
-            " ",
-            config.path_candidates(specifier.as_bytes()),
-        )),
-        None => NO_CONFIG.to_owned(),
-    }
-}
-
-fn assert_candidates(host: &MemoryHost, options: &CodeOptions, cases: &[[&str; 3]]) {
+fn assert_keys_of_paths(host: &MemoryHost, options: &CodeOptions, cases: &[[&str; 2]]) {
     with_resolver(host, options, |resolver| {
-        for &[from, specifier, expected] in cases {
-            let config = resolver.enclosing_code_config(from.as_bytes());
-            let found = render_candidates(config, specifier);
-            assert_eq!(found, expected, "{specifier} from {from}");
+        for &[from, expected] in cases {
+            let found = match resolver.enclosing_code_config(from.as_bytes()) {
+                Some(config) => text(&bstr::join(" ", config.paths)),
+                None => NO_CONFIG.to_owned(),
+            };
+            assert_eq!(found, expected, "from {from}");
         }
     });
 }
 
-fn assert_app_candidates(options: &str, cases: &[[&str; 2]]) {
+fn assert_app_keys_of_paths(options: &str, expected: &str) {
     let host = config_host("/app/tsconfig.json", options);
-    for &[specifier, expected] in cases {
-        assert_candidates(&host, &bun_run(), &[["/app", specifier, expected]]);
-    }
+    assert_keys_of_paths(&host, &bun_run(), &[["/app", expected]]);
 }
 
 fn settings_with(host: &MemoryHost, options: &CodeOptions, path: &str) -> TranspileSettings {
@@ -121,30 +111,30 @@ fn extends_chain_settings(option: &str, written: &[Option<bool>]) -> TranspileSe
 fn nearest_config_file_decides() {
     let host = create_host(
         r#"
-        /tsconfig.json {"compilerOptions": {"paths": {"@/*": ["./root/*"]}}}
-        /app/tsconfig.json {"compilerOptions": {"paths": {"@/*": ["./outer/*"]}}}
-        /app/nested/tsconfig.json {"compilerOptions": {"paths": {"@/*": ["./inner/*"]}}}
-        /app/nested/jsconfig.json {"compilerOptions": {"paths": {"@/*": ["./unused/*"]}}}
-        /app/scripts/jsconfig.json {"compilerOptions": {"paths": {"@/*": ["./js/*"]}}}
+        /tsconfig.json {"compilerOptions": {"paths": {"root/*": ["./a/*"]}}}
+        /app/tsconfig.json {"compilerOptions": {"paths": {"outer/*": ["./a/*"]}}}
+        /app/nested/tsconfig.json {"compilerOptions": {"paths": {"inner/*": ["./a/*"]}}}
+        /app/nested/jsconfig.json {"compilerOptions": {"paths": {"unused/*": ["./a/*"]}}}
+        /app/scripts/jsconfig.json {"compilerOptions": {"paths": {"js/*": ["./a/*"]}}}
         /app/rejected/tsconfig.json {
-        /app/rejected/jsconfig.json {"compilerOptions": {"paths": {"@/*": ["./unused/*"]}}}
+        /app/rejected/jsconfig.json {"compilerOptions": {"paths": {"unused/*": ["./a/*"]}}}
         /app/list/tsconfig.json []
         "#,
     );
     let cases = [
-        ["/app/nested", "@/a", "/app/nested/inner/a"],
-        ["/app/nested/deep", "@/a", "/app/nested/inner/a"],
-        ["/app/scripts", "@/a", "/app/scripts/js/a"],
-        ["/app", "@/a", "/app/outer/a"],
-        ["/app/node_modules/pkg", "@/a", "/app/outer/a"],
-        ["/other", "@/a", "/root/a"],
-        ["/app/rejected/deep", "@/a", NO_CONFIG],
-        ["/app/rejected", "@/a", NO_CONFIG],
-        ["/app/list", "@/a", ""],
-        ["app", "@/a", NO_CONFIG],
-        ["", "@/a", NO_CONFIG],
+        ["/app/nested", "inner/*"],
+        ["/app/nested/deep", "inner/*"],
+        ["/app/scripts", "js/*"],
+        ["/app", "outer/*"],
+        ["/app/node_modules/pkg", "outer/*"],
+        ["/other", "root/*"],
+        ["/app/rejected/deep", NO_CONFIG],
+        ["/app/rejected", NO_CONFIG],
+        ["/app/list", ""],
+        ["app", NO_CONFIG],
+        ["", NO_CONFIG],
     ];
-    assert_candidates(&host, &bun_run(), &cases);
+    assert_keys_of_paths(&host, &bun_run(), &cases);
 }
 
 #[test]
@@ -178,19 +168,18 @@ fn extends_inherits_unset_options() {
         "#,
     );
     let cases = [
-        ["/inherits.json", "@/a", "/base/a"],
-        ["/chain.json", "@/a", "/base/a"],
-        ["/ignores.json", "@/a", "/base/a"],
-        ["/rebases.json", "@/a", "/src/base/a"],
-        ["/missing.json", "b", "/b"],
-        ["/no-ending.json", "@/a", ""],
-        ["/list.json", "@/a", ""],
-        ["/cycle.json", "@/a", NO_CONFIG],
-        ["/node_modules/pkg/inherits.json", "@/a", ""],
+        ["/inherits.json", "@/*"],
+        ["/chain.json", "@/*"],
+        ["/ignores.json", "@/*"],
+        ["/rebases.json", "@/*"],
+        ["/missing.json", "b"],
+        ["/no-ending.json", ""],
+        ["/list.json", ""],
+        ["/cycle.json", NO_CONFIG],
+        ["/node_modules/pkg/inherits.json", ""],
     ];
-    for [config, specifier, expected] in cases {
-        let options = with_override(config);
-        assert_candidates(&host, &options, &[["/app", specifier, expected]]);
+    for [config, expected] in cases {
+        assert_keys_of_paths(&host, &with_override(config), &[["/app", expected]]);
     }
 }
 
@@ -208,18 +197,13 @@ fn child_paths_replace_parent_paths() {
         "#,
     );
     let cases = [
-        ["/replaces.json", "b", "/b"],
-        ["/replaces.json", "@/a", ""],
-        ["/replaces.json", "shared", ""],
-        ["/clears.json", "@/a", ""],
-        ["/through-middle.json", "shared", "/middle/middle-shared"],
-        ["/through-middle.json", "@/a", ""],
-        ["/over-middle.json", "@/a", "/own/a"],
-        ["/over-middle.json", "shared", ""],
+        ["/replaces.json", "b"],
+        ["/clears.json", ""],
+        ["/through-middle.json", "shared"],
+        ["/over-middle.json", "@/*"],
     ];
-    for [config, specifier, expected] in cases {
-        let options = with_override(config);
-        assert_candidates(&host, &options, &[["/app", specifier, expected]]);
+    for [config, expected] in cases {
+        assert_keys_of_paths(&host, &with_override(config), &[["/app", expected]]);
     }
 }
 
@@ -234,9 +218,9 @@ fn extends_chain_has_limit() {
     };
     let options = with_override("/0.json");
     let longest = create_chain(MAX_EXTENDED_CONFIGS);
-    assert_candidates(&longest, &options, &[["/app", "a", ""]]);
+    assert_keys_of_paths(&longest, &options, &[["/app", ""]]);
     let over_limit = create_chain(MAX_EXTENDED_CONFIGS + 1);
-    assert_candidates(&over_limit, &options, &[["/app", "a", NO_CONFIG]]);
+    assert_keys_of_paths(&over_limit, &options, &[["/app", NO_CONFIG]]);
 }
 
 #[test]
@@ -326,50 +310,30 @@ fn nearest_extended_file_decides_class_field_semantics() {
 fn first_of_repeated_option_keys_wins() {
     let config = r#"{
         "compilerOptions": {
-            "baseUrl": 5, "baseUrl": "./src", "paths": {"a": ["./first"]}, "paths": {}
+            "baseUrl": 5, "baseUrl": "./src", "paths": {"first": ["./a"]}, "paths": {}
         },
-        "compilerOptions": {"paths": {"a": ["./second"]}}
+        "compilerOptions": {"paths": {"second": ["./a"]}}
     }"#;
     let host = MemoryHost::new(&[("/app/tsconfig.json", config)]);
-    assert_candidates(&host, &bun_run(), &[["/app", "a", "/app/first"]]);
-    let replaced = r#"{"paths": {"a": ["./first"], "a": ["./second"]}}"#;
-    assert_app_candidates(replaced, &[["a", "/app/second"]]);
-    let unusable = r#"{"paths": {"a": ["./first"], "a": [], "a": "./third", "a": ["bare"]}}"#;
-    assert_app_candidates(unusable, &[["a", "/app/first"]]);
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn config_dir_is_directory_of_writing_file() {
-    let host = create_host(
-        r#"
-        /tsconfig.json {"compilerOptions": {"paths": {"@/*": ["${configDir}/a/*"]}}}
-        /config/base.json {"compilerOptions": {"paths": {"@/*": ["${configDir}a/*", "./b/*"]}}}
-        /child/tsconfig.json {"extends": "../config/base.json"}
-        "#,
-    );
-    let cases = [
-        ["/child", "@/x", "/config/a/x /config/b/x"],
-        ["/other", "@/x", "/a/x"],
-    ];
-    assert_candidates(&host, &bun_run(), &cases);
-    let in_base_url = r#"{"baseUrl": "${configDir}/src", "paths": {"@/*": ["${other}/*"]}}"#;
-    assert_app_candidates(in_base_url, &[["@/x", "/app/src/${other}/x"]]);
+    assert_keys_of_paths(&host, &bun_run(), &[["/app", "first"]]);
+    let unusable = r#"{"paths": {"a": ["./first"], "b": [], "c": "./third", "d": ["bare"]}}"#;
+    assert_app_keys_of_paths(unusable, "a");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn bare_substitution_needs_base_url() {
     let cases = [
-        ("", "", "/app/lib/a"),
-        (r#""baseUrl": 5, "#, "", "/app/lib/a"),
-        (r#""baseUrl": "", "#, "", "/app/src/a /app/lib/a"),
-        (r#""baseUrl": "./x/..", "#, "/app", "/app/src/a /app/lib/a"),
+        ("", "", "relative/*"),
+        (r#""baseUrl": 5, "#, "", "relative/*"),
+        (r#""baseUrl": "", "#, "", "bare/* relative/*"),
+        (r#""baseUrl": "./x/..", "#, "/app", "bare/* relative/*"),
     ];
     for (written, base_url, expected) in cases {
-        let options = format!(r#"{{{written}"paths": {{"@/*": ["src/*", "./lib/*"]}}}}"#);
+        let paths = r#"{"bare/*": ["src/*"], "relative/*": ["./lib/*"]}"#;
+        let options = format!(r#"{{{written}"paths": {paths}}}"#);
         let host = config_host("/app/tsconfig.json", &options);
-        assert_candidates(&host, &bun_run(), &[["/app", "@/a", expected]]);
+        assert_keys_of_paths(&host, &bun_run(), &[["/app", expected]]);
         let found = with_resolver(&host, &bun_run(), |resolver| {
             resolver.enclosing_code_config(b"/app")?.base_url.map(text)
         });
@@ -391,67 +355,6 @@ fn relative_and_rooted_text_needs_no_base_url() {
     for text in rejected {
         assert!(!is_relative_or_rooted(text.as_bytes()), "{text}");
     }
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn most_specific_key_is_selected() {
-    let options = r#"{
-        "paths": {
-            "lib*": ["./pattern/*"], "lib": ["./exact", "./second"],
-            "@/*": ["./short/*"], "@/deep/*": ["./long/*"],
-            "pre-*": ["./prefix/*"], "pre-*-post": ["./middle/*"], "ab*ba": ["./overlap/*"]
-        }
-    }"#;
-    let cases = [
-        ["lib", "/app/exact /app/second /app/pattern/"],
-        ["lib/a", "/app/pattern/a"],
-        ["li", ""],
-        ["@/deep/a", "/app/long/a"],
-        ["@/a", "/app/short/a"],
-        ["pre-x-post", "/app/middle/x"],
-        ["pre-y", "/app/prefix/y"],
-        ["abba", "/app/overlap/"],
-        ["aba", ""],
-    ];
-    assert_app_candidates(options, &cases);
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn substitutions_resolve_against_base() {
-    let options = r#"{
-        "baseUrl": "./src",
-        "paths": {
-            "~*": ["*"], "fixed/*": ["./fixed"], "both/*": ["first/*", "../second/*"],
-            "rooted/*": ["/lib/x/../*"], "rooted": ["/lib/.", "/lib/x/../a/", "./lib/."],
-            "@/*": ["./*"],
-            "types": ["./types.d.ts", "./types.D.MTS", "./types.d.cts", "./code.ts"],
-            "types/*": ["./types/*.d.ts", "./code/*"],
-            "two/*/*": ["./two/*"], "text/*": "./text/*", "empty/*": [],
-            "stars/*": ["./*/*", "./stars/*"], "mixed/*": [5, null, ["./nested/*"], "./mixed/*"]
-        }
-    }"#;
-    let cases = [
-        ["~/a", "/app/src/a"],
-        ["~\\a", "/app/src/a"],
-        ["~c:/a", "/app/src/c:/a"],
-        ["~a://b/c", "/app/src/a:/b/c"],
-        ["fixed/a", "/app/src/fixed"],
-        ["both/a", "/app/src/first/a /app/second/a"],
-        ["rooted/a", "/lib/a"],
-        ["rooted/.", "/lib"],
-        ["rooted", "/lib/. /lib/x/../a/ /app/src/lib"],
-        ["types", "/app/src/code.ts"],
-        ["types/a", "/app/src/code/a"],
-        ["@/env.d.ts", "/app/src/env.d.ts"],
-        ["two/a/b", ""],
-        ["text/a", ""],
-        ["empty/a", ""],
-        ["stars/a", "/app/src/stars/a"],
-        ["mixed/a", "/app/src/mixed/a"],
-    ];
-    assert_app_candidates(options, &cases);
 }
 
 fn can_match_prefix(options: &str, prefix: &str) -> bool {
@@ -508,21 +411,21 @@ fn config_without_paths_matches_no_prefix() {
 fn override_replaces_every_config() {
     let host = create_host(
         r#"
-        /app/tsconfig.json {"compilerOptions": {"paths": {"@/*": ["./app/*"]}}}
-        /app/nested/tsconfig.json {"compilerOptions": {"paths": {"@/*": ["./nested/*"]}}}
-        /elsewhere/custom.json {"compilerOptions": {"paths": {"@/*": ["./custom/*"]}}}
-        /elsewhere/tsconfig.json {"compilerOptions": {"paths": {"@/*": ["./directory/*"]}, "jsxImportSource": "custom"}}
+        /app/tsconfig.json {"compilerOptions": {"paths": {"app/*": ["./a/*"]}}}
+        /app/nested/tsconfig.json {"compilerOptions": {"paths": {"nested/*": ["./a/*"]}}}
+        /elsewhere/custom.json {"compilerOptions": {"paths": {"custom/*": ["./a/*"]}}}
+        /elsewhere/tsconfig.json {"compilerOptions": {"paths": {"directory/*": ["./a/*"]}, "jsxImportSource": "custom"}}
         "#,
     );
     let cases = [
-        ("/elsewhere/custom.json", "/elsewhere/custom/a"),
-        ("/elsewhere", "/elsewhere/directory/a"),
+        ("/elsewhere/custom.json", "custom/*"),
+        ("/elsewhere", "directory/*"),
         ("/elsewhere/missing.json", NO_CONFIG),
     ];
     for (path, expected) in cases {
         let directories = ["/app", "/app/nested", "/", "relative"];
-        let everywhere = directories.map(|from| [from, "@/a", expected]);
-        assert_candidates(&host, &with_override(path), &everywhere);
+        let everywhere = directories.map(|from| [from, expected]);
+        assert_keys_of_paths(&host, &with_override(path), &everywhere);
     }
     let options = with_override("/elsewhere");
     let import_source = |path| text(&settings_with(&host, &options, path).jsx.import_source);
@@ -721,4 +624,157 @@ fn pragmas_override_one_member_each() {
         assert_eq!(render_jsx(&once), expected, "{classic:?} {texts:?}");
         assert_eq!(once.with_pragmas(&pragmas, &atoms).as_ref(), Some(&once));
     }
+}
+
+const APP_CONFIG: &str = r#"{"compilerOptions": {"useDefineForClassFields": false, "experimentalDecorators": true, "emitDecoratorMetadata": true, "jsx": "react", "jsxFactory": "h", "jsxFragmentFactory": "F", "jsxImportSource": "preact"}}"#;
+
+fn render_settings(settings: &TranspileSettings) -> String {
+    let jsx = render_jsx(&settings.jsx);
+    let (legacy, metadata) = (
+        settings.experimental_decorators,
+        settings.emits_decorator_metadata,
+    );
+    let define = settings.use_define_for_class_fields;
+    format!("{jsx} | legacy {legacy} | metadata {metadata} | define {define:?}")
+}
+
+fn aot_package_host(manifest_rest: &str) -> MemoryHost {
+    let exports = r#""exports": {".": {"aot": "./index.aot.tsx", "default": "./index.js"}}"#;
+    let manifest = format!(r#"{{"name": "shapes", {exports}{manifest_rest}}}"#);
+    MemoryHost::new(&[
+        ("/app/tsconfig.json", APP_CONFIG),
+        ("/app/node_modules/shapes/package.json", manifest.as_str()),
+        (
+            "/app/node_modules/plain/package.json",
+            r#"{"name": "plain"}"#,
+        ),
+    ])
+}
+
+const PACKAGE_DEFAULTS: &str = "Automatic dev React.createElement React.Fragment react | legacy false | metadata false | define None";
+const APP_SETTINGS: &str =
+    "Classic dev h F preact | legacy true | metadata true | define Some(false)";
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn aot_package_ignores_tsconfig_of_the_program() {
+    let host = aot_package_host("");
+    let of = |path| render_settings(&settings(&host, path));
+    assert_eq!(of("/app/main.tsx"), APP_SETTINGS);
+    assert_eq!(of("/app/node_modules/plain/index.tsx"), APP_SETTINGS);
+    assert_eq!(of("/app/node_modules/shapes/index.js"), APP_SETTINGS);
+    assert_eq!(
+        of("/app/node_modules/shapes/index.aot.tsx"),
+        PACKAGE_DEFAULTS
+    );
+    assert_eq!(of("/app/node_modules/shapes/lib/a.ts"), PACKAGE_DEFAULTS);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn aot_package_ignores_tsconfig_override_and_working_directory() {
+    let host = aot_package_host("");
+    let path = "/app/node_modules/shapes/index.aot.tsx";
+    let overridden = with_override("/app/tsconfig.json");
+    let by_working_directory = CodeOptions {
+        transpiles_by_working_directory: true,
+        ..bun_run()
+    };
+    for options in [overridden, by_working_directory] {
+        let found = render_settings(&settings_with(&host, &options, path));
+        assert_eq!(found, PACKAGE_DEFAULTS);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn aot_package_ignores_jsx_flags_of_the_program() {
+    let host = aot_package_host("");
+    let mut options = bun_run();
+    options.jsx.import_source = b"preact".to_vec();
+    options.jsx.runtime = JsxRuntime::Classic;
+    let path = "/app/node_modules/shapes/index.aot.tsx";
+    let found = render_settings(&settings_with(&host, &options, path));
+    assert_eq!(found, PACKAGE_DEFAULTS);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn aot_package_states_each_option_in_its_package_json() {
+    let cases = [
+        (
+            r#""useDefineForClassFields": false"#,
+            "Automatic dev React.createElement React.Fragment react | legacy false | metadata false | define Some(false)",
+        ),
+        (
+            r#""useDefineForClassFields": true"#,
+            "Automatic dev React.createElement React.Fragment react | legacy false | metadata false | define Some(true)",
+        ),
+        (
+            r#""experimentalDecorators": true"#,
+            "Automatic dev React.createElement React.Fragment react | legacy true | metadata false | define None",
+        ),
+        (
+            r#""emitDecoratorMetadata": true"#,
+            "Automatic dev React.createElement React.Fragment react | legacy false | metadata true | define None",
+        ),
+        (
+            r#""jsx": "react""#,
+            "Classic dev React.createElement React.Fragment react | legacy false | metadata false | define None",
+        ),
+        (
+            r#""jsx": "react-jsx""#,
+            "Automatic prod React.createElement React.Fragment react | legacy false | metadata false | define None",
+        ),
+        (
+            r#""jsxFactory": "make""#,
+            "Automatic dev make React.Fragment react | legacy false | metadata false | define None",
+        ),
+        (
+            r#""jsxFragmentFactory": "Part""#,
+            "Automatic dev React.createElement Part react | legacy false | metadata false | define None",
+        ),
+        (
+            r#""jsxImportSource": "solid-js""#,
+            "Automatic dev React.createElement React.Fragment solid-js | legacy false | metadata false | define None",
+        ),
+        (r#""target": "es5""#, PACKAGE_DEFAULTS),
+        (r#""verbatimModuleSyntax": true"#, PACKAGE_DEFAULTS),
+    ];
+    for (option, expected) in cases {
+        let host = aot_package_host(&format!(r#", "compilerOptions": {{{option}}}"#));
+        let found = settings(&host, "/app/node_modules/shapes/index.aot.tsx");
+        assert_eq!(render_settings(&found), expected, "{option}");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn build_decides_jsx_development_of_aot_package() {
+    let host = aot_package_host(r#", "compilerOptions": {"jsx": "react-jsxdev"}"#);
+    let options = CodeOptions {
+        forced_jsx_development: Some(false),
+        ..bun_run()
+    };
+    let path = "/app/node_modules/shapes/index.aot.tsx";
+    assert!(settings(&host, path).jsx.is_development);
+    assert!(!settings_with(&host, &options, path).jsx.is_development);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tsconfig_applies_inside_the_aot_package_being_worked_on() {
+    let manifest = r#"{"name": "shapes", "exports": {".": {"aot": "./src/index.ts", "default": "./index.js"}}}"#;
+    let host = MemoryHost::new(&[
+        ("/app/tsconfig.json", APP_CONFIG),
+        ("/app/package.json", manifest),
+    ]);
+    let inside = CodeOptions::bun_run(b"/app/test");
+    for options in [bun_run(), inside] {
+        let found = settings_with(&host, &options, "/app/src/index.ts");
+        assert_eq!(render_settings(&found), APP_SETTINGS);
+    }
+    let beside = CodeOptions::bun_run(b"/other");
+    let found = settings_with(&host, &beside, "/app/src/index.ts");
+    assert_eq!(render_settings(&found), PACKAGE_DEFAULTS);
 }

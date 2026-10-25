@@ -5,19 +5,17 @@ use crate::program::HostModuleId;
 mod computed;
 mod config;
 mod declarations;
-mod exports;
-mod files;
 mod manifest;
 #[cfg(test)]
 pub(super) mod memory_host;
 mod options;
-mod packages;
 mod search;
 #[cfg(test)]
 mod tests;
 
 pub use self::config::{JsxRuntime, JsxSettings, TranspileSettings};
 pub use self::options::{AOT_CONDITION, CodeOptions, ExtensionOrders};
+pub use self::search::find_file_plainly;
 
 use self::config::ConfigCaches;
 use self::manifest::CodeManifest;
@@ -161,19 +159,6 @@ pub enum ComputedResolution<'h> {
 pub enum SiteResolution<'h> {
     Constant(CodeResolution<'h>),
     Computed(ComputedResolution<'h>),
-}
-
-#[derive(Copy, Clone)]
-struct CodeSearch<'a> {
-    kind: CodeImportKind,
-    extensions: &'a [Vec<u8>],
-}
-
-#[derive(PartialEq, Eq, Debug)]
-enum SearchResult {
-    File(Vec<u8>),
-    Claimed(HostResolution),
-    NotFound(CodeFailure),
 }
 
 pub(super) struct CodeState<'h> {

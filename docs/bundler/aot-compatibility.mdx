@@ -215,7 +215,7 @@ A global that can't be replaced can't be shadowed either. A script that you run 
 An executable always runs on Bun, on the platform that you built it for. A test that asks which runtime this is has one answer, so the compiler answers it at build time. The code for the other runtimes isn't compiled, and what only that code imports isn't in the executable and doesn't have to be installed.
 
 ```ts database.ts icon="/icons/typescript.svg"
-const isBun = typeof Bun !== "undefined";
+const isBun = typeof process !== "undefined" && "bun" in process.versions;
 
 export function open(path: string) {
   if (isBun) return new (require("bun:sqlite").Database)(path);
@@ -223,16 +223,20 @@ export function open(path: string) {
 }
 ```
 
-| Answered at build time                                | The answer                                       |
-| ----------------------------------------------------- | ------------------------------------------------ |
-| `typeof Bun`, `globalThis.Bun`, `"Bun" in globalThis` | An object                                        |
-| `process.versions.bun`                                | The version of the Bun that built the program    |
-| `process.platform`, `process.arch`                    | Those of the `--target`                          |
-| `typeof require`, `typeof module`                     | Depends on whether the file is a CommonJS module |
+| Answered at build time                                                                                  | The answer                                       |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `typeof Bun`, `typeof process`, `globalThis.Bun`, `globalThis.process`, `"Bun" in globalThis`           | Two objects                                      |
+| `process.isBun`                                                                                         | `true`                                           |
+| `process.versions.bun`, `process.versions.node`, `"bun" in process.versions`, `typeof process.versions` | The versions of the Bun that built the program   |
+| `process.release.name`                                                                                  | `"node"`                                         |
+| `process.platform`, `process.arch`                                                                      | Those of the `--target`                          |
+| `typeof require`, `typeof module`                                                                       | Depends on whether the file is a CommonJS module |
 
-A `const`, or a `let` or `var` that is assigned once, keeps the answer for the functions that read it.
+It makes no difference whether there is a `?.` on the way, as in `process?.versions?.bun`. A `const`, or a `let` or `var` that is assigned once, keeps the answer for the functions that read it.
 
-Only the global counts. A parameter, a variable or an import that is called `Bun` is read when the program runs, like any other. The global `Bun` is read-only under `bun run` too, so nothing changes for a program that tries to replace it.
+Only the globals count, and the `process` of `import process from "node:process"`, which is the same object. A parameter, a variable or an import that is called `Bun` or `process` is read when the program runs, like any other.
+
+So that the answers stay true, an executable can't replace what gives them. Assigning to, redefining or deleting the global `process`, or `process.isBun`, `process.versions` and `process.release`, throws the `TypeError` above. The objects `process.versions` and `process.release` are frozen, so a program that overwrites `process.versions.node` to pass for another version of Node.js can't do that in an executable. The global `Bun` is read-only under `bun run` too. Every other property of `process` and `Bun` follows the rule of the last group.
 
 ### New properties on built-in prototypes
 
@@ -878,7 +882,13 @@ import path from "./worker.ts" with { type: "file" };
 const worker = new Worker(path);
 ```
 
-A file that you embed for another use, like a script that a server sends to browsers, stays a file.
+The path doesn't have to go straight from the import to `new Worker()`. It can pass through variables, objects, arrays, functions and promises.
+
+A file that you embed for another use, like a script that a server sends to browsers, stays a file. The compiler goes by what your program does with the path. A path that only ever reaches `new Worker()` is a worker. If the same path can also reach something like `Bun.file()` or `fs.readFile()`, it could be either. The compiler tries up to four files like that, and none of them if there are more. A Worker that gets the path of a file that wasn't compiled fails to load, so the build warns where that can happen:
+
+```txt
+warn: TS100071: This Worker may start from an embedded file that isn't compiled, and then it fails to load: "/home/me/app/site/index.js", "/home/me/app/site/login.js", "/home/me/app/site/settings.js" and 97 more. Add the file as an entry point, or pass its import straight to new Worker()
+```
 
 A Worker that you create from a file on disk or from a `blob:` or `data:` URL runs [code that isn't in the executable](#code-that-isnt-in-the-executable), so it fails to load. Put the code in a file and pass it as an entry point. With [`--aot-allow-code-from-disk`](#load-code-from-disk) it loads, in a program that also has a dynamic `import()` or `require()`.
 
@@ -934,6 +944,7 @@ This differs:
 | ----------------------------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------- |
 | Files that a [computed path](#dynamic-imports) or `import.meta.resolve` names | Not in the executable, so no hook runs | In the executable, so the hooks run for them                           |
 | One import that a file has twice                                              | `onResolve` runs twice                 | `onResolve` runs once                                                  |
+| The `"development"` condition of `"exports"`                                  | Holds, except in a production build    | Holds only with `--conditions=development`, as under `bun run`         |
 | One path in two namespaces                                                    | One module                             | Two modules                                                            |
 | `minify`                                                                      | Renames functions and classes          | Shortens the same names in `name`, stack traces and messages           |
 | `sourcemap`                                                                   | A map is one of the outputs            | Only `external` [writes a map](/bundler/aot-debugging#use-with-sentry) |

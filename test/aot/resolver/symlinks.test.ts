@@ -1,7 +1,6 @@
 import { isWindows } from "harness";
 import { describe } from "../supported";
-import { packageFiles } from "./compare";
-import { testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
+import { packageFiles, testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 type LinkedTree = Pick<ResolutionCase, "files" | "links">;
 type LinkAnswer = [from: string, specifier: string, followed: string | null, preserved?: string | null];

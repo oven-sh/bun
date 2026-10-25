@@ -1,5 +1,5 @@
 // A named import of a module that native code makes holds what the module's object held when the module was loaded, as one of a module written in JavaScript does. A store to the object afterward changes the object alone: also for a call, a `new`, a member of a star and a name that is exported again.
-import process, { cwd, hrtime, nextTick, emitWarning, exit, argv, env, exitCode, title, platform, versions } from "node:process";
+import process, { cwd, hrtime, nextTick, emitWarning, exit, argv, env, exitCode, title, platform, features } from "node:process";
 import buffer, { Buffer, atob, isUtf8, INSPECT_MAX_BYTES, kMaxLength, constants } from "node:buffer";
 import module, { createRequire, builtinModules, isBuiltin } from "node:module";
 import types, { isDate, isPromise } from "node:util/types";
@@ -36,7 +36,7 @@ during(process, "env", { only: "this" }, () => ["only" in env, processStar.env =
 during(process, "exitCode", 0, () => [exitCode, processStar.exitCode, process.exitCode]);
 during(process, "title", "stored", () => [title === "stored", processStar.title === title, process.title]);
 during(process, "platform", "stored", () => [platform === "stored", processStar.platform === platform, process.platform]);
-during(process, "versions", { stored: "1" }, () => [typeof versions.bun, processStar.versions === versions, Object.keys(process.versions).join()]);
+during(process, "features", { stored: "1" }, () => [typeof features.tls, processStar.features === features, Object.keys(process.features).join()]);
 process.exitCode = undefined;
 
 during(buffer, "Buffer", class Stored {}, () => [Buffer.from("text").toString(), new Buffer(2).length, Buffer.isBuffer(Buffer.alloc(1)), bufferStar.Buffer === Buffer, buffer.Buffer.name]);

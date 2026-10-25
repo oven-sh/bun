@@ -687,8 +687,15 @@ impl<'p, 's> Checker<'p, 's> {
                         _ => None,
                     }
                 };
-                // Stop at the first link whose type is cached.
                 let mut at = first;
+                for _ in 0..16 {
+                    let Some(next) = next_link(at) else {
+                        return;
+                    };
+                    at = next;
+                }
+                // Stop at the first link whose type is cached.
+                at = first;
                 while let Some(next) = next_link(at)
                     && !self.has_type_of_expr(file, at)
                 {
@@ -1204,7 +1211,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `isJSLiteralType`. A property missing from a JavaScript object literal's type is
             // `any`.
             let is_unchecked_js = self.is_unchecked_js_suggestion(file, e, left);
-            if !is_unchecked_js && self.is_js_literal_type(left) {
+            if (!is_unchecked_js || self.is_inferred_file(file)) && self.is_js_literal_type(left) {
                 return (TypeId::ANY, may_short_circuit);
             }
             // `leftType.symbol == c.globalThisSymbol`

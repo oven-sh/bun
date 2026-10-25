@@ -46,6 +46,10 @@ impl Marker<'_> {
     pub(super) fn mark_module(&mut self, module: ProgramModule) {
         match module {
             ProgramModule::File(file) => self.mark_file(file),
+            ProgramModule::Inner { file, .. } => {
+                self.mark_body(module, file);
+                self.mark_exports_variable(module, file);
+            }
             ProgramModule::Face(file) => {
                 self.mark_body(module, file);
                 self.mark_exports_of_face(file);

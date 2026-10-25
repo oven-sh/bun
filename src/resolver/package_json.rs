@@ -1071,6 +1071,10 @@ pub struct ExportsMap {
 }
 
 impl ExportsMap {
+    pub(crate) fn names_condition(&self, condition: &[u8]) -> bool {
+        self.root.names_condition(condition)
+    }
+
     /// The keys that name one subpath each, without their dot: `/feature` for `"./feature"`. Neither `"."` nor a pattern.
     pub fn written_subpaths(&self) -> Vec<&[u8]> {
         let EntryData::Map(map) = &self.root.data else {
@@ -1328,6 +1332,17 @@ impl<'a> Visitor<'a> {
 #[derive(Clone)]
 pub struct Entry {
     pub(crate) data: EntryData,
+}
+
+impl Entry {
+    fn names_condition(&self, condition: &[u8]) -> bool {
+        match &self.data {
+            EntryData::Invalid | EntryData::Null | EntryData::String(_) => false,
+            EntryData::Array(items) => items.iter().any(|item| item.names_condition(condition)),
+            EntryData::Map(map) => (map.list.iter())
+                .any(|entry| &*entry.key == condition || entry.value.names_condition(condition)),
+        }
+    }
 }
 
 #[derive(Clone)]

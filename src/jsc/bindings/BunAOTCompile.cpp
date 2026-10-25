@@ -53,6 +53,7 @@ struct BunAOTResult {
     JSC::AOT::Vector<Wire::InternalErrorRecord> internalErrors;
     JSC::AOT::Vector<Wire::FeatureUseRecord> featuresUsed;
     JSC::AOT::Vector<Wire::LocaleUseRecord> localesUsed;
+    JSC::AOT::Vector<Wire::WorkerEntryRecord> workerEntries;
     JSC::AOT::Vector<Wire::AllocationRemarkRecord> allocationRemarks;
     JSC::AOT::Vector<Wire::ObfuscatedSiteRecord> obfuscatedSites;
     JSC::AOT::Vector<Wire::FunctionReportRecord> functions;
@@ -143,6 +144,8 @@ extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult* result, Wire:
         return bytesOf(result->featuresUsed);
     case Wire::ResultSection::LocalesUsed:
         return bytesOf(result->localesUsed);
+    case Wire::ResultSection::WorkerEntries:
+        return bytesOf(result->workerEntries);
     case Wire::ResultSection::Accesses:
         return output ? bytesOf(output->flowReport.accesses) : noBytes;
     case Wire::ResultSection::AccessCounts:
@@ -280,6 +283,7 @@ static void encodeLocaleUse(BunAOTResult& result)
 {
     Typed::FlowReport& report = result.output->flowReport;
     result.localesUsed = rebaseTextRanges(result.text, report.localeTags.span(), WTF::move(report.localesUsed), &Wire::LocaleUseRecord::tag);
+    result.workerEntries = rebaseTextRanges(result.text, report.workerEntryPaths.span(), WTF::move(report.workerEntries), &Wire::WorkerEntryRecord::path);
 }
 
 static Typed::AllocationSiteReport findAllocationSite(const Typed::FlowReport& report, Typed::AllocationSiteID site)

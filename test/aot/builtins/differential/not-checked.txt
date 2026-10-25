@@ -23,16 +23,12 @@ BunTestViSpyOn/0: it is not called: it reaches outside JavaScript
 BunUdpSocket/0: it is not called: it blocks, starts a process or opens a socket
 CompilerHelpersCountCodePoints/0: it differs in parameters
 CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instance of a compiled program, and this process has none
-CompilerHelpersEncodeIntoRangeOfBytes/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
-CompilerHelpersEncodeIntoRangeOfBytes/1: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it
 CompilerHelpersGetDisposeMethod/0: it is not called: this realm does not have it
 CompilerHelpersOwnEntriesFlat/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersPlainQueryEntries/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryKeys/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryValues/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
-CompilerHelpersRangeOfBytes/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
-CompilerHelpersViewOrRangeOfBytes/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CrashHandlerJscCrashHandlerAbort/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerFastfail/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerOperatorNew/0: the process ended or did not come back

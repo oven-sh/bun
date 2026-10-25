@@ -610,6 +610,12 @@ pub(crate) fn apply_developer_word<'a>(
         }
         "erase-types" => options.erases_types = true,
         "refuse-code-from-disk" => options.loads_code_from_disk = false,
+        "symbols" if options.obfuscates => {
+            return Err(OptionError::DeveloperWord {
+                word: key.as_bytes().to_vec(),
+                sentence: b"cannot be used with --obfuscate or --sourcemap=external, which keep function names out of the executable".to_vec(),
+            });
+        }
         "symbols" => options.emits_symbols = true,
         "no-builtin-modules" => options.omits_builtin_modules = true,
         "out" => options.ir_output_path = Some(Box::from(text)),

@@ -97,7 +97,7 @@ impl Checker<'_, '_> {
                 break;
             }
             last = next;
-            self.reported_unreachable_nodes.push(next);
+            self.reported_unreachable_nodes.insert(next);
         }
         let end = self.end_of_stmt(file, last);
         let is_error = self.module_options(file).allow_unreachable_code == Some(false);

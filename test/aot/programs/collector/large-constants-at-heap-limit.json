@@ -1,0 +1,6 @@
+{
+  "env": {
+    "BUN_JSC_markedBlockCageSizeInMB": "64"
+  },
+  "skipInVariants": "the counts are tuned for the default build"
+}

@@ -118,6 +118,7 @@ export default b.declarations(
   operation("putDoubleIndex", "PutDoubleIndex"),
   operation("truncateNewArray", "TruncateNewArray"),
   operation("tryPutByValDirect", "TryPutByValDirect"),
+  operation("tryPutDoubleIndex", "TryPutDoubleIndex"),
   operation("tryPutIndex", "TryPutIndex"),
 
   b.intrinsic("jsonStringify", "Call", builtin("JSON.stringify")),

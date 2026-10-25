@@ -240,7 +240,12 @@ fn retain_distinct_names(
         let last = retained.last().map(|&last| &files[last as usize]);
         let same_name = last.filter(|last| last.dest_path == file.dest_path);
         if let Some(last) = same_name {
-            if last.value.as_slice() != file.value.as_slice() {
+            // A build that loads a file more than once embeds it more than once. It is still one file, and a copy whose contents are read later is empty.
+            if last.src_path.text == file.src_path.text {
+                if last.value.as_slice().is_empty() {
+                    *retained.last_mut().expect("there is a last file") = index;
+                }
+            } else if last.value.as_slice() != file.value.as_slice() {
                 has_collision = true;
                 log_diagnostic(
                     log,
@@ -522,6 +527,24 @@ mod tests {
         assert!(text.starts_with(b"TS100054"));
         assert!(strings::contains(text, b"/first"));
         assert!(strings::contains(text, b"/second"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn one_source_embedded_twice_is_one_file() {
+        for copies in [[&b""[..], b"text"], [b"text", b""], [b"text", b"text"]] {
+            let embedded = EmbeddedFiles::default();
+            let mut log = Log::init();
+            embedded.embed_page_outputs(vec![
+                create_output(b"x.min.js", b"/lib/x.min.js", copies[0], u32::MAX),
+                create_output(b"x.min.js", b"/lib/x.min.js", copies[1], u32::MAX),
+            ]);
+            assert!(embedded.check_names(&mut log).is_ok());
+            assert_eq!(log.errors, 0);
+            let files = embedded.into_output_files();
+            assert_eq!(files.len(), 1);
+            assert_eq!(files[0].value.as_slice(), b"text");
+        }
     }
 
     #[test]

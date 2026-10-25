@@ -146,6 +146,8 @@ struct Walker<'x, 's> {
     lexical_owners: &'x [ScopeId],
     is_commonjs: bool,
     file_scope: ScopeId,
+    // `exports` and `module` of each `__commonJS((exports, module) => { .. })` whose callback is the body of a module, in order.
+    inner_module_parameters: Vec<SymbolId>,
     jsx_uses: Vec<(ExprId, Binding)>,
     metadata_uses: Vec<(ClassId, Binding)>,
     class_decorators: Vec<(ClassId, ExprId)>,

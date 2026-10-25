@@ -43,7 +43,19 @@ const int32 = integersIn(-(2 ** 31), 2 ** 31 - 1);
 const instance = { ...nothing, parts: [{ part: "Instance" }] } as unknown as ModelType;
 
 const taking = (accepted: ModelType, columns: Partial<ModelParameter> = {}) =>
-  ({ name: "operand", mode: "Required", conversion: "None", accepted, ...columns }) as ModelParameter;
+  ({
+    name: "operand",
+    mode: "Required",
+    conversion: "None",
+    accepted,
+    uses: ["Inspects"],
+    roles: [],
+    protocols: [],
+    namedMembers: [],
+    calledMembers: [],
+    convertedMembers: [],
+    ...columns,
+  }) as ModelParameter;
 
 const value: DirectParameterSpec = { value: "Value", cppType: "JSC::EncodedJSValue" };
 const asBoolean: DirectParameterSpec = { value: "Boolean", cppType: "bool" };
@@ -125,7 +137,7 @@ test("a parameter is of a kind that the engine knows, and of a C++ type of that 
     ),
   ).toEqual([
     problem(
-      "String is not one of Realm, NativeObjectOfReceiver, Receiver, Value, ValueOrEmpty, RestOfValues, FrameOfValues, Boolean, Int32, Double",
+      "String is not one of Realm, NativeObjectOfReceiver, Receiver, Value, ValueOrEmpty, RestOfValues, FrameOfValues, Boolean, Int32, Double, Bytes, BytesOfReceiver, BytesInRange, BytesOfReceiverInRange, Characters",
     ),
   ]);
   expect(problemsOfOperands([{ value: "Int32", cppType: "uint32_t" }], [taking(int32)])).toEqual([
@@ -258,10 +270,158 @@ test("it stands in for native code", () => {
   ]);
 });
 
-test("without a parameter for it there is no receiver", () => {
+test("without a parameter for it there is no receiver, or one that the function only tests", () => {
   const takesNoReceiver = problem("Bun__thunk takes the arguments of a call and no receiver");
   expect(problemsOf({ mode: "Construct" })).toEqual([takesNoReceiver]);
-  expect(problemsOf({ receiver: taking(instance) })).toEqual([takesNoReceiver]);
+  expect(problemsOf({ receiver: taking(instance) })).toEqual([]);
+  expect(problemsOf({ receiver: taking(anything) })).toEqual([takesNoReceiver]);
+  expect(problemsOf({ receiver: taking(instance, { uses: ["Inspects", "ReadsContents"] }) })).toEqual([
+    takesNoReceiver,
+  ]);
+});
+
+const classNamed = (token: string, parent: unknown = null) => ({ token, parent });
+const instanceOf = (...classes: unknown[]) =>
+  ({
+    ...nothing,
+    parts: classes.map(builtinClass => ({ part: "Instance", class: builtinClass })),
+  }) as unknown as ModelType;
+const typedArray = classNamed("TypedArray");
+const buffer = classNamed("Buffer", classNamed("Uint8Array", typedArray));
+const anyView = instanceOf(typedArray, classNamed("DataView"));
+const bytes: DirectParameterSpec = { value: "Bytes", cppType: "uint8_t*, size_t" };
+const bytesOfReceiver: DirectParameterSpec = { value: "BytesOfReceiver", cppType: "uint8_t*, size_t" };
+const characters: DirectParameterSpec = { value: "Characters", cppType: "const uint8_t*, size_t" };
+const readAndWritten = { uses: ["Inspects", "ReadsContents", "WritesContents"] } as const;
+const readAsCharacters = { roles: ["ReadAsCharacters"] } as const;
+
+test("a view that is only read or written while the call runs is handed over as bytes", () => {
+  expect(problemsOfOperands([bytes], [taking(anyView, readAndWritten)])).toEqual([]);
+  expect(problemsOfOperands([bytes], [taking(instanceOf(buffer), { uses: ["Inspects"] })])).toEqual([]);
+  const directEntry = { ...entryTaking(), parameters: [bytesOfReceiver, realmParameter] };
+  expect(problemsOf({ receiver: taking(instanceOf(buffer), readAndWritten), code: { directEntry } })).toEqual([]);
+});
+
+test("a function that holds on to a view gets the view", () => {
+  const saysMore = (uses: string) =>
+    problem(`operand: Bytes hands over memory for the time of the call, and the row says more: ${uses}`);
+  for (const use of ["Retains", "Returns", "Calls", "RetainsContents", "StoresByKey", "PassesToUserCode"] as const) {
+    expect(problemsOfOperands([bytes], [taking(anyView, { uses: ["Inspects", "ReadsContents", use] })])).toEqual([
+      saysMore(use),
+    ]);
+  }
+  expect(problemsOfOperands([bytes], [taking(anyView, { uses: ["Inspects", "Retains", "Returns"] })])).toEqual([
+    saysMore("Retains, Returns"),
+  ]);
+  expect(problemsOfOperands([bytes], [taking(anyView, { protocols: ["Species"] })])).toEqual([
+    saysMore("it runs code of the operand"),
+  ]);
+  const directEntry = { ...entryTaking(), parameters: [bytesOfReceiver, realmParameter] };
+  expect(
+    problemsOf({ receiver: taking(instanceOf(buffer), { uses: ["Inspects", "Retains"] }), code: { directEntry } }),
+  ).toEqual([
+    problem("operand: BytesOfReceiver hands over memory for the time of the call, and the row says more: Retains"),
+  ]);
+});
+
+test("bytes are those of a typed array or a DataView", () => {
+  const isNoView = problem("operand: Bytes is for typed arrays and DataViews, and for nothing else");
+  expect(problemsOfOperands([bytes], [taking(instanceOf(classNamed("ArrayBuffer")), readAndWritten)])).toEqual([
+    isNoView,
+  ]);
+  expect(problemsOfOperands([bytes], [taking(instanceOf(typedArray, classNamed("Blob")), readAndWritten)])).toEqual([
+    isNoView,
+  ]);
+  expect(problemsOfOperands([bytes], [taking({ ...anyView, primitives: ["String"] }, readAndWritten)])).toEqual([
+    isNoView,
+  ]);
+  expect(problemsOfOperands([bytes], [taking(anything, readAndWritten)])).toEqual([isNoView]);
+});
+
+test("a string that is only read as characters is handed over as characters", () => {
+  const isMore = problem("operand: Characters is for a string that is read as characters, and for nothing else");
+  expect(problemsOfOperands([characters], [taking(string, readAsCharacters)])).toEqual([]);
+  expect(problemsOfOperands([characters], [taking(string)])).toEqual([isMore]);
+  expect(
+    problemsOfOperands([characters], [taking(string, { ...readAsCharacters, uses: ["Inspects", "Retains"] })]),
+  ).toEqual([isMore]);
+  expect(
+    problemsOfOperands([characters], [taking(string, { roles: ["ReadAsCharacters", "EvaluatedAsText"] })]),
+  ).toEqual([isMore]);
+  expect(
+    problemsOfOperands([characters], [taking(string, { ...readAsCharacters, protocols: ["ToPrimitive"] })]),
+  ).toEqual([isMore]);
+  expect(problemsOfOperands([characters], [taking(anything, readAsCharacters)])).toEqual([
+    problem("operand: Characters is for strings"),
+  ]);
+});
+
+test("bytes and characters take two registers each", () => {
+  expect(
+    problemsOfOperands(
+      [characters, bytes, value],
+      [taking(string, readAsCharacters), taking(anyView, readAndWritten), taking(anything)],
+    ),
+  ).toEqual([]);
+  expect(
+    problemsOfOperands(
+      [characters, bytes, bytes],
+      [taking(string, readAsCharacters), taking(anyView, readAndWritten), taking(anyView, readAndWritten)],
+    ),
+  ).toEqual([problem("Bun__thunk takes more than fits the 6 general argument registers")]);
+});
+
+test("the bounds of a part of a view are two more operands, behind the others", () => {
+  const bytesInRange: DirectParameterSpec = { value: "BytesInRange", cppType: "uint8_t*, size_t" };
+  const text = taking(string, readAsCharacters);
+  const view = taking(anyView, readAndWritten);
+  expect(problemsOfOperands([characters, bytesInRange], [text, view, taking(anything), taking(anything)])).toEqual([]);
+  expect(problemsOfOperands([characters, bytesInRange], [text, view])).toEqual([
+    problem("Bun__thunk takes 4 arguments, and the overload has 2"),
+  ]);
+  expect(
+    problemsOfOperands(
+      [characters, bytesInRange],
+      [text, view, taking(anything), taking(anything, { uses: ["Inspects", "Retains"] })],
+    ),
+  ).toEqual([problem("operand: a bound of a part of a view is only looked at")]);
+  expect(
+    problemsOfOperands(
+      [bytesInRange],
+      [taking(anyView, { uses: ["Inspects", "Retains"] }), taking(anything), taking(anything)],
+    ),
+  ).toEqual([
+    problem("operand: BytesInRange hands over memory for the time of the call, and the row says more: Retains"),
+  ]);
+});
+
+test("a function that returns fields returns at most two integers and has no realm", () => {
+  const count = { name: null, isOptional: false, type: integersIn(0, 2 ** 32) };
+  const returning = (...fields: unknown[]) =>
+    ({
+      type: { ...nothing, parts: [{ part: "Layout", layout: { isTuple: false, fields } }] },
+    }) as ModelOverload["result"];
+  const directEntry = { ...entryTaking(), parameters: [characters, bytes], returnsFields: true };
+  const parameters = [taking(string, readAsCharacters), taking(anyView, readAndWritten)];
+  expect(problemsOf({ parameters, result: returning(count, count), code: { directEntry } })).toEqual([]);
+  expect(problemsOf({ parameters, result: returning(count, count, count), code: { directEntry } })).toEqual([
+    problem("Bun__thunk returns fields in two registers, so the layout has at most two fields, and they are integers"),
+  ]);
+  expect(
+    problemsOf({ parameters, result: returning(count, { ...count, type: anything }), code: { directEntry } }),
+  ).toEqual([
+    problem("Bun__thunk returns fields in two registers, so the layout has at most two fields, and they are integers"),
+  ]);
+  expect(
+    problemsOf({ parameters, result: { type: anything } as ModelOverload["result"], code: { directEntry } }),
+  ).toEqual([problem("Bun__thunk returns fields, so the row returns one layout")]);
+  expect(
+    problemsOf({
+      parameters,
+      result: returning(count, count),
+      code: { directEntry: { ...directEntry, parameters: [realmParameter, characters, bytes] } },
+    }),
+  ).toEqual([problem("Bun__thunk returns fields, so it takes nothing with which it could throw, allocate or call")]);
 });
 
 test("what the receiver wraps is taken out of an instance of a class", () => {

@@ -35,20 +35,6 @@ fn with_aliased_library(main_text: &str, then: impl FnOnce(&TestProgram<'_, '_>)
 }
 
 #[test]
-fn governing_tsconfig_resolves_own_paths() {
-    with_aliased_library(r#"export { a } from "./lib/index.ts";"#, |program| {
-        let files = program.files();
-        let (main, index) = (program.file("main.ts"), program.file("lib/index.ts"));
-        let a = program.file("lib/src/a.ts");
-        assert_eq!(imported_files(files, index, "@/a"), [a]);
-        assert_eq!(files.code_answers(index), [CodeAnswer::File(a)]);
-        assert!(files_with_unresolved_import(program).is_empty());
-        assert!(!std::ptr::eq(files.module_options(index), files.options));
-        assert!(std::ptr::eq(files.module_options(main), files.options));
-    });
-}
-
-#[test]
 fn program_files_ignore_governing_paths() {
     let main_text = r#"export { a } from "./lib/index.ts";
         export { a as own } from "@/a";"#;
@@ -295,85 +281,6 @@ fn name_that_runs_keeps_code_answer_in_jsdoc() {
     });
 }
 
-const SOURCES_UNDER_CONDITION: &str = r#"{ "name": "lib", "version": "1.0.0", "exports": { ".": {
-    "source": "./src/index.ts", "types": "./dist/index.d.ts", "default": "./dist/index.js"
-} } }"#;
-
-const LIBRARY_WITH_SOURCES: [(&str, &str); 4] = [
-    ("node_modules/lib/package.json", SOURCES_UNDER_CONDITION),
-    (
-        "node_modules/lib/src/index.ts",
-        "export const value: number = 1;",
-    ),
-    (
-        "node_modules/lib/dist/index.d.ts",
-        "export declare const value: number;",
-    ),
-    ("node_modules/lib/dist/index.js", "export const value = 1;"),
-];
-
-fn with_library(
-    files: &[(&str, &str)],
-    conditions: &[&str],
-    then: impl FnOnce(&TestProgram<'_, '_>),
-) {
-    let files = [files, &LIBRARY_WITH_SOURCES[..]].concat();
-    with_conditions(&files, &["./main.ts"], conditions, then);
-}
-
-fn assert_both_answers(program: &TestProgram<'_, '_>, importer: &str, answer: &str) {
-    let (files, importer) = (program.files(), program.file(importer));
-    let answer = program.file(answer);
-    assert_eq!(files.code_answers(importer), [CodeAnswer::File(answer)]);
-    assert_eq!(imported_files(files, importer, "lib"), [answer]);
-}
-
-#[test]
-fn conditions_of_build_answer_both_questions() {
-    let main = [("main.ts", r#"export { value } from "lib";"#)];
-    with_library(&main, &["source"], |program| {
-        assert_both_answers(program, "main.ts", "node_modules/lib/src/index.ts");
-        assert_eq!(program.find("node_modules/lib/dist/index.d.ts"), None);
-    });
-    with_library(&main, &[], |program| {
-        let (files, main) = (program.files(), program.file("main.ts"));
-        let declarations = program.file("node_modules/lib/dist/index.d.ts");
-        assert_eq!(imported_files(files, main, "lib"), [declarations]);
-    });
-}
-
-#[test]
-fn conditions_of_build_reach_governing_projects_and_dependencies() {
-    let files = [
-        (
-            "main.ts",
-            r#"export * from "./tools/read.ts"; export * from "dep";"#,
-        ),
-        (
-            "tools/tsconfig.json",
-            r#"{ "compilerOptions": { "module": "preserve", "moduleResolution": "bundler" } }"#,
-        ),
-        ("tools/read.ts", r#"export { value } from "lib";"#),
-        (
-            "node_modules/dep/package.json",
-            r#"{ "name": "dep", "version": "1.0.0", "main": "./index.ts", "types": "./index.ts" }"#,
-        ),
-        (
-            "node_modules/dep/index.ts",
-            r#"export { value as other } from "lib";"#,
-        ),
-    ];
-    with_library(&files, &["source"], |program| {
-        assert_both_answers(program, "tools/read.ts", "node_modules/lib/src/index.ts");
-        assert_both_answers(
-            program,
-            "node_modules/dep/index.ts",
-            "node_modules/lib/src/index.ts",
-        );
-        assert_eq!(program.find("node_modules/lib/dist/index.d.ts"), None);
-    });
-}
-
 #[test]
 fn import_found_only_under_condition_of_build_is_resolved() {
     let files = [
@@ -393,27 +300,6 @@ fn import_found_only_under_condition_of_build_is_resolved() {
     ];
     with_conditions(&files, &["./main.ts"], &["source"], |program| {
         assert!(files_with_unresolved_import(program).is_empty());
-    });
-}
-
-#[test]
-fn own_conditions_of_bun_answer_code_question_alone() {
-    let files = [
-        ("main.ts", r#"export { value } from "lib";"#),
-        (
-            "node_modules/lib/package.json",
-            r#"{ "name": "lib", "version": "1.0.0", "exports": { ".": {
-                "bun": "./src/index.ts", "types": "./dist/index.d.ts", "default": "./dist/index.js"
-            } } }"#,
-        ),
-    ];
-    let files = [&LIBRARY_WITH_SOURCES[..], &files].concat();
-    with_conditions(&files, &["./main.ts"], &["source"], |program| {
-        let (files, main) = (program.files(), program.file("main.ts"));
-        let sources = program.file("node_modules/lib/src/index.ts");
-        let declarations = program.file("node_modules/lib/dist/index.d.ts");
-        assert_eq!(files.code_answers(main), [CodeAnswer::File(sources)]);
-        assert_eq!(imported_files(files, main, "lib"), [declarations]);
     });
 }
 

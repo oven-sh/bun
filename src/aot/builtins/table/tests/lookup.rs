@@ -179,6 +179,41 @@ fn symbol_members() {
 }
 
 #[test]
+fn names_stored_by_native_code() {
+    for stored in [
+        // Members of built-in objects.
+        "byteLength",
+        "PI",
+        "readFileSync",
+        // Defined on new instances.
+        "message",
+        "sourceURL",
+        "errors",
+        "suppressed",
+        // Fields of results.
+        "done",
+        "written",
+        "reason",
+        "groups",
+        "indices",
+        // Defined on an operand.
+        "originalLine",
+        "lastIndex",
+        // Fields of an object that the host makes.
+        "headersUrl",
+    ] {
+        assert!(is_stored_by_native_code(name(stored)), "{stored}");
+    }
+    assert!(is_stored_by_native_code(name_of_symbol(
+        WellKnownSymbol::Iterator
+    )));
+    let mut members = all_ids().filter(|&id| entry(id).holder.is_some());
+    assert!(members.all(|id| is_stored_by_native_code(entry(id).name)));
+    // A text that is only ever a value.
+    assert!(!is_stored_by_native_code(name("ERR_INVALID_ARG_TYPE")));
+}
+
+#[test]
 fn every_well_known_symbol_has_name() {
     for symbol in WellKnownSymbol::ALL {
         let constant = symbol_constant(symbol);

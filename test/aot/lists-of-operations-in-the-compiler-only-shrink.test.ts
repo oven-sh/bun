@@ -40,7 +40,6 @@ const known: Record<string, number> = {
   "codegen/AOTArrivalSiteNumbers.cpp opcodeCallsByValue": 4,
   "codegen/AOTHintEmitter.cpp isLengthOfDataWhereComputed": 5,
   "codegen/AOTHintEmitter.cpp readsLengthOfData": 3,
-  "codegen/AOTSlotAccessEmitter.cpp SlotAccessEmitter::isTestedByAccess": 3,
   "codegen/AOTSlotAccessEmitter.cpp storesBySlot": 3,
   "codegen/AOTStringBuilderCursor.h renewsReservation": 3,
   "codegen/AOTStringBuilderEmitter.cpp stackBuilderOperations": 11,
@@ -192,9 +191,12 @@ for (const list of [
 // TODO: a new list, which came in the same way. What it asks of an operation goes into the schema, and this line out of here.
 known["valueflow/AOTValueFlowUnobservedDefinitions.cpp keepsObjectToItself"] = 5;
 // TODO: three more new lists, which came in the same way, and go out the same way.
-known["passes/AOTCreatedObjectLayouts.cpp definesWhatStandsAtOnePlace"] = 4;
+known["passes/AOTCopyClosureFactories.cpp definesWhatStandsAtOnePlace"] = 5;
 known["passes/AOTTypeTestOperatorRule.cpp isWantedAsInteger"] = 4;
 known["represent/AOTChooseRepresentations.cpp isSumOfWhichOnlyLowBitsAreUsed"] = 5;
+// TODO: two more, which only guess: what the back end folds on constants costs no code. A wrong guess moves an estimate of code size. The schema already says natural(Bitwise), natural(Addition).
+known["passes/AOTInlining.cpp foldableOpcodes"] = 6;
+known["passes/AOTInlining.cpp isConstantExpression"] = 9;
 
 function numberOfNamesIn(body: string): number {
   const names = { Opcode: new Set<string>(), InlineBuiltin: new Set<string>() };

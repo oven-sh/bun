@@ -888,7 +888,7 @@ fn import_of_uncompiled_code_lets_code_load_at_run_time() {
     assert!(!can_load_code("import \"node:fs\";\n"));
 }
 
-// A module of Bun that has a type error is compiled as untyped code, and no build says so.
+// No build looks for type errors in Bun's own modules (`keep_verified_roles`), and what has an error has the type `any`.
 #[test]
 fn every_module_of_bun_keeps_its_types() {
     let modules = RuntimeModules::new(Archive::embedded(), false);
@@ -921,7 +921,7 @@ fn every_module_of_bun_keeps_its_types() {
             assert!(module_count > 150, "{module_count} modules were loaded");
             assert!(
                 untyped.is_empty(),
-                "{} of {module_count} modules of Bun are compiled as untyped code. The first error of each:\n{}",
+                "{} of {module_count} modules of Bun have a type error. The first error of each:\n{}",
                 untyped.len(),
                 untyped.join("\n"),
             );

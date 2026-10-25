@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { readBuildReport } from "./harness/build-report";
 import { slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
@@ -25,12 +26,12 @@ const typedPackage = (name: string, type: "module" | "commonjs", typed: string, 
     name,
     version: "1.0.0",
     type,
-    exports: { ".": { types: "./index.d.ts", "full-types": "./index.full.ts", default: "./index.js" } },
+    exports: { ".": { types: "./index.d.ts", aot: "./index.aot.ts", default: "./index.js" } },
   }),
   [`node_modules/${name}/index.js`]: typed
     .replace(/\((this: any)?\): string/g, "()")
     .replace(/^declare global {.*?^}\n/ms, ""),
-  [`node_modules/${name}/index.full.ts`]: typed,
+  [`node_modules/${name}/index.aot.ts`]: typed,
   [`node_modules/${name}/index.d.ts`]: declarations,
 });
 
@@ -56,17 +57,19 @@ const shared = {
   "node_modules/between/index.d.ts": `export { x, y } from "dep";\n`,
 };
 
-async function expectSameOutput(name: string, files: Record<string, string>, entry: string) {
+async function expectSameOutput(files: Record<string, string>, entry: string) {
   using dir = tempDir("typed-package-commonjs", { ...shared, ...files });
   const root = String(dir);
-  const built = await spawned([bunExe(), "compile", `./${entry}`], root, env);
-  const said = (built.stdout + built.stderr)
-    .split(/\r?\n/)
-    .filter(line => /full types|^error|^warn/.test(line) && !/ full types, and /.test(line));
+  const report = join(root, "report.json");
+  const built = await spawned([bunExe(), "compile", `./${entry}`, "--aot-report=" + report], root, env);
+  const said = (built.stdout + built.stderr).split(/\r?\n/).filter(line => /^error|^warn/.test(line));
   const ran = await spawned([join(root, isWindows ? "app.exe" : "app")], root, env);
   const plain = await spawned([bunExe(), entry], root, env);
-  expect({ said, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
-    said: [`note: "${name}" 1.0.0 is compiled from its full types in node_modules/${name}`],
+  // index.aot.ts is the one file of a package with the condition.
+  const aotFiles = readBuildReport(report).statistics.TypedVersionsUsed;
+  expect({ said, aotFiles, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
+    said: [],
+    aotFiles: 1,
     stdout: plain.stdout,
     exitCode: 0,
   });
@@ -99,7 +102,6 @@ describe.concurrent("a typed ES package imports a CommonJS package that, in the 
         () =>
           slot(() =>
             expectSameOutput(
-              name,
               {
                 ...typedPackage(name, "module", typed, name === "reexport" ? typed : callX),
                 "app.ts": `import { callX } from "${name}";\n${text}`,
@@ -147,10 +149,9 @@ describe.concurrent("a typed CommonJS package", () => {
         () =>
           slot(() =>
             expectSameOutput(
-              name,
               {
                 ...typedPackage(name, "commonjs", typed),
-                [`node_modules/${name}/other.js`]: `exports.seen = Object.keys(require("./index.js")).join();\n`,
+                [`node_modules/${name}/other.js`]: `exports.seen = Object.keys(require("${name}")).join();\n`,
                 "app.js": text.replaceAll("P", JSON.stringify(name)),
               },
               "app.js",
@@ -167,14 +168,13 @@ test(
   () =>
     slot(() =>
       expectSameOutput(
-        "absent",
         {
           ...typedPackage(
             "absent",
             "module",
             `import { second } from "dep";\nexport const value: string = "x of " + second;\n`.replace(": string", ""),
           ),
-          "node_modules/absent/index.full.ts": `import { second } from "dep";\nexport const value: string = "x of " + second;\n`,
+          "node_modules/absent/index.aot.ts": `import { second } from "dep";\nexport const value: string = "x of " + second;\n`,
           "node_modules/dep/index.d.ts": `export declare const first: number;\nexport declare const second: number;\n`,
           "late.js": `import { first } from "dep";\nconsole.log(first);\n`,
           "app.js": `for (const load of [() => import("./late.js"), () => import("absent")]) {

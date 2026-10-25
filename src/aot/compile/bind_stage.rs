@@ -26,6 +26,7 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     for &module in &reached.naming_ways {
         graph.set_names_way_to_module_objects(module);
     }
+    graph.leave_out_inner_modules(&reached.left_out_inner_modules);
     graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
 }
 

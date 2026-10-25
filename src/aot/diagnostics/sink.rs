@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     COMPILER_DIAGNOSTIC_CLASS, Diagnostic, DiagnosticBuffer, Diagnostics, Entry, InternalError,
-    LoadMessages, ProgramView, Severity, Span, SpanLocator, new_driver_diagnostic,
+    LoadMessages, ProgramView, Severity, ShownPosition, Span, SpanLocator, new_driver_diagnostic,
 };
 use crate::diagnostic_codes::Code;
 use crate::statistics::Stage;
@@ -172,6 +172,29 @@ impl Diagnostics {
 pub fn log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]) {
     let diagnostic = Diagnostic::new(code, None, arguments);
     write_message(log, to_message(None, &diagnostic, None));
+}
+
+/// For a message about a place in the program that is found after the diagnostics of the build were written.
+pub(crate) fn log_diagnostic_at(
+    log: &mut Log,
+    code: Code,
+    arguments: &[&[u8]],
+    place: Option<&ShownPosition>,
+) {
+    let severity = code.severity();
+    let text = code.message(arguments);
+    let mut reported = new_driver_diagnostic(code.number(), severity.category(), text, &[]);
+    if let Some(ShownPosition {
+        position,
+        line_text,
+    }) = place
+    {
+        reported.path = position.path.clone();
+        reported.has_undefined_range = false;
+        (reported.line, reported.column) = (position.line, position.column);
+        (reported.source, reported.source_line) = (vec![line_text.clone()], position.line);
+    }
+    write_message(log, to_log_message(&reported, severity));
 }
 
 /// For an error found after the diagnostics of the build were written.

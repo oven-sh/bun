@@ -16,6 +16,8 @@ pub(crate) struct MemoryHost {
     links: Vec<(Vec<u8>, Vec<u8>)>,
     runtime_modules: Vec<(Vec<u8>, HostResolution)>,
     claims: Vec<Claim>,
+    required: Vec<(Vec<u8>, Vec<u8>)>,
+    node_paths: Vec<Vec<u8>>,
     reads: bun_threading::Guarded<FxHashMap<Vec<u8>, usize>>,
 }
 
@@ -32,6 +34,17 @@ impl MemoryHost {
     pub(crate) fn link(mut self, link: &str, target: &str) -> MemoryHost {
         self.add_parent_directories(link.as_bytes());
         self.links.push((link.into(), target.into()));
+        self
+    }
+
+    /// `imported` is what "module" names in a package, `required` what "main" names.
+    pub(crate) fn required_in_place_of(mut self, imported: &str, required: &str) -> MemoryHost {
+        self.required.push((imported.into(), required.into()));
+        self
+    }
+
+    pub(crate) fn node_path(mut self, directory: &str) -> MemoryHost {
+        self.node_paths.push(directory.into());
         self
     }
 
@@ -96,6 +109,18 @@ impl MemoryHost {
             path = [&target[..], &path[link.len()..]].concat();
         }
         path
+    }
+}
+
+impl MemoryHost {
+    // What "imports" of the nearest `package.json` names by an exact key is taken for a module of the host.
+    fn find_through_imports(&self, search: &FileSearch<'_>) -> Option<FoundCode> {
+        let manifest = ancestors(search.directory).find_map(|directory| {
+            let path = self.follow_links(&inside(directory, b"package.json"));
+            parse_json(self.files.get(&path)?)
+        })?;
+        let target = get_first(get_first(&manifest, b"imports")?, search.specifier)?.as_str()?;
+        Some(FoundCode::External(target.to_vec()))
     }
 }
 
@@ -194,6 +219,40 @@ impl CodeHost for MemoryHost {
         match self.claims.iter().find(is_match) {
             Some(claim) => claim.resolution.clone(),
             None => HostResolution::Unclaimed,
+        }
+    }
+
+    fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
+        let in_node_paths = || {
+            let files = self.node_paths.iter().map(|directory| {
+                let specifier = &join(directory, search.specifier);
+                find_file_plainly(
+                    self,
+                    &FileSearch {
+                        specifier,
+                        ..*search
+                    },
+                )
+            });
+            files
+                .into_iter()
+                .find(|it| matches!(it, FoundCode::File { .. }))
+        };
+        let found = self.find_through_imports(search);
+        let found = found.unwrap_or_else(|| find_file_plainly(self, search));
+        let is_settled = matches!(found, FoundCode::File { .. })
+            || matches!(search.specifier.first(), Some(b'/' | b'.'));
+        let found = match is_settled {
+            true => found,
+            false => in_node_paths().unwrap_or(found),
+        };
+        match found {
+            FoundCode::File { path, .. } if search.prefers_module_field => {
+                let mut pairs = self.required.iter();
+                let required = pairs.find(|pair| pair.0 == path).map(|pair| pair.1.clone());
+                FoundCode::File { path, required }
+            }
+            found => found,
         }
     }
 

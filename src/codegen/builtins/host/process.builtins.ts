@@ -397,20 +397,20 @@ const computedOnce = [
   "execPath",
   "features",
   "hrtime",
-  "isBun",
   "memoryUsage",
   "nextTick",
   "pid",
   "platform",
   "reallyExit",
-  "release",
   "revision",
   "stderr",
   "stdin",
   "stdout",
   "version",
-  "versions",
 ];
+
+// Programs read these to find out which runtime they are on. The compiler folds those reads (src/aot/load/locked_builtin_defines.rs), so they are locked.
+const runtimeIdentity = ["isBun", "release", "versions"];
 
 // Every `get` and `getIfPropertyExists` on the object in BunProcess.cpp and ZigGlobalObject.cpp.
 const lookedUpByNativeCode = [
@@ -456,6 +456,8 @@ export default b.declarations(
       stderr: outputStream,
       stdout: outputStream,
       pid: createdOnFirstRead(b.f64),
+      browser: createdOnFirstRead(b.bool),
+      isBun: createdOnFirstRead(b.bool),
       features: objectCreatedOnFirstRead(featuresCell),
       release: objectCreatedOnFirstRead(releaseCell),
       versions: objectCreatedOnFirstRead(versionsCell),
@@ -659,4 +661,6 @@ export default b.declarations(
   b.inherits("process.report", "Object.prototype"),
   changedByNativeCode.flatMap(name => b.extend(`process.${name}`, { mutability: "ChangesOnItsOwn" })),
   computedOnce.flatMap(name => b.extend(`process.${name}`, { mutability: "ConstantUnlessWritten" })),
+  runtimeIdentity.flatMap(name => b.extend(`process.${name}`, { mutability: "AlwaysLocked" })),
+  b.extend("process", { mutability: "AlwaysLocked" }),
 );

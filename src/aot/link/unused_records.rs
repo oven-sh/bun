@@ -1,5 +1,6 @@
 use super::state::{Numbering, UnitIds};
 use super::unit::LinkUnit;
+use crate::builtins::table;
 use crate::ir::generated::{
     FieldFlags, Layout, LayoutFlags, LayoutKind, PropertyKey, PropertyKeyKind,
 };
@@ -114,6 +115,14 @@ fn find_written_keys(layouts: &[Layout], input: &UseInput<'_>) -> Vec<AtomicBool
     is_written
 }
 
+// An error has a message that no compiled code stored: a type that requires one describes what native code makes.
+fn is_stored_by_native_code(input: &UseInput<'_>, key: PropertyKeyId) -> bool {
+    let key = input.property_keys.get(key);
+    let text = key.text.filter(|_| key.kind == PropertyKeyKind::Text);
+    let name = text.and_then(|text| input.strings.builtin_name(text));
+    name.is_some_and(table::is_stored_by_native_code)
+}
+
 /// Says of a plain record that nothing in the program makes an object with it: it only describes objects.
 /// Answers whether the program writes a property under `asked_name`.
 pub(super) fn mark_unused_records(
@@ -136,13 +145,15 @@ pub(super) fn mark_unused_records(
             layout.flags |= LayoutFlags::IS_NEVER_ALLOCATED;
         }
         for field in &mut layout.fields {
-            if field
-                .key
-                .is_some_and(|key| !is_written[key.index()].load(Ordering::Relaxed))
+            let Some(key) = field.key else { continue };
+            let is_required = field.flags.contains(FieldFlags::IS_REQUIRED);
+            if is_written[key.index()].load(Ordering::Relaxed)
+                || (is_required && is_stored_by_native_code(input, key))
             {
-                field.flags = field.flags.without(FieldFlags::IS_REQUIRED);
-                field.flags |= FieldFlags::IS_NEVER_WRITTEN;
+                continue;
             }
+            field.flags = field.flags.without(FieldFlags::IS_REQUIRED);
+            field.flags |= FieldFlags::IS_NEVER_WRITTEN;
         }
     });
     is_asked_name_written
@@ -152,6 +163,7 @@ pub(super) fn mark_unused_records(
 mod tests {
     use super::*;
     use crate::ir::Program;
+    use crate::ir::generated::Field;
     use crate::link::testing::link_sources_without_bun_modules;
 
     const MAIN: &str = r#"
@@ -223,5 +235,77 @@ export function make(id: number): Made { return { id, label: "made" }; }
             flags_of_field(program, made, "label"),
             FieldFlags::IS_REQUIRED
         );
+    }
+
+    // The only names that the program stores are `name` and `level`.
+    const FILLED_BY_NATIVE_CODE: &str = r#"
+/// <reference lib="dom" />
+interface Warning extends Error { level: number }
+interface Failures extends AggregateError { level: number }
+interface Upload extends Blob { level: number }
+interface Step { done: boolean; value: number }
+interface Match { index: number; groups: object }
+interface Traced { originalLine: number }
+interface Branded { __brand: "level"; level: number }
+export function read(warning: Warning, failures: Failures, upload: Upload, branded: Branded): number {
+  return warning.level + failures.level + upload.level + branded.level;
+}
+export function readResults(step: Step, match: Match, traced: Traced): number {
+  return step.value + match.index + traced.originalLine;
+}
+export function make(level: number) { return { name: "made", level }; }
+"#;
+
+    fn required_names(program: &Program, layout: &Layout) -> Vec<String> {
+        let is_required = |field: &&Field| field.flags.contains(FieldFlags::IS_REQUIRED);
+        let fields = layout.fields.iter().filter(is_required);
+        let texts = fields.filter_map(|field| program.property_keys.get(field.key?).text);
+        texts
+            .map(|text| String::from_utf8_lossy(program.strings.get(text)).into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_name_that_only_native_code_stores_stays_required() {
+        let linked = link_sources_without_bun_modules(&[("main.ts", FILLED_BY_NATIVE_CODE)]);
+        let program = &linked.expect("the program links").program;
+        for (layout, names) in [
+            ("Warning", &["name", "message", "level"][..]),
+            ("Failures", &["errors", "name", "message", "level"]),
+            ("Upload", &["size", "type", "level"]),
+            ("Step", &["done", "value"]),
+            ("Match", &["index", "groups"]),
+            ("Traced", &["originalLine"]),
+        ] {
+            let layout = find_layout(program, layout);
+            let required = required_names(program, layout);
+            for &name in names {
+                assert!(required.iter().any(|it| it == name), "{name}: {required:?}");
+            }
+        }
+    }
+
+    // An object made with the layout has no place for it, and whoever looks for the name finds nothing at once.
+    #[test]
+    fn an_optional_field_that_only_native_code_stores_is_never_written() {
+        let linked = link_sources_without_bun_modules(&[("main.ts", FILLED_BY_NATIVE_CODE)]);
+        let program = &linked.expect("the program links").program;
+        let warning = find_layout(program, "Warning");
+        assert_eq!(
+            flags_of_field(program, warning, "stack"),
+            FieldFlags::IS_NEVER_WRITTEN
+        );
+    }
+
+    #[test]
+    fn a_brand_that_nothing_stores_is_not_required() {
+        let linked = link_sources_without_bun_modules(&[("main.ts", FILLED_BY_NATIVE_CODE)]);
+        let program = &linked.expect("the program links").program;
+        let branded = find_layout(program, "Branded");
+        assert_eq!(
+            flags_of_field(program, branded, "__brand"),
+            FieldFlags::IS_NEVER_WRITTEN
+        );
+        assert_eq!(required_names(program, branded), ["level"]);
     }
 }

@@ -245,11 +245,15 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
             }
             (
                 RequireResult::DefaultExport,
-                ModuleRef::Face(_) | ModuleRef::Check(_) | ModuleRef::External { .. },
+                ModuleRef::Inner { .. }
+                | ModuleRef::Face(_)
+                | ModuleRef::Check(_)
+                | ModuleRef::External { .. },
             )
             | (
                 RequireResult::ModuleExports,
-                ModuleRef::Face(_)
+                ModuleRef::Inner { .. }
+                | ModuleRef::Face(_)
                 | ModuleRef::Check(_)
                 | ModuleRef::Runtime(_)
                 | ModuleRef::External { .. },

@@ -41,15 +41,15 @@ describe.concurrent("bun build --dts", () => {
     const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(readdirSync(join(String(dir), "out")).sort()).toEqual([
+      "index.aot.ts",
       "index.d.ts",
-      "index.full.ts",
       "index.js",
       "join.d.ts",
     ]);
     const read = (name: string) => readFileSync(join(String(dir), "out", name), "utf8");
     expect(read("index.d.ts")).toContain("export declare function greet(options: Options): string;");
-    expect(read("index.full.ts")).toContain("function greet(options: Options): string {");
-    expect(read("index.full.ts")).toContain("function join(first: string, second: string): string {");
+    expect(read("index.aot.ts")).toContain("function greet(options: Options): string {");
+    expect(read("index.aot.ts")).toContain("function join(first: string, second: string): string {");
     expect(read("index.js")).toContain("function greet(options) {");
     expect(read("index.js")).not.toContain("debugId");
     expect(readFileSync(join(String(dir), "package.json"), "utf8")).toBe(project["package.json"]);
@@ -72,10 +72,10 @@ describe.concurrent("bun build --dts", () => {
     expect(built.exitCode).toBe(0);
     expect(built.stderr).toBe(
       warns
-        ? `warn: package.json needs "compilerOptions": {"strict":true,"strictNullChecks":false,"noUncheckedIndexedAccess":true}: bun compile type checks a package's full types under them, and as strict without them\n`
+        ? `warn: package.json needs "compilerOptions": {"strict":true,"strictNullChecks":false,"noUncheckedIndexedAccess":true}: --aot type checks a package's .aot.ts files under them, and as strict without them\n`
         : "",
     );
-    expect(readdirSync(join(String(dir), "out"))).toContain("index.full.ts");
+    expect(readdirSync(join(String(dir), "out"))).toContain("index.aot.ts");
   });
 
   test("a type error fails the build", async () => {
@@ -99,7 +99,7 @@ describe.concurrent("bun build --dts", () => {
     using dir = tempDir("build-dts-minify", project);
     const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts", "--minify");
     expect(built.stderr).toBe(
-      "warn: the full types that bun compile compiles a package from are left out: they do not support --minify-identifiers yet\n",
+      "warn: the .aot.ts files that --aot compiles a package from are left out: they do not support --minify-identifiers yet\n",
     );
     expect(built.exitCode).toBe(0);
     expect(readdirSync(join(String(dir), "out")).sort()).toEqual(["index.d.ts", "index.js", "join.d.ts"]);
@@ -110,7 +110,7 @@ describe.concurrent("bun build --dts", () => {
     const flags = ["--dts", "--minify-syntax", "--minify-whitespace"];
     const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", ...flags);
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    expect(readFileSync(join(String(dir), "out/index.full.ts"), "utf8")).toContain(
+    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain(
       "function greet(options: Options): string{return join(",
     );
   });
@@ -131,7 +131,7 @@ export function join(first: string, second: string): string {
     expect(readFileSync(join(String(dir), "out/index.js"), "utf8")).toContain(
       'function join(first, second) {\n  return first + " " + second;\n}',
     );
-    expect(readFileSync(join(String(dir), "out/index.full.ts"), "utf8")).not.toContain("__DEV__");
+    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).not.toContain("__DEV__");
   });
 
   test("a build without it writes what it always did", async () => {

@@ -758,7 +758,13 @@ fn delete_defined_member() {
     let other = lower_body(&defines, "return delete process.env.OTHER;");
     let deleted = decode_delete(other.definition(other.returned()));
     assert_eq!(other.key_text(deleted.key), "OTHER", "{other}");
-    other.expect_path(deleted.object, &["process", "env"]);
+    let holder = decode_read(other.definition(deleted.object));
+    assert_eq!(other.key_text(holder.key), "env", "{other}");
+    assert_eq!(
+        other.builtin_of(holder.object),
+        Some(BuiltinId::Process),
+        "{other}"
+    );
     assert!(!deleted.is_free_name, "{other}");
     assert_eq!(other.count(Opcode::Boolean), 0, "{other}");
 }

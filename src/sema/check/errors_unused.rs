@@ -144,17 +144,15 @@ impl Checker<'_, '_> {
         self.note_module_references(file, &mut u);
         self.note_unresolved_type_references(file, &mut u);
         self.note_untyped_signature_parameters(file, &mut u);
-        for &(of, scope, name, meaning) in &self.tracked_names {
-            if of == file {
-                let bit = if meaning == SymFlags::TYPE {
-                    TYPE
-                } else if meaning == SymFlags::NAMESPACE {
-                    NAMESPACE
-                } else {
-                    VALUE
-                };
-                u.note_name(scope, name, meaning, bit);
-            }
+        for &(scope, name, meaning) in self.tracked_names.get(&file).into_iter().flatten() {
+            let bit = if meaning == SymFlags::TYPE {
+                TYPE
+            } else if meaning == SymFlags::NAMESPACE {
+                NAMESPACE
+            } else {
+                VALUE
+            };
+            u.note_name(scope, name, meaning, bit);
         }
         let links = &self.p.symbol_reference_links;
         for (i, kinds) in u.referenced.iter_mut().enumerate() {

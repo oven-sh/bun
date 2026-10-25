@@ -35,6 +35,7 @@ pub use crate::ir::generated::{
     FeatureUseRecord, FunctionReportRecord, InternalErrorRecord, LocaleUseRecord,
     ObfuscatedSiteRecord, OperationCountRecord, PassTimeRecord, RemainingCheckRecord,
     SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord,
+    WorkerEntryRecord,
 };
 use crate::ir::generated::{
     AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, LimitId, MismatchPolicy,
@@ -167,9 +168,17 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     for name in &options.trim.remove {
         removed.union_with(&name.features());
     }
-    for feature in removed.iter() {
+    fill_feature_bits(&mut record.removed_features, &removed);
+    fill_feature_bits(
+        &mut record.target.features_kept_only_when_named,
+        &bun_trim::features_kept_only_when_named(),
+    );
+}
+
+fn fill_feature_bits(bits: &mut [u64; 8], features: &FeatureSet) {
+    for feature in features.iter() {
         let index = usize::from(feature.index());
-        record.removed_features[index / 64] |= 1 << (index % 64);
+        bits[index / 64] |= 1 << (index % 64);
     }
 }
 
@@ -430,6 +439,7 @@ result_records! {
     builtins_used: BuiltinUseRecord = BuiltinsUsed,
     features_used: FeatureUseRecord = FeaturesUsed,
     locales_used: LocaleUseRecord = LocalesUsed,
+    worker_entries: WorkerEntryRecord = WorkerEntries,
     access_counts: AccessCountRecord = AccessCounts,
     accesses: AccessRecord = Accesses,
     remaining_checks: RemainingCheckRecord = RemainingChecks,

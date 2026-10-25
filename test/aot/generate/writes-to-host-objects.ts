@@ -40,7 +40,7 @@ const MEMBERS = {
     stdout: PRINTS + through("node:process", "stdout"), stderr: 'attempt("console.error", () => console.error("prints"));\n' + through("node:process", "stderr"), stdin: through("node:process", "stdin"),
     nextTick: STREAM + later("a tick of the library", 'const { nextTick } = await import("node:process");\nreturn typeof nextTick;'),
     env: 'attempt("Bun.env", () => typeof Bun.env);\n', allowedNodeEnvironmentFlags: PRINTS, finalization: PRINTS, loadEnvFile: PRINTS, _rawDebug: PRINTS, mainModule: PRINTS,
-    channel: PRINTS, send: PRINTS, disconnect: PRINTS, versions: through("node:process", "versions"), release: PRINTS, features: PRINTS,
+    channel: PRINTS, send: PRINTS, disconnect: PRINTS, config: through("node:process", "config"), report: PRINTS, features: PRINTS,
   },
   console: {
     Console: through("node:console", "Console"), _stdout: PRINTS, _stderr: 'attempt("console.error", () => console.error("prints"));\n',

@@ -11,9 +11,16 @@ use bun_aot::load::source_provider::{
 };
 use bun_aot::{SourceProvider, WithoutServices};
 use bun_ast::{ASTMemoryAllocator, Log};
+use bun_paths::resolve_path::posix_to_platform_in_place;
+use bun_resolver::options::{ExternalModules, Packages};
+use bun_resolver::package_json::Status;
+use bun_resolver::{GlobalCache, Resolver, ResultUnion};
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
 use bun_sema::hir_from_data::{DataModule, DataValue};
+use bun_sema::resolve::{AOT_CONDITION, CodeFailure, CodeImportKind, FileSearch, FoundCode, Host};
+use bun_sema_driver::host::{from_native, to_native};
+use bun_threading::Guarded;
 use core::ptr::NonNull;
 
 #[derive(Clone)]
@@ -59,6 +66,110 @@ pub(crate) fn with_ast_scope<R>(work: impl FnOnce(&Arena) -> R) -> R {
     let mut store = ASTMemoryAllocator::borrowing(&arena);
     let _scope = store.enter();
     work(&arena)
+}
+
+/// Bun's resolver, asked which file runs for an import.
+pub struct FileFinder(Resolver<'static>);
+
+// SAFETY: one thread at a time holds it. What it points to belongs to the transpiler it was made from, which is not
+// written while it lives, or to every resolver of the process, which share it under their own locks.
+unsafe impl Send for FileFinder {}
+
+impl FileFinder {
+    /// `conditions`: those of "exports" and "imports" that hold beside the ones of `transpiler`.
+    ///
+    /// # Safety
+    /// `transpiler` outlives what is returned and is not written in the meantime.
+    pub unsafe fn new(transpiler: &Transpiler<'_>, conditions: &[Vec<u8>]) -> FileFinder {
+        let mut options = crate::transpiler::resolver_bundle_options_subset(&transpiler.options);
+        // Whoever asks has taken out what is external and the modules of Bun's own that it has.
+        options.mark_builtins_as_external = false;
+        options.packages = Packages::Bundle;
+        options.external = ExternalModules::default();
+        options.preserve_symlinks = transpiler.resolver.opts.preserve_symlinks;
+        // `bun build` adds "development" by itself. A compiled program runs the files that `bun run` runs.
+        let mut asked_for = transpiler.options.custom_conditions.iter();
+        if !asked_for.any(|condition| **condition == *b"development") {
+            options.conditions.import.swap_remove(b"development");
+            options.conditions.require.swap_remove(b"development");
+        }
+        for condition in conditions {
+            options.conditions.import.insert(condition, ());
+            options.conditions.require.insert(condition, ());
+        }
+        let resolver = &transpiler.resolver;
+        // SAFETY: the caller's.
+        FileFinder(unsafe { Resolver::for_worker(resolver, resolver.log, options) })
+    }
+
+    pub fn find(&mut self, search: &FileSearch<'_>) -> FoundCode {
+        with_ast_scope(|_| self.find_in_ast_scope(search))
+    }
+
+    // The resolver reads `package.json` and `tsconfig.json` into the thread's store of trees.
+    fn find_in_ast_scope(&mut self, search: &FileSearch<'_>) -> FoundCode {
+        let resolver = &mut self.0;
+        let kind = match search.kind {
+            CodeImportKind::EntryPoint => bun_ast::ImportKind::EntryPointBuild,
+            CodeImportKind::Import => bun_ast::ImportKind::Stmt,
+            CodeImportKind::Require => bun_ast::ImportKind::Require,
+        };
+        let mut unread_log = Log::init();
+        // SAFETY: the resolver and `unread_log` outlive the guard.
+        let _log_scope =
+            unsafe { Resolver::scoped_log(&raw mut *resolver, NonNull::from(&mut unread_log)) };
+        resolver.prefer_module_field = search.prefers_module_field;
+        resolver.esm_failure = None;
+        let mut directory = to_native(search.directory).to_vec();
+        posix_to_platform_in_place(&mut directory);
+        if directory.last() != Some(&bun_paths::SEP) {
+            directory.push(bun_paths::SEP);
+        }
+        let result = resolver.resolve_and_auto_install(
+            &directory,
+            search.specifier,
+            kind,
+            GlobalCache::disable,
+        );
+        let failure = resolver.esm_failure.take();
+        let result = match result {
+            ResultUnion::Success(result) => result,
+            ResultUnion::Failure(_) | ResultUnion::Pending(_) | ResultUnion::NotFound => {
+                return failure.map_or_else(FoundCode::not_found, describe_failure);
+            }
+        };
+        match result.path_const() {
+            None => FoundCode::not_found(),
+            Some(path) if result.flags.is_external() || path.is_data_url() => {
+                FoundCode::External(path.text.to_vec())
+            }
+            Some(path) => FoundCode::File {
+                path: from_native(path.text),
+                required: (result.path_pair.secondary.as_ref()).map(|it| from_native(it.text)),
+            },
+        }
+    }
+}
+
+fn describe_failure(status: Status) -> FoundCode {
+    let failure = match status {
+        Status::InvalidModuleSpecifier => CodeFailure::InvalidModuleSpecifier,
+        Status::InvalidPackageConfiguration => CodeFailure::InvalidPackageConfiguration,
+        Status::InvalidPackageTarget => CodeFailure::InvalidPackageTarget,
+        Status::UnsupportedDirectoryImport => CodeFailure::UnsupportedDirectoryImport,
+        Status::PackageImportNotDefined => CodeFailure::PackageImportNotDefined,
+        Status::Exact
+        | Status::ExactEndsWithStar
+        | Status::Inexact
+        | Status::PackageResolve
+        | Status::ModuleNotFound => CodeFailure::ModuleNotFound,
+        Status::Undefined
+        | Status::UndefinedNoConditionsMatch
+        | Status::Null
+        | Status::PackagePathNotExported
+        | Status::PackagePathDisabled => CodeFailure::PackagePathNotExported,
+    };
+    FoundCode::NotFound(failure)
 }
 
 #[cfg(test)]
@@ -107,6 +218,8 @@ pub(crate) struct BundlerServices {
     plugins: Option<PluginRequests>,
     embedded: EmbeddedFiles,
     macros: MacroThread,
+    /// Those that no thread holds.
+    file_finders: Guarded<Vec<FileFinder>>,
 }
 
 impl BundlerServices {
@@ -125,6 +238,7 @@ impl BundlerServices {
             plugins,
             embedded: EmbeddedFiles::default(),
             macros: MacroThread::new(),
+            file_finders: Guarded::new(Vec::new()),
         }
     }
 
@@ -152,6 +266,23 @@ impl SourceProvider for BundlerServices {
             Some(plugins) => plugins.resolve(request, log),
             None => Ok(Resolution::NotHandled),
         }
+    }
+
+    fn has_resolve_plugins(&self) -> bool {
+        self.plugins.is_some()
+    }
+
+    fn find_file(&self, _host: &dyn Host, search: &FileSearch<'_>) -> FoundCode {
+        let idle = self.file_finders.lock().pop();
+        let create = || {
+            let conditions = [AOT_CONDITION.to_vec()];
+            // SAFETY: `build` keeps the carrier and its transpiler as they are until `shut_down` has returned.
+            unsafe { FileFinder::new(self.context.bundle().transpiler(), &conditions) }
+        };
+        let mut finder = idle.unwrap_or_else(create);
+        let found = finder.find(search);
+        self.file_finders.lock().push(finder);
+        found
     }
 
     fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {

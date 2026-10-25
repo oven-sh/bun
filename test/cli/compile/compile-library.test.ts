@@ -92,13 +92,13 @@ const packageJson = {
 };
 
 const conditions = (stem: string) => ({
+  aot: `./${stem}.aot.ts`,
   types: `./${stem}.d.ts`,
-  "full-types": `./${stem}.full.ts`,
   default: `./${stem}.js`,
 });
 const untypedConditions = (stem: string) => ({ types: `./${stem}.d.ts`, default: `./${stem}.js` });
 const NO_TYPED_FILES_WITHOUT_BUNDLING =
-  "warn: the full types that bun compile compiles a package from are left out: they do not support --no-bundle yet\n";
+  "warn: the .aot.ts files that --aot compiles a package from are left out: they do not support --no-bundle yet\n";
 
 describe.concurrent("bun compile --library", () => {
   test("writes JavaScript, declaration files and a package.json into dist", async () => {
@@ -117,8 +117,8 @@ describe.concurrent("bun compile --library", () => {
       "LICENSE",
       "README.md",
       "area.d.ts",
+      "index.aot.ts",
       "index.d.ts",
-      "index.full.ts",
       "index.js",
       "package.json",
     ]);
@@ -143,7 +143,7 @@ describe.concurrent("bun compile --library", () => {
       types: "./index.d.ts",
       exports: { ".": conditions("index"), "./package.json": "./package.json" },
       compilerOptions: { strict: true, lib: ["esnext"] },
-      files: ["LICENSE", "README.md", "area.d.ts", "index.d.ts", "index.full.ts", "index.js"],
+      files: ["LICENSE", "README.md", "area.d.ts", "index.aot.ts", "index.d.ts", "index.js"],
       sideEffects: false,
       engines: { node: ">=18" },
       dependencies: { "left-pad": "^1.3.0" },
@@ -151,7 +151,7 @@ describe.concurrent("bun compile --library", () => {
       peerDependenciesMeta: { react: { optional: true } },
       publishConfig: { access: "public" },
     });
-    expect(Object.keys(json(join(dist, "package.json")).exports["."])).toEqual(["types", "full-types", "default"]);
+    expect(Object.keys(json(join(dist, "package.json")).exports["."])).toEqual(["aot", "types", "default"]);
     expect(json(join(String(dir), "package.json"))).toEqual(packageJson);
     expect(readFileSync(join(dist, "package.json"), "utf8")).toStartWith('{\n  "name": "@acme/shapes",\n');
     expect(readFileSync(join(dist, "package.json"), "utf8")).toEndWith("}\n");
@@ -175,7 +175,7 @@ describe.concurrent("bun compile --library", () => {
       types: "./index.d.ts",
       exports: { ".": conditions("index"), "./package.json": "./package.json" },
       compilerOptions: { strict: true, lib: ["esnext"] },
-      files: ["area.d.ts", "index.d.ts", "index.full.ts", "index.js"],
+      files: ["area.d.ts", "index.aot.ts", "index.d.ts", "index.js"],
     });
     expect(existsSync(join(project, "package.json"))).toBe(false);
   });
@@ -579,19 +579,19 @@ describe.concurrent("bun compile --library", () => {
   });
 });
 
-describe.concurrent("the full-types file that bun compile --library writes", () => {
+describe.concurrent("the .aot.ts file that bun compile --library writes", () => {
   const library = (files: Record<string, string>) => ({
     "tsconfig.json": tsconfig,
     "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }),
     ...files,
   });
-  const typedFile = (dir: unknown) => readFileSync(join(String(dir), "dist/index.full.ts"), "utf8");
+  const typedFile = (dir: unknown) => readFileSync(join(String(dir), "dist/index.aot.ts"), "utf8");
 
   test("is the bundle with the types of its sources", async () => {
     using dir = tempDir("library-typed-file", library(sources));
     const built = await bun(String(dir), "compile", "--library", "src/index.ts");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(built.stdout).toMatch(/index\.full\.ts .*\(full types\)/);
+    expect(built.stdout).toMatch(/index\.aot\.ts .*\(aot source\)/);
     const typed = typedFile(dir);
     expect(typed).toContain("function area(shape: Shape): number {");
     expect(typed).toContain("interface Shape {");
@@ -660,7 +660,7 @@ describe.concurrent("the full-types file that bun compile --library writes", () 
     const built = await bun(join(String(dir), "packages/links"), "compile", "--library", "src/index.ts");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
     expect(json(join(String(dir), "packages/links/dist/package.json")).compilerOptions).toEqual({ strict: true });
-    expect(filesIn(join(String(dir), "packages/links/dist"))).toContain("index.full.ts");
+    expect(filesIn(join(String(dir), "packages/links/dist"))).toContain("index.aot.ts");
   });
 
   test("keeps the source maps that the build asks for", async () => {
@@ -668,7 +668,7 @@ describe.concurrent("the full-types file that bun compile --library writes", () 
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--sourcemap=external");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
     expect(filesIn(join(String(dir), "dist"))).toContain("index.js.map");
-    expect(filesIn(join(String(dir), "dist"))).toContain("index.full.ts");
+    expect(filesIn(join(String(dir), "dist"))).toContain("index.aot.ts");
   });
 
   test("a constant that is a unique symbol keeps its type", async () => {
@@ -752,7 +752,7 @@ export function counts(): Counts {
     expect(typedFile(dir)).toContain("new Map<string, number[]> as Counts");
   });
 
-  test("an entry point that is a script is not met twice when the full-types files are judged", async () => {
+  test("an entry point that is a script is not met twice when the .aot.ts files are type checked", async () => {
     using dir = tempDir(
       "library-typed-file-script",
       library({
@@ -762,7 +762,7 @@ export function counts(): Counts {
     );
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/cli.ts");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(filesIn(join(String(dir), "dist"))).toContain("cli.full.ts");
+    expect(filesIn(join(String(dir), "dist"))).toContain("cli.aot.ts");
   });
 
   const development = {
@@ -816,7 +816,7 @@ export function warn(text: string): void {
 `,
   };
 
-  test("removes dead statements from the bundle and the full-types file", async () => {
+  test("removes dead statements from the bundle and the .aot.ts file", async () => {
     using dir = tempDir("library-typed-file-dead", library(development));
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--define", "__DEV__=false");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
@@ -951,12 +951,12 @@ export function literal(which: "plain" | "loud"): { done: true } {
   };
 
   test.each([["--minify-syntax"], ["--minify-whitespace"], ["--minify-syntax", "--minify-whitespace"]])(
-    "%s %s keeps the full-types file",
+    "%s %s keeps the .aot.ts file",
     async (...flags) => {
       using dir = tempDir("library-typed-file-minified", library(rewritten));
       const built = await bun(String(dir), "compile", "--library", "src/index.ts", ...flags.filter(Boolean));
       expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-      expect(filesIn(join(String(dir), "dist"))).toContain("index.full.ts");
+      expect(filesIn(join(String(dir), "dist"))).toContain("index.aot.ts");
       const javascript = readFileSync(join(String(dir), "dist/index.js"), "utf8");
       expect(javascript.match(/\b(let|var) \w+/g)).toEqual(["var notes"]);
       const code = (text: string) => text.replace(/\s+/g, "");
@@ -965,7 +965,7 @@ export function literal(which: "plain" | "loud"): { done: true } {
     },
   );
 
-  test("--minify-whitespace puts each statement of the full-types file on its own line", async () => {
+  test("--minify-whitespace puts each statement of the .aot.ts file on its own line", async () => {
     using dir = tempDir(
       "library-typed-file-lines",
       library({
@@ -1002,17 +1002,35 @@ export{first,second};
     using dir = tempDir("library-typed-file-skipped", library(sources));
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", flag);
     expect(built.stderr).toBe(
-      `warn: the full types that bun compile compiles a package from are left out: they do not support ${named} yet\n`,
+      `warn: the .aot.ts files that --aot compiles a package from are left out: they do not support ${named} yet\n`,
     );
     expect(built.exitCode).toBe(0);
-    expect(filesIn(join(String(dir), "dist")).filter(path => /\.full\.|tsconfig/.test(path))).toEqual([]);
-    expect(JSON.stringify(json(join(String(dir), "dist/package.json")))).not.toContain("full-types");
+    expect(filesIn(join(String(dir), "dist")).filter(path => /\.aot\.|tsconfig/.test(path))).toEqual([]);
+    expect(JSON.stringify(json(join(String(dir), "dist/package.json")))).not.toContain('"aot"');
   });
 
-  // Whoever installs the package reads the full types of make.js where index.js imports it, so the check before they are written does too.
+  test("--splitting: an .aot.ts file imports the .aot.ts file of each chunk that its JavaScript imports", async () => {
+    using dir = tempDir("library-typed-file-chunks", library(sources));
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/extra.ts", "--splitting");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    const dist = join(String(dir), "dist");
+    const typedName = (path: string) => path.replace(/\.js$/, ".aot.ts");
+    const imported = (path: string) =>
+      [...readFileSync(join(dist, path), "utf8").matchAll(/ from "(\.[^"]+)"/g)].map(match => match[1]);
+    const javascript = filesIn(dist).filter(path => path.endsWith(".js"));
+    const chunk = javascript.find(path => path !== "index.js" && path !== "extra.js");
+    expect(javascript).toHaveLength(3);
+    expect(javascript.map(imported)).toEqual(javascript.map(path => (path === chunk ? [] : ["./" + chunk])));
+    expect(javascript.map(path => imported(typedName(path)))).toEqual(
+      javascript.map(path => imported(path).map(typedName)),
+    );
+    expect(json(join(dist, "package.json")).files).toContain(typedName(chunk!));
+  });
+
+  // index.aot.ts imports make.aot.ts, so the two are type checked together before they are written.
   // TODO: on Windows the build says nothing.
   test.todoIf(isWindows)(
-    "--splitting: full types that do not fit each other are a warning for whoever builds the package",
+    "--splitting: .aot.ts files that do not fit each other are a warning for whoever builds the package",
     async () => {
       using dir = tempDir(
         "library-typed-files-that-do-not-fit",
@@ -1045,11 +1063,11 @@ export function one(): number {
       );
       const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/make.ts", "--splitting");
       expect(built.stderr).toMatch(
-        /^warn: the full types that bun compile compiles a package from are left out: they have type errors, the first at index\.full\.ts:\d+:\d+: TS2345: Argument of type 'Token' is not assignable to parameter of type 'Token'\.\n$/,
+        /^warn: the \.aot\.ts files that --aot compiles a package from are left out: they have type errors, the first at index\.aot\.ts:\d+:\d+: TS2345: Argument of type 'Token' is not assignable to parameter of type 'Token'\.\n$/,
       );
       expect(built.exitCode).toBe(0);
-      expect(filesIn(join(String(dir), "dist")).filter(path => /\.full\.|tsconfig/.test(path))).toEqual([]);
-      expect(JSON.stringify(json(join(String(dir), "dist/package.json")))).not.toContain("full-types");
+      expect(filesIn(join(String(dir), "dist")).filter(path => /\.aot\.|tsconfig/.test(path))).toEqual([]);
+      expect(JSON.stringify(json(join(String(dir), "dist/package.json")))).not.toContain('"aot"');
     },
   );
 });

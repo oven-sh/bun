@@ -343,19 +343,19 @@ function f1 name="dot" role=EntryChecks {
     v2: boolean = TypeTest v1 testedType=L0 @45
     Branch v2 -> taken b1(| 0), notTaken b2(| 0) @45
   b1(v3: L0):
-    v4: number = CallDirect v0, v3 function=f1240 @45
+    v4: number = CallDirect v0, v3 function=f1155 @45
     ReturnCall v4 requirement=Allowed @45
   b2(v5: anything) frequency=Unlikely:
-    v6: number = CallDirect v0, v1 function=f1241 @45
+    v6: number = CallDirect v0, v1 function=f1156 @45
     ReturnCall v6 requirement=Allowed @45
 }
-function f1240 name="dot" {
+function f1155 name="dot" {
   b0(v0: L0, v1: L0):
     v2: int[-2147483643, 2147483647] = PropGet v0 key="x" accessSite=10 receivers=[L0] @93
     v3: int[-2147483643, 2147483647] = PropGet v1 key="x" accessSite=11 @99
     ..
 }
-function f1241 name="dot" role=GenericVersion {
+function f1156 name="dot" role=GenericVersion {
   b0(v0: L0, v1: anything ~ undefined|null|L0) frequency=Unlikely:
     v2: int[-2147483643, 2147483647] = PropGet v0 key="x" accessSite=10 receivers=[L0] @93
     v3: anything ~ int[-2147483643, 2147483647] = PropGet v1 key="x" accessSite=11 @99
@@ -449,7 +449,7 @@ TypeScript takes the annotation without a check, because `JSON.parse` returns `a
   b4(v14: guard @Void):
     v15: cursor @RawWord = JSONSourceStart v14
     v16: cursor @RawWord = JSONSkipWhitespace v15
-    v17: undefined @Void = CallDirect v16 function=f1506
+    v17: undefined @Void = CallDirect v16 function=f1159
     v18: int[0, 2] @Int32 = ResultAt v17
     v19: undefined|null|L1 @JSValue = ResultAt v17 index=1
     v20: cursor @RawWord = ResultAt v17 index=2
@@ -459,7 +459,7 @@ TypeScript takes the annotation without a check, because `JSON.parse` returns `a
     v25: null|boolean|number|string|object @JSValue = CallBuiltin -, v12, v24 overload=JSONParse/0
 ```
 
-`f1506` is a function with `role=Parser`. It's written in the same IR as everything else, so the same passes optimize it and the same back end compiles it. It reads the bytes of the text through a cursor that lives in a register, and it allocates objects with the layouts of `{ vec: Vec }` and `Vec`. It returns three values in registers: a status, the object and the new cursor. No tree of boxed values is built on the way.
+`f1159` is a function with `role=Parser`. It's written in the same IR as everything else, so the same passes optimize it and the same back end compiles it. It reads the bytes of the text through a cursor that lives in a register, and it allocates objects with the layouts of `{ vec: Vec }` and `Vec`. It returns three values in registers: a status, the object and the new cursor. No tree of boxed values is built on the way.
 
 Keys in another order, and keys that the type doesn't name, are no trouble. Where the text doesn't fit the type, the parser gives up, and the original call of `JSON.parse` in `b8` parses the text from the start. Then you get ordinary objects, the guard fails, and the program does what it does under `bun run`.
 
@@ -768,7 +768,7 @@ operation PropGet (object: Any/inspects, key: PropertyKey, with AccessStamp) [is
 
 A `|` followed by `engine` in a list splits it. What comes before it is on the wire. What comes after it exists only in the engine, so the front end can't even spell it.
 
-The schema has about 400 operations. The ones that the front end may send are close to the language: `PropGet`, `Call`, `Add`, `Await`, `NewClass`. The rest are forms that the engine's passes lower to.
+The schema has about 380 operations. The ones that the front end may send are close to the language: `PropGet`, `Call`, `Add`, `Await`, `NewClass`. The rest are forms that the engine's passes lower to.
 
 ### Four forms
 
@@ -1290,6 +1290,7 @@ One node per parameter, shared by all callers, is cheap and often too coarse. `i
 - **A method sees only the receivers that find it.** With `shape.area()` over circles and squares, `Circle.prototype.area` gets only circles as `this`.
 - **A function that uses a parameter as a key is followed once per constant.** `on(table, "request", f)` and `emit(table, "request", x)` are matched by name, so an event emitter doesn't connect every listener to every event.
 - **What a callee does to each argument is part of its summary.** It reads it, writes these fields, keeps it, or passes it on. The caller keeps every proof that the summary doesn't kill.
+- **A function that returns a closure is copied for each call at the top of a module.** With `const once = run => { let result; return () => (result ??= run()); }`, `once(loadA)` and `once(loadB)` would share one inner function and one `result`, and each would return what either load returns. `CopyClosureFactories` runs before flow and gives each such call its own copy of the function, of the functions it makes closures of, and of their environments. The top of a CommonJS file and the body of a function that is called where it is written count as the top of a module. That's what keeps the modules of a pre-bundled file apart when they all go through one `__commonJS`-style helper. A copy has the name, length, text and position of its original, and what stays identical after optimization is merged again in the image.
 
 ### What flow hands on
 
@@ -1583,7 +1584,7 @@ There's no profile. The compiler never sees the program run, and a build takes n
 - Each function gets an estimate of how often it's entered, propagated down the call graph from the entry points.
 - A loop multiplies. A branch divides. A block that ends in a `throw`, the failing edge of a guard and a `catch` are unlikely or rare.
 - Flow's execution counts feed in. A module body runs once, and so does what only it calls outside of loops.
-- Callbacks count. A function that's passed to `Bun.serve` as a handler, or to `forEach`, is entered many times. The table of built-ins says `times: "PerElement"` or `"Repeatedly"`.
+- Callbacks count. A function that's passed to `Bun.serve` as a handler, or to `forEach`, is entered many times. The table of built-ins says `times: "PerElement"`, `"Repeatedly"` or `"PerEvent"`. A handler that the host calls per event is hot in every block that runs at least every second time, however much other code the program has.
 
 The estimate is then held against a budget: `MaxHotCodeValues` and `MaxWarmCodeValues` in `limits.def`. The hottest code up to the first limit is hot, the next part is warm, and the rest is cold. In a small program, everything fits and everything is hot. In a very large one, most code is cold.
 

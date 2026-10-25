@@ -197,7 +197,8 @@ impl Tables {
 
     #[inline]
     fn class(&self, index: u32) -> u32 {
-        let cell = self.classes.existing(index / class::PER_CELL);
+        // Another thread may have just allocated the cells for another text.
+        let cell = self.classes.existing_acquire(index / class::PER_CELL);
         let classes = cell.map_or(0, |cell| cell.load(Ordering::Relaxed));
         classes >> (index % class::PER_CELL * class::BITS) & ((1 << class::BITS) - 1)
     }
@@ -994,4 +995,38 @@ impl<'p, 's> Atoms<'p, 's> {
 /// `String(n)`, which is a number's property name.
 pub fn number_to_string(n: f64) -> Vec<u8> {
     bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], n).to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    /// A plain name has no stored class, so nothing orders the thread that asks for its class after the thread that
+    /// allocates the cells for another name. Only Miri can fail this test.
+    #[test]
+    fn a_class_is_read_while_another_thread_adds_a_name() {
+        let session = Session::new();
+        // An interner that's layered over another one starts without cells.
+        let atoms = Interner::over(&session, Interner::in_common(&session));
+        let plain = atoms.intern(b"plain");
+        assert!(plain.0 >= atoms.first);
+        // Relaxed, so that it orders nothing. It only makes the reader come second.
+        let added = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                atoms.intern(b"0");
+                added.store(true, Ordering::Relaxed);
+            });
+            scope.spawn(|| {
+                while !added.load(Ordering::Relaxed) {
+                    std::thread::yield_now();
+                }
+                for _ in 0..64 {
+                    assert_eq!(atoms.class(plain), 0);
+                }
+            });
+        });
+        assert_eq!(atoms.class(atoms.intern(b"0")), class::IS_NUMERIC);
+    }
 }

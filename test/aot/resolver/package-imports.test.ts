@@ -1,6 +1,5 @@
 import { describe } from "../supported";
-import { packageFiles } from "./compare";
-import { testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
+import { packageFiles, testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 type Answer = string | null | [onImport: string | null, onRequire: string | null];
 type ImportsFixture = [name: string, importsMap: object | string, files: string[], answers: Record<string, Answer>];

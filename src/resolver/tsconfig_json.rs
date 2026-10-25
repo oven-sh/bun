@@ -163,6 +163,7 @@ pub struct TSConfigJSON {
     pub experimental_decorators: bool,
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
+    pub(crate) has_compiler_options: bool,
 }
 
 impl Default for TSConfigJSON {
@@ -179,6 +180,7 @@ impl Default for TSConfigJSON {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: None,
+            has_compiler_options: false,
         }
     }
 }
@@ -371,6 +373,7 @@ impl TSConfigJSON {
 
         // Parse "compilerOptions"
         if let Some(compiler_opts) = compiler_opts {
+            result.has_compiler_options = true;
             // Single pass over `compilerOptions`' properties; first occurrence
             // of each key wins (matching `asProperty`).
             let mut base_url_v: Option<&bun_ast::E::JsonValue> = None;

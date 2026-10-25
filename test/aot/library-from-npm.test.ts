@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { readBuildReport } from "./harness/build-report";
 import { slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
@@ -78,26 +79,60 @@ async function pack(root: string, folder = "library") {
   return (await bun(root, `${folder}/dist`, "pm", "pack", "--quiet", "--destination", root)).trim();
 }
 
+/**
+ * Compiles and runs the program. `aotFiles`: how many files under an "aot" condition were compiled with their types.
+ * `functionsFrom`: the .aot.ts files that the functions of the executable were written in.
+ */
 async function compile(root: string, folder = "app", entry = "app.ts") {
   const app = join(root, folder);
-  const built = await spawned([bunExe(), "compile", `./${entry}`], app, environment(root));
+  const reportPath = join(app, "report.json");
+  const flags = ["--aot-report=" + reportPath, "--aot-report-detail=functions"];
+  const built = await spawned([bunExe(), "compile", `./${entry}`, ...flags], app, environment(root));
+  const fromRoot = (text: string) => text.replaceAll("\\", "/").replaceAll(root.replaceAll("\\", "/"), "<root>");
   const said = (built.stdout + built.stderr)
     .split(/\r?\n/)
-    .filter(line => /full types|without (its |their )?types/.test(line) && !/^\s*\[| full types, and /.test(line))
-    .map(line => line.replaceAll("\\", "/").replaceAll(root.replaceAll("\\", "/"), "<root>"));
+    .filter(line => /^(warn|error): /.test(line))
+    .map(fromRoot);
   const name = entry.replace(/\.[a-z]+$/, isWindows ? ".exe" : "");
   const ran = built.exitCode === 0 ? await spawned([join(app, name)], app, environment(root)) : undefined;
   const plain = await spawned([bunExe(), entry], app, environment(root));
-  return { said, exitCode: built.exitCode, signal: built.signal, stdout: ran?.stdout, plain: plain.stdout };
+  const report = built.exitCode === 0 ? readBuildReport(reportPath) : undefined;
+  const written = report?.functions?.map(({ file }) => file).filter(file => /\.aot\.[cm]?ts$/.test(file));
+  return {
+    said,
+    aotFiles: report?.statistics.TypedVersionsUsed,
+    functionsFrom: written && [...new Set(written.map(file => fromRoot(join(app, file))))].sort(),
+    exitCode: built.exitCode,
+    signal: built.signal,
+    stdout: ran?.stdout,
+    plain: plain.stdout,
+  };
 }
 
-const used = (where: string, version = "1.2.3") =>
-  `note: "shapes" ${version} is compiled from its full types in ${where}`;
-const unused = (why: string, where = "node_modules/shapes") =>
-  `warn: "shapes" is compiled without types, because its full types in ${where} can't be used: ${why}`;
-const differs = (stem: string) =>
-  `${stem}.full.ts without its types doesn't match ${stem}.js. Was the package patched?`;
-const compiled = (said: string[], stdout = "7 1.2.3\n") => ({ said, exitCode: 0, signal: null, stdout, plain: stdout });
+/** `count` files of packages with the condition, and functions from index.aot.ts in each of the folders. */
+const typed = (count: number, ...folders: string[]) => ({
+  aotFiles: count,
+  functionsFrom: folders.map(folder => `<root>/${folder}/index.aot.ts`).sort(),
+});
+// index.aot.ts and version.aot.ts; the second holds no function.
+const shapes = (folder = "app/node_modules/shapes") => typed(2, folder);
+const compiled = (files: ReturnType<typeof typed>, stdout = "7 1.2.3\n", said: string[] = []) => ({
+  said,
+  ...files,
+  exitCode: 0,
+  signal: null,
+  stdout,
+  plain: stdout,
+});
+const stopped = (said: string[], plain = "7 1.2.3\n") => ({
+  said,
+  aotFiles: undefined,
+  functionsFrom: undefined,
+  exitCode: 1,
+  signal: null,
+  stdout: undefined,
+  plain,
+});
 
 const scene = (
   name: string,
@@ -116,41 +151,43 @@ const scene = (
   );
 
 describe.concurrent(
-  "bun compile, with no flag and no setup, uses the full-types files of a package from bun compile --library",
+  "bun compile, with no flag and no setup, compiles the .aot.ts files of a package from bun compile --library",
   () => {
     scene("that bun add installed from its tarball", async root => {
       await bun(root, "app", "add", await pack(root));
-      expect(await compile(root)).toEqual(compiled([used("node_modules/shapes")]));
+      expect(await compile(root)).toEqual(compiled(shapes()));
     });
 
     scene("that the isolated linker installed", async root => {
       await bun(root, "app", "add", "--linker", "isolated", await pack(root));
-      const { said, ...rest } = await compile(root);
-      expect(rest).toEqual((({ said, ...rest }) => rest)(compiled([])));
-      expect(said).toHaveLength(1);
-      expect(said[0]).toMatch(
-        /^note: "shapes" 1\.2\.3 is compiled from its full types in node_modules\/\.bun\/shapes@[^/]+\/node_modules\/shapes$/,
-      );
+      expect(await compile(root)).toEqual({
+        ...compiled(shapes()),
+        functionsFrom: [
+          expect.stringMatching(
+            /^<root>\/app\/node_modules\/\.bun\/shapes@[^/]+\/node_modules\/shapes\/index\.aot\.ts$/,
+          ),
+        ],
+      });
     });
 
     scene("that bun add installed from its folder", async root => {
       await build(root);
       await bun(root, "app", "add", "../library/dist");
-      expect(await compile(root)).toEqual(compiled([used("node_modules/shapes")]));
+      expect(await compile(root)).toEqual(compiled(shapes()));
     });
 
     scene("that --minify-syntax and --minify-whitespace made smaller", async root => {
       const flags = ["--minify-syntax", "--minify-whitespace"];
       await bun(root, "library", "compile", "--library", "src/index.ts", "src/version.ts", ...flags);
       await bun(root, "app", "add", "../library/dist");
-      expect(await compile(root)).toEqual(compiled([used("node_modules/shapes")]));
+      expect(await compile(root)).toEqual(compiled(shapes()));
     });
 
     scene("that bun link links", async root => {
       await build(root);
       await bun(root, "library/dist", "link");
       await bun(root, "app", "link", "shapes");
-      expect(await compile(root)).toEqual(compiled([used("<root>/library/dist")]));
+      expect(await compile(root)).toEqual(compiled(shapes("library/dist")));
     });
 
     scene(
@@ -158,7 +195,7 @@ describe.concurrent(
       async root => {
         await build(root, "packages/shapes");
         await bun(root, ".", "install");
-        expect(await compile(root, "packages/app")).toEqual(compiled([used("<root>/packages/shapes/dist")]));
+        expect(await compile(root, "packages/app")).toEqual(compiled(shapes("packages/shapes/dist")));
       },
       {
         "package.json": JSON.stringify({ name: "workspaces", private: true, workspaces: ["packages/*"] }),
@@ -169,8 +206,8 @@ describe.concurrent(
             version: "1.2.3",
             type: "module",
             exports: {
-              ".": { types: "./dist/index.d.ts", default: "./dist/index.js" },
-              "./version": { types: "./dist/version.d.ts", default: "./dist/version.js" },
+              ".": { aot: "./dist/index.aot.ts", types: "./dist/index.d.ts", default: "./dist/index.js" },
+              "./version": { aot: "./dist/version.aot.ts", types: "./dist/version.d.ts", default: "./dist/version.js" },
             },
           }),
         }),
@@ -188,11 +225,18 @@ describe.concurrent(
         const chunks = readdirSync(join(root, "library/dist"))
           .filter(name => /^index-\w+\./.test(name))
           .sort();
-        expect(chunks.map(name => name.replace(/-\w+/, ""))).toEqual(["index.full.ts", "index.js"]);
+        expect(chunks.map(name => name.replace(/-\w+/, ""))).toEqual(["index.aot.ts", "index.js"]);
         await bun(root, "app", "add", "--backend=copyfile", "../library/dist");
-        expect(await compile(root)).toEqual(compiled([used("node_modules/shapes")], "18\n"));
+        const files = {
+          aotFiles: 3,
+          functionsFrom: ["index.aot.ts", chunks[0], "make.aot.ts"]
+            .map(name => `<root>/app/node_modules/shapes/${name}`)
+            .sort(),
+        };
+        expect(await compile(root)).toEqual(compiled(files, "18\n"));
+        // The .aot.ts files import the chunk's .aot.ts file, not its JavaScript.
         writeFileSync(join(root, "app/node_modules/shapes", chunks[1]), "");
-        expect((await compile(root)).said).toEqual([unused(differs(chunks[1].replace(".js", "")))]);
+        expect(await compile(root)).toMatchObject({ ...files, said: [], stdout: "18\n" });
       },
       {
         ...project,
@@ -229,10 +273,8 @@ console.log(total([make(2), { kind: "circle", size: 1 }, make(3)]));
         await build(root, "newer");
         cpSync(join(root, "newer/dist"), join(root, "app/node_modules/other/node_modules/shapes"), { recursive: true });
         expect(await compile(root)).toEqual(
-          compiled(
-            [used("node_modules/shapes"), used("node_modules/other/node_modules/shapes", "1.2.4")],
-            "7 1.2.3\n1.2.4\n",
-          ),
+          // Of the newer version, version.aot.ts alone.
+          compiled(typed(3, "app/node_modules/shapes"), "7 1.2.3\n1.2.4\n"),
         );
       },
       {
@@ -254,14 +296,14 @@ console.log(total([make(2), { kind: "circle", size: 1 }, make(3)]));
 );
 
 describe.concurrent(
-  "bun compile, with no flag and no setup, uses the full-types files that bun build --dts wrote",
+  "bun compile, with no flag and no setup, compiles the .aot.ts files that bun build --dts wrote",
   () => {
-    const typed = (stem: string) => ({
+    const withCondition = (stem: string) => ({
       types: `./${stem}.d.ts`,
-      "full-types": `./${stem}.full.ts`,
+      aot: `./${stem}.aot.ts`,
       default: `./${stem}.js`,
     });
-    const untyped = (stem: string) => ({ types: `./${stem}.d.ts`, default: `./${stem}.js` });
+    const withoutCondition = (stem: string) => ({ types: `./${stem}.d.ts`, default: `./${stem}.js` });
     const entryPoints = ["src/index.ts", "src/version.ts"];
 
     scene(
@@ -274,7 +316,7 @@ describe.concurrent(
           "add",
           (await bun(root, "library", "pm", "pack", "--quiet", "--destination", root)).trim(),
         );
-        expect(await compile(root)).toEqual(compiled([used("node_modules/shapes/dist")]));
+        expect(await compile(root)).toEqual(compiled(shapes("app/node_modules/shapes/dist")));
       },
       {
         ...project,
@@ -282,7 +324,7 @@ describe.concurrent(
           name: "shapes",
           version: "1.2.3",
           type: "module",
-          exports: { ".": typed("dist/index"), "./version": typed("dist/version") },
+          exports: { ".": withCondition("dist/index"), "./version": withCondition("dist/version") },
           files: ["dist"],
         }),
       },
@@ -300,8 +342,8 @@ describe.concurrent(
           "add",
           (await bun(root, "library", "pm", "pack", "--quiet", "--destination", root)).trim(),
         );
-        expect(await compile(root)).toEqual(compiled([used("node_modules/shapes/dist/esm")]));
-        expect(await compile(root, "app", "app.cjs")).toEqual(compiled([]));
+        expect(await compile(root)).toEqual(compiled(shapes("app/node_modules/shapes/dist/esm")));
+        expect(await compile(root, "app", "app.cjs")).toEqual(compiled(typed(0)));
       },
       {
         ...project,
@@ -314,8 +356,8 @@ console.log(total([{ kind: "square", size: 2 }, { kind: "circle", size: 1 }]), v
           version: "1.2.3",
           type: "module",
           exports: {
-            ".": { import: typed("dist/esm/index"), require: untyped("dist/cjs/index") },
-            "./version": { import: typed("dist/esm/version"), require: untyped("dist/cjs/version") },
+            ".": { import: withCondition("dist/esm/index"), require: withoutCondition("dist/cjs/index") },
+            "./version": { import: withCondition("dist/esm/version"), require: withoutCondition("dist/cjs/version") },
           },
           files: ["dist"],
         }),
@@ -324,75 +366,47 @@ console.log(total([{ kind: "square", size: 2 }, { kind: "circle", size: 1 }]), v
   },
 );
 
-describe.concurrent(
-  "a full-types file that can't be used is a warning, and the JavaScript is compiled without types",
-  () => {
-    const installed = async (root: string) => {
-      await bun(root, "app", "add", "--backend=copyfile", await pack(root));
-      return join(root, "app/node_modules/shapes");
-    };
-    const edit = (path: string, from: string, to: string) => {
-      const text = readFileSync(path, "utf8");
-      expect(text).toContain(from);
-      writeFileSync(path, text.replace(from, to));
-    };
+describe.concurrent("an .aot.ts file of an installed package", () => {
+  const installed = async (root: string) => {
+    await bun(root, "app", "add", "--backend=copyfile", await pack(root));
+    return join(root, "app/node_modules/shapes");
+  };
+  const edit = (path: string, from: string, to: string) => {
+    const text = readFileSync(path, "utf8");
+    expect(text).toContain(from);
+    writeFileSync(path, text.replace(from, to));
+  };
+  const unresolved = `error: TS100151: Could not resolve: "shapes". Maybe you need to "bun install"?`;
 
-    scene("the JavaScript was patched by hand", async root => {
-      edit(join(await installed(root), "index.js"), "3 * shape.size", "4 * shape.size");
-      expect(await compile(root)).toEqual(compiled([unused(differs("index"))], "8 1.2.3\n"));
-    });
-
-    scene("the JavaScript was patched by bun patch", async root => {
-      const shapes = await installed(root);
-      await bun(root, "app", "patch", "shapes");
-      edit(join(shapes, "index.js"), "3 * shape.size", "4 * shape.size");
-      await bun(root, "app", "patch", "--commit", "node_modules/shapes");
-      expect(await compile(root)).toEqual(compiled([unused(differs("index"))], "8 1.2.3\n"));
-    });
-
-    scene(
-      "the full-types file belongs to another version",
-      async root => {
-        const shapes = await installed(root);
-        await build(root, "newer");
-        cpSync(join(root, "newer/dist/version.full.ts"), join(shapes, "version.full.ts"));
-        expect(await compile(root)).toEqual(compiled([unused(differs("version"))]));
-      },
-      { ...project, ...under("newer", sourcesOf("1.2.4")) },
+  scene("that has a type error is compiled without its types, with a warning", async root => {
+    edit(join(await installed(root), "version.aot.ts"), "version: string", "version: number");
+    expect(await compile(root)).toEqual(
+      compiled({ ...shapes(), aotFiles: 1 }, undefined, [
+        `warn: TS100009: 'shapes' has 1 type error (the first at <root>/app/node_modules/shapes/version.aot.ts:2:7), so 1 of its 2 files are compiled without their types. They still work, but run slower.`,
+      ]),
     );
+  });
 
-    scene("the full-types file does not parse", async root => {
-      writeFileSync(join(await installed(root), "index.full.ts"), "export const = ;\n");
-      expect(await compile(root)).toEqual(compiled([unused(differs("index"))]));
-    });
+  scene("that does not parse stops the build", async root => {
+    writeFileSync(join(await installed(root), "index.aot.ts"), "export const = ;\n");
+    expect(await compile(root)).toEqual(stopped(["error: TS1134: Variable declaration expected."]));
+  });
 
-    scene("the full-types file has a type error", async root => {
-      edit(join(await installed(root), "version.full.ts"), "version: string", "version: number");
-      expect(await compile(root)).toEqual(
-        compiled([
-          `warn: TS100009: 'shapes' has 1 type error (the first at <root>/app/node_modules/shapes/version.full.ts:2:7), so 1 of its 2 files are compiled without their types. They still work, but run slower.`,
-        ]),
-      );
-    });
+  scene("that is missing stops the build", async root => {
+    rmSync(join(await installed(root), "index.aot.ts"));
+    expect(await compile(root)).toEqual(stopped([unresolved]));
+  });
 
-    scene("one full-types file is missing", async root => {
-      rmSync(join(await installed(root), "index.full.ts"));
-      expect(await compile(root)).toEqual(compiled([unused("index.full.ts is missing")]));
-    });
-
-    scene("every full-types file is missing", async root => {
-      const shapes = await installed(root);
-      rmSync(join(shapes, "index.full.ts"));
-      rmSync(join(shapes, "version.full.ts"));
-      expect(await compile(root)).toEqual(
-        compiled([unused("index.full.ts is missing"), unused("version.full.ts is missing")]),
-      );
-    });
-  },
-);
+  scene("that is missing for every entry point stops the build with an error for each", async root => {
+    const folder = await installed(root);
+    rmSync(join(folder, "index.aot.ts"));
+    rmSync(join(folder, "version.aot.ts"));
+    expect(await compile(root)).toEqual(stopped([unresolved, `error: TS100150: Could not resolve: "shapes/version"`]));
+  });
+});
 
 describe.concurrent(
-  "the tsconfig.json of the application does not count against the full-types files of a package",
+  "the tsconfig.json of the application does not count against the .aot.ts files of a package",
   () => {
     const withOptions = (compilerOptions: object) =>
       JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, ...compilerOptions } });
@@ -411,13 +425,13 @@ describe.concurrent(
       const tarball = await bun(root, "library/dist", "pm", "pack", "--quiet", "--destination", root);
       await bun(root, "app", "add", tarball.trim());
     };
-    const note = (name: string) => `note: "${name}" 1.0.0 is compiled from its full types in node_modules/${name}`;
+    const only = (name: string) => typed(1, `app/node_modules/${name}`);
 
     scene(
       "nodenext, and every flag beyond strict",
       async root => {
         await install(root);
-        expect(await compile(root)).toEqual(compiled([note("options")], "a b c\n"));
+        expect(await compile(root)).toEqual(compiled(only("options"), "a b c\n"));
       },
       {
         ...libraryOf(
@@ -460,7 +474,7 @@ export function read(options: { [key: string]: string }): string {
       "exactOptionalPropertyTypes, where the package has a conditional type over Partial",
       async root => {
         await install(root);
-        expect(await compile(root)).toEqual(compiled([note("forms")], "b\n"));
+        expect(await compile(root)).toEqual(compiled(only("forms"), "b\n"));
       },
       {
         ...libraryOf(
@@ -489,7 +503,7 @@ export function store(form: Record<string, string>, key: string, value: Value<Pa
       "a lib without what the package uses",
       async root => {
         await install(root);
-        expect(await compile(root)).toEqual(compiled([note("answers")], "201 /mine 3 6\n"));
+        expect(await compile(root)).toEqual(compiled(only("answers"), "201 /mine 3 6\n"));
       },
       {
         ...libraryOf(
@@ -524,7 +538,7 @@ console.log(read(answer), last([answer]));
       "the globals of @types/bun, where the package has those of the DOM",
       async root => {
         await install(root);
-        expect(await compile(root)).toEqual(compiled([note("boxes")], "200 /one 3 201 /mine 3 16 31 201 a\n"));
+        expect(await compile(root)).toEqual(compiled(only("boxes"), "200 /one 3 201 /mine 3 16 31 201 a\n"));
       },
       {
         ...libraryOf(
@@ -564,7 +578,7 @@ console.log(read(make("one")), read(mine), keep(list, mine), keep(list, make("tw
       "no null checks, where the program stores null and undefined in the package's fields",
       async root => {
         await install(root);
-        expect(await compile(root)).toEqual(compiled([note("chains")], "3 1 threw 2 undefined 3\n"));
+        expect(await compile(root)).toEqual(compiled(only("chains"), "3 1 threw 2 undefined 3\n"));
       },
       {
         ...libraryOf(
@@ -614,7 +628,7 @@ console.log(length(chain(["x", "yy"])), length(a), threw, first([b]).count, firs
       "an interface of the package that the program adds a member to",
       async root => {
         await install(root);
-        expect(await compile(root)).toEqual(compiled([note("totals")], "7 3 undefined\n"));
+        expect(await compile(root)).toEqual(compiled(only("totals"), "7 3 undefined\n"));
       },
       {
         ...libraryOf(
@@ -652,7 +666,7 @@ console.log(total(list), list[1]!.extra!.deep, list[0]!.extra);
       "exactOptionalPropertyTypes in the package alone, where the program stores undefined in an optional field",
       async root => {
         await install(root);
-        expect(await compile(root)).toEqual(compiled([note("counts")], "5 2 true false undefined NaN\n"));
+        expect(await compile(root)).toEqual(compiled(only("counts"), "5 2 true false undefined NaN\n"));
       },
       {
         ...libraryOf(
@@ -693,7 +707,7 @@ console.log(total(list), list.length, has(empty), has(list[1]!), empty.count, to
       "noUncheckedIndexedAccess in the package alone",
       async root => {
         await install(root);
-        expect(await compile(root)).toEqual(compiled([note("lists")], "2 first undefined 4 a none 1\n"));
+        expect(await compile(root)).toEqual(compiled(only("lists"), "2 first undefined 4 a none 1\n"));
       },
       {
         ...libraryOf(
@@ -744,7 +758,7 @@ console.log(threw, pick(list, 0)!.name, pick(list, 9), sizes(holes), named(table
       async root => {
         await install(root);
         expect(await compile(root)).toEqual(
-          compiled([note("lists")], "3 undefined undefined 1 undefined undefined 0 b\n"),
+          compiled(only("lists"), "3 undefined undefined 1 undefined undefined 0 b\n"),
         );
       },
       {
@@ -804,7 +818,7 @@ console.log(threw, got, other, kept.length, kept[0], typeof kept[0], total(kept)
       async root => {
         await install(root);
         expect(await compile(root)).toEqual(
-          compiled([note("levels")], "8 low high undefined threw 2 3 true blue blue,red,red,blue High\n"),
+          compiled(only("levels"), "8 low high undefined threw 2 3 true blue blue,red,red,blue High\n"),
         );
       },
       {
@@ -879,11 +893,13 @@ console.log(
       "a conditional type over a global that only one of the two has",
       async root => {
         await install(root);
-        const { said, ...rest } = await compile(root);
-        expect(rest).toEqual((({ said, ...rest }) => rest)(compiled([], "string:2:2 number:7:1 string number\n")));
-        expect(said).toEqual([
-          expect.stringMatching(/^(note: "stamps" 1\.0\.0 is compiled from|warn: TS100009: 'stamps' has)/),
-        ]);
+        const { said, aotFiles, ...rest } = await compile(root);
+        expect(rest).toEqual(
+          (({ said, aotFiles, ...rest }) => rest)(compiled(only("stamps"), "string:2:2 number:7:1 string number\n")),
+        );
+        // With its types or without them: both are right.
+        expect(said.filter(line => !line.startsWith("warn: TS100009: 'stamps' has"))).toEqual([]);
+        expect(aotFiles).toBe(1 - said.length);
       },
       {
         ...libraryOf(
@@ -919,7 +935,7 @@ console.log(rows.map(show).join(" "), typeof rows[0]!.stamp, typeof rows[1]!.sta
       "a field that is a string to the package and a number to the program",
       async root => {
         await install(root);
-        expect(await compile(root)).toEqual(compiled([note("widths")], "undefined 2 8.5 s31 9.5s4 NaN\n"));
+        expect(await compile(root)).toEqual(compiled(only("widths"), "undefined 2 8.5 s31 9.5s4 NaN\n"));
       },
       {
         ...libraryOf(
@@ -963,7 +979,7 @@ console.log(width(mine), width(row(2)), mine.stamp + 1, row(3).stamp + 1, joined
       async root => {
         await install(root);
         expect(await compile(root)).toEqual(
-          compiled([note("stamps")], "NaN 0 s01,h01,s01,a1,s11,h11,s11,b1,s21,h21,s21,a1 string,string,string NaN\n"),
+          compiled(only("stamps"), "NaN 0 s01,h01,s01,a1,s11,h11,s11,b1,s21,h21,s21,a1 string,string,string NaN\n"),
         );
       },
       {
@@ -1023,7 +1039,7 @@ console.log(sum, bits, numbers.map(n => n + 1).join(), all.map(mine => typeof mi
         await install(root);
         expect(await compile(root)).toEqual(
           compiled(
-            [note("grown")],
+            only("grown"),
             `179 m0m1m2m3m4m5m6m7mine 48 60 undefined undefined name,times,extra,more count,label,added,tail {"name":"n1","times":1,"extra":2,"more":"m1","deep":{"value":1}}\n`,
           ),
         );
@@ -1120,7 +1136,7 @@ console.log(
       "no null checks in the program, whose callbacks return null where the package expects a number or an object",
       async root => {
         await install(root);
-        expect(await compile(root)).toEqual(compiled([note("folds")], "3 0 threw 2 null\n"));
+        expect(await compile(root)).toEqual(compiled(only("folds"), "3 0 threw 2 null\n"));
       },
       {
         ...libraryOf(
@@ -1168,7 +1184,7 @@ console.log(fold(list, item => item.name.length), fold(list, nothing), threw, na
       async root => {
         await install(root);
         expect(await compile(root)).toEqual(
-          compiled([note("finds")], "2 b null null 1\n5 2,,1,1,,,4 2:true,null:null,1:true 3,1,2,2,1,NaN,5\n"),
+          compiled(only("finds"), "2 b null null 1\n5 2,,1,1,,,4 2:true,null:null,1:true 3,1,2,2,1,NaN,5\n"),
         );
       },
       {
@@ -1243,11 +1259,12 @@ console.log(sum, numbers.join(), all.map(mine => mine.n + ":" + mine.on).join(),
         });
         expect(await compile(root)).toEqual(
           compiled(
-            [
-              note("between"),
-              note("shapes"),
-              `note: "shapes" 2.0.0 is compiled from its full types in node_modules/between/node_modules/shapes`,
-            ],
+            typed(
+              3,
+              "app/node_modules/between",
+              "app/node_modules/shapes",
+              "app/node_modules/between/node_modules/shapes",
+            ),
             "6 16 7 seven no 0sevenundefined\n",
           ),
         );
@@ -1321,7 +1338,7 @@ console.log(total(list), sum(4), other.name, other.times, threw, total([other as
   },
 );
 
-describe.concurrent("bun compile finds the full-types file of a package.json that was written by hand", () => {
+describe.concurrent("bun compile finds the file under the aot condition of a hand-written package.json", () => {
   const greeter = (format: string) => ({
     javascript: `function greet(options) {\n  return "${format} " + options.name;\n}\n`,
     typed: `interface Options {\n  name: string;\n}\nfunction greet(options: Options): string {\n  return "${format} " + options.name;\n}\n`,
@@ -1340,53 +1357,56 @@ describe.concurrent("bun compile finds the full-types file of a package.json tha
       types: "./dist/index.d.ts",
       exports: {
         ".": {
-          import: { types: "./dist/index.d.ts", "full-types": "./dist/index.full.ts", default: "./dist/index.js" },
-          require: { types: "./dist/index.d.cts", "full-types": "./dist/index.full.cts", default: "./dist/index.cjs" },
+          import: { types: "./dist/index.d.ts", aot: "./dist/index.aot.ts", default: "./dist/index.js" },
+          require: { types: "./dist/index.d.cts", aot: "./dist/index.aot.cts", default: "./dist/index.cjs" },
         },
       },
     }),
     "node_modules/dual/dist/index.js": esm.javascript + "export { greet };\n",
-    "node_modules/dual/dist/index.full.ts": esm.typed + "export { greet };\n",
+    "node_modules/dual/dist/index.aot.ts": esm.typed + "export { greet };\n",
     "node_modules/dual/dist/index.d.ts": esm.declarations,
     "node_modules/dual/dist/index.cjs": cjs.javascript + "module.exports = { greet };\n",
-    "node_modules/dual/dist/index.full.cts": cjs.typed + "module.exports = { greet };\n",
+    "node_modules/dual/dist/index.aot.cts": cjs.typed + "module.exports = { greet };\n",
     "node_modules/dual/dist/index.d.cts": cjs.declarations,
     "app.ts": `import { greet } from "dual";\nconsole.log(greet({ name: "Ada" }));\n`,
     "app.cjs": `const { greet } = require("dual");\nconsole.log(greet({ name: "Ada" }));\n`,
   };
-  const note = `note: "dual" 1.0.0 is compiled from its full types in node_modules/dual/dist`;
+  const one = (name: string) => ({ aotFiles: 1, functionsFrom: [`<root>/node_modules/dual/dist/${name}`] });
 
   scene(
     "under import, in a package that has ES modules and CommonJS",
-    async root => expect(await compile(root, ".", "app.ts")).toEqual(compiled([note], "esm Ada\n")),
+    async root => expect(await compile(root, ".", "app.ts")).toEqual(compiled(one("index.aot.ts"), "esm Ada\n")),
     dual,
   );
 
   scene(
     "under require, in a package that has ES modules and CommonJS",
-    async root => expect(await compile(root, ".", "app.cjs")).toEqual(compiled([note], "cjs Ada\n")),
+    async root => expect(await compile(root, ".", "app.cjs")).toEqual(compiled(one("index.aot.cts"), "cjs Ada\n")),
     dual,
   );
 
   scene(
-    "under require, with compilerOptions in a package.json beside the full-types files",
-    async root => expect(await compile(root, ".", "app.cjs")).toEqual(compiled([note], "cjs Ada\n")),
+    "under require, with compilerOptions in a package.json beside the files",
+    async root => expect(await compile(root, ".", "app.cjs")).toEqual(compiled(one("index.aot.cts"), "cjs Ada\n")),
     { ...dual, "node_modules/dual/dist/package.json": tsconfig },
   );
 
   scene(
-    "under a pattern, which need not have a full-types file for every file",
+    "under a pattern, which needs a file for every name that is imported",
     async root => {
+      const writeTyped = (name: string) =>
+        writeFileSync(join(root, `node_modules/many/typed/${name}.ts`), `export const name: string = "${name}";\n`);
       mkdirSync(join(root, "node_modules/many/typed"), { recursive: true });
       for (const name of ["one", "two", "three"]) {
         writeFileSync(join(root, `node_modules/many/lib/${name}.js`), `export const name = "${name}";\n`);
         writeFileSync(join(root, `node_modules/many/lib/${name}.d.ts`), `export declare const name: string;\n`);
-        if (name !== "three")
-          writeFileSync(join(root, `node_modules/many/typed/${name}.ts`), `export const name: string = "${name}";\n`);
+        if (name !== "three") writeTyped(name);
       }
       expect(await compile(root, ".", "app.ts")).toEqual(
-        compiled([`note: "many" 1.0.0 is compiled from its full types in node_modules/many/typed`], "one two three\n"),
+        stopped([`error: TS100150: Could not resolve: "many/three"`], "one two three\n"),
       );
+      writeTyped("three");
+      expect(await compile(root, ".", "app.ts")).toEqual(compiled(typed(3), "one two three\n"));
     },
     {
       "tsconfig.json": tsconfig,
@@ -1395,7 +1415,7 @@ describe.concurrent("bun compile finds the full-types file of a package.json tha
         name: "many",
         version: "1.0.0",
         type: "module",
-        exports: { "./*": { types: "./lib/*.d.ts", "full-types": "./typed/*.ts", default: "./lib/*.js" } },
+        exports: { "./*": { types: "./lib/*.d.ts", aot: "./typed/*.ts", default: "./lib/*.js" } },
       }),
       "node_modules/many/lib/.keep": "",
       "app.ts": `import { name as one } from "many/one";\nimport { name as two } from "many/two";\nimport { name as three } from "many/three";\nconsole.log(one, two, three);\n`,

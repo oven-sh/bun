@@ -7,6 +7,7 @@
   "array/spread-into-call-in-function": 1.23,
   "baseline/nothing": 8,
   "baseline/nothing-in-function": 8,
+  "built-in/async-local-storage-get-store": 1.06,
   "built-in/byte-length-of-chunks-written-to-a-view": 1.2,
   "built-in/events-emit": 1.12,
   "built-in/object-to-string-of-a-payload": 1.06,
@@ -37,7 +38,6 @@
   "everyday-benchmarks/shapes-by-virtual-call": 1.17,
   "everyday-benchmarks/spread-to-grow-an-object": 1.09,
   "everyday-benchmarks/validate-an-object-by-hand": 1.23,
-  "everyday-classes/bound-method": 1.06,
   "everyday-classes/constructor-name": 1.15,
   "everyday-classes/private-field": 1.21,
   "everyday-classes/singleton": 1.44,
@@ -59,7 +59,6 @@
   "everyday-dictionaries-built-anew/names-seen.one-of-256-lists-of-40-by-in": 1.13,
   "everyday-dictionaries-built-anew/names-seen.one-of-256-lists-of-40-in-a-map": 1.13,
   "everyday-dictionaries-built-anew/names-seen.one-of-256-lists-of-40-kept": 1.5,
-  "everyday-downleveled/bound-method.bind-in-the-constructor": 1.22,
   "everyday-downleveled/class.babel-create-class": 1.06,
   "everyday-downleveled/class.new-or-call": 6.6,
   "everyday-downleveled/derived.es5-extends": 1.06,
@@ -130,6 +129,7 @@
   "everyday-spellings/chain.ifs": 1.16,
   "everyday-spellings/chain.optional": 1.16,
   "everyday-spellings/chain.optional-nullish": 1.16,
+  "everyday-spellings/copy-a-list.concat": 1.05,
   "everyday-spellings/copy-a-list.loop-push": 1.07,
   "everyday-spellings/copy-a-list.slice": 1.07,
   "everyday-spellings/copy-a-list.slice-0": 1.05,
@@ -158,5 +158,6 @@
   "react/create-element-no-key-in-function": 1.07,
   "react/jsx-key-in-props": 1.07,
   "react/jsx-key-in-props-in-function": 1.09,
-  "spread/two-objects-in-function": 2.22
+  "spread/two-objects-in-function": 2.22,
+  "text/replace-all-markers-of-many-characters-in-a-page": 1.06
 }

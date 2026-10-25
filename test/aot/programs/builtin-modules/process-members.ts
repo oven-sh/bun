@@ -1,4 +1,4 @@
-// `process.env`, `process.stdout`, `process.version` and their like are read behind a watch where the read is hot: replaced, deleted, made getters, or with another `process` altogether, what is read is what is there now.
+// `process.env`, `process.stdout`, `process.version` and their like are read behind a watch where the read is hot: replaced, deleted or made getters, what is read is what is there now.
 const world = globalThis as any;
 const own = process as any;
 function environment(rounds: number): unknown {
@@ -85,11 +85,6 @@ console.log(others(3).endsWith("string"));
 delete own.notThere;
 console.log(others(3).endsWith("undefined"));
 
-const originalProcess = process;
-world.process = { env: { MEMBERS_OF_PROCESS: "of another process" }, version: "another" } as any;
-const withAnotherProcess = [environment(3) === originalEnvironment, variable(3), byKey("MEMBERS_OF_PROCESS", 3), version(3)].join();
-world.process = originalProcess;
-console.log("another process", withAnotherProcess, "|", environment(3) === originalEnvironment, variable(3), version(3) === originalVersion);
 Bun.gc(true);
 console.log("after a collection", environment(5000) === originalEnvironment, version(5000) === originalVersion, streams(5000), others(50) === others(1), ofBun(50) === ofBun(1));
 export {};

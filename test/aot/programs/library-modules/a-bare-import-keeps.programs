@@ -157,9 +157,9 @@ try {
 // writes-to-host-objects/process-next-tick-* have the import with process.nextTick replaced, which throws if the import makes process.stdin.
 const p = await import("node:process");
 console.log(Object.keys(p).length > 50, p.default === process, p.env === process.env, typeof p.versions, "title" in p, p.nothing);
-const before = p.release;
-process.release = 1;
-console.log("an export that was read keeps its value:", p.release === before, process.release);
+const before = p.config;
+process.config = 1;
+console.log("an export that was read keeps its value:", p.config === before, process.config);
 process.features = 2;
 console.log("an export that nobody had read gives what is there now:", p.features);
 const b = await import("bun");

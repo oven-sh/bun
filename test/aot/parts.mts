@@ -366,12 +366,12 @@ export const rows: Row[] = [
     "fastify",
     "fastify-schemas",
     "tanstack",
-    "koa-typed",
-    "express-typed",
-    "fastify-typed",
   ].map((name): Row => [`aot/servers/${name}`, 0, "./servers/one-server", "testServers", ["servers", name]]),
   ...["bun", "elysia", "express", "fastify", "hono", "node"].map(
     (name): Row => [`aot/servers/features-of-${name}`, 0, "./servers/one-server", "testServers", ["features", name]],
+  ),
+  ...["bun", "elysia", "express", "fastify", "hono", "koa", "node"].map(
+    (name): Row => [`aot/servers/budgets-of-${name}`, 0, "./servers/one-server", "testServers", ["budgets", name]],
   ),
   ["aot/servers/api-servers", 0, "./servers/one-server", "testServers", ["api", "api-bun,api-thin,api-hono,api-elysia"]],
   ["aot/servers/api-servers-on-node-http", 0, "./servers/one-server", "testServers", ["api", "api-node,api-express,api-fastify,api-koa"]],

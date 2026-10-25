@@ -4,8 +4,6 @@ Nine small servers with the same eight routes (`../app`, `../tanstack`; the rout
 node:http, Koa, TanStack Start, Express, Fastify, and Fastify with a schema for the body of an order and for every JSON response (`fastify-schemas`: ajv and
 fast-json-stringify generate code from the schemas at run time, which a compiled server interprets). `measure.py` builds each of them with every Bun it is given, loads them side by side and writes
 one line of JSON for each server, route and build. Every response is compared with the expected one, byte for byte.
-`tanstack-typed` is TanStack Start once more, with the full types of react, react-dom and seroval from `packages/full-types` in `.full-types/`.
-`koa-typed`, `express-typed` and `fastify-typed` are those servers once more, with the full types of their packages installed as `node_modules/@oven/full-types-<name>`.
 
 The order of the route `post` is checked by zod, and that of the route `hand` by checks written by hand. As columns side by side:
 

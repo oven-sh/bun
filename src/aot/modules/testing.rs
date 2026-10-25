@@ -167,6 +167,9 @@ fn describe_binding(
 pub(crate) fn describe_module_ref(input: &BindInput<'_, '_>, module: ModuleRef) -> String {
     match module {
         ModuleRef::File(file) => project_path(input, file).to_string(),
+        ModuleRef::Inner { file, callback } => {
+            format!("{}#{}", project_path(input, file), callback.0)
+        }
         ModuleRef::Face(file) => format!("face:{}", project_path(input, file)),
         ModuleRef::Check(file) => format!("check:{}", project_path(input, file)),
         ModuleRef::Runtime(module) => format!("runtime:{module:?}"),

@@ -13,6 +13,7 @@ declare function $newContiguousArray<T>(n: number): T[];
 declare function $putDoubleIndex(out: unknown[], k: number, value: number): void;
 declare function $putContiguousIndex(out: unknown[], k: number, value: unknown): void;
 declare function $tryPutIndex(a: unknown[], k: number, value: unknown): boolean;
+declare function $tryPutDoubleIndex(a: unknown[], k: number, value: number): boolean;
 
 // The comparator sees the same calls in the same order as in arrayStableSort of JavaScriptCore's runtime/StableSort.h.
 
@@ -503,13 +504,14 @@ function sortDoubleArray<T>(array: T[], length: number, comparator: unknown): vo
   sortDoubles(from, count, comparator);
   let index = 0;
   if (count > 0) {
-    // This store copies shared storage and throws on a frozen array, so the loop below stores into writable storage.
+    // This store copies shared storage and throws on a frozen array, so the loop below finds writable storage.
     const first: number = $getDoubleIndex(from, 0);
     const isFirstStored: boolean = $tryPutIndex(array, 0, first);
     if (!isFirstStored) array[0] = first as unknown as T;
-    index = 1;
-    if (isDoubleArray(array) && count <= array.length) {
-      for (; index < count; index++) $putDoubleIndex(array, index, $getDoubleIndex(from, index));
+    // $putDoubleIndex is for arrays that this file made. The program's array may refuse a store: the last loop stores the rest.
+    for (index = 1; index < count; index++) {
+      const isStored: boolean = $tryPutDoubleIndex(array, index, $getDoubleIndex(from, index));
+      if (!isStored) break;
     }
   }
   for (; index < count; index++) {

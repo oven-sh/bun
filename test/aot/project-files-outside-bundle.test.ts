@@ -442,8 +442,7 @@ test("type-only file that loses a member during bundling fails the build", async
   expect(result.buildExitCode).not.toBe(0);
 });
 
-// TODO: the check does not see a file that a plugin wrote into a folder it had listed before: TS2307.
-test.todo("type-only file added to a cached directory during bundling is resolved", async () => {
+test("type-only file added to a cached directory during bundling is resolved", async () => {
   const result = await buildWithLateWrites(
     {
       "src/generated/first.ts": `export type First = { first: number };\n`,

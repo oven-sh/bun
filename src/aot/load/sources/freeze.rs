@@ -19,7 +19,7 @@ use crate::load::module_paths::{
 };
 use crate::load::project::{PerProject, ProjectId};
 use crate::options::Options;
-use crate::statistics::{Counters, LimitId, Stage, StatisticId};
+use crate::statistics::{Counters, LimitId, Stage};
 
 pub(crate) struct FreezeInput<'a, 's> {
     pub project: ProjectId,
@@ -173,8 +173,6 @@ impl FrozenRun {
             let span = Span::of_node(hir, file, NodeData::Expr(string));
             counters.gave_up(LimitId::MaxFoldedStringBytes, Some(span));
         }
-        let is_aot_source = u64::from(compiled.is_aot_source);
-        counters.count(StatisticId::TypedVersionsUsed, is_aot_source);
         for site in &payload.evaluated_text_sites {
             let answer = compiled.implied_answers.get(site.implied_answer as usize);
             let Some(&CodeAnswer::File(text_file)) = answer else {

@@ -1,7 +1,6 @@
 import { isWindows, type DirectoryTree } from "harness";
 import { describe } from "../supported";
-import { packageFiles } from "./compare";
-import { testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
+import { packageFiles, testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 type Answer = string | null;
 type MainFieldsFixture = [name: string, manifest: object | null, files: string[], onImport: Answer, onRequire?: Answer];

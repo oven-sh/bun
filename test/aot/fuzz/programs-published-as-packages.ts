@@ -1,18 +1,19 @@
-// Every typed program that a source of this folder draws, published as a package and installed: `bun compile --library` writes `index.js`, `index.d.ts`, `index.full.ts` and `package.json`; the folder is laid into
-// `node_modules` of a program that imports it; `bun compile` builds that program from the package's full types. The executable prints what plain Bun prints for the program itself.
+// Publishes every typed program that a source of this folder draws as a package, installs it and compiles a program that imports it. `bun compile --library` writes `index.js`, `index.d.ts`, `index.aot.ts` and
+// `package.json`, whose `exports` name `index.aot.ts` under the "aot" condition. `bun compile` compiles that file. The executable must print what plain Bun prints for the same files (`bun --conditions=aot`).
 //
 //   bun programs-published-as-packages.ts --bun <bun> --work <folder> --out <folder> [--seconds 300] [--jobs 8] [--seed 1] [--sources a,b,c] [--flags "<flags of the build of the program>"]
 //
 //   the package   the program as its one entry point; or with a second module that the first imports; with functions and a class that the importer uses: records, instances and callbacks cross the border, those that the
 //                 package declares and those that it does not, once and three hundred times
-//   its options   no tsconfig.json; strict; strict with noUncheckedIndexedAccess or exactOptionalPropertyTypes; strict off
-//   laid          as `bun compile --library` wrote it; without "compilerOptions", with them in another place or with an error in them; with the conditions of "exports" in another order: the types stay;
-//                 with index.js changed; without index.full.ts, with it cut off in the middle or behind `// @ts-nocheck`; with the "full-types" condition behind "default", deleted, misspelled, at the top level of
-//                 package.json or pointing at index.d.ts; without "exports": these may cost the types and never the build
-//   --always-says-so   for builds that always say whether the full types of a package are used: the note or a warning that names the package, one of the two
+//   its options   no tsconfig.json; strict; strict with exactOptionalPropertyTypes; strict off
+//   installed     as `bun compile --library` wrote it; without "compilerOptions", with them in another place or with an error in them; with the conditions in another order; with index.js changed; behind
+//                 `// @ts-nocheck`: index.aot.ts is compiled.
+//                 With the condition behind "default", deleted, misspelled or at the top level of package.json; without "exports": index.js is compiled.
+//                 Without index.aot.ts, with it cut off in the middle, with the condition pointing at index.d.ts: the build may stop with an error where plain Bun fails too.
 //
-// A finding: a command that ends by a signal or runs out of its clock, a library that is refused although the program compiles by itself, an executable that prints something else. One folder a finding in --out.
-// What is counted and printed at the end: how many packages were compiled from their full types, and the words of every warning that took the types away from a package laid as it was written.
+// A finding: a command that ends by a signal or runs out of time, a library or a build that is refused without a reason, index.aot.ts that prints something else than index.js, the wrong one of the two compiled,
+// an executable that prints something else. Each finding gets a folder in --out.
+// The counts printed at the end: which file each kind of install was compiled from, and the words of every warning that took the types away from a package installed as it was written.
 import { spawn } from "bun";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -60,22 +61,24 @@ const layings = [
   "without compilerOptions",
   "conditions in another order",
   "index.js changed",
-  "without index.full.ts",
-  "full types cut off",
-  "full-types behind default",
+  "without index.aot.ts",
+  "index.aot.ts cut off",
+  "the condition behind default",
   "the condition deleted",
   "no exports",
   "the condition misspelled",
-  "full-types at the top level",
-  "full-types points at index.d.ts",
+  "the condition at the top level",
+  "the condition points at index.d.ts",
   "ts-nocheck in front",
   "compilerOptions in another place",
   "compilerOptions with an error",
 ] as const;
-/** Where the package keeps its types; everywhere else it may lose them and never the build. */
-const keepsItsTypes = new Set<string>(["as written", "without compilerOptions", "conditions in another order", "compilerOptions in another place", "compilerOptions with an error"]);
-/** Builds of newer trees always say whether the full types of a package are used. */
-const alwaysSaysSo = process.argv.includes("--always-says-so");
+/** `exports` name index.aot.ts as it was written, so it is compiled and behaves as index.js does. */
+const compilesAotFile = new Set<string>(["as written", "without compilerOptions", "conditions in another order", "index.js changed", "ts-nocheck in front", "compilerOptions in another place", "compilerOptions with an error"]);
+/** Nothing names index.aot.ts, so index.js is compiled. */
+const compilesJavaScript = new Set<string>(["the condition behind default", "the condition deleted", "no exports", "the condition misspelled", "the condition at the top level"]);
+/** The condition names a file that is missing, broken or empty. The build may stop with an error where plain Bun fails on the same files. */
+const mayStopTheBuild = new Set<string>(["without index.aot.ts", "index.aot.ts cut off", "the condition points at index.d.ts"]);
 
 const counts = new Map<string, number>();
 const count = (what: string) => counts.set(what, (counts.get(what) ?? 0) + 1);
@@ -86,7 +89,7 @@ function finding(kind: string, folder: string, seed: number, notes: string, said
   count("FINDING " + kind);
   const to = join(out, `${kind.replaceAll(" ", "-")}-${seed}`);
   mkdirSync(to, { recursive: true });
-  for (const part of ["library/src", "library/package.json", "library/tsconfig.json", "library/dist", "app/main.ts", "app/package.json"]) if (existsSync(join(folder, part))) cpSync(join(folder, part), join(to, part), { recursive: true });
+  for (const part of ["library/src", "library/package.json", "library/tsconfig.json", "library/dist", "app/main.ts", "app/package.json", "app/node_modules/published"]) if (existsSync(join(folder, part))) cpSync(join(folder, part), join(to, part), { recursive: true });
   writeFileSync(join(to, "finding.txt"), `${kind}\nseed ${seed}\n${notes}\n\n${said.slice(0, 6000)}\n`);
   console.log(`${new Date().toISOString()} ${kind} | seed ${seed} | ${notes} | ${said.slice(0, 200).replaceAll("\n", " ")}`);
 }
@@ -132,8 +135,8 @@ export function toldByThePackage(asked: AskedOfThePackage, kept: KeptByThePackag
     return finding("the library build fails without a word", folder, seed, notes, library.text);
   }
   const dist = join(folder, "library/dist");
-  const hasFullTypes = existsSync(join(dist, "index.full.ts"));
-  count(hasFullTypes ? "libraries with full types" : "libraries WITHOUT full types: " + shapeOf(library.text.match(/warn[^\n]*/)?.[0] ?? "no warning"));
+  const hasAotFile = existsSync(join(dist, "index.aot.ts"));
+  count(hasAotFile ? "libraries with index.aot.ts" : "libraries WITHOUT index.aot.ts: " + shapeOf(library.text.match(/warn[^\n]*/)?.[0] ?? "no warning"));
 
   const installed = join(folder, "app/node_modules/published");
   cpSync(dist, installed, { recursive: true });
@@ -142,31 +145,31 @@ export function toldByThePackage(asked: AskedOfThePackage, kept: KeptByThePackag
   if (laying === "conditions in another order" && manifest.exports)
     for (const [key, entry] of Object.entries(manifest.exports)) if (entry && typeof entry === "object") manifest.exports[key] = Object.fromEntries(random.shuffled(Object.entries(entry).filter(([name]) => name !== "default")).concat(Object.entries(entry).filter(([name]) => name === "default")));
   const entries = () => Object.entries((manifest.exports ?? {}) as Record<string, unknown>).filter((each): each is [string, Record<string, unknown>] => !!each[1] && typeof each[1] === "object");
-  if (laying === "full-types behind default") for (const [key, { "full-types": full, ...rest }] of entries()) manifest.exports[key] = { ...rest, "full-types": full };
-  if (laying === "the condition deleted" || laying === "full-types at the top level") for (const [, entry] of entries()) delete entry["full-types"];
-  if (laying === "full-types at the top level") manifest["full-types"] = "./index.full.ts";
+  if (laying === "the condition behind default") for (const [key, { aot, ...rest }] of entries()) manifest.exports[key] = { ...rest, aot };
+  if (laying === "the condition deleted" || laying === "the condition at the top level") for (const [, entry] of entries()) delete entry["aot"];
+  if (laying === "the condition at the top level") manifest["aot"] = "./index.aot.ts";
   if (laying === "no exports") {
     delete manifest.exports;
     Object.assign(manifest, { main: "./index.js", types: "./index.d.ts", type: "module" });
   }
   if (laying === "the condition misspelled") {
-    const spelled = random.pick(["full-type", "fullTypes", "Full-Types"]);
-    for (const [key, entry] of entries()) manifest.exports[key] = Object.fromEntries(Object.entries(entry).map(([name, value]) => [name === "full-types" ? spelled : name, value]));
+    const spelled = random.pick(["AOT", "Aot", "aot-types"]);
+    for (const [key, entry] of entries()) manifest.exports[key] = Object.fromEntries(Object.entries(entry).map(([name, value]) => [name === "aot" ? spelled : name, value]));
   }
-  if (laying === "full-types points at index.d.ts") for (const [, entry] of entries()) if ("full-types" in entry) entry["full-types"] = "./index.d.ts";
+  if (laying === "the condition points at index.d.ts") for (const [, entry] of entries()) if ("aot" in entry) entry["aot"] = "./index.d.ts";
   if (laying === "compilerOptions in another place" && manifest.compilerOptions) {
     const { compilerOptions, ...rest } = manifest;
     for (const name of Object.keys(manifest)) delete manifest[name];
     Object.assign(manifest, rest, random.chance(0.5) ? { publishConfig: { compilerOptions } } : { compileroptions: compilerOptions });
   }
   if (laying === "compilerOptions with an error") manifest.compilerOptions = { ...manifest.compilerOptions, ...random.pick<object>([{ stricter: true }, { strict: "yes" }, { noImplicitAny: 1 }, { lib: "esnext" }]) };
-  if (laying === "ts-nocheck in front" && hasFullTypes) writeFileSync(join(installed, "index.full.ts"), "// @ts-nocheck\n" + readFileSync(join(installed, "index.full.ts"), "utf8"));
+  if (laying === "ts-nocheck in front" && hasAotFile) writeFileSync(join(installed, "index.aot.ts"), "// @ts-nocheck\n" + readFileSync(join(installed, "index.aot.ts"), "utf8"));
   writeFileSync(join(installed, "package.json"), JSON.stringify(manifest, null, 2));
   if (laying === "index.js changed") writeFileSync(join(installed, "index.js"), readFileSync(join(installed, "index.js"), "utf8") + "\n;0;\n");
-  if (laying === "without index.full.ts") rmSync(join(installed, "index.full.ts"), { force: true });
-  if (laying === "full types cut off" && hasFullTypes) {
-    const full = readFileSync(join(installed, "index.full.ts"), "utf8");
-    writeFileSync(join(installed, "index.full.ts"), full.slice(0, random.between(1, full.length - 1)));
+  if (laying === "without index.aot.ts") rmSync(join(installed, "index.aot.ts"), { force: true });
+  if (laying === "index.aot.ts cut off" && hasAotFile) {
+    const whole = readFileSync(join(installed, "index.aot.ts"), "utf8");
+    writeFileSync(join(installed, "index.aot.ts"), whole.slice(0, random.between(1, whole.length - 1)));
   }
   writeFileSync(join(folder, "app/package.json"), JSON.stringify({ name: "app", dependencies: { published: "1.0.0" } }));
   writeFileSync(
@@ -181,21 +184,29 @@ export function toldByThePackage(asked: AskedOfThePackage, kept: KeptByThePackag
   if (installedPlain.signal || installedPlain.late) return finding("plain Bun ends badly on the package", folder, seed, notes, installedPlain.text);
   // A program may print behind its last statement, and then the importer's lines stand in between.
   if (!holdsInOrder(installedPlain.out, plain.out)) return finding("index.js prints something else than the sources", folder, seed, notes, firstDifference(plain.out, installedPlain.out));
-  const expected = installedPlain.out;
+  // The same files as the build reads, in plain Bun.
+  const expected = await run([bun, "--no-install", "--conditions=aot", "main.ts"], join(folder, "app"));
+  if (expected.signal || expected.late) return finding("plain Bun ends badly on the package with the condition", folder, seed, notes, expected.text);
+  if (compilesAotFile.has(laying) && (expected.out !== installedPlain.out || expected.code !== installedPlain.code)) return finding("index.aot.ts prints something else than index.js", folder, seed, notes, firstDifference(installedPlain.out, expected.out));
 
-  const build = await run([bun, "compile", ...flags, "./main.ts", "--outfile", "app"], join(folder, "app"), 300);
+  const build = await run([bun, "compile", ...flags, "./main.ts", "--outfile", "app", "--aot-report=report.json"], join(folder, "app"), 300);
   if (build.signal || build.late) return finding(build.late ? "the build hangs" : "the build ends by a signal", folder, seed, notes, build.text);
-  if (build.code !== 0) return finding("the build is refused", folder, seed, notes, build.text);
-  const isFromFullTypes = /is compiled from its full types/.test(build.text);
-  count(`${laying}: ${isFromFullTypes ? "compiled from its full types" : "compiled without types"}`);
-  // One or the other, never both and never neither.
-  const isWarnedOf = /^warn: .*"published"|TS100009.*published/m.test(build.text);
-  if (alwaysSaysSo && hasFullTypes && isFromFullTypes === isWarnedOf && !(isFromFullTypes && keepsItsTypes.has(laying))) return finding(isFromFullTypes ? "the build says both that the types are used and that they are not" : "the build does not say that the types are not used", folder, seed, notes, build.text);
-  if (isFromFullTypes && !keepsItsTypes.has(laying) && hasFullTypes) count(`TYPES ARE USED WHERE THE LAYING SHOULD COST THEM: ${laying}`);
-  if (!isFromFullTypes && hasFullTypes && laying === "as written") count("THE TYPES ARE LOST OF A PACKAGE LAID AS IT WAS WRITTEN: " + shapeOf(build.text.match(/warn[^\n]*/)?.[0] ?? "no warning"));
+  if (build.code !== 0) {
+    if (hasAotFile && mayStopTheBuild.has(laying) && expected.code !== 0 && /^error: /m.test(build.text)) return count(`${laying}: the build stops with an error, and plain Bun fails too`);
+    return finding("the build is refused", folder, seed, notes, build.text);
+  }
+  const hasLostTypes = /TS1000(09|10): .*published/.test(build.text);
+  // The statistic counts the files that kept their types. Behind `// @ts-nocheck` index.aot.ts is compiled without them, and the build says so.
+  const isCompiledUnchecked = laying === "ts-nocheck in front" && /compiled without types/.test(build.text);
+  const usesAotFile = hasLostTypes || isCompiledUnchecked || JSON.parse(readFileSync(join(folder, "app/report.json"), "utf8")).statistics.TypedVersionsUsed > 0;
+  const compiledFrom = usesAotFile ? "index.aot.ts" + (hasLostTypes ? " without its types" : "") : laying === "the condition points at index.d.ts" ? "index.d.ts" : "index.js";
+  count(`${laying}: compiled from ${compiledFrom}`);
+  if (hasAotFile && !usesAotFile && compilesAotFile.has(laying)) return finding("index.aot.ts is not compiled", folder, seed, notes, build.text);
+  if (usesAotFile && compilesJavaScript.has(laying)) return finding("index.aot.ts is compiled although nothing names it", folder, seed, notes, build.text);
+  if (hasLostTypes && laying === "as written") count("THE TYPES ARE LOST OF A PACKAGE INSTALLED AS IT WAS WRITTEN: " + shapeOf(build.text.match(/warn[^\n]*/)?.[0] ?? "no warning"));
   const compiled = await run(["./app"], join(folder, "app"));
   if (compiled.signal || compiled.late) return finding(compiled.late ? "the executable hangs" : "the executable ends by a signal", folder, seed, notes, compiled.text);
-  if (compiled.out !== expected || compiled.code !== installedPlain.code) return finding("the executable prints something else", folder, seed, notes, firstDifference(expected, compiled.out));
+  if (compiled.out !== expected.out || compiled.code !== expected.code) return finding("the executable prints something else", folder, seed, notes, firstDifference(expected.out, compiled.out));
   count("as plain");
 }
 

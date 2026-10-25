@@ -109,6 +109,11 @@ impl KnownHelpers {
         self.files.get(file.idx())
     }
 
+    pub fn has_functions(&self, file: FileId) -> bool {
+        let helpers = self.file(file);
+        helpers.is_some_and(|helpers| helpers.functions().len() != 0)
+    }
+
     pub fn function(&self, file: FileId, function: FnId) -> Option<&KnownFunction> {
         self.file(file)?.function(function)
     }

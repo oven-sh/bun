@@ -334,7 +334,7 @@ function caseOf(combination: Combination, id: number) {
     `// ${id}: ${nameOf(combination)}`,
     `let calls${id} = 0;\nlet entered${id} = 0;\nlet left${id} = 0;\nlet probes${id} = 0;`,
     `function probe${id}() {\n  return ${indented(probe.text).trimStart()};\n}`,
-    `function atTheEnd${id}() {\n  if (probes${id} >= 3) return;\n  probes${id}++;\n  try {\n    probe${id}();\n  } catch (error) {\n    if (!(error instanceof RangeError)) strange.push("${id} " + String(error));\n  }\n}`,
+    `function atTheEnd${id}() {\n  if (probes${id} >= 12) return;\n  probes${id}++;\n  try {\n    probe${id}();\n  } catch (error) {\n    if (!(error instanceof RangeError)) strange.push("${id} " + String(error));\n  }\n}`,
     road.beside?.(id) ?? "",
     `function down${id}(level: number): number {\n  if (level >= limit || ++calls${id} >= budget) return 0;\n${[frame.before, guard.text(road.recurse(id), id)].filter(Boolean).map(text => indented(text)).join("\n")}\n  return below + ${frame.after};\n}`, // prettier-ignore
     `function run${id}() {\n  let line = "${id}";\n  for (let round = 0; round < 3; round++) {\n    calls${id} = 0;\n    probes${id} = 0;\n    try {\n      const result = down${id}(0);\n      line += result === 0 ? " fine" : " result " + result;\n    } catch (error) {\n      line += error instanceof RangeError ? " fine" : " thrown " + String(error);\n    }\n  }\n  return line + " " + (entered${id} - left${id}) + " " + String(probe${id}());\n}`,

@@ -3,6 +3,7 @@ use super::imports::{FileBinder, NamedMember, PendingBinding};
 use super::interop::{ImportPhase, ModuleKind};
 use super::order::{PlannedSite, SiteKey};
 use super::plan::{Member, ModuleRef, View};
+use super::wrapped::InnerModuleKind;
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{BuiltinNames, table};
 use bun_sema::atom::{Atom, Interner, known};
@@ -145,8 +146,20 @@ impl FileBinder<'_, '_> {
         }
     }
 
+    fn is_esm_wrapper(&self, module: ModuleRef) -> bool {
+        let ModuleRef::Inner { file, callback } = module else {
+            return false;
+        };
+        let inner = self.context.modules.wrapped.of_callback(file, callback);
+        inner.is_some_and(|inner| inner.kind == InnerModuleKind::Esm)
+    }
+
     fn bind_site(&mut self, site: &PlannedSite, roots: &mut Vec<Root>, holders: &mut Vec<Holder>) {
         let target = site.target;
+        // `init_x()` gives `undefined`.
+        if self.is_esm_wrapper(target) {
+            return;
+        }
         let (answer, view) = match self.context.modules.interop(target).kind {
             ModuleKind::SourceText => (
                 StandsFor::RequiredNamespace(target),

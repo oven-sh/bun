@@ -92,6 +92,27 @@ server.listen(0, async () => {
   expect(await run([module.executable], directory)).toEqual({ stdout: "200 hello /a\n", errors: [], exitCode: 0 });
 });
 
+test("a program that imports names of node:fs lowers little more than one that imports nothing", async () => {
+  using dir = tempDir("aot-library-names-of-the-file-system", {
+    "nothing.js": `console.log(0);\n`,
+    "written.js": `import { existsSync } from "node:fs";\nconsole.log(existsSync("/") ? 0 : 1);\n`,
+    "bound.js": `import { readFileSync, constants } from "node:fs";\nconsole.log(readFileSync(process.execPath).length > constants.F_OK ? 0 : 1);\n`,
+    "module.js": `import fs from "node:fs";\nconsole.log(fs.existsSync("/") ? 0 : 1);\n`,
+  });
+  const directory = String(dir);
+  const [nothing, written, bound, module] = [
+    await build(directory, "nothing.js"),
+    await build(directory, "written.js"),
+    await build(directory, "bound.js"),
+    await build(directory, "module.js"),
+  ];
+  expect(module.functionsLowered - nothing.functionsLowered).toBeGreaterThan(1500);
+  expect(written.functionsLowered - nothing.functionsLowered).toBeLessThan(300);
+  expect(bound.functionsLowered - nothing.functionsLowered).toBeLessThan(300);
+  for (const built of [nothing, written, bound, module])
+    expect(await run([built.executable], directory)).toEqual({ stdout: "0\n", errors: [], exitCode: 0 });
+});
+
 test("a server holds the half of a cluster's worker only where the program names node:cluster", async () => {
   const serves = `import { createServer } from "node:http";
 const server = createServer((request, response) => response.end("hello " + request.url));

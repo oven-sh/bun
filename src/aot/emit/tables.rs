@@ -85,10 +85,6 @@ pub(super) fn create_table_tasks<'p, 'o>(program: &'p Program) -> Vec<Task<'p, '
             | ProgramList::Words
             | ProgramList::ClassParts
             | ProgramList::DeclaredTypes
-            | ProgramList::TemplateParts
-            | ProgramList::ValidationRules
-            | ProgramList::ValidationMembers
-            | ProgramList::ValidationNodes
             | ProgramList::Fields
             | ProgramList::StaticFields
             | ProgramList::ModuleRequests

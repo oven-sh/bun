@@ -1,5 +1,3 @@
-use super::exports::PackageSpecifier;
-use super::files::rewritten_extensions;
 use super::manifest::ExportsEntry;
 use super::search::join_unrooted;
 use super::*;
@@ -212,8 +210,8 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         name: &[u8],
     ) -> Result<(), ComputedUnknown> {
         let resolver = self.resolver;
-        let manifest = PackageSpecifier::parse(name)
-            .map(|parsed| join_unrooted(node_modules, parsed.name))
+        let manifest = installed_name(name)
+            .map(|installed| join_unrooted(node_modules, installed))
             .filter(|package_directory| resolver.is_dir(package_directory))
             .and_then(|package_directory| resolver.code_manifest(&package_directory));
         match manifest.and_then(|manifest| Some((manifest, manifest.exports.as_ref()?))) {
@@ -497,7 +495,7 @@ fn classify_prefix<'a>(prefix: &'a [u8], suffix: &[u8]) -> PrefixKind<'a> {
     } else if HOST_SCHEMES.iter().any(|scheme| prefix.starts_with(scheme)) {
         PrefixKind::HostScheme
     } else {
-        match PackageSpecifier::parse_name(prefix) {
+        match written_package_name(prefix) {
             Some(name) if name.len() < prefix.len() => PrefixKind::Package { name },
             Some(_) | None => PrefixKind::IncompletePackageName,
         }
@@ -523,7 +521,7 @@ fn specifier_spellings(written: &[u8], extensions: &[Vec<u8>]) -> Vec<Vec<u8>> {
         spellings.push(stem.to_vec());
     }
     let is_rewritten_to_extension = |written_extension: &&[u8]| {
-        let rewritten = rewritten_extensions(written_extension, false);
+        let rewritten = rewritten_extensions(written_extension);
         rewritten.contains(&extension)
     };
     let written_extensions = REWRITABLE_EXTENSIONS.iter().copied();
@@ -580,6 +578,41 @@ fn compare_candidates(a: &ComputedCandidate<'_>, b: &ComputedCandidate<'_>) -> O
         (ComputedCandidate::File(_), ComputedCandidate::HostModule(_)) => Ordering::Less,
         (ComputedCandidate::HostModule(_), ComputedCandidate::File(_)) => Ordering::Greater,
         (ComputedCandidate::HostModule(a), ComputedCandidate::HostModule(b)) => a.cmp(b),
+    }
+}
+
+// `@scope/name` or `name`, up to the slash behind it.
+pub(super) fn written_package_name(specifier: &[u8]) -> Option<&[u8]> {
+    let slash = strings::index_of_char_usize(specifier, b'/');
+    if !specifier.starts_with(b"@") {
+        return Some(&specifier[..slash.unwrap_or(specifier.len())]);
+    }
+    let scope_len = slash? + 1;
+    let slash = strings::index_of_char_usize(&specifier[scope_len..], b'/');
+    let name_len = slash.map_or(specifier.len(), |slash| scope_len + slash);
+    Some(&specifier[..name_len])
+}
+
+// The folder of a package in `node_modules`: its written name without a version, `name` of `name@1.0.0`.
+pub(super) fn installed_name(specifier: &[u8]) -> Option<&[u8]> {
+    if specifier.is_empty() {
+        return None;
+    }
+    let name = written_package_name(specifier)?;
+    if name.starts_with(b".") || strings::index_of_any(name, b"\\%").is_some() {
+        return None;
+    }
+    let scope_marker_len = usize::from(name.starts_with(b"@"));
+    let at = strings::index_of_char_usize(&name[scope_marker_len..], b'@');
+    Some(at.map_or(name, |at| &name[..scope_marker_len + at]))
+}
+
+pub(super) fn rewritten_extensions(extension: &[u8]) -> &'static [&'static [u8]] {
+    match extension {
+        b".js" | b".jsx" => &[b".ts", b".tsx", b".mts"],
+        b".mjs" => &[b".mts"],
+        b".cjs" => &[b".cts"],
+        _ => &[],
     }
 }
 

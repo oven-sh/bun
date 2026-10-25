@@ -964,6 +964,7 @@ impl<'s> Program<'s> {
             cycle_at: 0,
             limit_at: 0,
             rejected_at: 0,
+            aliases_in_tables: Default::default(),
             enclosing_module_specifier_mode: None,
             emit_resolver_links: Default::default(),
             expected: Requested::All,
@@ -992,7 +993,7 @@ impl<'s> Program<'s> {
             undefined_properties: Default::default(),
             synthetic_default_import_types: Default::default(),
             referenced_properties: Default::default(),
-            tracked_names: Vec::new(),
+            tracked_names: Default::default(),
             unused_private_members: Vec::new(),
             widening_contexts: Vec::new(),
             widened_types: spare.widened_types,
@@ -1024,7 +1025,7 @@ impl<'s> Program<'s> {
             save_deferred_diagnostics: false,
             node_check_flags: Default::default(),
             within_unreachable_code: false,
-            reported_unreachable_nodes: Vec::new(),
+            reported_unreachable_nodes: Default::default(),
             renamed_binding_elements_in_types: Vec::new(),
             unvisited_exprs: Vec::new(),
             checked_with_contextual_type: Vec::new(),
@@ -1850,6 +1851,7 @@ pub struct Checker<'p, 's> {
     cycle_at: u64,
     limit_at: u64,
     rejected_at: u64,
+    aliases_in_tables: errors_declaration_emit::AliasesInTables,
     /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`,
     /// while the name of an import or an export is printed.
     enclosing_module_specifier_mode: Option<ResolutionMode>,
@@ -1903,10 +1905,10 @@ pub struct Checker<'p, 's> {
     /// `symbolReferenceLinks` of the private members marked by an access in a file other than the
     /// one that declares them (`mark_property_as_referenced`).
     referenced_properties: crate::util::FxHashSet<Sym>,
-    /// `Resolve` with `isUse` in `trackComputedName` and `trackExistingEntityName`: the file and
-    /// the scope it starts from, the name and the meaning. `check_unused` of that file resolves it
+    /// `Resolve` with `isUse` in `trackComputedName` and `trackExistingEntityName`, by the file it
+    /// starts from: the scope, the name and the meaning. `check_unused` of that file resolves it
     /// again.
-    tracked_names: Vec<(FileId, crate::bind::ScopeId, Atom, SymFlags)>,
+    tracked_names: FxHashMap<FileId, Vec<(crate::bind::ScopeId, Atom, SymFlags)>>,
     /// `Checked::unused_private_members` of the file being checked.
     unused_private_members: Vec<(Sym, u32)>,
     /// The contexts of the unions being widened. A `*WideningContext` is an index into it.
@@ -1974,7 +1976,7 @@ pub struct Checker<'p, 's> {
     /// `withinUnreachableCode`
     within_unreachable_code: bool,
     /// `reportedUnreachableNodes` for the file being checked.
-    reported_unreachable_nodes: Vec<StmtId>,
+    reported_unreachable_nodes: crate::util::FxHashSet<StmtId>,
     /// `renamedBindingElementsInTypes`
     renamed_binding_elements_in_types: Vec<PatPropId>,
     /// The expressions in the file being checked whose parent's check returned before reaching

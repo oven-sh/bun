@@ -40,7 +40,7 @@ struct Chunks<E, const FIRST: u32, A: Allocator + Clone> {
     bases: [AtomicPtr<E>; CHUNKS],
     /// Null, or the chunk's actual start. Nothing reads it. No address in `bases` points into a chunk, so if the process
     /// exits without dropping this, a leak checker would find no reference to the chunks and report them as leaked. It's
-    /// compiled only for builds that have a leak checker, because it's as large as `bases`, a map has 64 of these, and
+    /// compiled only for builds that have a leak checker, because it's as large as `bases`, a map has 8 of these, and
     /// each referenced project has a resolver with five maps.
     #[cfg(bun_asan)]
     starts: [AtomicPtr<E>; CHUNKS],
@@ -332,31 +332,6 @@ impl<T, L: Length, A: Allocator + Clone> Drop for Stable<T, L, A> {
     }
 }
 
-/// A vector that several threads fill. One thread reserves a range of elements, then
-/// each reserved element is written exactly once, by any thread.
-pub(crate) trait Fill<T> {
-    /// # Safety
-    /// See `Stable::reserve`.
-    unsafe fn reserve(&self, count: u32) -> u32;
-
-    /// # Safety
-    /// See `Stable::write`.
-    unsafe fn write(&self, index: u32, value: T);
-}
-
-impl<T, L: Length, A: Allocator + Clone> Fill<T> for Stable<T, L, A> {
-    unsafe fn reserve(&self, count: u32) -> u32 {
-        // SAFETY: the caller upholds the contract of `Stable::reserve`.
-        unsafe { Stable::reserve(self, count) }
-    }
-
-    #[inline]
-    unsafe fn write(&self, index: u32, value: T) {
-        // SAFETY: the caller upholds the contract of `Stable::write`.
-        unsafe { Stable::write(self, index, value) }
-    }
-}
-
 // ───────────────────────────── segmented vectors ─────────────────────────────
 
 /// Base-2 log of a segment's element count. Small segments waste less memory, because every task
@@ -520,7 +495,7 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
         let index = self.len.add(1);
         // SAFETY: `add` returns each index to only one call, and this call hasn't returned it yet,
         // so nothing else accesses the element.
-        unsafe { Fill::write(self, index, value) };
+        unsafe { self.write(index, value) };
         if L::IS_CHECKED {
             self.limits[1].add(1);
         }
@@ -585,11 +560,15 @@ impl<T, L: Length, A: Allocator + Clone> Drop for Segmented<'_, T, L, A> {
     }
 }
 
-impl<T, L: Length, A: Allocator + Clone> Fill<T> for Segmented<'_, T, L, A> {
+impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
+    /// # Safety
+    /// See `Stable::reserve`.
     unsafe fn reserve(&self, count: u32) -> u32 {
         self.len.add(count)
     }
 
+    /// # Safety
+    /// See `Stable::write`.
     #[inline]
     unsafe fn write(&self, index: u32, value: T) {
         let segment = self.segment((index >> SEGMENT_BITS) as usize);
@@ -1371,7 +1350,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "index < self.len.get()")]
     fn a_local_vector_checks_the_index() {
         let vec = LocalVec::<u32>::new();
         vec.push(1);
@@ -1541,6 +1520,12 @@ mod tests {
         assert!(cells.existing(0).is_none());
         assert_eq!(cells.existing(5000).unwrap().load(Ordering::Relaxed), 9);
         assert_eq!(cells.existing(5001).unwrap().load(Ordering::Relaxed), 0);
+        // Another page of the chunk that's allocated now. Only the page's bit says that it was never written.
+        let other_page = 5000 + 2 * (SMALLEST_PAGE / size_of::<AtomicU64>()) as u32;
+        assert!(cells.existing(other_page).is_none());
+        assert!(cells.existing_acquire(other_page).is_none());
+        assert_eq!(cells.cell(other_page).load(Ordering::Relaxed), 0);
+        assert!(cells.existing(other_page).is_some());
         let lengths: Vec<usize> = cells.allocated().map(<[_]>::len).collect();
         assert_eq!(lengths, [1 << (FIRST_CELLS_BITS + 1)]);
         let all = cells.allocated().flatten();
@@ -1618,7 +1603,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "the index is out of range")]
     fn out_of_range_cell_panics() {
         Cells::<AtomicU32>::default().cell(u32::MAX);
     }
@@ -1841,17 +1826,17 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn number_of_a_cleared_element_panics() {
         let mut own = Segmented::<u64, Cell<u32>>::new_in(Global);
         own.push(1);
         assert_eq!(*own.get_layered(OWN), 1);
         own.clear();
-        own.get_layered(OWN);
+        let read = std::panic::AssertUnwindSafe(|| *own.get_layered(OWN));
+        assert!(std::panic::catch_unwind(read).is_err());
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "number < self.limits[which].get()")]
     fn shared_number_panics_without_a_shared_vector() {
         let own = Segmented::<u64, Cell<u32>>::new_in(Global);
         own.push(1);
@@ -1893,7 +1878,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "placeholder.owner_addr ==")]
     fn replacing_a_placeholder_in_another_vector_panics() {
         let [one, other] = [(), ()].map(|()| Segmented::<u64, AtomicU32>::new_in(Global));
         other.push(1);

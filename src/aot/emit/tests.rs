@@ -76,8 +76,6 @@ fn create_expected_result(names: &Names) -> ExpectedResult {
     ExpectedResult {
         ty: names.object,
         layouts: vec![LAYOUT],
-        site: None,
-        validation: Vec::new(),
     }
 }
 
@@ -455,16 +453,8 @@ fn counts_match_program() {
     for (list, count) in expected_counts {
         assert_eq!(count_of(&header, list), count, "{}", list.name());
     }
-    // The front end makes no validation nodes.
-    let empty_lists = [
-        ProgramList::TemplateParts,
-        ProgramList::ValidationRules,
-        ProgramList::ValidationMembers,
-        ProgramList::ValidationNodes,
-    ];
     for list in ProgramList::ALL {
-        let is_empty = count_of(&header, list) == 0;
-        assert_eq!(is_empty, empty_lists.contains(&list), "{}", list.name());
+        assert_ne!(count_of(&header, list), 0, "{}", list.name());
     }
 }
 

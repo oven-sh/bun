@@ -4,10 +4,12 @@ use bun_sema::bind::{CommonJsVariable, Decl, ScopeId};
 use bun_sema::hir::{FnKind, ModuleId, Pat, PatId, PatKind, StmtKind};
 
 use super::{
-    has_symbol_use, has_use, is_commonjs_slot, stored_in_loop, used_slots, walked, with_walk,
+    creator_of, has_symbol_use, has_use, is_commonjs_slot, stored_in_loop, used_slots, walked,
+    with_walk,
 };
 use crate::lower::scope::testing::{
-    file_scope, first_statement, function_named, only_function, symbol_named, top_scope,
+    file_scope, first_statement, function_named, functions_of_kind, only_function, symbol_named,
+    top_scope,
 };
 use crate::lower::scope::{BindingRef, ScopeSlot, WalkedFunctionId};
 
@@ -232,6 +234,34 @@ fn initialization_under_a_branch_is_conditional() {
         for name in ["branch", "tried", "labeled", "chosen", "repeated"] {
             assert!(is_conditional(name), "{name}");
         }
+    });
+}
+
+#[test]
+fn callback_of_an_inner_module_is_a_body() {
+    let source = "var __commonJS = (cb, mod) => () => \
+        (mod || cb((mod = { exports: {} }).exports, mod), mod.exports); \
+        var shared = 1; \
+        var require_a = __commonJS((exports) => { \
+            exports.x = shared; exports.f = function () { return exports.x; }; }); \
+        export default require_a().f();";
+    with_walk(&[("main.mjs", source)], |hir, bound, walk| {
+        let callback = walked(walk, functions_of_kind(hir, FnKind::Arrow)[2]);
+        assert_eq!(creator_of(walk, callback), None);
+        assert!(has_symbol_use(
+            walk,
+            callback,
+            symbol_named(hir, bound, "shared")
+        ));
+        let holder = symbol_named(hir, bound, "require_a");
+        assert!(!has_symbol_use(walk, WalkedFunctionId::MODULE_BODY, holder));
+        let function = walked(walk, only_function(hir, FnKind::Expr));
+        assert_eq!(creator_of(walk, function), Some(callback));
+        assert!(!has_symbol_use(
+            walk,
+            function,
+            symbol_named(hir, bound, "exports")
+        ));
     });
 }
 

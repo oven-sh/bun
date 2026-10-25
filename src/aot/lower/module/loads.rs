@@ -278,6 +278,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let (callee, arguments) = (hir[id].callee, hir[id].args);
         let analysis = &self.file.compiled.analysis;
         let Some(site) = analysis.import_site_of_call(call) else {
+            if let Some(evaluated) = self.try_lower_inner_module_call(call) {
+                return Some(evaluated);
+            }
             if let Some(loaded) = self.try_lower_library_module_named_to_made_require(call, id) {
                 return Some(loaded);
             }
@@ -356,6 +359,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let loaded = lower_tested_call(self, call, chain_exit, test, operation, site);
         Some(loaded)
+    }
+
+    // `require_x()` and `init_x()` of a bundle, where `var require_x = __commonJS(..)` is a module of its own.
+    fn try_lower_inner_module_call(&mut self, call: ExprId) -> Option<ValueId> {
+        let (modules, file) = (self.file.inputs.modules, self.file.file);
+        let plan = create_plan(modules.site(file, call), || {
+            modules.is_site_read_as_value(file, call)
+        })?;
+        let hir = self.file.hir;
+        let ExprKind::Call(id) = hir[call].kind else {
+            return None;
+        };
+        self.lower_arguments_for_effect(hir[id].args, 0);
+        self.set_position(hir[call].pos);
+        Some(self.emit_planned_require(plan))
     }
 
     // `createRequire("/")("node:path")`: the require is made for another file, and the name of a library module means the same from every file.
@@ -559,7 +577,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // The module has run, is running, or throws its error.
     fn emit_planned_require(&mut self, plan: PlannedSite) -> ValueId {
         let module = self.file.fragment.declare_module(plan.target);
-        let referrer = self.file.module_id();
+        let referrer = self.current_module_id();
         if plan.records {
             self.builder.record_require(module, referrer);
         }
@@ -592,7 +610,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // One of the modules that a computed specifier can name.
     fn emit_require_of_candidate(&mut self, module: ModuleRef, specifier: StringId) -> ValueId {
         // The plan has a request for each candidate that the site evaluates itself. The loader has the others.
-        let referrer = ModuleRef::File(self.file.file);
+        let referrer = self.current_module();
         let mut requests = self.file.inputs.modules.requests_of(referrer).iter();
         let is_evaluated = requests
             .any(|request| request.kind == ModuleRequestKind::Require && request.target == module);
@@ -1118,6 +1136,7 @@ fn find_object_replacing_namespace(
         (
             ModuleRef::Runtime(_)
             | ModuleRef::File(_)
+            | ModuleRef::Inner { .. }
             | ModuleRef::Face(_)
             | ModuleRef::Check(_)
             | ModuleRef::External { .. },

@@ -2179,13 +2179,15 @@ impl Checker<'_, '_> {
         meaning: SymFlags,
     ) {
         let options = self.module_options(file);
-        let used = (file, scope, name, meaning);
+        let used = (scope, name, meaning);
         if (options.no_unused_locals || options.no_unused_parameters)
             && scope.is_some()
             && !self.is_type_checked
-            && !self.tracked_names.contains(&used)
         {
-            self.tracked_names.push(used);
+            let names = self.tracked_names.entry(file).or_default();
+            if !names.contains(&used) {
+                names.push(used);
+            }
         }
     }
 

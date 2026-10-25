@@ -328,6 +328,15 @@ impl<'a, 's> FileScan<'a, 's> {
                 let name = self.input.names.get_private(spelling)?;
                 table::own_member(BuiltinId::PrivateGlobals, name)
             }
+            // `Object.$defineProperty`: the member of a built-in that Bun's own code finds under a private name.
+            Resolved::Intrinsic(Intrinsic::PrivateName) => {
+                let (holder, MemberKey::Name(spelling)) = self.hir.member_key(callee)? else {
+                    return None;
+                };
+                let holder = self.hir.skip_type_assertions(holder);
+                let holder = source.builtins.builtin_of_expression(holder)?;
+                table::own_member(holder, self.input.names.get_private(spelling)?)
+            }
             Resolved::Builtin(_) | Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_) => {
                 source.builtins.builtin_of_expression(callee)
             }
@@ -499,7 +508,10 @@ impl<'a, 's> FileScan<'a, 's> {
             .filter_map(|site| graph.find_site_answer(self.file, site));
         match answers.next()? {
             SiteAnswer::Module(
-                ModuleRef::File(target) | ModuleRef::Face(target) | ModuleRef::Check(target),
+                ModuleRef::File(target)
+                | ModuleRef::Inner { file: target, .. }
+                | ModuleRef::Face(target)
+                | ModuleRef::Check(target),
             ) => Some(target),
             SiteAnswer::Module(ModuleRef::Runtime(_) | ModuleRef::External { .. })
             | SiteAnswer::Computed(_)
@@ -585,8 +597,7 @@ impl<'a, 's> FileScan<'a, 's> {
     fn is_only_looked_at(&self, call: CallId, operand: ExprId) -> bool {
         let hir = self.hir;
         let callee = hir.skip_type_assertions(hir[call].callee);
-        let source = parsed_source(self.input.runtime, self.file);
-        let builtin = source.and_then(|it| it.builtins.builtin_of_expression(callee));
+        let builtin = self.find_called_builtin(callee);
         hir.ids(hir[call].args).next() == Some(operand)
             && matches!(
                 builtin.map(table::canonical_id),
@@ -739,7 +750,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     continue;
                 };
                 let interest = match self.classify_symbol(symbol) {
-                    SymbolClass::Other => continue,
+                    SymbolClass::Other => Interest::Evaluation(ModuleRef::File(self.file)),
                     SymbolClass::Unit(unit) => Interest::Unit(unit),
                     SymbolClass::Export(target, name) => Interest::Export(target, name),
                     SymbolClass::ExportObject(target) => {
@@ -747,6 +758,23 @@ impl<'a, 's> FileScan<'a, 's> {
                     }
                 };
                 named_exports.push((hir[item].exported, interest));
+            }
+        }
+    }
+
+    // What the literal holds under any other name that is written in it is made by code at the top level.
+    fn add_names_made_by_evaluation(&self, named_exports: &mut Vec<(Atom, Interest)>) {
+        let hir = self.hir;
+        let Some(ExprKind::Object(properties)) = self.export_object.map(|it| hir[it.literal].kind)
+        else {
+            return;
+        };
+        let mut listed: FxHashSet<Atom> = named_exports.iter().map(|export| export.0).collect();
+        for property in properties.iter() {
+            if let PropKey::Name(name) = hir[property].key
+                && listed.insert(name)
+            {
+                named_exports.push((name, Interest::Evaluation(ModuleRef::File(self.file))));
             }
         }
     }
@@ -804,9 +832,12 @@ impl<'a, 's> FileScan<'a, 's> {
                 SymbolClass::ExportObject(target) => match self.classify_holder_use(reference) {
                     HolderUse::Member(name) => Interest::Export(target, name),
                     HolderUse::NothingRead => continue,
-                    HolderUse::Initializer(_) | HolderUse::Other => {
-                        Interest::EveryExport(ModuleRef::File(target))
+                    HolderUse::Initializer(declaration) => {
+                        let region = self.region_of(hir[reference].pos) as usize;
+                        self.add_initialized_names(declaration, target, &mut interests[region]);
+                        continue;
                     }
+                    HolderUse::Other => Interest::EveryExport(ModuleRef::File(target)),
                 },
             };
             match self.names_of_exported_bindings.get(&reference) {
@@ -819,6 +850,7 @@ impl<'a, 's> FileScan<'a, 's> {
         }
         let exported_functions = self.exported_functions.iter();
         named_exports.extend(exported_functions.map(|&(name, unit)| (name, Interest::Unit(unit))));
+        self.add_names_made_by_evaluation(&mut named_exports);
         let analysis = self.analysis;
         for site in analysis.import_sites {
             let region = match site.kind.call() {
@@ -1038,7 +1070,10 @@ impl<'a, 's> Walk<'a, 's> {
 
     fn find_file(&self, module: ModuleRef) -> Option<FileId> {
         match module {
-            ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Check(file) => Some(file),
+            ModuleRef::File(file)
+            | ModuleRef::Inner { file, .. }
+            | ModuleRef::Face(file)
+            | ModuleRef::Check(file) => Some(file),
             ModuleRef::Runtime(module) => self.input.sources.runtime_module_file(module),
             ModuleRef::External { .. } => None,
         }
@@ -1179,7 +1214,10 @@ impl<'a, 's> Walk<'a, 's> {
     fn find_target_module(&self, file: FileId, site: ImportSiteKind) -> Option<RuntimeModule> {
         match self.input.graph.find_site_answer(file, site)? {
             SiteAnswer::Module(
-                ModuleRef::File(target) | ModuleRef::Face(target) | ModuleRef::Check(target),
+                ModuleRef::File(target)
+                | ModuleRef::Inner { file: target, .. }
+                | ModuleRef::Face(target)
+                | ModuleRef::Check(target),
             ) => self.input.graph.runtime_module(target),
             SiteAnswer::Module(ModuleRef::Runtime(module)) => Some(module),
             _ => None,

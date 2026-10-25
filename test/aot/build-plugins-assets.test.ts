@@ -107,6 +107,29 @@ console.log(text(script));`,
     prints: "[throw 1]\n",
     calls: { "script.min.js": 1 },
   },
+  "scripts that the plugin answers are asked for once, beside a Worker with an unknown path": {
+    files: {
+      "main.ts": `${reads}// @ts-ignore
+import once from "./once.min.js" with { type: "file" };
+// @ts-ignore
+import twice from "./twice.min.js" with { type: "file" };
+import { twiceAgain } from "./again";
+console.log(text(once), text(twice), twice === twiceAgain);
+const settings: any = ((globalThis as any)[Symbol.for("settings")] ??= {});
+if (settings.findWorker) new Worker(settings.findWorker());`,
+      "again.ts": `// @ts-ignore
+import twiceAgain from "./twice.min.js" with { type: "file" };
+export { twiceAgain };`,
+      "once.min.js": "!function(){}();",
+      "twice.min.js": "!function(){}();",
+      "plugin.ts": plugin(
+        `  const callsOf = (a: any) => calls[a.path.split(/[\\\\/]/).pop()] ?? 0;
+  b.onLoad({ filter: /\\.min\\.js$/ }, (a: any) => answer(a, { contents: "[answer " + (callsOf(a) + 1) + "]", loader: "file" }));`,
+      ),
+    },
+    prints: "[answer 1] [answer 1] true\n",
+    calls: { "once.min.js": 1, "twice.min.js": 1 },
+  },
   "a plugin that returns undefined embeds the file from disk": {
     files: {
       "main.ts": `${reads}// @ts-ignore

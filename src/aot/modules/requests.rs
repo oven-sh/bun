@@ -427,15 +427,21 @@ impl RequestList {
     }
 }
 
-/// By record file: what a module imports, which runs in front of its body, and then what its sites evaluate, in the order of the text.
+pub(super) struct FinishedRequests {
+    /// By record file.
+    pub files: Vec<Vec<ModuleRequest>>,
+    /// In the order of `ModuleSet::inner_modules`.
+    pub inner_modules: Vec<(ModuleRef, Vec<ModuleRequest>)>,
+}
+
+/// What a module imports, which runs in front of its body, and then what its sites evaluate, in the order of the text.
 pub(super) fn finish_requests(
     scans: &Scans,
     modules: &ModuleSet,
     tables: &ExportTables,
     order: &EvaluationOrder,
     sites: &PlannedSites,
-) -> Vec<Vec<ModuleRequest>> {
-    let mut seen = FxHashSet::default();
+) -> FinishedRequests {
     let finish_file = |&file: &FileId| {
         let follows_every_star = tables.follows_every_star(file);
         let finish_request = |draft: &RequestDraft| ModuleRequest {
@@ -444,10 +450,20 @@ pub(super) fn finish_requests(
                 && (follows_every_star || tables.has_dynamic_names(draft.target)),
             ..ModuleRequest::import(draft.target)
         };
-        let mut requests: Vec<ModuleRequest> = match scans.find(file) {
+        match scans.find(file) {
             Some(scan) => scan.requests.iter().map(finish_request).collect(),
             None => Vec::new(),
-        };
+        }
+    };
+    let inner_modules = modules.inner_modules().iter();
+    let mut finished = FinishedRequests {
+        files: modules.record_files.iter().map(finish_file).collect(),
+        inner_modules: inner_modules
+            .map(|&(file, callback)| (ModuleRef::Inner { file, callback }, Vec::new()))
+            .collect(),
+    };
+    let mut seen = FxHashSet::default();
+    for (requests, &file) in finished.files.iter_mut().zip(&modules.record_files) {
         seen.clear();
         let evaluated = sites.of(file).iter().filter(|site| site.evaluates);
         let evaluated = evaluated.map(|site| (site.referrer, site.target));
@@ -457,11 +473,18 @@ pub(super) fn finish_requests(
             }
             // Behind a site of such a target it has run to its end, or it lies on a cycle that the requests show.
             let completes = modules.keeps_error(target) || !order.exposed(target);
-            requests.push(ModuleRequest::require(target, completes));
+            let request = ModuleRequest::require(target, completes);
+            match referrer {
+                ModuleRef::Inner { file, callback } => {
+                    let position = modules.inner_module_position(file, callback);
+                    let position = position.expect("a site in an unlisted module");
+                    finished.inner_modules[position].1.push(request);
+                }
+                _ => requests.push(request),
+            }
         }
-        requests
-    };
-    modules.record_files.iter().map(finish_file).collect()
+    }
+    finished
 }
 
 pub(super) fn finish_site_answers(

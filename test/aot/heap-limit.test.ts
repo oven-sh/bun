@@ -172,12 +172,10 @@ async function build(cwd: string, ...moreEntryPoints: string[]) {
   return join(cwd, "program");
 }
 
-if (isASAN)
-  console.error(
-    "SKIPPED: heap-limit.test.ts: a Bun built with AddressSanitizer takes the range from another allocator, which does not hand out again at once what is freed, so the reserve that pays for the RangeError does not come back; under `ulimit -v` such a program does not start",
-  );
+// TODO: with AddressSanitizer these run out of room where a release build does not.
+const runsOutOfRoomEarly = isASAN;
 
-(isASAN ? describe.skip : describe.concurrent)("the address space for objects of a compiled program", () => {
+describe.concurrent("the address space for objects of a compiled program", () => {
   test("a program that keeps more objects alive than fit ends with a RangeError", async () => {
     using folder = tempDir("aot-heap-limit", { "program.ts": keepsEverything });
     const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
@@ -194,16 +192,20 @@ if (isASAN)
     expect({ stdout, exitCode }).toEqual({ stdout: "finally\n", exitCode: 1 });
   }, 120_000);
 
-  test("a program that is told and goes on filling stops and says why", async () => {
-    using folder = tempDir("aot-heap-limit", { "program.ts": isToldAndGoesOnFilling("console.log") });
-    const program = await build(String(folder));
-    const { stdout, stderr, exitCode } = await run(withoutCoreDump([program]), String(folder), smallHeap);
-    expect(stderr).toContain("FATAL: out of memory. Each thread of a compiled executable can use 64 MB");
-    expect(stderr).toMatch(/Bun (has run|ran) out of memory/);
-    expect(stderr).not.toContain("This indicates a bug in Bun");
-    expect(stdout).toMatch(/^(told RangeError true\n)+$/);
-    expect(exitCode).not.toBe(0);
-  }, 120_000);
+  test.skipIf(runsOutOfRoomEarly)(
+    "a program that is told and goes on filling stops and says why",
+    async () => {
+      using folder = tempDir("aot-heap-limit", { "program.ts": isToldAndGoesOnFilling("console.log") });
+      const program = await build(String(folder));
+      const { stdout, stderr, exitCode } = await run(withoutCoreDump([program]), String(folder), smallHeap);
+      expect(stderr).toContain("FATAL: out of memory. Each thread of a compiled executable can use 64 MB");
+      expect(stderr).toMatch(/Bun (has run|ran) out of memory/);
+      expect(stderr).not.toContain("This indicates a bug in Bun");
+      expect(stdout).toMatch(/^(told RangeError true\n)+$/);
+      expect(exitCode).not.toBe(0);
+    },
+    120_000,
+  );
 
   // The function that fills the range has the handler. Nothing in its loop but the built-in makes anything, and a loop that ends with its list makes records.
   test("a loop inside a try that fills the range gets the RangeError in its own catch, whatever it fills the range with", async () => {
@@ -413,9 +415,11 @@ console.log("afterward", kept.length);
   }, 120_000);
 
   // Native code that makes an object for each piece of its input enters no function of the program: it asks by itself, once an object, whether the error is owed.
-  test("one text or one message with more objects than fit is a RangeError of JSON.parse and of structuredClone", async () => {
-    using folder = tempDir("aot-heap-limit", {
-      "program.ts": `const text = "[" + '{"a":1,"b":"x"},'.repeat(2_000_000) + '{"a":1}]';
+  test.skipIf(runsOutOfRoomEarly)(
+    "one text or one message with more objects than fit is a RangeError of JSON.parse and of structuredClone",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `const text = "[" + '{"a":1,"b":"x"},'.repeat(2_000_000) + '{"a":1}]';
 function attempt(what: string, fill: () => unknown[]) {
   try {
     console.log(what, "finished", fill().length);
@@ -434,15 +438,17 @@ attempt("copies", () => {
 attempt("a small text afterward", () => JSON.parse("[1,2,3]"));
 attempt("a small copy afterward", () => structuredClone([1, { a: 2 }]));
 `,
-    });
-    const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout:
-        "a text RangeError Out of memory\na text and a reviver RangeError Out of memory\ncopies RangeError Out of memory\na small text afterward finished 3\na small copy afterward finished 2\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  }, 120_000);
+      });
+      const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout:
+          "a text RangeError Out of memory\na text and a reviver RangeError Out of memory\ncopies RangeError Out of memory\na small text afterward finished 3\na small copy afterward finished 2\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 
   test("a Worker that is sent such a text ends alone", async () => {
     using folder = tempDir("aot-heap-limit", {
@@ -913,15 +919,19 @@ ${keepsAFullRangeAndGoesOnInATry("parentPort!.postMessage")}`,
     });
   }, 120_000);
 
-  test("two Workers each keep more alive than half a range holds", async () => {
-    using folder = tempDir("aot-heap-limit", twoWorkersThatKeepMoreThanHalfARange);
-    const program = await build(String(folder), "worker.ts");
-    const { stdout, stderr, exitCode } = await run([program], String(folder), {
-      BUN_JSC_markedBlockCageSizeInMB: "128",
-    });
-    expect(stderr).not.toContain("FATAL");
-    expect({ stdout, exitCode }).toEqual({ stdout: "3002300000,3002300000 2000000000\n", exitCode: 0 });
-  }, 120_000);
+  test.skipIf(runsOutOfRoomEarly)(
+    "two Workers each keep more alive than half a range holds",
+    async () => {
+      using folder = tempDir("aot-heap-limit", twoWorkersThatKeepMoreThanHalfARange);
+      const program = await build(String(folder), "worker.ts");
+      const { stdout, stderr, exitCode } = await run([program], String(folder), {
+        BUN_JSC_markedBlockCageSizeInMB: "128",
+      });
+      expect(stderr).not.toContain("FATAL");
+      expect({ stdout, exitCode }).toEqual({ stdout: "3002300000,3002300000 2000000000\n", exitCode: 0 });
+    },
+    120_000,
+  );
 
   test.skipIf(!isLinux || isASAN)(
     "where address space is limited a Worker shares the range of the main thread",
@@ -1119,11 +1129,9 @@ console.log(entries, sum);
     120_000,
   );
 
-  test.skipIf(isASAN)(
-    "a program that fills the room for the shapes of objects gets an error that names it",
-    async () => {
-      using folder = tempDir("aot-heap-limit", {
-        "program.js": `let keep = [];
+  test("a program that fills the room for the shapes of objects gets an error that names it", async () => {
+    using folder = tempDir("aot-heap-limit", {
+      "program.js": `let keep = [];
 function fill() {
   for (let i = 0; ; i++) {
     const object = {};
@@ -1142,24 +1150,22 @@ for (let attempt = 0; attempt < 2; attempt++) {
 }
 console.log("afterward", Object.keys({ a: 1, b: 2 }).join());
 `,
-      });
-      const built = await run(
-        [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
-        String(folder),
-      );
-      expect(built.exitCode).toBe(0);
-      const { stdout, stderr, exitCode } = await run([join(String(folder), "program")], String(folder), {
-        BUN_JSC_structureHeapSizeInKB: "65536",
-      });
-      const message = "Out of memory: This executable can use 64 MB for the shapes of JavaScript objects (Structures).";
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: `0 true ${message} true\n1 true ${message} true\nafterward a,b\n`,
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    240_000,
-  );
+    });
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
+      String(folder),
+    );
+    expect(built.exitCode).toBe(0);
+    const { stdout, stderr, exitCode } = await run([join(String(folder), "program")], String(folder), {
+      BUN_JSC_structureHeapSizeInKB: "65536",
+    });
+    const message = "Out of memory: This executable can use 64 MB for the shapes of JavaScript objects (Structures).";
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `0 true ${message} true\n1 true ${message} true\nafterward a,b\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 240_000);
 
   test.skipIf(!isLinux)(
     "the range of a Worker that has ended is given back",

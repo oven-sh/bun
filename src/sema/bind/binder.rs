@@ -1682,40 +1682,65 @@ impl<'f, 's> Binder<'f, 's> {
     /// isn't bound in that node's scope. Returns `None` for an object literal, a JSX element's
     /// attributes or a type literal. Those are containers (`GetContainerFlags`) with neither locals
     /// nor exports.
-    fn container_of_expando(&self, e: ExprId, scope: ScopeId) -> Option<ScopeId> {
+    fn container_of_expando(
+        &self,
+        e: ExprId,
+        scope: ScopeId,
+        long_climbs: &mut FxHashMap<ExprId, Parent>,
+    ) -> Option<ScopeId> {
         let (f, b) = (self.f, &self.b);
         let scope_of_function = |func: FnId| func.is_some().then(|| b.fns[func.idx()].scope);
-        let mut parent = b.parent_of_expr(e);
-        loop {
-            parent = match parent {
-                Parent::Expr(outer) if outer.is_some() => b.parent_of_expr(outer),
-                Parent::Prop(_) | Parent::PropKey(..) => return None,
-                Parent::MethodKey(p) => return scope_of_function(f.function_of(f.node(p))),
-                Parent::ParamDecorator(p) => {
-                    return scope_of_function(b.param_fn[p.idx()]);
-                }
-                Parent::MemberKey(m) | Parent::MemberDecorator(m) => {
-                    return match b.member_owner[m.idx()] {
-                        _ if f[m].func.is_some() => scope_of_function(f[m].func),
-                        MemberOwner::Class(c) => Some(b.class_scope[c.idx()]),
-                        MemberOwner::Interface(i) => Some(b.interface_scope[i.idx()]),
-                        MemberOwner::TypeLiteral(_) | MemberOwner::None => None,
-                    };
-                }
-                Parent::ClassDecorator(c) => {
-                    return Some(b.class_scope[c.idx()]);
-                }
-                _ => return Some(self.declaration_scope_at(scope)),
-            };
+        match self.parent_of_enclosing_expressions(e, long_climbs) {
+            Parent::Prop(_) | Parent::PropKey(..) => None,
+            Parent::MethodKey(p) => scope_of_function(f.function_of(f.node(p))),
+            Parent::ParamDecorator(p) => scope_of_function(b.param_fn[p.idx()]),
+            Parent::MemberKey(m) | Parent::MemberDecorator(m) => match b.member_owner[m.idx()] {
+                _ if f[m].func.is_some() => scope_of_function(f[m].func),
+                MemberOwner::Class(c) => Some(b.class_scope[c.idx()]),
+                MemberOwner::Interface(i) => Some(b.interface_scope[i.idx()]),
+                MemberOwner::TypeLiteral(_) | MemberOwner::None => None,
+            },
+            Parent::ClassDecorator(c) => Some(b.class_scope[c.idx()]),
+            _ => Some(self.declaration_scope_at(scope)),
         }
+    }
+
+    /// The first ancestor of `e` that isn't an expression. An operand of a comma chain of minified code has as many operators
+    /// above it as operands follow it. So a climb that gets long notes its end at each expression it passes from there on, and
+    /// the next one stops there.
+    fn parent_of_enclosing_expressions(
+        &self,
+        e: ExprId,
+        long_climbs: &mut FxHashMap<ExprId, Parent>,
+    ) -> Parent {
+        const SHORT_CLIMB: usize = 8;
+        let mut passed = Vec::new();
+        let mut parent = self.b.parent_of_expr(e);
+        let mut steps = 0;
+        while let Parent::Expr(outer) = parent
+            && outer.is_some()
+        {
+            steps += 1;
+            if steps > SHORT_CLIMB {
+                if let Some(&end) = long_climbs.get(&outer) {
+                    parent = end;
+                    break;
+                }
+                passed.push(outer);
+            }
+            parent = self.b.parent_of_expr(outer);
+        }
+        long_climbs.extend(passed.into_iter().map(|outer| (outer, parent)));
+        parent
     }
 
     /// `bindDeferredExpandoAssignments`: `f.name = value`, `f[key] = value` and, in JavaScript,
     /// `Object.defineProperty(f, key, descriptor)` declare a property of `f`.
     fn bind_deferred_expando_assignments(&mut self) {
         let assignments = std::mem::take(&mut self.expando_assignments);
+        let mut long_climbs = FxHashMap::default();
         for &(e, scope) in &assignments {
-            let Some(scope) = self.container_of_expando(e, scope) else {
+            let Some(scope) = self.container_of_expando(e, scope, &mut long_climbs) else {
                 continue;
             };
             // `getParentOfPropertyAssignment`, `getDeclarationName`: the text of a literal key. `key` is `NONE` for `obj.name`.

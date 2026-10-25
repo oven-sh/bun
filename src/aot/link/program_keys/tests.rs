@@ -132,8 +132,14 @@ fn modules_order_by_variant_project_file() {
     };
     let (first, second) = (RuntimeModule::NodeBuffer, RuntimeModule::NodePath);
     let (application, runtime) = (ProjectId::Application, ProjectId::Runtime);
+    let inner = |file, callback| ProgramModule::Inner {
+        file,
+        callback: FnId(callback),
+    };
     let modules_in_order = [
         file(application, 0),
+        inner(in_project(application, 0), 1),
+        inner(in_project(application, 0), 5),
         ProgramModule::Face(in_project(application, 0)),
         ProgramModule::Check(in_project(application, 0)),
         file(application, 9),

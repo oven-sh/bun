@@ -15,9 +15,9 @@ use bun_sema::hir_from_data::HostValue;
 use bun_sema::program::{HostLoader, HostModuleId};
 use bun_sema::resolve::{
     CodeHost, CodeImportForm, CodeImportKind, CodeParseRequest, CodeRead, CodeRequest,
-    ExternalKind, FileStamp, FinishedFile, Host, HostPayload, HostResolution, LoaderRequest,
-    MacroRequest, ModuleDetection, ParsedCode, ScriptKind, TransformRequest, TreeChange,
-    is_declaration_file_name, to_path, to_path_in,
+    ExternalKind, FileSearch, FileStamp, FinishedFile, FoundCode, Host, HostPayload,
+    HostResolution, LoaderRequest, MacroRequest, ModuleDetection, ParsedCode, ScriptKind,
+    TransformRequest, TreeChange, is_declaration_file_name, to_path, to_path_in,
 };
 use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
@@ -128,6 +128,8 @@ pub(crate) struct LoadHost<'a> {
     unreadable: Guarded<Vec<Vec<u8>>>,
     /// Sorted.
     background_reads: Guarded<Vec<Vec<u8>>>,
+    /// The background reads that a plugin answered.
+    assets_from_plugins: Guarded<Vec<Vec<u8>>>,
     background_reads_disabled: AtomicBool,
     reads_in_background_after_load: bool,
     has_run_macros: AtomicBool,
@@ -182,6 +184,7 @@ impl<'a> LoadHost<'a> {
             extra_extensions: extra_extensions.collect(),
             unreadable: Guarded::new(Vec::new()),
             background_reads: Guarded::new(Vec::new()),
+            assets_from_plugins: Guarded::new(Vec::new()),
             background_reads_disabled: AtomicBool::new(false),
             reads_in_background_after_load: false,
             has_run_macros: AtomicBool::new(false),
@@ -199,6 +202,10 @@ impl<'a> LoadHost<'a> {
 
     pub(crate) fn background_reads(&self) -> Vec<Vec<u8>> {
         self.background_reads.lock().clone()
+    }
+
+    pub(crate) fn assets_from_plugins(&self) -> Vec<Vec<u8>> {
+        self.assets_from_plugins.lock().clone()
     }
 
     fn served_by(&self, path: &[u8]) -> ServedBy {
@@ -310,6 +317,9 @@ impl<'a> LoadHost<'a> {
                 }
             };
             let plugin_loader = self.plugin_loader(path);
+            if plugin_loader.is_some() {
+                self.assets_from_plugins.lock().push(path.clone());
+            }
             if plugin_loader.is_some_and(|loader| loader != Loader::File) {
                 are_assets = false;
                 continue;
@@ -499,6 +509,19 @@ impl CodeHost for LoadHost<'_> {
             },
             false => HostResolution::Unclaimed,
         }
+    }
+
+    fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
+        // The resolver of the provider sees the disk alone. A file that the build was given in memory comes first.
+        let options = self.input.options;
+        let in_memory_files = &options.load.in_memory_files;
+        if !in_memory_files.is_empty()
+            && let FoundCode::File { path, required } = options.code.find_file_plainly(self, search)
+            && (in_memory_files.iter()).any(|(file, _)| file.as_slice() == to_native(&path))
+        {
+            return FoundCode::File { path, required };
+        }
+        self.input.provider.find_file(self, search)
     }
 
     fn resolve_runtime_module(&self, specifier: &[u8]) -> HostResolution {

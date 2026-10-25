@@ -43,7 +43,7 @@ export function path() {
 }
 
 export function url() {
-  return import.meta.resolve("#values");
+  return import.meta.resolve("values-package");
 }
 
 export function computed(name) {

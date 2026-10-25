@@ -1025,15 +1025,6 @@ export const internalModuleBytecode: {
   (source: string, name: string): { name: string; bytecode: Uint8Array; strings: Uint8Array };
 } = $newCppFunction("InternalModuleRegistry.cpp", "jsInternalModuleBytecode", 2);
 
-/** An answer: an absolute native path | `builtin:node:fs` | `external` | `erased` | `computed` (unknown) | `computed: <answer>, <answer>` | `not found` (bunRun) | `not found (PackagePathNotExported)` (compile: the member of `CodeFailure`). */
-export type CodeResolutionSite = {
-  importer: string;
-  specifier: string;
-  kind: "import" | "require";
-  bunRun: string;
-  compile: string;
-};
-
 /** All paths are absolute native paths. */
 export type CodeGraphFile = {
   path: string;
@@ -1067,27 +1058,6 @@ export type CodeGraph = {
   /** `TS2307: ..` */
   diagnostics: string[];
 };
-
-const compareCodeResolutionNative = $bindgen("code_resolver_testing.bind.ts", "compareCodeResolution") as (
-  root: string,
-  conditions: string,
-  preserveSymlinks: boolean | undefined,
-  listsEverySite: boolean,
-) => string;
-
-/** Resolves every constant specifier of every source file under `root`, as `import` and as `require`, with the resolver of `bun compile` and with the resolver of `bun run`. */
-export const compareCodeResolution = (
-  root: string,
-  options: { conditions?: string[]; preserveSymlinks?: boolean; listsEverySite?: boolean } = {},
-): { sites: number; differences: CodeResolutionSite[]; everySite?: CodeResolutionSite[] } =>
-  JSON.parse(
-    compareCodeResolutionNative(
-      root,
-      (options.conditions ?? []).join("\n"),
-      options.preserveSymlinks,
-      !!options.listsEverySite,
-    ),
-  );
 
 const describeCodeGraphNative = $bindgen("code_resolver_testing.bind.ts", "describeCodeGraph") as (
   entryPoints: string,

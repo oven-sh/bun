@@ -8,7 +8,7 @@
 // Left out: a program of several files; one with a file beside it (it needs flags, or differs from plain Bun on purpose); and whatever cannot share a process with others
 // or says something else each time: its own path or arguments, stack texts, the clock, random numbers, timers, files, sockets, processes, an exit, a change to a built-in.
 import { afterAll, describe, expect, test } from "bun:test";
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { dirname, join } from "path";
 import { limitsLowered } from "./harness/limits";
@@ -20,6 +20,9 @@ const namesInGroup = 300;
 // What a script makes from a few rows of the table of built-ins is listed under one name until it is made (run-programs.ts).
 const programsUnderOneName = 6;
 const groupsInShare = isASAN ? 1 : 3;
+// A validating build of many joined programs, or of a large one beside others, needs gigabytes and minutes.
+const programsInValidatingBuild = 40;
+const bytesOfLargeProgram = 20_000;
 const measure = ["--aot-heat=everything-is-hot"];
 
 const cannotBeJoined = new RegExp(
@@ -130,6 +133,15 @@ async function run(executable: string | string[], cwd: string, env: Record<strin
 const joinable = (listed: string[]) =>
   taken(listed, () => true).filter(path => isOneFile(inPrograms(path).replaceAll("\\", "/")) && !filesBeside.some(suffix => existsSync(path.replace(/\.[a-z]+$/, suffix))));
 
+/** A large program by itself, the others `programsInValidatingBuild` at a time. */
+function splitForValidatingBuild(paths: string[]): string[][] {
+  const isLarge = (path: string) => statSync(path).size > bytesOfLargeProgram;
+  const small = paths.filter(path => !isLarge(path));
+  const parts = paths.filter(isLarge).map(path => [path]);
+  for (let from = 0; from < small.length; from += programsInValidatingBuild) parts.push(small.slice(from, from + programsInValidatingBuild));
+  return parts;
+}
+
 /** Writes a group below `cwd` and builds it with `flags` as `name`. What the compiler refuses beside the others has left `names`. Nothing where nothing of the group can be joined. */
 async function written(cwd: string, carrier: string[], group: number | string, paths: string[], name: string, flags: string[]) {
   const pathOf = new Map(paths.map(path => [inPrograms(path).replaceAll("\\", "/"), path]));
@@ -168,6 +180,11 @@ async function compare(folder: string, carrier: string[], group: number | string
   // What was listed under one name may have come to many programs.
   if (paths.length > 2 * namesInGroup) {
     for (let from = 0; from < paths.length; from += namesInGroup) await compare(folder, carrier, `${group}.${from / namesInGroup}`, paths.slice(from, from + namesInGroup), flags);
+    return;
+  }
+  const parts = flags.includes("--aot-validate") ? splitForValidatingBuild(paths) : [paths];
+  if (parts.length > 1) {
+    for (const [index, part] of parts.entries()) await compare(folder, carrier, `${group}.${index}`, part, flags);
     return;
   }
   const made = await written(cwd, carrier, group, paths, "measure", measure);

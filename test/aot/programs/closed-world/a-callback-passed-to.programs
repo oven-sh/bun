@@ -2385,30 +2385,30 @@ attempt("structuredClone, deleted", () => { readStructuredClone(); delete hidden
 ////= attempt-4	"queueMicrotask, in a loop that replaces it half way"	readQueueMicrotask	realm	queueMicrotask
 attempt("Blob, by Object.assign", () => { readBlob(); Object.assign(realm, JSON.parse(`{ "Blob": { "mine": "assigned" } }`)); return readBlob(); });
 //// host-members-defined-and-deleted-through-a-receiver-that-nobody-follows.cjs
-// One statement stores to `process` under a computed key, so every member of it may be replaced and none is locked. Then a definition and a deletion that reach `process`
+// One statement stores to `process` under a computed key, so every member of it that a program may replace at all is open. Then a definition and a deletion that reach `process`
 // through a receiver that the compiler does not follow work too, and every later read by name sees them.
 const hidden = JSON.parse('["process"]').map(name => globalThis[name]);
 const keyOf = text => JSON.parse(JSON.stringify(text));
 process[keyOf("aNameOfMyOwn")] = 1;
 
-function readRelease() { return process.release; }
+function readMemoryUsage() { return process.memoryUsage; }
 function readFeatures() { return process.features; }
-function readVersions() { return process.versions; }
+function readArgv0() { return process.argv0; }
 function readConfig() { return process.config; }
 
 ////= report	expected
 
-report("release, at first:", readRelease, hidden[0].release);
+report("memoryUsage, at first:", readMemoryUsage, hidden[0].memoryUsage);
 report("features, at first:", readFeatures, hidden[0].features);
-report("versions, at first:", readVersions, hidden[0].versions);
+report("argv0, at first:", readArgv0, hidden[0].argv0);
 report("config, at first:", readConfig, hidden[0].config);
 const mine = () => {};
-Object.defineProperty(hidden[0], keyOf("release"), { value: mine, writable: true, configurable: true, enumerable: true });
-report("release, replaced by a definition:", readRelease, mine);
+Object.defineProperty(hidden[0], keyOf("memoryUsage"), { value: mine, writable: true, configurable: true, enumerable: true });
+report("memoryUsage, replaced by a definition:", readMemoryUsage, mine);
 Reflect.defineProperty(hidden[0], keyOf("features"), { get() { return "from a getter"; }, configurable: true });
 report("features, with a getter defined:", readFeatures, "from a getter");
-delete hidden[0][keyOf("versions")];
-report("versions, deleted:", readVersions, undefined);
+delete hidden[0][keyOf("argv0")];
+report("argv0, deleted:", readArgv0, undefined);
 Reflect.deleteProperty(hidden[0], keyOf("config"));
 report("config, deleted:", readConfig, undefined);
 //// host-members-made-by-a-read-that-nobody-follows.cjs

@@ -25,7 +25,7 @@ const helpersIn = (
   );
 
 // A list that the program makes by its length. The length is converted where it is no number, and the mapper gets what lies at each index and the index.
-const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh;
+const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh.dense;
 const lengthOfNewArray = [b.runs("ToPrimitive")];
 const calledForEachIndex = (element: b.PlaceLike, ...others: readonly b.PlaceLike[]) => [
   b.called({
@@ -58,18 +58,6 @@ const keyList = [b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive"
 // The compiler writes a number here. Anything else would be compared with one.
 const comparedWithNumbers = keyList;
 const serialized = [b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToJSON", "ToPrimitive")];
-
-// The engine's list of host roles names these. No compiled code calls them.
-const rolesWithoutCallers = ["copyOwnProperties", "countCodePoints", "holdsRule", "interpretNode", "validateByPlan"];
-const neverCalled = {
-  args: {},
-  returns: b.any,
-  capability: "js",
-  throws: true,
-  runsOnlyOperandCode: true,
-  runsUnseenCode: false,
-  implementation: b.generic,
-} satisfies b.FunctionField;
 
 // These files reach built-ins through intrinsics and locked members, which a program cannot replace.
 const usesOnlyFixedBuiltins = true;
@@ -163,83 +151,8 @@ const listOfPlainQuery = (symbol: string, element: b.TableType) =>
     },
   }) satisfies b.FunctionField;
 
-// view.subarray(begin) that goes into encoder.encodeInto(text, ..) and nowhere else on its way there is not made: what travels in its place is the view and where the range starts. startOfRangeOfBytes stands where the call stood and answers the start for bytes of a fixed length that give an ordinary Uint8Array, and -1 for everything else. viewOrRangeOfBytes stands there too: it hands the view on, or makes the call where the start is -1, so an error comes from where it came from. encodeIntoRangeOfBytes writes behind the start. rangeOfBytes makes the range for whoever else wants to see it, as it would be by then: nothing but a transfer of the buffer can have changed such bytes.
-const startOfRange = b.int(-1, 2 ** 31 - 1);
-const storageOfBytes = ["TypedArrayStorage"] as const;
-const anyView = b.union(b.instance("TypedArray"), b.instance("DataView"));
-const entryOfRangeHelper = (symbol: string, numberOfValues: number) => ({
-  symbol,
-  declaration: `extern "C" SYSV_ABI JSC::EncodedJSValue ${symbol}(JSC::JSGlobalObject*${", JSC::EncodedJSValue".repeat(numberOfValues)});`,
-  headers: [],
-  parameters: [realm, ...Array.from({ length: numberOfValues }, () => value)],
-});
-const encodedIntoRange = {
-  returns: b.ordinaryObjectOf("ReadAndWrittenCounts").fresh,
-  reads: storageOfBytes,
-  writes: [...storageOfBytes, "TypedArrayElements"],
-  implementation: b.hostCall,
-  directEntry: entryOfRangeHelper("AOT__encodeIntoRangeOfBytes", 4),
-} satisfies Partial<b.FunctionField>;
-
 export default b.declarations(
   b.namespace("%CompilerHelpers%", {
-    startOfRangeOfBytes: {
-      args: { view: b.any, begin: b.any },
-      returns: startOfRange,
-      capability: "none",
-      uses: { view: b.inspected, begin: b.inspected },
-      reads: storageOfBytes,
-      implementation: b.hostCall,
-      directEntry: entryOfRangeHelper("AOT__startOfRangeOfBytes", 2),
-    },
-    viewOrRangeOfBytes: {
-      args: { view: b.any, begin: b.any, start: b.any },
-      returns: b.operand("view"),
-      capability: "heap",
-      throws: true,
-      uses: { view: [b.returned, b.retained], begin: b.inspected, start: b.inspected },
-      reads: storageOfBytes,
-      writes: storageOfBytes,
-      implementation: b.hostCall,
-      directEntry: entryOfRangeHelper("AOT__viewOrRangeOfBytes", 3),
-    },
-    rangeOfBytes: {
-      args: { view: b.any, start: b.any },
-      returns: b.operand("view"),
-      capability: "heap",
-      throws: true,
-      uses: { view: [b.returned, b.retained], start: b.inspected },
-      reads: storageOfBytes,
-      writes: storageOfBytes,
-      implementation: b.hostCall,
-      directEntry: entryOfRangeHelper("AOT__rangeOfBytes", 2),
-    },
-    encodeIntoRangeOfBytes: [
-      {
-        ...encodedIntoRange,
-        args: { encoder: b.any, source: b.string, destination: anyView, start: b.any },
-        capability: "heap",
-        uses: {
-          encoder: b.inspected,
-          source: [b.readAsCharacters],
-          destination: [b.readsContents(), b.writesContents()],
-          start: b.inspected,
-        },
-      },
-      {
-        ...encodedIntoRange,
-        args: { encoder: b.any, source: b.any, destination: b.any, start: b.any },
-        capability: "js",
-        runsOnlyOperandCode: true,
-        throws: true,
-        uses: {
-          encoder: b.inspected,
-          source: [b.readAsCharacters, b.runs("ToPrimitive")],
-          destination: [b.readsContents(), b.writesContents()],
-          start: b.inspected,
-        },
-      },
-    ],
     scanPlainQuery: scanOfText("AOT__scanPlainQuery", -1, { text: b.string }, [realm, value]),
     findInPlainQuery: scanOfText("AOT__findInPlainQuery", -2, { text: b.string, name: b.any }, [realm, value, value]),
     plainQueryEntries: listOfPlainQuery(
@@ -405,7 +318,6 @@ export default b.declarations(
         operand: [b.retained, b.returned],
       },
     }),
-    ...Object.fromEntries(rolesWithoutCallers.map(name => [name, neverCalled])),
     ...helpersIn(
       "prelude/json",
       b.string,

@@ -36,19 +36,24 @@ description: "A package points bun compile at its TypeScript with the aot condit
 - **The file is the module.** Bun compiles it like any TypeScript file of a dependency. Nothing compares it with `index.js`, so keeping the two in step is up to you. Generating both from the same sources does that.
 - **A wrong type never changes what a program does.** A type is a prediction that a guard checks. A value of another type takes a slower path.
 - **The type checker reads the same file.** Under `--aot`, `"types"` isn't read for an export that has an `"aot"` condition, whatever the order of the keys, so every class has one declaration. What the file exports is what importers see: a class written as `export var Box = (() => { class Box {} return Box; })()` is a value there and can't be used as a type.
+- **Put `"aot"` first.** As with every condition, the first one that matches wins: after `"default"`, or after an `"import"` that names a file, `"aot"` is never reached.
 - **It works wherever conditions work:** nested under `"import"` or `"require"`, on subpaths, on patterns such as `"./features/*"`, and in `"imports"`.
 - **Relative imports are resolved as always.** Only imports that go through `exports` or `imports` see the condition, so a typed file imports the typed files beside it by name: `import { parse } from "./parse.aot.ts"`. As in TypeScript, `"./parse.js"` also finds `parse.ts`, `"./parse.mjs"` finds `parse.mts`, and `"./parse.cjs"` finds `parse.cts`.
 - **The name of the file is up to you.** It can be your source: `"aot": "./src/index.ts"`, if you publish `src`.
 
 ### Compiler options
 
-Bun type checks the TypeScript of a package with an `"aot"` condition under the `"compilerOptions"` of that package's `package.json`, or as `strict` if it has none. The `tsconfig.json` of the program that installs the package doesn't apply.
+Bun type checks and compiles the TypeScript of a package with an `"aot"` condition under the `"compilerOptions"` of that package's `package.json`, or as `strict` if it has none. The `tsconfig.json` and the flags of the program that installs the package don't apply, so the package behaves the same in every program.
 
 ```json title="package.json" icon="file-json"
 {
   "compilerOptions": { "strict": true, "noUncheckedIndexedAccess": true }
 }
 ```
+
+State the options that change what your code does, if your build sets them: `useDefineForClassFields`, `experimentalDecorators`, `emitDecoratorMetadata`, `jsx`, `jsxFactory`, `jsxFragmentFactory` and `jsxImportSource`. As everywhere in Bun, `target` and `verbatimModuleSyntax` don't change the code.
+
+In the package you're working on, the one you run Bun in, your `tsconfig.json` applies as always.
 
 ### Type errors
 
@@ -58,9 +63,34 @@ If the files have type errors in the program that installs the package, the buil
 warn: TS100009: 'greeter' has 1 type error (the first at node_modules/greeter/dist/index.aot.ts:3:7), so 1 of its 1 files are compiled without their types. They still work, but run slower.
 ```
 
+### Syntax errors and missing files
+
+A file that doesn't parse stops the build, and so does an `"aot"` condition that names a file the package doesn't have. The file is the module, so Bun doesn't fall back to `index.js`, just as Node.js doesn't try the next condition when a target is missing. With a pattern such as `"./features/*"`, every subpath that a program imports needs its own file.
+
 ## Let Bun write the files
 
 `bun compile --library` builds a package that's ready for npm, `"aot"` condition included.
+
+```ts src/index.ts icon="/icons/typescript.svg"
+export interface Options {
+  name: string;
+  times: number;
+}
+
+export function greet(options: Options): string {
+  return ("hello " + options.name + " ").repeat(options.times).trim();
+}
+```
+
+```json package.json icon="file-json"
+{
+  "name": "greeter",
+  "version": "1.0.0",
+  "license": "MIT",
+  "scripts": { "test": "bun test" },
+  "devDependencies": { "@types/bun": "latest" }
+}
+```
 
 ```bash terminal icon="terminal"
 bun compile --library
@@ -70,7 +100,7 @@ bun compile --library
   index.js      135 bytes  (entry point)
   index.d.ts    123 bytes  (declaration)
   index.aot.ts  232 bytes  (aot source)
-  package.json  459 bytes  (asset)
+  package.json  450 bytes  (asset)
 ```
 
 | File           | Holds                                              | Read by                     |

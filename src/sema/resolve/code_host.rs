@@ -1,6 +1,6 @@
 use super::{
-    CodeImportKind, CodeRequest, ExternalKind, Host, ParseOptions, SiteResolution,
-    TranspileSettings,
+    CodeFailure, CodeImportKind, CodeRequest, ExternalKind, Host, ParseOptions, SiteResolution,
+    TranspileSettings, find_file_plainly,
 };
 use crate::atom::Interner;
 use crate::bind::Bound;
@@ -29,6 +29,11 @@ pub trait CodeHost: Host {
 
     fn resolve_code(&self, _request: &CodeRequest<'_>) -> HostResolution {
         HostResolution::Unclaimed
+    }
+
+    /// Which file runs for an import that nothing has claimed.
+    fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
+        find_file_plainly(self, search)
     }
 
     fn resolve_runtime_module(&self, _specifier: &[u8]) -> HostResolution {
@@ -195,6 +200,32 @@ pub enum DeclaredSideEffects<'a> {
 pub enum CodeRead {
     Text(Cow<'static, [u8]>),
     Deferred,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct FileSearch<'a> {
+    pub directory: &'a [u8],
+    pub specifier: &'a [u8],
+    pub kind: CodeImportKind,
+    /// Whether an import of a package takes "module" where the package has "main" too.
+    pub prefers_module_field: bool,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum FoundCode {
+    File {
+        path: Vec<u8>,
+        /// The file that `require` of the same package finds, where "module" named `path`.
+        required: Option<Vec<u8>>,
+    },
+    External(Vec<u8>),
+    NotFound(CodeFailure),
+}
+
+impl FoundCode {
+    pub fn not_found() -> FoundCode {
+        FoundCode::NotFound(CodeFailure::ModuleNotFound)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

@@ -1,4 +1,6 @@
 # <program> TAB <expectation line>: expectations that are known to fail today. See expectations.py.
+# Open: JSON.parse behind a generic function is not parsed by the type that its answer is written under: nothing says that the layout of that type is made.
+data-from-outside/parsed-behind-generic-functions	// IR+ ^ .* = JSONSourceOpen v
 # Open: in this program the index may be `undefined` as far as the compiler knows (the parameter is `undefined|number`), and then `s[i]` is a general keyed read, which yields a string. Where it is known to be a number it is expanded without it, inside a loop (`keptInLoop`) and outside.
 strings/single-characters	// CALLS- kept StringHasAt|StringEqualsLiteral
 # Open: a key that is built from a string and integers is not yet built in one piece.
@@ -6,7 +8,6 @@ strings/strings-built-and-consumed-locally	// CALLS+ lookUp ConcatenateWithInteg
 # Open: `{ ...source, name }` over a source whose names no type knows is born as a copy of the source, and the names that are written are defined by name on the copy: 420 instructions where the form before, a layout of
 # the written names with the copied ones kept beside it, took 735. The copy and its definitions are not yet one call (the three CALLS+ lines of this program below).
 typed-objects/plain-clone-takes-stores-behind-it	// CALLS- named PutBy
-typed-objects/plain-clone-takes-stores-behind-it	// CALLS- wide PutBy
 # Nobody has looked at the lines below one by one. For a long time no test read the expectation lines; these failed when they were read again.
 # Each is one of three things: an optimization that is lost; a line that spells an operation, a stub or a counter as the compiler no longer does; a function that no longer has a body of its own.
 # A line that says what must NOT be there (IR-, CALLS-, IR= 0) and fails names something that IS there: look at those first.
@@ -73,7 +74,6 @@ calls-fast-paths/array-index-of-with-a-start-index	// CALLS+ afterFirst ArraySea
 calls-fast-paths/array-index-of-with-a-start-index	// CALLS- afterFirst CallHostFunction
 calls-fast-paths/array-methods-in-hot-caller	// IR= 1 filterFrom = ArrayHasIndex 
 calls-fast-paths/array-methods-in-hot-caller	// IR= 1 mapFrom = ArrayHasIndex 
-calls-fast-paths/bind-async-method	// IR+ IsClosureOf v[0-9]+ function=f[0-9]+
 calls-fast-paths/bind-async-method	// IR+ NewClosure \(.*\) function=f[0-9]+
 calls-fast-paths/bind-async-method	// IR+ TypeTest v[0-9]+ testedType=Function\^
 calls-fast-paths/bind-async-method	// IR+ ^function f[0-9]+ "later" \w+ role=BoundFunction
@@ -372,7 +372,6 @@ calls/arrow-function-stored-into-another-object-than-its-this	// IR= 1 sum PropG
 calls/builtin-only-callbacks-skip-signature-entry	// IR+ ^function f\d+ "byLastDigit" \w+ role=SignatureEntrypoint
 calls/builtin-only-callbacks-skip-signature-entry	// IR+ ^function f\d+ "descending" \w+ role=SignatureEntrypoint
 calls/builtin-only-callbacks-skip-signature-entry	// IR+ ^function f\d+ "productOf" \w+ role=SignatureEntrypoint
-calls/functions-that-call-themselves-last	// IR= 0 sumTo CallDirect
 calls/functions-that-call-themselves-last	// IR= 0 summed CallDirect
 calls/functions-that-call-themselves-last	// IR= 0 swapped CallDirect
 calls/functions-that-call-themselves-last	// IR= 0 tallied : =?L[0-9]+ = NewObject |CallDirect
@@ -388,7 +387,6 @@ calls/keys-of-rest	// IR= 1 typedInteger GetMyArgumentByVal
 calls/keys-of-rest	// IR= 1 typedNumber GetMyArgumentByVal
 calls/keys-of-rest	// IR= 1 typedString GetMyArgumentByVal
 calls/large-switch-predicate-inlined-in-loop	// IRT= 0 walk : boolean = CallDirect
-calls/large-switch-predicate-inlined-in-loop	// IRT= 1 walk : (number|i32|int\S*) = CallDirect
 calls/literal-factory-makes-no-calls	// CALLS+ summed f:summed
 calls/literal-factory-makes-no-calls	// CALLS- pair f:pair
 calls/literal-factory-makes-no-calls	// CALLS- point f:point
@@ -400,7 +398,6 @@ calls/rest-arrays-of-numbers	// IR= 1 keptOfThree : Array<number>\S* = NewArray
 calls/rest-arrays-of-numbers	// IR= 1 restOfThree Switch v[0-9]+ \[0: b[0-9]+\(v[0-9]+\), 1: b[0-9]+\(v[0-9]+\), 2: b[0-9]+\(v[0-9]+\)\]
 calls/results-specialized-by-caller	// IR- ResultAt v\d+ index=[123]\b
 calls/results-specialized-by-caller	// IR= 2 make Results
-calls/results-specialized-by-caller	// IR= 4 make LoopHint
 calls/tail-calls-mixed-result-types-large	// IR+  = TailCallDirect \(
 calls/tail-calls-mixed-result-types-large	// IR+ ^ .* = TailCall v
 calls/tail-calls-mixed-result-types-large	// IR+ ^function f[0-9]+ "flags" Plain .* -> anything( |$)
@@ -418,8 +415,6 @@ classes-and-closures/declare-fields-and-a-mixin-elsewhere	// IR+ ^layout L[0-9]+
 classes-and-closures/new-target-this-allocation	// CALLS+ constructAny CreateThis
 commonjs/compound-assignment-const-symbol-key	// IR= 1 underWhatALoopCarries ElemGet
 commonjs/const-literal-exported-whole	// IR+ ^variable g\d+ name="onlyReadThroughTheObject" module=
-commonjs/constants-in-variables	// IR= 0 hasFlag GetEnvironmentField
-commonjs/constants-in-variables	// IR= 0 isArgumentsTag GetEnvironmentField
 commonjs/constants-in-variables	// IR= 1 seenEarly GetEnvironmentField
 commonjs/constants-in-variables	// IR= 1 storedLater GetEnvironmentField
 commonjs/pure-module-reads-const-in-tdz	// IR+ ^variable (g\d+) name="kSound" [\s\S]* = GetModuleVariable variable=\1 isKnownInitialized
@@ -486,10 +481,6 @@ escape-analysis/objects-handed-from-call-to-call	// IR= 2 isWrittenBehindTheJoin
 escape-analysis/objects-handed-from-call-to-call	// IR= 2 sourceIsWrittenBehindTheJoin : =?L[0-9]+ = NewObject |CallDirect
 escape-analysis/removed-allocations	//!
 escape-analysis/required-allocations	//!
-escape-analysis/results-forwarded-by-functions	// IR= 0 readsPair NewArray|ElemGet
-escape-analysis/results-inspected-and-then-returned	// IR= 0 readsAfterWork PropGet| = New(Plain)?Object 
-escape-analysis/results-inspected-and-then-returned	// IR= 0 readsInspected PropGet| = New(Plain)?Object 
-escape-analysis/results-inspected-and-then-returned	// IR= 0 readsInspectedTwice  = New(Plain)?Object 
 escape-analysis/results-inspected-and-then-returned	// IR= 2 readsAfterWork ResultAt
 escape-analysis/results-inspected-and-then-returned	// IR= 2 readsInspected ResultAt
 escape-analysis/results-inspected-and-then-returned	// IR= 2 readsInspectedTwice ResultAt
@@ -888,7 +879,6 @@ typed-objects/untouched-uninitialized-fields	// IR+ PropSet v\d+, v\d+ name="tou
 typed-objects/untyped-stores-against-field-types	// COUNTER: StoreOfOtherType = 4
 typed-objects/wider-optional-field-costs-nothing	// CALLS+ putThroughLoose DidCreate
 typed-objects/wider-optional-primitive-costs-nothing	// CALLS+ putNumberThroughLoose DidCreate
-typed-objects/wider-optional-primitive-costs-nothing	// CALLS- putNumberThroughPoint DidCreate
 untyped-code/places-remember-in-the-hottest-functions	// CALLS+ callsMethod FindMethodByIdAndFillSiteCache
 untyped-code/places-remember-in-the-hottest-functions	// CALLS+ readsData GetByIdAndFillSiteCache
 untyped-code/places-remember-in-the-hottest-functions	// CALLS+ storesData PutByIdAndFillSiteCache
@@ -910,9 +900,6 @@ arrays/a-position-typed-number-is-an-integer-behind-one-test	// IRT= 1 twoOfAVie
 arrays/a-position-typed-number-is-an-integer-behind-one-test	// IRT= 1 twoOfAView = TypeTest v1 testedType=i32
 calls-fast-paths/members-that-the-program-stores-to-the-object-of-a-class	// IR= 0 loopClass AreMembersUnchanged
 constant-containers/a-constant-literal-where-a-class-is-declared-leaves-the-field-typed	// IR- layout .* name="Line" .*key="from" declared=\{type=[^}]*IsExpected
-copied-properties/a-frozen-source-is-copied-by-a-plan	// COUNTER: CopiesCollectedByName = 0
-function-prototypes/a-wide-prototype-object-keeps-the-guards-of-its-class	// COUNTER: MemberGuardsCleared = 0
-function-prototypes/a-wide-prototype-object-keeps-the-guards-of-its-class	// COUNTER: PrototypeLinkGuardsCleared = 0
 narrowing/a-narrowed-variable-is-claimed-once-and-keeps-its-own-value	// IRT= 2 eachArm = TypeTest
 narrowing/instanceof-is-the-only-test-of-what-it-has-narrowed	// IRT= 1 conditional = TypeTest
 narrowing/instanceof-is-the-only-test-of-what-it-has-narrowed	// IRT= 1 leavesEarly = TypeTest

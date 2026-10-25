@@ -1,46 +1,38 @@
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::num::NonZeroUsize;
-use std::ptr::NonNull;
 use std::sync::Arc;
 
 use bun_aot::statistics::{LimitId, LimitValues};
+use bun_bundler::aot::FileFinder;
 use bun_core::strings;
+use bun_jsc::JsResult;
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JsResult};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, posix_to_platform_in_place};
 use bun_resolve_builtins::Alias;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
-use bun_resolver::{GlobalCache, ResultUnion};
 use bun_sema::atom::{Atom, Interner};
-use bun_sema::bind::BindOptions;
 use bun_sema::check::aot::FileOrigin;
-use bun_sema::file_analysis::{FileInputs, analyze_file};
 use bun_sema::fold::{
     Constant, Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions,
 };
 use bun_sema::hir;
-use bun_sema::import_sites::{ImportSite, ImportSpecifier, JsxMode};
+use bun_sema::import_sites::{ImportSite, ImportSpecifier};
 use bun_sema::json::Json;
-use bun_sema::module_format::DeclaredModuleType;
-use bun_sema::program::{
-    CodeAnswer, CompiledModule, ComputedTargets, FileId, Files, HostLoader, HostModuleId,
-};
+use bun_sema::program::{CodeAnswer, CompiledModule, ComputedTargets, FileId, Files, HostModuleId};
 use bun_sema::resolve::{
     AOT_CONDITION, CachedConfig, CodeFailure, CodeHost, CodeImportForm, CodeImportKind,
-    CodeOptions, CodeParseRequest, CodeRequest, CodeResolution, ComputedCandidate,
-    ComputedCodeRequest, ComputedResolution, Host, HostResolution, JsxSettings, Options,
-    ParseOptions, ParsedCode, Paths, Resolver, ScriptKind, TranspileSettings, inside,
-    is_declaration_file_name, is_same_path,
+    CodeOptions, CodeParseRequest, CodeRequest, ComputedCandidate, ComputedCodeRequest,
+    ComputedResolution, FileSearch, FoundCode, Host, HostResolution, Options, ParseOptions,
+    ParsedCode, Paths, Resolver, ScriptKind, inside,
 };
 use bun_sema::session::{Arena, Session};
-use bun_sema::util::FxHashSet;
 use bun_sema_driver::host::{Disk, from_argument, from_native, to_native};
 use bun_sema_driver::{
     BuildDiagnostic, CompileRequest, EntryPointFailure, EntryPoints, Libs, LoadFailure,
-    load_program, use_dedicated_pool,
+    load_program,
 };
 use bun_threading::Guarded;
 
@@ -49,6 +41,7 @@ use crate::cli::typescript_libs::BUNDLED;
 pub(crate) struct DiskWithBuiltinModules {
     disk: Disk,
     modules: Vec<&'static [u8]>,
+    file_finder: Guarded<FileFinder>,
 }
 
 fn builtin_module_name(specifier: &[u8]) -> Option<&'static [u8]> {
@@ -57,7 +50,13 @@ fn builtin_module_name(specifier: &[u8]) -> Option<&'static [u8]> {
 }
 
 impl DiskWithBuiltinModules {
-    pub(crate) fn new(threads: usize, working_directory: &[u8]) -> DiskWithBuiltinModules {
+    /// `conditions`: those of "exports" and "imports" that hold beside the ones of `bun run`.
+    pub(crate) fn new(
+        vm: &VirtualMachine,
+        threads: usize,
+        working_directory: &[u8],
+        conditions: &[Vec<u8>],
+    ) -> DiskWithBuiltinModules {
         let threads = match threads {
             0 => usize::from(bun_core::get_thread_count()),
             threads => threads,
@@ -73,7 +72,13 @@ impl DiskWithBuiltinModules {
                 modules.push(name);
             }
         }
-        DiskWithBuiltinModules { disk, modules }
+        // SAFETY: the thread of the VM waits in the native call that makes this host and drops it.
+        let file_finder = unsafe { FileFinder::new(&vm.transpiler, conditions) };
+        DiskWithBuiltinModules {
+            disk,
+            modules,
+            file_finder: Guarded::new(file_finder),
+        }
     }
 
     pub(crate) fn module_name(&self, module: HostModuleId) -> &'static [u8] {
@@ -167,6 +172,10 @@ impl CodeHost for DiskWithBuiltinModules {
         }
     }
 
+    fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
+        self.file_finder.lock().find(search)
+    }
+
     fn resolve_runtime_module(&self, specifier: &[u8]) -> HostResolution {
         let index = builtin_module_name(specifier)
             .and_then(|name| self.modules.iter().position(|module| *module == name));
@@ -208,20 +217,10 @@ enum Answer {
     Erased,
     ComputedAll,
     ComputedSet(Vec<Answer>),
-    NotFound(Option<CodeFailure>),
+    NotFound(CodeFailure),
 }
 
 impl Answer {
-    fn from_resolution(host: &DiskWithBuiltinModules, resolution: CodeResolution<'_>) -> Answer {
-        match resolution {
-            CodeResolution::File(file) => Answer::File(file.path.to_vec()),
-            CodeResolution::HostModule(module) => Answer::Builtin(host.module_name(module)),
-            CodeResolution::External { .. } => Answer::External,
-            CodeResolution::Erased => Answer::Erased,
-            CodeResolution::NotFound(failure) => Answer::NotFound(Some(failure)),
-        }
-    }
-
     fn from_candidate(host: &DiskWithBuiltinModules, candidate: ComputedCandidate<'_>) -> Answer {
         match candidate {
             ComputedCandidate::File(file) => Answer::File(file.path.to_vec()),
@@ -251,24 +250,7 @@ impl Answer {
                 let host_modules = host_modules.iter().copied().map(module_answer);
                 Answer::ComputedSet(targets.chain(host_modules).collect())
             }
-            CodeAnswer::NotFound(failure) => Answer::NotFound(Some(failure)),
-        }
-    }
-
-    fn is_same(&self, other: &Answer, is_case_sensitive: bool) -> bool {
-        match self {
-            Answer::File(path) => {
-                matches!(other, Answer::File(it) if is_same_path(path, it, is_case_sensitive))
-            }
-            Answer::Builtin(name) => matches!(other, Answer::Builtin(it) if name == it),
-            Answer::External => matches!(other, Answer::External),
-            Answer::Erased => matches!(other, Answer::Erased),
-            Answer::ComputedAll => matches!(other, Answer::ComputedAll),
-            Answer::ComputedSet(members) => matches!(other, Answer::ComputedSet(others)
-                if members.len() == others.len()
-                    && (members.iter().zip(others))
-                        .all(|(member, it)| member.is_same(it, is_case_sensitive))),
-            Answer::NotFound(_) => matches!(other, Answer::NotFound(_)),
+            CodeAnswer::NotFound(failure) => Answer::NotFound(failure),
         }
     }
 
@@ -284,8 +266,7 @@ impl Answer {
                 let list = texts.join(&b", "[..]);
                 [&b"computed: "[..], &list[..]].concat()
             }
-            Answer::NotFound(None) => b"not found".to_vec(),
-            Answer::NotFound(Some(failure)) => format!("not found ({failure:?})").into_bytes(),
+            Answer::NotFound(failure) => format!("not found ({failure:?})").into_bytes(),
         }
     }
 }
@@ -294,14 +275,6 @@ fn native_text(path: &[u8]) -> Vec<u8> {
     let mut text = to_native(path).to_vec();
     posix_to_platform_in_place(&mut text);
     text
-}
-
-fn native_directory(file: &[u8]) -> Vec<u8> {
-    let mut directory = native_text(dirname::<Posix>(file));
-    if directory.last() != Some(&bun_paths::SEP) {
-        directory.push(bun_paths::SEP);
-    }
-    directory
 }
 
 fn json_object<'a>(entries: impl IntoIterator<Item = (&'a str, Json)>) -> Json {
@@ -333,63 +306,6 @@ fn json_text(json: &Json) -> Vec<u8> {
     text
 }
 
-struct CompareOptions<'a> {
-    conditions: Vec<&'a [u8]>,
-    preserves_symlinks: bool,
-    lists_every_site: bool,
-}
-
-struct Site {
-    specifier: Vec<u8>,
-    kind: CodeImportKind,
-    compile: Answer,
-}
-
-struct Directory {
-    path: Vec<u8>,
-    real_path: Vec<u8>,
-    is_under_link: bool,
-}
-
-fn find_source_files(host: &dyn Host, root: &[u8], preserves_symlinks: bool) -> Vec<Vec<u8>> {
-    let mut source_files = Vec::new();
-    let mut visited: FxHashSet<(Vec<u8>, bool)> = FxHashSet::default();
-    let mut pending = vec![Directory {
-        path: root.to_vec(),
-        real_path: root.to_vec(),
-        is_under_link: false,
-    }];
-    while let Some(directory) = pending.pop() {
-        let (file_names, directory_names) = host.entries(&directory.path);
-        for name in &file_names {
-            if ScriptKind::from_file_name(name).is_none() || is_declaration_file_name(name) {
-                continue;
-            }
-            let path = inside(&directory.path, name);
-            if host.realpath(&path) == inside(&directory.real_path, name) {
-                source_files.push(path);
-            }
-        }
-        for name in directory_names.iter().rev() {
-            let path = inside(&directory.path, name);
-            let real_path = host.realpath(&path);
-            let is_link = real_path != inside(&directory.real_path, name);
-            if is_link && !preserves_symlinks {
-                continue;
-            }
-            let is_under_link = directory.is_under_link || is_link;
-            if visited.insert((real_path.clone(), is_under_link)) {
-                pending.push(Directory {
-                    path,
-                    real_path,
-                    is_under_link,
-                });
-            }
-        }
-    }
-    source_files
-}
-
 pub(crate) fn code_options_with_limits(
     working_directory: &[u8],
     limits: &LimitValues,
@@ -409,277 +325,19 @@ pub(crate) fn fold_options_with_limits<'s>(limits: &LimitValues) -> FoldOptions<
     }
 }
 
-fn collect_constant_specifiers(host: &dyn CodeHost, path: &[u8]) -> Vec<Vec<u8>> {
-    let Some(text) = host.read(path) else {
-        return Vec::new();
-    };
-    let session = Session::new();
-    let arena = session.arena();
-    let atoms = Interner::new_in(&session);
-    let settings = TranspileSettings {
-        jsx: JsxSettings::default(),
-        experimental_decorators: false,
-        emits_decorator_metadata: false,
-        use_define_for_class_fields: None,
-    };
-    let request = CodeParseRequest {
-        path,
-        loader: HostLoader::default(),
-        options: ParseOptions::default(),
-        reads_jsdoc: false,
-        settings: &settings,
-        declared_module_type: DeclaredModuleType::Unknown,
-    };
-    let mut hir = host.parse_code(arena, &request, &text, &atoms).hir;
-    if hir.has_errors {
-        return Vec::new();
-    }
-    hir.text = text;
-    let bind_options = BindOptions {
-        runtime: Some(Default::default()),
-        ..Default::default()
-    };
-    let fold_options = FoldOptions {
-        preserves_unused_imports: true,
-        ..fold_options_with_limits(&LimitValues::for_host())
-    };
-    let fold = FoldInputs::new(fold_options, arena);
-    let file_inputs = FileInputs {
-        declared_module_type: DeclaredModuleType::Unknown,
-        import_meta_main: None,
-        is_library: false,
-        host_values: &[],
-        jsx: JsxMode::Classic,
-    };
-    let (_, analysis) = analyze_file(&mut hir, bind_options, &fold, file_inputs, &atoms, arena);
-    let mut seen: FxHashSet<Atom> = FxHashSet::default();
-    let mut specifiers = Vec::new();
-    for site in analysis.import_sites {
-        match site.specifier {
-            ImportSpecifier::Constant(specifier) if seen.insert(specifier) => {
-                specifiers.push(atoms.bytes(specifier).to_vec());
-            }
-            ImportSpecifier::Constant(_)
-            | ImportSpecifier::Pattern { .. }
-            | ImportSpecifier::Unknown => {}
-        }
-    }
-    specifiers
-}
-
-fn resolve_file_sites(
-    host: &DiskWithBuiltinModules,
-    resolver: &Resolver<'_>,
-    importer: &[u8],
-) -> Vec<Site> {
-    let directory = dirname::<Posix>(importer);
-    let mut sites = Vec::new();
-    for specifier in collect_constant_specifiers(host, importer) {
-        for kind in [CodeImportKind::Import, CodeImportKind::Require] {
-            let request = CodeRequest {
-                specifier: &specifier,
-                importer,
-                directory,
-                kind,
-                form: CodeImportForm::Static,
-            };
-            match resolver.resolve_code(&request) {
-                CodeResolution::NotFound(CodeFailure::QueryString) => {}
-                resolution => sites.push(Site {
-                    specifier: specifier.clone(),
-                    kind,
-                    compile: Answer::from_resolution(host, resolution),
-                }),
-            }
-        }
-    }
-    sites
-}
-
-fn resolve_sites(
-    host: &DiskWithBuiltinModules,
-    resolver: &Resolver<'_>,
-    importers: &[Vec<u8>],
-) -> Vec<Vec<Site>> {
-    let empty_slots = importers.iter().map(|_| Guarded::new(Vec::new()));
-    let slots: Vec<Guarded<Vec<Site>>> = empty_slots.collect();
-    host.parallel(importers.len(), &|index| {
-        *slots[index].lock() = resolve_file_sites(host, resolver, &importers[index]);
-    });
-    (slots.into_iter())
-        .map(|mut slot| std::mem::take(slot.get_mut()))
-        .collect()
-}
-
-fn bun_run_answer(
-    resolver: &mut bun_resolver::Resolver<'_>,
-    directory: &[u8],
-    specifier: &[u8],
-    kind: CodeImportKind,
-) -> Answer {
-    if let Some(name) = builtin_module_name(specifier) {
-        return Answer::Builtin(name);
-    }
-    let kind = match kind {
-        CodeImportKind::EntryPoint => bun_ast::ImportKind::EntryPointRun,
-        CodeImportKind::Import => bun_ast::ImportKind::Stmt,
-        CodeImportKind::Require => bun_ast::ImportKind::Require,
-    };
-    let result =
-        resolver.resolve_and_auto_install(directory, specifier, kind, GlobalCache::disable);
-    let result = match result {
-        ResultUnion::Success(result) => result,
-        ResultUnion::Failure(_) | ResultUnion::Pending(_) | ResultUnion::NotFound => {
-            return Answer::NotFound(None);
-        }
-    };
-    let Some(path) = result.path_const() else {
-        return Answer::NotFound(None);
-    };
-    let is_external = result.flags.is_external();
-    match builtin_module_name(path.text).filter(|_| is_external) {
-        Some(name) => Answer::Builtin(name),
-        None if is_external || path.is_data_url() => Answer::External,
-        None => Answer::File(from_native(path.text)),
-    }
-}
-
-fn site_json(importer: &[u8], site: &Site, bun_run: &Answer) -> Json {
-    json_object([
-        ("importer", path_json(importer)),
-        ("specifier", Json::String(site.specifier.clone())),
-        ("kind", kind_json(site.kind)),
-        ("bunRun", Json::String(bun_run.text())),
-        ("compile", Json::String(site.compile.text())),
-    ])
-}
-
-fn compare_with_bun_run(
-    global: &JSGlobalObject,
-    options: &CompareOptions<'_>,
-    is_case_sensitive: bool,
-    importers: &[Vec<u8>],
-    sites: &[Vec<Site>],
-) -> Json {
-    let resolver_options = &mut global.bun_vm().as_mut().transpiler.resolver.opts;
-    let added_to_import: Vec<&[u8]> = (options.conditions.iter())
-        .filter(|condition| !resolver_options.conditions.import.contains(condition))
-        .copied()
-        .collect();
-    let added_to_require: Vec<&[u8]> = (options.conditions.iter())
-        .filter(|condition| !resolver_options.conditions.require.contains(condition))
-        .copied()
-        .collect();
-    for condition in &added_to_import {
-        resolver_options.conditions.import.insert(condition, ());
-    }
-    for condition in &added_to_require {
-        resolver_options.conditions.require.insert(condition, ());
-    }
-    let previous_preserve_symlinks = std::mem::replace(
-        &mut resolver_options.preserve_symlinks,
-        options.preserves_symlinks,
-    );
-    scopeguard::defer! {
-        let resolver_options = &mut global.bun_vm().as_mut().transpiler.resolver.opts;
-        for condition in &added_to_import {
-            resolver_options.conditions.import.swap_remove(condition);
-        }
-        for condition in &added_to_require {
-            resolver_options.conditions.require.swap_remove(condition);
-        }
-        resolver_options.preserve_symlinks = previous_preserve_symlinks;
-    }
-    let mut log = bun_ast::Log::init();
-    // SAFETY: the resolver belongs to the VM, which outlives this call, and `log` is declared
-    // before the guard, so the guard is dropped first.
-    let _log_scope = unsafe {
-        bun_resolver::Resolver::scoped_log(
-            &raw mut (*global.bun_vm_ptr()).transpiler.resolver,
-            NonNull::from(&mut log),
-        )
-    };
-
-    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-    let mut site_count = 0;
-    let (mut differences, mut every_site) = (Vec::new(), Vec::new());
-    for (importer, sites) in importers.iter().zip(sites) {
-        let directory = native_directory(importer);
-        for site in sites {
-            let bun_run = bun_run_answer(resolver, &directory, &site.specifier, site.kind);
-            if options.lists_every_site {
-                every_site.push(site_json(importer, site, &bun_run));
-            }
-            if !bun_run.is_same(&site.compile, is_case_sensitive) {
-                differences.push(site_json(importer, site, &bun_run));
-            }
-        }
-        site_count += sites.len();
-    }
-    let mut comparison = vec![
-        ("sites", Json::Number(site_count as f64)),
-        ("differences", Json::Array(differences)),
-    ];
-    if options.lists_every_site {
-        comparison.push(("everySite", Json::Array(every_site)));
-    }
-    json_object(comparison)
-}
-
-fn vm_code_options(vm: &VirtualMachine, root: &[u8], options: &CompareOptions<'_>) -> CodeOptions {
+fn vm_code_options(vm: &VirtualMachine, root: &[u8]) -> CodeOptions {
     let top_level_directory = from_native(vm.top_level_dir());
     let node_path = vm.env_loader().get(b"NODE_PATH").unwrap_or_default();
     let separator: &[u8] = if cfg!(windows) { b";" } else { b":" };
     let tsconfig_override = vm.transpiler.resolver.opts.tsconfig_override.as_deref();
     let mut code = code_options_with_limits(root, &LimitValues::for_host());
     code.remove_condition(AOT_CONDITION);
-    let conditions = options.conditions.iter().map(|it| it.to_vec());
-    code.conditions.extend(conditions);
-    code.preserves_symlinks = options.preserves_symlinks;
+    code.preserves_symlinks = vm.transpiler.resolver.opts.preserve_symlinks;
     code.node_paths = strings::tokenize(node_path, separator)
         .map(|entry| from_argument(&top_level_directory, entry))
         .collect();
     code.tsconfig_override = tsconfig_override.map(from_native);
     code
-}
-
-pub(crate) fn compare_code_resolution(
-    cx: &mut JsScope<'_>,
-    root_argument: &[u8],
-    conditions_argument: &[u8],
-    preserve_symlinks: Option<bool>,
-    lists_every_site: bool,
-) -> JsResult<Option<Vec<u8>>> {
-    if !bun_aot::engine::has_compiler() {
-        return Ok(None);
-    }
-    let global = cx.global();
-    let vm = global.bun_vm();
-    let options = CompareOptions {
-        conditions: strings::tokenize(conditions_argument, b"\n").collect(),
-        preserves_symlinks: preserve_symlinks
-            .unwrap_or(vm.transpiler.resolver.opts.preserve_symlinks),
-        lists_every_site,
-    };
-
-    use_dedicated_pool("Bun Compile");
-    let requested_root = from_native(root_argument);
-    let host = DiskWithBuiltinModules::new(0, &requested_root);
-    let root = host.realpath(&requested_root);
-    if !host.is_dir(&root) {
-        let root = bstr::BStr::new(root_argument);
-        return Err(global.throw(format_args!("{root} is not a directory")));
-    }
-
-    let code = vm_code_options(vm, &root, &options);
-    let session = Session::new();
-    let type_options = Options::default();
-    let resolver = Resolver::for_compile(&session, &host, &type_options, &code);
-    let importers = find_source_files(&host, &root, options.preserves_symlinks);
-    let sites = resolve_sites(&host, &resolver, &importers);
-    let is_case_sensitive = host.is_case_sensitive();
-    let comparison = compare_with_bun_run(global, &options, is_case_sensitive, &importers, &sites);
-    Ok(Some(json_text(&comparison)))
 }
 
 fn computed_resolution_json(
@@ -719,22 +377,16 @@ pub(crate) fn resolve_computed_specifier(
         }
     };
     let vm = global.bun_vm();
-    let options = CompareOptions {
-        conditions: Vec::new(),
-        preserves_symlinks: vm.transpiler.resolver.opts.preserve_symlinks,
-        lists_every_site: false,
-    };
-
     let requested_importer = from_native(importer_argument);
     let requested_directory = dirname::<Posix>(&requested_importer);
-    let host = DiskWithBuiltinModules::new(0, requested_directory);
+    let host = DiskWithBuiltinModules::new(vm, 0, requested_directory, &[]);
     let directory = host.realpath(requested_directory);
     if !host.is_dir(&directory) {
         let importer = bstr::BStr::new(importer_argument);
         return Err(global.throw(format_args!("{importer} is not in a directory")));
     }
 
-    let code = vm_code_options(vm, &directory, &options);
+    let code = vm_code_options(vm, &directory);
     let session = Session::new();
     let type_options = Options::default();
     let resolver = Resolver::for_compile(&session, &host, &type_options, &code);
@@ -954,12 +606,15 @@ pub(crate) fn describe_code_graph(
         false => working_directory_argument,
     });
 
-    let host = DiskWithBuiltinModules::new(threads, &working_directory);
     let limits = LimitValues::for_host();
     let mut code = code_options_with_limits(&working_directory, &limits);
     for condition in strings::tokenize(conditions_argument, b"\n") {
         code.add_custom_condition(condition);
     }
+    let vm = cx.global().bun_vm();
+    code.preserves_symlinks = vm.transpiler.resolver.opts.preserve_symlinks;
+    let host =
+        DiskWithBuiltinModules::new(vm, threads, &working_directory, &code.custom_conditions);
 
     let arena = session.arena();
     let atoms = Interner::new_in(&session);

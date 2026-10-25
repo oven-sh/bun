@@ -1,8 +1,8 @@
 // Opt-in test, like ./servers.test.ts. CI runs it as the unit `aot/servers/every-pass-changes-one-of-the-servers` of ../parts.mts.
 //
 // Whether a pass of the compiler does anything is asked of real programs, not of programs written for it: eight servers of ./app, the type
-// checker of the typescript package (./typescript-check.ts) and a terminal program on react-reconciler
-// (../typed-react-costs-no-more-than-erased/terminal.ts). Each is built the way a user builds it, and the build's report says how often each
+// checker of the typescript package (./typescript-check.ts) and a terminal program on a package that names its TypeScript under the "aot"
+// condition (../typed-packages/small-renderer/terminal.ts). Each is built the way a user builds it, and the build's report says how often each
 // pass changed something.
 //
 //   every pass        changes something in at least one of the programs, or stands in one of the two lists below: the passes that only look
@@ -22,12 +22,13 @@
 //
 // It prints one line a pass that begins with PASS: the changes by program.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { cpSync, existsSync, mkdirSync, rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { readBuildReport, type BuildReport } from "../harness/build-report";
 import { compileCommand, withReport } from "../harness/flags";
 import { built, slot, spawned, unsupported } from "../run-programs";
+import { installSmallRenderer } from "../typed-packages/small-renderer/install";
 import { installPackages, requestedServers } from "./run-servers";
 
 const servers = ["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify"];
@@ -59,23 +60,23 @@ const statisticsOfPassesThatReportNoChange = {
 const passesWithoutWorkInThesePrograms = ["RemoveDeadCountedLoops"];
 
 /**
- * The barriers the terminal program is compiled with on Linux x64, within five percent. Without the removal of barriers: over 662.
+ * The barriers the terminal program is compiled with on Linux x64, within five percent. Without the removal of barriers: 221.
  * It counts places in the code, not barriers that run: a call that is inlined brings a copy of each of its barriers along,
  * and the share of stores without a barrier stays what it was.
  */
-const barriersOfTheTerminalProgram = 616;
+const barriersOfTheTerminalProgram = 199;
 /** Of a hundred stores of cells, how many are compiled without a barrier. */
 const percentWithoutBarrierAtLeast: Record<string, number> = {
-  bun: 12,
-  thin: 13,
-  hono: 9,
+  bun: 8,
+  thin: 10,
+  hono: 7,
   elysia: 10,
   node: 14,
   koa: 16,
   express: 15,
   fastify: 18,
   typescript: 10,
-  terminal: 8,
+  terminal: 9,
 };
 
 if (!requestedServers)
@@ -105,37 +106,11 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/every pass chan
     );
   }
 
-  function layOutTerminal(folder: string) {
-    const host = join(import.meta.dir, "..", "typed-packages", "react-reconciler-host");
-    const typedReconciler = join(import.meta.dir, "..", "..", "..", "packages", "full-types", "react-reconciler", "0.33.0", "lay", "cjs", "react-reconciler.production.js"); // prettier-ignore
-    cpSync(
-      join(import.meta.dir, "..", "typed-react-costs-no-more-than-erased", "terminal.ts"),
-      join(folder, "terminal.ts"),
-    );
-    for (const file of ["modules.d.ts", "tsconfig.json"]) cpSync(join(host, file), join(folder, file));
-    const reconciler = join(folder, "node_modules", "react-reconciler");
-    mkdirSync(join(reconciler, "cjs"), { recursive: true });
-    for (const name of ["react", "scheduler"])
-      cpSync(join(host, "stand-ins", name), join(folder, "node_modules", name), { recursive: true });
-    writeFileSync(
-      join(reconciler, "package.json"),
-      JSON.stringify({ name: "react-reconciler", version: "0.33.0", main: "index.js" }),
-    );
-    writeFileSync(
-      join(reconciler, "index.js"),
-      `"use strict";\nmodule.exports = require("./cjs/react-reconciler.production.ts");\n`,
-    );
-    writeFileSync(
-      join(reconciler, "cjs", "react-reconciler.production.ts"),
-      readFileSync(typedReconciler, "utf8").replace(`type int32 = import("bun").int32;`, "type int32 = number;"),
-    );
-  }
-
   beforeAll(async () => {
     cpSync(join(import.meta.dir, "app"), folders.app, { recursive: true });
     await installPackages(folders.app);
     layOutTypeScript(folders.typescript);
-    layOutTerminal(folders.terminal);
+    installSmallRenderer(folders.terminal);
     await Promise.all(
       programs.map(name =>
         slot(async () => {

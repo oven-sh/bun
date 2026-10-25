@@ -1,0 +1,3 @@
+error: TS100031: Parameter 'n' of 'take' is declared 'int32', but 'negative' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'negative | 0'.
+error: TS100031: Parameter 'n' of 'take' is declared 'int32', but 'written' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'written | 0'.
+error: TS100031: Parameter 'n' of 'take' is declared 'int32', but 'changes' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'changes | 0'.

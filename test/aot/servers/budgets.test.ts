@@ -1,4 +1,5 @@
-// Opt-in test, like ./servers.test.ts. What the servers under ./app and ./tanstack cost, held against ./budgets.json, which only goes down.
+// What the servers under ./app and ./tanstack cost, held against ./budgets.json, which only goes down.
+// Opt-in by hand, like ./servers.test.ts. CI runs one unit per server: `aot/servers/budgets-of-<name>` in ../parts.mts.
 //
 // Each server is built twice: the way a user builds it, for the size of its code, and with a counter on each side of each branch
 // (../harness/counted-run.ts). The counted server answers a fixed number of rounds, one request of each route of ./answers.ts a
@@ -41,7 +42,7 @@
 // NUMBERS: all that may only fall, as measured, for whoever compares one Bun with another.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { dirname, join } from "path";
 import {
   alwaysFailing,
@@ -95,6 +96,7 @@ const budgets: Record<string, StoredBudget> = existsSync(budgetsPath)
   : {};
 const mode = process.env.AOT_BUDGETS;
 const measuresThisPlatform = isLinux && process.arch === "x64";
+const measuresThisBuild = !isDebug && !isASAN;
 
 const exchanges: Exchange[] = routes.map(route => ({
   method: route.method,
@@ -242,8 +244,12 @@ if (!requestedServers)
   );
 else if (!measuresThisPlatform)
   console.error("SKIPPED: test/aot/servers/budgets.test.ts: the budgets are those of Linux on x64");
+else if (!measuresThisBuild)
+  console.error("SKIPPED: test/aot/servers/budgets.test.ts: the budgets are those of a release build");
 
-describe.skipIf(!requestedServers || !measuresThisPlatform || !!unsupported)("compile/aot/servers/budgets", () => {
+const skipped = !requestedServers || !measuresThisPlatform || !measuresThisBuild || !!unsupported;
+
+describe.skipIf(skipped)("compile/aot/servers/budgets", () => {
   const app = String(tempDir("aot-servers-budgets", {}));
   const tanstack = String(tempDir("aot-servers-budgets-tanstack", {}));
   const typescript = String(tempDir("aot-servers-budgets-typescript", {}));

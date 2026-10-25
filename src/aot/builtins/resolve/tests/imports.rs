@@ -321,7 +321,7 @@ fn import_mutability() {
     with_case(PROGRAM, source, |case| {
         assert_builtin(case, "p", BuiltinId::Process);
         assert_mutability(case, "p", Mutability::AlwaysLocked);
-        assert_mutability(case, "process", Mutability::ConstantUnlessWritten);
+        assert_mutability(case, "process", Mutability::AlwaysLocked);
     });
 }
 

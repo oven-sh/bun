@@ -207,7 +207,7 @@ fn only_last_extension_of_file_name_is_replaced() {
 #[test]
 fn spellings_invert_rewritten_extensions() {
     for written in REWRITABLE_EXTENSIONS {
-        for &found in rewritten_extensions(written, false) {
+        for &found in rewritten_extensions(written) {
             let spellings = specifier_spellings(&[STEM, found].concat(), &[]);
             let spelling = [STEM, written].concat();
             assert!(spellings.contains(&spelling), "{}", spelling.as_bstr());
@@ -219,7 +219,7 @@ fn spellings_invert_rewritten_extensions() {
         assert_eq!(spellings[0], file);
         assert!(spellings.len() > 1, "{}", file.as_bstr());
         for spelling in &spellings[1..] {
-            let rewritten = rewritten_extensions(&spelling[STEM.len()..], false);
+            let rewritten = rewritten_extensions(&spelling[STEM.len()..]);
             assert!(
                 rewritten.iter().any(|it| *it == found),
                 "{}",
@@ -479,7 +479,8 @@ fn packages_in_node_path_are_listed() {
         ("/p/main.ts", ""),
         ("/global/pkg/a.js", ""),
         ("/global/other/b.js", ""),
-    ]);
+    ])
+    .node_path("/global");
     let pattern = ComputedPattern {
         importer: "/p/main.ts",
         prefix: "pkg/",

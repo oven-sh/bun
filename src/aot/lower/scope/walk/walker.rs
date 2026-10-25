@@ -1,4 +1,5 @@
 use bun_sema::bind::{Binding, Decl, ScopeId, ScopeKind, SymbolId};
+use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{ExprId, FnId, StmtId, is_moved_to_file_start};
 use rustc_hash::FxHashMap;
@@ -6,6 +7,7 @@ use smallvec::SmallVec;
 
 use super::prepass::{
     collect_class_decorators, collect_eval_variable_scopes, collect_implicit_uses,
+    collect_inner_module_parameters,
 };
 use super::{Context, Initialization, ScopeWalk, Task, WalkedFunction, WalkedFunctionId, Walker};
 use crate::ir::FunctionKey;
@@ -75,6 +77,11 @@ impl<'x, 's> Walker<'x, 's> {
             lexical_owners,
             is_commonjs,
             file_scope: bound.scope_of_declaration(hir, Decl::File),
+            inner_module_parameters: collect_inner_module_parameters(
+                hir,
+                bound,
+                input.modules.inner_modules(input.file),
+            ),
             jsx_uses,
             metadata_uses,
             class_decorators: collect_class_decorators(hir, bound),
@@ -100,6 +107,7 @@ impl<'x, 's> Walker<'x, 's> {
 
     fn walk_module(&mut self) {
         let body = self.add_function(FunctionKey::ModuleBody(self.input.file), None);
+        let inner_bodies = self.declare_inner_module_bodies();
         let root = self.enter_unit(body, self.file_scope);
         let hir = self.hir;
         let moves = self.input.modules.kind(self.input.file) != ModuleKind::RuntimeSource;
@@ -107,6 +115,31 @@ impl<'x, 's> Walker<'x, 's> {
         let moved = hir.ids(hir.body).filter(is_moved);
         let others = hir.ids(hir.body).filter(|statement| !is_moved(statement));
         self.push_statements(moved.chain(others), root);
+        self.run_pushed_tasks();
+        for (function, id) in inner_bodies {
+            let context = self.enter_unit(id, self.bound.fns[function.idx()].scope);
+            self.push_function_code(function, context);
+            self.run_pushed_tasks();
+        }
+    }
+
+    // The callback of `__commonJS(cb)` or `__esm(fn)` is the body of a module of its own.
+    fn declare_inner_module_bodies(&mut self) -> Vec<(FnId, WalkedFunctionId)> {
+        let file = self.input.file;
+        let callbacks = self.input.modules.inner_modules(file);
+        let mut bodies = Vec::with_capacity(callbacks.len());
+        for &function in callbacks {
+            if !self.is_live_function(function) {
+                continue;
+            }
+            let id = self.add_function(FunctionKey::Source(FunctionRef { file, function }), None);
+            self.walk.function_of_fn[function.idx()] = Some(id);
+            bodies.push((function, id));
+        }
+        bodies
+    }
+
+    fn run_pushed_tasks(&mut self) {
         self.stack.reverse();
         while let Some((task, context)) = self.stack.pop() {
             let first_child = self.stack.len();

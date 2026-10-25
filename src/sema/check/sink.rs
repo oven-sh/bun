@@ -570,6 +570,11 @@ impl Checker<'_, '_> {
     /// the queries in progress are about. See `View::hides`.
     #[cold]
     pub(super) fn note_error_in(&mut self, file: FileId) {
+        // No pass of a build reads what a query reports in a file that's compiled without its types, so no task has to
+        // get to the error itself.
+        if file != NOWHERE.0 && self.is_inferred_file(file) {
+            return;
+        }
         let about = self.stack.iter().filter_map(|q| q.syntax());
         let others = about.chain([file]).filter(|&it| self.task.file != Some(it));
         self.files_with_errors.extend(others);

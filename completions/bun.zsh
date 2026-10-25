@@ -596,7 +596,7 @@ _bun_build_completion() {
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
         '--splitting[Whether to enable code splitting (requires --outdir)]' \
         '--compile[generating a standalone binary from a TypeScript or JavaScript file]' \
-        '--dts[Write declaration files (.d.ts), and each output file with its types kept (.full.ts), to --outdir]' \
+        '--dts[Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir]' \
         '--format[Specifies the module format to be used in the generated bundles]: :->format' &&
         ret=0
 

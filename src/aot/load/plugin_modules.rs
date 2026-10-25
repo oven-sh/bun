@@ -117,6 +117,9 @@ impl<'a> PluginModules<'a> {
     }
 
     pub(crate) fn resolve(&self, request: &CodeRequest<'_>) -> PluginResolution {
+        if !self.provider.has_resolve_plugins() {
+            return PluginResolution::NotHandled;
+        }
         let key = (
             request.specifier.to_vec(),
             request.importer.to_vec(),

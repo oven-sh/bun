@@ -24,7 +24,7 @@
 
 // RUN(NATIVECALL): lower
 // NATIVECALL-LABEL: function {{*}}name="native"
-// NATIVECALL: [[process]] = Convert {{*}}declared={type=builtin(Process) flags=[IsExpected]}
+// NATIVECALL: [[process]] = Builtin builtin=Process
 // NATIVECALL: [[name]] = String string="node:buffer"
 // NATIVECALL: Branch {{*}}notTaken [[other]](| 0)
 // NATIVECALL: [[other]]([[callee]]):

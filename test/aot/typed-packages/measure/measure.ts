@@ -1,10 +1,9 @@
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { columns, rows, type Column, type Row } from "./rows";
 
 const here = import.meta.dir;
-const typedVersions = resolve(here, "../../../../packages/full-types");
 
 const { values: options } = parseArgs({
   options: {
@@ -12,6 +11,7 @@ const { values: options } = parseArgs({
     released: { type: "string" },
     ceiling: { type: "string" },
     modules: { type: "string", multiple: true },
+    "typed-modules": { type: "string", multiple: true },
     sources: { type: "string", multiple: true },
     work: { type: "string" },
     out: { type: "string" },
@@ -81,6 +81,14 @@ function findInstalled(name: string): string {
   throw new Error(`${name} is installed in none of ${(options.modules ?? []).join(", ")}`);
 }
 
+function findTyped(name: string): string | undefined {
+  return [join(here, "packages"), ...(options["typed-modules"] ?? [])].map(folder => join(folder, name)).find(folder => existsSync(join(folder, "package.json")) && readFileSync(join(folder, "package.json"), "utf8").includes('"aot"'));
+}
+
+function versionOf(folder: string): string {
+  return JSON.parse(readFileSync(join(folder, "package.json"), "utf8")).version;
+}
+
 function link(target: string, path: string): void {
   mkdirSync(dirname(path), { recursive: true });
   symlinkSync(target, path);
@@ -88,9 +96,9 @@ function link(target: string, path: string): void {
 
 function withoutTypedFiles(folder: string): void {
   const described = join(folder, "package.json");
-  const text = JSON.parse(readFileSync(described, "utf8"), (key, value) => (key === "full-types" ? undefined : value));
+  const text = JSON.parse(readFileSync(described, "utf8"), (key, value) => (key === "aot" ? undefined : value));
   writeFileSync(described, JSON.stringify(text, null, 2));
-  for (const name of readdirSync(folder, { recursive: true }) as string[]) if (name.endsWith(".full.ts")) rmSync(join(folder, name));
+  for (const name of readdirSync(folder, { recursive: true }) as string[]) if (name.endsWith(".aot.ts")) rmSync(join(folder, name));
 }
 
 function sourcesOf(name: string): string {
@@ -150,11 +158,12 @@ function layFolder(row: Row, variant: Variant, libraries: Map<string, string>): 
     if (!typed) withoutTypedFiles(join(folder, "node_modules", name));
   }
   if (typed) {
-    for (const name of row.typedVersions ?? []) {
-      const version = JSON.parse(readFileSync(join(findInstalled(name), "package.json"), "utf8")).version;
-      const from = [join(here, "typed-versions"), typedVersions].map(folder => join(folder, name, version)).find(folder => existsSync(join(folder, "full-types.json")));
-      if (!from) throw new Error(`neither typed-versions nor packages/full-types has full types of ${name} ${version}`);
-      for (const part of ["full-types.json", "lay"]) cpSync(join(from, part), join(folder, ".full-types", name, part), { recursive: true });
+    for (const name of hasTypes(row) ? (row.typedPackages ?? []) : []) {
+      const [installed, from, target] = [findInstalled(name), findTyped(name)!, join(folder, "node_modules", name)];
+      if (versionOf(from) !== versionOf(installed)) throw new Error(`${name}: ${from} is ${versionOf(from)}, ${versionOf(installed)} is installed`);
+      rmSync(target, { recursive: true, force: true });
+      cpSync(realpathSync(installed), target, { recursive: true });
+      cpSync(from, target, { recursive: true });
     }
   }
   return folder;
@@ -174,8 +183,12 @@ function codeBytesOf(executable: string): number | null {
   return found ? Number(found[1]) : null;
 }
 
+function hasTypes(row: Row): boolean {
+  return packagesOf(row).length > 0 && (row.typedPackages ?? []).every(name => findTyped(name));
+}
+
 function packagesOf(row: Row): string[] {
-  return [...(row.typedVersions ?? []), ...(row.ownPackages ?? []), ...(row.libraries ?? []).map(library => library.name), ...(row.typedSources ? [row.name] : [])];
+  return [...(row.typedPackages ?? []), ...(row.ownPackages ?? []), ...(row.libraries ?? []).map(library => library.name), ...(row.typedSources ? [row.name] : [])];
 }
 
 function countARun(row: Row, column: Column, folder: string): string {
@@ -214,10 +227,10 @@ function build(row: Row, column: Column, folders: Record<string, string>): void 
   const log = built.stdout.toString() + built.stderr.toString();
   writeFileSync(`${executable}.build.txt`, log);
   if (built.exitCode !== 0) throw new Error(`${row.name} ${column.name}: the build ended with ${built.exitCode}\n${log.slice(-2000)}`);
-  const notes = log.split("\n").filter(line => /^note: .* full types|^warn: .* without types|^Dependencies:|^STB:/.test(line));
+  const notes = log.split("\n").filter(line => /without (its |their )?types|^Dependencies:|^STB:/.test(line));
   console.log(`built ${row.name} ${column.name}: ${statSync(executable).size} B${notes.map(note => `\n    ${note.slice(0, 200)}`).join("")}`);
-  if (column.typed && !row.typedSources && !notes.some(note => note.startsWith("note:")))
-    throw new Error(`${row.name} ${column.name}: no package was compiled from its full types`);
+  if (column.typed && !row.typedSources && !JSON.parse(readFileSync(`${executable}.report.json`, "utf8")).statistics.TypedVersionsUsed)
+    throw new Error(`${row.name} ${column.name}: no file under an "aot" condition was compiled`);
 }
 
 function busyTicks(core: number): number {
@@ -419,7 +432,6 @@ if (options.table) {
 if (!options.bun || !options.work) throw new Error("--bun and --work are needed; see README.md");
 options.work = resolve(options.work);
 const chosenRows = selected(rows, options.rows);
-const hasTypes = (row: Row) => packagesOf(row).length > 0;
 const columnsOf = (row: Row) => selected(columns, options.columns).filter(column => bunOf(column) && (!column.typed || hasTypes(row)) && (!column.only || column.only(row)));
 
 if (!options["no-build"]) {

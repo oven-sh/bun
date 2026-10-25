@@ -635,7 +635,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let forms = self.collect_written_forms(file, hir.ids(arguments))?;
         let has_exact_arguments = *forms == *self.c.types_from_nodes(file, arguments);
-        if !has_exact_arguments && (is_alias || self.symbol_trust(symbol).is_trusted()) {
+        if !has_exact_arguments && (is_alias || self.decides_by_type_arguments(symbol)) {
             return Ok(TypeId::UNKNOWN);
         }
         if is_alias {
@@ -643,6 +643,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let ty = self.c.type_reference(symbol, &forms);
         self.resolved(ty)
+    }
+
+    fn decides_by_type_arguments(&self, symbol: Sym) -> bool {
+        let is_class_alone = self.compiled_class(symbol).is_some()
+            && !self.c.files().flags(symbol).contains(SymFlags::INTERFACE);
+        self.symbol_trust(symbol).is_trusted() && !is_class_alone
     }
 
     fn takes_only_written_arguments(&mut self, symbol: Sym, written_count: usize) -> bool {

@@ -392,10 +392,10 @@ fn reason_of_interpreted_node_is_cause() {
         };
         decline_line(&record, 1, b"")
     };
-    let symbol_key = InterpretedCause::MemberKeyIsNotText.to_wire();
+    let never_parsed = InterpretedCause::LayoutIsNotModeled.to_wire();
     assert_eq!(
-        line(DeclineKind::ResultNodeInterpreted, symbol_key),
-        "missed: generic-parser at a.ts:3:5, the key of a member is a symbol"
+        line(DeclineKind::ResultNodeInterpreted, never_parsed),
+        "missed: generic-parser at a.ts:3:5, no call in the program parses this type"
     );
     assert_eq!(
         line(
@@ -405,7 +405,7 @@ fn reason_of_interpreted_node_is_cause() {
         "missed: generic-parser at a.ts:3:5"
     );
     assert_eq!(
-        line(DeclineKind::StretchNotGuarded, symbol_key),
+        line(DeclineKind::StretchNotGuarded, never_parsed),
         "missed: no-fast-path at a.ts:3:5"
     );
 }
@@ -417,10 +417,10 @@ fn merge_separates_reasons_at_one_location() {
         ..record(DeclineKind::ResultNodeInterpreted, PROGRAM, 10, 0)
     };
     let recursion = with_reason(InterpretedCause::RepeatedRecursion);
-    let symbol_key = with_reason(InterpretedCause::MemberKeyIsNotText);
+    let never_parsed = with_reason(InterpretedCause::LayoutIsNotModeled);
     assert_eq!(
-        merged_times(&[symbol_key, recursion, symbol_key]),
-        [(recursion, 1), (symbol_key, 2)]
+        merged_times(&[never_parsed, recursion, never_parsed]),
+        [(recursion, 1), (never_parsed, 2)]
     );
 }
 

@@ -49,7 +49,7 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^bun:(ffi|test|jsc|sqlite|internal-for-testing)\./, "it reaches outside JavaScript"],
   [/^ShadowRealm\.prototype\.importValue$/, "it loads whatever its operand names"],
   [/^%CompilerHelpers%\.(ownEntriesFlat|definePropertiesFrom)$/, "it works on the instance of a compiled program, and this process has none"],
-  [/^%CompilerHelpers%\.(plainQuery(Entries|Keys|Values)|rangeOfBytes|viewOrRangeOfBytes|encodeIntoRangeOfBytes)$/, "the compiler hands it what another helper answered for the same operands, and takes that on trust"],
+  [/^%CompilerHelpers%\.plainQuery(Entries|Keys|Values)$/, "the compiler hands it what another helper answered for the same operands, and takes that on trust"],
   [/^%PrivateGlobals%\.(makeErrorWithCode|inherits)$/, "a call spells out a number, and by it native code takes the other operands on trust: the table does not say which"],
 ]);
 

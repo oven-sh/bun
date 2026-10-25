@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { readBuildReport } from "./harness/build-report";
 import { slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
@@ -46,7 +47,8 @@ console.log(total([{ kind: "square", size: 2 }, { kind: "circle", size: 1 }]), v
 };
 
 const env = { ...bunEnv, NO_COLOR: "1" };
-const USED = 'note: "shapes" 1.2.3 is compiled from its full types in node_modules/shapes';
+// index.aot.ts and version.aot.ts are compiled, and the build has nothing to say about them.
+const USED = { said: [], aotFiles: 2, exitCode: 0, signal: null, stdout: "7 1.2.3\n" };
 
 async function install(root: string) {
   const built = await spawned(
@@ -60,22 +62,22 @@ async function install(root: string) {
 
 async function compile(root: string) {
   const app = join(root, "app");
-  const build = await spawned([bunExe(), "compile", "./app.ts"], app, env);
-  const said = (build.stdout + build.stderr)
-    .split(/\r?\n/)
-    .filter(line => /^(note|warn|error): /.test(line) && !/ full types, and /.test(line));
+  const report = join(app, "report.json");
+  const build = await spawned([bunExe(), "compile", "./app.ts", "--aot-report=" + report], app, env);
+  const said = (build.stdout + build.stderr).split(/\r?\n/).filter(line => /^(note|warn|error): /.test(line));
   const ran = build.exitCode === 0 ? await spawned([join(app, isWindows ? "app.exe" : "app")], app, env) : undefined;
-  return { said, exitCode: build.exitCode, signal: build.signal, stdout: ran?.stdout };
+  const aotFiles = build.exitCode === 0 ? readBuildReport(report).statistics.TypedVersionsUsed : undefined;
+  return { said, aotFiles, exitCode: build.exitCode, signal: build.signal, stdout: ran?.stdout };
 }
 
 describe.concurrent("a program compiled against a package that bun compile --library wrote", () => {
   test(
-    "uses the full-types files of every entry point, without any setup",
+    "compiles the .aot.ts file of every entry point, without any setup",
     () =>
       slot(async () => {
         using dir = tempDir("aot-library-typed-file", library);
         await install(String(dir));
-        expect(await compile(String(dir))).toEqual({ said: [USED], exitCode: 0, signal: null, stdout: "7 1.2.3\n" });
+        expect(await compile(String(dir))).toEqual(USED);
         expect(await spawned([bunExe(), "app.ts"], join(String(dir), "app"), env)).toMatchObject({
           stdout: "7 1.2.3\n",
           exitCode: 0,
@@ -88,7 +90,7 @@ describe.concurrent("a program compiled against a package that bun compile --lib
     ["is not strict", { strict: false, skipLibCheck: true, target: "es2017", lib: ["es2017", "dom"] }],
     ["asks for more than strict", { strict: true, noUncheckedIndexedAccess: true, noImplicitOverride: true }],
   ])(
-    "an application whose tsconfig.json %s gets the same full-types files",
+    "an application whose tsconfig.json %s compiles the same .aot.ts files",
     (_, compilerOptions) =>
       slot(async () => {
         using dir = tempDir("aot-library-typed-file-options", {
@@ -102,7 +104,7 @@ describe.concurrent("a program compiled against a package that bun compile --lib
           }),
         });
         await install(String(dir));
-        expect(await compile(String(dir))).toEqual({ said: [USED], exitCode: 0, signal: null, stdout: "7 1.2.3\n" });
+        expect(await compile(String(dir))).toEqual(USED);
       }),
     600_000,
   );
@@ -121,7 +123,7 @@ describe.concurrent("a program compiled against a package that bun compile --lib
       'const other: { shape?: { size: unknown } } = { shape };\n  if ((other.shape?.size as number | undefined)?.toFixed() === "") return 0;\n  return shape',
     ],
   ])(
-    "%s keeps the full-types files in use",
+    "%s is written into an .aot.ts file that compiles",
     (_, replacement) =>
       slot(async () => {
         using dir = tempDir("aot-library-typed-file-printed-otherwise", {
@@ -129,13 +131,13 @@ describe.concurrent("a program compiled against a package that bun compile --lib
           "library/src/area.ts": library["library/src/area.ts"].replace("return shape", replacement),
         });
         await install(String(dir));
-        expect(await compile(String(dir))).toEqual({ said: [USED], exitCode: 0, signal: null, stdout: "7 1.2.3\n" });
+        expect(await compile(String(dir))).toEqual(USED);
       }),
     600_000,
   );
 
   test(
-    "a namespace that holds nothing but types keeps the full-types files in use",
+    "a namespace that holds nothing but types is written into an .aot.ts file that compiles",
     () =>
       slot(async () => {
         using dir = tempDir("aot-library-typed-file-namespace-of-types", {
@@ -157,26 +159,23 @@ export function area(shape: Shape): Sizes.Size {
 `,
         });
         await install(String(dir));
-        expect(await compile(String(dir))).toEqual({ said: [USED], exitCode: 0, signal: null, stdout: "7 1.2.3\n" });
+        expect(await compile(String(dir))).toEqual(USED);
       }),
     600_000,
   );
 
   test(
-    "a patched file is compiled without types, with a warning",
+    "does not read index.js, so a change to it reaches plain Bun alone",
     () =>
       slot(async () => {
         using dir = tempDir("aot-library-typed-file-patched", library);
         await install(String(dir));
         const path = join(String(dir), "app/node_modules/shapes/index.js");
         writeFileSync(path, readFileSync(path, "utf8").replace("3 * shape.size", "4 * shape.size"));
-        expect(await compile(String(dir))).toEqual({
-          said: [
-            `warn: "shapes" is compiled without types, because its full types in node_modules/shapes can't be used: index.full.ts without its types doesn't match index.js. Was the package patched?`,
-          ],
-          exitCode: 0,
-          signal: null,
+        expect(await compile(String(dir))).toEqual(USED);
+        expect(await spawned([bunExe(), "app.ts"], join(String(dir), "app"), env)).toMatchObject({
           stdout: "8 1.2.3\n",
+          exitCode: 0,
         });
       }),
     600_000,

@@ -571,6 +571,9 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
+
+    /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
+    pub esm_failure: Option<crate::package_json::Status>,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -648,6 +651,7 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            esm_failure: None,
         }
     }
 
@@ -1000,6 +1004,7 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            esm_failure: None,
         }
     }
 
@@ -1755,7 +1760,17 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
+            if let Some(own) = self.aot_package_config(path.text()) {
+                result.jsx = own.merge_jsx(options::jsx::Pragma {
+                    development: result.jsx.development,
+                    ..Default::default()
+                });
+                (result.flags).set_emit_decorator_metadata(own.emit_decorator_metadata);
+                (result.flags).set_experimental_decorators(own.experimental_decorators);
+                (result.flags).set_use_define_for_class_fields(
+                    own.use_define_for_class_fields != Some(false),
+                );
+            } else if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
@@ -3799,14 +3814,36 @@ impl<'a> Resolver<'a> {
 
     fn handle_esm_resolution(
         &mut self,
-        esm_resolution_: crate::package_json::Resolution,
+        mut esm_resolution: crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
         package_json: &PackageJSON,
         package_subpath: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
-        let mut esm_resolution = esm_resolution_;
+        let status = self.load_esm_resolution(
+            &mut esm_resolution,
+            abs_package_path,
+            kind,
+            package_json,
+            package_subpath,
+            out,
+        );
+        if !status.is_success() {
+            self.esm_failure.get_or_insert(esm_resolution.status);
+        }
+        status
+    }
+
+    fn load_esm_resolution(
+        &mut self,
+        esm_resolution: &mut crate::package_json::Resolution,
+        abs_package_path: &[u8],
+        kind: ast::ImportKind,
+        package_json: &PackageJSON,
+        package_subpath: &[u8],
+        out: &mut MatchResult,
+    ) -> MatchStatus {
         use crate::package_json::Status;
         if !((matches!(
             esm_resolution.status,
@@ -5192,6 +5229,8 @@ impl<'a> Resolver<'a> {
                     bstr::BStr::new(import_path)
                 ));
             }
+            self.esm_failure
+                .get_or_insert(crate::package_json::Status::InvalidModuleSpecifier);
             return MatchStatus::NotFound;
         }
 
@@ -6863,6 +6902,63 @@ impl<'a> Resolver<'a> {
         self.opts.tsconfig_override_json.clone()
     }
 
+    /// The `compilerOptions` that decide how the TypeScript file at `path` becomes JavaScript, if it is in a package with
+    /// the "aot" condition and this resolver reads that condition: those of the package's own `package.json`. No
+    /// `tsconfig.json` and no flag does, so the package answers alike in every program that installs it.
+    /// `None`: another file, or a file of the package that the program runs in.
+    pub fn aot_package_config(&mut self, path: &[u8]) -> Option<Arc<TSConfigJSON>> {
+        if !is_typescript_path(path) || !self.opts.conditions.import.contains_key(b"aot") {
+            return None;
+        }
+        let directory = bun_paths::dirname(path)?;
+        let known =
+            (AOT_PACKAGE_CONFIGS.lock().as_ref()).and_then(|all| all.get(directory).cloned());
+        if let Some(known) = known {
+            return known;
+        }
+        // Not under the lock: this takes the resolver's own.
+        let found = self.find_aot_package_config(directory);
+        let mut all = AOT_PACKAGE_CONFIGS.lock();
+        let _ = all.get_or_insert_default().put(directory, found.clone());
+        found
+    }
+
+    fn find_aot_package_config(&mut self, directory: &[u8]) -> Option<Arc<TSConfigJSON>> {
+        let names_aot = |manifest: &PackageJSON| {
+            [&manifest.exports, &manifest.imports]
+                .into_iter()
+                .flatten()
+                .any(|table| table.names_condition(b"aot"))
+        };
+        let mut manifests: Vec<&'static PackageJSON> = Vec::new();
+        let mut package = None;
+        let mut next = self.read_dir_info_ignore_error(directory);
+        while let Some(info) = next.filter(|info| !info.is_node_modules()) {
+            if let Some(manifest) = info.package_json() {
+                manifests.push(manifest);
+                let speaks_for_package = manifest.exports.is_some() || names_aot(manifest);
+                if package.is_none() && speaks_for_package {
+                    package = Some((info.abs_path, names_aot(manifest)));
+                }
+            }
+            next = info.get_parent();
+        }
+        let (package_directory, true) = package? else {
+            return None;
+        };
+        let working_directory = self.fs_ref().top_level_dir();
+        if ResolvePath::resolve_path::is_parent_or_equal(package_directory, working_directory)
+            != ResolvePath::resolve_path::ParentEqual::Unrelated
+        {
+            return None;
+        }
+        let stated = manifests.into_iter().find_map(|manifest| {
+            let parsed = self.parse_tsconfig(manifest.source.path.text, FD::INVALID);
+            parsed.ok().flatten().filter(|it| it.has_compiler_options)
+        });
+        Some(Arc::from(stated.unwrap_or_default()))
+    }
+
     /// `DirInfo::enclosing_tsconfig_json`, for this resolver.
     pub(crate) fn enclosing_tsconfig_json(
         &mut self,
@@ -6883,6 +6979,18 @@ impl<'a> Resolver<'a> {
             None => dir_info.tsconfig_json().map(TSConfigRef::OfDirectory),
         }
     }
+}
+
+/// [`Resolver::aot_package_config`] by directory. Empty without the "aot" condition. Like `DirInfo`, it belongs to no
+/// resolver: the runtime transpiles on other threads with copies of one.
+static AOT_PACKAGE_CONFIGS: bun_threading::Guarded<
+    Option<bun_collections::StringHashMap<Option<Arc<TSConfigJSON>>>>,
+> = bun_threading::Guarded::new(None);
+
+fn is_typescript_path(path: &[u8]) -> bool {
+    [&b".ts"[..], b".tsx", b".mts", b".cts"]
+        .iter()
+        .any(|extension| path.ends_with(extension))
 }
 
 /// The configuration file that applies in a directory.

@@ -1,6 +1,6 @@
 use bun_sema::bind::{Bound, ClassOwner, Decl, InitialState, Parent, PatParent};
 use bun_sema::check::aot::{ClassRef, FunctionRef, GaveUp, PositionTypes, declares_type_alone};
-use bun_sema::hir::{File, Flags, FnBody, PatId, StmtKind, VarDeclId};
+use bun_sema::hir::{ExprKind, File, Flags, FnBody, PatId, StmtKind, VarDeclId, VarKind};
 use bun_sema::program::{FileId, Sym};
 
 use super::SiteOrigin;
@@ -8,6 +8,20 @@ use crate::ir::generated::TypeSiteKind;
 use crate::ir::{DeclaredType, FunctionKey, Type, TypeTable};
 use crate::lower::FileLowering;
 use crate::lower::function_types::find_explicit_constructor;
+
+// `const zero = 0` holds the integer. Its type does not say so: TypeScript's `0` is also the type of `-0`.
+fn is_const_written_as_zero(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
+    let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
+        return false;
+    };
+    let written = &hir[declaration];
+    written.kind == VarKind::Const
+        && written.ty.is_none()
+        && written.init.is_some()
+        && !hir.is_ambient(hir.node(declaration))
+        && matches!(hir[written.init].kind, ExprKind::Number(index)
+            if hir.numbers[index as usize].to_bits() == 0)
+}
 
 impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn compute_variable_position(&mut self, symbol: Sym) -> DeclaredType {
@@ -34,6 +48,13 @@ impl FileLowering<'_, '_, '_, '_> {
             Decl::Param(pattern) => (TypeSiteKind::Parameter, pattern),
             _ => return DeclaredType::untyped(),
         };
+        if is_const_written_as_zero(
+            files.hir(declaring_file),
+            files.bound(declaring_file),
+            pattern,
+        ) {
+            self.types.positions.constant_zeros.insert(symbol);
+        }
         let written = self.queries.written_variable_type(symbol);
         let (checked, origin) = match declaring_file == self.file {
             true => {

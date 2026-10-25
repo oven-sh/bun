@@ -258,9 +258,12 @@ pub(super) struct Relater {
     cycles: u64,
     /// True if failures are recorded in `failed` instead of the relation cache. That's the case in
     /// the non-reporting run that precedes a reporting run where tsgo has no such run
-    /// (`check_type_related_to_ex`). It must leave the cache as tsgo's run would find it.
+    /// (`check_type_related_to_ex`). It must leave the cache as tsgo's run would find it. If it succeeds, no run
+    /// follows, and `failures_to_store` go into the cache, where tsgo's only run has put them.
     pub(super) stores_failures_locally: bool,
     failed: FxHashSet<Key>,
+    /// Each with its entry, and whether it replaces the entry that is there.
+    failures_to_store: Vec<(Key, u8, Stored, bool)>,
     /// True if `compareTypes` of `compareSignaturesRelated` is `compareTypesAssignable`. Each pair
     /// of types is then a separate check, and nothing else in this relater is used.
     compares_types_assignable: bool,
@@ -298,6 +301,7 @@ impl Relater {
             cycles,
             stores_failures_locally: false,
             failed: FxHashSet::default(),
+            failures_to_store: Vec::new(),
             compares_types_assignable: false,
             error_node: (FileId(0), 0, 0),
             head_message: None,
@@ -1274,6 +1278,15 @@ impl<'p, 's> Checker<'p, 's> {
         r.hit_cached_overflow = false;
         if is_trial {
             r.failed.clear();
+            if overflow || is_for_query || !result.holds() {
+                r.failures_to_store.clear();
+            }
+            for (key, entry, stored, replaces) in r.failures_to_store.drain(..) {
+                match replaces {
+                    true => self.set_relation(key, entry, stored),
+                    false => self.insert_relation(key, entry, stored),
+                }
+            }
         }
         self.free_relaters.push(r);
         self.end_comparison(is_outermost);
@@ -4222,7 +4235,10 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // Past the limit, the entry waits for the commit. An entry about the visited file is never shared in the
         // first place, as long as it isn't held back. If it were, the commit would publish it.
-        if r.relation_count < r.waits_for_commit_below && !key.is_of_visited_file(&self.task.own) {
+        if !r.is_for_query
+            && r.relation_count < r.waits_for_commit_below
+            && !key.is_of_visited_file(&self.task.own)
+        {
             self.task.hold_back();
         }
         let stored = self.end_scope(scope).ok();
@@ -4263,6 +4279,10 @@ impl<'p, 's> Checker<'p, 's> {
             if r.stores_failures_locally {
                 if !is_cut_short {
                     r.failed.insert(key);
+                    if let Some(stored) = stored {
+                        let entry = FAILED | propagating;
+                        r.failures_to_store.push((key, entry, stored, replaces));
+                    }
                 }
             } else if let Some(stored) = stored
                 && !is_cut_short

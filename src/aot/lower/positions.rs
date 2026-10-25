@@ -8,7 +8,7 @@ use bun_sema::bind::SymbolId;
 use bun_sema::check::aot::{PositionTypes, ShapeKind, WrittenType};
 use bun_sema::hir::{FnId, TypeNodeId};
 use bun_sema::program::Sym;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 pub(crate) use self::sites::add_type_site;
 use super::{CheckerTypeId, FileLowering, types};
@@ -37,6 +37,8 @@ pub(in crate::lower) struct PositionState {
     annotations: FxHashMap<(TypeNodeId, TypeSiteKind), DeclaredType>,
     named_variables: FxHashMap<SymbolId, Sym>,
     variables: FxHashMap<Sym, DeclaredType>,
+    /// Each `const zero = 0` whose position is in `variables`.
+    constant_zeros: FxHashSet<Sym>,
     functions: FxHashMap<FnId, Rc<FunctionPositions>>,
     sites: FxHashMap<TypeSite, TypeSiteId>,
     texts: FxHashMap<CheckerTypeId, StringId>,
@@ -293,6 +295,14 @@ impl FileLowering<'_, '_, '_, '_> {
         let memo = &mut self.types.positions.named_variables;
         memo.insert(symbol, variable);
         self.variable_position(variable)
+    }
+
+    /// Whether the name stands for a `const zero = 0`, of this file or imported.
+    pub(in crate::lower) fn is_constant_zero(&mut self, symbol: SymbolId) -> bool {
+        self.binding_position(symbol);
+        let positions = &self.types.positions;
+        let variable = positions.named_variables.get(&symbol);
+        variable.is_some_and(|variable| positions.constant_zeros.contains(variable))
     }
 
     pub(crate) fn variable_position(&mut self, symbol: Sym) -> DeclaredType {

@@ -465,7 +465,7 @@ fn count_module_forms(projects: &Projects<'_, '_>, modules: &ModuleTable, counte
     let (mut with_names, mut with_value, mut faces) = (0, 0, 0);
     for &module in &modules.modules {
         let (project, own) = match module {
-            ProgramModule::File(_) => module
+            ProgramModule::File(_) | ProgramModule::Inner { .. } => module
                 .in_own_project()
                 .expect("the module has its text in a file"),
             ProgramModule::Face(_) => {

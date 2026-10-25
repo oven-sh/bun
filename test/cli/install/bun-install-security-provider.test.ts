@@ -1450,15 +1450,11 @@ describe("the question about warnings on a terminal", () => {
     ["y", 0, true],
     ["n", 1, false],
     ["yes", 1, false],
-  ])(
-    "%j takes the whole line and nothing of the next one",
-    async (answer, exitCode, installed) => {
-      expect(await answerOnTerminal(answer)).toEqual({
-        result: JSON.stringify({ exitCode, next: "sentinel" }),
-        installed,
-        exitCode: 0,
-      });
-    },
-    30_000,
-  );
+  ])("%j takes the whole line and nothing of the next one", async (answer, exitCode, installed) => {
+    expect(await answerOnTerminal(answer)).toEqual({
+      result: JSON.stringify({ exitCode, next: "sentinel" }),
+      installed,
+      exitCode: 0,
+    });
+  });
 });

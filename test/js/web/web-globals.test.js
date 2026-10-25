@@ -471,20 +471,24 @@ async function runWithStdin(kind, script, input) {
 /** What a script that ends with `console.error(JSON.stringify(value))` gives. */
 const printed = value => ({ stderr: JSON.stringify(value) + "\n", exitCode: 0 });
 
+// On Windows, `Bun.stdin.text()` reads a regular file from byte 0. There the file rows read what is left with `fs`.
+const restOfStdin = kind =>
+  kind === "file" && isWindows ? `require("node:fs").readFileSync(0, "utf8")` : `await Bun.stdin.text()`;
+
 const promptLines = {
-  script: `const answers = [prompt("a?"), prompt("b?"), prompt("c?", "C"), prompt("d?", "D"), prompt("e?")];
-           console.error(JSON.stringify({ answers, rest: await Bun.stdin.text() }));`,
+  script: kind => `const answers = [prompt("a?"), prompt("b?"), prompt("c?", "C"), prompt("d?", "D"), prompt("e?")];
+           console.error(JSON.stringify({ answers, rest: ${restOfStdin(kind)} }));`,
   input: "hello\nworld\r\n\n\r\n\nrest-of-stdin\nmore\n",
   printed: printed({ answers: ["hello", "world", "C", "D", null], rest: "rest-of-stdin\nmore\n" }),
 };
 
 test.concurrent("prompt() takes one line of a Buffer stdin", async () => {
-  expect(await runWithStdin("buffer", promptLines.script, promptLines.input)).toEqual(promptLines.printed);
+  expect(await runWithStdin("buffer", promptLines.script("buffer"), promptLines.input)).toEqual(promptLines.printed);
 });
 
 describe.concurrent.each(["pipe", "file"])("a dialog takes one line of stdin (%s)", kind => {
-  test("prompt(): LF, CRLF and empty lines, then Bun.stdin.text()", async () => {
-    expect(await runWithStdin(kind, promptLines.script, promptLines.input)).toEqual(promptLines.printed);
+  test("prompt(): LF, CRLF and empty lines, then the rest of stdin", async () => {
+    expect(await runWithStdin(kind, promptLines.script(kind), promptLines.input)).toEqual(promptLines.printed);
   });
 
   test("prompt(): lines around the size of one read, then fs.readFileSync(0)", async () => {
@@ -518,7 +522,7 @@ describe.concurrent.each(["pipe", "file"])("a dialog takes one line of stdin (%s
     expect(
       await runWithStdin(
         kind,
-        `const r = prompt("?"); console.error(JSON.stringify({ r, rest: await Bun.stdin.text() }));`,
+        `const r = prompt("?"); console.error(JSON.stringify({ r, rest: ${restOfStdin(kind)} }));`,
         "abc",
       ),
     ).toEqual(printed({ r: null, rest: "" }));
@@ -593,7 +597,7 @@ describe.concurrent.each(["pipe", "file"])("a dialog takes one line of stdin (%s
         kind,
         `const answers = [];
          for (let i = 0; i < ${answers.length}; i++) answers.push(confirm("?"));
-         console.error(JSON.stringify({ answers, rest: await Bun.stdin.text() }));`,
+         console.error(JSON.stringify({ answers, rest: ${restOfStdin(kind)} }));`,
         answers.map(([line]) => line + "\n").join("") + "rest\n",
       ),
     ).toEqual(printed({ answers: answers.map(([, yes]) => yes), rest: "rest\n" }));

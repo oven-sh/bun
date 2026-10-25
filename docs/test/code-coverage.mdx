@@ -212,7 +212,7 @@ coverageIgnoreSourcemaps = true  # default false
 
 By default, coverage reports:
 
-- **Exclude** `node_modules` directories
+- **Exclude** `node_modules` directories. When `bun test` starts in a package folder of `node_modules` or below one, the files of that package are included (on Windows, not yet when the folder is entered through a link).
 - **Exclude** files loaded with non-JS/TS loaders (for example `.css`, `.txt`) unless you specify a custom JS loader
 - **Exclude** test files themselves (include them with `coverageSkipTestFiles = false`)
 - Can exclude additional files with `coveragePathIgnorePatterns`

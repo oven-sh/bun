@@ -133,6 +133,73 @@ test("coverage excludes node_modules directory", () => {
   expect(result.signalCode).toBeUndefined();
 });
 
+// https://github.com/oven-sh/bun/issues/15538
+// A project can be a package folder of node_modules: a package that is worked on in place. Its own files are not
+// package files. `node_modules` counts from the package folder that holds the folder bun starts in, and that folder is
+// the one of the start: a test that moves into a package folder later does not turn the package into a project.
+test("coverage lists the files of a project in a package folder of node_modules, and no file of a package", async () => {
+  const testFile = (imports: string, sum: string) =>
+    `import { expect, test } from "bun:test";\nimport { bake } from "../cake.ts";\n${imports}test("bake", () => expect(${sum}).toBe(5));\n`;
+  const cake = `export const bake = () => 5;\n`;
+  using dir = tempDir("cov", {
+    "node_modules/my-pkg": {
+      "cake.ts": cake,
+      "tests/cake.test.ts": testFile(
+        `import { nested } from "nested";\nimport { hoisted } from "hoisted";\nimport { sibling } from "../../my-pkg-2/index.js";\n`,
+        "bake() + nested() + hoisted() + sibling()",
+      ),
+      "node_modules/nested/index.js": `export const nested = () => 0;\n`,
+    },
+    "node_modules/hoisted/index.js": `export const hoisted = () => 0;\n`,
+    "node_modules/my-pkg-2/index.js": `export const sibling = () => 0;\n`,
+    "node_modules/@scope/my-pkg": { "cake.ts": cake, "tests/cake.test.ts": testFile("", "bake()") },
+    "plain": {
+      "lib.ts": `export const lib = () => 1;\n`,
+      "late.test.ts": `import { expect, test } from "bun:test";
+import { lib } from "./lib.ts";
+test("late", async () => {
+  const cwd = process.cwd();
+  process.chdir("node_modules/late");
+  try {
+    const { late } = await import("late");
+    expect(lib() + late()).toBe(3);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+`,
+      "node_modules/late/index.js": `export const late = () => 2;\n`,
+    },
+  });
+  const coverage = async (cwd: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage"],
+      cwd: path.join(String(dir), cwd),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // A row of the table is ` <file> | ...`. A debug build also lists the test file.
+    const files = [...stderr.matchAll(/^ (\S+) +\|/gm)].map(row => row[1].replaceAll("\\", "/"));
+    return { cwd, files: files.filter(file => !file.endsWith(".test.ts")), exitCode };
+  };
+  const starts = {
+    // The package folder, a folder below it, and the same for a scoped package.
+    "node_modules/my-pkg": ["cake.ts"],
+    "node_modules/my-pkg/tests": ["../cake.ts"],
+    "node_modules/@scope/my-pkg": ["cake.ts"],
+    "node_modules/@scope/my-pkg/tests": ["../cake.ts"],
+    // In node_modules itself and in a scope folder, every folder is a package.
+    "node_modules": [],
+    "node_modules/@scope": [],
+    "plain": ["lib.ts"],
+  };
+  expect(await Promise.all(Object.keys(starts).map(coverage))).toEqual(
+    Object.entries(starts).map(([cwd, files]) => ({ cwd, files, exitCode: 0 })),
+  );
+});
+
 test("coveragePathIgnorePatterns - single pattern string", () => {
   using dir = tempDir("cov", {
     "bunfig.toml": `

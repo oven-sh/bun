@@ -47,10 +47,12 @@ function timeoutArgument(timeoutMs: unknown): number | undefined {
 }
 
 let armToken: (token: UnlockToken, mutex: unknown) => void;
+let heldMutex: (token: unknown) => unknown;
 
 /**
  * Proof that a mutex is held. `unlock()` and `[Symbol.dispose]()` release it once and then do nothing, so the token can
- * be handed on, disposed with `using`, or unlocked early.
+ * be handed on, disposed with `using`, or unlocked early. A new token is empty; `lock` fills one and a released token
+ * can be filled again.
  */
 class UnlockToken {
   #mutex: unknown = null;
@@ -59,13 +61,23 @@ class UnlockToken {
     armToken = (token, mutex) => {
       token.#mutex = mutex;
     };
+    heldMutex = token => {
+      if (!(token instanceof UnlockToken)) throw new TypeError("Expected an Atomics.Mutex.UnlockToken");
+      return token.#mutex;
+    };
   }
 
+  get locked() {
+    return this.#mutex !== null;
+  }
+
+  /** Releases the mutex if the token holds one. Answers whether it did. */
   unlock() {
     const mutex = this.#mutex;
-    if (mutex === null) return;
+    if (mutex === null) return false;
     this.#mutex = null;
     mutexUnlock.$call(mutex);
+    return true;
   }
 
   [Symbol.dispose]() {
@@ -73,26 +85,38 @@ class UnlockToken {
   }
 }
 
+/** The token a lock fills: the empty one the caller passed, or a new one. */
+function tokenToFill(token: unknown): UnlockToken {
+  if (token === undefined) return new UnlockToken();
+  if (heldMutex(token) !== null) throw new TypeError("The Atomics.Mutex.UnlockToken is already locked");
+  return token as UnlockToken;
+}
+
+/** The mutex a non-empty token holds. */
+function lockedMutex(token: unknown) {
+  const mutex = heldMutex(token);
+  if (mutex === null) throw new TypeError("The Atomics.Mutex.UnlockToken is not locked");
+  return mutex;
+}
+
 const mutexStatics = {
-  /** Blocks until `mutex` is held and returns the token that releases it. Throws if `timeoutMs` passes first. */
-  lock(mutex: unknown, timeoutMs?: number) {
+  /** Blocks until `mutex` is held and returns the token that releases it: `token` if one is given, else a new one. */
+  lock(mutex: unknown, unlockToken?: UnlockToken) {
     assertMutex(mutex);
-    if (!mutexLock.$call(mutex, timeoutArgument(timeoutMs))) {
-      throw new Error("Atomics.Mutex.lock timed out or was interrupted");
-    }
-    const token = new UnlockToken();
+    const token = tokenToFill(unlockToken);
+    if (!mutexLock.$call(mutex, undefined)) throw new Error("Atomics.Mutex.lock was interrupted");
     armToken(token, mutex);
     return token;
   },
 
   /** Like `lock`, but `null` when the mutex is not taken, after `timeoutMs` if one is given and at once otherwise. */
-  lockIfAvailable(mutex: unknown, timeoutMs?: number) {
+  lockIfAvailable(mutex: unknown, timeoutMs?: number, unlockToken?: UnlockToken) {
     assertMutex(mutex);
+    const token = tokenToFill(unlockToken);
     const timeout = timeoutMs === undefined ? 0 : timeoutArgument(timeoutMs);
     // A zero timeout never waits, so it must not trip over a mutex this thread already holds.
     const held = timeout === 0 ? mutexTryLock.$call(mutex) : mutexLock.$call(mutex, timeout);
     if (!held) return null;
-    const token = new UnlockToken();
     armToken(token, mutex);
     return token;
   },
@@ -103,20 +127,19 @@ define(Mutex, "lockIfAvailable", mutexStatics.lockIfAvailable);
 define(Mutex, "UnlockToken", UnlockToken);
 
 const conditionStatics = {
-  /** Releases `mutex`, which the caller holds, until notified, then takes it again. `false` on timeout. */
-  wait(condition: unknown, mutex: unknown, timeoutMs?: number) {
+  /** Releases the mutex that `unlockToken` holds until notified, then takes it again. */
+  wait(condition: unknown, unlockToken: UnlockToken) {
     assertCondition(condition);
-    assertMutex(mutex);
-    return conditionWait.$call(condition, mutex, timeoutArgument(timeoutMs));
+    conditionWait.$call(condition, lockedMutex(unlockToken), undefined);
   },
 
   /**
-   * Waits at most `timeoutMs`. With a `predicate`, keeps waiting until it returns true, checking it with `mutex` held, and
-   * answers whether it did; without one this is `wait`.
+   * Waits at most `timeoutMs`. With a `predicate`, keeps waiting until it returns true, checking it with the mutex held,
+   * and answers whether it did; without one it answers whether it was notified before the timeout.
    */
-  waitFor(condition: unknown, mutex: unknown, timeoutMs: number, predicate?: () => unknown) {
+  waitFor(condition: unknown, unlockToken: UnlockToken, timeoutMs: number, predicate?: () => unknown) {
     assertCondition(condition);
-    assertMutex(mutex);
+    const mutex = lockedMutex(unlockToken);
     const timeout = timeoutArgument(timeoutMs);
     if (predicate === undefined) return conditionWait.$call(condition, mutex, timeout);
     if (!$isCallable(predicate)) throw new TypeError("Atomics.Condition.waitFor: predicate must be a function");

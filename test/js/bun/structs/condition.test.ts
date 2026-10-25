@@ -16,7 +16,7 @@ describe("Atomics.Condition across workers", () => {
       self.onmessage = ({ data: { state, mutex, cond } }) => {
         const token = Atomics.Mutex.lock(mutex);
         state.waiting = true;
-        while (!state.ready) Atomics.Condition.wait(cond, mutex);
+        while (!state.ready) Atomics.Condition.wait(cond, token);
         token.unlock();
         postMessage("woke");
       };
@@ -40,15 +40,21 @@ describe("Atomics.Condition across workers", () => {
   test("waitFor returns the predicate result on timeout", () => {
     const m = new Atomics.Mutex();
     const c = new Atomics.Condition();
-    using _token = Atomics.Mutex.lock(m);
-    expect(Atomics.Condition.waitFor(c, m, 10, () => false)).toBe(false);
-    expect(Atomics.Condition.waitFor(c, m, 10, () => true)).toBe(true);
+    using token = Atomics.Mutex.lock(m);
+    expect(Atomics.Condition.waitFor(c, token, 10, () => false)).toBe(false);
+    expect(Atomics.Condition.waitFor(c, token, 10, () => true)).toBe(true);
+    expect(Atomics.Condition.waitFor(c, token, 10)).toBe(false);
   });
 
-  test("wait requires a Condition and a Mutex", () => {
+  test("wait requires a Condition and a locked UnlockToken", () => {
     const m = new Atomics.Mutex();
-    expect(() => Atomics.Condition.wait({} as any, m, 1)).toThrow(TypeError);
-    expect(() => Atomics.Condition.wait(new Atomics.Condition(), {} as any, 1)).toThrow(TypeError);
+    const c = new Atomics.Condition();
+    const token = Atomics.Mutex.lock(m);
+    expect(() => Atomics.Condition.wait({} as any, token)).toThrow(TypeError);
+    expect(() => Atomics.Condition.wait(c, m as any)).toThrow(TypeError);
+    expect(() => Atomics.Condition.wait(c, new Atomics.Mutex.UnlockToken())).toThrow(TypeError);
+    token.unlock();
+    expect(() => Atomics.Condition.wait(c, token)).toThrow(TypeError);
   });
 
   test("a blocked worker can be terminated", async () => {

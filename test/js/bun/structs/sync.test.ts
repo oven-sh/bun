@@ -7,7 +7,14 @@ describe("Atomics.Mutex", () => {
     const m = new Atomics.Mutex();
     const token = Atomics.Mutex.lock(m);
     expect(Atomics.Mutex.lockIfAvailable(m, 0)).toBeNull();
-    token.unlock();
+    expect(token.locked).toBe(true);
+    expect(token.unlock()).toBe(true);
+    expect(token.unlock()).toBe(false);
+    const reused = new Atomics.Mutex.UnlockToken();
+    expect(Atomics.Mutex.lock(m, reused)).toBe(reused);
+    expect(() => Atomics.Mutex.lock(m, reused)).toThrow(TypeError);
+    expect(() => Atomics.Mutex.lock(m, {} as any)).toThrow(TypeError);
+    expect(reused[Symbol.dispose]()).toBeUndefined();
     const again = Atomics.Mutex.lockIfAvailable(m, 0);
     expect(again).not.toBeNull();
     again!.unlock();
@@ -54,11 +61,11 @@ describe("Atomics.Mutex", () => {
 });
 
 describe("Atomics.Condition", () => {
-  test("wait times out and reports false", () => {
+  test("waitFor times out and reports false", () => {
     const m = new Atomics.Mutex();
     const c = new Atomics.Condition();
-    using _token = Atomics.Mutex.lock(m);
-    expect(Atomics.Condition.wait(c, m, 10)).toBe(false);
+    using token = Atomics.Mutex.lock(m);
+    expect(Atomics.Condition.waitFor(c, token, 10)).toBe(false);
   });
 
   test("notify with no waiters wakes none", () => {

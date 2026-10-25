@@ -50,16 +50,19 @@ interface AtomicsMutexConstructor {
   new (): AtomicsMutex;
   readonly prototype: AtomicsMutex;
 
-  /** Blocks until the lock is held. */
-  lock(mutex: AtomicsMutex, timeout?: number): AtomicsUnlockToken;
+  /** Blocks until the lock is held. Fills `unlockToken` if one is given (it must be empty), else returns a new token. */
+  lock(mutex: AtomicsMutex, unlockToken?: AtomicsUnlockToken): AtomicsUnlockToken;
 
   /** Takes the lock if it is free, or within `timeout` milliseconds. Returns `null` otherwise. */
-  lockIfAvailable(mutex: AtomicsMutex, timeout?: number): AtomicsUnlockToken | null;
+  lockIfAvailable(mutex: AtomicsMutex, timeout?: number, unlockToken?: AtomicsUnlockToken): AtomicsUnlockToken | null;
 }
 
 /** Proof that a mutex is held. The only way to release it. */
 interface AtomicsUnlockToken {
-  unlock(): void;
+  /** Whether the token holds a mutex. */
+  readonly locked: boolean;
+  /** Releases the mutex if the token holds one. Returns whether it did. */
+  unlock(): boolean;
   [Symbol.dispose](): void;
 }
 
@@ -77,11 +80,14 @@ interface AtomicsConditionConstructor {
   new (): AtomicsCondition;
   readonly prototype: AtomicsCondition;
 
-  /** Releases `mutex`, waits to be notified, and relocks it. Returns `false` on timeout. */
-  wait(condition: AtomicsCondition, mutex: AtomicsMutex, timeout?: number): boolean;
+  /** Releases the mutex that `unlockToken` holds, waits to be notified, and relocks it. */
+  wait(condition: AtomicsCondition, unlockToken: AtomicsUnlockToken): undefined;
 
-  /** Like `wait`, but loops until `predicate` returns true or `timeout` elapses. */
-  waitFor(condition: AtomicsCondition, mutex: AtomicsMutex, timeout: number, predicate?: () => boolean): boolean;
+  /**
+   * Like `wait`, but gives up after `timeout` milliseconds. Without a `predicate` it returns whether it was notified;
+   * with one it loops until the predicate returns true and returns whether it did.
+   */
+  waitFor(condition: AtomicsCondition, unlockToken: AtomicsUnlockToken, timeout: number, predicate?: () => boolean): boolean;
 
   /** Wakes up to `count` waiters (all if omitted). Returns how many were woken. */
   notify(condition: AtomicsCondition, count?: number): number;

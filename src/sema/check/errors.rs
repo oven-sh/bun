@@ -2803,6 +2803,13 @@ impl Checker<'_, '_> {
         right_type: TypeId,
     ) {
         let hir = self.hir(file);
+        // `checkPropertyAccessExpression(left, CheckModeNormal, true /*writeOnly*/)` checks `left` a second time.
+        let left_type = match hir[left].kind {
+            ExprKind::Dot { .. } if !is_parenthesized(hir, left) => {
+                self.check_expression_again(file, left)
+            }
+            _ => left_type,
+        };
         // A setter may accept a wider type than the getter returns: `checkPropertyAccessExpression` with `writeOnly`,
         // which `(a.b) += c` doesn't reach, and `AccessFlagsWriting`.
         let property = match hir[left].kind {

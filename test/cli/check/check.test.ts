@@ -10806,6 +10806,39 @@ while ((tok = next()).kind !== "eof") {
       expect(exitCode).toBe(0);
     });
 
+    // After `fail()` everything is `never`. The first walk for `data` ends with an incomplete `never`, which has every
+    // property. `checkAssignmentOperator` checks the target of a compound assignment a second time.
+    test("the target of a compound assignment is checked again after a walk that ended with an incomplete type", async () => {
+      using dir = project({
+        "a.ts": `declare const c: boolean;
+declare function fail(): never;
+export function f(o: { a?: number }, k: string) {
+  const data: any = {};
+  fail();
+  for (;;) {
+    try { } catch { delete o.a; }
+    if (c) break;
+  }
+  switch (k) {
+    case "s":
+      const { a } = o;
+      data.z ??= 1;
+      data.z = 1;
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(7,30): error TS2339: Property 'a' does not exist on type 'never'.",
+          "a.ts(13,12): error TS2339: Property 'z' does not exist on type 'never'.",
+          "a.ts(14,12): error TS2339: Property 'z' does not exist on type 'never'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("a shared flow node in a `finally` block has the type of its first visit", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

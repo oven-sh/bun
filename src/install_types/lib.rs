@@ -8,8 +8,8 @@ pub use resolver_hooks::{
     DependencySlice, DependencyVersion, DependencyVersionTag, DependencyVersionValue,
     EnqueueResult, ExternalPackageNameHashList, ExternalSlice, ExternalStringList,
     ExternalStringMap, Features, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, Libc, Negatable,
-    NegatableEnum, NegatableExt, NpmInfo, OperatingSystem, PackageID, PackageJsonView,
-    PackageNameHash, PreinstallState, Repository, Resolution, ResolutionSlice, ResolutionTag,
-    ResolutionValue, TagInfo, TarballInfo, TaskCallbackContext, TruncatedPackageNameHash, URI,
-    VersionSlice, VersionedURL, VersionedURLType, WakeHandler, WakeTarget,
+    NegatableEnum, NegatableExt, NpmInfo, OperatingSystem, PackageID, PackageNameHash,
+    PreinstallState, Repository, Resolution, ResolutionSlice, ResolutionTag, ResolutionValue,
+    TagInfo, TarballInfo, TruncatedPackageNameHash, URI, VersionSlice, VersionedURL,
+    VersionedURLType, WakeHandler, WakeTarget,
 };

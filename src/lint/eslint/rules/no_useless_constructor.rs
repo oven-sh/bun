@@ -5,12 +5,12 @@ use bun_lint::tokens::next_token;
 pub struct NoUselessConstructor;
 
 const NO_USELESS_CONSTRUCTOR: Message = Message::new("noUselessConstructor", "Useless constructor.");
-/// What oxlint says instead.
+/// oxlint's messages.
 const EMPTY_CONSTRUCTOR: Message = Message::new("noUselessConstructor", "Empty constructors are unnecessary");
 const REDUNDANT_SUPER_CALL: Message = Message::new("noUselessConstructor", "Redundant super call in constructor");
 const REMOVE_CONSTRUCTOR: Message = Message::new("removeConstructor", "Remove the constructor.");
 
-/// The arguments, if `body` is a single call of `super`.
+/// Returns the arguments, if `body` is a single `super` call.
 fn single_super_call<'a>(body: List<'a, Stmt<'a>>) -> Option<List<'a, Expr<'a>>> {
     if body.len() != 1 {
         return None;
@@ -20,7 +20,7 @@ fn single_super_call<'a>(body: List<'a, Stmt<'a>>) -> Option<List<'a, Expr<'a>>>
     (call.callee().tag() == ExprTag::Super).then(|| call.args())
 }
 
-/// It has no side effects, which a default value and destructuring can have.
+/// True if binding `param` has no side effects. A default value and destructuring can have some.
 fn is_simple(param: Param) -> bool {
     param.default().is_none() && (param.is_rest() || param.pat().tag() == PatTag::Ident)
 }
@@ -44,7 +44,7 @@ fn is_passing_through<'a>(params: List<'a, Param<'a>>, args: List<'a, Expr<'a>>)
     params.len() == args.len() && params.iter().zip(args).all(|(param, arg)| is_valid_pair(param, arg))
 }
 
-/// `has_this`: there is a parameter `this` before `params`, which no argument can be.
+/// `has_this` is true if a `this` parameter comes before `params`. No argument can match it.
 fn is_redundant_super_call<'a>(body: List<'a, Stmt<'a>>, params: List<'a, Param<'a>>, has_this: bool) -> bool {
     single_super_call(body).is_some_and(|args| {
         params.iter().all(is_simple)
@@ -52,8 +52,7 @@ fn is_redundant_super_call<'a>(body: List<'a, Stmt<'a>>, params: List<'a, Param<
     })
 }
 
-/// The whole rule, for a member of a class. typescript-eslint's rule of the same name is no
-/// different.
+/// The whole rule, for a class member. typescript-eslint's rule of the same name behaves the same.
 #[inline]
 pub fn check<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
     if member.is_constructor() {
@@ -95,11 +94,11 @@ fn check_constructor<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
             before.end()
         }
     };
-    // oxlint points at all of an empty constructor, and at the name of one that only calls `super`.
-    let place = match (cx.language().is_oxlint, member.constructor_keyword()) {
+    // oxlint points at the whole of an empty constructor, and at the name of one that only calls `super`.
+    let location = match (cx.language().is_oxlint, member.constructor_keyword()) {
         (true, Some(name)) if has_super_class => name.span(),
         (true, _) => member.span(),
-        // Before ESLint 10 it is the whole constructor.
+        // Before ESLint 10 it's the whole constructor.
         (false, _) if cx.language().eslint_major < 10 => member.span(),
         (false, _) => Span::new(member.span().start, name_end),
     };
@@ -108,7 +107,7 @@ fn check_constructor<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
         (true, false) => EMPTY_CONSTRUCTOR,
         (true, true) => REDUNDANT_SUPER_CALL,
     };
-    cx.report(place, message)
+    cx.report(location, message)
         .labels_with(|labels| {
             if has_super_class && let Some(StmtKind::Expr(super_call)) = body.first().map(Stmt::kind) {
                 labels.first("This constructor is unnecessary,");
@@ -119,7 +118,7 @@ fn check_constructor<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
             let file = fixer.file();
             let can_continue = match file.slice(next_token(file.text(), member.span().end)) {
                 b"[" | b"*" | b"in" | b"instanceof" => true,
-                // It can be a comment of HTML.
+                // It can be an HTML-like comment.
                 [b'<' | b'-', ..] => {
                     file.token_after(member).is_some_and(|it| ast_utils::can_continue_expression_in_class_body(&it))
                 }

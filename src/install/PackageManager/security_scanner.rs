@@ -204,17 +204,32 @@ pub(crate) fn perform_security_scan_after_resolution(
     command_ctx: CommandContext,
     original_cwd: &[u8],
     seeds: &[PackageID],
+    loaded_lockfile: bool,
 ) -> Result<Option<SecurityScanResults>, Error> {
     let Some(security_scanner) = manager.options.security_scanner else {
         return Ok(None);
     };
 
+    // No command skips a configured scanner unless the run installs nothing into `node_modules`.
     if manager.options.dry_run || !manager.options.do_.contains(Do::INSTALL_PACKAGES) {
         return Ok(None);
     }
 
-    let scan_all =
-        manager.subcommand == bun_install::Subcommand::Remove || manager.update_requests.is_empty();
+    let has_node_modules = {
+        let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+        manager.root_dir.has_comptime_query(b"node_modules")
+    };
+    // A command that names the packages it adds or updates scans only those packages and `seeds`.
+    // The install that wrote the lockfile and `node_modules` already scanned everything else.
+    let scan_all = manager.update_requests.is_empty()
+        || !loaded_lockfile
+        || !has_node_modules
+        || !matches!(
+            manager.subcommand,
+            bun_install::Subcommand::Add
+                | bun_install::Subcommand::Install
+                | bun_install::Subcommand::Update
+        );
     scan_installing_scanner_if_needed(
         manager,
         security_scanner,
@@ -717,17 +732,20 @@ fn attempt_security_scan(
     let json_data = build_package_json(manager, &package_paths)?;
     let packages_scanned = package_paths.count();
 
-    let code = replace_first(
-        SCANNER_ENTRY_SOURCE,
-        b"__SCANNER_MODULE__",
-        security_scanner,
-    );
     let suppress: &[u8] = if suppress_error_output {
         b"true"
     } else {
         b"false"
     };
-    let code = replace_first(&code, b"__SUPPRESS_ERROR__", suppress);
+    let code = replace_first(SCANNER_ENTRY_SOURCE, b"__SUPPRESS_ERROR__", suppress);
+    // The scanner's name is substituted last, so a placeholder inside the name is never replaced.
+    let mut quoted: Vec<u8> = Vec::new();
+    write!(
+        &mut quoted,
+        "{}",
+        bun_core::fmt::format_json_string_utf8(security_scanner, Default::default())
+    )?;
+    let code = replace_first(&code, b"__SCANNER_MODULE__", &quoted);
 
     let event_loop_handle = EventLoopHandle::from_any(&mut manager.event_loop);
     let mut scanner = Box::new(SecurityScanSubprocess {
@@ -858,16 +876,13 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let exec_path = bun_core::self_exe_path()?;
 
-        // Like a lifecycle script: the environment install resolved, and no `.env` file on top.
+        // Like a lifecycle script, it gets the environment that the install resolved, with no
+        // `.env` file on top.
         let code =
             std::ffi::CString::new(&*self.code).map_err(|_| crate::Error::InvalidCharacter)?;
-        let argv = [
-            exec_path.as_cstr(),
-            c"--no-install",
-            c"--no-env-file",
-            c"-e",
-            code.as_c_str(),
-        ];
+        let mut argv = vec![exec_path.as_cstr(), c"--no-install", c"--no-env-file"];
+        argv.extend(bun_core::Global::ca_store_flag().map(bun_core::ZStr::as_cstr));
+        argv.extend([c"-e", code.as_c_str()]);
         let env = self.manager.env_mut();
         // Set in the process environment after the loader copied it.
         if bun_io::parent_death_watchdog::is_enabled() {
@@ -1195,7 +1210,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
-            // The JSON may still be in the pipe: drain it; only EOF tears the reader's poll down.
+            // The JSON may still be in the pipe, so drain it. Only EOF tears down the reader's
+            // poll.
             #[cfg(not(windows))]
             {
                 let fd = self.ipc_reader.get_fd();

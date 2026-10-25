@@ -50,6 +50,7 @@
 #include "wtf/text/StringView.h"
 
 #include "isBuiltinModule.h"
+#include "VectorSizeLimit.h"
 #include "WebCoreJSBuiltins.h"
 
 namespace Zig {
@@ -206,7 +207,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
     JSC::JSValue moduleName = callFrame->argument(0);
     JSValue from = callFrame->argument(1);
-    bool isESM = callFrame->argument(2).asBoolean();
+    bool isESM = callFrame->argument(2).isTrue();
     bool isRequireDotResolve = callFrame->argument(3).isTrue();
     JSValue userPathList = callFrame->argument(4);
     JSValue parentModule = callFrame->argument(5);
@@ -255,6 +256,11 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     RETURN_IF_EXCEPTION(scope, {});
                     auto str = string->value(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
+                    // The override bypasses the resolver, which is what normally rejects null bytes.
+                    if (str->contains('\0')) [[unlikely]] {
+                        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, string, "must be a string, Uint8Array, or URL without null bytes"_s);
+                        return {};
+                    }
                     WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
                     if (!prefixed.isNull()) {
                         return JSValue::encode(jsString(vm, prefixed));
@@ -296,7 +302,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     WTF::String pathStr = path.toWTFString(globalObject);
                     if (scope.exception()) [[unlikely]]
                         goto cleanup;
-                    paths.append(Bun::toStringRef(pathStr));
+                    BunString pathRef = Bun::toStringRef(pathStr);
+                    if (!Bun::tryAppendWithinLimit(paths, pathRef)) [[unlikely]] {
+                        pathRef.deref();
+                        throwOutOfMemoryError(globalObject, scope);
+                        goto cleanup;
+                    }
                 }
 
                 result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
@@ -512,7 +523,10 @@ JSC_DEFINE_CUSTOM_SETTER(jsImportMetaObjectSetter_require, (JSGlobalObject * jsG
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
-    return JSValue::encode(globalObject->m_processEnvObject.getInitializedOnMainThread(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSObject* env = globalObject->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(env);
 }
 
 extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);

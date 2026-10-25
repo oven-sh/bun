@@ -1,6 +1,6 @@
-//! Function types, and the signatures of interfaces and type literals that have parameters.
+//! Function types, and the interface and type literal signatures that have parameters.
 
-use super::function::should_group_function_parameters;
+use super::function::write_parameters_and_return_type;
 use super::parameters::FormatFormalParameters;
 use super::type_parameters::type_parameters;
 use crate::js::format::{FormatReturnTypeOfFunctionType, FormatTypeAnnotation};
@@ -63,57 +63,51 @@ pub(crate) fn write_ts_method_signature<'a>(
         }
         write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
 
-        let format_type_parameters =
-            type_parameters(func.type_params(), Node::Func(func)).memoized();
-        let format_parameters = FormatFormalParameters(func).memoized();
-        format_type_parameters.inspect(f);
-        format_parameters.inspect(f);
-        let format_return_type = FormatReturnType(func).memoized();
-
-        match should_group_function_parameters(func, &format_return_type, f) {
-            true => write!(
-                f,
-                group(&format_args!(format_type_parameters, format_parameters))
-            ),
-            false => write!(f, [format_type_parameters, format_parameters]),
-        }
-        write!(f, group(&format_return_type));
+        let format_return_type = format_with(|f| write!(f, group(&FormatReturnType(func))));
+        write_parameters_and_return_type(
+            func,
+            &FormatAllParameters(func).memoized(),
+            &format_return_type.memoized(),
+            f,
+        );
     });
     write!(f, group(&format_inner));
 }
 
-/// The type parameters, the parameters and the return type of a function type or of a signature
-/// without a name.
+/// The type parameters, parameters and return type of a function type or an unnamed signature.
 fn format_grouped_parameters_with_return_type<'a>(
     func: Func<'a>,
     is_function_or_constructor_type: bool,
     f: &mut Formatter<'a>,
 ) {
     group(&format_with(|f| {
-        let format_type_parameters =
-            type_parameters(func.type_params(), Node::Func(func)).memoized();
-        let format_parameters = FormatFormalParameters(func).memoized();
-        let format_return_type = FormatReturnType(func).memoized();
-
-        format_type_parameters.inspect(f);
-        format_parameters.inspect(f);
-
-        match should_group_function_parameters(func, &format_return_type, f) {
-            true => write!(
+        let format_return_type = format_with(|f| {
+            write!(
                 f,
-                group(&format_args!(format_type_parameters, format_parameters))
-            ),
-            false => write!(f, [format_type_parameters, format_parameters]),
-        }
-        write!(
+                [
+                    is_function_or_constructor_type.then_some(space()),
+                    FormatReturnType(func)
+                ]
+            )
+        });
+        write_parameters_and_return_type(
+            func,
+            &FormatAllParameters(func).memoized(),
+            &format_return_type.memoized(),
             f,
-            [
-                is_function_or_constructor_type.then_some(space()),
-                format_return_type
-            ]
         );
     }))
     .fmt(f);
+}
+
+/// `<T>(a: A)`
+struct FormatAllParameters<'a>(Func<'a>);
+
+impl<'a> Format<'a> for FormatAllParameters<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let type_parameters = type_parameters(self.0.type_params(), Node::Func(self.0));
+        write!(f, [type_parameters, FormatFormalParameters(self.0)]);
+    }
 }
 
 /// `: R`, `=> R`

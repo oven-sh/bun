@@ -60,7 +60,7 @@ impl BanTypes {
             b"Function" => FUNCTION,
             _ => return,
         };
-        // What a class implements and an interface extends is no type reference.
+        // What a class implements or an interface extends isn't a type reference.
         let is_heritage = match ty.parent() {
             Node::Class(class) => class.implements().iter().any(|it| it == ty),
             Node::Stmt(stmt) => matches!(stmt.kind(), StmtKind::Interface(it) if it.extends().iter().any(|it| it == ty)),

@@ -17,7 +17,6 @@ use bun_semver as Semver;
 use bun_url::URL;
 
 use crate::cli::pm_pkg_command::PmPkgCommand;
-use bun_core::fmt::buf_print_infallible as buf_print;
 
 fn string_of<'b>(object: &ast::Expr, bump: &'b Bump, key: &[u8]) -> Option<&'b [u8]> {
     object.get_string_cloned(bump, key).ok().flatten()
@@ -71,7 +70,8 @@ pub(crate) fn view(
 
             // Try our best to get the package.json name they meant
             'from_package_json: {
-                // `root_dir` is in the resolver's directory cache: probes must hold `entries_mutex`.
+                // `root_dir` is in the resolver's directory cache, so lookups must hold
+                // `entries_mutex`.
                 let has_package_json = {
                     let _entries_lock = bun_resolver::fs::FileSystem::instance()
                         .fs
@@ -80,7 +80,7 @@ pub(crate) fn view(
                     manager.root_dir.has_comptime_query(b"package.json")
                 };
                 if !has_package_json {
-                    const NO_NAME: &str = "No package name was given and no package.json was found";
+                    const NO_NAME: &str = "no package name given and no package.json found";
                     if json_output {
                         print_json_error(NO_NAME, spec_, None);
                     } else {
@@ -114,16 +114,13 @@ pub(crate) fn view(
 
     let scope = manager.scope_for_package_name(name);
 
-    let mut url_buf = bun_paths::path_buffer_pool::get();
     // Always fetch the full registry manifest, not a specific version
-    let url = URL::parse(buf_print(
-        url_buf.0.as_mut_slice(),
-        format_args!(
-            "{}/{}",
-            BStr::new(strings::without_trailing_slash(scope.url.href())),
-            bun_fmt::dependency_url(name),
-        ),
-    ));
+    let href = format!(
+        "{}/{}",
+        BStr::new(strings::without_trailing_slash(scope.url.href())),
+        bun_fmt::dependency_url(name),
+    );
+    let url = URL::parse(href.as_bytes());
 
     let authorization = scope.authorization(&url);
     let mut pairs: Vec<(&[u8], &[u8])> = vec![(b"Accept", b"application/json")];
@@ -137,7 +134,7 @@ pub(crate) fn view(
     let mut req =
         manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
 
-    let res = match req.send_sync(&mut response_buf) {
+    let res = match manager.send_with_retries(&mut req, &mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Output::err(err, "view request failed to send", ());
@@ -274,7 +271,8 @@ pub(crate) fn view(
 
             let max_versions_to_display: usize = 5;
 
-            // Newest published versions; prereleases only when nothing else was ever published.
+            // The newest published versions. Prereleases are only included if nothing else was ever
+            // published.
             let mut all_versions = parsed_manifest.release_versions();
             if all_versions.is_empty() {
                 all_versions = parsed_manifest.prerelease_versions();
@@ -295,7 +293,8 @@ pub(crate) fn view(
         Global::exit(1);
     }
 
-    // Treat versions specially because npm does some normalization on there: valid ones, in semver order.
+    // Versions are handled specially, because npm normalizes them: only the valid ones, in semver
+    // order.
     if let Some(versions_object) = json.get_object(b"versions") {
         let versions_e_obj = versions_object
             .data
@@ -324,7 +323,8 @@ pub(crate) fn view(
         manifest.set(&bump, b"versions", versions_array)?;
     }
 
-    // Like `npm view`, add the package-level fields (`dist-tags`, `time`); the readme on request.
+    // Like `npm view`, add the package-level fields (`dist-tags`, `time`). The readme is only added
+    // on request.
     json.try_for_each_property(|key, _, value| {
         if key != b"versions"
             && (key != b"readme" || !fields.is_empty())
@@ -448,7 +448,8 @@ pub(crate) fn view(
         .map(|deps| deps.properties.slice())
         .unwrap_or_default();
 
-    // Every string printed below is registry-controlled: always `escape_control_chars` it.
+    // Every string printed below comes from the registry, so always pass it through
+    // `escape_control_chars`.
     prettyln!(
         "<b><blue><u>{}<r><d>@<r><blue><b><u>{}<r> <d>|<r> <cyan>{}<r> <d>|<r> deps<d>:<r> {} <d>|<r> versions<d>:<r> {}",
         escape_control_chars(pkg_name),

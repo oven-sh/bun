@@ -26,7 +26,7 @@ use super::add_remove_with_filter::{
 };
 use super::options::LogLevel;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
-use super::update_package_json_and_install::print_package_json_into_cache_entry;
+use super::update_package_json_and_install::save_entry;
 use super::workspace_package_json_cache::MapEntry;
 use super::{PackageManager, Subcommand, UpdateRequest};
 
@@ -975,11 +975,7 @@ pub(crate) fn edit_root_entry_before_install(
     }
     let root = root_package_json.root;
     edit_root_before_install(manager, &root)?;
-    print_package_json_into_cache_entry(root_package_json, root);
-    if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
-        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
-        Global::crash();
-    }
+    save_entry(root_package_json, root, manager.log_mut());
     Ok(())
 }
 
@@ -1072,17 +1068,20 @@ pub(crate) fn edit_root_after_install(
                 let Some(seed) = lockfile.catalogs.find(buf, &add.group, &add.name) else {
                     continue;
                 };
-                if seed.version.tag != dependency::Tag::DistTag {
-                    continue;
-                }
+                let target = match seed.version.tag {
+                    dependency::Tag::DistTag => seed.version.dist_tag().name,
+                    // With `--exact`, a range the user typed is also replaced by the exact version.
+                    dependency::Tag::Npm
+                        if exact && matches!(add.candidate, Candidate::Explicit(_)) =>
+                    {
+                        seed.version.npm().name
+                    }
+                    _ => continue,
+                };
                 let mut literal = Vec::new();
                 if seed.version.literal.slice(buf).starts_with(b"npm:") {
-                    write!(
-                        &mut literal,
-                        "npm:{}@",
-                        BStr::new(seed.version.dist_tag().name.slice(buf))
-                    )
-                    .expect("infallible: in-memory write");
+                    write!(&mut literal, "npm:{}@", BStr::new(target.slice(buf)))
+                        .expect("infallible: in-memory write");
                 }
                 write!(
                     &mut literal,

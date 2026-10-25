@@ -463,12 +463,10 @@ impl<'a> Task<'a> {
                     // Apply variant (see `new_apply_patch_hash`).
                     unsafe { core::hint::unreachable_unchecked() }
                 };
-                if apply.logger.errors > 0 {
-                    // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
-                    let _ = apply
-                        .logger
-                        .print(std::ptr::from_mut(Output::error_writer()));
-                }
+                // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
+                let _ = apply
+                    .logger
+                    .print(std::ptr::from_mut(Output::error_writer()));
             }
         }
         // SAFETY: `UnboundedQueue::push` takes `&self` (lock-free), so reach it

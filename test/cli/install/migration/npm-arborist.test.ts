@@ -9,7 +9,7 @@ describe("package-lock.json migration fixes", () => {
     // Snapshot matchers are unsupported inside a concurrent group, so these stay sequential.
     test.each(arboristFixtures.map(f => f.name))("%s", async name => {
       using dir = fixture(name);
-      const { stderr, exitCode } = await run(dir, "pm", "migrate");
+      const { stderr, exitCode } = await run(dir, "pm", "migrate", "--verbose");
       const report = [stderr.replace(/^\[[\d.]+m?s\] /gm, "").trimEnd(), `bun pm migrate exit code: ${exitCode}`];
       if (exitCode === 0) {
         const { text } = await readLock(dir);

@@ -23,7 +23,7 @@ impl Rule for NoProcessEnv {
         let Some((obj, name, _)) = e.as_dot() else {
             return;
         };
-        // The `name` of ESLint's `PrivateIdentifier` is without the `#`.
+        // ESLint's `PrivateIdentifier` has a `name` without the `#`.
         if name.name().is_any(&["env", "#env"])
             && obj.is_ident("process")
             && !e.is_jsx_tag_name()

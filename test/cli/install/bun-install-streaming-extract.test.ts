@@ -1783,6 +1783,56 @@ describe.concurrent("gzip trailer", () => {
 });
 
 // -------------------------------------------------------------------
+// libarchive could wait for more of a download in some of its reads only.
+// A piece that ended inside one of the others failed the install.
+// -------------------------------------------------------------------
+describe.concurrent("a piece of the download may end anywhere", () => {
+  const index = `module.exports = "GOOD";\n`;
+  const json = JSON.stringify({ name: "stream-pkg", version: "1.0.0" });
+  const comment = Buffer.from(`1126417 comment=${Buffer.alloc(1100 * 1024, "c")}\n`);
+  expect(comment.length).toBe(1126417);
+  const tar = (...before: Buffer[]) =>
+    Buffer.concat([
+      ...tarFile("package/package.json", Buffer.from(json)),
+      ...before,
+      ...tarFile("package/index.js", Buffer.from(index)),
+      Buffer.alloc(1024),
+    ]);
+  const gz = gzipSync(tar(), { level: 0 });
+
+  test.each([
+    // The first piece is 512 bytes.
+    [
+      "in an optional field of the gzip header",
+      Buffer.concat([
+        gz.subarray(0, 3),
+        Buffer.from([4]),
+        gz.subarray(4, 10),
+        Buffer.from([0xe8, 3]),
+        Buffer.alloc(1000),
+        gz.subarray(10),
+      ]),
+    ],
+    [
+      "in a pax header of more than 1 MiB",
+      gzipSync(tar(tarHeader("PaxHeader", comment.length, "x"), comment, pad512(comment.length)), { level: 0 }),
+    ],
+  ])("%s", async (_, tgz) => {
+    expect(await installStreamPkg("streaming", tgz, { files: true })).toEqual([
+      {
+        error: undefined,
+        streamed: true,
+        installed: true,
+        cached: 1,
+        tmp: [".keep"],
+        exitCode: 0,
+        files: { "package.json": json, "index.js": index },
+      },
+    ]);
+  });
+});
+
+// -------------------------------------------------------------------
 // bun reads the package.json of a tarball dependency, and of a registry
 // package that may run scripts, as soon as it is extracted. One that
 // fails the install there was already in the cache by then, where the

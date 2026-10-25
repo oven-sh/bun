@@ -312,6 +312,68 @@ test.concurrent("load() preserves caller-preset filename and paths (#29253)", as
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("Module.prototype.load can be hooked like in Node", async () => {
+  // Both prototype objects share one slot, so assigning on either is seen
+  // by instances; assigning on an instance shadows it for that instance only.
+  using dir = tempDir("module-load-hook", {
+    "leaf.js": `module.exports = "ok";`,
+    "driver.js": `
+      const Module = require("node:module");
+      const path = require("node:path");
+      const target = path.resolve(__dirname, "leaf.js");
+
+      const original = Module.prototype.load;
+      const seen = [];
+      Module.prototype.load = function (f) {
+        seen.push(path.basename(f));
+        return original.call(this, f);
+      };
+
+      const a = new Module(target, module);
+      a.load(target);
+
+      const b = new Module(target, module);
+      b.load = () => { seen.push("instance-only"); };
+      b.load(target);
+
+      const c = new Module(target, module);
+      c.load(target);
+
+      Module.prototype.load = original;
+      const d = new Module(target, module);
+      d.load(target);
+
+      console.log(JSON.stringify({
+        seen,
+        aExports: a.exports,
+        bHasOwn: Object.prototype.hasOwnProperty.call(b, "load"),
+        cHasOwn: Object.prototype.hasOwnProperty.call(c, "load"),
+        restored: Module.prototype.load === original,
+      }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "driver.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    seen: ["leaf.js", "instance-only", "leaf.js"],
+    aExports: "ok",
+    bHasOwn: true,
+    cHasOwn: false,
+    restored: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("module.isPreloading is a boolean getter on the prototype", () => {
   // Node defines `isPreloading` as a getter on `Module.prototype`; before
   // the fix Bun returned `undefined` here.

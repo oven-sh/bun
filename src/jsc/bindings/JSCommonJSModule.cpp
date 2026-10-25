@@ -951,11 +951,10 @@ public:
         ASSERT(inherits(info()));
         Bun::reifyStaticPropertyTable(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
 
-        this->putDirectBuiltinFunction(
+        this->putDirectCustomAccessor(
             vm,
-            this->globalObject(),
             JSC::Identifier::fromString(vm, "load"_s),
-            WebCore::commonJSModulePrototypeLoadCodeGenerator(vm),
+            JSC::CustomGetterSetter::create(vm, getterLoadFunction, setterLoadFunction),
             0);
     }
 };

@@ -37,8 +37,8 @@ _read_scripts_in_package_json() {
     local line=0;
     local working_dir="${PWD}";
 
-    for ((; line < ${#COMP_WORDS[@]}; line+=1)); do
-        [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[$((line + 1))]}";
+    for ((; line < ${#words[@]}; line+=1)); do
+        [[ "${words[${line}]}" == "--cwd" ]] && working_dir="${words[$((line + 1))]}";
     done
 
     [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
@@ -58,7 +58,7 @@ _read_scripts_in_package_json() {
     # when a script is passed as an option, do not show other scripts as part of the completion anymore
     local re_prev_script="(^| )${prev}($| )";
     [[
-        ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" )
+        ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${words[2]}" )
     ]] && {
         local filtered_reply=();
         local reply_word script_name keep;
@@ -74,7 +74,50 @@ _read_scripts_in_package_json() {
 }
 
 
+# readline splits the command line at every character in COMP_WORDBREAKS, and ':' is in
+# that set by default. So `build:r` arrives as the three words `build`, `:` and `r`.
+# Join those pieces again into `words`, so that every handler sees `build:r`.
+_bun_reassemble_comp_words() {
+    words=();
+    cword=${COMP_CWORD};
+    [[ "${COMP_WORDBREAKS}" == *:* ]] || { words=( "${COMP_WORDS[@]}" ); return; };
+
+    local i j=-1;
+    for ((i = 0; i < ${#COMP_WORDS[@]}; i += 1)); do
+        # a ':' piece, or the piece right after one, continues the previous word
+        # (never the command name itself)
+        if (( j >= 1 )) && [[ "${COMP_WORDS[i]}" == ":" || "${COMP_WORDS[i - 1]}" == ":" ]]; then
+            words[j]+="${COMP_WORDS[i]}";
+        else
+            words[++j]="${COMP_WORDS[i]}";
+        fi
+        (( i == COMP_CWORD )) && cword=${j};
+    done
+}
+
+# readline only replaces the piece after the last ':', so the candidates must not
+# repeat the prefix up to and including that ':'.
+_bun_ltrim_colon_completions() {
+    [[ "${COMP_WORDBREAKS}" == *:* && "${cur_word}" == *:* ]] || return 0;
+    local prefix="${cur_word%"${cur_word##*:}"}";
+    local i;
+    for ((i = 0; i < ${#COMPREPLY[@]}; i += 1)); do
+        COMPREPLY[i]="${COMPREPLY[i]#"${prefix}"}";
+    done
+}
+
 _bun_completions() {
+    local -a words;
+    local cword cur_word prev;
+    _bun_reassemble_comp_words;
+    cur_word="${words[${cword}]}";
+    prev="${words[$(( cword - 1 ))]}";
+
+    _bun_complete_word;
+    _bun_ltrim_colon_completions;
+}
+
+_bun_complete_word() {
     declare -A GLOBAL_OPTIONS;
     declare -A PACKAGE_OPTIONS;
     declare -A PM_OPTIONS;
@@ -104,19 +147,16 @@ _bun_completions() {
     PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --json --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
 
-    local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
-    local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
-
     # the subcommand or file: the first word that is not a flag or the value of one (`bun --hot run`, `bun --cwd dir run`)
     local first_word="" i;
-    for (( i=1; i < COMP_CWORD; i++ )); do
-        case "${COMP_WORDS[i]}" in
-            # readline splits `--flag=value` and `K:V` at the `=` and the `:`
-            =|:) (( i++ ));;
+    for (( i=1; i < cword; i++ )); do
+        case "${words[i]}" in
+            # readline splits `--flag=value` at the `=`
+            =) (( i++ ));;
             --cwd|--env-file|--preload|--require|--import|--filter|--define|--loader|--port|--conditions|--tsconfig-override|-r|-F|-d|-l)
-                (( i++ )); [[ "${COMP_WORDS[i]}" == "=" ]] && (( i++ ));;
+                (( i++ )); [[ "${words[i]}" == "=" ]] && (( i++ ));;
             -*) ;;
-            *) first_word="${COMP_WORDS[i]}"; break;;
+            *) first_word="${words[i]}"; break;;
         esac
     done
 

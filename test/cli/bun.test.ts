@@ -452,7 +452,19 @@ describe("bun", () => {
       }
 
       const project = {
-        "package.json": JSON.stringify({ scripts: { "dev": "echo dev", "test:unit": "echo unit" } }, null, 2),
+        "package.json": JSON.stringify(
+          {
+            scripts: {
+              "dev": "echo dev",
+              "test:unit": "echo unit",
+              "build:nightly": "echo nightly",
+              "build:release": "echo release",
+              "reinstall": "echo reinstall",
+            },
+          },
+          null,
+          2,
+        ),
         "myscript.ts": "",
         "foo.txt": "",
         "src/index.ts": "",
@@ -505,13 +517,20 @@ describe("bun", () => {
           "bun myscript.ts fo": ["foo.txt"],
           "bun tw": ["two words.ts"],
           "bun --silent add --p": ["--peer", "--production"],
+          // readline replaces only the piece after the last ':'. Before, `bun run build:r<TAB>`
+          // completed `reinstall` (the scripts that start with `r`) and `bun run build:<TAB>` nothing.
+          "bun run build:r": ["release"],
+          "bun run build:": ["nightly", "release"],
+          "bun --loader .ts:j": ["js", "json", "jsx"],
+          "bun --inspect=localhost:6499 run d": ["dev"],
           // As before.
           "bun add --p": ["--peer", "--production"],
           "bun r": ["remove", "repl", "run"],
           "bun te": ["test"],
         };
         const replies = await offered(String(dir), Object.keys(expected), line => {
-          const words = line.split(" ");
+          // bash's default COMP_WORDBREAKS has ':' and '=', so readline makes them words of their own.
+          const words = line.split(" ").flatMap(word => word.split(/([:=])/).filter(Boolean));
           return [
             "bash",
             "--norc",

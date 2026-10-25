@@ -1756,7 +1756,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             }
                             it = entry.next_dependency;
                         }
-                        self.append_client_entry_point(entry_points, index)?;
+                        // The importers queued above bundle this file again, with the loader that each import asks for.
+                        if self.edge_lists[index].first_dep.is_none()
+                            || self.bundled_files.values()[index]
+                                .html_route_bundle_index
+                                .is_some()
+                        {
+                            self.append_client_entry_point(entry_points, index)?;
+                        }
                     }
                     // When re-bundling SCBs, only bundle the server.
                     Content::Js(_) | Content::Unknown => {

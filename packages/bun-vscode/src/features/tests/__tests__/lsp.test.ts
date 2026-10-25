@@ -682,7 +682,7 @@ describe("registerLanguageServer", () => {
   test("constructs the real LanguageClient over stdio without a --stdio flag by default", async () => {
     setConfiguration("bun.lint.enable", false);
     setConfiguration("bun.lint.run", "onSave");
-    setConfiguration("bun.format.enable", true);
+    setConfiguration("bun.format.enable", false);
     // Other bun.* keys must neither reach initializationOptions nor be synced.
     setConfiguration("bun.runtime", "bun");
     setConfiguration("bun.lint.rules", { "no-debugger": "error" });
@@ -705,7 +705,7 @@ describe("registerLanguageServer", () => {
     expect(client.clientOptions.documentSelector).toContainEqual({ scheme: "file", language: "typescript" });
     expect(client.clientOptions.initializationOptions).toEqual({
       lint: { enable: false, run: "onSave" },
-      format: { enable: true },
+      format: { enable: false },
     });
     expect(client.clientOptions.synchronize.configurationSection).toEqual(["bun.lint", "bun.format"]);
     expect(client.clientOptions.outputChannel.name).toBe("Bun");

@@ -3700,12 +3700,12 @@ describe("css tests", () => {
         { chrome: 8 << 16 },
       );
       prefix_test(
-        `.foo { background-image: -moz-radial-gradient(20px, red, blue), radial-gradient(20px, yellow, red) }`,
+        `.foo { background-image: -moz-linear-gradient(red, blue), linear-gradient(yellow, red) }`,
         indoc`
           .foo {
-            background-image: -webkit-gradient(radial, center center, 0, center center, 20, from(red), to(#00f)), -webkit-gradient(radial, center center, 0, center center, 20, from(#ff0), to(red));
-            background-image: -webkit-radial-gradient(20px, red, #00f), -webkit-radial-gradient(20px, #ff0, red);
-            background-image: -moz-radial-gradient(20px, red, #00f), radial-gradient(20px, #ff0, red);
+            background-image: -webkit-gradient(linear, 0 0, 0 100%, from(red), to(#00f)), -webkit-gradient(linear, 0 0, 0 100%, from(#ff0), to(red));
+            background-image: -webkit-linear-gradient(red, #00f), -webkit-linear-gradient(#ff0, red);
+            background-image: -moz-linear-gradient(red, #00f), linear-gradient(#ff0, red);
           }
         `,
         { chrome: 8 << 16 },
@@ -3722,11 +3722,11 @@ describe("css tests", () => {
         { chrome: 8 << 16 },
       );
       prefix_test(
-        `.foo { background-image: -webkit-radial-gradient(20px, lab(50% 20 30), blue) }`,
+        `.foo { background-image: -webkit-linear-gradient(lab(50% 20 30), blue) }`,
         indoc`
           .foo {
-            background-image: -webkit-gradient(radial, center center, 0, center center, 20, from(#a16945), to(#00f));
-            background-image: -webkit-radial-gradient(20px, #a16945, #00f);
+            background-image: -webkit-gradient(linear, 0 0, 0 100%, from(#a16945), to(#00f));
+            background-image: -webkit-linear-gradient(#a16945, #00f);
           }
         `,
         { chrome: 8 << 16 },

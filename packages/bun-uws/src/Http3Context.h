@@ -52,6 +52,7 @@ struct Http3Context {
                 res->writeStatus("400 Bad Request")->end();
                 return;
             }
+            rd->declaredContentLength = req.getContentLength();
             if (!isKnownMethod(req.getCaseSensitiveMethod())) {
                 /* RFC 9110 §15.6.2. The router would dispatch it to the "any"
                  * handler, which cannot represent the method and would report GET. */
@@ -73,6 +74,20 @@ struct Http3Context {
             Http3Response *res = (Http3Response *) s;
             Http3ResponseData *rd = res->getHttpResponseData();
             if (!rd->inStream) return;
+            rd->receivedBodyBytes += len;
+            /* RFC 9114 §4.1.2: a request whose DATA doesn't add up to its content-length is malformed.
+             * lsquic reports that on the connection alone and still ends the read cleanly, hence the
+             * status check. It counts against the content-length of the last header block it decoded
+             * (a second HEADERS, the trailers), and before 4.10.0 not at all when no DATA came, hence
+             * the count against the one the request started with. */
+            if (rd->receivedBodyBytes > rd->declaredContentLength ||
+                (fin && ((rd->declaredContentLength != NO_CONTENT_LENGTH && rd->receivedBodyBytes != rd->declaredContentLength) ||
+                         us_quic_stream_connection_failed(s)))) [[unlikely]] {
+                /* on_stream_close reports the abort, as it does for a reset by the peer. */
+                rd->inStream = nullptr;
+                us_quic_stream_reset(s, US_QUIC_H3_MESSAGE_ERROR);
+                return;
+            }
             if (len > rd->requestBodyBudget) return res->refuseRequestBody();
             rd->requestBodyBudget -= len;
             rd->inStream(res, data, len, fin != 0, rd->userData);

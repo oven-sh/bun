@@ -2,6 +2,7 @@
 #define UWS_H3RESPONSEDATA_H
 
 #include "AsyncSocketData.h"
+#include "Utilities.h"
 #include "quic.h"
 
 #include <wtf/Vector.h>
@@ -65,6 +66,9 @@ struct Http3ResponseData {
     uint64_t offset = 0;
     /* See HttpResponseData::requestBodyBudget. */
     uint64_t requestBodyBudget = UINT64_MAX;
+    /* The content-length of the request's HEADERS and the DATA bytes read so far, as on Http2Response. */
+    uint64_t declaredContentLength = NO_CONTENT_LENGTH;
+    uint64_t receivedBodyBytes = 0;
     uint8_t state = 0;
 
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {

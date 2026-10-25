@@ -1440,6 +1440,10 @@ int us_quic_stream_reset_received(us_quic_stream_t *s) {
     return s->stream && lsquic_stream_reset_received(s->stream);
 }
 
+int us_quic_stream_connection_failed(us_quic_stream_t *s) {
+    return s->stream && lsquic_conn_status(lsquic_stream_conn(s->stream), NULL, 0) == LSCONN_ST_ERROR;
+}
+
 int us_quic_stream_refused_by_goaway(us_quic_stream_t *s) {
     return s->stream &&
         lsquic_stream_id(s->stream) > lsquic_conn_goaway_stream_id(lsquic_stream_conn(s->stream));

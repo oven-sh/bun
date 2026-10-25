@@ -4874,7 +4874,7 @@ console.log(foo, array);
       ]);
     }
 
-    it("a call or a tagged template gets the same `this` after a fold", async () => {
+    it.concurrent("a call or a tagged template gets the same `this` after a fold", async () => {
       const rows = {
         tag: "o.f`t`",
         call: "o.f()",
@@ -4917,7 +4917,7 @@ console.log(foo, array);
     });
 
     // https://github.com/oven-sh/bun/issues/44578
-    it("a tag that is read through a const or behind a comma gets no `this`", async () => {
+    it.concurrent("a tag that is read through a const or behind a comma gets no `this`", async () => {
       const source = `
         function tag(parts, n) {
           console.log("tag", this === undefined, n);

@@ -12,7 +12,8 @@
 //! `QueryFrame::reported_from`. `Checker::leave` calls `settle_reported` for them:
 //! - If the result is final, they move to `Task::diagnostics`, tagged with the query.
 //! - If the result depends on a cycle, a trial or a rejected query (`drops_reported`), they're
-//!   dropped. The next evaluation reports them again.
+//!   dropped. The next evaluation reports them again. Under a frame that drops its own, they stay until that frame is
+//!   settled: `keep_type_of_returned_expression_in_cycle` can make it final, and then they're what tsc reports.
 //! - If the result depends on an incomplete flow-loop type (`taint_from`), they stay and belong to
 //!   the enclosing frame.
 //!
@@ -794,7 +795,10 @@ impl Checker<'_, '_> {
         let drops_reported =
             frame.drops_reported && !(frame.incomplete_flow && self.is_in_flow_loop());
         if drops_reported {
-            self.reported.truncate(from);
+            // A frame that drops its own drops these too, unless it turns out to be final after all.
+            if !self.frames.last().is_some_and(|outer| outer.drops_reported) {
+                self.reported.truncate(from);
+            }
         } else if !frame.tainted {
             for diagnostic in self.reported.split_off(from) {
                 self.log_diagnostic(Some(q), diagnostic);

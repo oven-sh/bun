@@ -586,7 +586,12 @@ impl<'p, 's> Checker<'p, 's> {
             || since(self.any_signature_read_at)
             || since(self.members_in_place_hit_at)
             || !self.check_mode().is_empty()
-            || !matches!(self.stack[self.stack.len() - 2], Query::Return(..))
+            || !match self.stack[self.stack.len() - 2] {
+                Query::Return(..) => true,
+                // `getTypeOfAccessors` calls `getReturnTypeFromBody` itself.
+                Query::LiteralProp(of, p) => self.hir(of)[p].kind == PropKind::Getter,
+                _ => false,
+            }
             || !self.is_checked_by_check_expression_cached(file, e)
             // tsc caches a `return` statement's expression without its parentheses, so the walk checks it again.
             || is_parenthesized(self.hir(file), e)

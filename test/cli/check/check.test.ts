@@ -8669,6 +8669,44 @@ ${printedIn === "a.ts" ? use : ""}`,
       },
     );
 
+    // `last` is visited once, inside the cycle, where `this` is only the object literal. `checkExpressionCached` keeps the
+    // type of the returned expression, so TypeScript never checks it again, and the errors of that visit are the ones
+    // it reports: `name` is missing too, and the type in the messages isn't the `this` that the call ends up with.
+    test("reports what the only visit of a getter's returned expression found, inside a cycle", async () => {
+      using dir = project({
+        "a.ts": `declare function defineStore<S = {}, G extends Record<string, unknown> = {}>(o: { state?: () => S; view?: G & ThisType<S & G> }): S & G;
+declare function pick<T, K extends keyof T>(o: T, k: K): T[K];
+export const cart = defineStore({
+  state: () => ({ on: false, name: "x" }),
+  view: {
+    get ids() { return pick(this, "on"); },
+    get last() { return this.missing ? this.ids : this.name; },
+    get first() { return String(this.ids) + this.name; },
+  },
+});
+`,
+      });
+      const self = "{ readonly ids: any; readonly last: any; readonly first: any; }";
+      const circular = (name: string) =>
+        `error TS7023: '${name}' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.`;
+      for (const threads of [1, 8]) {
+        const { stdout, exitCode } = await check(dir, ["--threads", String(threads)]);
+        expect(stdout).toBe(
+          [
+            "a.ts(2,58): error TS2577: Return type annotation circularly references itself.",
+            `a.ts(6,9): ${circular("ids")}`,
+            `a.ts(6,35): error TS2345: Argument of type '"on"' is not assignable to parameter of type '"first" | "ids" | "last"'.`,
+            `a.ts(7,9): ${circular("last")}`,
+            `a.ts(7,30): error TS2339: Property 'missing' does not exist on type '${self}'.`,
+            `a.ts(7,56): error TS2339: Property 'name' does not exist on type '${self}'.`,
+            `a.ts(8,9): ${circular("first")}`,
+            `a.ts(8,50): error TS2339: Property 'name' does not exist on type '${self}'.`,
+          ].join("\n"),
+        );
+        expect(exitCode).toBe(1);
+      }
+    });
+
     // The call to `String` starts a new resolution stack, so both getters are visited a second time inside their first
     // visit. The inner visit of `first` ends in the cycle and assigns `any`. The outer one gets `string`, but
     // `getTypeOfAccessors` only assigns if the symbol has no type yet.

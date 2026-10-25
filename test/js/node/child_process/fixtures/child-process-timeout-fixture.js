@@ -27,6 +27,9 @@ if (mode === "idle") {
   setTimeout(() => {}, 30_000);
 } else if (mode === "brief") {
   setTimeout(() => {}, 3 * soon);
+} else if (mode === "leaves its pipes open") {
+  // Exits at once. A process of its own holds stdout and stderr a little longer.
+  spawn(process.execPath, [__filename, "brief"], { stdio: "inherit", detached: true }).unref();
 } else if (mode !== "exit") {
   const idle = [__filename, "idle"];
   const brief = [__filename, "brief"];
@@ -94,6 +97,14 @@ if (mode === "idle") {
     case "spawn, 'exit' listener pauses stdout": {
       const child = watch(spawn(process.execPath, exits, { timeout: never }));
       child.once("exit", () => child.stdout.pause());
+      break;
+    }
+    case "execFile, 'exit' listener pauses the pipes": {
+      const child = watch(execFile(process.execPath, [__filename, "leaves its pipes open"], { timeout: never }, done));
+      child.once("exit", () => {
+        child.stdout.pause();
+        child.stderr.pause();
+      });
       break;
     }
     case "spawn of a missing file":

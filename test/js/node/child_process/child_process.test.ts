@@ -1728,8 +1728,9 @@ describe("options.timeout", () => {
     "spawn, child exits first": { kills: 0, events: ["exit", "close"] },
     "fork, child exits first": { kills: 0, events: ["exit", "close"] },
     "execFile, child exits first": { kills: 0, events: ["exit", "close"], callback: "no error" },
-    // No 'close' comes after this 'exit' (Node emits one), so the events are not part of the case.
+    // No 'close' comes after these 'exit's (Node emits one), so the events are not part of the cases.
     "spawn, 'exit' listener pauses stdout": { killed: false, kills: 0 },
+    "execFile, 'exit' listener pauses the pipes": { killed: false, kills: 0 },
     "spawn of a missing file": { kills: 0, events: ["error", "close"] },
     // The timers are not the globals, which a fake-timers library replaces.
     "spawn, timers replaced after the module loaded": { kills: 0, events: ["exit", "close"] },

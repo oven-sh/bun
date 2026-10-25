@@ -373,6 +373,8 @@ function execFile(file, args, options?, callback?) {
       timeoutId = null;
       kill();
     }, optionsTimeout);
+    // Past 'exit' the deadline only bounds the wait for 'close', which Bun can lose, so it stops holding the process.
+    child.once("exit", () => timeoutId?.unref());
   }
 
   function addOnDataListener(child_buffer, _buffer, kind) {

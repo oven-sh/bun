@@ -114,6 +114,18 @@ test("incompatible selector lists hit the limit when nesting has to be compiled 
   expect(() => minifyTest(src, "", { chrome: 100 << 16 })).toThrow(LIMIT_ERROR);
 });
 
+test("a split list is charged for the rules it prints when nesting is preserved", () => {
+  // The four selectors that chrome 130 can parse stay in one rule and
+  // `.i:user-valid` gets its own, so every level doubles the nested rules. It
+  // does not multiply them by five.
+  expect(minifyTest(nestedRules(".a.b, .c.d, .e.f, .g.h, .i:user-valid", 1), "", MODERN_TARGETS)).toBe(
+    ".a.b,.c.d,.e.f,.g.h{color:red}.i:user-valid{color:red}",
+  );
+  const out = minifyTest(nestedRules(".a.b, .c.d, .e.f, .g.h, .i:user-valid", 7), "", MODERN_TARGETS);
+  expect(out).toContain("color:red");
+  expect(out.length).toBeLessThan(10_000);
+});
+
 test("@nest selector lists are not charged for a split when nesting is preserved", () => {
   // An `@nest` rule prints its selector list as written. With native nesting
   // nothing multiplies, so 20 levels stay linear and no limit applies.

@@ -593,11 +593,11 @@ impl<R> CssRuleList<R> {
                         // pre-port behavior.
                         nst.style.charge_selector_expansion(context)?;
                         // The wrapped rule prints its selector list as written, so only compiled nesting multiplies it.
-                        let splits_selectors = false;
+                        let split_rule_count = 1;
                         nst.style.minify_nested_rules(
                             context,
                             parent_is_unused,
-                            splits_selectors,
+                            split_rule_count,
                         )?;
                     }
                     CssRule::StartingStyle(rl) => {
@@ -668,15 +668,15 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         return Ok(());
     }
 
-    let splits_selectors = sty.splits_selectors(context.targets);
-    if sty.minify(context, parent_is_unused, splits_selectors)? {
+    let split_rule_count = sty.split_rule_count(context.targets);
+    if sty.minify(context, parent_is_unused, split_rule_count)? {
         return Ok(());
     }
 
     // If some of the selectors in this rule are not compatible with the targets,
     // we need to split them into multiple rules.
     let mut incompatible = SmallList::<Selector, 1>::default();
-    if splits_selectors {
+    if split_rule_count > 1 {
         // The compatible selectors stay in this rule. The rules for the incompatible ones are generated later.
         let mut i: u32 = 0;
         while i < sty.selectors.v.len() {

@@ -69,11 +69,20 @@ impl<R> StyleRule<R> {
         selector::is_compatible(self.selectors.v.slice(), targets)
     }
 
-    /// Whether each selector that a target cannot parse moves to its own copy of the rule. One `:is(list)` instead would change what the selectors match and weigh.
-    pub(crate) fn splits_selectors(&self, targets: &css::targets::Targets) -> bool {
-        self.selectors.v.len() > 1
-            && targets.should_compile_selectors()
-            && !self.is_compatible(targets)
+    /// How many rules this rule prints as. Each selector that a target cannot parse moves to its own copy of the rule, because one `:is(list)` would change what the selectors match and weigh.
+    pub(crate) fn split_rule_count(&self, targets: &css::targets::Targets) -> u32 {
+        let selectors = self.selectors.v.slice();
+        if selectors.len() <= 1
+            || !targets.should_compile_selectors()
+            || self.is_compatible(targets)
+        {
+            return 1;
+        }
+        let moved = selectors
+            .iter()
+            .filter(|one| !selector::is_compatible(core::slice::from_ref(*one), targets))
+            .count();
+        (moved + usize::from(moved < selectors.len())) as u32
     }
 }
 
@@ -321,7 +330,7 @@ impl<R> StyleRule<R> {
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
-        splits_selectors: bool,
+        split_rule_count: u32,
     ) -> Result<bool, MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
@@ -376,7 +385,7 @@ impl<R> StyleRule<R> {
         context.handler_context.context = DeclarationContext::None;
 
         if self.rules.v.len() > 0 {
-            self.minify_nested_rules(context, unused, splits_selectors)?;
+            self.minify_nested_rules(context, unused, split_rule_count)?;
             if unused && self.rules.v.len() == 0 {
                 return Ok(true);
             }
@@ -421,22 +430,22 @@ impl<R> StyleRule<R> {
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
-        splits_selectors: bool,
+        split_rule_count: u32,
     ) -> Result<(), MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
     {
         use css::context::{DeclarationContext, PropertyHandlerContext};
 
-        // When the targets require compiling nesting away (or splitting this
-        // rule's selectors for compatibility), each of this rule's selectors
-        // multiplies the expansion of every nested rule.
+        // Compiled nesting repeats every nested rule for each selector of this rule. Native nesting repeats it for each rule that the selector list is split into.
         let saved_expansion_multiplier = context.selector_expansion_multiplier;
-        if context.targets.should_compile_same(css::Feature::Nesting) || splits_selectors {
-            context.selector_expansion_multiplier = context
-                .selector_expansion_multiplier
-                .saturating_mul(self.selectors.v.len().max(1));
-        }
+        let copies = if context.targets.should_compile_same(css::Feature::Nesting) {
+            self.selectors.v.len().max(1)
+        } else {
+            split_rule_count
+        };
+        context.selector_expansion_multiplier =
+            context.selector_expansion_multiplier.saturating_mul(copies);
 
         let mut handler_context = context.handler_context.child(DeclarationContext::StyleRule);
         core::mem::swap::<PropertyHandlerContext<'_>>(

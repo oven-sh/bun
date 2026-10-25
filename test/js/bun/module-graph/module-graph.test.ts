@@ -1797,7 +1797,7 @@ describe("Bun.ModuleGraph — CommonJS surface per graph", () => {
       "deep.mjs": `export { default } from "./deep-1.mjs";`,
       "deep-1.mjs": `export { default } from "./leaf.cjs";`,
     };
-    test("whether the file's fetch completes or starts after dispose(), for every importer", async () => {
+    test.concurrent("whether the file's fetch completes or starts after dispose(), for every importer", async () => {
       using d = tempDir("module-graph-dispose-in-flight", {
         ...files,
         "disposes.cjs": `disposeGraph(); module.exports = "disposes";`,
@@ -1874,7 +1874,7 @@ describe("Bun.ModuleGraph — CommonJS surface per graph", () => {
       });
       expect([offThread.exitCode, synchronous.exitCode]).toEqual([0, 0]);
     });
-    test("when the file comes from the module cache of bun test --isolate", async () => {
+    test.concurrent("when the file comes from the module cache of bun test --isolate", async () => {
       using d = tempDir("module-graph-dispose-in-flight-isolate", {
         ...files,
         "isolate.test.js": `

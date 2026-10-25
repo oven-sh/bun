@@ -6,6 +6,7 @@ const {
   validateInteger,
   validateBoolean,
   validateObject,
+  validateOneOf,
   validateAbortSignal,
   validateEncoding,
 } = require("internal/validators");
@@ -48,6 +49,8 @@ async function* watch(
     recursive?: boolean;
     signal?: AbortSignal;
     ignore?: import("node:fs").WatchOptions["ignore"];
+    maxQueue?: number;
+    overflow?: "ignore" | "error";
   } = {},
 ) {
   type Event = {
@@ -65,7 +68,15 @@ async function* watch(
   if (typeof options === "string") {
     options = { encoding: options };
   }
-  const queue = $createFIFO();
+  // Node's defaults and checks: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L386-L395
+  let maxQueue = options?.maxQueue;
+  const overflow = options?.overflow;
+  // Node also bounds the queue when neither option is passed. Bun does not: existing callers rely on every event.
+  const bounded = maxQueue !== undefined || overflow !== undefined;
+  if (maxQueue === undefined) maxQueue = 2048;
+  else validateInteger(maxQueue, "options.maxQueue");
+  if (overflow !== undefined) validateOneOf(overflow, "options.overflow", ["ignore", "error"]);
+  let queue = $createFIFO();
   const ignoreMatcher = require("internal/fs/watch").createIgnoreMatcher(options?.ignore);
   const signal = options?.signal;
   validateAbortSignal(signal, "options.signal");
@@ -83,13 +94,36 @@ async function* watch(
     }
   }
 
-  const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
+  let onEvent = (eventType: string, filename: string | Buffer | undefined) => {
     if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
       return;
     }
     queue.push({ __proto__: null, eventType, filename });
     wake();
-  });
+  };
+  if (bounded) {
+    // The bound: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L421-L447
+    // Node skips it for a recursive watch off macOS and Windows: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1948-L1952
+    onEvent = (eventType, filename) => {
+      if (eventType !== "close" && eventType !== "error") {
+        if (filename != null && ignoreMatcher?.(filename)) return;
+        if (queue.size() >= maxQueue) {
+          if (overflow === "error") {
+            queue = $createFIFO();
+            queue.push({ __proto__: null, eventType: "error", filename: $ERR_FS_WATCH_QUEUE_OVERFLOW(maxQueue) });
+            wake();
+          } else {
+            process.emitWarning("fs.watch maxQueue exceeded");
+          }
+          return;
+        }
+      }
+      queue.push({ __proto__: null, eventType, filename });
+      wake();
+      if (eventType === "error") closeWatcher();
+    };
+  }
+  const watcher = fs.watch(filename, options || {}, onEvent);
 
   let watcherClosed = false;
   function closeWatcher() {

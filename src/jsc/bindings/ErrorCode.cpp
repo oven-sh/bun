@@ -1932,6 +1932,7 @@ static constexpr SimpleErrorMessage simpleErrorMessages[] = {
     { ErrorCode::ERR_VM_MODULE_STATUS, 1, { "Module status "_s, ""_s, ""_s } },
     { ErrorCode::ERR_ZSTD_INVALID_PARAM, 1, { ""_s, " is not a valid zstd parameter"_s, ""_s } },
     { ErrorCode::ERR_INSPECTOR_COMMAND, 1, { "Inspector error "_s, ""_s, ""_s } },
+    { ErrorCode::ERR_FS_WATCH_QUEUE_OVERFLOW, 1, { "fs.watch() queued more than "_s, " events"_s, ""_s } },
 };
 
 static JSC::EncodedJSValue makeSimpleErrorMessage(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, JSC::ThrowScope& scope, const SimpleErrorMessage& entry)

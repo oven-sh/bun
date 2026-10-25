@@ -359,5 +359,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
   ["ERR_FFI_CC_DISABLED", Error],
   ["HPE_INVALID_URL", Error],
+  ["ERR_FS_WATCH_QUEUE_OVERFLOW", Error],
 ];
 export default errors;

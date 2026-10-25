@@ -145,13 +145,19 @@ test.concurrent("a fold that leaves a member of a namespace import as the callee
     "(({}).p ||= m.fn)",
     "((() => g()) && m.fn)",
   ];
-  // The comma is folded under --minify-syntax only.
-  const foldedWhenMinified = ["(0, m.fn)", "(/* @__PURE__ */ g(), m.fn)"];
+  // Only --minify-syntax folds the comma and reads `m["fn"]` as `m.fn`.
+  const foldedWhenMinified = ["(0, m.fn)", "(/* @__PURE__ */ g(), m.fn)", '(true && m["fn"])'];
+  // A parameter with the name of the import, and a member of a local, are not macros.
+  const notMacros = ["((m) => (true && m.fn)())(g)", "(true && g.call)()"];
+  const notMacrosPrinted = "((m) => (0, m.fn)())(g), (0, g.call)()";
+  const call = (callees: string[]) => callees.map(callee => callee + "()");
   using dir = tempDir("macro-behind-fold", {
     "macro.ts": `export function fn() {\n  return "ran";\n}\n`,
-    "folded.mjs": header + `console.log(${folded.map(callee => callee + "()").join(", ")});\n`,
-    "comma.mjs": header + `console.log(${foldedWhenMinified.map(callee => callee + "()").join(", ")});\n`,
+    "folded.mjs": header + `console.log(${[...call(folded), ...notMacros].join(", ")});\n`,
+    "comma.mjs": header + `console.log(${call(foldedWhenMinified).join(", ")});\n`,
     "tag.mjs": header + "console.log((true && m.fn)`x`);\n",
+    "substituted-tag.mjs": header + "export function h() {\n  const t = m.fn;\n  return t`x` + 1;\n}\n",
+    "in-macro-runtime.mjs": header + "console.log((true && m.fn)());\n",
   });
   const build = async (...args: string[]) => {
     await using proc = Bun.spawn({
@@ -165,20 +171,29 @@ test.concurrent("a fold that leaves a member of a namespace import as the callee
     // Debug builds print "[macro] call fn" to stdout first, so only the last line is compared.
     return { lastLine: stdout.trim().split("\n").at(-1), stderr, exitCode };
   };
-  const [plain, minified, tag] = await Promise.all([
+  const [plain, plainMinified, minified, tag, substitutedTag, inMacroRuntime] = await Promise.all([
     build("folded.mjs"),
+    build("--minify-syntax", "folded.mjs"),
     build("--minify-syntax", "comma.mjs"),
     build("tag.mjs"),
+    build("--minify-syntax", "substituted-tag.mjs"),
+    build("--target=macro", "in-macro-runtime.mjs"),
   ]);
 
-  const ran = (count: number) => `console.log(${Array(count).fill('"ran"').join(", ")});`;
-  expect(plain).toMatchObject({ lastLine: ran(folded.length), exitCode: 0 });
-  expect(minified).toMatchObject({ lastLine: ran(foldedWhenMinified.length), exitCode: 0 });
+  const ran = (count: number) => Array(count).fill('"ran"').join(", ");
+  const foldedPrinted = `console.log(${ran(folded.length)}, ${notMacrosPrinted});`;
+  expect(plain).toMatchObject({ lastLine: foldedPrinted, exitCode: 0 });
+  expect(plainMinified).toMatchObject({ lastLine: foldedPrinted, exitCode: 0 });
+  expect(minified).toMatchObject({ lastLine: `console.log(${ran(foldedWhenMinified.length)});`, exitCode: 0 });
   // A macro is not a tag, and the build says so instead of leaving `m` for run time.
-  expect(tag).toMatchObject({
+  const notATag = {
     stderr: expect.stringContaining("template literal macro invocations are not supported"),
     exitCode: 1,
-  });
+  };
+  expect(tag).toMatchObject(notATag);
+  expect(substitutedTag).toMatchObject(notATag);
+  // Code that runs inside a macro gets no macro call, so the call keeps its comma.
+  expect(inMacroRuntime).toMatchObject({ lastLine: "console.log((0, m.fn)());", exitCode: 0 });
 });
 
 // test("template string ascii", () => {

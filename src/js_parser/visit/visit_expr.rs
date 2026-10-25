@@ -1596,12 +1596,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Does `expr()` pass a `this`? A property access does, but a call of a macro member passes none.
+    #[inline(never)] // PERF(port:frame): inlined, this adds 16 bytes to the `visit_expr_in_out` frame.
     pub(crate) fn has_value_for_this_in_call(&self, expr: &Expr) -> bool {
         match &expr.data {
-            Data::EDot(dot) => !matches!(
-                &dot.target.data,
-                Data::EIdentifier(id) if Self::ALLOW_MACROS && self.macro_.refs.contains_key(&id.ref_)
-            ),
+            // `m.fn` for a macro import `* as m`: `e_call` and `e_template` replace that call by the macro result.
+            Data::EDot(dot) => {
+                !(Self::ALLOW_MACROS
+                    && !self.macro_.refs.is_empty()
+                    && !self.options.features.is_macro_runtime
+                    && matches!(&dot.target.data, Data::EIdentifier(id) if self.macro_.refs.contains_key(&id.ref_)))
+            }
             Data::EIndex(_) => true,
             _ => false,
         }

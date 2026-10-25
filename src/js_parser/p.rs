@@ -3127,8 +3127,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::ExprData::ETemplate(mut e) => {
                     if let Some(tag) = e.tag.as_mut() {
                         // A tag takes "this" like a call target does
-                        if self.has_value_for_this_in_call(&replacement)
-                            && matches!(tag.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
+                        if matches!(tag.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
+                            && self.has_value_for_this_in_call(&replacement)
                         {
                             break 'outer;
                         }

@@ -221,6 +221,25 @@ impl<'a> Graph<'a> {
         &mut self.build_graphs[target]
     }
 
+    /// The source that has the module id of `path`, for an importer of `importer_target`.
+    /// `process_resolve_queue` files a source under the target of its importer. So the map of a server
+    /// target can give the server copy or the SSR copy of a path, and `pretty` tells which one it is.
+    pub(crate) fn source_of_module(
+        &self,
+        importer_target: options::Target,
+        path: &crate::bun_fs::Path<'_>,
+    ) -> Option<bun_ast::IndexInt> {
+        let client = importer_target == options::Target::Browser;
+        self.build_graphs.iter().find_map(|(target, map)| {
+            if (target == options::Target::Browser) != client {
+                return None;
+            }
+            let index = map.get(path.text)?;
+            (self.input_files.items_source()[index as usize].path.pretty == path.pretty)
+                .then_some(index)
+        })
+    }
+
     /// Schedule a task to be run on the JS thread which resolves the promise of
     /// each `.defer()` called in an onLoad plugin.
     ///

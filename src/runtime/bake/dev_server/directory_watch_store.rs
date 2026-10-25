@@ -158,7 +158,11 @@ impl DirectoryWatchStore {
 
         match loader {
             Loader::Tsx | Loader::Ts | Loader::Jsx | Loader::Js => {
-                if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
+                // A package specifier names no directory to watch. `missing_sources::report` passes the path of a file.
+                if !(specifier.starts_with(b"./")
+                    || specifier.starts_with(b"../")
+                    || bun_paths::is_absolute(specifier))
+                {
                     return Ok(());
                 }
             }

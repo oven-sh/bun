@@ -1,5 +1,6 @@
 // HTML tests are tests relating to HTML files themselves.
 import { expect } from "bun:test";
+import fs from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
@@ -95,6 +96,62 @@ devTest("image tag", {
     await dev.fetch(url2).expect.toBe("SECOND");
 
     await dev.fetch(url).expect404(); // TODO
+  },
+});
+// The dev server bundles index.html again for this event. The resolver can still have the listing
+// from before the delete, and then the image is a file that is not there to read.
+devTest("deleting the image of an image tag shows an error then recovers", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <img src="image.png" alt="test image">
+      </body></html>
+    `,
+    "image.png": "FIRST",
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await dev.delete("image.png", {
+      errors: ['index.html: error: Could not resolve: "image.png". Maybe you need to "bun install"?'],
+    });
+    await c.expectReload(async () => {
+      await dev.write("image.png", "SECOND");
+    });
+    await dev.fetch(await c.js`document.querySelector("img").src`).expect.toBe("SECOND");
+  },
+});
+// The build of /listing lists node_modules/lib/, so the resolver still finds the three files after
+// they are deleted. The dev server does not watch node_modules.
+devTest("a script, a stylesheet and an image that were deleted after their directory was listed show errors", {
+  files: {
+    "listing.html": emptyHtmlFile({ scripts: ["listing.ts"] }),
+    "listing.ts": `
+      import "./node_modules/lib/listed";
+      console.log("listing");
+    `,
+    "node_modules/lib/listed.ts": `export {};`,
+    "index.html": emptyHtmlFile({
+      styles: ["./node_modules/lib/deleted.css"],
+      scripts: ["./node_modules/lib/deleted.ts"],
+      body: `<img src="./node_modules/lib/deleted.png">`,
+    }),
+    "node_modules/lib/deleted.css": `body { color: red; }`,
+    "node_modules/lib/deleted.ts": `console.log("deleted");`,
+    "node_modules/lib/deleted.png": "IMAGE",
+  },
+  async test(dev) {
+    await dev.fetch("/listing");
+    for (const extension of ["css", "ts", "png"]) fs.unlinkSync(dev.join(`node_modules/lib/deleted.${extension}`));
+    await using c = await dev.client("/index", {
+      errors: [
+        'index.html: error: Could not resolve: "./node_modules/lib/deleted.css"',
+        'index.html: error: Could not resolve: "./node_modules/lib/deleted.png"',
+        'index.html: error: Could not resolve: "./node_modules/lib/deleted.ts"',
+      ],
+    });
   },
 });
 devTest("image import in JS", {

@@ -366,6 +366,374 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
+// A parse task can find that its file is gone: the resolver still has the listing of the directory
+// from before a delete or a rename, or a plugin gave the path. The build then fails each file that
+// imports the file, as for an import that does not resolve.
+//
+// The build of /index lists src/. The rename is before any build reads the file, so no build sees the
+// file go. The dev server watches src/ for the import that failed, and lists it again at the next change.
+devTest("importing a file that was renamed before a build read it shows an error then finds the new file", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./src/listed";
+      console.log("index");
+    `,
+    "src/listed.ts": `export {};`,
+    "src/renamed.ts": `export const value = "ts";`,
+    "second.html": emptyHtmlFile({ scripts: ["second.ts"] }),
+    "second.ts": `
+      import { value } from "./src/renamed";
+      console.log("second: " + value);
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/index");
+    fs.renameSync(dev.join("src/renamed.ts"), dev.join("src/renamed.tsx"));
+    {
+      await using c = await dev.client("/second", {
+        errors: ['second.ts:1:23: error: Could not resolve: "./src/renamed"'],
+      });
+    }
+    await dev.write("src/renamed.tsx", `export const value = "tsx";`);
+    await using c = await dev.client("/second");
+    await c.expectMessage("second: tsx");
+  },
+});
+// The dev server does not watch node_modules, so most tests below delete a file there after a build
+// listed its directory. Other tests use a plugin. When an onLoad returns nothing, the bundler reads
+// the file then, so the onLoad can delete the file first.
+const servePlugin = (htmlFiles: string[]) => ({
+  "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+  "bun.app.ts": `
+    ${htmlFiles.map((file, i) => `import html${i} from "./${file}.html";`).join("\n    ")}
+
+    globalThis.counts = {};
+    export default {
+      static: { ${htmlFiles.map((file, i) => `"/${file}": html${i}`).join(", ")} },
+      fetch(req) {
+        if (new URL(req.url).pathname === "/counts") return Response.json(globalThis.counts);
+        return new Response("Not Found", { status: 404 });
+      },
+    };
+  `,
+});
+{
+  // The build of /listing lists node_modules/lib/.
+  const listing = {
+    "listing.html": emptyHtmlFile({ scripts: ["listing.ts"] }),
+    "listing.ts": `
+      import "./node_modules/lib/listed";
+      console.log("listing");
+    `,
+    "node_modules/lib/listed.ts": `export {};`,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+  };
+  const deleteListed = async (dev: Dev, file: string) => {
+    await dev.fetch("/listing");
+    fs.unlinkSync(dev.join(file));
+  };
+  devTest("importing a file that was deleted after its directory was listed shows an error then recovers", {
+    files: {
+      ...listing,
+      "index.ts": `
+        import { value } from "./node_modules/lib/deleted";
+        console.log("index: " + value);
+      `,
+      "node_modules/lib/deleted.ts": `export const value = 1;`,
+    },
+    async test(dev) {
+      await deleteListed(dev, "node_modules/lib/deleted.ts");
+      const errors = ['index.ts:1:23: error: Could not resolve: "./node_modules/lib/deleted"'];
+      {
+        await using c = await dev.client("/index", { errors });
+      }
+      await dev.output.waitForLine(/File not found ".*deleted\.ts"/);
+      await using c = await dev.client("/index", { errors });
+      // The dev server watches the directory of an import that failed.
+      await c.expectReload(async () => {
+        await dev.write("node_modules/lib/deleted.ts", `export const value = 2;`);
+      });
+      await c.expectMessage("index: 2");
+    },
+  });
+  // TypeScript drops the first import, so its record is not used. The record still gets the source of
+  // the stylesheet: it holds the path that the second import resolves to.
+  devTest("an import that TypeScript drops adds no error for a deleted stylesheet", {
+    files: {
+      ...listing,
+      "index.ts": `console.log("index");`,
+      "node_modules/lib/deleted.css": `body { color: red; }`,
+    },
+    async test(dev) {
+      const deleted = dev.join("node_modules/lib/deleted.css");
+      const specifier = JSON.stringify(deleted);
+      fs.writeFileSync(
+        dev.join("index.ts"),
+        `import { NotUsed } from ${specifier};\nimport ${specifier};\nconsole.log("index");\n`,
+      );
+      await deleteListed(dev, "node_modules/lib/deleted.css");
+      await using c = await dev.client("/index", {
+        errors: [`index.ts:2:8: error: Could not resolve: "${deleted}"`],
+      });
+    },
+  });
+  // The code catches the error of a file that never existed. The import() is of another module: a
+  // plugin answers it with the path of the deleted file, as an external module.
+  devTest("a require() in a try block of a file that was deleted after its directory was listed is not an error", {
+    files: {
+      ...servePlugin(["listing", "index"]),
+      ...listing,
+      "plugin.ts": `
+        import path from "node:path";
+        export default {
+          name: "an external module at the path of the deleted file",
+          setup(build) {
+            build.onResolve({ filter: /^external-copy$/ }, () => ({
+              path: path.join(import.meta.dir, "node_modules/lib/deleted.ts"),
+              external: true,
+            }));
+          },
+        };
+      `,
+      "index.ts": `
+        let value;
+        try {
+          value = require("./node_modules/lib/deleted").value;
+        } catch (error) {
+          value = error.message;
+        }
+        export const load = () => import("external-copy");
+        console.log("index: " + value);
+      `,
+      "node_modules/lib/deleted.ts": `export const value = "required";`,
+    },
+    htmlFiles: [],
+    async test(dev) {
+      await deleteListed(dev, "node_modules/lib/deleted.ts");
+      await using c = await dev.client("/index");
+      await c.expectMessage("index: Cannot require module ./node_modules/lib/deleted");
+    },
+  });
+  // The bundler resolves an import that a plugin declines in another place, and gives it a source there.
+  devTest("an import that an onResolve plugin declines and that resolves to a deleted file shows an error", {
+    files: {
+      ...servePlugin(["listing", "index"]),
+      ...listing,
+      "plugin.ts": `
+        export default {
+          name: "declines the import",
+          setup(build) {
+            build.onResolve({ filter: /deleted$/ }, () => {
+              globalThis.counts.onResolve = (globalThis.counts.onResolve ?? 0) + 1;
+              return undefined;
+            });
+          },
+        };
+      `,
+      "index.ts": `
+        import { value } from "./node_modules/lib/deleted";
+        console.log("index: " + value);
+      `,
+      "node_modules/lib/deleted.ts": `export const value = 1;`,
+    },
+    htmlFiles: [],
+    async test(dev) {
+      await deleteListed(dev, "node_modules/lib/deleted.ts");
+      {
+        await using c = await dev.client("/index", {
+          errors: ['index.ts:1:23: error: Could not resolve: "./node_modules/lib/deleted"'],
+        });
+      }
+      expect(await dev.fetch("/counts").json()).toEqual({ onResolve: 1 });
+    },
+  });
+}
+// The plugin deletes the file when the bundler has resolved the import and has not read the file.
+// As for a file that never existed, the import is an error also when the code never runs it.
+devTest("an import() of a file that is deleted before it is read shows an error then recovers", {
+  files: {
+    ...servePlugin(["index"]),
+    "plugin.ts": `
+      import fs from "node:fs";
+      let deleted = false;
+      export default {
+        name: "deletes late.ts before the bundler reads it",
+        setup(build) {
+          build.onLoad({ filter: /[\\\\/]lib[\\\\/]late\\.ts$/ }, args => {
+            if (deleted) return;
+            deleted = true;
+            fs.unlinkSync(args.path);
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      export const load = () => import("./node_modules/lib/late");
+      console.log("index");
+    `,
+    "node_modules/lib/late.ts": `export const value = 1;`,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/index", {
+      errors: ['index.ts:1:34: error: Could not resolve: "./node_modules/lib/late"'],
+    });
+    await c.expectReload(async () => {
+      await dev.write("node_modules/lib/late.ts", `export const value = 2;`);
+    });
+    await c.expectMessage("index");
+  },
+});
+devTest("an import that an onResolve plugin resolves to a file that does not exist shows an error", {
+  files: {
+    ...servePlugin(["index"]),
+    "plugin.ts": `
+      import path from "node:path";
+      export default {
+        name: "resolves to a file that does not exist",
+        setup(build) {
+          build.onResolve({ filter: /^virtual$/ }, () => {
+            globalThis.counts.onResolve = (globalThis.counts.onResolve ?? 0) + 1;
+            return { path: path.join(import.meta.dir, "does-not-exist.ts") };
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { value } from "virtual";
+      console.log("index: " + value);
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    {
+      await using c = await dev.client("/index", {
+        errors: ['index.ts:1:23: error: Could not resolve: "virtual". Maybe you need to "bun install"?'],
+      });
+    }
+    await dev.output.waitForLine(/File not found ".*does-not-exist\.ts"/);
+    expect(await dev.fetch("/counts").json()).toEqual({ onResolve: 1 });
+  },
+});
+// The resolver finds ./data, so a watch for the specifier builds index.ts again at each change in
+// its directory. The watch is for the file that the plugin gave.
+devTest("an import that a plugin resolves to a missing file is built again when that file is created", {
+  files: {
+    ...servePlugin(["index"]),
+    "plugin.ts": `
+      import path from "node:path";
+      export default {
+        name: "resolves ./data to a generated file",
+        setup(build) {
+          build.onResolve({ filter: /^\\.\\/data$/ }, () => {
+            globalThis.counts.onResolve = (globalThis.counts.onResolve ?? 0) + 1;
+            return { path: path.join(import.meta.dir, "generated/data.ts") };
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { value } from "./data";
+      console.log("index: " + value);
+    `,
+    "data.ts": `export const value = "not generated";`,
+    "generated/.keep": ``,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    const errors = ['index.ts:1:23: error: Could not resolve: "./data"'];
+    await using c = await dev.client("/index", { errors });
+    await dev.write("unrelated.txt", "a change in the directory of index.ts", { errors });
+    expect(await dev.fetch("/counts").json()).toEqual({ onResolve: 1 });
+    await c.expectReload(async () => {
+      await dev.write("generated/data.ts", `export const value = "generated";`);
+    });
+    await c.expectMessage("index: generated");
+  },
+});
+// second.css is new in the build of /second, and its @import is the first to read the deleted
+// stylesheet. The dev server then loads first.css again, which imports it from an earlier build.
+// Its onLoad writes the stylesheet back, so first.css gets the source that second.css needs.
+devTest("a stylesheet that was not there to read and that another stylesheet finds again is bundled", {
+  files: {
+    ...servePlugin(["first", "second"]),
+    "plugin.ts": `
+      import fs from "node:fs";
+      import path from "node:path";
+      const colors = path.join(import.meta.dir, "node_modules/theme/colors.css");
+      export default {
+        name: "writes the stylesheet back",
+        setup(build) {
+          build.onLoad({ filter: /first\\.css$/ }, () => {
+            if (!fs.existsSync(colors)) fs.writeFileSync(colors, ".theme { color: blue; }");
+          });
+        },
+      };
+    `,
+    "first.html": emptyHtmlFile({ styles: ["first.css"] }),
+    "second.html": emptyHtmlFile({ styles: ["second.css"] }),
+    "first.css": `@import "./node_modules/theme/colors.css";\n.first { color: green; }\n`,
+    "second.css": `@import "./node_modules/theme/colors.css";\n.second { color: green; }\n`,
+    "node_modules/theme/colors.css": `.theme { color: red; }`,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    await using first = await dev.client("/first");
+    await first.style(".theme").color.expect.toBe("red");
+    fs.unlinkSync(dev.join("node_modules/theme/colors.css"));
+    await using second = await dev.client("/second");
+    await second.style(".theme").color.expect.toBe("#00f");
+    await second.style(".second").color.expect.toBe("green");
+  },
+});
+// The build of /first keeps the image. In the build of /second, the script gets the kept image and
+// the stylesheet reads the file. Each file that names the image fails, also when it read nothing.
+for (const last of ["second.ts", "second.css"]) {
+  devTest(`a script and a stylesheet fail for an image that was deleted, and ${last} loads last`, {
+    files: {
+      ...servePlugin(["first", "second"]),
+      "plugin.ts": `
+        export default {
+          name: "loads one file after every other file",
+          setup(build) {
+            build.onLoad({ filter: /${last.replace(".", "\\\\.")}$/ }, async args => {
+              await args.defer();
+            });
+          },
+        };
+      `,
+      ...Object.fromEntries(
+        ["first", "second"].flatMap(name => [
+          [`${name}.html`, emptyHtmlFile({ scripts: [`${name}.ts`], styles: [`${name}.css`] })],
+          [`${name}.ts`, `import img from "./node_modules/lib/img.svg";\nconsole.log("${name}: " + typeof img);\n`],
+          [`${name}.css`, `body {\n  background: url("./node_modules/lib/img.svg");\n}\n`],
+        ]),
+      ),
+      "node_modules/lib/img.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>`,
+    },
+    htmlFiles: [],
+    async test(dev) {
+      await dev.fetch("/first");
+      fs.unlinkSync(dev.join("node_modules/lib/img.svg"));
+      await using c = await dev.client("/second", {
+        errors: [
+          'first.css:2:15: error: Could not resolve: "./node_modules/lib/img.svg"',
+          'first.ts:1:17: error: Could not resolve: "./node_modules/lib/img.svg"',
+          'second.css:2:15: error: Could not resolve: "./node_modules/lib/img.svg"',
+          'second.ts:1:17: error: Could not resolve: "./node_modules/lib/img.svg"',
+        ],
+      });
+      await c.expectReload(async () => {
+        await dev.write("node_modules/lib/img.svg", `<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>`);
+      });
+      await c.expectMessage("second: string");
+    },
+  });
+}
 // Without a separate SSR graph, the server bundle keeps a "use client" module
 // and the parser wraps its exported values in `registerClientReference(value,
 // file, name)`. The parser chose `file` by the JSX development flag. A
@@ -953,6 +1321,378 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
     // AllocationScope's invalid-free panic.
   },
 });
+// Framework routes that import a file that is not there to read.
+{
+  const route = (imports: string, body: string) => `
+    ${imports}
+    export default function () {
+      return new Response("index " + ${body});
+    }
+  `;
+  const clientComponent = (imported: string) => ({
+    "routes/index.ts": route(`import "../Comp";`, `"Comp"`),
+    "Comp.ts": `
+      "use client";
+      import "./node_modules/lib/${imported}";
+      export const marker = 1;
+    `,
+  });
+  // The server graph reads shared.ts. The plugin deletes it before the client graph reads it.
+  devTest('a file that only one graph of a "use client" module finds fails the other graph', {
+    framework: { ...minimalFramework, serverComponents: oneServerGraph },
+    pluginFile: `
+      import fs from "node:fs";
+      import { basename } from "node:path";
+      // Resolves when the server graph has read shared.ts: it then loads what shared.ts imports.
+      const serverReadShared = Promise.withResolvers();
+      let deleted = false;
+      export default [
+        {
+          name: "deletes shared.ts between the two graphs",
+          setup(build) {
+            build.onLoad({ filter: /[\\\\/]lib[\\\\/](shared|after)[.]ts$/ }, async args => {
+              const file = basename(args.path);
+              if (file === "after.ts" && args.side === "server") serverReadShared.resolve();
+              if (file === "shared.ts" && args.side === "client" && !deleted) {
+                deleted = true;
+                await serverReadShared.promise;
+                fs.unlinkSync(args.path);
+              }
+            });
+          },
+        },
+      ];
+    `,
+    files: {
+      ...clientComponent("shared"),
+      "node_modules/lib/shared.ts": `import "./after";`,
+      "node_modules/lib/after.ts": `export {};`,
+    },
+    async test(dev) {
+      {
+        await using c = await dev.client("/", {
+          errors: ['Comp.ts:2:8: error: Could not resolve: "./node_modules/lib/shared"'],
+        });
+      }
+      await dev.write("node_modules/lib/shared.ts", `import "./after";`);
+      await dev.fetch("/").equals("index Comp");
+    },
+  });
+  // The client graph and the SSR graph have shared.ts from the build of /. The save makes a file of
+  // the server graph import it, and that file loads when Comp.ts has its imports.
+  devTest("a file that only the server graphs do not find is not an error in the client graph", {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    // A request does not bundle the route again, so the page shows the errors of the build of the save.
+    env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+    pluginFile: `
+      export default [
+        {
+          name: "loads server-part.ts after every other file",
+          setup(build) {
+            build.onLoad({ filter: /server-part[.]ts$/ }, async args => {
+              await args.defer();
+            });
+          },
+        },
+      ];
+    `,
+    files: {
+      "routes/index.ts": route(`import "../Comp";\n    import "../server-part";`, `"Comp"`),
+      "Comp.ts": clientComponent("shared")["Comp.ts"],
+      "server-part.ts": `export {};`,
+      "node_modules/lib/shared.ts": `export {};`,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("index Comp");
+      fs.unlinkSync(dev.join("node_modules/lib/shared.ts"));
+      {
+        await using batch = await dev.batchChanges({ errors: null });
+        await dev.write(
+          "Comp.ts",
+          `
+            "use client";
+            import "./node_modules/lib/shared";
+            export const marker = 2;
+          `,
+        );
+        await dev.write("server-part.ts", `import "./node_modules/lib/shared";`);
+      }
+      await using c = await dev.client("/", {
+        errors: [
+          'Comp.ts:2:8: error: Could not resolve: "./node_modules/lib/shared"',
+          'server-part.ts:1:8: error: Could not resolve: "./node_modules/lib/shared"',
+        ],
+      });
+    },
+  });
+  // The two graphs have the barrel from the build of /. The build of /two reads it again for both,
+  // because the dev server does not keep a barrel. The plugin gives the server graph the source, and
+  // deletes the file before the client graph reads it.
+  const barrelOfTwoGraphs = (restore: boolean) => ({
+    framework: { ...minimalFramework, serverComponents: oneServerGraph },
+    pluginFile: `
+      import fs from "node:fs";
+      let secondBuild = false;
+      let serverLoads = 0;
+      const serverHasSource = Promise.withResolvers();
+      let deleted: string | undefined;
+      export default [
+        {
+          name: "deletes the barrel between the two graphs of the second build",
+          setup(build) {
+            build.onLoad({ filter: /CompB[.]ts$/ }, () => {
+              secondBuild = true;
+            });
+            build.onLoad({ filter: /[\\/]bar[\\/]index[.]js$/ }, async args => {
+              if (args.side === "server") {
+                const contents = fs.readFileSync(args.path, "utf8");
+                if (++serverLoads === 2) serverHasSource.resolve();
+                return { contents, loader: "js" };
+              }
+              if (!secondBuild || deleted !== undefined) return;
+              await serverHasSource.promise;
+              deleted = fs.readFileSync(args.path, "utf8");
+              fs.unlinkSync(args.path);
+            });
+            // The dev server loads CompA.ts again, because it imports the file that is gone.
+            build.onLoad({ filter: /CompA[.]ts$/ }, args => {
+              if (${restore} && deleted !== undefined && args.side === "client") {
+                fs.writeFileSync(args.path.replace("CompA.ts", "node_modules/bar/index.js"), deleted);
+              }
+            });
+          },
+        },
+      ];
+    `,
+    files: {
+      "routes/index.ts": route(`import "../CompA";`, `"A"`),
+      "routes/two.ts": `
+        import { a } from "bar";
+        import "../CompB";
+        export default function () {
+          return new Response("two " + a);
+        }
+      `,
+      ...Object.fromEntries(
+        ["CompA", "CompB"].map(name => [
+          `${name}.ts`,
+          `"use client";\nimport { a } from "bar";\nexport const marker = a;\n`,
+        ]),
+      ),
+      "node_modules/bar/package.json": JSON.stringify({ name: "bar", main: "./index.js", sideEffects: false }),
+      "node_modules/bar/index.js": `export { a } from "./a.js";\nexport { b } from "./b.js";\n`,
+      "node_modules/bar/a.js": `export const a = "A";`,
+      "node_modules/bar/b.js": `export const b = "B";`,
+    },
+  });
+  devTest('a barrel that only the client graph of a "use client" module does not find fails that graph', {
+    ...barrelOfTwoGraphs(false),
+    async test(dev) {
+      await dev.fetch("/").equals("index A");
+      await using c = await dev.client("/two", {
+        errors: [
+          'CompA.ts:2:19: error: Could not resolve: "bar". Maybe you need to "bun install"?',
+          'CompB.ts:2:19: error: Could not resolve: "bar". Maybe you need to "bun install"?',
+        ],
+      });
+    },
+  });
+  devTest('a barrel that is back when a "use client" module of an earlier build loads again is bundled', {
+    ...barrelOfTwoGraphs(true),
+    async test(dev) {
+      await dev.fetch("/").equals("index A");
+      await dev.fetch("/two").equals("two A");
+    },
+  });
+  // The route has the server copy of the barrel when the SSR graph does not find the file.
+  devTest("a barrel that only the SSR graph does not find fails the file of that graph", {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    // A request does not bundle the route again, so the page shows the errors of the build of the save.
+    env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+    pluginFile: `
+      import fs from "node:fs";
+      let deleteAtNextLoad = false;
+      export default [
+        {
+          name: "deletes the barrel before the SSR graph of the second build reads it",
+          setup(build) {
+            build.onLoad({ filter: /ssr-part[.]ts$/ }, async args => {
+              if (!fs.readFileSync(args.path, "utf8").includes("saved")) return;
+              await args.defer();
+              deleteAtNextLoad = true;
+            });
+            build.onLoad({ filter: /[\\/]bar[\\/]index[.]js$/ }, args => {
+              if (!deleteAtNextLoad) return;
+              deleteAtNextLoad = false;
+              fs.unlinkSync(args.path);
+            });
+          },
+        },
+      ];
+    `,
+    files: {
+      "routes/index.ts": `
+        import { a } from "bar";
+        import { ssr } from "../ssr-part" with { bunBakeGraph: "ssr" };
+        export default function () {
+          return new Response("index " + a + " " + ssr);
+        }
+      `,
+      "ssr-part.ts": `import { a } from "bar";\nexport const ssr = "ssr " + a;\n`,
+      "node_modules/bar/package.json": JSON.stringify({ name: "bar", main: "./index.js", sideEffects: false }),
+      "node_modules/bar/index.js": `export { a } from "./a.js";\nexport { b } from "./b.js";\n`,
+      "node_modules/bar/a.js": `export const a = "A";`,
+      "node_modules/bar/b.js": `export const b = "B";`,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("index A ssr A");
+      {
+        await using batch = await dev.batchChanges({ errors: null });
+        await dev.write(
+          "routes/index.ts",
+          `
+            import { a } from "bar";
+            import { ssr } from "../ssr-part" with { bunBakeGraph: "ssr" };
+            export default function () {
+              return new Response("saved " + a + " " + ssr);
+            }
+          `,
+        );
+        await dev.write("ssr-part.ts", `import { a } from "bar";\nexport const ssr = "ssr saved " + a;\n`);
+      }
+      await using c = await dev.client("/", {
+        errors: ['ssr-part.ts:1:19: error: Could not resolve: "bar". Maybe you need to "bun install"?'],
+      });
+    },
+  });
+  // The read of late.ts fails. The onLoad of second.ts continues when every other module is loaded,
+  // and writes late.ts back. second.ts then imports it.
+  const lateOnce = {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    pluginFile: `
+      import fs from "node:fs";
+      import { basename } from "node:path";
+      let late;
+      export default [
+        {
+          name: "deletes late.ts before the first read and writes it back for the second",
+          setup(build) {
+            build.onLoad({ filter: /([\\/]lib[\\/]late|second)[.]ts$/ }, async args => {
+              if (basename(args.path) === "second.ts") {
+                await args.defer();
+                fs.writeFileSync(late, 'export const value = "restored";');
+              } else if (!late) {
+                late = args.path;
+                fs.unlinkSync(late);
+              }
+            });
+          },
+        },
+      ];
+    `,
+  };
+  const ssr = ` with { bunBakeGraph: "ssr" }`;
+  const lateFiles = (routeImports: string, second?: string) => ({
+    "routes/index.ts": route(routeImports, `value`),
+    ...(second === undefined ? {} : { "second.ts": second }),
+    "node_modules/lib/late.ts": `export const value = "first";`,
+  });
+  // The import of the route has a source again, for the same graph. The bundler keeps that source
+  // for the graph of second.ts: the server graph, or the SSR graph.
+  for (const { graph, second, secondImport } of [
+    { graph: "server", second: `import "../second";`, secondImport: ssr },
+    { graph: "SSR", second: `import "../second"${ssr};`, secondImport: `` },
+  ]) {
+    devTest(`a file that is back when a second file of the ${graph} graph imports it in the same build is bundled`, {
+      ...lateOnce,
+      files: lateFiles(
+        `import { value } from "../node_modules/lib/late"${ssr};\n    ${second}`,
+        `import "./node_modules/lib/late"${secondImport};`,
+      ),
+      async test(dev) {
+        await dev.fetch("/").equals("index restored");
+      },
+    });
+  }
+  // second.ts gets the copy of the other graph. The import of the route still has no module.
+  for (const [routeGraph, secondGraph] of [
+    ["SSR", "server"],
+    ["server", "SSR"],
+  ]) {
+    devTest(`a file that is back for the ${secondGraph} graph still fails an import for the ${routeGraph} graph`, {
+      ...lateOnce,
+      files: lateFiles(
+        `import { value } from "../node_modules/lib/late"${routeGraph === "SSR" ? ssr : ""};\n    import "../second";`,
+        `import "./node_modules/lib/late"${secondGraph === "SSR" ? ssr : ""};`,
+      ),
+      async test(dev) {
+        expect((await dev.fetch("/")).status).toBe(500);
+        await dev.fetch("/").equals("index restored");
+        expect(dev.output.lines.join("\n")).toContain(`Could not resolve: "../node_modules/lib/late"`);
+      },
+    });
+  }
+  // mid.ts is a file of the SSR graph. The dev server bundles it again for that graph.
+  devTest("a file of the SSR graph that imports a file that is deleted before it is read fails then recovers", {
+    ...lateOnce,
+    files: {
+      ...lateFiles(`import { value } from "../mid"${ssr};`),
+      "mid.ts": `export { value } from "./node_modules/lib/late";`,
+    },
+    async test(dev) {
+      await dev.fetch("/").expect.not.toContain("Failed to load bundled module");
+      {
+        await using c = await dev.client("/", {
+          errors: ['mid.ts:1:23: error: Could not resolve: "./node_modules/lib/late"'],
+        });
+      }
+      await dev.write("node_modules/lib/late.ts", `export const value = "restored";`);
+      await dev.fetch("/").equals("index restored");
+    },
+  });
+  // The resolver lists node_modules/linked/ apart from the directory that it links to, so it gives
+  // the deleted file a second time. The route already runs: a build that fails must not run it again.
+  devTest("a route that imports a deleted file of a symlinked package fails and is not evaluated again", {
+    skip: [
+      "win32", // unlinkSync is having weird behavior
+    ],
+    framework: minimalFramework,
+    // The link has to be there when the dev server first lists node_modules.
+    pluginFile: `
+      import { symlinkSync } from "node:fs";
+      import { join } from "node:path";
+      symlinkSync(join(import.meta.dir, "packages/linked"), join(import.meta.dir, "node_modules/linked"), "junction");
+      export default [];
+    `,
+    files: {
+      "packages/linked/package.json": JSON.stringify({ name: "linked", version: "1.0.0", main: "./index.js" }),
+      "packages/linked/index.js": `export { value } from "./value.js";`,
+      "packages/linked/value.js": `export const value = "linked";`,
+      "node_modules/.keep": ``,
+      "routes/index.ts": `
+        import { value } from "linked";
+        globalThis.evaluated = (globalThis.evaluated ?? 0) + 1;
+        export default function () {
+          return new Response("index " + value);
+        }
+      `,
+      "routes/count.ts": `
+        export default function () {
+          return new Response("evaluated " + globalThis.evaluated);
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("index linked");
+      await dev.delete("packages/linked/index.js");
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.fetch("/count").equals("evaluated 1");
+      await dev.write("packages/linked/index.js", `export const value = "back";`);
+      await dev.fetch("/").equals("index back");
+      await dev.fetch("/count").equals("evaluated 2");
+    },
+  });
+}
 // The dev server skips a router type whose root doesn't exist.
 devTest("reports a build error when an earlier router type has a missing root", {
   framework: {
@@ -1513,6 +2253,134 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
 });
 // The dev server's runtime threw `$ERR_SSR_RESPONSE_EXPECTED(...)`, a name only src/js resolves: what the
 // user saw was "ReferenceError: $ERR_SSR_RESPONSE_EXPECTED is not defined".
+// A build reads a barrel again when an earlier build left an export of it that nothing imports.
+// /first bundled both barrels. They are deleted, and the build of /second reads both again:
+//   1. The early barrel is not there to read. The dev server loads first.ts again, which imports it.
+//   2. The onLoad of first.ts writes the early barrel back. The bundler resolves the imports of
+//      first.ts: the early barrel is read again, and the late barrel still waits in its onLoad.
+//   3. The late barrel is not there to read. first.ts and second.ts import it.
+for (const late of ["whole", "named"]) {
+  const early = late === "whole" ? "named" : "whole";
+  const barrel = (name: string) => `node_modules/${name}/index.js`;
+  const line = late === "whole" ? 2 : 1;
+  devTest(`two imports of one module are deleted in one build, and the import of "${late}" fails last`, {
+    files: {
+      ...servePlugin(["first", "second"]),
+      ...abPackage("named", abBarrel),
+      ...abPackage("whole", abBarrel),
+      "first.html": emptyHtmlFile({ scripts: ["first.ts"] }),
+      "second.html": emptyHtmlFile({ scripts: ["second.ts"] }),
+      "first.ts": `
+        import { a as named } from "named";
+        import { a as whole } from "whole";
+        console.log("first: " + named + " " + whole);
+      `,
+      "second.ts": `
+        import { a as named } from "named";
+        import { a as whole } from "whole";
+        console.log("second: " + named + " " + whole);
+      `,
+      "plugin.ts": `
+        import fs from "node:fs";
+        import path from "node:path";
+
+        const root = import.meta.dir;
+        // Resolves when the early barrel is loaded a second time: step 2 is done.
+        const firstResolvedAgain = Promise.withResolvers();
+        let deleted = false;
+        export default {
+          name: "orders two missing files",
+          setup(build) {
+            build.onLoad({ filter: /(first\\.ts|[\\\\/](named|whole)[\\\\/]index\\.js)$/ }, async args => {
+              const file = path.relative(root, args.path).replaceAll("\\\\", "/");
+              if (!fs.existsSync(args.path)) deleted = true;
+              if (!deleted) return;
+              const loads = (globalThis.counts[file] = (globalThis.counts[file] ?? 0) + 1);
+              if (file === ${JSON.stringify(barrel(early))} && loads === 2) firstResolvedAgain.resolve();
+              if (file === ${JSON.stringify(barrel(late))} && loads === 1) await firstResolvedAgain.promise;
+              if (file === "first.ts") fs.writeFileSync(path.join(root, ${JSON.stringify(barrel(early))}), ${JSON.stringify(abBarrel)});
+            });
+          },
+        };
+      `,
+    },
+    htmlFiles: [],
+    async test(dev) {
+      await dev.fetch("/first");
+      for (const name of [early, late]) fs.unlinkSync(dev.join(barrel(name)));
+      {
+        await using c = await dev.client("/second", {
+          errors: ["first.ts", "second.ts"].map(
+            file => `${file}:${line}:28: error: Could not resolve: "${late}". Maybe you need to "bun install"?`,
+          ),
+        });
+      }
+      expect(await dev.fetch("/counts").json()).toEqual({ [barrel(early)]: 2, [barrel(late)]: 1, "first.ts": 1 });
+      fs.writeFileSync(dev.join(barrel(late)), abBarrel);
+      await using c = await dev.client("/second");
+      await c.expectMessage("second: A A");
+    },
+  });
+}
+// The same with no plugin: the one importer of a barrel is saved while the barrel is away.
+devTest("saving the importer of a barrel that was deleted shows an error until the barrel is back", {
+  files: {
+    ...abPackage("named", abBarrel),
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { a as named } from "named";
+      console.log("index: " + named);
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/");
+      await c.expectMessage("index: A");
+    }
+    fs.unlinkSync(dev.join("node_modules/named/index.js"));
+    await dev.write(
+      "index.ts",
+      `
+        import { a as named } from "named";
+        console.log("saved: " + named);
+      `,
+      { errors: null },
+    );
+    {
+      await using c = await dev.client("/", {
+        errors: ['index.ts:1:28: error: Could not resolve: "named". Maybe you need to "bun install"?'],
+      });
+    }
+    // The request above listed the directory of the package again, without the barrel. The dev
+    // server watches that directory since the build of the save.
+    await dev.write("node_modules/named/index.js", abBarrel);
+    await using c = await dev.client("/");
+    await c.expectMessage("saved: A");
+  },
+});
+// /first has the modules of the package, and the page of /second has none of them.
+devTest("a second route that imports a deleted barrel shows the error at each request", {
+  files: {
+    ...abPackage("named", abBarrel),
+    "first.html": emptyHtmlFile({ scripts: ["first.ts"] }),
+    "second.html": emptyHtmlFile({ scripts: ["second.ts"] }),
+    "first.ts": `
+      import { a } from "named";
+      console.log("first: " + a);
+    `,
+    "second.ts": `
+      import { b } from "named";
+      console.log("second: " + typeof b);
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/first");
+    fs.unlinkSync(dev.join("node_modules/named/index.js"));
+    const statuses: number[] = [];
+    for (let i = 0; i < 3; i++) statuses.push((await dev.fetch("/second")).status);
+    expect(statuses).toEqual([500, 500, 500]);
+  },
+});
 devTest("a render() that does not return a Response is reported as that", {
   framework: minimalFramework,
   files: {

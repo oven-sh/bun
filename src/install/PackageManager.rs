@@ -2665,7 +2665,7 @@ pub fn init(
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option = match fs.read_directory(fs.top_level_dir(), 0, true)? {
+    let entries_option = match fs.read_directory(fs.top_level_dir(), fs::GENERATION_BASE, true)? {
         fs::EntriesOption::Entries(e) => {
             // SAFETY: the BSSMap singleton owns `*e` for the process
             // lifetime, and `init()` runs single-threaded before any other
@@ -3029,7 +3029,8 @@ fn init_with_runtime_once(
     // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
     // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
     let fs_instance = FileSystem::instance();
-    let root_dir = match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true)? {
+    let top_level_dir = fs_instance.top_level_dir();
+    let root_dir = match fs_instance.read_directory(top_level_dir, fs::GENERATION_BASE, true)? {
         // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
         // and runtime init runs once on the main thread before any other access.
         fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
@@ -3199,7 +3200,7 @@ fn init_with_runtime_once(
     // passed in does not alias the `&mut Lockfile` receiver.
     manager.lockfile.init_empty();
     if let Ok(fs::EntriesOption::Entries(entries)) =
-        FileSystem::instance().read_directory(project_dir, 0, false)
+        FileSystem::instance().read_directory(project_dir, fs::GENERATION_BASE, false)
         && {
             // `.data` probes must hold `entries_mutex`.
             let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();

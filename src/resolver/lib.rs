@@ -710,6 +710,13 @@ pub mod fs {
     use bun_sys::Fd;
     use bun_threading::Mutex;
 
+    /// The generation every resolver starts at, and the one to read a
+    /// directory with outside a resolver.
+    pub const GENERATION_BASE: Generation = 1;
+    /// Below every resolver's generation: the next read of a `DirEntry`
+    /// stamped with it, under any key of the listing, refills it in place.
+    pub const GENERATION_STALE: Generation = 0;
+
     // `StringOrTinyString::init*_append_if_needed` needs an `Appender`; route the
     // ZST `FilenameStore` handle through to the backing `BSSStringList` singleton.
     impl strings::Appender for &FilenameStore {
@@ -1188,7 +1195,8 @@ pub mod fs {
                         }
                         cached => return Ok(cached),
                     }
-                } else if cache_result.status == bun_alloc::ItemStatus::NotFound && generation == 0
+                } else if cache_result.status == bun_alloc::ItemStatus::NotFound
+                    && generation == GENERATION_BASE
                 {
                     return Ok(temp_entries_option_write(EntriesOption::Err(
                         dir_entry::Err {
@@ -1980,7 +1988,7 @@ pub mod dir_entry_accessor {
             // return Err(SysError::from_code(E::NOTDIR, Syscall::Tag::open));
             let res = FS::instance()
                 .fs
-                .read_directory(path.as_bytes(), None, 0, false)
+                .read_directory(path.as_bytes(), None, crate::fs::GENERATION_BASE, false)
                 .map_err(crate::Error::into_core)?;
             match res {
                 EntriesOption::Entries(entry) => {

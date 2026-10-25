@@ -231,7 +231,7 @@ impl<'a> Scanner<'a> {
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }
-            .read_directory_with_iterator(name, handle, 0, false, iter)
+            .read_directory_with_iterator(name, handle, fs::GENERATION_BASE, false, iter)
             .map_err(Into::into)
     }
 

@@ -962,7 +962,7 @@ impl<'a> Resolver<'a> {
             debug_logs: None,
             elapsed: 0,
             watcher: None,
-            generation: 0,
+            generation: Fs::GENERATION_BASE,
             package_manager: None,
             on_wake_package_manager: Default::default(),
             env_loader: None,

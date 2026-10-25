@@ -131,7 +131,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             waker: Async::Waker::placeholder(),
             waker_error: None,
             queue: UnboundedQueue::new(),
-            generation: 0,
+            generation: bun_resolver::fs::GENERATION_BASE,
             ready_event: ResetEvent::default(),
         }
     }

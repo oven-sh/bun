@@ -2437,4 +2437,33 @@ c {
       "/across-files-url.css",
     ],
   });
+
+  // Each `url()` has its own import record. Rules with the same url are still
+  // one rule, and the file is inlined or copied as before.
+  itBundled("css/RulesWithTheSameURLMerge", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { background: url(./one.png) }
+        .b { background: url("./one.png") }
+        .c { background: url(./two.png) }
+        .d { mask: url(./sprites.svg#icon) }
+        .e { mask: url(./sprites.svg#icon) }
+      `,
+      "/one.png": "1",
+      "/two.png": "2",
+      "/sprites.svg": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+    },
+    loader: {
+      ".svg": "file",
+    },
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toEqualIgnoringWhitespace(
+          /* css */ `.a,.b{background:url(data:image/png;base64,MQ==)}.c{background:url(data:image/png;base64,Mg==)}.d,.e{mask:url(./sprites-mrrzcz3w.svg#icon)}`,
+        );
+    },
+  });
 });

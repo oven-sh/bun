@@ -1,6 +1,7 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { join } from "node:path";
+import { mkdirSync, symlinkSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -770,6 +771,54 @@ describe("bundler files option", () => {
       expect(asset?.path).toMatch(/manifest-[a-zA-Z0-9]+\.json$/);
       expect(await asset!.text()).toBe(`{"name":"app"}`);
     });
+
+    // A "./" key is a path from the cwd, so the build runs in a child process.
+    // The page is in a directory that is not on disk.
+    test("a built server that imports an in-memory page under a ./ key starts", async () => {
+      using dir = tempDir("bundler-files-html-import-relative", {
+        "build.mjs": `
+          import { relative } from "node:path";
+          const result = await Bun.build({
+            entrypoints: ["./server.ts"],
+            target: "bun",
+            outdir: "./dist",
+            files: {
+              "./server.ts": 'import page from "./pages/index.html"; console.log("page:", page.index);',
+              "./pages/index.html": ${JSON.stringify(pageHtml)},
+              "./pages/page.css": ${JSON.stringify(pageCss)},
+              "./pages/client.js": ${JSON.stringify(clientJs)},
+            },
+          });
+          const paths = result.outputs.map(output => relative(process.cwd(), output.path).replaceAll("\\\\", "/"));
+          console.log(JSON.stringify(paths.map(path => path.replace(/chunk-\\w+/, "chunk-[hash]")).sort()));
+        `,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const built = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(built).toEqual([
+        JSON.stringify(["dist/chunk-[hash].css", "dist/chunk-[hash].js", "dist/pages/index.html", "dist/server.js"]) +
+          "\n",
+        "",
+        0,
+      ]);
+
+      await using server = Bun.spawn({
+        cmd: [bunExe(), "server.js"],
+        cwd: join(String(dir), "dist"),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const ran = await Promise.all([server.stdout.text(), server.stderr.text(), server.exited]);
+      expect(ran).toEqual(["page: pages/index.html\n", "", 0]);
+    });
   });
 
   // `[dir]` is the directory of a file from the root. A directory that is only in `files` cannot be opened.
@@ -912,9 +961,11 @@ describe("bundler files option", () => {
   describe("relative keys", () => {
     type Report = Record<
       string,
-      { logs: string[]; outputs: string[]; found: string[]; inputs?: string[] } | { threw: string }
+      { logs: string[]; outputs: string[]; found: string[]; inputs?: string[]; whole?: unknown } | { threw: string }
     >;
-    const cases: { name: string; files: Record<string, string>; markers: string[]; builds: string }[] = [];
+    // A file is its text, or a link to another path of the case (a junction on Windows).
+    type Files = Record<string, string | { link: string }>;
+    const cases: { name: string; files: Files; markers: string[]; builds: string }[] = [];
     // Lines on the stdout of a child process that are not the report of a case.
     const notReports: string[] = [];
     let root: ReturnType<typeof tempDir> | undefined;
@@ -937,8 +988,9 @@ describe("bundler files option", () => {
       if (text) yield text;
     }
 
-    function start() {
-      root ??= tempDir("bundler-files-relative-keys", {
+    // Writes the files of every case once. Each child process reads them.
+    function writeCases() {
+      const tree = tempDir("bundler-files-relative-keys", {
         "scripts/build.mjs": `
           import { isAbsolute, join, relative, resolve as abs } from "node:path";
           const root = process.cwd();
@@ -950,9 +1002,11 @@ describe("bundler files option", () => {
             const [directory, markers, builds] = cases.get(name);
             process.chdir(join(root, directory));
             const report = {};
-            for (const [build, { chdir, chdirAfterCall, ...options }] of Object.entries(builds())) {
+            for (const [build, { chdir, chdirAfterCall, whole, ...options }] of Object.entries(builds())) {
               if (chdir) process.chdir(chdir);
               const cwd = process.cwd();
+              const withoutCwd = text => text.replaceAll(JSON.stringify(cwd).slice(1, -1), "<cwd>").replaceAll(cwd, "<cwd>");
+              globalThis.seen = [];
               try {
                 const building = Bun.build({ ...options, throw: false });
                 if (chdirAfterCall) process.chdir(chdirAfterCall);
@@ -969,6 +1023,11 @@ describe("bundler files option", () => {
                   ),
                   ...(result.metafile && { inputs: Object.keys(result.metafile.inputs).sort() }),
                 };
+                if (whole) {
+                  const outputs = result.outputs.map(({ path }, index) => [withoutCwd(path), withoutCwd(texts[index])]);
+                  const positions = result.logs.map(({ position }) => position && withoutCwd(position.file) + ":" + position.line);
+                  report[build].whole = { outputs: outputs.sort(), metafile: result.metafile, positions, seen: seen.map(withoutCwd).sort() };
+                }
               } catch (error) {
                 report[build] = { threw: error.name + ": " + error.message };
               }
@@ -980,10 +1039,28 @@ describe("bundler files option", () => {
         ...Object.fromEntries(
           cases.flatMap((it, index) => [
             [`${index}/case.txt`, it.name],
-            ...Object.entries(it.files).map(([file, text]) => [`${index}/${file}`, text]),
+            ...Object.entries(it.files).flatMap(([file, text]) =>
+              typeof text === "string" ? [[`${index}/${file}`, text]] : [],
+            ),
           ]),
         ),
       });
+      for (const [index, { files }] of cases.entries()) {
+        for (const [file, target] of Object.entries(files)) {
+          if (typeof target === "string") continue;
+          mkdirSync(dirname(join(String(tree), String(index), file)), { recursive: true });
+          symlinkSync(
+            join(String(tree), String(index), target.link),
+            join(String(tree), String(index), file),
+            "junction",
+          );
+        }
+      }
+      return tree;
+    }
+
+    function start() {
+      root ??= writeCases();
       const proc = Bun.spawn({
         cmd: [bunExe(), join("scripts", "build.mjs")],
         cwd: String(root),
@@ -1034,10 +1111,12 @@ describe("bundler files option", () => {
     // logs, the output paths from the directory of the call, each string
     // literal of the outputs that is one of `markers`, and the inputs of the
     // metafile if there is one. A marker that starts with "raw:" is any text,
-    // not a string literal.
+    // not a string literal. With `whole: true` the report also has the text of
+    // each output, the metafile, the file and line of each log, and what a
+    // plugin pushed to `seen`, with "<cwd>" for the directory of the call.
     function buildsIn(
       name: string,
-      files: Record<string, string>,
+      files: Files,
       markers: string[],
       builds: string,
       check: (report: Report) => void | Promise<void>,
@@ -1101,16 +1180,110 @@ describe("bundler files option", () => {
       );
     }
 
+    // Display paths, `[hash]` names, class names of a CSS module and inlined
+    // paths come from the path of a module, so they show what a key is.
+    {
+      const project = {
+        "index.ts": `
+          import styles from "./src/card.module.css";
+          import { shared } from "./src/shared.ts";
+          console.log(styles.title, shared);
+          import("./src/lazy.ts");
+        `,
+        "src/card.module.css": `.title { color: red; }`,
+        "src/shared.ts": `export const shared = "shared";`,
+        "src/lazy.ts": `import { shared } from "./shared.ts"; console.log("lazy", shared);`,
+        "where.ts": `import { where } from "./src/where.ts"; console.log(where);`,
+        "src/where.ts": `export const where = [__filename, __dirname];`,
+        "bad.ts": `import "./src/bad.ts";`,
+        "src/bad.ts": `export const = 1;`,
+      };
+      const keysOf = (...files: (keyof typeof project)[]) =>
+        JSON.stringify(Object.fromEntries(files.map(file => ["./" + file, project[file]])));
+      const build = `entry => ({
+        entrypoints: [entry],
+        splitting: true,
+        naming: "[dir]/[name]-[hash].[ext]",
+        metafile: true,
+        whole: true,
+      })`;
+      const keys = keysOf("src/card.module.css", "src/shared.ts", "src/lazy.ts");
+
+      buildsIn(
+        "a ./ key with the text of its file gives the same build as the file",
+        { ...project, "virtual/index.ts": project["index.ts"] },
+        [],
+        `(() => {
+          const build = ${build};
+          return {
+            "files on disk": build("./index.ts"),
+            "keys over the files": { ...build("./index.ts"), files: ${keys} },
+            "keys and no files": { ...build("./index.ts"), files: ${keys}, chdir: "virtual" },
+          };
+        })()`,
+        report => {
+          const onDisk = report["files on disk"];
+          expect(onDisk).toMatchObject({ logs: [], inputs: expect.arrayContaining(["src/lazy.ts"]) });
+          expect(report["keys over the files"]).toEqual(onDisk);
+          expect(report["keys and no files"]).toEqual(onDisk);
+        },
+      );
+
+      buildsIn(
+        "a plugin, an inlined path and a log get the path of a ./ key as they get the path of its file",
+        project,
+        [],
+        `(() => {
+          const build = ${build};
+          // The plugin declines, so the bundler resolves and loads each module.
+          const plugins = [{
+            name: "sees",
+            setup(build) {
+              build.onResolve({ filter: /shared/ }, ({ path, importer, resolveDir }) => void seen.push(["onResolve", path, importer, resolveDir].join(" ")));
+              build.onLoad({ filter: /lazy|shared/ }, ({ path }) => void seen.push("onLoad " + path));
+            },
+          }];
+          return {
+            "a plugin and files on disk": { ...build("./index.ts"), plugins },
+            "a plugin and keys": { ...build("./index.ts"), files: ${keys}, plugins },
+            "__filename on disk": build("./where.ts"),
+            "__filename in a key": { ...build("./where.ts"), files: ${keysOf("src/where.ts")} },
+            "a syntax error on disk": build("./bad.ts"),
+            "a syntax error in a key": { ...build("./bad.ts"), files: ${keysOf("src/bad.ts")} },
+          };
+        })()`,
+        report => {
+          expect(report["a plugin and files on disk"]).toMatchObject({
+            logs: [],
+            whole: {
+              seen: expect.arrayContaining([expect.stringMatching(/^onLoad <cwd>[\\/]src[\\/]lazy\.ts$/)]),
+            },
+          });
+          expect(report["a plugin and keys"]).toEqual(report["a plugin and files on disk"]);
+          expect(report["__filename on disk"]).toMatchObject({ logs: [] });
+          expect(report["__filename in a key"]).toEqual(report["__filename on disk"]);
+          expect(report["a syntax error on disk"]).toMatchObject({
+            outputs: [],
+            whole: { positions: expect.arrayContaining([expect.stringMatching(/^<cwd>[\\/]src[\\/]bad\.ts:1$/)]) },
+          });
+          expect(report["a syntax error in a key"]).toEqual(report["a syntax error on disk"]);
+        },
+      );
+    }
+
     // The disk resolver picks the file for these imports. The parse task then
-    // finds the key by the path of that file.
+    // finds the key by the path of that file. "./config.ts" in other.ts is an
+    // import that `files` answers: both imports name one module.
     buildsIn(
       "a key overrides the file that the resolver finds for an import",
       {
         "src/index.ts": `
           import { config } from "./config";
           import { util } from "util-lib";
+          import "./other.ts";
           console.log(config, util);
         `,
+        "src/other.ts": `import { config } from "./config.ts"; console.log(config);`,
         "src/config.ts": `export const config = "config from disk";`,
         "node_modules/util-lib/package.json": JSON.stringify({ name: "util-lib", main: "index.js" }),
         "node_modules/util-lib/index.js": `export const util = "util from disk";`,
@@ -1134,38 +1307,39 @@ describe("bundler files option", () => {
 
     // Nothing is on disk. The entry imports the other key as "./lib.js".
     buildsIn(
-      "an entry point names a key by text or by path",
+      "an entry point names a key by its text or by the absolute path of its file",
       {},
       ["entry in memory", "lib in memory"],
       `(() => {
-        const build = entry => ({
+        const build = (entry, key) => ({
           entrypoints: [entry],
           files: {
-            "./entry.js": 'import { lib } from "./lib.js"; console.log("entry in memory", lib);',
+            [key]: 'import { lib } from "./lib.js"; console.log("entry in memory", lib);',
             "./lib.js": 'export const lib = "lib in memory";',
           },
         });
         return {
-          "./entry.js": build("./entry.js"),
-          "entry.js": build("entry.js"),
-          absolute: build(abs("entry.js")),
-          // A relative entry point is a path from the cwd for an absolute key too.
-          "./entry.js with absolute keys": {
-            entrypoints: ["./entry.js"],
-            files: {
-              [abs("entry.js")]: 'import { lib } from "./lib.js"; console.log("entry in memory", lib);',
-              [abs("lib.js")]: 'export const lib = "lib in memory";',
-            },
-          },
+          "./entry.js": build("./entry.js", "./entry.js"),
+          absolute: build(abs("entry.js"), "./entry.js"),
+          // Any other entry point is for the disk resolver, with a "./" key and with an absolute key.
+          "entry.js": build("entry.js", "./entry.js"),
+          "entry.js, absolute key": build("entry.js", abs("entry.js")),
+          "./entry.js, absolute key": build("./entry.js", abs("entry.js")),
         };
       })()`,
       report => {
         const inMemory = { logs: [], outputs: ["./entry.js"], found: ["entry in memory", "lib in memory"] };
+        const notFound = (entry: string) => ({
+          logs: [`BuildMessage: ModuleNotFound resolving "${entry}" (entry point)`],
+          outputs: [],
+          found: [],
+        });
         expect(report).toEqual({
           "./entry.js": inMemory,
-          "entry.js": inMemory,
           absolute: inMemory,
-          "./entry.js with absolute keys": inMemory,
+          "entry.js": notFound("entry.js"),
+          "entry.js, absolute key": notFound("entry.js"),
+          "./entry.js, absolute key": notFound("./entry.js"),
         });
       },
     );
@@ -1175,8 +1349,8 @@ describe("bundler files option", () => {
         entrypoints: [${entry}],
         files: { "./src/entry.ts": 'console.log("entry from memory");' },
       }`;
-      // An entry point that is the path of a key, written another way, is for
-      // the disk resolver when the file is on disk. The parse task reads the key.
+      // A relative entry point that is not the text of a key is for the disk
+      // resolver. The parse task reads the key at the path that it finds.
       const page = (key: string) => `{
         entrypoints: ["src/page.tsx"],
         files: { [${key}]: 'console.log(<div>{"page from memory"}</div>);' },
@@ -1200,17 +1374,85 @@ describe("bundler files option", () => {
         report => {
           const page = { logs: [], outputs: ["./page.js"], found: ["page from memory", "preact/jsx-dev-runtime"] };
           expect(report).toEqual({
-            // Every entrypoint is written like a key, so the root is the cwd.
+            // The entrypoint is the text of a key or the path of its file, so the root is the cwd.
             "./src/entry.ts": { logs: [], outputs: ["src/entry.js"], found: ["entry from memory"] },
+            "absolute": { logs: [], outputs: ["src/entry.js"], found: ["entry from memory"] },
             // If not, the root is the directory of the entry point, as for an entry point on disk.
             "src/entry.ts": { logs: [], outputs: ["./entry.js"], found: ["entry from memory"] },
-            "absolute": { logs: [], outputs: ["./entry.js"], found: ["entry from memory"] },
             "the tsconfig.json of the file applies": page,
             "the tsconfig.json of the file applies, absolute key": page,
           });
         },
       );
     }
+
+    // `files` answers "./page.tsx" and gives the module the JSX options of the
+    // build. The disk resolver answers "./page" and gives it the tsconfig.json
+    // of the file. An absolute key does the same.
+    {
+      const build = (entry: string) => `{
+        entrypoints: [${JSON.stringify(entry)}],
+        files: { "./src/page.tsx": 'export const Page = () => <div>{"page from memory"}</div>;' },
+        external: ["preact", "react"],
+      }`;
+      buildsIn(
+        "a key over a file takes the settings of the route that finds it",
+        {
+          "src/index.tsx": `import { Page } from "./page.tsx"; console.log(Page);`,
+          "src/noext.tsx": `import { Page } from "./page"; console.log(Page);`,
+          "src/page.tsx": `export const Page = () => <div>page from disk</div>;`,
+          "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } }),
+        },
+        ["page from memory", "page from disk", 'raw:"react/jsx-dev-runtime"', 'raw:"preact/jsx-dev-runtime"'],
+        `{
+          "an import with the extension": ${build("./src/index.tsx")},
+          "an import without the extension": ${build("./src/noext.tsx")},
+        }`,
+        report => {
+          expect(report).toEqual({
+            "an import with the extension": {
+              logs: [],
+              outputs: ["./index.js"],
+              found: ["page from memory", 'raw:"react/jsx-dev-runtime"'],
+            },
+            "an import without the extension": {
+              logs: [],
+              outputs: ["./noext.js"],
+              found: ["page from memory", 'raw:"preact/jsx-dev-runtime"'],
+            },
+          });
+        },
+      );
+    }
+
+    // Bun does not resolve a symlink in a key. The disk resolver gives a module
+    // its real path, so that is the path that a key must have.
+    buildsIn(
+      "a key for a file behind a symlink is its real path",
+      {
+        "index.ts": `import { util } from "util-lib"; console.log(util);`,
+        "store/util-lib/package.json": JSON.stringify({ name: "util-lib", main: "index.js" }),
+        "store/util-lib/index.js": `export const util = "util from disk";`,
+        "node_modules/util-lib": { link: "store/util-lib" },
+      },
+      ["util from disk", "util from memory"],
+      `(() => {
+        const build = key => ({
+          entrypoints: ["./index.ts"],
+          files: { [key]: 'export const util = "util from memory";' },
+        });
+        return {
+          "the path through the link": build("./node_modules/util-lib/index.js"),
+          "the real path": build("./store/util-lib/index.js"),
+        };
+      })()`,
+      report => {
+        expect(report).toEqual({
+          "the path through the link": { logs: [], outputs: ["./index.js"], found: ["util from disk"] },
+          "the real path": { logs: [], outputs: ["./index.js"], found: ["util from memory"] },
+        });
+      },
+    );
 
     buildsIn(
       "a key is a path from the directory that Bun.build() is called in",
@@ -1228,17 +1470,21 @@ describe("bundler files option", () => {
           entrypoints: ["./src/index.ts"],
           files: { "./src/config.ts": 'export const config = "config from memory";' },
         },
-        // The key is one/src/config.ts, not other/src/config.ts.
+        // The key is one/src/config.ts, not other/src/config.ts. Its display path is from one/ too.
         "process.chdir() after the call": {
           chdir: "one",
           chdirAfterCall: "../other",
           entrypoints: [abs("one/src/index.ts")],
           files: { "./src/config.ts": 'export const config = "config from memory";' },
+          metafile: true,
         },
       }`,
       report => {
         const inMemory = { logs: [], outputs: ["./index.js"], found: ["config from memory"] };
-        expect(report).toEqual({ "the directory of the call": inMemory, "process.chdir() after the call": inMemory });
+        expect(report).toEqual({
+          "the directory of the call": inMemory,
+          "process.chdir() after the call": { ...inMemory, inputs: expect.arrayContaining(["src/config.ts"]) },
+        });
       },
     );
 
@@ -1495,8 +1741,8 @@ describe("bundler files option", () => {
           plugins: [{
             name: "path",
             setup(build) {
-              // Windows: the path has "/" separators, and the case of the drive letter can differ.
-              const expected = abs("src/generated.ts").replaceAll("\\\\", "/").toLowerCase();
+              // Windows: the case of the drive letter can differ.
+              const expected = abs("src/generated.ts").toLowerCase();
               build.onLoad({ filter: /generated/ }, ({ path }) => ({
                 contents: "console.log(" + JSON.stringify(path.toLowerCase() === expected ? "onLoad saw the path" : "onLoad saw another path") + ");",
                 loader: "js",
@@ -1547,7 +1793,7 @@ describe("bundler files option", () => {
     buildsIn(
       "a key that is a name can be an entry point",
       {},
-      ["entry in memory"],
+      ["entry in memory", "lib in memory"],
       `{
         "a scheme": {
           entrypoints: ["virtual:entry.ts"],
@@ -1556,6 +1802,14 @@ describe("bundler files option", () => {
         "a file name": {
           entrypoints: ["worker.ts"],
           files: { "worker.ts": 'console.log("entry in memory");' },
+        },
+        // A relative import in a module with a name as its path is a path from the cwd.
+        "a name that imports an absolute key": {
+          entrypoints: ["worker.ts"],
+          files: {
+            "worker.ts": 'import { lib } from "./lib.ts"; console.log("entry in memory", lib);',
+            [abs("lib.ts")]: 'export const lib = "lib in memory";',
+          },
         },
       }`,
       report => {
@@ -1566,6 +1820,11 @@ describe("bundler files option", () => {
             found: ["entry in memory"],
           },
           "a file name": { logs: [], outputs: ["./worker.js"], found: ["entry in memory"] },
+          "a name that imports an absolute key": {
+            logs: [],
+            outputs: ["./worker.js"],
+            found: ["entry in memory", "lib in memory"],
+          },
         });
       },
     );

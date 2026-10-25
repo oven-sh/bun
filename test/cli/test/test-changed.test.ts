@@ -1111,5 +1111,5 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
 
     proc.kill();
     reader.releaseLock();
-  }, 60_000);
+  });
 });

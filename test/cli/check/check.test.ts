@@ -9000,6 +9000,59 @@ seed.nope5;
       expect(exitCode).toBe(1);
     });
 
+    // As above, for `x31`. The inner resolution also assigns the untyped signature of `pick("id")`, so the check of m3.ts
+    // doesn't resolve the call with the type that the import of `x02` has by then.
+    test("the call in an initializer keeps the signature it got inside the cycle", async () => {
+      using dir = project({
+        "index.ts": `export * from "./m3";
+export { x02 } from "./m0";
+export * from "./m5";
+`,
+        "m0.ts": `import { x20, x21 } from "./m2";
+import { x51 } from "./index";
+export const x02 = { a: x51, b: x20, c: x21().k }
+`,
+        "m2.ts": `import { z, ZObject } from "./ztypes";
+import { x31} from "./index";
+export const x20 = z.object({ });
+function x21F() { }
+export function x21() { return { k: x21F, e: x31.shape }}
+`,
+        "m3.ts": `import { x02 } from "./index";
+export const x31 = x02.b.pick("id");
+`,
+        "m5.ts": `import { z, ZObject } from "./ztypes";import * as Nm3 from "./index";
+export const x51 = z.object({ items: z.object({ }), meta: Nm3.x31 });
+`,
+        "zcore.ts": `export abstract class Schema<Out = any> {  abstract check(v: unknown, path: (string | number)[]): Out;
+}
+export type Shape = Record<string, Schema>;
+export type ObjOut<S extends Shape> = {};
+`,
+        "ztypes.ts": `import { Schema } from "./zcore"; import type { Shape, ObjOut } from "./zcore";
+export class ZObject<S extends Shape> extends Schema<ObjOut<S>> {
+  constructor(public shape: S) { super(); }
+  check(v: unknown, p: (string | number)[]) { const out: any = {}; for (const k in this.shape) out[k] = this.shape[k].check((v as any)[k], [...p, k]); return out as ObjOut<S>; }
+  pick<K extends keyof S>(...ks: K[]) { }
+}
+export const z = {  object: <S extends Shape>(s: S) => new ZObject(s)
+}
+`,
+      });
+      const circular =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "index.ts(2,10): error TS2303: Circular definition of import alias 'x02'.",
+          `m0.ts(3,14): error TS7022: 'x02' implicitly has type 'any' ${circular}`,
+          `m3.ts(2,14): error TS7022: 'x31' implicitly has type 'any' ${circular}`,
+          `m5.ts(2,14): error TS7022: 'x51' implicitly has type 'any' ${circular}`,
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // The argument of `router` in m1.ts is first checked in the mode that skips generic functions. The callee of
     // `keys()` leads to `c11` again, and that resolution of `keys()` finds `p` to be `any` and assigns its signature.
     test("a call keeps the signature that a resolution inside the check of its callee assigned", async () => {

@@ -192,7 +192,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `links.resolvedSignature = result`. The first value wins, and is returned: "it's possible
     /// that this inner resolution sets the resolvedSignature first. In such a case we ignore the
     /// local result and reuse the correct one that was cached."
-    fn cache_call(
+    pub(super) fn cache_call(
         &mut self,
         file: FileId,
         call: ExprId,

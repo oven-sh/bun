@@ -177,6 +177,8 @@ struct Provisional {
 
 struct InitializerCheckedInside {
     quick_type_frame: usize,
+    /// `links.resolvedSignature`, if it's a call.
+    signature: Option<call::ResolvedCall>,
     reported: Vec<Reported>,
 }
 

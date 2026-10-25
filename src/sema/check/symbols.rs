@@ -2885,6 +2885,9 @@ impl<'p, 's> Checker<'p, 's> {
                 match self.leave(Query::Expr(file, e)) {
                     Ok(stored) => {
                         (self.p.expr_types).rewrite(&self.task, (file, e), TypeId::ANY, stored);
+                        if let Some(signature) = checked_inside.signature {
+                            self.cache_call(file, e, signature, stored);
+                        }
                     }
                     Err(open) => {
                         let any = u64::from(TypeId::ANY.0);

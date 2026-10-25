@@ -615,9 +615,11 @@ impl<'p, 's> Checker<'p, 's> {
                 && !(self.initializers_checked_inside.iter()).any(|it| it.quick_type_frame == at)
             {
                 let reported = self.take_reported_from(from);
+                let signature = self.provisional(Query::Call(file, e));
                 self.initializers_checked_inside
                     .push(super::InitializerCheckedInside {
                         quick_type_frame: at,
+                        signature: signature.map(crate::table::Packed::unpack),
                         reported,
                     });
             }

@@ -1899,7 +1899,7 @@ static void restoreDefaultSignalDisposition(int signalNumber)
 }
 #endif
 
-// Set by `bun fuzzilli`: a fuzzed script must not end the REPRL child or signal another process.
+// Set by `bun fuzzilli`: process.abort, process.execve and process._kill then do nothing, in every global.
 static std::atomic<bool> isFuzzilliREPRL { false };
 
 extern "C" void Bun__Process__enterFuzzilliREPRL()

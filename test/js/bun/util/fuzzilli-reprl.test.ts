@@ -18,9 +18,11 @@ async function runPayload(payload: string) {
 
 const returned = { stdout: "STATUSES=0,0 LIVE=true\n", exitCode: 0, signalCode: null };
 
+// The REPRL loop is synchronous: the payload blocks until the worker stores 1 (both calls returned) or 2 (one threw).
 const workerSource =
-  "self.onmessage = e => { process.kill(process.pid, 'SIGKILL'); process.abort(); " +
-  "const done = new Int32Array(e.data); Atomics.store(done, 0, 1); Atomics.notify(done, 0); };";
+  "self.onmessage = e => { const done = new Int32Array(e.data); let result = 2; " +
+  "try { process.kill(process.pid, 'SIGKILL'); process.abort(); result = 1; } catch {} " +
+  "Atomics.store(done, 0, result); Atomics.notify(done, 0); };";
 
 test.concurrent.each([
   ["process.kill", `process.kill(process.pid, "SIGKILL");`],
@@ -33,7 +35,9 @@ test.concurrent.each([
     "process.kill and process.abort in a Worker",
     `const done = new Int32Array(new SharedArrayBuffer(4)); ` +
       `new Worker("data:text/javascript," + encodeURIComponent(${JSON.stringify(workerSource)})).postMessage(done.buffer); ` +
-      `if (Atomics.wait(done, 0, 0, 30000) === "timed-out") throw new Error("the worker did not answer");`,
+      `Atomics.wait(done, 0, 0, 30000); ` +
+      `const state = ["did not answer", "returned", "threw"][Atomics.load(done, 0)]; ` +
+      `if (state !== "returned") throw new Error("the worker " + state);`,
   ],
   [
     "process.kill still validates its arguments",

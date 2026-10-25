@@ -2455,7 +2455,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break 'check_for_usestate false;
                 } {
                     debug_assert!(p.options.features.server_components.is_server_side());
+                    // A store that `node_modules` links to has no `node_modules` folder in `text`.
                     if original_name == b"useState"
+                        && !strings::starts_with(p.source.path.pretty, b"node_modules")
                         && !bun_paths::strings::path_contains_node_modules_folder(
                             p.source.path.text,
                         )

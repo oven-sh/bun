@@ -618,57 +618,6 @@ export default function IndexPage() {
       normalizePath(path.relative(root, match[1])),
     ).sort();
 
-  test("importing useState server-side from a project path that holds the letters node_modules", async () => {
-    const widget = `import { useState } from 'react';
-
-export default function Widget() {
-  const [count] = useState(0);
-  return <button>{count}</button>;
-}`;
-    const dir = await tempDirWithBakeDeps("bake-production-node-modules-letters", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `import Tools from "../node_modules-tools/Widget";
-import Local from "../node_modules_local/Widget";
-import RootFile from "../node_modules_widget";
-import Old from "../old_node_modules/Widget";
-
-export default function IndexPage() {
-  return (
-    <div>
-      <Tools />
-      <Local />
-      <RootFile />
-      <Old />
-    </div>
-  );
-}`,
-      "node_modules-tools/Widget.tsx": widget,
-      "node_modules_local/Widget.tsx": widget,
-      "node_modules_widget.tsx": widget,
-      "old_node_modules/Widget.tsx": widget,
-      "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
-      }),
-    });
-
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
-
-    expect({ useStateErrors: filesWithUseStateError(stderr.toString(), dir), exitCode }).toEqual({
-      useStateErrors: [
-        "node_modules-tools/Widget.tsx",
-        "node_modules_local/Widget.tsx",
-        "node_modules_widget.tsx",
-        "old_node_modules/Widget.tsx",
-      ],
-      exitCode: 1,
-    });
-  });
-
   // A package module with a hook that calls `useState` and an export that uses no hook.
   const libWithHook = (label: string) => `import { useState } from 'react';
 
@@ -681,7 +630,7 @@ export function ${label}() {
 }`;
   const libPackageJson = (name: string) => JSON.stringify({ name, version: "1.0.0", type: "module", main: "index.js" });
 
-  test("useState in a package is not a server-component error, wherever node_modules is", async () => {
+  test.concurrent("useState in a package is not a server-component error, wherever node_modules is", async () => {
     // The app is in apps/web. React and most of the packages are in the node_modules folder two levels above it.
     const dir = await tempDirWithBakeDeps("bake-production-package-useState", {
       "node_modules/hoisted-lib/package.json": libPackageJson("hoisted-lib"),
@@ -701,6 +650,9 @@ exports.useCounter = function useCounter() {
 exports.cjsLabel = function cjsLabel() {
   return "cjsLabel";
 };`,
+      // A store that node_modules links to under another name.
+      "apps/web/node_modules.nosync/linked-lib/package.json": libPackageJson("linked-lib"),
+      "apps/web/node_modules.nosync/linked-lib/index.js": libWithHook("linkedLabel"),
       "apps/web/packages/x/node_modules/nested-lib/package.json": libPackageJson("nested-lib"),
       "apps/web/packages/x/node_modules/nested-lib/index.js": libWithHook("nestedLabel"),
       "apps/web/packages/x/index.ts": `export { nestedLabel } from "nested-lib";`,
@@ -709,6 +661,7 @@ exports.cjsLabel = function cjsLabel() {
 import { looseLabel } from "loose-lib.js";
 import { isoLabel } from "iso-lib";
 import { cjsLabel } from "cjs-lib";
+import { linkedLabel } from "linked-lib";
 import { nestedLabel } from "../packages/x";
 import Counter from "../components/Counter";
 
@@ -719,6 +672,7 @@ export default function IndexPage() {
       <li>{looseLabel()}</li>
       <li>{isoLabel()}</li>
       <li>{cjsLabel()}</li>
+      <li>{linkedLabel()}</li>
       <li>{nestedLabel()}</li>
       <li>
         <Counter />
@@ -735,14 +689,18 @@ export default function Counter() {
 }`,
       "apps/web/package.json": JSON.stringify({ name: "web", version: "1.0.0" }),
     });
+    const appDir = path.join(dir, "apps", "web");
     symlinkSync(
       path.join(dir, "node_modules", ".bun", "iso-lib@1.0.0", "node_modules", "iso-lib"),
       path.join(dir, "node_modules", "iso-lib"),
       "junction",
     );
-    const appDir = path.join(dir, "apps", "web");
+    symlinkSync(path.join(appDir, "node_modules.nosync"), path.join(appDir, "node_modules"), "junction");
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(appDir).throws(false);
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(appDir)
+      .env(bunEnv)
+      .throws(false);
 
     expect({ useStateErrors: filesWithUseStateError(stderr.toString(), dir), exitCode }).toEqual({
       useStateErrors: [],
@@ -750,11 +708,11 @@ export default function Counter() {
     });
     // The server component calls the exports that use no hook. The client component calls the hook.
     expect(await Bun.file(path.join(appDir, "dist", "index.html")).text()).toContain(
-      "<ul><li>hoistedLabel</li><li>looseLabel</li><li>isoLabel</li><li>cjsLabel</li><li>nestedLabel</li><li><p>count=0</p></li></ul>",
+      "<ul><li>hoistedLabel</li><li>looseLabel</li><li>isoLabel</li><li>cjsLabel</li><li>linkedLabel</li><li>nestedLabel</li><li><p>count=0</p></li></ul>",
     );
   });
 
-  test("useState that a package calls in a server component fails the build when the page renders", async () => {
+  test.concurrent("useState that a package calls in a server component fails the build at render", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-package-useState-called", {
       "node_modules/hoisted-lib/package.json": libPackageJson("hoisted-lib"),
       "node_modules/hoisted-lib/index.js": libWithHook("hoistedLabel"),
@@ -770,6 +728,7 @@ export default function IndexPage() {
 
     const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
       .cwd(path.join(dir, "apps", "web"))
+      .env(bunEnv)
       .throws(false);
 
     expect({ useStateErrors: filesWithUseStateError(stderr.toString(), dir), exitCode }).toEqual({

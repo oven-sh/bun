@@ -4,7 +4,7 @@
 
 import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -8690,6 +8690,34 @@ describe("css tests", () => {
     `,
       { chrome: Some(90 << 16) },
     );
+
+    // One build of n same-query @media rules merges n - 1 times, and each merge
+    // minifies the merged list again. bun 1.4.0 to 1.4.4 nested new fallbacks
+    // in the @supports rules on every pass and printed 209 MB for these 7 KB.
+    // bun 1.3.14 printed 33 KB.
+    test("one build of 120 same-query @media rules prints each fallback once", async () => {
+      let source = "";
+      for (let i = 0; i < 120; i++) source += `@media (min-width:640px){.a${i}{color:var(--a,lab(50% 20 30))}}\n`;
+      using dir = tempDir("css-supports-scope", { "s.css": source });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "s.css", "--outdir=out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+        // Stop a build that nests the fallbacks: it needs 10 s and 900 MB on a release build.
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
+
+      const output = Bun.file(join(String(dir), "out", "s.css"));
+      expect(output.size).toBeLessThan(10 * source.length);
+      // Each rule gets one @supports rule for display-p3 and one for lab().
+      expect((await output.text()).split("@supports").length - 1).toBe(240);
+    });
   });
 
   describe("edge cases", () => {

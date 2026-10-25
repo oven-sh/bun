@@ -11353,6 +11353,28 @@ export function f(cur: Item) {
       expect(exitCode).toBe(1);
     });
 
+    // The initializer of `r` is looked at with the loops hidden, and the return type of `f` is a resolution inside that.
+    // The walk for `cur.data` under it ends with an incomplete type, so the check of the assignment walks again.
+    test("a walk that ended with an incomplete type under a resolution isn't the last one", async () => {
+      using dir = project({
+        "a.ts": `interface Item { data?: { name?: string; loc?: number } }
+declare function text(): string | undefined;
+declare function item(): Item;
+export const r = f(item());
+export function f(cur: Item) {
+  let val = text();
+  if (typeof cur.data !== "string") return;
+  try { for (const k in {}) { } } catch { }
+  ({ name: val, loc: cur.data!.loc } = { name: text(), loc: 1 });
+  return val;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe("a.ts(9,32): error TS2339: Property 'loc' does not exist on type 'never'.");
+      expect(exitCode).toBe(1);
+    });
+
     test("a shared flow node in a `finally` block has the type of its first visit", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

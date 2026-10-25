@@ -934,10 +934,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_template_tag = matches!(p.template_tag, Data::EIndex(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
-        // `a["b"]` matches the same define as `a.b` (UTF-8 literals only, see `is_dot_define_match`)
+        // `a["b"]` matches the same define as `a.b`. The filter takes UTF-8, and a non-ASCII literal is UTF-16.
         if let Data::EString(s) = e_.index.data
-            && s.is_utf8()
-            && (s.next.is_some() || p.define.dots_filter.may_contain(s.data.slice()))
+            && (if s.is_utf8() {
+                s.next.is_some() || p.define.dots_filter.may_contain(s.data.slice())
+            } else {
+                p.define.dots_filter.has_non_ascii()
+            })
             && Self::apply_index_define(p, e, in_, is_delete_target)
         {
             return;

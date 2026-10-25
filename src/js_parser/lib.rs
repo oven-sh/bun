@@ -502,11 +502,18 @@ pub mod defines {
     }
 
     #[derive(Clone)]
-    pub struct DotFilter([u64; 64]);
+    pub struct DotFilter {
+        bits: [u64; 64],
+        /// A name with non-ASCII text is in the filter. The visitor holds such an index literal as UTF-16.
+        has_non_ascii: bool,
+    }
 
     impl Default for DotFilter {
         fn default() -> Self {
-            DotFilter([0; 64])
+            DotFilter {
+                bits: [0; 64],
+                has_non_ascii: false,
+            }
         }
     }
 
@@ -523,13 +530,19 @@ pub mod defines {
         #[inline]
         pub fn insert(&mut self, name: &[u8]) {
             let bit = Self::bit(name);
-            self.0[bit / 64] |= 1 << (bit % 64);
+            self.bits[bit / 64] |= 1 << (bit % 64);
+            self.has_non_ascii |= strings::first_non_ascii(name).is_some();
         }
 
         #[inline(always)]
         pub fn may_contain(&self, name: &[u8]) -> bool {
             let bit = Self::bit(name);
-            self.0[bit / 64] & (1 << (bit % 64)) != 0
+            self.bits[bit / 64] & (1 << (bit % 64)) != 0
+        }
+
+        #[inline(always)]
+        pub fn has_non_ascii(&self) -> bool {
+            self.has_non_ascii
         }
     }
 

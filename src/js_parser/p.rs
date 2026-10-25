@@ -7248,13 +7248,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parts = &parts[..last];
                 continue;
             }
-            // `a["b"]` matches the define for `a.b`. A UTF-16 (non-ASCII) literal is skipped: comparing it allocates.
+            // `a["b"]` matches the define for `a.b`
             if let js_ast::ExprData::EIndex(index) = expr.data
                 && let js_ast::ExprData::EString(mut s) = index.index.data
-                && s.is_utf8()
             {
-                // `slice` flattens a rope left by a folded `"b" + "c"`
-                if !strings::eql(&parts[last], s.slice(self.arena)) {
+                // `slice` flattens a rope left by a folded `"b" + "c"`. A UTF-16 literal compares without a copy.
+                let is_part = if s.is_utf8() {
+                    strings::eql(&parts[last], s.slice(self.arena))
+                } else {
+                    s.eql_bytes(&parts[last])
+                };
+                if !is_part {
                     return false;
                 }
                 expr = index.target;

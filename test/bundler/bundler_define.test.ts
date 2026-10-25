@@ -133,6 +133,8 @@ const repros: Repro[] = [
       'process.env["dotted.name"]': "4",
       'process.env["quo\\"te"]': "5",
       'process.env["with:colon=equals"]': "6",
+      'process.env["MY-VÄR"]': "7",
+      "labels.ключ": "8",
     },
     cases: [
       ["((g) => g)(this)", "((g) => g)(window)"],
@@ -146,6 +148,11 @@ const repros: Repro[] = [
       ["process.env['quo\"te']", "5"],
       // The `--define` flag splits the key from the value after the quoted part
       ['process.env["with:colon=equals"]', "6"],
+      // A non-ASCII name, as a quoted part and as an identifier
+      ['process.env["MY-VÄR"]', "7"],
+      ['labels["ключ"]', "8"],
+      ["labels.ключ", "8"],
+      ['labels?.["ключ"]', "8"],
       // Only a top-level `this` is replaced
       ["function () { return this; }", "function() { return this; }"],
     ],

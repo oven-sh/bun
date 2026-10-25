@@ -1423,20 +1423,21 @@ fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
 }
 
 /// Removes the packages that `before` placed and that aren't in the install tree for any dependency
-/// type or platform.
-pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Lockfile) {
+/// type or platform. Returns true if it removed one.
+pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Lockfile) -> bool {
     let Ok(saved) = hoist_install_tree(manager, true) else {
-        return;
+        return false;
     };
-    plan_and_remove_collapsed_copies(manager, before);
+    let removed = plan_and_remove_collapsed_copies(manager, before);
     restore_tree(&mut manager.lockfile, saved);
+    removed
 }
 
-fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile) {
+fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile) -> bool {
     let after: &Lockfile = &manager.lockfile;
     let workspace_names = collect_workspace_names(manager);
     if before.buffers.trees.is_empty() && workspace_names.is_empty() {
-        return;
+        return false;
     }
     let quiet = manager.options.log_level == LogLevel::Silent;
     let old = HoistedTree::init(before, true);
@@ -1732,7 +1733,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         );
     }
 
-    remove_planned(plan, Layout::Hoisted, manager);
+    remove_planned(plan, Layout::Hoisted, manager)
 }
 
 /// When a run skipped dependencies, Bun 1.4.3 and earlier installed nested copies in folders that
@@ -1872,7 +1873,8 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
     remove_planned(plan, Layout::Hoisted, manager);
 }
 
-fn remove_planned(mut plan: Plan, layout: Layout, manager: &PackageManager) {
+/// Returns true if it removed an entry.
+fn remove_planned(mut plan: Plan, layout: Layout, manager: &PackageManager) -> bool {
     if !plan.linked_folders.is_empty() {
         if (!plan.removals.is_empty() || plan.left_linked_folder)
             && manager.options.log_level != LogLevel::Silent
@@ -1882,10 +1884,11 @@ fn remove_planned(mut plan: Plan, layout: Layout, manager: &PackageManager) {
             }
             bun_core::note!("remove the link and run 'bun install', then 'bun prune'");
         }
-        return;
+        return false;
     }
-    execute(&plan, true);
+    let failed = execute(&plan, true);
     housekeeping(&plan, layout, manager);
+    plan.removals.len() > failed
 }
 
 /// Returns true if the symlink `entry` points to where the isolated linker links the package

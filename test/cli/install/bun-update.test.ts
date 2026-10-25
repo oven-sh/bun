@@ -1544,6 +1544,11 @@ it.concurrent.each([
   expect(err).toBe("");
   expect(out).toBe(`bun update <version> (<revision>)\n\n${summary}`);
   expect(await lockedAndInstalled(ctx)).toEqual({ locked: ["keep", "old"], installed: [...installed] });
+
+  // bun.lock still has the entry, but a second run has no folder to delete, so it counts nothing.
+  const again = await runUpdate(ctx, ["--no-save"]);
+  expect(again.out).toContain("(no changes)");
+  expect(await lockedAndInstalled(ctx)).toEqual({ locked: ["keep", "old"], installed: [...installed] });
 });
 
 // Installs parent@1.0.0, which has `before` as its dependencies. After that, the registry also lists parent@1.1.0,
@@ -1789,6 +1794,24 @@ describe.each(["hoisted", "isolated"] as const)("bun install counts a link to a 
     // The hoisted linker also links the workspace at the root, so it reports the removal on a second line.
     expect(await runInstall(ctx)).toMatch(/\n(?:1 package removed|Removed: 1)$/);
     expect((await lockedAndInstalled(ctx)).locked).toEqual(["m", "n", "o"]);
+  });
+
+  // The root links the workspace foo under its own name, so a/foo and b/foo are copies from the registry, not links.
+  it.concurrent("copies from the registry that have the name of a workspace count each", async () => {
+    using ctx = await testContext();
+    await perNameRegistry(ctx, one("foo"));
+    const copy = { dependencies: { foo: "^1.0.0" } };
+    await setupMembers(ctx, linker, {}, { foo: { version: "2.0.0" }, a: copy, b: copy });
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(["a", "a/foo", "b", "b/foo", "foo"]);
+
+    for (const name of ["a", "b"]) {
+      await writeFile(
+        join(ctx.package_dir, "packages", name, "package.json"),
+        JSON.stringify({ name, version: "1.0.0", dependencies: { foo: "workspace:*" } }),
+      );
+    }
+    expect(await runInstall(ctx)).toMatch(/\n2 packages removed$/);
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(["a", "b", "foo"]);
   });
 
   // The optional alias links the workspace m@1.0.0. The registry has no `m`, so nothing takes its place at 2.0.0.

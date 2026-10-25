@@ -1063,11 +1063,11 @@ pub fn install_with_manager(
                 || manager.lockfile.is_empty()
                 || manager.options.enable.force_save_lockfile()));
 
-    // The resolved lockfile takes the place of the loaded one: a save, a dry run of one, or the hoisted linker's folder cleanup under `--no-save`.
-    let mut replaces_lockfile = manager.options.dry_run || (removes_collapsed_copies && !isolated);
+    // The summary counts the entries that left if the run saves the lockfile, is a dry run of that save, or deletes a folder without a save.
+    let mut removes_entries = manager.options.dry_run;
     if should_save_lockfile {
         super::package_json_write_back::write_migrated(manager);
-        replaces_lockfile = save_lockfile(
+        removes_entries = save_lockfile(
             manager,
             &load_result,
             save_format,
@@ -1086,7 +1086,8 @@ pub fn install_with_manager(
     if removes_collapsed_copies && isolated {
         crate::prune::unlink_dropped_dependencies(manager, &lockfile_before_clean);
     } else if removes_collapsed_copies {
-        crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
+        let removed = crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
+        removes_entries |= removed && !should_save_lockfile;
     }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;
@@ -1123,7 +1124,7 @@ pub fn install_with_manager(
         // Another package manager's lockfile has no bun.lock entries to compare with.
         let replaced_lockfile = match &load_result {
             lockfile::LoadResult::Ok(ok)
-                if replaces_lockfile && ok.migrated == lockfile::Migrated::None =>
+                if removes_entries && ok.migrated == lockfile::Migrated::None =>
             {
                 Some((&*lockfile_before_clean, ok.format))
             }
@@ -1531,6 +1532,15 @@ fn count_entries_removed_from_lockfile(
         links.sort_unstable();
         links
     };
+    // A workspace that the root linked under its own name had no other link of that name, so the other entries are copies from the registry.
+    let linked_by_root = |name: PackageNameHash| {
+        let rows = before.buffers.dependencies.as_slice();
+        let entries = before.buffers.hoisted_dependencies.as_slice();
+        let root = before.buffers.trees.first();
+        let root = root.map_or(&[][..], |root| root.dependencies.get(entries));
+        let mut placed = root.iter().filter_map(|&id| rows.get(id as usize));
+        placed.any(|row| row.behavior.is_workspace() && row.name_hash == name)
+    };
 
     let before = names(before, before.loaded_package_count);
     let after_names = names(after, after.packages.len() as PackageID);
@@ -1547,6 +1557,7 @@ fn count_entries_removed_from_lockfile(
         if left > 1
             && format == lockfile::Format::Text
             && (links.get_or_insert_with(link_names).binary_search(&name)).is_ok()
+            && !linked_by_root(name)
         {
             left = 1;
         }

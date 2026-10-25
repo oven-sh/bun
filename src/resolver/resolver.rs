@@ -4416,7 +4416,9 @@ impl<'a> Resolver<'a> {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { queue[i].assume_init_mut() };
-                            slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                            if listing_is_named(entries.dir, top) {
+                                slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                            }
                             slot.fd = entries.fd;
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {

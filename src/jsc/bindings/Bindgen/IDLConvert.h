@@ -55,6 +55,7 @@ template<> struct IDLHumanReadableName<Bindgen::IDLStrictUTF8String> : BaseIDLHu
     static constexpr auto humanReadableName = std::to_array("string");
 };
 template<> struct IDLHumanReadableName<Bindgen::IDLLooseUTF8String> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
+template<bool allowStringObject> struct IDLHumanReadableName<Bindgen::IDLStringView<allowStringObject>> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
 template<bool allowShared> struct IDLHumanReadableName<Bindgen::IDLRawBufferSource<allowShared>> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
 };
@@ -222,6 +223,29 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictStringOrStringObject
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
         ctx.throwNotString(globalObject, scope);
+    }
+};
+
+template<bool allowStringObject>
+struct WebCore::Converter<Bun::Bindgen::IDLStringView<allowStringObject>> : Bun::DefaultContextConverter<Bun::Bindgen::IDLStringView<allowStringObject>> {
+    template<Bun::IDLConversionContext Ctx>
+    ALWAYS_INLINE static bool convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, JSC::GCOwnedDataScope<WTF::StringView>& result)
+    {
+        auto& vm = JSC::getVM(&globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::JSString* string;
+        if (value.isString()) [[likely]]
+            string = JSC::asString(value);
+        else if (allowStringObject && value.inherits<JSC::StringObject>()) {
+            string = value.toString(&globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+        } else {
+            ctx.throwNotString(globalObject, scope);
+            return false;
+        }
+        result = string->view(&globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        return true;
     }
 };
 

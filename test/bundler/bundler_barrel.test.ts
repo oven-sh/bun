@@ -92,6 +92,39 @@ describe("bundler", () => {
     run: { stdout: "a.js\nb.js\na" },
   });
 
+  // The package name of a file is that of the nearest package.json with a
+  // "name" above the file, for an import of the directory and for an import of
+  // the file by its path. Card.js has a syntax error: the build succeeds only
+  // when "mylib-icons" matches the barrel and the unused re-export is skipped.
+  for (const [route, specifier] of [
+    ["Directory", "mylib/icons"],
+    ["Path", "mylib/icons/index.js"],
+  ] as const) {
+    itBundled(`barrel/OptimizeImportsPackageNameOf${route}Import`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { Button } from '${specifier}';
+          console.log(Button);
+        `,
+        "/node_modules/mylib/package.json": JSON.stringify({ name: "mylib", version: "1.0.0" }),
+        "/node_modules/mylib/icons/package.json": JSON.stringify({ name: "mylib-icons", main: "./index.js" }),
+        "/node_modules/mylib/icons/index.js": /* js */ `
+          export { Button } from './Button.js';
+          export { Card } from './Card.js';
+        `,
+        "/node_modules/mylib/icons/Button.js": /* js */ `
+          export const Button = "button";
+        `,
+        "/node_modules/mylib/icons/Card.js": /* js */ `
+          export const Card = <<<SYNTAX_ERROR>>>;
+        `,
+      },
+      optimizeImports: ["mylib-icons"],
+      outdir: "/out",
+      run: { stdout: "button" },
+    });
+  }
+
   // --- Automatic mode (sideEffects: false) ---
 
   itBundled("barrel/SkipUnusedWithSideEffectsFalse", {
@@ -122,6 +155,69 @@ describe("bundler", () => {
       api.expectFile("/out/entry.js").toContain("alpha");
     },
   });
+
+  // The `"sideEffects": false` of the nearest package.json makes the file a
+  // barrel, for an import of the directory and for an import of the file by its
+  // path. That package.json has no "name". Beta.js has a syntax error: the build
+  // succeeds only when the unused re-export is skipped.
+  for (const [route, specifier] of [
+    ["Directory", "autolib/icons"],
+    ["Path", "autolib/icons/index.js"],
+  ] as const) {
+    itBundled(`barrel/SideEffectsFalseOfNearestPackageJson${route}Import`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { Alpha } from '${specifier}';
+          console.log(Alpha);
+        `,
+        "/node_modules/autolib/package.json": JSON.stringify({ name: "autolib", version: "1.0.0" }),
+        "/node_modules/autolib/icons/package.json": JSON.stringify({ main: "./index.js", sideEffects: false }),
+        "/node_modules/autolib/icons/index.js": /* js */ `
+          export { Alpha } from './Alpha.js';
+          export { Beta } from './Beta.js';
+        `,
+        "/node_modules/autolib/icons/Alpha.js": /* js */ `
+          export const Alpha = "alpha";
+        `,
+        "/node_modules/autolib/icons/Beta.js": /* js */ `
+          export const Beta = <<<SYNTAX_ERROR>>>;
+        `,
+      },
+      outdir: "/out",
+      run: { stdout: "alpha" },
+    });
+  }
+  // With `ignoreDCEAnnotations` that package.json does not make the file a
+  // barrel, so every re-export loads.
+  for (const [route, specifier] of [
+    ["Directory", "autolib/icons"],
+    ["Path", "autolib/icons/index.js"],
+  ] as const) {
+    itBundled(`barrel/IgnoreDCEAnnotationsOfNearestPackageJson${route}Import`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { Alpha } from '${specifier}';
+          console.log(Alpha);
+        `,
+        "/node_modules/autolib/package.json": JSON.stringify({ name: "autolib", version: "1.0.0" }),
+        "/node_modules/autolib/icons/package.json": JSON.stringify({ main: "./index.js", sideEffects: false }),
+        "/node_modules/autolib/icons/index.js": /* js */ `
+          export { Alpha } from './Alpha.js';
+          export { Beta } from './Beta.js';
+        `,
+        "/node_modules/autolib/icons/Alpha.js": /* js */ `
+          export const Alpha = "alpha";
+        `,
+        "/node_modules/autolib/icons/Beta.js": /* js */ `
+          console.log("Beta.js");
+          export const Beta = "beta";
+        `,
+      },
+      ignoreDCEAnnotations: true,
+      outdir: "/out",
+      run: { stdout: "Beta.js\nalpha" },
+    });
+  }
 
   // A "sideEffects" array must not enable barrel deferral: a deferred
   // re-export target may itself be listed in the array. See #40650.
@@ -2227,6 +2323,45 @@ describe("bundler", () => {
       api.expectFile("/out/entry.js").toContain("a = 1");
     },
   });
+
+  // One file has one "sideEffects" answer, so the barrel decision for it does
+  // not depend on which import reaches it first: the import of the directory
+  // or the import of the file by its path. The bundler resolves the imports of
+  // entry.js before it parses late.js, so the import in entry.js creates the
+  // module. Beta.js has a syntax error: the build fails when that import does
+  // not make the file a barrel.
+  for (const [first, early, late] of [
+    ["Directory", "autolib/icons", "autolib/icons/index.js"],
+    ["Path", "autolib/icons/index.js", "autolib/icons"],
+  ] as const) {
+    itBundled(`barrel/SideEffectsFalseOfNearestPackageJson${first}ImportArrivesFirst`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { Alpha } from '${early}';
+          import { late } from './late.js';
+          console.log(Alpha, late);
+        `,
+        "/late.js": /* js */ `
+          import { Alpha } from '${late}';
+          export const late = Alpha;
+        `,
+        "/node_modules/autolib/package.json": JSON.stringify({ name: "autolib", version: "1.0.0" }),
+        "/node_modules/autolib/icons/package.json": JSON.stringify({ main: "./index.js", sideEffects: false }),
+        "/node_modules/autolib/icons/index.js": /* js */ `
+          export { Alpha } from './Alpha.js';
+          export { Beta } from './Beta.js';
+        `,
+        "/node_modules/autolib/icons/Alpha.js": /* js */ `
+          export const Alpha = "alpha";
+        `,
+        "/node_modules/autolib/icons/Beta.js": /* js */ `
+          export const Beta = <<<SYNTAX_ERROR>>>;
+        `,
+      },
+      outdir: "/out",
+      run: { stdout: "alpha alpha" },
+    });
+  }
 
   // The barrel deferral must produce the same output no matter in which order
   // the parse tasks finish. When a request un-defers a barrel record, every

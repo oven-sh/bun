@@ -432,6 +432,42 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The test runtime loads every file that a barrel re-exports. The scan does
+  // not skip `b.ts` because the package.json above the barrel says
+  // `"sideEffects": false`, with or without a "name", by a relative import or
+  // by a tsconfig `paths` alias.
+  test("change behind an unused re-export of a sideEffects: false barrel selects the importing tests", async () => {
+    const barrel = {
+      "index.ts": `export { a } from "./a";\nexport { b } from "./b";\n`,
+      "a.ts": `export const a = 1;\n`,
+      "b.ts": `export const b = 2;\n`,
+    };
+    const importsA = (specifier: string) =>
+      `import { test, expect } from "bun:test";\nimport { a } from "${specifier}";\ntest("a", () => expect(a).toBe(1));\n`;
+    using dir = tempDir("test-changed-barrel-side-effects", {
+      "package.json": JSON.stringify({ name: "barrels", type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@nameless": ["./nameless/index.ts"] } },
+      }),
+      "named/package.json": JSON.stringify({ name: "named", sideEffects: false }),
+      ...Object.fromEntries(Object.entries(barrel).map(([file, text]) => [`named/${file}`, text])),
+      "nameless/package.json": JSON.stringify({ sideEffects: false }),
+      ...Object.fromEntries(Object.entries(barrel).map(([file, text]) => [`nameless/${file}`, text])),
+      "tests/named.test.ts": importsA("../named/index"),
+      "tests/nameless.test.ts": importsA("../nameless/index"),
+      "tests/alias.test.ts": importsA("@nameless"),
+      "tests/unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "named", "b.ts"), "// touched\n");
+    appendFileSync(join(String(dir), "nameless", "b.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    const testNames = ["alias.test.ts", "named.test.ts", "nameless.test.ts", "unrelated.test.ts"];
+    expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "named.test.ts", "nameless.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a node:vm timeout can interrupt a hot loop", async () => {
     using dir = tempDir("test-changed-vm-timeout", {
       "package.json": JSON.stringify({ name: "vm-timeout", type: "module" }),

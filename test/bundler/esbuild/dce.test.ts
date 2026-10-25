@@ -1,4 +1,7 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { isWindows, tempDir } from "harness";
+import { mkdirSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -775,8 +778,8 @@ describe("bundler", () => {
       run: { stdout },
     });
   }
-  // No package.json with a "name" encloses the file that the proxy names.
-  // Nothing decides its side effects, so the import stays, as in esbuild.
+  // No package.json encloses the file that the proxy names. Nothing decides its
+  // side effects, so the import stays, as in esbuild.
   itBundled("dce/PackageJsonSideEffectsNamelessProxyNoNamedPackage", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -788,38 +791,140 @@ describe("bundler", () => {
     },
     run: { stdout: "register\nentry" },
   });
-  // A proxy package.json with a "name" still decides for files outside its
-  // directory: Bun drops the import and prints only "entry". esbuild reads the
-  // package.json that encloses the file, and keeps it.
-  itBundled("dce/PackageJsonSideEffectsNamedProxyModuleMain", {
-    todo: true,
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import "ui/register"
-        console.log("entry")
-      `,
-      "/Users/user/project/node_modules/ui/package.json": `{ "name": "ui", "version": "1.0.0" }`,
-      "/Users/user/project/node_modules/ui/register/package.json": JSON.stringify({
-        name: "ui-register",
-        sideEffects: false,
-        ...proxyToModuleAndMain,
-      }),
-      "/Users/user/project/node_modules/ui/esm/register.js": `console.log("register")`,
-      "/Users/user/project/node_modules/ui/cjs/register.js": `console.log("main file")`,
-    },
-    run: { stdout: "register\nentry" },
-  });
+  // One file has one "sideEffects" answer: that of the nearest package.json
+  // above the file that has a "name" or a "sideEffects" field. An import of the
+  // directory and an import of the file by its path agree, so the bundle does
+  // not depend on which import reaches the file first.
+  for (const [id, files, directory, path, stdout] of [
+    [
+      "NamelessSubPackage",
+      {
+        "icons/package.json": { name: "icons", version: "1.0.0" },
+        "icons/outline/package.json": { sideEffects: false, main: "./index.js" },
+        "icons/outline/index.js": `console.log("file")`,
+      },
+      "icons/outline",
+      "icons/outline/index.js",
+      "entry",
+    ],
+    [
+      "NamedSubPackage",
+      {
+        "ui/package.json": { name: "ui", version: "1.0.0" },
+        "ui/hooks/package.json": {
+          name: "ui-hooks",
+          sideEffects: false,
+          module: "./esm/index.js",
+          main: "./index.js",
+        },
+        "ui/hooks/esm/index.js": `console.log("file")`,
+        "ui/hooks/index.js": `console.log("main file")`,
+      },
+      "ui/hooks",
+      "ui/hooks/esm/index.js",
+      "entry",
+    ],
+    // The proxy has a "name", and its files are outside its directory.
+    [
+      "NamedProxy",
+      {
+        "ui/package.json": { name: "ui", version: "1.0.0" },
+        "ui/register/package.json": { name: "ui-register", sideEffects: false, ...proxyToModuleAndMain },
+        "ui/esm/register.js": `console.log("file")`,
+        "ui/cjs/register.js": `console.log("main file")`,
+      },
+      "ui/register",
+      "ui/esm/register.js",
+      "file\nentry",
+    ],
+    // The proxy says `true` and the package says `false`. The file is in the
+    // package and outside the proxy, so the package decides.
+    [
+      "NamedProxyPackageSaysFalse",
+      {
+        "ui/package.json": { name: "ui", version: "1.0.0", sideEffects: false },
+        "ui/register/package.json": { name: "ui-register", sideEffects: true, ...proxyToModuleAndMain },
+        "ui/esm/register.js": `console.log("file")`,
+        "ui/cjs/register.js": `console.log("main file")`,
+      },
+      "ui/register",
+      "ui/esm/register.js",
+      "entry",
+    ],
+    // A package.json with no "name" that says `"sideEffects": true` decides for its files.
+    [
+      "SubPackageSideEffectsTrue",
+      {
+        "ui/package.json": { name: "ui", version: "1.0.0", sideEffects: false },
+        "ui/polyfill/package.json": { sideEffects: true, main: "./index.js" },
+        "ui/polyfill/index.js": `console.log("file")`,
+      },
+      "ui/polyfill",
+      "ui/polyfill/index.js",
+      "file\nentry",
+    ],
+    // So does one with a value that is not a boolean or an array.
+    [
+      "SubPackageSideEffectsString",
+      {
+        "ui/package.json": { name: "ui", version: "1.0.0", sideEffects: false },
+        "ui/polyfill/package.json": { sideEffects: "./index.js", main: "./index.js" },
+        "ui/polyfill/index.js": `console.log("file")`,
+      },
+      "ui/polyfill",
+      "ui/polyfill/index.js",
+      "file\nentry",
+    ],
+    // The `{ "type": "module" }` package.json next to the "module" file has no
+    // "name" and no "sideEffects", so it does not hide the `"sideEffects": false`
+    // of the package. esbuild stops at it and keeps the file.
+    [
+      "TypeModuleMarker",
+      {
+        "demo-pkg/package.json": {
+          name: "demo-pkg",
+          main: "dist/cjs/index.js",
+          module: "dist/esm/index.js",
+          sideEffects: false,
+        },
+        "demo-pkg/dist/esm/package.json": { type: "module" },
+        "demo-pkg/dist/esm/index.js": `console.log("file")`,
+        "demo-pkg/dist/cjs/index.js": `console.log("main file")`,
+      },
+      "demo-pkg",
+      "demo-pkg/dist/esm/index.js",
+      "entry",
+    ],
+  ] as const) {
+    for (const [route, specifier] of [
+      ["Directory", directory],
+      ["Path", path],
+    ] as const) {
+      itBundled(`dce/PackageJsonSideEffects${id}${route}Import`, {
+        files: {
+          "/Users/user/project/src/entry.js": /* js */ `
+            import "${specifier}"
+            console.log("entry")
+          `,
+          ...Object.fromEntries(
+            Object.entries(files).map(([file, contents]) => [
+              `/Users/user/project/node_modules/${file}`,
+              typeof contents === "string" ? contents : JSON.stringify(contents),
+            ]),
+          ),
+        },
+        run: { stdout },
+      });
+    }
+  }
   // "icons/outline" holds a package.json with no "name", `"sideEffects": false`
-  // and its own files. An import of the directory reads that package.json. An
-  // import of the file by path does not, and the first import to reach the file
-  // decides for both: with the path import first, Bun keeps the file and prints
-  // "outline". esbuild drops the file in both orders.
-  for (const [id, imports, todo] of [
-    ["DirectoryFirst", ["icons/outline", "icons/outline/esm/index.js"], false],
-    ["PathFirst", ["icons/outline/esm/index.js", "icons/outline"], true],
+  // and its own files, as "@heroicons/react/outline" does. The first import to
+  // reach a file creates the module. Both orders drop the file.
+  for (const [id, imports] of [
+    ["DirectoryFirst", ["icons/outline", "icons/outline/index.js"]],
+    ["PathFirst", ["icons/outline/index.js", "icons/outline"]],
   ] as const) {
     itBundled(`dce/PackageJsonSideEffectsNamelessSubPackage${id}`, {
-      todo,
       files: {
         "/Users/user/project/src/entry.js": /* js */ `
           import "${imports[0]}"
@@ -827,37 +932,93 @@ describe("bundler", () => {
           console.log("entry")
         `,
         "/Users/user/project/node_modules/icons/package.json": `{ "name": "icons", "version": "1.0.0" }`,
-        "/Users/user/project/node_modules/icons/outline/package.json": `{ "sideEffects": false, "module": "./esm/index.js" }`,
-        "/Users/user/project/node_modules/icons/outline/esm/index.js": `console.log("outline")`,
-        "/Users/user/project/node_modules/icons/outline/index.js": `console.log("main file")`,
+        "/Users/user/project/node_modules/icons/outline/package.json": `{ "sideEffects": false, "main": "./index.js" }`,
+        "/Users/user/project/node_modules/icons/outline/index.js": `console.log("outline")`,
       },
       run: { stdout: "entry" },
     });
   }
-  // The `{ "type": "module" }` package.json next to the "module" file has no
-  // "name" and is not the package.json of the import. Bun applies the
-  // "sideEffects" of the package, drops the import and prints only "entry".
-  // esbuild reads only the nearest package.json, and keeps the import.
-  itBundled("dce/PackageJsonSideEffectsFalseTypeModuleMarker", {
-    todo: true,
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import "demo-pkg"
-        console.log("entry")
-      `,
-      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
-        {
-          "name": "demo-pkg",
-          "main": "dist/cjs/index.js",
-          "module": "dist/esm/index.js",
-          "sideEffects": false
-        }
-      `,
-      "/Users/user/project/node_modules/demo-pkg/dist/esm/package.json": `{ "type": "module" }`,
-      "/Users/user/project/node_modules/demo-pkg/dist/esm/index.js": `console.log("module file")`,
-      "/Users/user/project/node_modules/demo-pkg/dist/cjs/index.js": `console.log("main file")`,
-    },
-    run: { stdout: "module file\nentry" },
+  // https://github.com/oven-sh/bun/issues/18008
+  // "vendor.ts" re-exports a CommonJS package with `export *`, below a
+  // package.json that says `"sideEffects": false`. The import reads the name off
+  // the exports object of "vendor.ts", and the linker drops that object:
+  // `ReferenceError: exports_vendor is not defined`. A package.json with no
+  // "name" now decides for "vendor.ts" too, so both cases wait for that fix.
+  for (const [id, name] of [
+    ["Named", "app"],
+    ["Nameless", undefined],
+  ] as const) {
+    itBundled(`dce/PackageJsonSideEffectsFalseExportStarOfCommonJS${id}`, {
+      todo: true,
+      files: {
+        "/Users/user/project/src/entry.ts": /* ts */ `
+          import { CancellationTokenSource } from "./vendor";
+          console.log(new CancellationTokenSource().ok());
+        `,
+        "/Users/user/project/src/vendor.ts": `export * from "dep";`,
+        "/Users/user/project/package.json": JSON.stringify({ name, private: true, type: "module", sideEffects: false }),
+        "/Users/user/project/node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0", "main": "./index.js" }`,
+        "/Users/user/project/node_modules/dep/index.js": /* js */ `
+          "use strict";
+          Object.defineProperty(exports, "__esModule", { value: true });
+          class CancellationTokenSource {
+            ok() {
+              return "ok";
+            }
+          }
+          exports.CancellationTokenSource = CancellationTokenSource;
+        `,
+      },
+      target: "bun",
+      run: { stdout: "ok" },
+    });
+  }
+  // An isolated install links "node_modules/demo-pkg" to a directory in the
+  // store. `import "demo-pkg"` takes the "sideEffects" answer of the "module"
+  // file there too. The other imports guard the "sideEffects" list: its entries
+  // match a file by its name through the link, by its real path and through a
+  // link to the file, and the routes name one module.
+  test("dce/PackageJsonSideEffectsOfPackageBehindStoreLink", async () => {
+    const store = "node_modules/.bun/demo-pkg@1.0.0/node_modules/demo-pkg";
+    const files = ["index-module", "listed", "glob-match", "unlisted"];
+    using dir = tempDir("dce-side-effects-store-link", {
+      "package.json": `{ "name": "app", "version": "1.0.0" }`,
+      [`${store}/package.json`]: JSON.stringify({
+        name: "demo-pkg",
+        version: "1.0.0",
+        main: "dist/index-main.js",
+        module: "dist/index-module.js",
+        sideEffects: ["./dist/index-module.js", "./dist/listed.js", "./dist/glob-*.js"],
+      }),
+      [`${store}/dist/index-main.js`]: `console.log("index-main file");`,
+      ...Object.fromEntries(files.map(file => [`${store}/dist/${file}.js`, `console.log("${file} file");`])),
+      "by-name.js": `import "demo-pkg";\n` + files.map(file => `import "demo-pkg/dist/${file}.js";`).join("\n"),
+      "by-real-path.js": files.map(file => `import "./${store}/dist/${file}.js";`).join("\n"),
+      "by-file-link.js": files.map(file => `import "file-links/dist/${file}.js";`).join("\n"),
+      "both.js": `import "./by-name.js";\nimport "./by-real-path.js";`,
+    });
+    const root = String(dir);
+    symlinkSync(join(root, store), join(root, "node_modules", "demo-pkg"), "junction");
+    // A link to a file needs a privilege on Windows.
+    if (!isWindows) {
+      mkdirSync(join(root, "node_modules", "file-links", "dist"), { recursive: true });
+      for (const file of ["package.json", ...files.map(file => `dist/${file}.js`)]) {
+        symlinkSync(join(root, store, file), join(root, "node_modules", "file-links", file));
+      }
+    }
+
+    // The number of copies of each file in the bundle.
+    const copies = async (entry: string) => {
+      const build = await Bun.build({ entrypoints: [join(root, entry)] });
+      const text = await build.outputs[0].text();
+      return Object.fromEntries(["index-main", ...files].map(file => [file, text.split(`"${file} file"`).length - 1]));
+    };
+    // The list names three files. Nothing imports the "main" file.
+    const kept = { "index-main": 0, "index-module": 1, "listed": 1, "glob-match": 1, "unlisted": 0 };
+    const entries = ["by-name.js", "by-real-path.js", "both.js", ...(isWindows ? [] : ["by-file-link.js"])];
+    const found: Record<string, object> = {};
+    for (const entry of entries) found[entry] = await copies(entry);
+    expect(found).toEqual(Object.fromEntries(entries.map(entry => [entry, kept])));
   });
   itBundled("dce/PackageJsonSideEffectsArrayGlob", {
     files: {
@@ -1093,7 +1254,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsGlobNoMatches", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "./components/comp.js";
@@ -1122,7 +1282,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsNestedDirectoryRemove", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg/a/b/c"

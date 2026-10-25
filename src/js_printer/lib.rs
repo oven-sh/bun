@@ -1816,7 +1816,10 @@ pub(crate) mod __gated_printer {
                                 v.left_level = Level::Call;
                             }
                         }
-                        ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
+                        ExprData::EAwait(_)
+                        | ExprData::EUndefined(_)
+                        | ExprData::ENumber(_)
+                        | ExprData::EImportMetaMain(_) => {
                             v.left_level = Level::Call;
                         }
                         ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
@@ -2700,6 +2703,74 @@ pub(crate) mod __gated_printer {
             self.print(b");})()");
         }
 
+        // A program has a few of these at most. Keep the text shapes out of `print_expr`.
+        #[cold]
+        #[inline(never)]
+        fn print_import_meta_main(&mut self, loc: bun_ast::Loc, inverted: bool, level: Level) {
+            // Node.js doesn't support import.meta.main
+            let is_property = self.options.module_type == bundle_opts::Format::Esm
+                && self.options.target != bun_ast::Target::Node;
+            // "!import.meta.main" is a unary expression and "require.main == module" is a binary one.
+            let wrap = if is_property {
+                inverted && level.gte(Level::Prefix)
+            } else {
+                level.gte(Level::Equals)
+            };
+            if wrap {
+                self.print(b"(");
+            }
+
+            if is_property {
+                // Most of the time, leave it in there
+                if inverted {
+                    self.add_source_mapping(loc);
+                    self.print(b"!");
+                } else {
+                    self.print_space_before_identifier();
+                    self.add_source_mapping(loc);
+                }
+                if let Some(mi) = self.module_info() {
+                    mi.flags.contains_import_meta = true;
+                }
+                self.print(b"import.meta.main");
+            } else {
+                debug_assert!(self.options.module_type != bundle_opts::Format::InternalBakeDev);
+
+                self.print_space_before_identifier();
+                self.add_source_mapping(loc);
+
+                if let Some(require) = self.options.require_ref {
+                    self.print_symbol(require);
+                } else {
+                    self.print(b"require");
+                }
+
+                if inverted {
+                    self.print_whitespacer(ws!(b".main != "));
+                } else {
+                    self.print_whitespacer(ws!(b".main == "));
+                }
+
+                if self.options.target == bun_ast::Target::Node {
+                    // "__require.module"
+                    if let Some(require) = self.options.require_ref {
+                        self.print_symbol(require);
+                        self.print(b".module");
+                    } else {
+                        self.print(b"module");
+                    }
+                } else if self.options.commonjs_module_ref.is_valid() {
+                    self.print_symbol(self.options.commonjs_module_ref);
+                } else {
+                    self.print(b"module");
+                }
+            }
+
+            if wrap {
+                self.print(b")");
+            }
+        }
+
         #[inline]
         pub(crate) fn import_record(&self, import_record_index: usize) -> &'a ImportRecord {
             // detached from `&self` so callers can interleave `&mut self` printing.
@@ -3326,56 +3397,7 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EImportMetaMain(data) => {
-                    if self.options.module_type == bundle_opts::Format::Esm
-                        && self.options.target != bun_ast::Target::Node
-                    {
-                        // Node.js doesn't support import.meta.main
-                        // Most of the time, leave it in there
-                        if data.inverted {
-                            self.add_source_mapping(expr.loc);
-                            self.print(b"!");
-                        } else {
-                            self.print_space_before_identifier();
-                            self.add_source_mapping(expr.loc);
-                        }
-                        if let Some(mi) = self.module_info() {
-                            mi.flags.contains_import_meta = true;
-                        }
-                        self.print(b"import.meta.main");
-                    } else {
-                        debug_assert!(
-                            self.options.module_type != bundle_opts::Format::InternalBakeDev
-                        );
-
-                        self.print_space_before_identifier();
-                        self.add_source_mapping(expr.loc);
-
-                        if let Some(require) = self.options.require_ref {
-                            self.print_symbol(require);
-                        } else {
-                            self.print(b"require");
-                        }
-
-                        if data.inverted {
-                            self.print_whitespacer(ws!(b".main != "));
-                        } else {
-                            self.print_whitespacer(ws!(b".main == "));
-                        }
-
-                        if self.options.target == bun_ast::Target::Node {
-                            // "__require.module"
-                            if let Some(require) = self.options.require_ref {
-                                self.print_symbol(require);
-                                self.print(b".module");
-                            } else {
-                                self.print(b"module");
-                            }
-                        } else if self.options.commonjs_module_ref.is_valid() {
-                            self.print_symbol(self.options.commonjs_module_ref);
-                        } else {
-                            self.print(b"module");
-                        }
-                    }
+                    self.print_import_meta_main(expr.loc, data.inverted, level);
                 }
                 ExprData::ESpecial(special) => match special {
                     E::Special::ModuleExports => {

@@ -10,6 +10,7 @@ import {
   isMacOS,
   isRoot,
   isWindows,
+  nodeExeAtLeast,
   tempDir,
   tempDirWithFiles,
 } from "harness";
@@ -1726,13 +1727,15 @@ test.skipIf(!isWindows)(
   30000,
 );
 
-// FSWatcher::init joins the user-supplied watch path with the process cwd into a
-// fixed pooled path buffer. The raw-path length validator only bounds the path
-// itself, so a relative path just under the platform path limit used to overflow
-// the buffer during the join and abort the whole process (panic=abort) instead of
-// surfacing an error to JavaScript. Must run in a subprocess: on an unfixed build
-// the abort would take down the test runner itself.
-test("fs.watch reports an error for relative paths that no longer fit in the path buffer once joined with the cwd", async () => {
+// Where Node resolves the watch path itself (Windows, and recursive watches on
+// Linux), FSWatcher::init joins it with the process cwd into a fixed pooled path
+// buffer. The raw-path length validator only bounds the path itself, so a
+// relative path just under the platform path limit used to overflow the buffer
+// during the join and abort the whole process (panic=abort) instead of surfacing
+// an error to JavaScript. Everywhere else the OS gets the path as given and finds
+// no "a" directory. Must run in a subprocess: on an unfixed build the abort would
+// take down the test runner itself.
+test("fs.watch reports an error for a relative path just under the platform path limit", async () => {
   using dir = tempDir("fswatch-long-relative", {
     "watch-me.txt": "hello",
   });
@@ -1748,13 +1751,21 @@ test("fs.watch reports an error for relative paths that no longer fit in the pat
     const segment = "a/";
     const longRelativePath = segment.repeat(Math.floor((maxPathBytes - 2) / segment.length));
 
-    try {
-      const watcher = fs.watch(longRelativePath, () => {});
-      watcher.close();
-      throw new Error("expected watching the overlong relative path to fail");
-    } catch (err) {
-      if (err.code !== "ENAMETOOLONG") throw err;
-      if (err.syscall !== "watch") throw new Error("unexpected syscall: " + err.syscall);
+    const joined = "ENAMETOOLONG", asGiven = "ENOENT";
+    const expected = {
+      win32: { plain: joined, recursive: joined },
+      darwin: { plain: asGiven, recursive: asGiven },
+    }[process.platform] ?? { plain: asGiven, recursive: joined };
+
+    for (const [name, options] of [["plain", {}], ["recursive", { recursive: true }]]) {
+      try {
+        const watcher = fs.watch(longRelativePath, options, () => {});
+        watcher.close();
+        throw new Error("expected watching the overlong relative path to fail");
+      } catch (err) {
+        if (err.code !== expected[name]) throw err;
+        if (err.syscall !== "watch") throw new Error("unexpected syscall: " + err.syscall);
+      }
     }
 
     // A normal relative path must still work after the rejected one.
@@ -1778,6 +1789,418 @@ test("fs.watch reports an error for relative paths that no longer fit in the pat
   // Unfixed builds overflow the pooled path buffer during the cwd join and abort
   // the subprocess instead of throwing a catchable error.
   expect(exitCode).toBe(0);
+});
+
+// fs.watch gives the OS the path the caller passed where Node does, and resolves it as Node does
+// (path.resolve) where Node resolves it: a recursive watch on Linux, and fs.watchFile. A path that
+// names nothing is then an error and not a watcher on the cwd, and a backslash is part of a name.
+// Each case runs fixtures/watch-start-fixture.js in a child with its own cwd: a watcher that is
+// live on the wrong directory reports the file the fixture writes there. The same rows run under
+// Node, and a row whose result is Bun's own says so.
+describe("a watched path means what it means to Node", () => {
+  type Row = {
+    api: "fs.watch" | "fs.promises.watch" | "fs.watchFile";
+    path: string | { buffer: string } | { url: string };
+    options?: object;
+    poke?: string[];
+    renameCwd?: string;
+  };
+  const fixture = path.join(import.meta.dir, "fixtures", "watch-start-fixture.js");
+  const runtimes: [name: "bun" | "node", exe: string | null][] = [
+    ["bun", bunExe()],
+    ["node", nodeExeAtLeast("26.3.0")],
+  ];
+
+  async function startOutcomes(exe: string, cwd: string, rows: Row[]) {
+    await using proc = Bun.spawn({
+      cmd: [exe, fixture, JSON.stringify(rows)],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      outcomes: stdout
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map(line => JSON.parse(line)),
+      stderr,
+      exitCode,
+    };
+  }
+
+  // Node's UVException leaves `path` and the quoted path out when the path is empty.
+  const emptyPath = {
+    name: "Error",
+    code: "ENOENT",
+    errno: "ENOENT",
+    syscall: "watch",
+    filename: ["string", ""],
+    message: "ENOENT: no such file or directory, watch",
+  };
+  const failed = (code: string, description: string, watched: string, filenameType = "string") => ({
+    name: "Error",
+    code,
+    errno: code,
+    syscall: "watch",
+    filename: [filenameType, watched],
+    path: ["string", watched],
+    message: `${code}: ${description}, watch '${watched}'`,
+  });
+  const noEntry = (watched: string, filenameType?: string) =>
+    failed("ENOENT", "no such file or directory", watched, filenameType);
+
+  for (const [runtime, exe] of runtimes) {
+    test.concurrent.skipIf(!exe)(`an empty path is ENOENT through every route (${runtime})`, async () => {
+      using dir = tempDir("fswatch-empty-path", {});
+      expect(
+        await startOutcomes(exe!, String(dir), [
+          { api: "fs.watch", path: "" },
+          { api: "fs.watch", path: "", options: { persistent: false } },
+          { api: "fs.watch", path: "", options: { encoding: "buffer" } },
+          { api: "fs.promises.watch", path: "" },
+          // Bun's native binding drops a leading "file://", which leaves these empty too.
+          { api: "fs.watch", path: { buffer: "file://" } },
+          { api: "fs.promises.watch", path: "file://" },
+          { api: "fs.promises.watch", path: { buffer: "file://" } },
+          { api: "fs.promises.watch", path: { buffer: "" } },
+          // A file: URL has to name a drive on Windows.
+          ...(isWindows ? [] : [{ api: "fs.watch", path: { url: "file:///%ff" } } as Row]),
+        ]),
+      ).toEqual({
+        outcomes: [
+          emptyPath,
+          emptyPath,
+          emptyPath,
+          emptyPath,
+          noEntry("file://", "Buffer"),
+          noEntry("file://"),
+          // Bun's own: fs.promises.watch makes a string of a Buffer first, so `filename` is one.
+          ...(runtime === "node"
+            ? [
+                noEntry("file://", "Buffer"),
+                { ...emptyPath, filename: ["Buffer", ""], message: emptyPath.message + " ''" },
+              ]
+            : [noEntry("file://"), emptyPath]),
+          // Bun's own: Bun.fileURLToPath() gives "" for a path that does not decode.
+          ...(isWindows
+            ? []
+            : [
+                runtime === "node"
+                  ? { name: "URIError", filename: ["undefined", "undefined"], message: "URI malformed" }
+                  : emptyPath,
+              ]),
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.skipIf(!exe)(
+      `an empty path with throwIfNoEntry: false is an unstarted watcher (${runtime})`,
+      async () => {
+        using dir = tempDir("fswatch-empty-unstarted", {});
+        // A watcher that is live on the cwd sees the writes and holds the event loop open.
+        const source = /* js */ `
+        const fs = require("node:fs");
+        fs.watch("", { throwIfNoEntry: false }, () => {
+          console.log("event");
+          process.exit(1);
+        });
+        const poke = () => fs.writeFileSync("poke.txt", "x");
+        setInterval(poke, 20).unref();
+        poke();
+      `;
+        await using proc = Bun.spawn({
+          cmd: [exe!, "-e", source],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+          stdout: "",
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      },
+    );
+
+    test.concurrent.skipIf(!exe)(
+      `an empty path with recursive is the cwd only where Node resolves it (${runtime})`,
+      async () => {
+        using dir = tempDir("fswatch-empty-recursive", {});
+        // Node's recursive watcher on Linux calls path.resolve(). macOS and Windows hand "" to libuv.
+        const outcome = isMacOS || isWindows ? emptyPath : { event: "poke.txt" };
+        expect(
+          await startOutcomes(exe!, String(dir), [
+            { api: "fs.watch", path: "", options: { recursive: true } },
+            { api: "fs.promises.watch", path: "", options: { recursive: true } },
+          ]),
+        ).toEqual({ outcomes: [outcome, outcome], stderr: "", exitCode: 0 });
+      },
+    );
+
+    // On Windows Node resolves the path with path.win32.resolve(), and a backslash is a separator.
+    test.concurrent.skipIf(!exe || isWindows)(
+      `'..', '.' and a backslash mean what the OS says (${runtime})`,
+      async () => {
+        using dir = tempDir("fswatch-as-given", {
+          "file.txt": "x",
+          "real": { "sub": {} },
+          "a": { "b": {} },
+          "a\\b": {},
+          "f": { "g": "decoy" },
+          "f\\g": "literal",
+        });
+        fs.symlinkSync(path.join("real", "sub"), path.join(String(dir), "link"));
+        const nextToTarget = ["in-cwd.txt", "real/next-to-target.txt"];
+        const inLiteral = ["a/b/wrong.txt", "a\\b/right.txt"];
+        const rows = (api: "fs.watch" | "fs.promises.watch"): Row[] => [
+          { api, path: "missing/.." },
+          { api, path: "file.txt/.." },
+          { api, path: "file.txt/.", poke: ["file.txt"] },
+          { api, path: "link/..", poke: nextToTarget },
+          { api, path: "a\\b", poke: inLiteral },
+          // An absolute path is not normalized either.
+          { api, path: `${dir}/link/..`, poke: nextToTarget },
+          { api, path: `${dir}/a\\b`, poke: inLiteral },
+          { api, path: "a\\b", options: { recursive: true }, poke: inLiteral },
+          { api, path: `${dir}/a\\b`, options: { recursive: true }, poke: inLiteral },
+          { api, path: "file.txt/", options: { recursive: true }, poke: ["file.txt"] },
+        ];
+        const outcomes = [
+          noEntry("missing/.."),
+          failed("ENOTDIR", "not a directory", "file.txt/.."),
+          failed("ENOTDIR", "not a directory", "file.txt/."),
+          { event: "next-to-target.txt" },
+          { event: "right.txt" },
+          { event: "next-to-target.txt" },
+          { event: "right.txt" },
+          { event: "right.txt" },
+          { event: "right.txt" },
+          // path.resolve() drops the slash. macOS watches recursively in the OS, which does not.
+          isMacOS ? failed("ENOTDIR", "not a directory", "file.txt/") : { event: "file.txt" },
+        ];
+        expect(
+          await startOutcomes(exe!, String(dir), [
+            ...rows("fs.watch"),
+            ...rows("fs.promises.watch"),
+            { api: "fs.watchFile", path: "f\\g", poke: ["f/g", "f\\g"] },
+          ]),
+        ).toEqual({ outcomes: [...outcomes, ...outcomes, { event: "f\\g" }], stderr: "", exitCode: 0 });
+      },
+    );
+
+    test.concurrent.skipIf(!exe || isWindows)(`a cwd with a backslash in its name (${runtime})`, async () => {
+      using dir = tempDir("fswatch-backslash-cwd", { "w\\d": { "sub": {}, "f.txt": "x" } });
+      const cwd = path.join(String(dir), "w\\d");
+      const event = { event: "poke.txt" };
+      expect(
+        await startOutcomes(exe!, cwd, [
+          { api: "fs.watch", path: "." },
+          { api: "fs.watch", path: "sub", poke: ["sub/poke.txt"] },
+          { api: "fs.watch", path: ".", options: { recursive: true } },
+          { api: "fs.promises.watch", path: "." },
+          { api: "fs.promises.watch", path: ".", options: { recursive: true } },
+          { api: "fs.watch", path: cwd },
+          { api: "fs.watch", path: cwd, options: { recursive: true } },
+          { api: "fs.watchFile", path: "f.txt", poke: ["f.txt"] },
+        ]),
+      ).toEqual({
+        outcomes: [event, event, event, event, event, event, event, { event: "f.txt" }],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The OS resolves a relative path against the directory the process is in, whatever its name is now.
+    test.concurrent.skipIf(!exe || isWindows)(`a relative path after the cwd was renamed (${runtime})`, async () => {
+      using dir = tempDir("fswatch-renamed-cwd", { "cwd": {} });
+      expect(
+        await startOutcomes(exe!, path.join(String(dir), "cwd"), [
+          { api: "fs.watch", path: ".", renameCwd: "-renamed" },
+          { api: "fs.promises.watch", path: "." },
+        ]),
+      ).toEqual({ outcomes: [{ event: "poke.txt" }, { event: "poke.txt" }], stderr: "", exitCode: 0 });
+    });
+  }
+
+  // Only a failed start carries the path. An argument error wins over the empty path and has none.
+  test("an argument error from fs.promises.watch has no filename or path", async () => {
+    const error = await (async () => {
+      for await (const _ of fs.promises.watch("", { persistent: 1 } as any)) {
+      }
+    })().catch(e => e);
+    expect({
+      code: error.code,
+      filename: Object.hasOwn(error, "filename"),
+      path: Object.hasOwn(error, "path"),
+    }).toEqual({ code: "ERR_INVALID_ARG_TYPE", filename: false, path: false });
+  });
+
+  test("a failed start does not read the caller's path object", () => {
+    class Loud extends Uint8Array {
+      get length(): number {
+        throw new RangeError("length was read");
+      }
+    }
+    const missing = new Loud(Buffer.from(path.join(testDir, "missing-subdir")));
+    let error: any;
+    try {
+      fs.watch(missing as any).close();
+    } catch (e) {
+      error = e;
+    }
+    expect({ code: error?.code, filename: error?.filename === missing, path: typeof error?.path }).toEqual({
+      code: "ENOENT",
+      filename: true,
+      path: "string",
+    });
+  });
+
+  // "." in a removed directory is still a directory to the OS, and Linux reads its path back as
+  // "<cwd> (deleted)", which can be the name of another one. Node watches the removed directory.
+  // Bun's own: ENOENT, as before and as fs.realpath.native gives.
+  test.concurrent.skipIf(!isLinux)(
+    "'.' in a removed cwd does not watch a directory named '<cwd> (deleted)'",
+    async () => {
+      using dir = tempDir("fswatch-removed-cwd", {});
+      const source = /* js */ `
+      const fs = require("node:fs");
+      const root = process.cwd();
+      fs.mkdirSync("gone");
+      process.chdir("gone");
+      fs.rmdirSync(root + "/gone");
+      fs.mkdirSync(root + "/gone (deleted)");
+      try {
+        const watcher = fs.watch(".", (eventType, filename) => {
+          console.log("event " + filename);
+          process.exit(1);
+        });
+        watcher.on("error", error => {
+          console.log("error event " + error.code);
+          process.exit(1);
+        });
+        const poke = () => fs.writeFileSync(root + "/gone (deleted)/poke.txt", "x");
+        setInterval(poke, 20);
+        poke();
+      } catch (error) {
+        console.log(error.code + " " + error.syscall);
+      }
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", source],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ENOENT watch\n", stderr: "", exitCode: 0 });
+    },
+  );
+
+  // The backend has no realpath for a directory whose realpath is PATH_MAX or longer. It then keeps
+  // the caller's path, made absolute with the cwd the OS resolved it against.
+  test.concurrent.skipIf(!isLinux)("a path to a directory whose realpath is over PATH_MAX", async () => {
+    using dir = tempDir("fswatch-long-realpath", {});
+    const source = /* js */ `
+      const fs = require("node:fs");
+      const root = process.cwd();
+      const segment = Buffer.alloc(200, "d").toString();
+      // A legal symlink target; two of them in a row pass PATH_MAX.
+      const hop = Array(11).fill(segment).join("/");
+      const mkdirHop = base => {
+        for (let depth = 1; depth <= 11; depth++) fs.mkdirSync(base + Array(depth).fill(segment).join("/"));
+      };
+      // <root>/<name>/first -> <hop>, and in that directory second -> <hop>.
+      for (const name of ["a", "b"]) {
+        fs.mkdirSync(name);
+        mkdirHop(name + "/");
+        fs.symlinkSync(hop, name + "/first");
+        mkdirHop(name + "/first/");
+        fs.symlinkSync(hop, name + "/first/second");
+      }
+
+      async function firstFiles(targets, write) {
+        const seen = targets.map(() => new Set());
+        const { promise, resolve } = Promise.withResolvers();
+        const watchers = targets.map((target, i) =>
+          fs.watch(target(), (eventType, filename) => {
+            seen[i].add(filename);
+            if (seen.every(files => files.size > 0)) resolve();
+          }),
+        );
+        write();
+        await promise;
+        for (const watcher of watchers) watcher.close();
+        return seen.map(files => [...files]);
+      }
+      // Padded with "/." to an exact length: with "<cwd>/" in front, 4095 bytes fit and 4096 do not.
+      const padded = length => {
+        const pad = length - root.length - 1 - "a/first/second".length;
+        return "a/first" + (pad % 2 ? "/" : "") + "/second" + Buffer.alloc(pad - (pad % 2), "/.").toString();
+      };
+      const start = target => {
+        try {
+          fs.watch(target, () => {}).close();
+          return "watching";
+        } catch (e) {
+          return e.code + " " + e.syscall;
+        }
+      };
+
+      (async () => {
+        // Before any process.chdir() the cwd Bun keeps has no "/" at its end.
+        const [relative, absolute, other] = await firstFiles(
+          [() => "a/first/second", () => root + "/a/first/second", () => "b/first/second"],
+          () => {
+            fs.writeFileSync("a/first/second/in-a.txt", "x");
+            fs.writeFileSync("b/first/second/in-b.txt", "x");
+          },
+        );
+        const fits = start(padded(4095)), tooLong = start(padded(4096));
+        // After one it has. The same relative name from two cwds is two directories, so two watches.
+        const [fromA, fromB] = await firstFiles(
+          ["a", "b"].map(name => () => (process.chdir(root + "/" + name), "first/second")),
+          () => {
+            fs.writeFileSync(root + "/a/first/second/from-a.txt", "x");
+            fs.writeFileSync(root + "/b/first/second/from-b.txt", "x");
+          },
+        );
+        console.log(JSON.stringify({
+          realpathLength: (root + "/a/" + hop + "/" + hop).length,
+          relative, absolute, other, fits, tooLong, fromA, fromB,
+        }));
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { realpathLength, ...result } = JSON.parse(stdout);
+    expect(realpathLength).toBeGreaterThan(4096);
+    expect(result).toEqual({
+      relative: ["in-a.txt"],
+      absolute: ["in-a.txt"],
+      other: ["in-b.txt"],
+      fits: "watching",
+      // Bun's own: Node has no such bound.
+      tooLong: "ENAMETOOLONG watch",
+      fromA: ["from-a.txt"],
+      fromB: ["from-b.txt"],
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // The native FSWatcher holds a weak reference to its JS wrapper (rooted by

@@ -7693,20 +7693,16 @@ impl NodeFS {
             let path = match variant {
                 RealpathVariant::Native => args.path.slice_z(inbuf),
                 RealpathVariant::Emulated => {
-                    let parts = [args.path.slice()];
-                    let len = bun_node_path::resolve_buf_len(false, &parts);
-                    let mut bufs = vec![0u8; 2 * len];
-                    let (buf, buf2) = bufs.split_at_mut(len);
-                    let resolved = bun_node_path::resolve_posix_t(&parts, buf, buf2)?;
-                    if resolved.len() >= inbuf.len() {
+                    let Some(resolved) = bun_node_path::resolve_posix_z(args.path.slice(), inbuf)?
+                    else {
                         return Err(sys::Error {
                             errno: E::ENAMETOOLONG as _,
                             syscall: sys::Tag::realpath,
                             path: args.path.slice().into(),
                             ..Default::default()
                         });
-                    }
-                    paths::resolve_path::z(resolved, inbuf)
+                    };
+                    resolved
                 }
             };
 
@@ -7726,10 +7722,8 @@ impl NodeFS {
                 Ok(buf_) => buf_,
             };
 
-            // Linux appends " (deleted)" to the path of a file that has been unlinked. A name can
-            // end like that too.
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            if buf.ends_with(b" (deleted)") && Syscall::fstat(fd)?.st_nlink == 0 {
+            if Syscall::fd_path_is_unlinked(fd, buf)? {
                 return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
             }
 

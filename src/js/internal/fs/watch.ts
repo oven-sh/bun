@@ -160,7 +160,7 @@ class FSWatcher extends EventEmitter {
     try {
       this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
     } catch (e: any) {
-      e.path = path;
+      // The native error carries `path` when the path is not empty, as node's UVException does.
       e.filename = path;
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L317
       // Only ENOENT is suppressed, and the watcher is left unstarted rather than

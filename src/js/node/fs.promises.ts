@@ -97,7 +97,7 @@ function watch(
     };
   }
 
-  const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
+  function onEvent(eventType: string, filename: string | Buffer | undefined) {
     if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
       return;
     }
@@ -107,7 +107,15 @@ function watch(
       nextEventResolve = null;
       resolve();
     }
-  });
+  }
+  let watcher: ReturnType<typeof fs.watch>;
+  try {
+    watcher = fs.watch(filename, options || {}, onEvent);
+  } catch (e: any) {
+    // Node sets `filename` on a failed start. An argument error is not one.
+    if (e?.syscall === "watch") e.filename = filename;
+    throw e;
+  }
 
   function onAbort() {
     watcher.close();

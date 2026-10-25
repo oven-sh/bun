@@ -2673,6 +2673,22 @@ pub fn resolve_buf_len<T: PathCharCwd>(is_windows: bool, paths: &[&[T]]) -> usiz
     buf_len + 2
 }
 
+/// `path.posix.resolve(path)`, NUL-terminated in `out`. `None` when the result does not fit.
+pub fn resolve_posix_z<'a>(
+    path: &[u8],
+    out: &'a mut bun_paths::PathBuffer,
+) -> bun_sys::Result<Option<&'a bun_core::ZStr>> {
+    let parts = [path];
+    let len = resolve_buf_len(false, &parts);
+    let mut bufs = vec![0u8; 2 * len];
+    let (buf, buf2) = bufs.split_at_mut(len);
+    let resolved = resolve_posix_t(&parts, buf, buf2)?;
+    if resolved.len() >= out.len() {
+        return Ok(None);
+    }
+    Ok(Some(bun_paths::resolve_path::z(resolved, out)))
+}
+
 /// How long each of the three buffers of [`relative_posix_t`] and [`relative_windows_t`] has to be.
 pub fn relative_buf_len<T: PathCharCwd>(from: &[T], to: &[T]) -> usize {
     // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend, and for

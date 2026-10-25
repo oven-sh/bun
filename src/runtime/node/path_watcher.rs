@@ -33,7 +33,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_collections::HashMap;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::ZBox;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_core::strings;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_core::{Output, zstr};
@@ -424,6 +423,7 @@ pub(crate) fn watch(
 
     // Resolve to a canonical path so `fs.watch("./x")` and `fs.watch("/abs/x")` dedup;
     // FSEvents reports events by realpath so macOS needs this for prefix matching too.
+    // `path` can be relative: the kernel resolves it against the cwd, as it does for node.
     //
     // Open with O_PATH|O_DIRECTORY first and retry without O_DIRECTORY on ENOTDIR —
     // that tells us file-vs-dir without a separate stat, follows symlinks, and the
@@ -449,8 +449,28 @@ pub(crate) fn watch(
     };
     let _close_probe = sys::CloseOnDrop::new(probe_fd);
     let resolved: &ZStr = match sys::get_fd_path(probe_fd, &mut resolve_buf) {
-        Err(_) => path, // fall back to the caller's path; best effort
+        // No realpath: it is PATH_MAX or longer. Keep the caller's path, and keep
+        // `PathWatcher.path` absolute without normalizing ("link/.." is not the cwd).
+        Err(_) if path::is_absolute(path.as_bytes()) => path,
+        Err(_) => {
+            let cwd = bun_core::top_level_dir();
+            let sep: &[u8] = if cwd.ends_with(b"/") { b"" } else { b"/" };
+            let Ok(joined) = strings::concat_buf_t::<u8>(
+                &mut resolve_buf[..],
+                &[cwd, sep, path.as_bytes(), b"\0"],
+            ) else {
+                return Err(sys::Error::from_code(E::ENAMETOOLONG, Tag::watch));
+            };
+            let len = joined.len() - 1;
+            // SAFETY: resolve_buf[len] == 0 (the last part); buf lives for the rest of this fn.
+            ZStr::from_buf(&resolve_buf[..], len)
+        }
         Ok(r) => {
+            // The text names another entry, or none: "." in a removed cwd reads "<cwd> (deleted)".
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if sys::fd_path_is_unlinked(probe_fd, r)? {
+                return Err(sys::Error::from_code(E::ENOENT, Tag::watch));
+            }
             let len = r.len();
             resolve_buf[len] = 0;
             // SAFETY: resolve_buf[len] == 0 written above; buf lives for the rest of this fn.

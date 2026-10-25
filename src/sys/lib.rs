@@ -7715,6 +7715,13 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
 }
 
+/// Whether `path`, as [`get_fd_path`] read it for `fd`, is the path of an unlinked file: Linux
+/// appends " (deleted)" to it. A name can end like that too, so the link count decides.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn fd_path_is_unlinked(fd: Fd, path: &[u8]) -> Maybe<bool> {
+    Ok(path.ends_with(b" (deleted)") && fstat(fd)?.st_nlink == 0)
+}
+
 /// fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
 /// `\\?\` prefix and `\\?\UNC\` are stripped. Higher-tier callers
 /// (`bun.getFdPathW`) re-export this. A libc/kernel32-only sibling lives at

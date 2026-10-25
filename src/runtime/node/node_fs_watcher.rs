@@ -1084,25 +1084,44 @@ impl FSWatcher {
             }
             s
         };
-        // SAFETY: `FileSystem::instance()` returns the process-global singleton
-        // initialized at startup; never null once init has run.
-        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
-        let joined_buf_len = joined_buf.len();
-        let Some(joined) = Path::join_abs_string_buf_checked::<platform::Auto>(
-            cwd,
-            &mut joined_buf[..joined_buf_len - 1],
-            &[slice],
-        ) else {
-            return Err(bun_sys::Error {
-                errno: SystemErrno::ENAMETOOLONG as _,
-                syscall: bun_sys::Tag::watch,
-                path: args.path.slice().into(),
-                ..Default::default()
-            });
+        let failed = |errno: SystemErrno| bun_sys::Error {
+            errno: errno as _,
+            syscall: bun_sys::Tag::watch,
+            path: args.path.slice().into(),
+            ..Default::default()
         };
-        let joined_len = joined.len();
-        joined_buf[joined_len] = 0;
-        let file_path: &bun_core::ZStr = bun_core::ZStr::from_buf(&joined_buf[..], joined_len);
+        // Node gives libuv the caller's path, so "" is the kernel's ENOENT. It resolves the path
+        // first on Windows (path.toNamespacedPath, which leaves "" alone) and in its recursive
+        // watcher on Linux and FreeBSD (path.resolve).
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L312
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L770-L773
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/recursive_watch.js#L218
+        let file_path: &bun_core::ZStr = if cfg!(windows) {
+            if slice.is_empty() {
+                return Err(failed(SystemErrno::ENOENT));
+            }
+            // SAFETY: `FileSystem::instance()` returns the process-global singleton
+            // initialized at startup; never null once init has run.
+            let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
+            let joined_buf_len = joined_buf.len();
+            let Some(joined) = Path::join_abs_string_buf_checked::<platform::Auto>(
+                cwd,
+                &mut joined_buf[..joined_buf_len - 1],
+                &[slice],
+            ) else {
+                return Err(failed(SystemErrno::ENAMETOOLONG));
+            };
+            let joined_len = joined.len();
+            joined_buf[joined_len] = 0;
+            bun_core::ZStr::from_buf(&joined_buf[..], joined_len)
+        } else if args.recursive && !cfg!(target_os = "macos") {
+            let Some(resolved) = bun_node_path::resolve_posix_z(slice, &mut joined_buf)? else {
+                return Err(failed(SystemErrno::ENAMETOOLONG));
+            };
+            resolved
+        } else {
+            Path::z(slice, &mut joined_buf)
+        };
 
         let vm = args.global_this.bun_vm_ptr();
         // `bun_vm()` is the audited safe `&'static VirtualMachine` accessor —

@@ -789,12 +789,17 @@ impl StatWatcher {
             slice = &slice[b"file://".len()..];
         }
 
-        // SAFETY: `FileSystem::instance()` is initialized at process start
-        // (`FileSystem::init` runs before any JS module loads).
-        let top_level_dir = fs::FileSystem::get().top_level_dir();
-        let parts: [&[u8]; 1] = [slice];
-        let file_path =
-            Path::join_abs_string_buf::<platform::Auto>(top_level_dir, &mut buf[..], &parts);
+        // internal/fs/watchfile.ts has resolved the path as node does (path.resolve). On POSIX the
+        // looser join would take it apart again at each `\`.
+        let file_path: &[u8] = if cfg!(windows) {
+            // SAFETY: `FileSystem::instance()` is initialized at process start
+            // (`FileSystem::init` runs before any JS module loads).
+            let top_level_dir = fs::FileSystem::get().top_level_dir();
+            let parts: [&[u8]; 1] = [slice];
+            Path::join_abs_string_buf::<platform::Auto>(top_level_dir, &mut buf[..], &parts)
+        } else {
+            slice
+        };
 
         // allocSentinel + memcpy → owned NUL-terminated copy (ZBox)
         let alloc_file_path = ZBox::from_bytes(file_path);

@@ -1852,7 +1852,9 @@ impl EString {
         let mut str_ = self.next;
         while let Some(part) = str_ {
             let mut more: &[u8] = &part.get().data;
-            if let Some(pair) = strings::wtf8_pair_across(&bytes, more) {
+            if more.first() == Some(&0xED)
+                && let Some(pair) = strings::wtf8_pair_across(&bytes, more)
+            {
                 bytes.truncate(bytes.len() - 3);
                 bytes.extend_from_slice(&pair);
                 more = &more[3..];

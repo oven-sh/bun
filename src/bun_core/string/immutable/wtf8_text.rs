@@ -150,16 +150,21 @@ impl Iterator for Wtf8CheckedUnits<'_> {
 
 /// `text.length`, or `None` if a byte of `text` is part of no sequence. [`wtf8_len_utf16`] counts
 /// such a byte as one unit.
+#[inline]
 pub fn wtf8_checked_len_utf16(text: &[u8]) -> Option<u32> {
     match first_non_ascii(text) {
         None => Some(text.len() as u32),
-        Some(_) if is_valid_utf8(text) => Some(element_length_utf8_into_utf16(text) as u32),
-        Some(ascii) => {
-            let mut units = wtf8_checked_units(&text[ascii as usize..]);
-            let rest = units.by_ref().count() as u32;
-            (!units.ill_formed()).then_some(ascii + rest)
-        }
+        Some(ascii) => checked_len_utf16_after_ascii(text, ascii),
     }
+}
+
+fn checked_len_utf16_after_ascii(text: &[u8], ascii: u32) -> Option<u32> {
+    if is_valid_utf8(text) {
+        return Some(element_length_utf8_into_utf16(text) as u32);
+    }
+    let mut units = wtf8_checked_units(&text[ascii as usize..]);
+    let rest = units.by_ref().count() as u32;
+    (!units.ill_formed()).then_some(ascii + rest)
 }
 
 /// What [`wtf8_code_unit_at`] finds at an index.
@@ -174,23 +179,24 @@ pub enum Wtf8CodeUnitAt {
 }
 
 /// `text.charCodeAt(index)`. An index in text that is ASCII up to it reads no byte after it.
+#[inline]
 pub fn wtf8_code_unit_at(text: &[u8], index: u32) -> Wtf8CodeUnitAt {
     let at = index as usize;
-    let ascii = match text.get(..=at) {
-        Some(up_to) => match first_non_ascii(up_to) {
-            None => {
-                return Wtf8CodeUnitAt::Unit {
-                    at,
-                    unit: u16::from(text[at]),
-                };
-            }
-            Some(ascii) => ascii,
+    match text.get(..=at) {
+        Some(up_to) if first_non_ascii(up_to).is_none() => Wtf8CodeUnitAt::Unit {
+            at,
+            unit: u16::from(text[at]),
         },
-        None => match first_non_ascii(text) {
-            None => return Wtf8CodeUnitAt::Past(text.len() as u32),
-            Some(ascii) => ascii,
-        },
+        _ => code_unit_at_after_ascii(text, index),
+    }
+}
+
+/// For an index that is not in the ASCII that `text` starts with.
+fn code_unit_at_after_ascii(text: &[u8], index: u32) -> Wtf8CodeUnitAt {
+    let Some(ascii) = first_non_ascii(text) else {
+        return Wtf8CodeUnitAt::Past(text.len() as u32);
     };
+    debug_assert!(index >= ascii);
     let mut units = wtf8_checked_units(&text[ascii as usize..]);
     let mut seen = ascii;
     for (offset, unit) in units.by_ref() {

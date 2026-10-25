@@ -156,62 +156,44 @@ describe("bundler", () => {
     },
   });
 
-  // The `"sideEffects": false` of the nearest package.json makes the file a
-  // barrel, for an import of the directory and for an import of the file by its
-  // path. That package.json has no "name". Beta.js has a syntax error: the build
-  // succeeds only when the unused re-export is skipped.
+  // "autolib/icons" is a barrel below a package.json that has no "name" and
+  // says `"sideEffects": false`.
+  const autolibIconsFiles = (beta: string) => ({
+    "/node_modules/autolib/package.json": JSON.stringify({ name: "autolib", version: "1.0.0" }),
+    "/node_modules/autolib/icons/package.json": JSON.stringify({ main: "./index.js", sideEffects: false }),
+    "/node_modules/autolib/icons/index.js": /* js */ `
+      export { Alpha } from './Alpha.js';
+      export { Beta } from './Beta.js';
+    `,
+    "/node_modules/autolib/icons/Alpha.js": /* js */ `
+      export const Alpha = "alpha";
+    `,
+    "/node_modules/autolib/icons/Beta.js": beta,
+  });
+  const betaWithSyntaxError = `export const Beta = <<<SYNTAX_ERROR>>>;`;
+
   for (const [route, specifier] of [
     ["Directory", "autolib/icons"],
     ["Path", "autolib/icons/index.js"],
   ] as const) {
+    const entry = /* js */ `
+      import { Alpha } from '${specifier}';
+      console.log(Alpha);
+    `;
+    // The `"sideEffects": false` of the nearest package.json makes the file a
+    // barrel, for an import of the directory and for an import of the file by
+    // its path. The build succeeds only when the unused re-export is skipped.
     itBundled(`barrel/SideEffectsFalseOfNearestPackageJson${route}Import`, {
-      files: {
-        "/entry.js": /* js */ `
-          import { Alpha } from '${specifier}';
-          console.log(Alpha);
-        `,
-        "/node_modules/autolib/package.json": JSON.stringify({ name: "autolib", version: "1.0.0" }),
-        "/node_modules/autolib/icons/package.json": JSON.stringify({ main: "./index.js", sideEffects: false }),
-        "/node_modules/autolib/icons/index.js": /* js */ `
-          export { Alpha } from './Alpha.js';
-          export { Beta } from './Beta.js';
-        `,
-        "/node_modules/autolib/icons/Alpha.js": /* js */ `
-          export const Alpha = "alpha";
-        `,
-        "/node_modules/autolib/icons/Beta.js": /* js */ `
-          export const Beta = <<<SYNTAX_ERROR>>>;
-        `,
-      },
+      files: { "/entry.js": entry, ...autolibIconsFiles(betaWithSyntaxError) },
       outdir: "/out",
       run: { stdout: "alpha" },
     });
-  }
-  // With `ignoreDCEAnnotations` that package.json does not make the file a
-  // barrel, so every re-export loads.
-  for (const [route, specifier] of [
-    ["Directory", "autolib/icons"],
-    ["Path", "autolib/icons/index.js"],
-  ] as const) {
+    // With `ignoreDCEAnnotations` that package.json does not make the file a
+    // barrel, so every re-export loads.
     itBundled(`barrel/IgnoreDCEAnnotationsOfNearestPackageJson${route}Import`, {
       files: {
-        "/entry.js": /* js */ `
-          import { Alpha } from '${specifier}';
-          console.log(Alpha);
-        `,
-        "/node_modules/autolib/package.json": JSON.stringify({ name: "autolib", version: "1.0.0" }),
-        "/node_modules/autolib/icons/package.json": JSON.stringify({ main: "./index.js", sideEffects: false }),
-        "/node_modules/autolib/icons/index.js": /* js */ `
-          export { Alpha } from './Alpha.js';
-          export { Beta } from './Beta.js';
-        `,
-        "/node_modules/autolib/icons/Alpha.js": /* js */ `
-          export const Alpha = "alpha";
-        `,
-        "/node_modules/autolib/icons/Beta.js": /* js */ `
-          console.log("Beta.js");
-          export const Beta = "beta";
-        `,
+        "/entry.js": entry,
+        ...autolibIconsFiles(`console.log("Beta.js"); export const Beta = "beta";`),
       },
       ignoreDCEAnnotations: true,
       outdir: "/out",
@@ -2328,8 +2310,7 @@ describe("bundler", () => {
   // not depend on which import reaches it first: the import of the directory
   // or the import of the file by its path. The bundler resolves the imports of
   // entry.js before it parses late.js, so the import in entry.js creates the
-  // module. Beta.js has a syntax error: the build fails when that import does
-  // not make the file a barrel.
+  // module. The build fails when that import does not make the file a barrel.
   for (const [first, early, late] of [
     ["Directory", "autolib/icons", "autolib/icons/index.js"],
     ["Path", "autolib/icons/index.js", "autolib/icons"],
@@ -2345,18 +2326,7 @@ describe("bundler", () => {
           import { Alpha } from '${late}';
           export const late = Alpha;
         `,
-        "/node_modules/autolib/package.json": JSON.stringify({ name: "autolib", version: "1.0.0" }),
-        "/node_modules/autolib/icons/package.json": JSON.stringify({ main: "./index.js", sideEffects: false }),
-        "/node_modules/autolib/icons/index.js": /* js */ `
-          export { Alpha } from './Alpha.js';
-          export { Beta } from './Beta.js';
-        `,
-        "/node_modules/autolib/icons/Alpha.js": /* js */ `
-          export const Alpha = "alpha";
-        `,
-        "/node_modules/autolib/icons/Beta.js": /* js */ `
-          export const Beta = <<<SYNTAX_ERROR>>>;
-        `,
+        ...autolibIconsFiles(betaWithSyntaxError),
       },
       outdir: "/out",
       run: { stdout: "alpha alpha" },

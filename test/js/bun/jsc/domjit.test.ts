@@ -60,6 +60,11 @@ async function run(realm: string) {
     cmd: [bunExe(), join(import.meta.dir, "domjit-fixture.ts"), realm],
     env: {
       ...bunEnv,
+      // Every tier is on, whatever the environment of this process says.
+      BUN_JSC_useJIT: "1",
+      BUN_JSC_useBaselineJIT: "1",
+      BUN_JSC_useDFGJIT: "1",
+      BUN_JSC_useFTLJIT: "1",
       BUN_JSC_useConcurrentJIT: "0",
       BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "1000",
       BUN_JSC_testTheFTL: "1",
@@ -75,7 +80,8 @@ async function run(realm: string) {
   return { cases, stderr, exitCode };
 }
 
-// A debug build takes about 10 seconds for one realm.
+// A debug build takes about 10 seconds for one realm. Its JIT compilers alone take more than the default 5 seconds, so
+// fewer loops do not make a realm fit. Every other build uses the default.
 const timeout = isDebug ? 60_000 : undefined;
 
 describe.concurrent("DOMJIT", () => {

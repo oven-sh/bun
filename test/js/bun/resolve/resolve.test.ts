@@ -2590,3 +2590,272 @@ describe.concurrent("a directory that is read again", () => {
     },
   );
 });
+
+// What Bun.resolveSync gives for each way a package is laid out, and each of the two paths to its directory:
+// "linked" is how a file at the root reaches the package, and "direct" is where its files are.
+describe.concurrent("Bun.resolveSync of a package through a link and by its own path", () => {
+  /** Where the files of `pkg` are, the link to them if there is one, and whether the root names the package. */
+  const layouts: Record<string, (pkg: string) => { real: string; link: string | null; named: boolean }> = {
+    // The package is in node_modules itself.
+    hoisted: pkg => ({ real: `node_modules/${pkg}`, link: null, named: true }),
+    // The isolated linker: the package is in the store, and node_modules has a link to it.
+    isolated: pkg => ({
+      real: `node_modules/.bun/${pkg}@1.0.0/node_modules/${pkg}`,
+      link: `node_modules/${pkg}`,
+      named: true,
+    }),
+    // A workspace member, and node_modules has a link to it.
+    workspace: pkg => ({ real: `packages/${pkg}`, link: `node_modules/${pkg}`, named: true }),
+    // A link that is not in node_modules, so the root gives its path.
+    directory: pkg => ({ real: `vendor/${pkg}`, link: `links/${pkg}`, named: false }),
+  };
+
+  const modules = (files: string[]) =>
+    Object.fromEntries(files.map(file => [file, `export default ${JSON.stringify(file)};\n`]));
+  const lib = {
+    "package.json": JSON.stringify({ name: "lib", version: "1.0.0", main: "./main.js" }),
+    ...modules(["main.js", "a.js", "dual.js", "dual.ts", "only.mts", "sub/index.js", "sub/deep.ts"]),
+  };
+  const xlib = {
+    "package.json": JSON.stringify({
+      name: "xlib",
+      version: "1.0.0",
+      exports: { ".": "./entry.js", "./feature": "./src/feature.js", "./wild/*": "./src/wild/*.js" },
+    }),
+    ...modules(["entry.js", "src/feature.js", "src/wild/one.js", "src/hidden.js"]),
+  };
+  const dependency = (name: string) => ({
+    "package.json": JSON.stringify({ name, version: "1.0.0" }),
+    ...modules(["index.js"]),
+  });
+
+  const script = String.raw`
+    import { join, relative } from "node:path";
+    import plan from "./plan.json";
+
+    const root = process.cwd();
+    const resolved = (specifier, from = ".") => {
+      try {
+        return relative(root, Bun.resolveSync(specifier, join(root, from))).replaceAll("\\", "/");
+      } catch (error) {
+        return "throws " + error.code;
+      }
+    };
+    const asked = ({ lib, dir, xlib }) => ({
+      "<lib>": resolved(lib),
+      "<lib>/a.js": resolved(lib + "/a.js"),
+      "<lib>/dual": resolved(lib + "/dual"),
+      "<lib>/only.mjs": resolved(lib + "/only.mjs"),
+      "<lib>/sub": resolved(lib + "/sub"),
+      "<lib>/sub/deep": resolved(lib + "/sub/deep"),
+      "<lib>/missing": resolved(lib + "/missing"),
+      "xlib": resolved("xlib", xlib),
+      "xlib/feature": resolved("xlib/feature", xlib),
+      "xlib/wild/one": resolved("xlib/wild/one", xlib),
+      "xlib/src/hidden.js": resolved("xlib/src/hidden.js", xlib),
+      "./a.js from <dir>": resolved("./a.js", dir),
+      "./dual from <dir>": resolved("./dual", dir),
+      "../a.js from <dir>/sub": resolved("../a.js", dir + "/sub"),
+      "own from <dir>": resolved("own", dir),
+      "dep from <dir>": resolved("dep", dir),
+      "<root>/<dir>": resolved(join(root, dir)),
+      "<root>/<dir>/a.js": resolved(join(root, dir, "a.js")),
+      "<root>/<dir>/dual": resolved(join(root, dir, "dual")),
+      "<root>/<dir>/only.mjs": resolved(join(root, dir, "only.mjs")),
+      "<root>/<dir>/sub/deep": resolved(join(root, dir, "sub", "deep")),
+    });
+    const order = process.argv[2] === "direct" ? ["direct", "linked"] : ["linked", "direct"];
+    const answers = {};
+    for (const spelling of order) answers[spelling] = asked(plan[spelling]);
+    const again = {};
+    for (const spelling of order) again[spelling] = asked(plan[spelling]);
+    console.log(
+      JSON.stringify({
+        linked: answers.linked,
+        direct: answers.direct,
+        askedAgain: Bun.deepEquals(again, answers) ? "the same" : again,
+      }),
+    );
+  `;
+
+  // One row for each thing asked. `<lib>` is how the spelling names lib from the root: "lib" where node_modules
+  // has it, else the path of its directory, which is `<dir>`. "exports" is for a package that is named, so xlib
+  // is asked for from the root where node_modules has it, else from its own directory. own is in the
+  // node_modules of lib, and dep is beside where the files of lib are.
+  // A row is the answer when both spellings got the same one, else the answer of each.
+  type Row = string | { linked: string; direct: string };
+  const recorded: Record<string, Record<string, Row>> = {
+    hoisted: {
+      "<lib>": "node_modules/lib/main.js",
+      "<lib>/a.js": "node_modules/lib/a.js",
+      "<lib>/dual": "node_modules/lib/dual.js",
+      "<lib>/only.mjs": "throws ERR_MODULE_NOT_FOUND",
+      "<lib>/sub": "node_modules/lib/sub/index.js",
+      "<lib>/sub/deep": "node_modules/lib/sub/deep.ts",
+      "<lib>/missing": "throws ERR_MODULE_NOT_FOUND",
+      "xlib": "node_modules/xlib/entry.js",
+      "xlib/feature": "node_modules/xlib/src/feature.js",
+      "xlib/wild/one": "node_modules/xlib/src/wild/one.js",
+      "xlib/src/hidden.js": "throws ERR_MODULE_NOT_FOUND",
+      "./a.js from <dir>": "node_modules/lib/a.js",
+      "./dual from <dir>": "node_modules/lib/dual.js",
+      "../a.js from <dir>/sub": "node_modules/lib/a.js",
+      "own from <dir>": "node_modules/lib/node_modules/own/index.js",
+      "dep from <dir>": "node_modules/dep/index.js",
+      "<root>/<dir>": "node_modules/lib/main.js",
+      "<root>/<dir>/a.js": "node_modules/lib/a.js",
+      "<root>/<dir>/dual": "node_modules/lib/dual.ts",
+      "<root>/<dir>/only.mjs": "throws ERR_MODULE_NOT_FOUND",
+      "<root>/<dir>/sub/deep": "node_modules/lib/sub/deep.ts",
+    },
+    isolated: {
+      "<lib>": "node_modules/.bun/lib@1.0.0/node_modules/lib/main.js",
+      "<lib>/a.js": "node_modules/.bun/lib@1.0.0/node_modules/lib/a.js",
+      "<lib>/dual": "node_modules/.bun/lib@1.0.0/node_modules/lib/dual.js",
+      "<lib>/only.mjs": "throws ERR_MODULE_NOT_FOUND",
+      "<lib>/sub": "node_modules/.bun/lib@1.0.0/node_modules/lib/sub/index.js",
+      "<lib>/sub/deep": "node_modules/.bun/lib@1.0.0/node_modules/lib/sub/deep.ts",
+      "<lib>/missing": "throws ERR_MODULE_NOT_FOUND",
+      "xlib": "node_modules/.bun/xlib@1.0.0/node_modules/xlib/entry.js",
+      "xlib/feature": "node_modules/.bun/xlib@1.0.0/node_modules/xlib/src/feature.js",
+      "xlib/wild/one": "node_modules/.bun/xlib@1.0.0/node_modules/xlib/src/wild/one.js",
+      "xlib/src/hidden.js": "throws ERR_MODULE_NOT_FOUND",
+      "./a.js from <dir>": "node_modules/.bun/lib@1.0.0/node_modules/lib/a.js",
+      "./dual from <dir>": "node_modules/.bun/lib@1.0.0/node_modules/lib/dual.js",
+      "../a.js from <dir>/sub": "node_modules/.bun/lib@1.0.0/node_modules/lib/a.js",
+      "own from <dir>": "node_modules/.bun/lib@1.0.0/node_modules/lib/node_modules/own/index.js",
+      "dep from <dir>": {
+        linked: "throws ERR_MODULE_NOT_FOUND",
+        direct: "node_modules/.bun/lib@1.0.0/node_modules/dep/index.js",
+      },
+      "<root>/<dir>": "node_modules/.bun/lib@1.0.0/node_modules/lib/main.js",
+      "<root>/<dir>/a.js": "node_modules/.bun/lib@1.0.0/node_modules/lib/a.js",
+      "<root>/<dir>/dual": "node_modules/.bun/lib@1.0.0/node_modules/lib/dual.ts",
+      "<root>/<dir>/only.mjs": "throws ERR_MODULE_NOT_FOUND",
+      "<root>/<dir>/sub/deep": "node_modules/.bun/lib@1.0.0/node_modules/lib/sub/deep.ts",
+    },
+    workspace: {
+      "<lib>": "packages/lib/main.js",
+      "<lib>/a.js": "packages/lib/a.js",
+      "<lib>/dual": { linked: "packages/lib/dual.js", direct: "packages/lib/dual.ts" },
+      "<lib>/only.mjs": { linked: "throws ERR_MODULE_NOT_FOUND", direct: "packages/lib/only.mts" },
+      "<lib>/sub": "packages/lib/sub/index.js",
+      "<lib>/sub/deep": "packages/lib/sub/deep.ts",
+      "<lib>/missing": "throws ERR_MODULE_NOT_FOUND",
+      "xlib": "packages/xlib/entry.js",
+      "xlib/feature": "packages/xlib/src/feature.js",
+      "xlib/wild/one": "packages/xlib/src/wild/one.js",
+      "xlib/src/hidden.js": "throws ERR_MODULE_NOT_FOUND",
+      "./a.js from <dir>": "packages/lib/a.js",
+      "./dual from <dir>": { linked: "packages/lib/dual.js", direct: "packages/lib/dual.ts" },
+      "../a.js from <dir>/sub": "packages/lib/a.js",
+      "own from <dir>": "packages/lib/node_modules/own/index.js",
+      "dep from <dir>": "throws ERR_MODULE_NOT_FOUND",
+      "<root>/<dir>": "packages/lib/main.js",
+      "<root>/<dir>/a.js": "packages/lib/a.js",
+      "<root>/<dir>/dual": "packages/lib/dual.ts",
+      "<root>/<dir>/only.mjs": { linked: "throws ERR_MODULE_NOT_FOUND", direct: "packages/lib/only.mts" },
+      "<root>/<dir>/sub/deep": "packages/lib/sub/deep.ts",
+    },
+    directory: {
+      "<lib>": "vendor/lib/main.js",
+      "<lib>/a.js": "vendor/lib/a.js",
+      "<lib>/dual": "vendor/lib/dual.ts",
+      "<lib>/only.mjs": "vendor/lib/only.mts",
+      "<lib>/sub": "vendor/lib/sub/index.js",
+      "<lib>/sub/deep": "vendor/lib/sub/deep.ts",
+      "<lib>/missing": "throws ERR_MODULE_NOT_FOUND",
+      "xlib": "vendor/xlib/entry.js",
+      "xlib/feature": "vendor/xlib/src/feature.js",
+      "xlib/wild/one": "vendor/xlib/src/wild/one.js",
+      "xlib/src/hidden.js": "throws ERR_MODULE_NOT_FOUND",
+      "./a.js from <dir>": "vendor/lib/a.js",
+      "./dual from <dir>": "vendor/lib/dual.ts",
+      "../a.js from <dir>/sub": "vendor/lib/a.js",
+      "own from <dir>": "vendor/lib/node_modules/own/index.js",
+      "dep from <dir>": "throws ERR_MODULE_NOT_FOUND",
+      "<root>/<dir>": "vendor/lib/main.js",
+      "<root>/<dir>/a.js": "vendor/lib/a.js",
+      "<root>/<dir>/dual": "vendor/lib/dual.ts",
+      "<root>/<dir>/only.mjs": "vendor/lib/only.mts",
+      "<root>/<dir>/sub/deep": "vendor/lib/sub/deep.ts",
+    },
+  };
+  const answersOf = (rows: Record<string, Row>, spelling: "linked" | "direct") =>
+    Object.fromEntries(
+      Object.entries(rows).map(([asked, row]) => [asked, typeof row === "string" ? row : row[spelling]]),
+    );
+
+  /** A project that has lib and xlib where `layout` puts them. */
+  function project(layout: string) {
+    const [at, xat] = [layouts[layout]("lib"), layouts[layout]("xlib")];
+    const tree: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "root" }),
+      // With no node_modules above it, a name that is not found is looked for in the registry.
+      "node_modules/.keep": "",
+      "fixture.mjs": script,
+      "plan.json": JSON.stringify({
+        linked: { lib: at.named ? "lib" : `./${at.link}`, dir: at.link ?? at.real, xlib: xat.named ? "." : xat.link },
+        direct: { lib: `./${at.real}`, dir: at.real, xlib: xat.real },
+      }),
+    };
+    for (const [directory, files] of [
+      [at.real, lib],
+      [xat.real, xlib],
+      [`${at.real}/node_modules/own`, dependency("own")],
+      [`${dirname(at.real)}/dep`, dependency("dep")],
+    ] as const) {
+      for (const [file, text] of Object.entries(files)) tree[`${directory}/${file}`] = text;
+    }
+    const dir = tempDir(`resolve-link-${layout}`, tree);
+    for (const { real, link } of [at, xat]) if (link) linkDirectory(String(dir), real, link);
+    return dir;
+  }
+
+  test.each(Object.keys(layouts))("%s", async layout => {
+    using dir = project(layout);
+    const [linkedFirst, directFirst] = await Promise.all([
+      runFixture(String(dir), ["linked"]),
+      runFixture(String(dir), ["direct"]),
+    ]);
+    expect(linkedFirst).toEqual({
+      stdout: {
+        linked: answersOf(recorded[layout], "linked"),
+        direct: answersOf(recorded[layout], "direct"),
+        askedAgain: "the same",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    // The spelling that a process asks for first does not change an answer.
+    expect(directFirst).toEqual(linkedFirst);
+  });
+
+  // A path stays as it was reached: the same files, under the link.
+  test.each(["isolated", "workspace", "directory"])("%s, with NODE_PRESERVE_SYMLINKS=1", async layout => {
+    using dir = project(layout);
+    const env = { ...bunEnv, NODE_PRESERVE_SYMLINKS: "1" };
+    const [linkedFirst, directFirst] = await Promise.all([
+      runFixture(String(dir), ["linked"], env),
+      runFixture(String(dir), ["direct"], env),
+    ]);
+    const underLink = (answer: string) => {
+      for (const { real, link } of [layouts[layout]("lib"), layouts[layout]("xlib")]) {
+        if (answer.startsWith(real + "/")) return link + answer.slice(real.length);
+      }
+      return answer;
+    };
+    expect(linkedFirst).toEqual({
+      stdout: {
+        linked: Object.fromEntries(
+          Object.entries(answersOf(recorded[layout], "linked")).map(([asked, answer]) => [asked, underLink(answer)]),
+        ),
+        direct: answersOf(recorded[layout], "direct"),
+        askedAgain: "the same",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(directFirst).toEqual(linkedFirst);
+  });
+});

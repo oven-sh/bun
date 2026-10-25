@@ -2144,6 +2144,44 @@ c {
     outfile: "/out.css",
   });
 
+  // A media condition that stops short used to inline the file with no condition at all.
+  for (const [name, condition] of [
+    ["MediaTypeAnd", "screen and"],
+    ["FeatureAnd", "(min-width: 100px) and"],
+    ["Not", "not"],
+  ]) {
+    itBundled(`css/CSSAtImportConditionsStopShort${name}`, {
+      files: {
+        "/entry.css": `@import "./b.css" ${condition};`,
+        "/b.css": `.b { color: red }`,
+      },
+      outfile: "/out.css",
+      bundleErrors: {
+        "/entry.css": ["Unexpected end of input"],
+      },
+    });
+  }
+
+  itBundled("css/CSSAtImportConditionsBlankSegment", {
+    files: {
+      "/entry.css": `@import "./b.css" screen,;`,
+      "/b.css": `.b { color: red }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* b.css */
+@media screen {
+  .b {
+    color: red;
+  }
+}
+
+/* entry.css */
+`);
+    },
+  });
+
   // This test mainly just makes sure that this scenario doesn't crash
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {
     files: {

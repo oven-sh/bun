@@ -674,7 +674,8 @@ impl MediaList {
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if self.media_queries.is_empty() {
-            return dest.write_str("not all");
+            // An empty list always matches (`@media {}`). lightningcss prints `not all`.
+            return dest.write_str("all");
         }
         dest.write_comma_separated(&self.media_queries, |d, q| q.to_css(d))
     }
@@ -1402,19 +1403,14 @@ impl MediaList {
         let mut media_queries: Vec<MediaQuery, ArenaPtr> =
             Vec::new_in(ArenaPtr::new(input.arena()));
         loop {
+            let start = input.position();
             match input
                 .parse_until_before(css::Delimiters::COMMA, |i| MediaQuery::parse(i, options))
             {
                 Ok(mq) => media_queries.push(mq),
-                Err(e) => {
-                    if matches!(
-                        e.kind,
-                        css::error::ParserErrorKind::basic(css::BasicParseErrorKind::end_of_input)
-                    ) {
-                        break;
-                    }
-                    return Err(e);
-                }
+                // lightningcss ends the list on any `EndOfInput`, which drops the query of `@media screen and {`.
+                Err(_) if input.skipped_only_blank_since(start) => break,
+                Err(e) => return Err(e),
             }
 
             match input.next() {
@@ -1633,6 +1629,10 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
 
         let operator = match input.try_parse(|i| consume_operation_or_colon(i, true)) {
             Ok(operator) => operator,
+            // `(min-width)` is not `(width)`: see parcel-bundler/lightningcss#1366.
+            Err(_) if legacy_op.is_some() && input.is_exhausted() => {
+                return Err(input.new_custom_error(css::ParserError::invalid_media_query));
+            }
             Err(_) => return Ok(QueryFeature::Boolean { name }),
         };
 

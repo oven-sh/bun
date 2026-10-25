@@ -1576,19 +1576,13 @@ mod rule_parsers {
                         break 'brk AtRulePrelude::MozDocument;
                     },
                     b"layer" => {
+                        let start = input.position();
                         let names: SmallList<LayerName, 1> =
                             match input.parse_comma_separated(LayerName::parse) {
                                 Ok(vv) => SmallList::<LayerName, 1>::from_list(vv),
-                                Err(e) => {
-                                    if matches!(
-                                        e.kind,
-                                        errors_::ParserErrorKind::basic(BasicParseErrorKind::end_of_input)
-                                    ) {
-                                        SmallList::default()
-                                    } else {
-                                        return Err(e);
-                                    }
-                                }
+                                // lightningcss reads any `EndOfInput` as the anonymous layer, `@layer a, {}` too.
+                                Err(_) if input.skipped_only_blank_since(start) => SmallList::default(),
+                                Err(e) => return Err(e),
                             };
                         break 'brk AtRulePrelude::Layer(names);
                     },
@@ -3295,6 +3289,23 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
+    }
+
+    /// After `parse_until_before` or `parse_comma_separated` failed from `start`: whether it skipped only blanks.
+    #[cold]
+    pub(crate) fn skipped_only_blank_since(&self, start: usize) -> bool {
+        debug_assert!(
+            self.input.tokenizer.is_eof()
+                || (self.stop_before | Delimiters::COMMA)
+                    .intersects(Delimiters::from_byte(self.input.tokenizer.next_byte())),
+            "the failed parse rewound instead of stopping at a delimiter"
+        );
+        if self.position() == start {
+            return true;
+        }
+        let mut skipped = Tokenizer::init_with_arena(self.slice_from(start), self.arena());
+        skipped.skip_whitespace();
+        skipped.is_eof()
     }
 
     /// Parse the input until exhaustion and check that it contains no "error"

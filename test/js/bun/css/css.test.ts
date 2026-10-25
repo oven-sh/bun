@@ -6028,6 +6028,148 @@ describe("css tests", () => {
     );
     minify_test("@media { .foo { color: chartreuse }}", ".foo{color:#7fff00}");
     minify_test("@media all { .foo { color: chartreuse }}", ".foo{color:#7fff00}");
+
+    // A blank list always matches. A blank segment after a comma ends the list.
+    cssTest("@media { .foo { color: chartreuse }}", "@media all { .foo { color: #7fff00; } }");
+    minify_test("@media /* c */ { .foo { color: chartreuse }}", ".foo{color:#7fff00}");
+    cssTest("@media /* c */ { .foo { color: chartreuse }}", "@media all { .foo { color: #7fff00; } }");
+    minify_test("@media screen, { .foo { color: chartreuse }}", "@media screen{.foo{color:#7fff00}}");
+    minify_test("@media screen, /* c */ { .foo { color: chartreuse }}", "@media screen{.foo{color:#7fff00}}");
+    minify_test('@import "foo.css";', '@import "foo.css";');
+    minify_test('@import "foo.css" screen,;', '@import "foo.css" screen;');
+    minify_test("@custom-media --m ;", "@custom-media --m all;");
+
+    test.each([
+      // A query that stops after `and`, `or` or `not` is an error. It used to end the list, and the list lost the query.
+      ["@media screen and { .foo { color: chartreuse }}", "Unexpected end of input"],
+      ["@media only screen and { .foo { color: chartreuse }}", "Unexpected end of input"],
+      ["@media screen and not { .foo { color: chartreuse }}", "Unexpected end of input"],
+      ["@media not { .foo { color: chartreuse }}", "Unexpected end of input"],
+      ["@media (min-width: 100px) and { .foo { color: chartreuse }}", "Unexpected end of input"],
+      ["@media (min-width: 100px) or { .foo { color: chartreuse }}", "Unexpected end of input"],
+      ["@media screen, print and { .foo { color: chartreuse }}", "Unexpected end of input"],
+      ["@media screen and, print { .foo { color: chartreuse }}", "Unexpected end of input"],
+      [".foo { @media screen and { color: chartreuse } }", "Unexpected end of input"],
+      ["@supports (display: grid) { @media screen and { .foo { color: chartreuse } } }", "Unexpected end of input"],
+      ["@layer x { @media screen and { .foo { color: chartreuse } } }", "Unexpected end of input"],
+      ["@media print { @media screen and { .foo { color: chartreuse } } }", "Unexpected end of input"],
+      ['@import "foo.css" screen and;', "Unexpected end of input"],
+      ['@import "foo.css" (min-width: 100px) and;', "Unexpected end of input"],
+      ['@import "foo.css" not;', "Unexpected end of input"],
+      ['@import "foo.css" layer(x) screen and;', "Unexpected end of input"],
+      ['@import "foo.css" supports(display: grid) screen and;', "Unexpected end of input"],
+      ['@import "foo.css" screen and', "Unexpected end of input"],
+      ["@custom-media --m screen and;", "Unexpected end of input"],
+      // These were errors before and keep their message.
+      ["@media , screen { .foo { color: chartreuse }}", "Unexpected token: ,"],
+      ["@media screen,, print { .foo { color: chartreuse }}", "Unexpected token: ,"],
+      ["@container (width > 1px) and { .foo { color: chartreuse }}", "Unexpected end of input"],
+      ["@supports not { .foo { color: chartreuse }}", "Unexpected end of input"],
+    ])("ERROR: %s", (source, message) => {
+      expect(() => minify_test_with_options(source, "")).toThrow(new Error(`parsing failed: ${message}`));
+    });
+
+    // The minified output, or undefined when the source is a parse error.
+    function minifyOrParseError(source: string): string | undefined {
+      try {
+        return minify_test_with_options(source, "");
+      } catch (e) {
+        if (!(e instanceof Error) || !e.message.startsWith("parsing failed: ")) throw e;
+        return undefined;
+      }
+    }
+    const squash = (text: string) => text.replace(/\s+/g, "");
+
+    // A condition in parentheses that stops short is an error, unless Bun keeps it as written (#46756).
+    test.each([
+      // These built with no condition at all.
+      ["@media (width <) { .foo { color: chartreuse }}", "(width <)"],
+      ["@media (width >=) { .foo { color: chartreuse }}", "(width >=)"],
+      ["@media (100px < width <) { .foo { color: chartreuse }}", "(100px < width <)"],
+      ['@import "foo.css" (width <);', "(width <)"],
+      // These built as `(width)`, `(height)` and `(-webkit-device-pixel-ratio)`.
+      ["@media (min-width) { .foo { color: chartreuse }}", "(min-width)"],
+      ["@media (max-height) { .foo { color: chartreuse }}", "(max-height)"],
+      ["@media (-webkit-min-device-pixel-ratio) { .foo { color: chartreuse }}", "(-webkit-min-device-pixel-ratio)"],
+      ["@media screen and (min-width) { .foo { color: chartreuse }}", "(min-width)"],
+      ["@container (min-width) { .foo { color: chartreuse }}", "(min-width)"],
+      ['@import "foo.css" (min-width);', "(min-width)"],
+      ["@custom-media --m (min-width);", "(min-width)"],
+    ])("%s is an error or keeps %s", (source, condition) => {
+      const output = minifyOrParseError(source);
+      const kept = output === undefined || squash(output).includes(squash(condition));
+      expect(kept ? "an error, or kept as written" : output).toBe("an error, or kept as written");
+    });
+
+    test("a media query list cut after any token prints what it holds, or is an error", () => {
+      const queries = [
+        ["screen", "and", "(", "min-width", ":", "100px", ")", "and", "(", "max-width", ":", "200px", ")"],
+        ["not", "screen", "and", "(", "color", ")"],
+        ["only", "screen", "and", "not", "(", "hover", ")"],
+        ["(", "width", ">=", "600px", ")", "or", "(", "height", "<", "400px", ")"],
+        ["(", "100px", "<", "width", "<=", "200px", ")"],
+        ["(", "color", ")", "and", "(", "hover", ":", "hover", ")", "and", "(", "pointer", ":", "fine", ")"],
+        ["print", ",", "screen", "and", "(", "orientation", ":", "landscape", ")"],
+        ["(", "min-resolution", ":", "2dppx", ")", ",", "(", "aspect-ratio", ":", "16", "/", "9", ")"],
+      ];
+      // Each cut that is a whole list, and the prelude it prints. A blank segment after a comma ends the list.
+      const whole = new Map(
+        [
+          ["screen", "screen"],
+          ["screen and (min-width: 100px)", "screen and (width>=100px)"],
+          ["screen and (min-width: 100px) and (max-width: 200px)", "screen and (width>=100px) and (width<=200px)"],
+          ["not screen", "not screen"],
+          ["not screen and (color)", "not screen and (color)"],
+          ["only screen", "only screen"],
+          ["only screen and not (hover)", "only screen and not (hover)"],
+          ["(width)", "(width)"],
+          ["(width >= 600px)", "(width>=600px)"],
+          ["(width >= 600px) or (height)", "(width>=600px) or (height)"],
+          ["(width >= 600px) or (height < 400px)", "(width>=600px) or (height<400px)"],
+          ["(100px < width)", "(width>100px)"],
+          ["(100px < width <= 200px)", "(100px<width<=200px)"],
+          ["(color)", "(color)"],
+          ["(color) and (hover)", "(color) and (hover)"],
+          ["(color) and (hover: hover)", "(color) and (hover:hover)"],
+          ["(color) and (hover: hover) and (pointer)", "(color) and (hover:hover) and (pointer)"],
+          ["(color) and (hover: hover) and (pointer: fine)", "(color) and (hover:hover) and (pointer:fine)"],
+          ["print", "print"],
+          ["print,", "print"],
+          ["print, screen", "print,screen"],
+          ["print, screen and (orientation)", "print,screen and (orientation)"],
+          ["print, screen and (orientation: landscape)", "print,screen and (orientation:landscape)"],
+          ["(min-resolution: 2dppx)", "(resolution>=2x)"],
+          ["(min-resolution: 2dppx),", "(resolution>=2x)"],
+          ["(min-resolution: 2dppx), (aspect-ratio)", "(resolution>=2x),(aspect-ratio)"],
+          ["(min-resolution: 2dppx), (aspect-ratio: 16)", "(resolution>=2x),(aspect-ratio:16)"],
+          ["(min-resolution: 2dppx), (aspect-ratio: 16 / 9)", "(resolution>=2x),(aspect-ratio:16/9)"],
+        ].map(([list, prelude]) => [squash(list), prelude]),
+      );
+      const wrong: string[] = [];
+      let cuts = 0;
+      let built = 0;
+      for (const tokens of queries) {
+        for (let end = 1; end <= tokens.length; end++) {
+          const cut = tokens.slice(0, end);
+          const unclosed = cut.filter(t => t === "(").length - cut.filter(t => t === ")").length;
+          const list = cut.join(" ") + Buffer.alloc(unclosed, ")").toString();
+          const output = minifyOrParseError(`@media ${list} {.foo{color:red}}`);
+          const prelude = whole.get(squash(list));
+          cuts++;
+          if (prelude !== undefined) {
+            built++;
+            if (output !== `@media ${prelude}{.foo{color:red}}`) wrong.push(`${list} => ${output}`);
+            continue;
+          }
+          // Not a whole list: an error, unless it ends in a block that Bun keeps as written (#46756).
+          const block = list.endsWith(")") ? squash(list.slice(list.lastIndexOf("("))) : undefined;
+          const kept = output !== undefined && block !== undefined && squash(output).includes(block);
+          if (output !== undefined && !kept) wrong.push(`${list} => ${output}`);
+        }
+      }
+      expect({ cuts, built, wrong }).toEqual({ cuts: 81, built: 41, wrong: [] });
+    });
+
     minify_test(
       "@media not (((color) or (hover))) { .foo { color: chartreuse }}",
       "@media not ((color) or (hover)){.foo{color:#7fff00}}",
@@ -7929,6 +8071,27 @@ describe("css tests", () => {
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
     );
+  });
+
+  describe("layer", () => {
+    // Only a blank prelude is the anonymous layer.
+    minify_test("@layer { a { color: red } }", "@layer{a{color:red}}");
+    minify_test("@layer /* c */ { a { color: red } }", "@layer{a{color:red}}");
+    minify_test("@layer a.b { a { color: red } }", "@layer a.b{a{color:red}}");
+    minify_test("@layer a, b.c;", "@layer a,b.c;");
+
+    test.each([
+      // A name list that stops after a comma used to build as the anonymous layer.
+      ["@layer a, { a { color: red } }", "Unexpected end of input"],
+      ["@layer a, b, { a { color: red } }", "Unexpected end of input"],
+      ["@layer a.b, c, { a { color: red } }", "Unexpected end of input"],
+      ["@layer a, ;", "Unexpected end of input"],
+      // These were errors before and keep their message.
+      ["@layer , a { a { color: red } }", "Unexpected token: ,"],
+      ["@layer a, b { a { color: red } }", "Invalid at-rule body"],
+    ])("ERROR: %s", (source, message) => {
+      expect(() => minify_test_with_options(source, "")).toThrow(new Error(`parsing failed: ${message}`));
+    });
   });
 
   describe("font-palette-values", () => {

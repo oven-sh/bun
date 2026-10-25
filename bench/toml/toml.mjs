@@ -38,34 +38,45 @@ silent = false
 "process.env.FOO" = "'bar'"
 `;
 
-// One table of `count` keys. Keys of mixed lengths, as in a config file.
-function table(count, key = i => `${"dependency-name".slice(0, 3 + ((i * 5) % 13))}-${i}`) {
-  let doc = "[dependencies]\n";
-  for (let i = 0; i < count; i++) doc += `${key(i)} = "1.${i}.0"\n`;
-  return doc;
-}
+// Names of mixed lengths, as in a config file.
+const name = i => `${"dependency-name".slice(0, 3 + ((i * 5) % 13))}-${i}`;
+const nonAsciiName = i => `"clé-${i}"`;
 
-const nonAscii = i => `"clé-${i}"`;
-
-function packages(count) {
+function lines(count, line) {
   let doc = "";
-  for (let i = 0; i < count; i++)
-    doc += `[[package]]\nname = "package-${i}"\nversion = "1.0.${i}"\nchecksum = "${i}"\n`;
+  for (let i = 0; i < count; i++) doc += line(i);
   return doc;
 }
+
+// One table of `count` keys, for each way a table can get its keys.
+const shapes = {
+  "keys": count => "[dependencies]\n" + lines(count, i => `${name(i)} = "1.${i}.0"\n`),
+  "non-ASCII keys": count => "[dependencies]\n" + lines(count, i => `${nonAsciiName(i)} = "1.${i}.0"\n`),
+  "dotted keys": count => "[dependencies]\n" + lines(count, i => `${name(i)}.version = "1.${i}.0"\n`),
+  "table headers": count => lines(count, i => `[dependencies.${name(i)}]\nversion = "1.${i}.0"\n`),
+  "keys of an inline table": count => `dependencies = { ${lines(count, i => `${name(i)} = "1.${i}.0", `)} }\n`,
+};
+
+const packages = count =>
+  lines(count, i => `[[package]]\nname = "package-${i}"\nversion = "1.0.${i}"\nchecksum = "${i}"\n`);
+const others = lines(100, i => `[${name(i)}]\n`);
 
 const documents = [
   ["one key", "a = 1"],
   ["config", config],
   // A table is scanned for a key up to 64 keys, and indexed from 65.
-  ...[16, 64, 65, 128, 1024].map(count => [`a table of ${count} keys`, table(count)]),
-  ...[64, 65, 1024].map(count => [`a table of ${count} non-ASCII keys`, table(count, nonAscii)]),
-  ["1,000 tables of 3 keys", packages(1000)],
-  ["a table of 10,000 keys", table(10_000)],
+  ...Object.entries(shapes).flatMap(([shape, document]) =>
+    [16, 64, 65, 1024].map(count => [`${count} ${shape} in a table`, document(count)]),
+  ),
+  ["10,000 keys in a table", shapes.keys(10_000)],
+  ["1,000 [[package]] tables of 3 keys", packages(1000)],
+  // Each `[[package]]` header finds `package` among the 101 keys of the root table.
+  ["1,000 [[package]] tables, `package` is the first of 101 root keys", packages(1) + others + packages(999)],
+  ["1,000 [[package]] tables, `package` is the last of 101 root keys", others + packages(1000)],
 ];
 
-for (const [name, doc] of documents) {
-  group(`${name} (${sizeLabel(doc.length)})`, () => {
+for (const [title, doc] of documents) {
+  group(`${title} (${sizeLabel(doc.length)})`, () => {
     if (isBun) bench("Bun.TOML.parse", () => Bun.TOML.parse(doc));
     bench("smol-toml", () => smolTomlParse(doc));
   });

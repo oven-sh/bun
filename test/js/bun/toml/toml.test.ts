@@ -1,6 +1,6 @@
 import { TOML } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 
 // Hand-written coverage beyond the official conformance suite
@@ -606,7 +606,7 @@ describe("robustness", () => {
 
   // A table's keys are found by a scan while the table is small, and through
   // a hash index once it has grown. These tests do not know where the parser
-  // switches: they run every table size up to 130 keys.
+  // switches: they run table sizes up to 130 keys.
   describe("a table of any size", () => {
     const maxSize = 130;
     // The first `size` of `maxSize` lines. All are slices of one string: a
@@ -617,13 +617,17 @@ describe("robustness", () => {
       for (let i = 0; i < maxSize; i++) ends.push((all += line(i)).length);
       return (size: number) => all.slice(0, ends[size]);
     };
+    // `n` lines, each `before`, the line's number, `after`. Joined natively,
+    // for the same reason.
+    const numbered = (n: number, before: string, after: string) =>
+      before + [...Array(n).keys()].join(after + before) + after;
 
     test("rejects a second definition of its first and of its last key", () => {
       // [as first written, as the error message names it, written with an escape]
       const spellings: ((i: number) => string)[][] = [
         [i => `f${i}`, i => `f${i}`, i => `"\\u0066${i}"`],
-        // A key that is not ASCII is stored as UTF-16.
-        [i => `"é${i}"`, i => `é${i}`, i => `"\\u00E9${i}"`],
+        // A key that is not ASCII is stored as UTF-16. These are 2, 3 and 4 bytes of UTF-8.
+        [i => `"é中𠮷${i}"`, i => `é中𠮷${i}`, i => `"\\u00E9\\u4E2D\\U00020BB7${i}"`],
       ];
       for (const [written, name, escaped] of spellings) {
         const keys = prefixes(i => `${written(i)} = ${i}\n`);
@@ -671,19 +675,69 @@ describe("robustness", () => {
       }
     });
 
+    // The second half of each document goes through every key of the table
+    // again. A key that is not found again is added a second time, and then
+    // the result has lost what the first one held.
+    test("finds each of its keys again", () => {
+      // [a key's text before its number as written, and as the result names it]
+      const kinds = [
+        ["k", "k"],
+        ['"é中𠮷', "é中𠮷"],
+      ];
+      for (let size = 10; size <= maxSize; size += 10) {
+        for (const [written, name] of kinds) {
+          const quote = written === name ? "" : '"';
+          const dotted = numbered(size, written, `${quote}.x = 1\n`) + numbered(size, written, `${quote}.y = 2\n`);
+          expect(JSON.stringify(TOML.parse(dotted))).toBe(
+            `{${numbered(size, `"${name}`, '":{"x":1,"y":2},').slice(0, -1)}}`,
+          );
+          const headers =
+            numbered(size, `[${written}`, `${quote}]\nx = 1\n`) + numbered(size, `[${written}`, `${quote}.y]\n`);
+          expect(JSON.stringify(TOML.parse(headers))).toBe(
+            `{${numbered(size, `"${name}`, '":{"x":1,"y":{}},').slice(0, -1)}}`,
+          );
+        }
+      }
+    });
+
+    // Each table has its own index. `early` is in a table before the table
+    // grows, `late` is added after, and every table holds the same key texts.
+    test("is told apart from a thousand others with the same keys", () => {
+      const tables = isDebug ? 60 : 1000;
+      const keys = numbered(maxSize, "f", " = 0\n");
+      const doc =
+        numbered(tables, "[t", `]\nearly.x = 1\n${keys}late.x = 2\n`) +
+        numbered(tables, "[t", ".early.z]\n") +
+        numbered(tables, "[t", ".late.z]\n");
+      const table = `{"early":{"x":1,"z":{}},${numbered(maxSize, '"f', '":0,')}"late":{"x":2,"z":{}}}`;
+      expect(JSON.stringify(TOML.parse(doc))).toBe(`{${numbered(tables, '"t', `":${table},`).slice(0, -1)}}`);
+    });
+
+    // An index keeps 32 bits of the hash of each key, so among n keys about
+    // n * n / 2 ** 33 pairs have the same one: 10 pairs among 300,000 keys.
+    // A key must not be taken for the other one of its pair, neither when it
+    // is inserted (the first document) nor when a dotted key looks it up
+    // (the second). A debug build parses fewer keys, to stay fast.
+    test("tells keys with the same hash apart", () => {
+      const n = isDebug ? 40_000 : 300_000;
+      for (const after of [" = 1\n", ".x = 1\n"]) {
+        expect(syntaxError(numbered(n, "k", after) + "k0 = 1").message).toBe(
+          "TOML Parse error: Cannot redefine key 'k0'",
+        );
+      }
+    });
+
     // Each key of a table used to be compared with every key before it, and
     // so was each header and dotted key that went through the table. For
     // each way a table can grow, this parses a document and one with 16
     // times the keys. Each document ends in a key that is already defined,
     // so no result is converted to JS values and the parser is all that is
-    // timed. The small document is parsed 16 times for one sample: a linear
-    // parser then takes as long for it as for the large document, and a
-    // loaded machine slows both alike. The scan took 10 times as long.
+    // timed. One sample of the small document is 16 parses, which take a
+    // linear parser as long as one parse of the large document. The samples
+    // of the two take turns, and nothing is asserted while the clock runs,
+    // because an `expect()` can start a garbage collection. The scan took
+    // at least 9 times as long.
     test("is parsed in time linear in the number of its keys", () => {
-      // `n` lines, each `before`, the line's number, `after`. Joined natively,
-      // for the same reason as `prefixes`.
-      const numbered = (n: number, before: string, after: string) =>
-        before + [...Array(n).keys()].join(after + before) + after;
       const shapes: [string, (n: number) => string, string][] = [
         ["keys", n => numbered(n, "k", " = 1\n") + "k0 = 1", "Cannot redefine key 'k0'"],
         ["keys that are not ASCII", n => numbered(n, '"é', '" = 1\n') + '"\\u00E90" = 1', "Cannot redefine key 'é0'"],
@@ -698,22 +752,29 @@ describe("robustness", () => {
       const n = 250;
       const factor = 16;
       const limit = 4;
-      const time = (doc: Buffer, message: string, times: number) => {
-        const start = Bun.nanoseconds();
-        for (let i = 0; i < times; i++) expect(syntaxError(doc).message).toBe(`TOML Parse error: ${message}`);
-        return Bun.nanoseconds() - start;
+      const parse = (doc: Buffer) => {
+        try {
+          TOML.parse(doc);
+        } catch {}
       };
       for (const [shape, document, message] of shapes) {
         const small = Buffer.from(document(n));
         const large = Buffer.from(document(n * factor));
-        const linear = Math.min(time(small, message, factor), time(small, message, factor));
-        // A sample can be slow for a reason that is not the parser. The large
-        // document gets 30 samples, or 2 seconds, to be fast in one of them.
-        const deadline = Bun.nanoseconds() + 2e9;
-        let slowdown = Infinity;
-        for (let sample = 0; sample < 30 && slowdown >= limit && Bun.nanoseconds() < deadline; sample++) {
-          slowdown = Math.min(slowdown, time(large, message, 1) / linear);
+        expect(syntaxError(small).message).toBe(`TOML Parse error: ${message}`);
+        expect(syntaxError(large).message).toBe(`TOML Parse error: ${message}`);
+        let smallBest = Infinity;
+        let largeBest = Infinity;
+        const began = Bun.nanoseconds();
+        // At least 2 rounds, and more while they fit in 100 ms.
+        for (let round = 0; round < 10 && (round < 2 || Bun.nanoseconds() - began < 100e6); round++) {
+          let start = Bun.nanoseconds();
+          for (let i = 0; i < factor; i++) parse(small);
+          smallBest = Math.min(smallBest, Bun.nanoseconds() - start);
+          start = Bun.nanoseconds();
+          parse(large);
+          largeBest = Math.min(largeBest, Bun.nanoseconds() - start);
         }
+        const slowdown = largeBest / smallBest;
         expect(
           slowdown,
           `${factor} times as many ${shape} took ${slowdown.toFixed(1)} times as long for each`,

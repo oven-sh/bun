@@ -141,7 +141,11 @@ test("compile/aot/perf/serial-time", async () => {
   const isJudged = (isUpdate || existsSync(pinsPath)) && !isMusl;
   const stored: Record<string, number> = isJudged && !isUpdate ? JSON.parse(readFileSync(pinsPath, "utf8")) : {};
   const isOver = (now: Record<string, number>, name: string) => now[name] > 2 * (stored[name] ?? 0) + slack;
-  const now = await measureUntilWithinBounds("serial-time", measure, now => !isJudged || isUpdate || !Object.keys(now).some(name => isOver(now, name)));
+  const now = await measureUntilWithinBounds(
+    "serial-time",
+    measure,
+    now => !isJudged || isUpdate || !Object.keys(now).some(name => isOver(now, name)),
+  );
   if (isUpdate) writeFileSync(pinsPath, JSON.stringify(now, null, 2) + "\n");
   const pins = isUpdate ? now : stored;
   const names = Object.keys(now).sort((a, b) => now[b] - now[a]);

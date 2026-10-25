@@ -51,6 +51,7 @@ pub(super) fn run<'s>(
         errors: join_errors(folded.errors, scan.errors, decision.error, arena),
         strings_over_limit: folded.strings_over_limit,
         relies_on_running_before_calls: folded.relies_on_running_before_calls,
+        requires_of_other_files: scan.requires_of_other_files,
         sites_by_kind: scan.sites_by_kind,
         first_call_site: scan.first_call_site,
     };

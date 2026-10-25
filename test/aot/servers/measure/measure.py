@@ -12,7 +12,7 @@ Two builds of Bun on the small routes of one server, in about four minutes:
 A column is a name, the Bun that builds the executable with `bun build --compile`, and extra flags for that build.
 `--run-env aot:NAME=value` sets an environment variable for the servers of one column.
 `name=/path/to/bun:--aot@effect-plain` makes a column serve another server's program, so that two programs with the same routes
-are measured seconds apart; `*` in that name stands for the server of the job. `name=/path/to/bun:--aot@bun-validated#parsed` makes it serve another route as well: one with the same request and the same answer.
+are measured seconds apart; `*` in that name stands for the server of the job. `name=/path/to/bun:--aot#hand` makes it serve another route: one with the same request and the same answer.
 `name=/path/to/node:run` runs the entry point with that executable instead of compiling it.
 
 The three servers under ../effect have routes of their own (`effectRoutes` in ../answers.ts): `effect` is an API written with
@@ -22,11 +22,10 @@ Effect, `effect-sources` is the same program with the Effect packages resolved t
     python3 measure.py --servers effect --column aot=/path/to/bun:--aot --column sources=/path/to/bun:--aot@effect-sources \
         --column released=/path/to/released/bun --column node=/usr/local/bin/node:run --column plain=/path/to/bun:--aot@effect-plain --out rows.jsonl
 
-`bun-validated`, `hono-validated` and `express-validated` take the same order with the checks that an --aot build generates from its type: `validate<Order>(await request.json())` (the route
-`validated`) and `JSON.parse<Order>(await request.text())` (`parsed`). zod is not in those programs. One order, validated in four ways and by two JITs, a valid one and one that is refused (`<route>-refused`, only when named):
+One order, validated by zod and by hand and by two JITs, a valid one and one that is refused (`<route>-refused`, only when named):
 
-    python3 measure.py --servers bun,hono,express --routes post,post-refused --column zod=/path/to/bun:--aot --column hand=/path/to/bun:--aot#hand --column validate=/path/to/bun:--aot@*-validated#validated \
-        --column parse=/path/to/bun:--aot@*-validated#parsed --column own=/path/to/bun --column released=/path/to/released/bun --out rows.jsonl
+    python3 measure.py --servers bun,hono,express --routes post,post-refused --column zod=/path/to/bun:--aot --column hand=/path/to/bun:--aot#hand \
+        --column own=/path/to/bun --column released=/path/to/released/bun --out rows.jsonl
 
 A job is one server and one route. Jobs are distributed over lanes. A lane is four consecutive cores: the server is pinned to
 the first one and the client (load.c) to the other three. Servers are told they have one core (WTF_numberOfProcessorCores=1).
@@ -121,14 +120,13 @@ import argparse, fcntl, functools, glob, json, multiprocessing, os, re, resource
 import layers
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SERVERS = ["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "fastify-schemas", "tanstack", "tanstack-typed", "koa-typed", "express-typed", "fastify-typed", "bun-validated", "hono-validated", "express-validated"]
-VALIDATED = ("bun-validated", "hono-validated", "express-validated")
+SERVERS = ["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "fastify-schemas", "tanstack", "tanstack-typed", "koa-typed", "express-typed", "fastify-typed"]
 TANSTACK = ("tanstack", "tanstack-typed")
 TYPED_APP = {"koa-typed": "koa", "express-typed": "express", "fastify-typed": "fastify"}
 API_SERVERS = ["api-bun", "api-thin", "api-hono", "api-elysia", "api-node", "api-express", "api-fastify", "api-koa"]
 EFFECT = {"effect": "./bun.ts", "effect-sources": "./bun.ts", "effect-plain": "./plain.ts"}
 PAGES = [{"name": "static", "method": "GET", "path": "/", "type": "text/html"}, {"name": "list", "method": "GET", "path": "/items", "type": "text/html"}]
-VALIDATING = ("post", "hand", "validated", "parsed")
+VALIDATING = ("post", "hand")
 NATIVE = {"go": ["go", "build", "-o"], "rust": ["cargo", "build", "--release"]}
 NATIVE_ROUTES = ("text", "json", "params", "post", "hand", "typed", "async", "stream")
 NATIVE_COLUMN = {"name": "native", "run_env": {}}
@@ -238,7 +236,7 @@ class Server:
     def __init__(self, options, lane, spec, server, route, column):
         self.name = "%s/%s/%s" % (server, route["name"], column["name"])
         if column.get("route"):
-            route = next(other for other in spec["routes"] + spec["validatedRoutes"] + spec["refusedRoutes"] if other["name"] == column["route"] + ("-refused" if route["name"].endswith("-refused") else ""))
+            route = next(other for other in spec["routes"] + spec["refusedRoutes"] if other["name"] == column["route"] + ("-refused" if route["name"].endswith("-refused") else ""))
         self.options, self.lane, self.spec, self.route, self.column = options, lane, spec, route, column
         self.at_rate = {}
         self.executable = os.path.join(options.work, "bin", "%s-%s" % (program_of(column, server), column["name"]))
@@ -719,7 +717,7 @@ def main():
     parser.add_argument("--run-env", action="append", default=[], metavar="COLUMN:NAME=VALUE")
     parser.add_argument("--build-env", action="append", default=[], metavar="COLUMN:NAME=VALUE")
     parser.add_argument("--out", required=True, help="output file; lines are appended")
-    parser.add_argument("--servers", default=",".join(server for server in SERVERS if server not in VALIDATED))
+    parser.add_argument("--servers", default=",".join(SERVERS))
     parser.add_argument("--routes", default="", help="names from ../answers.ts, static, list; all by default")
     parser.add_argument("--cores", default="0-3", help="a range of consecutive cores, a multiple of four; every four cores form a lane")
     parser.add_argument("--modules", help="a node_modules folder with the packages from ../app/package.json and ../tanstack/package.json; skips `bun install`")
@@ -876,7 +874,7 @@ def main():
     for server in servers:
         routes = [
             route
-            for route in (spec["effectRoutes"] if server in EFFECT else spec["apiRoutes"] if server in API_SERVERS else spec["validatedRoutes"] if server in VALIDATED else spec["routes"]) + (PAGES if server in TANSTACK and not options.soak else []) + [refused for refused in spec["refusedRoutes"] if refused["name"] in options.routes.split(",") and server not in EFFECT and server not in API_SERVERS]
+            for route in (spec["effectRoutes"] if server in EFFECT else spec["apiRoutes"] if server in API_SERVERS else spec["routes"]) + (PAGES if server in TANSTACK and not options.soak else []) + [refused for refused in spec["refusedRoutes"] if refused["name"] in options.routes.split(",") and server not in EFFECT and server not in API_SERVERS]
             if (not options.routes or route["name"] in options.routes.split(",")) and (server not in NATIVE or route["name"] in NATIVE_ROUTES)
         ]
         for job in [routes] if options.soak else routes:

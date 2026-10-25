@@ -64,7 +64,6 @@ impl AnswerShape {
 #[derive(PartialEq, Eq, Debug)]
 struct FileShape {
     name: BString,
-    diagnostic_path: BString,
     role: FileRole,
     rank: u32,
     edges: Vec<FileId>,
@@ -90,7 +89,6 @@ impl FileShape {
         let code_answers = files.code_answers(file).iter();
         FileShape {
             name: module.file_name().into(),
-            diagnostic_path: files.diagnostic_path(file).into(),
             role: files.role(file),
             rank: files.rank_of_file(file),
             edges: module.edges.to_vec(),
@@ -165,16 +163,16 @@ fn numbers_do_not_depend_on_threads() {
     assert_eq!(sequential, parallel);
 }
 
-const ACCEPTED_MANIFEST: &str = r#"{
-    "name": "accepted",
+const TYPED_MANIFEST: &str = r#"{
+    "name": "typed",
     "version": "1.0.0",
-    "exports": { ".": { "full-types": "./index.sound.ts", "default": "./index.js" } }
+    "exports": { ".": { "aot": "./index.aot.ts", "default": "./index.js" } }
 }"#;
 
-const REJECTED_MANIFEST: &str = r#"{
-    "name": "rejected",
+const MISTYPED_MANIFEST: &str = r#"{
+    "name": "mistyped",
     "version": "1.0.0",
-    "exports": { ".": { "full-types": "./index.sound.ts", "default": "./index.js" } }
+    "exports": { ".": { "aot": "./index.aot.ts", "default": "./index.js" } }
 }"#;
 
 const DEP_MANIFEST: &str = r#"{ "name": "dep", "version": "1.0.0", "main": "./index.js" }"#;
@@ -209,8 +207,8 @@ const EVERY_KIND_OF_IMPORT: [(&str, &str); 17] = [
         "app.tsx",
         r#"import "./main.ts";
         import "./cycle/a.ts";
-        import "accepted";
-        import "rejected";
+        import "typed";
+        import "mistyped";
         import "https://example.com/x.js";
         import "./missing.js";
         import "./declared.d.ts";
@@ -223,23 +221,20 @@ const EVERY_KIND_OF_IMPORT: [(&str, &str); 17] = [
     ),
     ("cycle/a.ts", r#"import "./b.ts";"#),
     ("cycle/b.ts", r#"import "./a.ts";"#),
-    ("node_modules/accepted/package.json", ACCEPTED_MANIFEST),
+    ("node_modules/typed/package.json", TYPED_MANIFEST),
+    ("node_modules/typed/index.js", "export const sides = 4;\n"),
     (
-        "node_modules/accepted/index.js",
-        "export const sides = 4;\n",
-    ),
-    (
-        "node_modules/accepted/index.sound.ts",
+        "node_modules/typed/index.aot.ts",
         "export const sides: number = 4;\n",
     ),
-    ("node_modules/rejected/package.json", REJECTED_MANIFEST),
+    ("node_modules/mistyped/package.json", MISTYPED_MANIFEST),
     (
-        "node_modules/rejected/index.js",
+        "node_modules/mistyped/index.aot.ts",
         "export const sides = 4;\n",
     ),
     (
-        "node_modules/rejected/index.sound.ts",
-        "export const sides: number = 5;\n",
+        "node_modules/mistyped/index.aot.ts",
+        "export const sides: number = \"5\";\n",
     ),
     (
         "node_modules/react/package.json",
@@ -274,7 +269,7 @@ fn every_kind_of_import_does_not_depend_on_threads() {
         "pages/a.js",
         "cycle/a.ts",
         "lib/governed.ts",
-        "node_modules/rejected/index.js",
+        "node_modules/mistyped/index.aot.ts",
     ] {
         assert!(
             names.contains(&format!("/project/{path}").as_bytes()),

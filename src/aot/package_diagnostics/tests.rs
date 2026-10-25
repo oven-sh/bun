@@ -1,13 +1,9 @@
 use super::*;
-use crate::compile::testing::{
-    TYPED_PACKAGE_JSON, TYPED_PACKAGE_SOUND_JSON, default_settings, describe_load,
-    with_loaded_build, with_loaded_build_and_options,
-};
+use crate::compile::testing::{default_settings, with_loaded_build};
 use crate::diagnostics::new_driver_diagnostic;
 use crate::load::ProjectId;
 use bstr::BStr;
 use bun_ast::{Data, Kind, Log};
-use bun_options_types::aot_options::AotOptions;
 use bun_sema::check::aot::DiagnosticClass;
 use bun_sema::messages::Category;
 use bun_sema::program::FileRole;
@@ -32,29 +28,13 @@ const DEPENDENCIES: &[(&str, &str)] = &[
     ("node_modules/helper/index.ts", "export {};\n"),
 ];
 
-const SHAPES: &[(&str, &str)] = &[
-    ("app.ts", "import \"shapes\";\nimport \"shapes/more\";\n"),
+const TWO_COPIES_OF_SHAPES: &[(&str, &str)] = &[
+    ("app.ts", "import \"shapes\";\nimport \"dep\";\n"),
     (
         "node_modules/shapes/package.json",
-        concat!(
-            r#"{"name":"shapes","version":"1.2.3","type":"module","exports":{"#,
-            r#"".":{"full-types":"./index.full.ts","default":"./index.js"},"#,
-            r#""./more":{"full-types":"./more.full.ts","default":"./more.js"}}}"#,
-        ),
+        r#"{"name":"shapes","version":"1.2.3","main":"index.ts"}"#,
     ),
-    (
-        "node_modules/shapes/index.js",
-        "export const area = 2 * 3;\n",
-    ),
-    (
-        "node_modules/shapes/index.full.ts",
-        "export const area: number = 2 * 3;\n",
-    ),
-    ("node_modules/shapes/more.js", "export const sides = 4;\n"),
-    (
-        "node_modules/shapes/more.full.ts",
-        "export const sides: number = 4;\n",
-    ),
+    ("node_modules/shapes/index.ts", "export {};\n"),
 ];
 
 const NESTED_SHAPES: &[(&str, &str)] = &[
@@ -73,59 +53,6 @@ const NESTED_SHAPES: &[(&str, &str)] = &[
     ),
 ];
 
-const NESTED_COPY_OF_OTHER_VERSION: &[(&str, &str)] = &[
-    (
-        "node_modules/dep/package.json",
-        r#"{"name":"dep","version":"1.0.0","main":"index.ts"}"#,
-    ),
-    ("node_modules/dep/index.ts", "import \"p\";\n"),
-    (
-        "node_modules/dep/node_modules/p/package.json",
-        r#"{"name":"p","version":"2.0.0","type":"module","main":"x.js"}"#,
-    ),
-    (
-        "node_modules/dep/node_modules/p/x.js",
-        "export const x = 1;\n",
-    ),
-];
-
-const TYPED_FILE: &str = "export const x: number = 1;\n";
-const TYPED_FILE_WITH_OTHER_CODE: &str = "export const x: number = 2;\n";
-
-const SOUND_JSON_FOR_OTHER_VERSION: &str =
-    r#"{"format":2,"name":"p","version":"2.0.0","when":{},"lay":{"x.js":""},"needs":[]}"#;
-
-const SOUND_JSON_FOR_PRODUCTION: &str = concat!(
-    r#"{"format":2,"name":"p","version":"1.0.0","#,
-    r#""when":{"process.env.NODE_ENV":"production"},"lay":{"x.js":""},"needs":[]}"#,
-);
-
-const CAST_BEFORE_MISMATCH: &str = concat!(
-    "function read() {\n",
-    "  return 1;\n",
-    "}\n",
-    "export const first = /** @type {number} */ (read());\n",
-    "export const area = 2;\n",
-);
-
-const TYPED_CAST_BEFORE_MISMATCH: &str = concat!(
-    "function read(): number {\n",
-    "  return 1;\n",
-    "}\n",
-    "export const first: number = (read());\n",
-    "export const area: number = 3;\n",
-);
-
-const SHAPES_USED: &str = "\"shapes\" 1.2.3 is compiled from its full types in node_modules/shapes";
-const PROJECT_VERSION_USED: &str = "\"p\" 1.0.0 is compiled from its full types in .full-types/p";
-const IS_FOR_OTHER_VERSION: &str = "they are for version 2.0.0, but 1.0.0 is installed. \
-                                    Replace them with the full types for 1.0.0, or remove them";
-const NEEDS_PRODUCTION: &str = "they need process.env.NODE_ENV to be defined as \"production\". \
-                                Pass --define 'process.env.NODE_ENV=\"production\"'";
-const SHIPPED_VERSION_DIFFERS: &str =
-    "index.full.ts without its types doesn't match index.js. Was the package patched?";
-const SHIPPED_VERSION_EMITS_CODE: &str =
-    "in index.full.ts, TypeScript syntax that emits code can't be erased";
 const TYPE_ERROR: &str = "TS2322: Type 'string' is not assignable to type 'number'.";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -137,13 +64,9 @@ struct Printed {
 }
 
 struct Outcome {
-    rejected_versions: Vec<Printed>,
-    /// Without the count.
     printed: Vec<Printed>,
-    count: Option<String>,
     stops_build: bool,
     remaining: Vec<BuildDiagnostic>,
-    demoted_directories: Vec<String>,
 }
 
 fn message(kind: Kind, text: &str) -> Printed {
@@ -171,28 +94,6 @@ fn package_warning(name: &str, errors: &str, first: &str, files: (u32, u32)) -> 
     message_with_type_error(Kind::Warn, &text)
 }
 
-fn shipped_version_text(sentence: &str) -> String {
-    format!(
-        "\"shapes\" is compiled without types, because its full types in node_modules/shapes \
-         can't be used: {sentence}"
-    )
-}
-
-fn shipped_version_not_used(position: &str, sentence: &str) -> Printed {
-    Printed {
-        position: Some(position.to_owned()),
-        ..message(Kind::Warn, &shipped_version_text(sentence))
-    }
-}
-
-fn project_version_text(sentence: &str) -> String {
-    format!("TS100056: The full types of \"p\" in .full-types/p can't be used: {sentence}")
-}
-
-fn load_with_messages(lines: &[String]) -> String {
-    format!("loaded: {}\n", lines.join("\n"))
-}
-
 fn text_of(data: &Data) -> String {
     BStr::new(&data.text).to_string()
 }
@@ -217,85 +118,24 @@ fn print(diagnostics: Diagnostics) -> Vec<Printed> {
         .collect()
 }
 
-fn with_packages<R>(files: &[(&str, &str)], then: impl FnOnce(PackageView<'_, '_>) -> R) -> R {
+fn with_packages<R>(files: &[(&str, &str)], then: impl FnOnce(ProgramView<'_, '_>) -> R) -> R {
     with_loaded_build(files, &default_settings(), |_, loaded| {
-        then(loaded.packages(ProjectId::Application))
+        then(loaded.project(ProjectId::Application).view())
     })
 }
 
-fn with_unreported_packages<R>(
-    files: &[(&str, &str)],
-    then: impl FnOnce(PackageView<'_, '_>) -> R,
-) -> R {
-    let aot = AotOptions {
-        runs_in_place: true,
-        ..AotOptions::default()
-    };
-    with_loaded_build_and_options(files, &default_settings(), aot, |_, loaded| {
-        then(loaded.packages(ProjectId::Application))
-    })
-}
-
-fn shipped_index_files<'a>(installed: &'a str, typed: &'a str) -> Vec<(&'a str, &'a str)> {
-    let mut files: Vec<(&str, &str)> = SHAPES.to_vec();
-    for (path, text) in &mut files {
-        match *path {
-            "node_modules/shapes/index.js" => *text = installed,
-            "node_modules/shapes/index.full.ts" => *text = typed,
-            _ => {}
-        }
-    }
-    files
-}
-
-fn with_shipped_index<R>(
-    installed: &str,
-    typed: &str,
-    then: impl FnOnce(PackageView<'_, '_>) -> R,
-) -> R {
-    with_packages(&shipped_index_files(installed, typed), then)
-}
-
-fn with_two_shapes_copies<R>(then: impl FnOnce(PackageView<'_, '_>) -> R) -> R {
-    let app = ("app.ts", "import \"shapes\";\nimport \"dep\";\n");
-    let files = [&[app][..], &SHAPES[1..], NESTED_SHAPES].concat();
-    with_packages(&files, then)
-}
-
-fn with_project_version<R>(typed: &str, then: impl FnOnce(PackageView<'_, '_>) -> R) -> R {
-    with_packages(
-        &project_version_files(TYPED_PACKAGE_SOUND_JSON, typed),
-        then,
-    )
-}
-
-fn project_version_files<'a>(sound_json: &'a str, typed: &'a str) -> [(&'a str, &'a str); 5] {
-    [
-        ("app.ts", "import \"p\";\n"),
-        ("node_modules/p/package.json", TYPED_PACKAGE_JSON),
-        ("node_modules/p/x.js", "export const x = 1;\n"),
-        (".full-types/p/full-types.json", sound_json),
-        (".full-types/p/lay/x.js", typed),
-    ]
-}
-
-fn file_at(packages: PackageView<'_, '_>, suffix: &str) -> FileId {
-    let files = packages.view.files();
+fn file_at(packages: ProgramView<'_, '_>, suffix: &str) -> FileId {
+    let files = packages.files();
     let mut compiled_files = files.compiled_files().iter().copied();
     compiled_files
         .find(|&file| files.module(file).file_name().ends_with(suffix.as_bytes()))
         .unwrap_or_else(|| panic!("{suffix} is not compiled"))
 }
 
-fn rejection_kind(packages: PackageView<'_, '_>, file: FileId) -> Option<ErasureMismatchKind> {
-    let compiled = packages.view.files().compiled(file)?;
-    Some(compiled.rejected_typed_version?.kind)
-}
-
-fn type_error(packages: PackageView<'_, '_>, file: FileId, effect: Effect) -> BuildDiagnostic {
+fn type_error(packages: ProgramView<'_, '_>, file: FileId, effect: Effect) -> BuildDiagnostic {
     let text = b"Type 'string' is not assignable to type 'number'.".to_vec();
     let diagnostic = driver::Diagnostic {
-        path: packages.view.files().diagnostic_path(file).to_vec(),
+        path: packages.files().module(file).file_name().to_vec(),
         start: 6,
         end: 7,
         has_undefined_range: false,
@@ -310,7 +150,7 @@ fn type_error(packages: PackageView<'_, '_>, file: FileId, effect: Effect) -> Bu
     BuildDiagnostic { diagnostic, effect }
 }
 
-fn withdraws_trust(packages: PackageView<'_, '_>, file: FileId) -> BuildDiagnostic {
+fn withdraws_trust(packages: ProgramView<'_, '_>, file: FileId) -> BuildDiagnostic {
     type_error(packages, file, Effect::WithdrawsTrust)
 }
 
@@ -319,8 +159,8 @@ fn with_type_errors(files: &[FileId]) -> Vec<Demotion> {
     files.iter().map(|&file| Demotion { file, cause }).collect()
 }
 
-fn role_decision(packages: PackageView<'_, '_>, demoted: &[Demotion]) -> RoleDecision {
-    let files = packages.view.files();
+fn role_decision(packages: ProgramView<'_, '_>, demoted: &[Demotion]) -> RoleDecision {
+    let files = packages.files();
     let file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));
     let mut roles: Vec<FileRole> = file_ids.map(|file| files.role(file)).collect();
     let mut demoted = demoted.to_vec();
@@ -337,121 +177,28 @@ fn role_decision(packages: PackageView<'_, '_>, demoted: &[Demotion]) -> RoleDec
     }
 }
 
-fn print_rejected_versions(
-    packages: PackageView<'_, '_>,
-    defines: &[(&str, &str)],
-) -> Vec<Printed> {
-    let defined = |path: &[u8]| {
-        let define = defines.iter().find(|define| define.0.as_bytes() == path)?;
-        Some(define.1.as_bytes().to_vec())
-    };
-    let mut diagnostics = Diagnostics::new();
-    report_rejected_versions(&mut diagnostics, packages, &defined);
-    print(diagnostics)
-}
-
 fn report(
-    packages: PackageView<'_, '_>,
+    packages: ProgramView<'_, '_>,
     checked: Vec<BuildDiagnostic>,
     demoted: &[Demotion],
 ) -> Outcome {
     let roles = role_decision(packages, demoted);
     let mut diagnostics = Diagnostics::new();
     let errors = report_package_errors(&mut diagnostics, packages, checked, &roles);
-    report_unchecked_versions(&mut diagnostics, packages, &roles);
-    let refused_at_load = report_rejected_versions(&mut Diagnostics::new(), packages, &|_| None);
-    report_used_versions(
-        &mut diagnostics,
-        packages,
-        &errors.demoted_directories,
-        &refused_at_load,
-    );
-    let demoted_directories = errors.demoted_directories.iter();
-    let stops_build = diagnostics.has_errors();
-    let is_count = |printed: &Printed| printed.text.contains(" full types, and ");
-    let (count, printed): (Vec<Printed>, Vec<Printed>) =
-        print(diagnostics).into_iter().partition(is_count);
     Outcome {
-        rejected_versions: print_rejected_versions(packages, &[]),
-        stops_build,
-        printed,
-        count: count.into_iter().next().map(|count| count.text),
+        stops_build: diagnostics.has_errors(),
+        printed: print(diagnostics),
         remaining: errors.remaining,
-        demoted_directories: demoted_directories
-            .map(|directory| BStr::new(directory).to_string())
-            .collect(),
     }
 }
 
-fn report_without_errors(packages: PackageView<'_, '_>) -> Outcome {
+fn report_without_errors(packages: ProgramView<'_, '_>) -> Outcome {
     report(packages, Vec::new(), &[])
 }
 
 fn remaining_files(outcome: &Outcome) -> Vec<Option<FileId>> {
     let remaining = outcome.remaining.iter();
     remaining.map(|reported| reported.diagnostic.file).collect()
-}
-
-#[test]
-fn only_emitted_code_changes_rejected_version_sentence() {
-    const AREA: &str = "export const area = 6;\n";
-    let cases = [
-        (
-            ErasureMismatchKind::NodeKind,
-            AREA,
-            "export const area: string = \"6\";\n",
-            SHIPPED_VERSION_DIFFERS,
-        ),
-        (
-            ErasureMismatchKind::Name,
-            AREA,
-            "export const size: number = 6;\n",
-            SHIPPED_VERSION_DIFFERS,
-        ),
-        (
-            ErasureMismatchKind::Literal,
-            AREA,
-            "export const area: number = 7;\n",
-            SHIPPED_VERSION_DIFFERS,
-        ),
-        (
-            ErasureMismatchKind::Operator,
-            "export const area = 2 * 3;\n",
-            "export const area: number = 2 + 3;\n",
-            SHIPPED_VERSION_DIFFERS,
-        ),
-        (
-            ErasureMismatchKind::Flags,
-            AREA,
-            "export let area: number = 6;\n",
-            SHIPPED_VERSION_DIFFERS,
-        ),
-        (
-            ErasureMismatchKind::ChildCount,
-            AREA,
-            "export const area: number = 6;\nexport const sides: number = 4;\n",
-            SHIPPED_VERSION_DIFFERS,
-        ),
-        (
-            ErasureMismatchKind::EmitsCode,
-            "var Kind;\nexport const area = 6;\n",
-            "enum Kind { A }\nexport const area: number = 6;\n",
-            SHIPPED_VERSION_EMITS_CODE,
-        ),
-    ];
-    for (kind, installed, typed, sentence) in cases {
-        let (found, outcome) = with_shipped_index(installed, typed, |packages| {
-            let index = file_at(packages, "shapes/index.js");
-            let found = rejection_kind(packages, index);
-            (found, report_without_errors(packages))
-        });
-        assert_eq!(found, Some(kind), "{typed}");
-        let texts: Vec<&str> = (outcome.rejected_versions.iter())
-            .map(|rejected| rejected.text.as_str())
-            .collect();
-        assert_eq!(texts, [shipped_version_text(sentence)], "{typed}");
-        assert!(outcome.printed.is_empty(), "{typed}");
-    }
 }
 
 #[test]
@@ -478,7 +225,6 @@ fn demoted_package_gets_one_warning() {
     );
     assert!(!outcome.stops_build);
     assert!(outcome.remaining.is_empty());
-    assert_eq!(outcome.demoted_directories, ["/project/node_modules/dep"]);
 }
 
 #[test]
@@ -513,40 +259,6 @@ fn several_errors_of_one_file_demote_one_file() {
 }
 
 #[test]
-fn neighbor_of_rejected_version_counts_as_demoted() {
-    let outcome = with_packages(DEPENDENCIES, |packages| {
-        let index = file_at(packages, "dep/index.ts");
-        let neighbor = Demotion {
-            file: file_at(packages, "dep/other.ts"),
-            cause: DemotionCause::RejectedNeighbor,
-        };
-        let demoted = [with_type_errors(&[index]), vec![neighbor]].concat();
-        report(packages, vec![withdraws_trust(packages, index)], &demoted)
-    });
-    let first = "/project/node_modules/dep/index.ts:1:7";
-    assert_eq!(
-        outcome.printed,
-        [package_warning("dep", "1 type error", first, (2, 3))]
-    );
-}
-
-#[test]
-fn neighbor_without_errors_demotes_package_silently() {
-    let outcome = with_packages(SHAPES, |packages| {
-        let neighbor = Demotion {
-            file: file_at(packages, "shapes/more.js"),
-            cause: DemotionCause::RejectedNeighbor,
-        };
-        report(packages, Vec::new(), &[neighbor])
-    });
-    assert!(outcome.printed.is_empty(), "{:?}", outcome.printed);
-    assert_eq!(
-        outcome.demoted_directories,
-        ["/project/node_modules/shapes"]
-    );
-}
-
-#[test]
 fn demoted_file_outside_packages_is_named_by_path() {
     let outcome = with_packages(DEPENDENCIES, |packages| {
         let app = file_at(packages, "app.ts");
@@ -556,7 +268,6 @@ fn demoted_file_outside_packages_is_named_by_path() {
     let text = "TS100010: '/project/app.ts' has 1 type error (the first at /project/app.ts:1:7), \
                 so it is compiled without its types. It still works, but runs slower.";
     assert_eq!(outcome.printed, [message_with_type_error(Kind::Warn, text)]);
-    assert!(outcome.demoted_directories.is_empty());
 }
 
 #[test]
@@ -569,10 +280,6 @@ fn each_demoted_package_is_counted_once() {
     });
     assert_eq!(outcome.printed.len(), 3);
     assert!(outcome.remaining.is_empty());
-    assert_eq!(
-        outcome.demoted_directories,
-        ["/project/node_modules/dep", "/project/node_modules/helper"]
-    );
 }
 
 #[test]
@@ -588,7 +295,6 @@ fn build_stopping_error_stays_in_remaining() {
     });
     assert_eq!(remaining_files(&outcome), expected);
     assert!(outcome.printed.is_empty());
-    assert!(outcome.demoted_directories.is_empty());
 }
 
 #[test]
@@ -610,310 +316,42 @@ fn other_effects_stay_in_remaining() {
         [Effect::Warns, Effect::InternalError, Effect::WithdrawsTrust]
     );
     assert!(outcome.printed.is_empty());
-    assert!(outcome.demoted_directories.is_empty());
-}
-
-#[test]
-fn typed_version_error_stops_build() {
-    let outcome = with_project_version(TYPED_FILE, |packages| {
-        let x = file_at(packages, "p/x.js");
-        let error = || type_error(packages, x, Effect::StopsBuild);
-        report(packages, vec![error(), error()], &[])
-    });
-    let text = "TS100021: The full types of 'p' in .full-types/p have type errors (2), \
-                the first at /project/.full-types/p/lay/x.js:1:7";
-    let error = message_with_type_error(Kind::Err, text);
-    assert_eq!(
-        outcome.printed,
-        [error, message(Kind::Note, PROJECT_VERSION_USED)]
-    );
-    assert!(outcome.stops_build);
-    assert!(outcome.remaining.is_empty());
-    assert!(outcome.demoted_directories.is_empty());
-}
-
-#[test]
-fn typed_version_errors_need_project_origin() {
-    let project_origin = with_project_version(TYPED_FILE, |packages| {
-        packages.view.origin(file_at(packages, "p/x.js"))
-    });
-    assert_eq!(project_origin, FileOrigin::ProjectTypedVersion);
-
-    let (origin, outcome, index) = with_packages(SHAPES, |packages| {
-        let index = file_at(packages, "shapes/index.js");
-        let checked = vec![type_error(packages, index, Effect::StopsBuild)];
-        (
-            packages.view.origin(index),
-            report(packages, checked, &[]),
-            index,
-        )
-    });
-    assert_eq!(origin, FileOrigin::DependencySource);
-    assert_eq!(remaining_files(&outcome), [Some(index)]);
-    assert_eq!(outcome.printed, [message(Kind::Note, SHAPES_USED)]);
-    assert!(!outcome.stops_build);
-}
-
-#[test]
-fn demoted_typed_version_only_warns() {
-    let outcome = with_packages(SHAPES, |packages| {
-        let index = file_at(packages, "shapes/index.js");
-        let checked = vec![withdraws_trust(packages, index)];
-        report(packages, checked, &with_type_errors(&[index]))
-    });
-    let first = "/project/node_modules/shapes/index.full.ts:1:7";
-    assert_eq!(
-        outcome.printed,
-        [package_warning("shapes", "1 type error", first, (1, 2))]
-    );
-    assert!(!outcome.stops_build);
-    assert_eq!(
-        outcome.demoted_directories,
-        ["/project/node_modules/shapes"]
-    );
-}
-
-#[test]
-fn demotion_hides_no_note_of_other_packages() {
-    let app = ("app.ts", "import \"shapes\";\nimport \"dep\";\n");
-    let files = [&[app][..], &SHAPES[1..], &DEPENDENCIES[1..]].concat();
-    let outcome = with_packages(&files, |packages| {
-        let index = file_at(packages, "dep/index.ts");
-        let checked = vec![withdraws_trust(packages, index)];
-        report(packages, checked, &with_type_errors(&[index]))
-    });
-    assert_eq!(outcome.printed.len(), 2);
-    assert!(outcome.printed.contains(&message(Kind::Note, SHAPES_USED)));
-    assert_eq!(outcome.demoted_directories, ["/project/node_modules/dep"]);
-}
-
-#[test]
-fn demoted_copy_hides_no_note_of_other_copy() {
-    let outcome = with_two_shapes_copies(|packages| {
-        let nested = file_at(packages, "dep/node_modules/shapes/index.ts");
-        let checked = vec![withdraws_trust(packages, nested)];
-        report(packages, checked, &with_type_errors(&[nested]))
-    });
-    let first = "/project/node_modules/dep/node_modules/shapes/index.ts:1:7";
-    let warning = package_warning("shapes", "1 type error", first, (1, 1));
-    assert_eq!(outcome.printed.len(), 2);
-    assert!(outcome.printed.contains(&warning));
-    assert!(outcome.printed.contains(&message(Kind::Note, SHAPES_USED)));
-    assert_eq!(
-        outcome.demoted_directories,
-        ["/project/node_modules/dep/node_modules/shapes"]
-    );
 }
 
 #[test]
 fn copies_of_one_package_are_grouped_separately() {
-    let outcome = with_two_shapes_copies(|packages| {
-        let demoted =
-            ["shapes/index.js", "shapes/index.ts"].map(|suffix| file_at(packages, suffix));
+    let files = [TWO_COPIES_OF_SHAPES, NESTED_SHAPES].concat();
+    let outcome = with_packages(&files, |packages| {
+        let demoted = [
+            "project/node_modules/shapes/index.ts",
+            "dep/node_modules/shapes/index.ts",
+        ]
+        .map(|suffix| file_at(packages, suffix));
         let checked = demoted.map(|file| withdraws_trust(packages, file));
         report(packages, checked.into(), &with_type_errors(&demoted))
     });
     let mut printed = outcome.printed.iter();
     assert!(printed.all(|it| it.text.starts_with("TS100009: 'shapes' has 1 type error ")));
     assert_eq!(outcome.printed.len(), 2);
-    assert_eq!(outcome.demoted_directories.len(), 2);
-}
-
-#[test]
-fn typed_files_of_one_package_give_one_note() {
-    let outcome = with_packages(SHAPES, report_without_errors);
-    assert_eq!(outcome.printed, [message(Kind::Note, SHAPES_USED)]);
-    assert!(outcome.rejected_versions.is_empty());
-    assert!(!outcome.stops_build);
-}
-
-#[test]
-fn rejected_shipped_version_warns_at_installed_file() {
-    let outcome = with_shipped_index(
-        "export const area = 2 * 3;\n",
-        "export const area: number = 2 + 3;\n",
-        report_without_errors,
-    );
-    let position = "/project/node_modules/shapes/index.js:1:21";
-    let warning = shipped_version_not_used(position, SHIPPED_VERSION_DIFFERS);
-    assert_eq!(outcome.rejected_versions, [warning]);
-    assert!(outcome.printed.is_empty());
-}
-
-#[test]
-fn jsdoc_cast_does_not_move_rejected_version_position() {
-    let outcome = with_shipped_index(
-        CAST_BEFORE_MISMATCH,
-        TYPED_CAST_BEFORE_MISMATCH,
-        report_without_errors,
-    );
-    let position = "/project/node_modules/shapes/index.js:5:21";
-    let warning = shipped_version_not_used(position, SHIPPED_VERSION_DIFFERS);
-    assert_eq!(outcome.rejected_versions, [warning]);
-}
-
-#[test]
-fn accepted_project_version_is_named_by_sound_folder() {
-    let outcome = with_project_version(TYPED_FILE, report_without_errors);
-    assert_eq!(outcome.printed, [message(Kind::Note, PROJECT_VERSION_USED)]);
-    assert!(outcome.rejected_versions.is_empty());
-    let count = "1 package has full types, and 1 is compiled from them";
-    assert_eq!(outcome.count.as_deref(), Some(count));
-}
-
-#[test]
-fn program_without_full_types_has_no_count() {
-    let outcome = with_packages(DEPENDENCIES, report_without_errors);
-    assert_eq!(outcome.count, None);
-    assert!(outcome.rejected_versions.is_empty());
-}
-
-#[test]
-fn refused_project_version_is_counted() {
-    let files = project_version_files(SOUND_JSON_FOR_OTHER_VERSION, TYPED_FILE);
-    let outcome = with_packages(&files, report_without_errors);
-    let count = "1 package has full types, and none are compiled from them";
-    assert_eq!(outcome.count.as_deref(), Some(count));
-}
-
-#[test]
-fn project_version_under_ts_nocheck_is_reported() {
-    let outcome = with_project_version(TYPED_FILE, |packages| {
-        let files = packages.view.files();
-        let is_typed = |file: &&FileId| {
-            let compiled = files.compiled(**file);
-            compiled.is_some_and(|it| it.typed_source_path.is_some())
-        };
-        let file = *files.compiled_files().iter().find(is_typed).unwrap();
-        let cause = DemotionCause::UnverifiedTypes;
-        report(packages, Vec::new(), &[Demotion { file, cause }])
-    });
-    let warning = project_version_text(
-        "lay/x.js has a // @ts-nocheck comment, so nothing checks its types. Remove the comment",
-    );
-    assert_eq!(outcome.printed, [message(Kind::Warn, &warning)]);
-}
-
-#[test]
-fn rejected_project_version_is_reported_and_names_both_files() {
-    let files = project_version_files(TYPED_PACKAGE_SOUND_JSON, TYPED_FILE_WITH_OTHER_CODE);
-    let expected = "loaded: /project/node_modules/p/x.js:1:18: TS100056: The full types of \"p\" \
-                    in .full-types/p can't be used: lay/x.js without its types doesn't match x.js. \
-                    Was the package patched?\n";
-    assert_eq!(describe_load(&files), expected);
-}
-
-#[test]
-fn manifest_mismatch_is_reported_without_position() {
-    let files = project_version_files(SOUND_JSON_FOR_OTHER_VERSION, TYPED_FILE);
-    let expected = load_with_messages(&[project_version_text(IS_FOR_OTHER_VERSION)]);
-    assert_eq!(describe_load(&files), expected);
-}
-
-#[test]
-fn manifest_without_pins_is_reported() {
-    let files = project_version_files("{}", TYPED_FILE);
-    let expected = load_with_messages(&[project_version_text(
-        "\"format\" in full-types.json is missing or not valid",
-    )]);
-    assert_eq!(describe_load(&files), expected);
-}
-
-#[test]
-fn manifest_mismatch_hides_rejected_files_of_package() {
-    let files = project_version_files(SOUND_JSON_FOR_OTHER_VERSION, TYPED_FILE_WITH_OTHER_CODE);
-    let expected = load_with_messages(&[project_version_text(IS_FOR_OTHER_VERSION)]);
-    assert_eq!(describe_load(&files), expected);
-}
-
-#[test]
-fn manifest_mismatch_hides_no_rejected_file_of_other_packages() {
-    let app = ("app.ts", "import \"p\";\nimport \"shapes\";\n");
-    let shapes = shipped_index_files(
-        "export const area = 2 * 3;\n",
-        "export const area: number = 2 + 3;\n",
-    );
-    let project_version = project_version_files(SOUND_JSON_FOR_OTHER_VERSION, TYPED_FILE);
-    let files = [&[app][..], &shapes[1..], &project_version[1..]].concat();
-    let warning = shipped_version_text(SHIPPED_VERSION_DIFFERS);
-    let expected = load_with_messages(&[
-        project_version_text(IS_FOR_OTHER_VERSION),
-        format!("/project/node_modules/shapes/index.js:1:21: {warning}"),
-    ]);
-    assert_eq!(describe_load(&files), expected);
-}
-
-#[test]
-fn each_installed_copy_is_compared_with_manifest() {
-    let app = ("app.ts", "import \"p\";\nimport \"dep\";\n");
-    let project_version = project_version_files(TYPED_PACKAGE_SOUND_JSON, TYPED_FILE);
-    let files = [
-        &[app][..],
-        &project_version[1..],
-        NESTED_COPY_OF_OTHER_VERSION,
-    ]
-    .concat();
-    let sentence = "they are for version 1.0.0, but 2.0.0 is installed. \
-                    Replace them with the full types for 2.0.0, or remove them";
-    let expected = load_with_messages(&[project_version_text(sentence)]);
-    assert_eq!(describe_load(&files), expected);
-}
-
-#[test]
-fn manifest_is_compared_with_what_build_defines() {
-    const NODE_ENV: &str = "process.env.NODE_ENV";
-    let files = project_version_files(SOUND_JSON_FOR_PRODUCTION, TYPED_FILE);
-    let text = project_version_text(NEEDS_PRODUCTION);
-    assert_eq!(describe_load(&files), load_with_messages(&[text.clone()]));
-
-    with_unreported_packages(&files, |packages| {
-        let insufficient: [&[(&str, &str)]; 3] = [
-            &[],
-            &[(NODE_ENV, "development")],
-            &[("NODE_ENV", "production")],
-        ];
-        for defines in insufficient {
-            let printed = print_rejected_versions(packages, defines);
-            assert_eq!(printed, [message(Kind::Warn, &text)], "{defines:?}");
-        }
-        let printed = print_rejected_versions(packages, &[(NODE_ENV, "production")]);
-        assert!(printed.is_empty(), "{printed:?}");
-    });
-}
-
-#[test]
-fn typed_version_of_package_that_is_not_loaded_is_reported_and_not_read() {
-    let mut files = project_version_files(TYPED_PACKAGE_SOUND_JSON, TYPED_FILE).to_vec();
-    files.push((".full-types/unused/full-types.json", "{"));
-    let outcome = with_packages(&files, report_without_errors);
-    let warning = "TS100056: The full types of \"unused\" in .full-types/unused can't be used: \
-                   the program doesn't import \"unused\". Check the name of the folder, or remove it";
-    assert_eq!(outcome.rejected_versions, [message(Kind::Warn, warning)]);
-    assert_eq!(outcome.printed, [message(Kind::Note, PROJECT_VERSION_USED)]);
-    let count = "2 packages have full types, and 1 is compiled from them";
-    assert_eq!(outcome.count.as_deref(), Some(count));
 }
 
 #[test]
 fn demoted_runtime_file_is_not_reported() {
     let files = [("app.js", "import \"node:path\";\n")];
     let outcome = with_loaded_build(&files, &default_settings(), |_, loaded| {
-        let packages = loaded.packages(ProjectId::Runtime);
-        let file = packages.view.files().compiled_files()[0];
-        assert_eq!(packages.view.origin(file), FileOrigin::Runtime);
+        let packages = loaded.project(ProjectId::Runtime).view();
+        let file = packages.files().compiled_files()[0];
+        assert_eq!(packages.origin(file), FileOrigin::Runtime);
         let checked = vec![withdraws_trust(packages, file)];
         report(packages, checked, &with_type_errors(&[file]))
     });
     assert!(outcome.printed.is_empty(), "{:?}", outcome.printed);
     assert!(outcome.remaining.is_empty());
-    assert!(outcome.demoted_directories.is_empty());
 }
 
 #[test]
 fn untyped_program_reports_nothing() {
     let outcome = with_packages(DEPENDENCIES, report_without_errors);
-    assert!(outcome.rejected_versions.is_empty());
     assert!(outcome.printed.is_empty());
     assert!(outcome.remaining.is_empty());
-    assert!(outcome.demoted_directories.is_empty());
 }

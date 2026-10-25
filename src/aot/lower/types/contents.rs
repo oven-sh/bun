@@ -29,7 +29,7 @@ pub(in crate::lower) fn find_contents_type(
                 return arguments.get(index).copied();
             }
             ShapeKind::TypeVariable { constraint, .. } => constraint?,
-            ShapeKind::Constrained { base, .. } => base,
+            ShapeKind::Int32 { base } => base,
             _ => return None,
         };
     }

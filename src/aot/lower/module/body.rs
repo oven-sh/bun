@@ -80,7 +80,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(crate) fn lower_module_body(&mut self, function: FunctionId) {
-        self.report_misused_compiler_functions();
         match self.inputs.modules.kind(self.file) {
             ModuleKind::SourceText | ModuleKind::Data => self.lower_es_module_body(function),
             ModuleKind::CommonJs => self.lower_commonjs_body(function),
@@ -120,25 +119,13 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(crate) fn finish_module(&mut self, roots: ModuleRoots) -> ModuleFragment {
         let text: &[u8] = &self.hir.text;
         let function_text = match self.inputs.options.embeds_function_text {
-            true => match self.compiled.installed_text {
-                Some(installed) => installed.text.to_vec(),
-                None => self.type_ranges.remove_from(text),
-            },
+            true => self.type_ranges.remove_from(text),
             false => Vec::new(),
-        };
-        let positions = match self.compiled.installed_text {
-            Some(installed) => crate::emit::installed_source_positions(
-                installed.text,
-                &compute_ecma_line_starts(installed.text),
-                installed.token_offsets,
-            ),
-            None => crate::emit::source_positions(text, compute_ecma_line_starts(text)),
         };
         ModuleFragment {
             body: roots.body,
             data: roots.data,
-            positions,
-            has_installed_positions: self.compiled.installed_text.is_some(),
+            positions: crate::emit::source_positions(text, compute_ecma_line_starts(text)),
             function_text,
         }
     }

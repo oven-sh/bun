@@ -70,18 +70,6 @@ describe("which code runs", () => {
     expect(checked.exitCode).toBe(0);
     expect((await bun(String(dir), "test", "--debug-aot")).stderr).toContain("[aot] image: ");
   });
-  test("a program that validates by type is compiled under --aot too", async () => {
-    using dir = tempDir("aot-flag-runs-from-source", {
-      "tsconfig.json": tsconfig,
-      "main.ts":
-        `import { JSON } from "bun"; ` +
-        declarations +
-        `try { console.log(JSON.parse<{ n: number }>('{"n":"1"}')); } catch (error) { console.log((error as Error).name); }`,
-    });
-    const { stdout, stderr, exitCode } = await bun(String(dir), "run", "--aot", "main.ts");
-    expect({ stdout, exitCode }).toEqual({ stdout: "TypeError\n", exitCode: 0 });
-    expect(stderr).toContain("[aot] image: ");
-  });
 });
 
 describe("what stops a build stops the run, and is printed as the build prints it", () => {
@@ -384,19 +372,6 @@ describe("the debugger", () => {
     expect(stderr).toContain("TS2322");
     expect({ stdout, listeners: listeners(stderr), exitCode }).toEqual({ stdout: "", listeners: 0, exitCode: 1 });
   });
-  test("a program that is compiled after all has none", async () => {
-    const programs = join(import.meta.dir, "programs", "data-from-outside");
-    const { stdout, stderr, exitCode } = await bun(
-      programs,
-      "--inspect=127.0.0.1:0",
-      "--aot",
-      join(programs, "validate-returns-a-copy.ts"),
-    );
-    expect(stderr).toContain(
-      "--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled",
-    );
-    expect({ stdout, listeners: listeners(stderr), exitCode }).toEqual({ stdout: "", listeners: 0, exitCode: 1 });
-  });
 });
 
 describe("--watch", () => {
@@ -513,16 +488,5 @@ describe("--watch", () => {
     writeFileSync(join(String(dir), "value.ts"), value("4"));
     await watched.out.until(text => text.endsWith("run 4 1 locked\nruns 1\n"));
     expect(watched.out.heard.text).toBe("run 1 1 locked\nruns 1\nrun 2 1 locked\nruns 1\nrun 4 1 locked\nruns 1\n");
-  });
-  test.each(["--watch", "--hot"])("a program that is compiled after all refuses %s", async flag => {
-    const programs = join(import.meta.dir, "programs", "data-from-outside");
-    const { stdout, stderr, exitCode } = await bun(
-      programs,
-      flag,
-      "--aot",
-      join(programs, "validate-returns-a-copy.ts"),
-    );
-    expect(stderr).toContain(`--aot does not support ${flag}: the program is compiled once, before it starts`);
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });
 });

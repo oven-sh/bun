@@ -5,7 +5,6 @@ AtomicsWait/1: it is not called: it blocks the thread
 BuildArtifactPrototypeSlice/0: the process ended or did not come back
 BunBuild/0: it is not called: it blocks, starts a process or opens a socket
 BunBundleFeature/0: it is not called: this realm does not have its holder
-BunBundleValidate/0: it is not called: this realm does not have its holder
 BunConnect/0: it is not called: it blocks, starts a process or opens a socket
 BunDollar/0: it is not called: it blocks, starts a process or opens a socket
 BunGenerateHeapSnapshot/0: it is not called: it blocks, starts a process or opens a socket

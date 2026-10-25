@@ -115,7 +115,7 @@ note: 1 untyped operator
 note: about 100% of the time in untyped operations, by how often the compiler expects each to run
 note: types: 'Item'
 note: why (external-data): The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).
-note: fix: validate it where it enters typed code: import { JSON } from "bun" for JSON.parse<T>(text), or import { validate } from "bun:bundle" for validate<T>(value). Or build a new object of this type from it.
+note: fix: build a new object of this type from it where it enters typed code.
 note: https://bun.com/docs/bundler/aot-explain#unknown-object
 ```
 
@@ -188,18 +188,24 @@ bun compile ./main.ts --explain=unknown-code
 aot: unknown-code: unknown-object at main.ts:7:25, 1 access, 1 untyped operator, types 'Item', why external-data
 ```
 
-Here is the fix.
+Here is the fix. `readItem` narrows the parsed value and builds a new `Item` from it.
 
 ```ts main.ts icon="/icons/typescript.svg"
-import { JSON } from "bun"; // [!code highlight]
-
 interface Item {
   sku: string;
   price: number;
 }
 
+function readItem(value: unknown): Item {
+  if (typeof value !== "object" || value === null) throw new Error("item: not an object");
+  const { sku, price } = value as Record<string, unknown>;
+  if (typeof sku !== "string") throw new Error("item: sku must be a string");
+  if (typeof price !== "number") throw new Error("item: price must be a number");
+  return { sku, price };
+}
+
 const items: Item[] = [{ sku: "A-1", price: 2.5 }];
-const saved = JSON.parse<Item>('{ "sku": "B-2", "price": 10 }'); // [!code highlight]
+const saved = readItem(JSON.parse('{ "sku": "B-2", "price": 10 }')); // [!code highlight]
 items.push(saved);
 
 let total = 0;
@@ -212,8 +218,10 @@ bun compile ./main.ts
 ```
 
 ```txt
-100% of property accesses are one load: 1 free, 0 tested, 0 by name (1)
+50% of property accesses are one load: 1 free, 0 tested, 1 by name (2)
 ```
+
+Every `Item` in the list is now an object literal that the compiler sees, so `item.price` in the loop is free. The access that's left is in `readItem`. It reads from the parsed object by name, once for each object that comes in.
 
 Fix the first entry, then run the command again. A fix can uncover another cause behind it: if two things keep `Item` untyped, the report shows one of them at a time.
 
@@ -264,7 +272,7 @@ bun check --aot ./main.ts --explain=json
   "inDependency": false,
   "source": "const saved: any = JSON.parse('{ \"sku\": \"B-2\", \"price\": 10 }');",
   "message": "An object from untyped code is used as this type here, so it can have any shape.",
-  "fix": "validate it where it enters typed code: import { JSON } from \"bun\" for JSON.parse<T>(text), or import { validate } from \"bun:bundle\" for validate<T>(value). Or build a new object of this type from it.",
+  "fix": "build a new object of this type from it where it enters typed code.",
   "url": "https://bun.com/docs/bundler/aot-explain#unknown-object",
   "accesses": 1,
   "dependencyAccesses": 0,
@@ -278,7 +286,7 @@ bun check --aot ./main.ts --explain=json
   "why": {
     "reason": "external-data",
     "message": "The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).",
-    "fix": "import { JSON } from \"bun\" and parse it with JSON.parse<T>(text), or import { validate } from \"bun:bundle\" and check it with validate<T>(value).",
+    "fix": "check its fields, and build a new object of this type from them.",
     "url": "https://bun.com/docs/bundler/aot-explain#external-data"
   }
 }
@@ -335,7 +343,7 @@ Run `bun compile --explain=json`. Fix the first entry, at its file, line and col
 what the program does. Run the tests, then run the command again. Stop when the first entry's estimatedPercent is small.
 ```
 
-Read what it changes. Some fixes add a check that was not there: `JSON.parse<T>` throws on data that doesn't match. `validate<T>` returns a copy, so a later change to the copy doesn't reach the original object.
+Read what it changes. A fix that builds a new object makes a copy, so a later change to the copy doesn't reach the original object. If it narrows the value first, it throws on data that doesn't match, where nothing threw before.
 
 ## Causes
 
@@ -379,16 +387,11 @@ Split the function or the type to get under it. [`Compiler limits hit`](#after-t
 Every access the object can reach needs a shape check first. The entry points to where the object comes from.
 
 ```ts
-import { JSON } from "bun"; // [!code ++]
-
-const saved: any = JSON.parse(text); // [!code --]
-const saved = JSON.parse<Item>(text); // [!code ++]
-items.push(saved);
+const config: Config = JSON.parse(text); // [!code --]
+const config = readConfig(JSON.parse(text)); // [!code ++]
 ```
 
-`JSON.parse<Item>(text)`, with `JSON` imported from `"bun"`, checks the data while it parses, and creates the objects with the fixed layout of `Item`. For a value that isn't JSON text, `validate<Item>(value)`, imported from `"bun:bundle"`, checks it and returns a typed copy. [Validate data by its type](/bundler/validate) has the details.
-
-If you want your own checks and your own error messages, take the value as `unknown`, narrow it, and build the object yourself. The compiler then sees every `Config` being created. The reads from the untyped value are lookups by name, but they happen once, at the edge of your program.
+Take the value as `unknown`, narrow it, and build the object yourself. The compiler then sees every `Config` being created. The reads from the untyped value are lookups by name, but they happen once, at the edge of your program.
 
 ```ts
 function readConfig(value: unknown): Config {
@@ -399,6 +402,10 @@ function readConfig(value: unknown): Config {
   return { host, port };
 }
 ```
+
+The examples below call such a function `readOrder`, `readItem` or `readOptions`.
+
+If the shape check is cheap enough for you, make sure that it passes: [declare the type where you parse](/bundler/aot-types#declare-the-type-where-you-parse). If the text matches, `JSON.parse(text) as Config` creates the object with the fixed layout of `Config`.
 
 ### not-a-plain-object
 
@@ -526,12 +533,10 @@ Keep the object out of that code, or pass only the fields it needs.
 > The callee isn't known at build time, so the result has no type.
 
 ```ts
-import { validate } from "bun:bundle"; // [!code ++]
-
 const handlers = await import(process.argv[2]);
 
 const order = handlers[name](request); // [!code --]
-const order = validate<Order>(handlers[name](request)); // [!code ++]
+const order = readOrder(handlers[name](request)); // [!code ++]
 console.log(order.total);
 ```
 
@@ -542,11 +547,9 @@ Call the function directly, or narrow the result.
 > The array, Map or Set this value is read from may contain values of other types.
 
 ```ts
-import { JSON } from "bun"; // [!code ++]
-
 const items: Item[] = [];
 items.push(JSON.parse(line)); // [!code --]
-items.push(JSON.parse<Item>(line)); // [!code ++]
+items.push(readItem(JSON.parse(line))); // [!code ++]
 
 for (const item of items) total += item.price;
 ```
@@ -712,23 +715,21 @@ This is a missed optimization in Bun, not a problem in your code. Please [report
 
 > The value is the result of a built-in function whose result type the compiler doesn't know.
 
-Narrow the result, or check it with `validate<T>(value)`.
+Narrow the result.
 
 ### runtime-code
 
 > The value comes from code that isn't in the executable.
 
 ```ts
-import { validate } from "bun:bundle"; // [!code ++]
-
 const plugin = await import(process.argv[2]);
 
 const options = plugin.options; // [!code --]
-const options = validate<Options>(plugin.options); // [!code ++]
+const options = readOptions(plugin.options); // [!code ++]
 console.log(options.port);
 ```
 
-Keep eval'd code and modules loaded at run time away from this value, or check it with `validate<T>(value)`.
+Keep eval'd code and modules loaded at run time away from this value. Where you can't, build a new object from it, as here.
 
 ### unchecked-value
 
@@ -758,15 +759,13 @@ Narrow it first, for example with `instanceof Error`.
 The entry points to where the function, or an object that holds it, is handed over. Everything that the function does with its parameters counts for that line.
 
 ```ts
-import { validate } from "bun:bundle"; // [!code ++]
-
 const plugin = await import(process.argv[2]);
 
 plugin.onOrder(handleOrder); // [!code --]
-plugin.onOrder((body: unknown) => handleOrder(validate<Order>(body))); // [!code ++]
+plugin.onOrder((body: unknown) => handleOrder(readOrder(body))); // [!code ++]
 ```
 
-Call the function from your own code, or hand over a small wrapper that checks its arguments with `validate<T>(value)`.
+Call the function from your own code, or hand over a small wrapper that checks its arguments.
 
 ### read-from-shared-object
 
@@ -852,13 +851,11 @@ Narrow it, or give the source a precise type.
 > An 'as' cast changes the type here, and nothing checks it.
 
 ```ts
-import { validate } from "bun:bundle"; // [!code ++]
-
 const order = body as Order; // [!code --]
-const order = validate<Order>(body); // [!code ++]
+const order = readOrder(body); // [!code ++]
 ```
 
-Remove the cast, or check the value first with `validate<T>(value)`. A cast to a wider type, such as `circle as Shape`, costs nothing.
+Remove the cast, or narrow the value first. A cast to a wider type, such as `circle as Shape`, costs nothing.
 
 ### suppressed-error
 
@@ -880,7 +877,7 @@ Fix the type error.
 declare function loadOrder(id: string): Order;
 
 const order = loadOrder(id); // [!code --]
-const order = validate<Order>(loadOrder(id)); // [!code ++]
+const order = readOrder(loadOrder(id)); // [!code ++]
 ```
 
 Narrow the value, or compile the typed source of the package. [Publish a library for bun compile](/bundler/aot-libraries) shows how a package ships it.
@@ -890,13 +887,11 @@ Narrow the value, or compile the typed source of the package. [Publish a library
 > The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).
 
 ```ts
-import { JSON } from "bun"; // [!code ++]
-
 const order: Order = await response.json(); // [!code --]
-const order = JSON.parse<Order>(await response.text()); // [!code ++]
+const order = readOrder(await response.json()); // [!code ++]
 ```
 
-Import `JSON` from `"bun"` and parse it with `JSON.parse<T>(text)`, or import `validate` from `"bun:bundle"` and check it with `validate<T>(value)`.
+Check its fields, and build a new object of this type from them. [unknown-object](#unknown-object) shows how.
 
 ### unexpected-shape
 
@@ -960,7 +955,7 @@ Keep the object out of eval'd code and modules loaded at run time.
 const plugin = await import(process.argv[2]);
 
 plugin.onOrder(handleOrder); // [!code --]
-plugin.onOrder((body: unknown) => handleOrder(validate<Order>(body))); // [!code ++]
+plugin.onOrder((body: unknown) => handleOrder(readOrder(body))); // [!code ++]
 ```
 
 Keep the function out of eval'd code and modules loaded at run time. Here only the small wrapper is passed in, and `handleOrder` is only called from compiled code.

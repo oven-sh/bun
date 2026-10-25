@@ -2,14 +2,13 @@ use super::support::{
     ClaimsNodeFs, HostScript, PROJECT, ScriptedHost, TestProgram, project_disk, with_defines,
     with_host, with_program,
 };
-use bun_sema::erasure::ErasureMismatchKind;
 use bun_sema::hir::ResolutionMode;
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{
     CodeAnswer, CompiledModule, ComputedTarget, ComputedTargets, FileId, FileRole, HostLoader,
     HostModuleId,
 };
-use bun_sema::resolve::{CodeFailure, ComputedUnknown, ExternalKind, TypedVersionOrigin};
+use bun_sema::resolve::{CodeFailure, ComputedUnknown, ExternalKind};
 use bun_sema::util::SharedSort;
 
 const COMPILER_OPTIONS: &str =
@@ -479,80 +478,6 @@ fn types_answers_match_import_kind() {
         assert_eq!(types_answer(ResolutionMode::Import), Some(esm));
         assert_eq!(types_answer(ResolutionMode::Require), Some(cjs));
         assert!(module.edges.is_empty());
-    });
-}
-
-const TYPED_VERSION: [(&str, &str); 1] = [("a.js", "a.sound.ts")];
-const EXACT_TYPED_TEXT: &str = "export const a: number = 1;\n";
-
-fn with_typed_file<R>(
-    main_text: &str,
-    typed_text: &str,
-    attribute_loader: HostLoader,
-    then: impl FnOnce(&TestProgram<'_, '_>) -> R,
-) -> R {
-    let files = [
-        ("main.js", main_text),
-        ("a.js", "export const a = 1;\n"),
-        ("a.sound.ts", typed_text),
-    ];
-    let disk = project_disk(&files, 1);
-    let script = HostScript {
-        typed_versions: &TYPED_VERSION,
-        attribute_loader,
-        ..HostScript::default()
-    };
-    with_host(&ScriptedHost(&disk, script), PROJECT, "./main.js", then)
-}
-
-#[test]
-fn other_loader_has_no_typed_version() {
-    let text_import = r#"import a from "./a.js" with { type: "text" };"#;
-    with_typed_file(text_import, EXACT_TYPED_TEXT, HostLoader(1), |program| {
-        let files = program.files();
-        let [CodeAnswer::File(text)] = *code_answers(program, "main.js") else {
-            panic!("the import is a file");
-        };
-        let compiled = files.compiled(text).expect("a file with code");
-        assert_eq!(compiled.loader, HostLoader(1));
-        assert_eq!(compiled.typed_source_path, None);
-        assert_eq!(compiled.typed_version_origin, None);
-        assert_eq!(files.role(text), FileRole::Inferred);
-    });
-    let import = r#"import "./a.js";"#;
-    with_typed_file(import, EXACT_TYPED_TEXT, HostLoader::default(), |program| {
-        let compiled = compiled(program, "a.js");
-        assert!(compiled.typed_source_path.is_some());
-        assert_eq!(
-            compiled.typed_version_origin,
-            Some(TypedVersionOrigin::Host)
-        );
-        assert_eq!(compiled.rejected_typed_version, None);
-        assert_eq!(
-            program.files().role(program.file("a.js")),
-            FileRole::Checked
-        );
-    });
-}
-
-#[test]
-fn rejected_typed_version_is_recorded() {
-    let (import, typed_text) = (r#"import "./a.js";"#, "export const a: number = 2;\n");
-    with_typed_file(import, typed_text, HostLoader::default(), |program| {
-        let compiled = compiled(program, "a.js");
-        assert_eq!(compiled.typed_source_path, None);
-        assert_eq!(
-            compiled.typed_version_origin,
-            Some(TypedVersionOrigin::Host)
-        );
-        let rejected = compiled.rejected_typed_version;
-        let rejected = rejected.expect("the full types have another literal");
-        assert_eq!(rejected.path, b"/project/a.sound.ts");
-        assert_eq!(rejected.kind, ErasureMismatchKind::Literal);
-        assert_eq!(
-            program.files().role(program.file("a.js")),
-            FileRole::Inferred
-        );
     });
 }
 

@@ -173,7 +173,7 @@ fn default_options_convert() {
             assert!(log.msgs.is_empty());
             assert_eq!(
                 options.code.conditions,
-                byte_lists(&["bun", "node", "node-addons"])
+                byte_lists(&["bun", "node", "node-addons", "aot"])
             );
             assert_eq!(options.load.loaders, default_loaders());
             assert_eq!(options.load.project_root, b"/project");
@@ -353,9 +353,12 @@ fn custom_conditions_append_once() {
     });
     assert_eq!(
         code.conditions,
-        byte_lists(&["bun", "node", "node-addons", "custom"])
+        byte_lists(&["bun", "node", "node-addons", "aot", "custom"])
     );
-    assert_eq!(code.custom_conditions, byte_lists(&["custom", "bun"]));
+    assert_eq!(
+        code.custom_conditions,
+        byte_lists(&["aot", "custom", "bun"])
+    );
 }
 
 #[test]
@@ -367,7 +370,7 @@ fn disabled_addons_remove_condition() {
             ..Default::default()
         });
     });
-    assert_eq!(code.conditions, byte_lists(&["bun", "node"]));
+    assert_eq!(code.conditions, byte_lists(&["bun", "node", "aot"]));
 }
 
 #[test]

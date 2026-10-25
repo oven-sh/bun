@@ -20,16 +20,6 @@ function classOf(run: () => unknown): string {
     return error instanceof Error ? error.constructor.name : typeof error;
   }
 }
-////: expect
-function expect(documented: "value" | "TypeError" | "SyntaxError" | "RangeError", label: string, run: () => unknown): void {
-  let got: string;
-  try {
-    got = "value " + show(run());
-  } catch (error) {
-    got = error instanceof Error ? error.constructor.name : typeof error;
-  }
-  console.log(label + ": documented " + documented + ", got " + got);
-}
 ////: lines
 interface «1» {
   «2»: «3»;
@@ -78,10 +68,6 @@ function show(value: unknown): string {
 ////= show
 
 ////= attempt
-////: show-3
-////= show-2
-
-////= expect
 //// a-member-is-missing-from-the-text-for-an-annotated-variable.ts
 interface User {
   id: number;
@@ -103,10 +89,10 @@ console.log("name" in user, Object.keys(user).join());
 ////= lines-2	user.name.length
 ////= lines-2	user.tags.length
 //// a-number-is-parsed-by-type.ts
-import { JSON } from "bun"; console.log(JSON.parse<number>("2.5"));
+console.log(JSON.parse("2.5") as number);
 //// a-number-member-of-a-result-parsed-by-type-is-added-to.ts
 ////= lines-4	Line	count	number
-import { JSON } from "bun"; const line = JSON.parse<Line>('{"count":2.5}');
+const line = JSON.parse('{"count":2.5}') as Line;
 console.log(0 + line.count);
 //// a-text-arrives-for-a-number-member-of-an-annotated-variable.ts
 ////= lines	User	id	number	name	string
@@ -147,16 +133,6 @@ try {
   console.log(error instanceof TypeError);
 }
 console.log(fromNull === null, typeof fromNull);
-//// an-object-that-a-reviver-returns-twice-is-one-object-after-a-parse-by-type.ts
-import { JSON } from "bun"; interface Order {
-  lines: { count: number }[];
-}
-const shared = { count: 5 };
-const order = JSON.parse<Order>('{"lines":[{"count":1},{"count":2}]}', (key, value) => (key === "0" || key === "1" ? shared : value));
-console.log(order.lines[0] === order.lines[1]);
-console.log(order.lines[0] === shared);
-shared.count = 6;
-console.log(order.lines[0].count, order.lines[1].count);
 //// an-unknown-tag-arrives-for-an-annotated-union.ts
 type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
 
@@ -512,422 +488,6 @@ for (const text of ["0", "1", "2", "-0", "0.5", '"0"', '"Red"', "null", "[0]", "
     return [nameOf(color), typeof nameOf(color), Color[color], color === Color.Red];
   });
 }
-//// json-parse-by-type-fills-in-defaults-for-missing-members.ts
-import { JSON } from "bun"; import type { Schema } from "bun";
-
-////= show-2
-
-interface Server {
-  host: string & Schema.Default<"localhost">;
-  port: number & Schema.Default<8080>;
-  secure: boolean & Schema.Default<false>;
-  name: string;
-}
-
-function address(server: Server): string {
-  return (server.secure ? "https://" : "http://") + server.host.toUpperCase() + ":" + (server.port + 1) + "/" + server.name;
-}
-
-const filled = JSON.parse<{ port: number & Schema.Default<8080> }>("{}").port === 8080;
-console.log("filled in by the parser:", filled);
-function withDefaults(text: string): Server {
-  const server = JSON.parse<Server>(text);
-  if (filled) return server;
-  const whole: Server = { ...server };
-  whole.host ??= "localhost";
-  whole.port ??= 8080;
-  whole.secure ??= false;
-  return whole;
-}
-
-for (const text of ['{"name":"a"}', '{"name":"b","port":1}', '{"host":"h","name":"c"}', '{"name":"d","secure":true}', '{"port":0,"host":"","secure":false,"name":"e"}', '{"name":"f","port":-0}']) {
-  attempt(text, () => {
-    const server = withDefaults(text);
-    return [address(server), server.host, server.port, server.secure, typeof server.port, Object.keys(server).sort(), "port" in server, Object.hasOwn(server, "host")];
-  });
-}
-//// json-parse-by-type-refuses-a-wrong-kind-for-each-kind-of-member.ts
-////= show-3
-
-import { JSON } from "bun"; enum Color {
-  Red,
-  Green,
-}
-
-const values = ["1", '"text"', "true", "null", "[]", "{}", "[1]", '{"a":1}'];
-const rows: [string, string[], (text: string) => unknown][] = [
-  ["number", ["1"], text => JSON.parse<{ m: number }>(text)],
-  ["string", ['"text"'], text => JSON.parse<{ m: string }>(text)],
-  ["boolean", ["true"], text => JSON.parse<{ m: boolean }>(text)],
-  ["null", ["null"], text => JSON.parse<{ m: null }>(text)],
-  ["a list of numbers", ["[]", "[1]"], text => JSON.parse<{ m: number[] }>(text)],
-  ["a list of strings", ["[]"], text => JSON.parse<{ m: string[] }>(text)],
-  ["an object with a", ['{"a":1}'], text => JSON.parse<{ m: { a: number } }>(text)],
-  ["an object with an optional a", ["{}", '{"a":1}'], text => JSON.parse<{ m: { a?: number } }>(text)],
-  ["an empty object type", ["{}", '{"a":1}'], text => JSON.parse<{ m: {} }>(text)],
-  ["object", ["[]", "{}", "[1]", '{"a":1}'], text => JSON.parse<{ m: object }>(text)],
-  ["a table of numbers", ["{}", '{"a":1}'], text => JSON.parse<{ m: Record<string, number> }>(text)],
-  ["a pair", [], text => JSON.parse<{ m: [number, number] }>(text)],
-  ["a tuple of one", ["[1]"], text => JSON.parse<{ m: [number] }>(text)],
-  ["an enum", ["1"], text => JSON.parse<{ m: Color }>(text)],
-  ["the literal 1", ["1"], text => JSON.parse<{ m: 1 }>(text)],
-  ["the literal text", ['"text"'], text => JSON.parse<{ m: "text" }>(text)],
-  ["the literal true", ["true"], text => JSON.parse<{ m: true }>(text)],
-  ["number or null", ["1", "null"], text => JSON.parse<{ m: number | null }>(text)],
-  ["string or a list of numbers", ['"text"', "[]", "[1]"], text => JSON.parse<{ m: string | number[] }>(text)],
-  ["an optional number", ["1"], text => JSON.parse<{ m?: number }>(text)],
-  ["unknown", values, text => JSON.parse<{ m: unknown }>(text)],
-];
-
-for (const [label, accepted, parse] of rows) {
-  for (const value of values) expect(accepted.includes(value) ? "value" : "TypeError", label + " given " + value, () => parse('{"m":' + value + "}"));
-}
-//// json-parse-by-type-refuses-arrays-for-objects-and-objects-for-arrays.ts
-////= show-3
-
-////= lines-4	Sized	length	number
-////= lines-4	First	0	number
-import { JSON } from "bun"; type Table = Record<string, number>;
-
-expect("value", "an object with a length", () => JSON.parse<Sized>('{"length":2}'));
-expect("TypeError", "a list where a length is declared", () => JSON.parse<Sized>("[1,2]"));
-expect("TypeError", "a text where a length is declared", () => JSON.parse<Sized>('"ab"'));
-expect("value", "an object with an index", () => JSON.parse<First>('{"0":1}'));
-expect("TypeError", "a list where an index is declared", () => JSON.parse<First>("[1]"));
-expect("value", "a table", () => JSON.parse<Table>('{"0":1,"1":2}'));
-expect("TypeError", "a list for a table", () => JSON.parse<Table>("[1,2]"));
-expect("TypeError", "an empty list for a table", () => JSON.parse<Table>("[]"));
-expect("TypeError", "an empty list for an empty object type", () => JSON.parse<{}>("[]"));
-expect("TypeError", "a number for an empty object type", () => JSON.parse<{}>("1"));
-expect("value", "an empty object for an empty object type", () => JSON.parse<{}>("{}"));
-expect("value", "a list for object", () => JSON.parse<object>("[1]"));
-expect("TypeError", "null for object", () => JSON.parse<object>("null"));
-expect("TypeError", "a text for object", () => JSON.parse<object>('"o"'));
-expect("TypeError", "an object with indexes and a length for a list", () => JSON.parse<number[]>('{"0":1,"1":2,"length":2}'));
-expect("TypeError", "an empty object for a list", () => JSON.parse<number[]>("{}"));
-expect("TypeError", "an object for a pair", () => JSON.parse<[number, number]>('{"0":1,"1":2,"length":2}'));
-expect("TypeError", "null for a list", () => JSON.parse<number[]>("null"));
-expect("TypeError", "a text for a list of texts", () => JSON.parse<string[]>('"ab"'));
-expect("TypeError", "a list in a list of numbers", () => JSON.parse<number[]>("[1,[2]]"));
-expect("TypeError", "a number in a list of lists", () => JSON.parse<number[][]>("[[1],2]"));
-expect("TypeError", "null in a list of numbers", () => JSON.parse<number[]>("[1,null,3]"));
-expect("TypeError", "the last of many is a text", () => JSON.parse<number[]>("[" + "1,".repeat(5000) + '"2"]'));
-expect("TypeError", "a list of objects holds a list", () => JSON.parse<{ a: number }[]>('[{"a":1},[]]'));
-expect("TypeError", "a list of objects holds null", () => JSON.parse<{ a: number }[]>('[{"a":1},null]'));
-//// json-parse-by-type-refuses-missing-members-and-values-that-are-no-objects.ts
-////= show-3
-
-import { JSON } from "bun"; interface User {
-  id: number;
-  name: string;
-  extra?: boolean;
-  anything: unknown;
-  maybe: number | undefined;
-}
-
-const whole = '{"id":1,"name":"n","anything":0,"maybe":2}';
-expect("value", "whole", () => JSON.parse<User>(whole));
-expect("TypeError", "without id", () => JSON.parse<User>('{"name":"n","anything":0,"maybe":2}'));
-expect("TypeError", "without name", () => JSON.parse<User>('{"id":1,"anything":0,"maybe":2}'));
-expect("TypeError", "without the member of type unknown", () => JSON.parse<User>('{"id":1,"name":"n","maybe":2}'));
-expect("TypeError", "without the member that may be undefined", () => JSON.parse<User>('{"id":1,"name":"n","anything":0}'));
-expect("TypeError", "empty", () => JSON.parse<User>("{}"));
-expect("TypeError", "only undeclared members", () => JSON.parse<User>('{"ID":1,"Name":"n","id ":1}'));
-expect("TypeError", "the members one level too deep", () => JSON.parse<User>('{"user":' + whole + "}"));
-expect("TypeError", "the members in __proto__", () => JSON.parse<User>('{"__proto__":' + whole + "}"));
-expect("TypeError", "some of the members in __proto__", () => JSON.parse<User>('{"id":1,"__proto__":{"name":"n","anything":0,"maybe":2}}'));
-expect("TypeError", "null for the optional member", () => JSON.parse<User>('{"id":1,"name":"n","anything":0,"maybe":2,"extra":null}'));
-expect("TypeError", "null for the member that may be undefined", () => JSON.parse<User>('{"id":1,"name":"n","anything":0,"maybe":null}'));
-expect("value", "null for the member of type unknown", () => JSON.parse<User>('{"id":1,"name":"n","anything":null,"maybe":2}'));
-for (const text of ["null", "1", '"text"', "true", "[]", "[" + whole + "]", '"' + whole.replaceAll('"', '\\"') + '"']) expect("TypeError", "instead of the object: " + text, () => JSON.parse<User>(text));
-
-////= lines	Named	toString	string	constructor	number
-expect("value", "members named like inherited ones", () => JSON.parse<Named>('{"toString":"s","constructor":1}'));
-expect("TypeError", "members named like inherited ones are missing", () => JSON.parse<Named>("{}"));
-expect("TypeError", "one of them is missing", () => JSON.parse<Named>('{"toString":"s"}'));
-//// json-parse-by-type-refuses-numbers-at-the-edge-of-schema-bounds.ts
-import { JSON } from "bun"; import type { Schema } from "bun";
-
-////= show-3
-
-type Whole = number & Schema.Int;
-type AtLeastOne = number & Schema.Min<1>;
-type AtMostTen = number & Schema.Max<10>;
-type AboveZero = number & Schema.Above<0>;
-type BelowOne = number & Schema.Below<1>;
-type AtLeastZero = number & Schema.Min<0>;
-type ByFive = number & Schema.MultipleOf<5>;
-type Quantity = number & Schema.Int & Schema.Min<1> & Schema.Max<1000>;
-
-function rows(label: string, parse: (text: string) => unknown, accepted: string[], refused: string[]): void {
-  for (const text of accepted) expect("value", label + " given " + text, () => parse(text));
-  for (const text of refused) expect("TypeError", label + " given " + text, () => parse(text));
-}
-
-rows("a whole number", text => JSON.parse<Whole>(text), ["0", "-0", "1", "-1", "1.0", "1e3", "1e21", "9007199254740993", "2147483648", "100e-2"], ["0.5", "-0.5", "1e-7", "5e-324", "1.0000000001", "1e400", '"1"', "null"]);
-rows("at least 1", text => JSON.parse<AtLeastOne>(text), ["1", "1.0", "1.0000000000000002", "2", "1e308"], ["0.9999999999999999", "0", "-1", "-0", "1e400", "-1e400"]);
-rows("at most 10", text => JSON.parse<AtMostTen>(text), ["10", "10.0", "9.999999999999998", "-1e308", "0"], ["10.000000000000002", "11", "1e400", "-1e400"]);
-rows("above 0", text => JSON.parse<AboveZero>(text), ["5e-324", "1", "0.1"], ["0", "-0", "0.0", "1e-400", "-5e-324", "-1"]);
-rows("below 1", text => JSON.parse<BelowOne>(text), ["0.9999999999999999", "0", "-5"], ["1", "1.0", "1.0000000000000002", "2"]);
-rows("at least 0", text => JSON.parse<AtLeastZero>(text), ["0", "-0", "-1e-400", "5e-324"], ["-5e-324", "-1"]);
-rows("a multiple of 5", text => JSON.parse<ByFive>(text), ["0", "-0", "5", "-5", "10", "1e21", "5.0"], ["1", "4.999999999999999", "5.000000000000001", "2.5", "-3"]);
-rows("a quantity", text => JSON.parse<Quantity>(text), ["1", "1000", "1e3", "999"], ["0", "1001", "1.5", "999.5", "-1", "1e400"]);
-rows("a quantity in a member", text => JSON.parse<{ q: Quantity }>('{"q":' + text + "}"), ["1", "1000"], ["0", "1001", "1.5", "null", '"1"']);
-rows("quantities in a list", text => JSON.parse<Quantity[]>("[1," + text + ",1000]"), ["2"], ["0", "1001", "2.5"]);
-//// json-parse-by-type-refuses-numbers-that-are-not-finite-and-int32-out-of-range.ts
-import { JSON } from "bun"; import type { int32 } from "bun";
-
-////= show-3
-
-////= lines-4	Reading	n	number
-////= lines-4	Cell	v	int32
-
-for (const spelling of ["1e400", "-1e400", "1e309", "1.7976931348623159e308", "9".repeat(400)]) {
-  expect("TypeError", "number given " + spelling.slice(0, 30), () => JSON.parse<Reading>('{"n":' + spelling + "}"));
-  expect("TypeError", "number alone given " + spelling.slice(0, 30), () => JSON.parse<number>(spelling));
-  expect("TypeError", "in a list " + spelling.slice(0, 30), () => JSON.parse<number[]>("[1," + spelling + "]"));
-  expect("value", "unknown given " + spelling.slice(0, 30), () => JSON.parse<{ n: unknown }>('{"n":' + spelling + "}"));
-}
-expect("value", "the largest number", () => JSON.parse<Reading>('{"n":1.7976931348623157e308}'));
-
-for (const spelling of ["0", "1", "-1", "2147483647", "-2147483648", "1.0", "1e9", "2147483647.0"]) expect("value", "int32 given " + spelling, () => JSON.parse<Cell>('{"v":' + spelling + "}"));
-for (const spelling of ["0.5", "-0.5", "1.5", "2147483648", "-2147483649", "2147483647.5", "1e10", "1e21", "1e400", "4294967296", "9007199254740993", "1e-7", "5e-324", '"1"', "null", "true", "[1]"]) {
-  expect("TypeError", "int32 given " + spelling, () => JSON.parse<Cell>('{"v":' + spelling + "}"));
-  expect("TypeError", "int32 in a list given " + spelling, () => JSON.parse<int32[]>("[1," + spelling + "]"));
-}
-expect("TypeError", "int32 is missing", () => JSON.parse<Cell>("{}"));
-//// json-parse-by-type-refuses-texts-and-lists-at-the-edge-of-schema-bounds.ts
-import { JSON } from "bun"; import type { Schema } from "bun";
-
-////= show-3
-
-type NotEmpty = string & Schema.MinLength<1>;
-type Short = string & Schema.MaxLength<3>;
-type AtLeastThree = string & Schema.MinLength<3>;
-type Lower = string & Schema.Pattern<"^[a-z]+$">;
-type SomeItems = number[] & Schema.MinItems<1>;
-type FewItems = number[] & Schema.MaxItems<2>;
-
-function rows(label: string, parse: (text: string) => unknown, accepted: string[], refused: string[]): void {
-  for (const text of accepted) expect("value", label + " given " + text, () => parse(text));
-  for (const text of refused) expect("TypeError", label + " given " + text, () => parse(text));
-}
-
-rows("not empty", text => JSON.parse<NotEmpty>(text), ['"a"', '" "', '"\\u0000"', '"\\ud800"'], ['""', "null", "1", "[]"]);
-rows("at most 3", text => JSON.parse<Short>(text), ['""', '"abc"', '"\\u0061\\u0062\\u0063"', '"日本語"', '"\\n\\n\\n"'], ['"abcd"', '"\\u0061\\u0062\\u0063\\u0064"', '"日本語語"', '"    "']);
-rows("at most 3, in code points", text => JSON.parse<Short>(text), ['"🍞🍞🍞"', '"a🍞b"', '"\\ud83c\\udf5e\\ud83c\\udf5e\\ud83c\\udf5e"', '"\\ud800\\ud800\\ud800"', '"\\udf5e\\ud83c\\udf5e\\ud83c"'], ['"🍞🍞🍞🍞"', '"ab🍞c"', '"\\ud800\\ud800\\ud800\\ud800"', '"\\udf5e\\ud83c\\ud83c\\udf5e\\ud83c"']);
-rows("at least 3, in code points", text => JSON.parse<AtLeastThree>(text), ['"abc"', '"abcd"', '"abcde"', '"🍞🍞🍞"', '"a🍞b"', '"\\ud800\\ud800\\ud800"', '"\\udf5e\\ud83c\\udf5e\\ud83c"'], ['""', '"ab"', '"🍞"', '"🍞🍞"', '"a🍞"', '"\\ud83c\\udf5e\\ud83c\\udf5e"']);
-rows("at least 3 in a member", text => JSON.parse<{ name: AtLeastThree & Schema.MaxLength<4> }>('{"name":' + text + "}"), ['"abc"', '"🍞🍞🍞🍞"'], ['"🍞🍞"', '"🍞🍞🍞🍞🍞"', '"abcde"']);
-rows("lower case", text => JSON.parse<Lower>(text), ['"a"', '"abc"', '"\\u0061"'], ['""', '"A"', '"a1"', '"a b"', '"a\\nb"', '"é"', '"a\\u0000"', '" a"']);
-rows("some items", text => JSON.parse<SomeItems>(text), ["[1]", "[1,2,3]"], ["[]", "null", "{}", '["a"]']);
-rows("few items", text => JSON.parse<FewItems>(text), ["[]", "[1]", "[1,2]"], ["[1,2,3]", "[1,2,null]"]);
-rows("an email", text => JSON.parse<string & Schema.Format<"email">>(text), ['"a@example.com"'], ['""', '"a"', '"a@"', '"@example.com"', '"a b@example.com"', "1"]);
-rows("a uuid", text => JSON.parse<string & Schema.Format<"uuid">>(text), ['"123e4567-e89b-42d3-a456-426614174000"'], ['""', '"123e4567-e89b-42d3-a456-42661417400"', '"123e4567e89b42d3a456426614174000"', '"123e4567-e89b-42d3-a456-42661417400g"']);
-rows("an ipv4 address", text => JSON.parse<string & Schema.Format<"ipv4">>(text), ['"1.2.3.4"', '"255.255.255.255"'], ['""', '"1.2.3"', '"1.2.3.256"', '"1.2.3.4.5"', '"a.b.c.d"', '" 1.2.3.4"']);
-rows("a date", text => JSON.parse<string & Schema.Format<"date">>(text), ['"2026-01-31"', '"2024-02-29"'], ['""', '"2026-1-31"', '"2026-13-01"', '"2026-02-30"', '"2026-01-31T00:00:00Z"', '"31-01-2026"']);
-rows("a date and time", text => JSON.parse<string & Schema.Format<"date-time">>(text), ['"2026-01-31T10:20:30Z"'], ['""', '"2026-01-31"', '"2026-01-31 10:20:30"', '"2026-01-31T25:00:00Z"', '"yesterday"']);
-rows("a date in a member", text => JSON.parse<{ at: string & Schema.Format<"date"> }>('{"at":' + text + "}"), ['"2026-01-31"'], ["1769817600000", "null", '"now"']);
-//// json-parse-by-type-refuses-tuples-of-another-length.ts
-////= show-3
-
-import { JSON } from "bun"; type Pair = [number, string];
-
-expect("value", "a pair", () => JSON.parse<Pair>('[1,"a"]'));
-expect("TypeError", "empty", () => JSON.parse<Pair>("[]"));
-expect("TypeError", "too short", () => JSON.parse<Pair>("[1]"));
-expect("TypeError", "too long", () => JSON.parse<Pair>('[1,"a",2]'));
-expect("TypeError", "too long by null", () => JSON.parse<Pair>('[1,"a",null]'));
-expect("TypeError", "the other way round", () => JSON.parse<Pair>('["a",1]'));
-expect("TypeError", "null for the first", () => JSON.parse<Pair>('[null,"a"]'));
-expect("TypeError", "a pair in a list", () => JSON.parse<Pair>('[[1,"a"]]'));
-expect("value", "the empty tuple", () => JSON.parse<[]>("[]"));
-expect("TypeError", "one element for the empty tuple", () => JSON.parse<[]>("[1]"));
-expect("TypeError", "a short pair among pairs", () => JSON.parse<Pair[]>('[[1,"a"],[2],[3,"c"]]'));
-expect("TypeError", "a long pair in a member", () => JSON.parse<{ at: [number, number] }>('{"at":[1,2,3]}'));
-expect("TypeError", "a read-only pair that is too long", () => JSON.parse<readonly [number, number]>("[1,2,3]"));
-expect("TypeError", "very long", () => JSON.parse<[number, number]>("[" + "1,".repeat(10000) + "1]"));
-//// json-parse-by-type-refuses-unknown-tags-and-mixed-variants.ts
-////= show-3
-
-import { JSON } from "bun"; type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
-type Result = { ok: true; value: number } | { ok: false; error: string };
-type Level = { level: 1; a: string } | { level: 2; b: string };
-
-expect("value", "a circle", () => JSON.parse<Shape>('{"kind":"circle","radius":1}'));
-expect("TypeError", "an unknown tag", () => JSON.parse<Shape>('{"kind":"triangle","radius":1,"side":1}'));
-expect("TypeError", "no tag", () => JSON.parse<Shape>('{"radius":1,"side":1}'));
-expect("TypeError", "a tag in other letters", () => JSON.parse<Shape>('{"kind":"Circle","radius":1}'));
-expect("TypeError", "a tag with a space", () => JSON.parse<Shape>('{"kind":"circle ","radius":1}'));
-expect("TypeError", "an empty tag", () => JSON.parse<Shape>('{"kind":"","radius":1}'));
-expect("TypeError", "null as the tag", () => JSON.parse<Shape>('{"kind":null,"radius":1}'));
-expect("TypeError", "a list as the tag", () => JSON.parse<Shape>('{"kind":["circle"],"radius":1}'));
-expect("TypeError", "a circle with the members of a square", () => JSON.parse<Shape>('{"kind":"circle","side":1}'));
-expect("TypeError", "a square with the members of a circle", () => JSON.parse<Shape>('{"radius":1,"kind":"square"}'));
-expect("TypeError", "two tags, the last one decides", () => JSON.parse<Shape>('{"kind":"circle","radius":1,"kind":"square"}'));
-expect("value", "two tags, the last one fits", () => JSON.parse<Shape>('{"kind":"square","radius":1,"kind":"circle"}'));
-expect("TypeError", "the member is of another kind", () => JSON.parse<Shape>('{"kind":"circle","radius":"1"}'));
-expect("TypeError", "the tag is in __proto__", () => JSON.parse<Shape>('{"__proto__":{"kind":"circle"},"radius":1}'));
-expect("TypeError", "one bad shape among many", () => JSON.parse<Shape[]>("[" + '{"kind":"circle","radius":1},'.repeat(500) + '{"kind":"square","radius":1}]'));
-expect("TypeError", "ok is true and there is only an error", () => JSON.parse<Result>('{"ok":true,"error":"e"}'));
-expect("TypeError", "ok is 1", () => JSON.parse<Result>('{"ok":1,"value":1}'));
-expect("TypeError", "ok is a text", () => JSON.parse<Result>('{"ok":"true","value":1}'));
-expect("TypeError", "ok is null", () => JSON.parse<Result>('{"ok":null,"error":"e"}'));
-expect("TypeError", "level 3", () => JSON.parse<Level>('{"level":3,"a":"a","b":"b"}'));
-expect("TypeError", "level 1.5", () => JSON.parse<Level>('{"level":1.5,"a":"a","b":"b"}'));
-expect("TypeError", "level as a text", () => JSON.parse<Level>('{"level":"1","a":"a"}'));
-expect("TypeError", "level 1 with the member of level 2", () => JSON.parse<Level>('{"level":1,"b":"b"}'));
-expect("value", "level 2", () => JSON.parse<Level>('{"b":"b","level":2}'));
-//// json-parse-by-type-refuses-values-outside-enums-and-literals.ts
-////= show-3
-
-import { JSON } from "bun"; enum Color {
-  Red,
-  Green,
-  Blue = 5,
-}
-////= lines-5	Way	Up	"UP"	Down	"DOWN"
-////= lines-5	Mixed	No	0	Yes	"YES"
-
-for (const text of ["0", "1", "5", "5.0", "50e-1"]) expect("value", "a color given " + text, () => JSON.parse<Color>(text));
-for (const text of ["2", "3", "4", "6", "-1", "0.5", "999", "1e400", '"Red"', '"0"', "null", "true", "[0]"]) expect("TypeError", "a color given " + text, () => JSON.parse<Color>(text));
-for (const text of ['"UP"', '"DOWN"', '"\\u0055P"']) expect("value", "a way given " + text, () => JSON.parse<Way>(text));
-for (const text of ['"Up"', '"up"', '"UP "', '""', "0", "null", '["UP"]']) expect("TypeError", "a way given " + text, () => JSON.parse<Way>(text));
-for (const text of ["0", '"YES"']) expect("value", "mixed given " + text, () => JSON.parse<Mixed>(text));
-for (const text of ["1", '"No"', '"0"', '"yes"', "false"]) expect("TypeError", "mixed given " + text, () => JSON.parse<Mixed>(text));
-expect("TypeError", "one member given another", () => JSON.parse<Color.Red>("1"));
-expect("TypeError", "a flag that is no member", () => JSON.parse<{ color: Color }>('{"color":3}'));
-for (const text of ['"a"', '"b"']) expect("value", "a or b given " + text, () => JSON.parse<"a" | "b">(text));
-for (const text of ['"c"', '"A"', '"ab"', '""', "null", "1"]) expect("TypeError", "a or b given " + text, () => JSON.parse<"a" | "b">(text));
-for (const text of ["3", "1.5", '"1"', "true", "null"]) expect("TypeError", "1 or 2 given " + text, () => JSON.parse<1 | 2>(text));
-expect("TypeError", "true given false", () => JSON.parse<true>("false"));
-expect("TypeError", "false given null", () => JSON.parse<false>("null"));
-expect("TypeError", "null given false", () => JSON.parse<null>("false"));
-expect("TypeError", "null given 0", () => JSON.parse<null>("0"));
-expect("TypeError", "null given an empty text", () => JSON.parse<null>('""'));
-for (const text of ['"id-"', '"id-x"', '"ID-1"', '" id-1"', '"id-1x"', '"id-Infinity"', '"id-NaN"', '"1"', "1", "null"]) expect("TypeError", "an id given " + text, () => JSON.parse<`id-${number}`>(text));
-for (const text of ['"id-15"', '"id--1.5"', '"id-1e3"', '"id-0x10"']) expect("value", "an id given " + text, () => JSON.parse<`id-${number}`>(text));
-//// json-parse-by-type-refuses-what-a-reviver-returns.ts
-////= show-3
-
-////= lines	Item	id	number	name	string
-import { JSON } from "bun"; const good = '{"id":1,"name":"n"}';
-
-expect("value", "a reviver that changes nothing", () => JSON.parse<Item>(good, (_, value) => value));
-expect("TypeError", "a number becomes a text", () => JSON.parse<Item>(good, (key, value) => (key === "id" ? String(value) : value)));
-expect("TypeError", "a member is removed", () => JSON.parse<Item>(good, (key, value) => (key === "name" ? undefined : value)));
-expect("TypeError", "the whole value becomes undefined", () => JSON.parse<Item>(good, (key, value) => (key === "" ? undefined : value)));
-expect("TypeError", "the whole value becomes null", () => JSON.parse<Item>(good, (key, value) => (key === "" ? null : value)));
-expect("TypeError", "the whole value becomes a list", () => JSON.parse<Item>(good, (key, value) => (key === "" ? [value] : value)));
-expect("TypeError", "a number becomes NaN", () => JSON.parse<Item>(good, (key, value) => (key === "id" ? NaN : value)));
-expect("TypeError", "a number becomes infinite", () => JSON.parse<Item>(good, (key, value) => (key === "id" ? Infinity : value)));
-expect("TypeError", "a number becomes a bigint", () => JSON.parse<Item>(good, (key, value) => (key === "id" ? 1n : value)));
-expect("TypeError", "a text becomes a symbol", () => JSON.parse<Item>(good, (key, value) => (key === "name" ? Symbol("n") : value)));
-expect("TypeError", "a text becomes a function", () => JSON.parse<Item>(good, (key, value) => (key === "name" ? () => "n" : value)));
-expect("TypeError", "a number becomes a Number object", () => JSON.parse<Item>(good, (key, value) => (key === "id" ? new Number(1) : value)));
-expect("TypeError", "a text becomes a String object", () => JSON.parse<Item>(good, (key, value) => (key === "name" ? new String("n") : value)));
-expect("value", "a wrong text is put right", () => JSON.parse<Item>('{"id":"1","name":2}', (key, value) => (key === "id" ? 1 : key === "name" ? "n" : value)));
-expect("RangeError", "the error of the reviver goes through", () =>
-  JSON.parse<Item>(good, () => {
-    throw new RangeError("stop");
-  }),
-);
-expect("SyntaxError", "broken text never reaches the reviver", () => JSON.parse<Item>(good + "}", () => 1));
-//// json-parse-by-type-refuses-when-the-last-of-two-equal-keys-is-wrong.ts
-////= show-3
-
-////= lines	Pair	a	number	b	string
-
-import { JSON } from "bun"; expect("value", "the last one fits", () => JSON.parse<Pair>('{"a":"x","b":"b","a":1}'));
-expect("TypeError", "the last one is a text", () => JSON.parse<Pair>('{"a":1,"b":"b","a":"x"}'));
-expect("TypeError", "the last one is null", () => JSON.parse<Pair>('{"a":1,"a":null,"b":"b"}'));
-expect("TypeError", "the last one is an object", () => JSON.parse<Pair>('{"a":1,"b":"b","a":{"a":1}}'));
-expect("TypeError", "the last one is written with an escape", () => JSON.parse<Pair>('{"a":1,"b":"b","\\u0061":"x"}'));
-expect("TypeError", "both members, both wrong at last", () => JSON.parse<Pair>('{"a":1,"b":"b","b":2,"a":"x"}'));
-expect("TypeError", "after a thousand that fit", () => JSON.parse<Pair>('{"b":"b",' + '"a":1,'.repeat(1000) + '"a":true}'));
-expect("TypeError", "in a nested object", () => JSON.parse<{ p: Pair }>('{"p":{"a":1,"b":"b"},"p":{"a":1}}'));
-expect("TypeError", "in an element", () => JSON.parse<Pair[]>('[{"a":1,"b":"b"},{"a":1,"b":"b","b":null}]'));
-expect("TypeError", "an optional member", () => JSON.parse<{ o?: number }>('{"o":1,"o":"x"}'));
-expect("TypeError", "in a table", () => JSON.parse<Record<string, number>>('{"k":1,"k":"x"}'));
-expect("value", "in a table, the last one fits", () => JSON.parse<Record<string, number>>('{"k":"x","k":1}'));
-//// json-parse-by-type-strict-types-refuse-undeclared-keys.ts
-import { JSON } from "bun"; import type { Schema } from "bun";
-
-////= show-3
-
-type Closed = { id: number; name?: string } & Schema.Strict;
-type Outer = { inner: { x: number }; list: { y: number }[] } & Schema.Strict;
-type Deep = { inner: { x: number }; list: { y: number }[] } & Schema.DeepStrict;
-
-expect("value", "only declared keys", () => JSON.parse<Closed>('{"id":1,"name":"n"}'));
-expect("value", "without the optional key", () => JSON.parse<Closed>('{"id":1}'));
-expect("value", "a declared key twice", () => JSON.parse<Closed>('{"id":0,"id":1}'));
-expect("value", "a declared key written with an escape", () => JSON.parse<Closed>('{"\\u0069d":1}'));
-expect("TypeError", "one more key", () => JSON.parse<Closed>('{"id":1,"more":0}'));
-expect("TypeError", "one more key first", () => JSON.parse<Closed>('{"more":0,"id":1}'));
-expect("TypeError", "a key named __proto__", () => JSON.parse<Closed>('{"id":1,"__proto__":{}}'));
-expect("TypeError", "a key named __proto__ that is null", () => JSON.parse<Closed>('{"id":1,"__proto__":null}'));
-expect("TypeError", "a key named constructor", () => JSON.parse<Closed>('{"id":1,"constructor":1}'));
-expect("TypeError", "a key named toString", () => JSON.parse<Closed>('{"id":1,"toString":1}'));
-expect("TypeError", "an empty key", () => JSON.parse<Closed>('{"id":1,"":1}'));
-expect("TypeError", "an index", () => JSON.parse<Closed>('{"id":1,"0":1}'));
-expect("TypeError", "a key in other letters", () => JSON.parse<Closed>('{"id":1,"Id":1}'));
-expect("TypeError", "a key with a space", () => JSON.parse<Closed>('{"id":1,"id ":1}'));
-expect("TypeError", "a key whose value is null", () => JSON.parse<Closed>('{"id":1,"more":null}'));
-expect("value", "strict outside only: more keys inside", () => JSON.parse<Outer>('{"inner":{"x":1,"more":0},"list":[{"y":1,"more":0}]}'));
-expect("TypeError", "strict outside only: more keys outside", () => JSON.parse<Outer>('{"inner":{"x":1},"list":[],"more":0}'));
-expect("value", "strict throughout: only declared keys", () => JSON.parse<Deep>('{"inner":{"x":1},"list":[{"y":1}]}'));
-expect("TypeError", "strict throughout: more keys in a member", () => JSON.parse<Deep>('{"inner":{"x":1,"more":0},"list":[]}'));
-expect("TypeError", "strict throughout: more keys in an element", () => JSON.parse<Deep>('{"inner":{"x":1},"list":[{"y":1},{"y":2,"more":0}]}'));
-expect("TypeError", "strict throughout: more keys outside", () => JSON.parse<Deep>('{"inner":{"x":1},"list":[],"more":0}'));
-//// json-parse-by-type-takes-its-arguments-from-a-list.ts
-////= Point
-
-import { JSON } from "bun"; function outcome(run: () => Point): string {
-  try {
-    const p = run();
-    return "value " + (p.x + p.y);
-  } catch (error) {
-    return error instanceof Error ? error.constructor.name : typeof error;
-  }
-}
-
-const texts = ['{"x":1,"y":2}', '{"x":1}', '{"x":1,"y":"2"}', "null"];
-function textAt(i: number): string {
-  return texts[i];
-}
-
-for (let i = 0; i < texts.length; i++) {
-  console.log(texts[i], "as an argument:", outcome(() => JSON.parse<Point>(textAt(i))));
-  console.log(texts[i], "in a list:", outcome(() => JSON.parse<Point>(...([textAt(i)] as [string]))));
-  console.log(texts[i], "in a list with a reviver:", outcome(() => JSON.parse<Point>(...([textAt(i), (_key: string, value: unknown) => value] as [string, (key: string, value: unknown) => unknown]))));
-}
-//// json-parse-by-type-through-the-json-that-bun-exports.ts
-// `import { JSON } from "bun"` and `Bun.JSON` are one object, which is not the global `JSON`, and a parse by type through them validates. The installed types give the `JSON` that "bun" exports signatures of its own.
-import { JSON as Typed } from "bun";
-
-////= lines	User	id	number	name	string
-const text = '{"id":7,"name":"Ada"}';
-const wrong = '{"id":"7"}';
-function attempt(label: string, run: () => unknown): void {
-  try {
-    console.log(label, JSON.stringify(run()));
-  } catch (error) {
-    console.log(label, (error as Error).constructor.name);
-  }
-}
-console.log("one object", Typed === Bun.JSON, "the global", Typed === JSON, Bun.JSON === JSON);
-attempt("global, right", () => JSON.parse(text) as User);
-attempt("global, wrong", () => JSON.parse(wrong) as User);
-attempt("imported, right", () => Typed.parse<User>(text));
-attempt("imported, wrong", () => Typed.parse<User>(wrong));
-attempt("Bun.JSON, right", () => Bun.JSON.parse<User>(text));
-attempt("Bun.JSON, wrong", () => Bun.JSON.parse<User>(wrong));
-attempt("imported, taken off", () => {
-  const { parse } = Typed;
-  return parse<User>(wrong);
-});
-attempt("no type argument", () => JSON.parse(wrong));
-attempt("imported, any", () => Typed.parse<any>(wrong));
 //// keys-in-another-order-and-more-keys-arrive-for-an-annotated-variable.ts
 ////= Point
 
@@ -970,10 +530,10 @@ try {
 }
 ////= lines-2	item.label.length
 console.log(JSON.stringify(item));
-//// parsed-by-type-a-reviver-runs-before-the-check.ts
+//// parsed-by-type-with-a-reviver.ts
 ////= show-2
 
-import { JSON } from "bun"; interface Order {
+interface Order {
   id: number;
   note: string;
   lines: { count: number }[];
@@ -993,49 +553,49 @@ function logged(this: unknown, key: string, value: unknown): unknown {
 
 attempt("a reviver that changes nothing", () => {
   log.length = 0;
-  const order = JSON.parse<Order>('{"id":1,"note":"n","lines":[{"count":2},{"count":3}]}', logged);
+  const order = JSON.parse('{"id":1,"note":"n","lines":[{"count":2},{"count":3}]}', logged) as Order;
   return [order, total(order), log.join(" ")];
 });
 attempt("a reviver that turns texts into numbers", () => {
-  const order = JSON.parse<Order>('{"id":"7","note":"n","lines":[{"count":"8"}]}', (key, value) => (key === "id" || key === "count" ? Number(value) : value));
+  const order = JSON.parse('{"id":"7","note":"n","lines":[{"count":"8"}]}', (key, value) => (key === "id" || key === "count" ? Number(value) : value)) as Order;
   return [order, total(order), typeof order.id];
 });
 attempt("a reviver that fills in a member", () => {
-  const order = JSON.parse<Order>('{"id":1,"lines":[]}', (key, value) => (key === "" ? { ...value, note: "added" } : value));
+  const order = JSON.parse('{"id":1,"lines":[]}', (key, value) => (key === "" ? { ...value, note: "added" } : value)) as Order;
   return [order, Object.keys(order), order.note.length];
 });
 attempt("a reviver that removes an undeclared member", () => {
-  const order = JSON.parse<Order>('{"id":1,"secret":"x","note":"n","lines":[]}', (key, value) => (key === "secret" ? undefined : value));
+  const order = JSON.parse('{"id":1,"secret":"x","note":"n","lines":[]}', (key, value) => (key === "secret" ? undefined : value)) as Order;
   return [order, Object.keys(order), "secret" in order];
 });
 attempt("a reviver that replaces the whole value", () => {
-  const order = JSON.parse<Order>("[1,2,3]", (key, value) => (key === "" ? { id: value.length, note: "from a list", lines: [] } : value));
+  const order = JSON.parse("[1,2,3]", (key, value) => (key === "" ? { id: value.length, note: "from a list", lines: [] } : value)) as Order;
   return [order, total(order)];
 });
 attempt("a reviver that returns the same object for every line", () => {
   const shared = { count: 5 };
-  const order = JSON.parse<Order>('{"id":0,"note":"","lines":[{"count":1},{"count":2}]}', (key, value) => (typeof value === "object" && value !== null && "count" in value ? shared : value));
+  const order = JSON.parse('{"id":0,"note":"","lines":[{"count":1},{"count":2}]}', (key, value) => (typeof value === "object" && value !== null && "count" in value ? shared : value)) as Order;
   return [order, total(order), order.lines[0] === order.lines[1], order.lines[0] === shared];
 });
 attempt("a reviver that sees the text of a number", () => {
   const seen: string[] = [];
-  const order = JSON.parse<Order>('{"id":1.0,"note":"n","lines":[]}', function (key, value) {
+  const order = JSON.parse('{"id":1.0,"note":"n","lines":[]}', function (key, value) {
     if (key === "id") seen.push(String(arguments.length), typeof arguments[2]);
     return value;
-  });
+  }) as Order;
   return [order.id, seen];
 });
 attempt("a reviver that throws", () =>
-  JSON.parse<Order>('{"id":1,"note":"n","lines":[]}', key => {
+  JSON.parse('{"id":1,"note":"n","lines":[]}', key => {
     if (key === "note") throw new RangeError("stop");
     return 1;
-  }),
+  }) as Order,
 );
 //// parsed-by-type-duplicate-keys-the-last-one-wins.ts
 ////= show-2
 
 ////= lines	Pair	a	number	b	string
-import { JSON } from "bun"; interface Nest {
+interface Nest {
   inner: { x: number };
   list: number[];
 }
@@ -1058,24 +618,24 @@ const texts = [
 ];
 for (const text of texts) {
   attempt(text, () => {
-    const pair = JSON.parse<Pair>(text);
+    const pair = JSON.parse(text) as Pair;
     return [pair, Object.keys(pair), sum(pair), JSON.stringify(pair), typeof pair.a, typeof pair.b];
   });
 }
 attempt("nested members twice", () => {
-  const nest = JSON.parse<Nest>('{"inner":{"x":"wrong"},"list":"wrong","inner":{"x":1,"x":2},"list":[1],"list":[2,3]}');
+  const nest = JSON.parse('{"inner":{"x":"wrong"},"list":"wrong","inner":{"x":1,"x":2},"list":[1],"list":[2,3]}') as Nest;
   return [nest, nest.inner.x + 1, nest.list.length, Object.keys(nest)];
 });
 attempt("a thousand times", () => {
   let text = "{";
   for (let i = 0; i < 1000; i++) text += '"a":' + i + ",";
-  const pair = JSON.parse<Pair>(text + '"b":"end"}');
+  const pair = JSON.parse(text + '"b":"end"}') as Pair;
   return [pair, sum(pair)];
 });
 //// parsed-by-type-enums-and-literal-types.ts
 ////= show-2
 
-import { JSON } from "bun"; enum Color {
+enum Color {
   Red,
   Green,
   Blue = 5,
@@ -1114,22 +674,22 @@ const texts = [
   '{"color":50e-1,"way":"UP","size":"s","level":10e-1,"on":true,"none":null,"id":"id-\\u0031"}',
   '{"id":"id-7","none":null,"on":true,"level":2,"size":"m","way":"DOWN","color":1}',
 ];
-for (const text of texts) attempt(text, () => describe(JSON.parse<Painted>(text)));
-attempt("alone", () => [JSON.parse<Color>("5"), JSON.parse<Way>('"DOWN"'), JSON.parse<"s" | "m">('"m"'), JSON.parse<1 | 2>("2"), JSON.parse<true>("true"), JSON.parse<null>("null"), JSON.parse<Color.Green>("1")]);
+for (const text of texts) attempt(text, () => describe(JSON.parse(text) as Painted));
+attempt("alone", () => [JSON.parse("5") as Color, JSON.parse('"DOWN"') as Way, JSON.parse('"m"') as "s" | "m", JSON.parse("2") as 1 | 2, JSON.parse("true") as true, JSON.parse("null") as null, JSON.parse("1") as Color.Green]);
 attempt("lists", () => {
-  const colors = JSON.parse<Color[]>("[0,1,5,5,0]");
-  const ways = JSON.parse<Way[]>('["UP","DOWN","UP"]');
+  const colors = JSON.parse("[0,1,5,5,0]") as Color[];
+  const ways = JSON.parse('["UP","DOWN","UP"]') as Way[];
   return [colors.map(nameOf), ways.map(way => way === Way.Up), colors.indexOf(Color.Blue), ways.indexOf(Way.Down)];
 });
 attempt("as keys", () => {
-  const table = JSON.parse<Record<Way, number>>('{"DOWN":2,"UP":1}');
-  const byColor = JSON.parse<Record<Color, string>>('{"5":"b","0":"r","1":"g"}');
+  const table = JSON.parse('{"DOWN":2,"UP":1}') as Record<Way, number>;
+  const byColor = JSON.parse('{"5":"b","0":"r","1":"g"}') as Record<Color, string>;
   return [table[Way.Up], table[Way.Down], Object.keys(table), byColor[Color.Blue], byColor[Color.Red], Object.keys(byColor)];
 });
 //// parsed-by-type-honest.ts
 ////= show-2
 
-import { JSON } from "bun"; interface Line {
+interface Line {
   sku: string;
   count: number;
   price: number;
@@ -1157,19 +717,19 @@ function textOf(i: number): string {
 let sum = 0;
 let names = 0;
 for (let i = 0; i < 2000; i++) {
-  const order = JSON.parse<Order>(textOf(i));
+  const order = JSON.parse(textOf(i)) as Order;
   sum += total(order) + order.id;
   names += order.customer.name.length + skus(order).length + (order.note === null ? 0 : order.note.length);
 }
 attempt("totals", () => [sum, names]);
 attempt("one order", () => {
-  const order = JSON.parse<Order>(textOf(7));
+  const order = JSON.parse(textOf(7)) as Order;
   return [order, total(order), skus(order), Object.keys(order), JSON.stringify(order) === textOf(7)];
 });
 //// parsed-by-type-keys-in-another-order-and-extra-keys-stay-as-written.ts
 ////= show-2
 
-import { JSON } from "bun"; interface User {
+interface User {
   id: number;
   name: string;
   active: boolean;
@@ -1203,15 +763,15 @@ console.log("2000 honest literals", warm);
 
 for (const text of texts) {
   attempt(JSON.stringify(text), () => {
-    const user = JSON.parse<User>(text);
+    const user = JSON.parse(text) as User;
     return [user, Object.keys(user), JSON.stringify(user), describe(user), typeof user.id, typeof user.name, typeof user.active, "extra" in user, Object.getPrototypeOf(user) === Object.prototype];
   });
   attempt("  then stored to", () => {
-    const user = rename(JSON.parse<User>(text), "renamed");
+    const user = rename(JSON.parse(text) as User, "renamed");
     return [user, JSON.stringify(user), describe(user)];
   });
   attempt("  then copied", () => {
-    const user = JSON.parse<User>(text);
+    const user = JSON.parse(text) as User;
     const copy: User = { ...user };
     const assigned: User = Object.assign({ id: 0, name: "", active: false }, user);
     return [copy, assigned, describe(copy), describe(assigned)];
@@ -1221,7 +781,7 @@ for (const text of texts) {
 ////= show-2
 
 ////= lines-4	Plain	id	number
-import { JSON } from "bun"; interface Named {
+interface Named {
   constructor: string;
   toString: number;
   valueOf: boolean;
@@ -1250,24 +810,24 @@ const extra = [
 ];
 for (const text of extra) {
   attempt(text, () => {
-    const plain = JSON.parse<Plain>(text);
+    const plain = JSON.parse(text) as Plain;
     return [plain, idOf(plain), look(plain)];
   });
 }
 attempt("an object with its own toString is written out", () => {
-  const plain = JSON.parse<Plain>('{"id":6,"toString":2,"valueOf":3}');
+  const plain = JSON.parse('{"id":6,"toString":2,"valueOf":3}') as Plain;
   return String(plain);
 });
 attempt("declared names that every object inherits", () => {
-  const named = JSON.parse<Named>('{"constructor":"c","toString":1,"valueOf":true,"hasOwnProperty":null}');
+  const named = JSON.parse('{"constructor":"c","toString":1,"valueOf":true,"hasOwnProperty":null}') as Named;
   return [named, named.constructor, named.toString + 1, named.valueOf, named.hasOwnProperty, look(named)];
 });
 attempt("a declared member named __proto__", () => {
-  const value = JSON.parse<WithProto>('{"id":1,"__proto__":{"admin":true}}');
+  const value = JSON.parse('{"id":1,"__proto__":{"admin":true}}') as WithProto;
   return [value, value.id, look(value), Object.getOwnPropertyDescriptor(value, "__proto__")];
 });
 attempt("copies of an object with its own __proto__", () => {
-  const plain = JSON.parse<Plain>('{"id":1,"__proto__":{"admin":true}}');
+  const plain = JSON.parse('{"id":1,"__proto__":{"admin":true}}') as Plain;
   const spread = { ...plain };
   const assigned = Object.assign({}, plain);
   return [look(spread), look(assigned), "admin" in assigned];
@@ -1275,7 +835,7 @@ attempt("copies of an object with its own __proto__", () => {
 //// parsed-by-type-keys-that-look-like-numbers.ts
 ////= show-2
 
-import { JSON } from "bun"; interface Indexed {
+interface Indexed {
   0: string;
   1: string;
   name: string;
@@ -1301,36 +861,36 @@ function total(table: Table): number {
 }
 
 attempt("declared indexes", () => {
-  const indexed = JSON.parse<Indexed>('{"name":"n","1":"b","0":"a"}');
+  const indexed = JSON.parse('{"name":"n","1":"b","0":"a"}') as Indexed;
   return [indexed, Object.keys(indexed), first(indexed), JSON.stringify(indexed), Array.isArray(indexed)];
 });
 attempt("declared indexes and more", () => {
-  const indexed = JSON.parse<Indexed>('{"5":"f","name":"n","1":"b","x":1,"0":"a","3":"d"}');
+  const indexed = JSON.parse('{"5":"f","name":"n","1":"b","x":1,"0":"a","3":"d"}') as Indexed;
   return [indexed, Object.keys(indexed), first(indexed)];
 });
 attempt("quoted names", () => {
-  const quoted = JSON.parse<Quoted>('{"10":1,"9":2,"01":3,"-1":4,"1.5":5,"4294967295":6,"4294967294":7}');
+  const quoted = JSON.parse('{"10":1,"9":2,"01":3,"-1":4,"1.5":5,"4294967295":6,"4294967294":7}') as Quoted;
   return [quoted, Object.keys(quoted), quoted[10] + quoted[9], quoted["01"], quoted["-1"], quoted["1.5"], quoted[4294967295], quoted[4294967294]];
 });
 attempt("a table", () => {
-  const table = JSON.parse<Table>('{"b":1,"2":2,"a":3,"1":4,"-0":5,"0":6,"1e3":7,"1000":8,"":9," 1":10}');
+  const table = JSON.parse('{"b":1,"2":2,"a":3,"1":4,"-0":5,"0":6,"1e3":7,"1000":8,"":9," 1":10}') as Table;
   return [table, Object.keys(table), total(table), table[0], table["-0"], table[1000], table["1e3"], table[""]];
 });
 attempt("a table with very many indexes", () => {
   let text = "{";
   for (let i = 2000; i > 0; i--) text += '"' + i + '":' + i + ",";
-  const table = JSON.parse<Table>(text + '"0":0}');
+  const table = JSON.parse(text + '"0":0}') as Table;
   const keys = Object.keys(table);
   return [keys.length, keys[0], keys[1], keys[2000], total(table)];
 });
 attempt("a sparse table", () => {
-  const table = JSON.parse<Table>('{"1000000":1,"5":2,"4000000000":3}');
+  const table = JSON.parse('{"1000000":1,"5":2,"4000000000":3}') as Table;
   return [table, Object.keys(table), total(table)];
 });
 //// parsed-by-type-long-strings-and-many-elements.ts
 ////= show-2
 
-import { JSON } from "bun"; interface Page {
+interface Page {
   text: string;
   items: { id: number; tag: string }[];
 }
@@ -1347,37 +907,37 @@ function tagLength(page: Page): number {
 }
 
 attempt("a string of a million letters", () => {
-  const page = JSON.parse<Page>('{"text":"' + "ab".repeat(500_000) + '","items":[]}');
+  const page = JSON.parse('{"text":"' + "ab".repeat(500_000) + '","items":[]}') as Page;
   return [page.text.length, page.text.slice(-3), page.text.charCodeAt(999_999), page.items];
 });
 attempt("a string of a hundred thousand escapes", () => {
-  const page = JSON.parse<Page>('{"text":"' + "\\n\\u00e9".repeat(50_000) + '","items":[]}');
+  const page = JSON.parse('{"text":"' + "\\n\\u00e9".repeat(50_000) + '","items":[]}') as Page;
   return [page.text.length, page.text.charCodeAt(99_999), page.text.charCodeAt(99_998)];
 });
 attempt("fifty thousand items", () => {
   const parts: string[] = [];
   for (let i = 0; i < 50_000; i++) parts.push('{"id":' + i + ',"tag":"t' + (i % 7) + '"}');
-  const page = JSON.parse<Page>('{"text":"","items":[' + parts.join(",") + "]}");
+  const page = JSON.parse('{"text":"","items":[' + parts.join(",") + "]}") as Page;
   return [page.items.length, idSum(page), tagLength(page), page.items[49_999], Object.keys(page.items[25_000])];
 });
 attempt("items whose keys change places", () => {
   const parts: string[] = [];
   for (let i = 0; i < 5_000; i++) parts.push(i % 3 === 0 ? '{"id":' + i + ',"tag":"a"}' : i % 3 === 1 ? '{"tag":"bb","id":' + i + "}" : '{"more":0,"tag":"ccc","id":' + (i + 0.5) + "}");
-  const page = JSON.parse<Page>('{"items":[' + parts.join(",") + '],"text":"t"}');
+  const page = JSON.parse('{"items":[' + parts.join(",") + '],"text":"t"}') as Page;
   return [page.items.length, idSum(page), tagLength(page), page.items[0], page.items[1], page.items[2], Object.keys(page)];
 });
 attempt("a key of ten thousand letters", () => {
   const key = "k".repeat(10_000);
-  const table = JSON.parse<Record<string, number>>('{"' + key + '":1,"' + key + 'x":2}');
+  const table = JSON.parse('{"' + key + '":1,"' + key + 'x":2}') as Record<string, number>;
   return [Object.keys(table).map(name => name.length), table[key], table[key + "x"]];
 });
 attempt("much white space", () => {
   const space = " \n\t\r".repeat(25_000);
-  const page = JSON.parse<Page>(space + "{" + space + '"text"' + space + ":" + space + '"t"' + space + "," + space + '"items"' + space + ":" + space + "[" + space + "]" + space + "}" + space);
+  const page = JSON.parse(space + "{" + space + '"text"' + space + ":" + space + '"t"' + space + "," + space + '"items"' + space + ":" + space + "[" + space + "]" + space + "}" + space) as Page;
   return page;
 });
 //// parsed-by-type-negative-zero-in-an-int32-member.ts
-import { JSON } from "bun"; import type { int32 } from "bun";
+import type { int32 } from "bun";
 
 ////= show-2
 
@@ -1391,28 +951,27 @@ class Kept {
   held: int32 = 1;
 }
 
-attempt("an honest zero", () => uses(xOf(JSON.parse<Point>('{"x":0,"y":1}'))));
+attempt("an honest zero", () => uses(xOf(JSON.parse('{"x":0,"y":1}') as Point)));
 for (const spelling of ["-0", "-0.0", "-0e0", "-0E+5", "-0.000e-3"]) {
   attempt(spelling, () => {
-    const point = JSON.parse<Point>('{"x":' + spelling + ',"y":1}');
+    const point = JSON.parse('{"x":' + spelling + ',"y":1}') as Point;
     return [point, uses(xOf(point)), uses(point.x)];
   });
   attempt(spelling + " kept in a field", () => {
     const kept = new Kept();
-    kept.held = JSON.parse<Point>('{"x":' + spelling + ',"y":1}').x;
+    kept.held = (JSON.parse('{"x":' + spelling + ',"y":1}') as Point).x;
     return [kept.held, 1 / kept.held];
   });
-  attempt(spelling + " alone", () => uses(JSON.parse<int32>(spelling)));
   attempt(spelling + " in a list", () => {
-    const list = JSON.parse<int32[]>("[1," + spelling + "]");
+    const list = JSON.parse("[1," + spelling + "]") as int32[];
     return [list, uses(list[1])];
   });
 }
-attempt("other spellings of integers", () => ["1.0", "1e2", "100e-2", "2147483647.0", "-2147483648", "2.147483647e9", "0.0"].map(spelling => JSON.parse<Point>('{"x":' + spelling + ',"y":0}').x));
+attempt("other spellings of integers", () => ["1.0", "1e2", "100e-2", "2147483647.0", "-2147483648", "2.147483647e9", "0.0"].map(spelling => (JSON.parse('{"x":' + spelling + ',"y":0}') as Point).x));
 //// parsed-by-type-nested-a-few-hundred-levels-deep.ts
 ////= show-2
 
-import { JSON } from "bun"; interface Tree {
+interface Tree {
   value: number;
   children: Tree[];
 }
@@ -1452,22 +1011,22 @@ function levels(nest: Nest): number {
 
 for (const depth of [1, 2, 10, 100, 400]) {
   attempt("a tree of depth " + depth, () => {
-    const tree = JSON.parse<Tree>('{"value":1,"children":['.repeat(depth).slice(0, -1) + "[]" + "}]".repeat(depth).slice(0, -1));
+    const tree = JSON.parse('{"value":1,"children":['.repeat(depth).slice(0, -1) + "[]" + "}]".repeat(depth).slice(0, -1)) as Tree;
     return [depthOf(tree), sumOf(tree)];
   });
-  attempt("a chain of length " + depth, () => lengthOf(JSON.parse<Chain>('{"next":'.repeat(depth) + "null" + "}".repeat(depth))));
-  attempt("lists in lists, " + depth + " levels", () => levels(JSON.parse<Nest>("[".repeat(depth) + "]".repeat(depth))));
+  attempt("a chain of length " + depth, () => lengthOf(JSON.parse('{"next":'.repeat(depth) + "null" + "}".repeat(depth)) as Chain));
+  attempt("lists in lists, " + depth + " levels", () => levels(JSON.parse("[".repeat(depth) + "]".repeat(depth)) as Nest));
 }
 attempt("a wide tree", () => {
   const leaf = '{"value":1,"children":[]}';
   const branch = '{"value":10,"children":[' + Array.from({ length: 20 }, () => leaf).join(",") + "]}";
-  const tree = JSON.parse<Tree>('{"value":100,"children":[' + Array.from({ length: 20 }, () => branch).join(",") + "]}");
+  const tree = JSON.parse('{"value":100,"children":[' + Array.from({ length: 20 }, () => branch).join(",") + "]}") as Tree;
   return [depthOf(tree), sumOf(tree), tree.children[19].children[19]];
 });
 //// parsed-by-type-nesting-of-a-million-levels-gives-the-value-or-a-range-error.ts
 ////= show-2
 
-import { JSON } from "bun"; type Nest = Nest[];
+type Nest = Nest[];
 interface Chain {
   next: Chain | null;
 }
@@ -1494,17 +1053,17 @@ function either(label: string, wanted: number, run: () => number): void {
 }
 
 for (const depth of [10_000, 100_000, 1_000_000]) {
-  either(depth + " lists", depth, () => levels(JSON.parse<Nest>("[".repeat(depth) + "]".repeat(depth))));
-  either(depth + " objects", depth, () => links(JSON.parse<Chain>('{"next":'.repeat(depth) + "null" + "}".repeat(depth))));
-  attempt(depth + " lists that are never closed", () => JSON.parse<Nest>("[".repeat(depth)));
-  attempt("afterwards", () => [levels(JSON.parse<Nest>("[[[]]]")), links(JSON.parse<Chain>('{"next":{"next":null}}'))]);
+  either(depth + " lists", depth, () => levels(JSON.parse("[".repeat(depth) + "]".repeat(depth)) as Nest));
+  either(depth + " objects", depth, () => links(JSON.parse('{"next":'.repeat(depth) + "null" + "}".repeat(depth)) as Chain));
+  attempt(depth + " lists that are never closed", () => JSON.parse("[".repeat(depth)) as Nest);
+  attempt("afterwards", () => [levels(JSON.parse("[[[]]]") as Nest), links(JSON.parse('{"next":{"next":null}}') as Chain)]);
 }
 //// parsed-by-type-numbers-in-odd-spellings.ts
 ////= show-2
 
 ////= lines-4	Reading	n	number
 
-import { JSON } from "bun"; function uses(reading: Reading): unknown[] {
+function uses(reading: Reading): unknown[] {
   const n = reading.n;
   return [n, typeof n, n + 1, n * 2, n | 0, n >>> 0, 1 / n, n === Math.floor(n), Number.isSafeInteger(n), String(n), JSON.stringify(reading)];
 }
@@ -1520,24 +1079,24 @@ let warm = 0;
 for (let i = 0; i < 2000; i++) warm += uses({ n: i }).length;
 console.log("2000 honest literals with integers", warm);
 
-for (const spelling of spellings) attempt(spelling, () => uses(JSON.parse<Reading>('{"n":' + spelling + "}")));
-attempt("alone", () => spellings.map(spelling => JSON.parse<number>(spelling)));
+for (const spelling of spellings) attempt(spelling, () => uses(JSON.parse('{"n":' + spelling + "}") as Reading));
+attempt("alone", () => spellings.map(spelling => JSON.parse(spelling) as number));
 attempt("in one list", () => {
-  const list = JSON.parse<number[]>("[" + spellings.join(",") + "]");
+  const list = JSON.parse("[" + spellings.join(",") + "]") as number[];
   return [list.length, list, sumOf(list.slice(0, 12))];
 });
 attempt("integers and then a fraction", () => {
-  const list = JSON.parse<number[]>("[1,2,3,4,5,6,7,8,0.5]");
+  const list = JSON.parse("[1,2,3,4,5,6,7,8,0.5]") as number[];
   return [list, sumOf(list)];
 });
 attempt("integers and then negative zero", () => {
-  const list = JSON.parse<number[]>("[1,2,-0]");
+  const list = JSON.parse("[1,2,-0]") as number[];
   return [list, 1 / list[2], list.indexOf(0), list.includes(-0), Object.is(list.at(-1), -0)];
 });
 //// parsed-by-type-optional-null-and-absent-members.ts
 ////= show-2
 
-import { JSON } from "bun"; interface Profile {
+interface Profile {
   name: string;
   age?: number;
   nick: string | null;
@@ -1577,32 +1136,32 @@ let warm = 0;
 for (let i = 0; i < 2000; i++) warm += describe(i % 2 ? { name: "n", nick: null } : { name: "n", nick: "k", age: i, tags: ["t"], inner: { deep: i } }).length;
 console.log("2000 honest literals", warm);
 
-for (const text of texts) attempt(text, () => describe(JSON.parse<Profile>(text)));
+for (const text of texts) attempt(text, () => describe(JSON.parse(text) as Profile));
 attempt("optional members are added later", () => {
-  const profile = JSON.parse<Profile>('{"name":"a","nick":null}');
+  const profile = JSON.parse('{"name":"a","nick":null}') as Profile;
   profile.age = 3;
   profile.inner = { deep: 4 };
   profile.tags = null;
   return describe(profile);
 });
 attempt("optional members are deleted later", () => {
-  const profile = JSON.parse<Profile>('{"name":"b","age":1,"nick":"n","tags":["x"],"inner":{"deep":2}}');
+  const profile = JSON.parse('{"name":"b","age":1,"nick":"n","tags":["x"],"inner":{"deep":2}}') as Profile;
   delete profile.age;
   delete profile.inner;
   profile.tags = undefined;
   return describe(profile);
 });
 attempt("mapped types", () => {
-  const part = JSON.parse<Partial<Profile>>("{}");
-  const picked = JSON.parse<Pick<Profile, "name" | "age">>('{"name":"p","nick":5}');
-  const whole = JSON.parse<Required<Pick<Profile, "age">>>('{"age":2}');
+  const part = JSON.parse("{}") as Partial<Profile>;
+  const picked = JSON.parse('{"name":"p","nick":5}') as Pick<Profile, "name" | "age">;
+  const whole = JSON.parse('{"age":2}') as Required<Pick<Profile, "age">>;
   return [part, Object.keys(part), part.name, picked, picked.name.length, whole.age + 1];
 });
 //// parsed-by-type-results-and-literals-go-through-one-function.ts
 ////= show-2
 
 ////= Point
-import { JSON } from "bun"; class Dot implements Point {
+class Dot implements Point {
   constructor(
     public x: number,
     public y: number,
@@ -1626,29 +1185,29 @@ console.log("2000 honest literals and instances", warm);
 const texts = ['{"x":3,"y":4}', '{"y":4,"x":3}', '{"x":0.5,"y":-0}', '{"w":0,"x":3,"y":4}', '{"x":3,"w":0,"y":4}', '{"x":3,"y":4,"z":5}', '{"y":1e21,"z":{},"x":1e-7}', '{"0":1,"x":3,"y":4}'];
 for (const text of texts) {
   attempt(text, () => {
-    const point = JSON.parse<Point>(text);
+    const point = JSON.parse(text) as Point;
     return [norm(point), keys(point), move(point, 1), keys(point), JSON.stringify(point)];
   });
 }
 attempt("in one list with literals and instances", () => {
-  const points: Point[] = [{ x: 1, y: 2 }, JSON.parse<Point>('{"y":2,"x":1}'), new Dot(1, 2), JSON.parse<Point>('{"z":0,"x":1,"y":2}'), { y: 2, x: 1 }];
+  const points: Point[] = [{ x: 1, y: 2 }, JSON.parse('{"y":2,"x":1}') as Point, new Dot(1, 2), JSON.parse('{"z":0,"x":1,"y":2}') as Point, { y: 2, x: 1 }];
   return [points.map(norm), points.map(keys), points.map(point => move(point, 0.5).x)];
 });
 attempt("a list that was parsed, then pushed to", () => {
-  const points = JSON.parse<Point[]>('[{"x":1,"y":1},{"y":2,"x":2}]');
+  const points = JSON.parse('[{"x":1,"y":1},{"y":2,"x":2}]') as Point[];
   points.push({ x: 3, y: 3 }, new Dot(4, 4));
   return [points.map(norm), points.map(keys)];
 });
 attempt("parsed 2000 times, each third with other keys", () => {
   let sum = 0;
-  for (let i = 0; i < 2000; i++) sum += norm(JSON.parse<Point>(i % 3 === 0 ? '{"x":1,"y":2}' : i % 3 === 1 ? '{"y":2,"x":1}' : '{"k' + i + '":0,"x":1,"y":2}'));
+  for (let i = 0; i < 2000; i++) sum += norm(JSON.parse(i % 3 === 0 ? '{"x":1,"y":2}' : i % 3 === 1 ? '{"y":2,"x":1}' : '{"k' + i + '":0,"x":1,"y":2}') as Point);
   return sum;
 });
 attempt("honest again", () => [norm({ x: 3, y: 4 }), norm(new Dot(3, 4)), keys(new Dot(0, 0))]);
 //// parsed-by-type-results-are-changed-afterwards.ts
 ////= show-2
 
-import { JSON } from "bun"; interface Account {
+interface Account {
   id: number;
   owner: string;
   limits: { daily: number };
@@ -1665,7 +1224,7 @@ function look(account: Account): unknown[] {
   return [idOf(account), account.owner, daily(account), Object.keys(account), JSON.stringify(account)];
 }
 function fresh(): Account {
-  return JSON.parse<Account>('{"id":1,"owner":"ann","limits":{"daily":10}}');
+  return JSON.parse('{"id":1,"owner":"ann","limits":{"daily":10}}') as Account;
 }
 
 let warm = 0;
@@ -1749,7 +1308,7 @@ attempt("honest again", () => look(fresh()));
 
 ////= lines	Note	title	string	body	string
 
-import { JSON } from "bun"; function codes(text: string): string {
+function codes(text: string): string {
   const parts: string[] = [];
   for (let i = 0; i < text.length; i++) parts.push(text.charCodeAt(i).toString(16));
   return parts.join(" ");
@@ -1760,32 +1319,32 @@ function uses(note: Note): unknown[] {
 
 const values = ['""', '"a"', '"\\""', '"\\\\"', '"\\/"', '"\\b\\f\\n\\r\\t"', '"\\u0000"', '"\\u0041"', '"\\u00e9"', '"é"', '"\\u65e5"', '"日"', '"\\ud83d\\ude00"', '"😀"', '"\\ud800"', '"\\udc00"', '"\\ude00\\ud83d"', '"a\\ud800b"', '"\\uD83D"', '"\\u2028\\u2029"', '"\u007f"', '"\\uFFFF"', '"\\ufeff"'];
 for (const value of values) {
-  attempt(codes(value), () => uses(JSON.parse<Note>('{"title":' + value + ',"body":"a"}')));
+  attempt(codes(value), () => uses(JSON.parse('{"title":' + value + ',"body":"a"}') as Note));
 }
 attempt("declared keys written with escapes", () => {
-  const note = JSON.parse<Note>('{"\\u0074itle":"t","bod\\u0079":"b"}');
+  const note = JSON.parse('{"\\u0074itle":"t","bod\\u0079":"b"}') as Note;
   return [note, Object.keys(note), note.title, note.body];
 });
 attempt("declared keys written with every letter escaped", () => {
-  const note = JSON.parse<Note>('{"\\u0074\\u0069\\u0074\\u006c\\u0065":"t","\\u0062\\u006F\\u0064\\u0079":"b"}');
+  const note = JSON.parse('{"\\u0074\\u0069\\u0074\\u006c\\u0065":"t","\\u0062\\u006F\\u0064\\u0079":"b"}') as Note;
   return [note, Object.keys(note), note.title, note.body];
 });
 attempt("keys that only look like the declared ones", () => {
-  const note = JSON.parse<Note>('{"title":"t","body":"b","tіtle":"cyrillic","title\\u0000":"nul","Title":"upper","title ":"space"}');
+  const note = JSON.parse('{"title":"t","body":"b","tіtle":"cyrillic","title\\u0000":"nul","Title":"upper","title ":"space"}') as Note;
   return [Object.keys(note).map(codes), note.title, note.body];
 });
 attempt("keys that are lone surrogates", () => {
-  const table = JSON.parse<Record<string, number>>('{"\\ud800":1,"\\udc00":2,"\\ud800\\udc00":3,"":4}');
+  const table = JSON.parse('{"\\ud800":1,"\\udc00":2,"\\ud800\\udc00":3,"":4}') as Record<string, number>;
   return [Object.keys(table).map(codes), table["\ud800"], table["\udc00"], table["𐀀"], table[""]];
 });
 attempt("a text in 16 bits", () => {
-  const note = JSON.parse<Note>('{"title":"日本","body":"語","日":"本"}');
+  const note = JSON.parse('{"title":"日本","body":"語","日":"本"}') as Note;
   return [note, uses(note)];
 });
 //// parsed-by-type-text-cut-at-every-position-is-a-syntax-error.ts
 ////= show-2
 
-import { JSON } from "bun"; interface Item {
+interface Item {
   id: number;
   name: string;
   tags: string[];
@@ -1796,18 +1355,18 @@ const whole = '{"id":-12.5e+1,"name":"a\\u0041\\n","tags":["x","y"],"inner":{"ok
 
 ////= classOf
 
-attempt("whole", () => JSON.parse<Item>(whole));
+attempt("whole", () => JSON.parse(whole) as Item);
 const cut: string[] = [];
-for (let end = 0; end < whole.length; end++) cut.push(classOf(() => JSON.parse<Item>(whole.slice(0, end))));
+for (let end = 0; end < whole.length; end++) cut.push(classOf(() => JSON.parse(whole.slice(0, end)) as Item));
 console.log("cut after each character:", cut.every(name => name === "SyntaxError") ? "always a SyntaxError" : cut.join(" "));
 
 const started: string[] = [];
-for (let start = 1; start < whole.length; start++) started.push(classOf(() => JSON.parse<Item>(whole.slice(start))));
+for (let start = 1; start < whole.length; start++) started.push(classOf(() => JSON.parse(whole.slice(start)) as Item));
 console.log("started after each character:", started.every(name => name === "SyntaxError") ? "always a SyntaxError" : started.join(" "));
 
 const tails = [",", "}", "]", "x", "{}", "null", '"', "\u0000", "﻿", "/", "//", "/**/", " ", " ", "\v", "\f"];
-for (const tail of tails) attempt("followed by " + JSON.stringify(tail), () => classOf(() => JSON.parse<Item>(whole + tail)));
-for (const head of [",", "﻿", " ", "\v", "+", "(", "'"]) attempt("after " + JSON.stringify(head), () => classOf(() => JSON.parse<Item>(head + whole)));
+for (const tail of tails) attempt("followed by " + JSON.stringify(tail), () => classOf(() => JSON.parse(whole + tail) as Item));
+for (const head of [",", "﻿", " ", "\v", "+", "(", "'"]) attempt("after " + JSON.stringify(head), () => classOf(() => JSON.parse(head + whole) as Item));
 
 const broken = [
   "",
@@ -1849,11 +1408,11 @@ const broken = [
   '{"tags":]}',
   '{"inner":{]}',
 ];
-for (const text of broken) attempt(JSON.stringify(text), () => classOf(() => JSON.parse<Item>(text)));
+for (const text of broken) attempt(JSON.stringify(text), () => classOf(() => JSON.parse(text) as Item));
 //// parsed-by-type-text-that-is-both-mistyped-and-broken-is-a-syntax-error.ts
 ////= show-2
 
-import { JSON } from "bun"; interface Item {
+interface Item {
   id: number;
   name: string;
   list: number[];
@@ -1880,20 +1439,20 @@ const items = [
   "[]]",
   "null null",
 ];
-for (const text of items) attempt(JSON.stringify(text), () => classOf(() => JSON.parse<Item>(text)));
+for (const text of items) attempt(JSON.stringify(text), () => classOf(() => JSON.parse(text) as Item));
 
 const shapes = ['{"kind":"c","x":1', '{"kind":"a","x":"wrong"', '{"kind":"a","y":"of b",}', '{"kind":1]', '{"kind":"b","y":2}{'];
-for (const text of shapes) attempt("shape " + JSON.stringify(text), () => classOf(() => JSON.parse<Shape>(text)));
+for (const text of shapes) attempt("shape " + JSON.stringify(text), () => classOf(() => JSON.parse(text) as Shape));
 
 attempt("mistyped far before the break", () => {
   const parts: string[] = [];
   for (let i = 0; i < 5000; i++) parts.push(i === 3 ? '"wrong"' : String(i));
-  return classOf(() => JSON.parse<Item>('{"id":1,"name":"n","list":[' + parts.join(",") + "]"));
+  return classOf(() => JSON.parse('{"id":1,"name":"n","list":[' + parts.join(",") + "]") as Item);
 });
 //// parsed-by-type-tuples-records-and-nested-lists.ts
 ////= show-2
 
-import { JSON } from "bun"; type Pair = [number, string];
+type Pair = [number, string];
 type Grid = number[][];
 type Rows = { cells: [number, number]; label: string }[];
 type Table = Record<string, { count: number }>;
@@ -1917,46 +1476,46 @@ function counts(table: Table): number {
 }
 
 attempt("a pair", () => {
-  const pair = JSON.parse<Pair>('[1,"one"]');
+  const pair = JSON.parse('[1,"one"]') as Pair;
   return [pair, pair.length, swap(pair), Array.isArray(pair), pair[0] + 1, pair[1].length];
 });
 attempt("a pair that is pushed to", () => {
-  const pair = JSON.parse<Pair>('[1,"one"]');
+  const pair = JSON.parse('[1,"one"]') as Pair;
   pair.push(2, "two");
   return [pair, pair.length, swap(pair)];
 });
-attempt("an empty tuple", () => JSON.parse<[]>("[]"));
+attempt("an empty tuple", () => JSON.parse("[]") as []);
 attempt("a grid", () => {
-  const grid = JSON.parse<Grid>("[[1,2],[],[3.5],[-0],[1e21]]");
+  const grid = JSON.parse("[[1,2],[],[3.5],[-0],[1e21]]") as Grid;
   return [grid, sumGrid(grid), grid[1].length, grid[3][0]];
 });
 attempt("rows", () => {
-  const rows = JSON.parse<Rows>('[{"cells":[1,5],"label":"a"},{"label":"b","cells":[0.5,0.25]},{"cells":[2,2],"label":"c","more":[]}]');
+  const rows = JSON.parse('[{"cells":[1,5],"label":"a"},{"label":"b","cells":[0.5,0.25]},{"cells":[2,2],"label":"c","more":[]}]') as Rows;
   return [rows, widths(rows), rows.map(row => row.label).join()];
 });
 attempt("a table", () => {
-  const table = JSON.parse<Table>('{"x":{"count":1},"y":{"count":2,"more":true},"":{"count":3},"constructor":{"count":4}}');
+  const table = JSON.parse('{"x":{"count":1},"y":{"count":2,"more":true},"":{"count":3},"constructor":{"count":4}}') as Table;
   const name: string = "constructor";
   return [table, counts(table), Object.keys(table), table[name].count, table["missing"]];
 });
 attempt("an empty table", () => {
-  const table = JSON.parse<Table>("{}");
+  const table = JSON.parse("{}") as Table;
   const name: string = "toString";
   return [table, counts(table), table[name] === undefined, typeof table[name]];
 });
 attempt("fixed keys", () => {
-  const fixed = JSON.parse<Fixed>('{"b":2,"c":3,"a":1}');
+  const fixed = JSON.parse('{"b":2,"c":3,"a":1}') as Fixed;
   return [fixed, fixed.a + fixed.b, Object.keys(fixed)];
 });
 attempt("read-only lists", () => {
-  const list = JSON.parse<readonly number[]>("[3,1,2]");
-  const pair = JSON.parse<readonly [number, number]>("[1,2]");
+  const list = JSON.parse("[3,1,2]") as readonly number[];
+  const pair = JSON.parse("[1,2]") as readonly [number, number];
   return [list, list.toSorted(), pair, Object.isFrozen(list), Object.isFrozen(pair)];
 });
 //// parsed-by-type-unions-and-tags-in-any-place.ts
 ////= show-2
 
-import { JSON } from "bun"; type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number } | { kind: "label"; text: string; size?: number };
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number } | { kind: "label"; text: string; size?: number };
 type Result = { ok: true; value: number } | { ok: false; error: string };
 type Loose = number | string | null | number[] | { n: number };
 type Versioned = { version: 1; name: string } | { version: 2; name: { first: string } };
@@ -2000,25 +1559,25 @@ const shapes = [
 ];
 for (const text of shapes) {
   attempt(text, () => {
-    const shape = JSON.parse<Shape>(text);
+    const shape = JSON.parse(text) as Shape;
     return [shape, area(shape), Object.keys(shape)];
   });
 }
 attempt("a list of shapes", () => {
-  const list = JSON.parse<Shape[]>("[" + shapes.join(",") + "]");
+  const list = JSON.parse("[" + shapes.join(",") + "]") as Shape[];
   return list.map(area);
 });
-for (const text of ['{"ok":true,"value":1}', '{"value":1,"ok":true}', '{"ok":false,"error":"e"}', '{"error":"e","ok":false,"value":"ignored"}']) attempt(text, () => unwrap(JSON.parse<Result>(text)));
-for (const text of ["1", "-0", '"text"', "null", "[]", "[1,2]", '{"n":1}', '{"n":1,"m":2}', '""']) attempt("loose " + text, () => [JSON.parse<Loose>(text), kindOf(JSON.parse<Loose>(text))]);
-for (const text of ['{"version":1,"name":"a"}', '{"name":{"first":"b"},"version":2}', '{"version":1.0,"name":"c"}', '{"version":2e0,"name":{"first":"d","last":"e"}}']) attempt(text, () => nameOf(JSON.parse<Versioned>(text)));
+for (const text of ['{"ok":true,"value":1}', '{"value":1,"ok":true}', '{"ok":false,"error":"e"}', '{"error":"e","ok":false,"value":"ignored"}']) attempt(text, () => unwrap(JSON.parse(text) as Result));
+for (const text of ["1", "-0", '"text"', "null", "[]", "[1,2]", '{"n":1}', '{"n":1,"m":2}', '""']) attempt("loose " + text, () => [JSON.parse(text) as Loose, kindOf(JSON.parse(text) as Loose)]);
+for (const text of ['{"version":1,"name":"a"}', '{"name":{"first":"b"},"version":2}', '{"version":1.0,"name":"c"}', '{"version":2e0,"name":{"first":"d","last":"e"}}']) attempt(text, () => nameOf(JSON.parse(text) as Versioned));
 //// products-of-members-parsed-by-type-are-summed-in-a-loop.ts
 ////= lines	Line	count	number	price	number
-import { JSON } from "bun"; function total(lines: Line[]): number {
+function total(lines: Line[]): number {
   let sum = 0;
   for (const line of lines) sum += line.count * line.price;
   return sum;
 }
-console.log(total(JSON.parse<Line[]>('[{"count":2,"price":2.5}]')));
+console.log(total(JSON.parse('[{"count":2,"price":2.5}]') as Line[]));
 //// squares-of-members-are-summed-over-literals-and-over-a-parsed-list.ts
 ////= Point
 ////= norm

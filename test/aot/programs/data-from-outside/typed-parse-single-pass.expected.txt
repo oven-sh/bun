@@ -1,8 +1,0 @@
-as JSON.stringify writes it 3 true
-indented 5 true
-with unknown members 2 true
-with a member written twice 0 true
-with escapes in strings 1 true
-16 bits 2 true
-with an escape in a key 0 true
-what is refused 500 true

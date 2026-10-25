@@ -134,9 +134,7 @@ fn find_module_origin(
     };
     let loaded = projects.application.loaded;
     match loaded.origin(file) {
-        FileOrigin::DependencySource
-        | FileOrigin::DependencyJavaScript
-        | FileOrigin::ProjectTypedVersion => ModuleOrigin::Dependency,
+        FileOrigin::DependencySource | FileOrigin::DependencyJavaScript => ModuleOrigin::Dependency,
         FileOrigin::Declarations => match loaded.files().module(file).is_from_external_library {
             true => ModuleOrigin::Dependency,
             false => ModuleOrigin::Program,

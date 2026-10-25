@@ -116,7 +116,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 listed
             }
-            ShapeKind::Constrained { base, .. } => self.find_listed_nullish(base, depth + 1),
+            ShapeKind::Int32 { base } => self.find_listed_nullish(base, depth + 1),
             _ => Primitives::default(),
         }
     }

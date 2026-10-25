@@ -451,150 +451,25 @@ export const copy = value;
     });
 }
 
-fn assert_shipped_typed_version_is_demoted(files: &[(&str, &str)], installed: &str, typed: &str) {
-    with_program(files, &["./main.ts"], 1, |program| {
-        let shapes = program.file(&format!("node_modules/shapes/{installed}"));
-        let typed_source_path = format!("/project/node_modules/shapes/{typed}");
+#[test]
+fn mistyped_file_under_the_aot_condition_is_demoted() {
+    let manifest = r#"{
+        "name": "shapes",
+        "version": "1.0.0",
+        "exports": { ".": { "aot": "./index.aot.ts", "default": "./index.js" } }
+    }"#;
+    let files = [
+        ("main.ts", r#"import "shapes";"#),
+        ("node_modules/shapes/package.json", manifest),
+        ("node_modules/shapes/index.js", INSTALLED_SHAPES),
+        ("node_modules/shapes/index.aot.ts", MISTYPED_SHAPES),
+    ];
+    with_program(&files, &["./main.ts"], 1, |program| {
+        let shapes = program.file("node_modules/shapes/index.aot.ts");
         let build = check_only(program);
         assert_eq!(build.roles.demoted, [type_error_in(shapes)]);
+        assert_eq!(build.roles.role(shapes), FileRole::Inferred);
         assert_eq!(build.reported(shapes, 2322), [WITHDRAWS_TRUST]);
-        let in_shapes = |file: Option<FileId>| file == Some(shapes);
-        let mut reported = build
-            .diagnostics()
-            .filter(|it| in_shapes(it.diagnostic.file));
-        assert!(reported.all(|it| it.diagnostic.path == typed_source_path.as_bytes()));
-    });
-}
-
-#[test]
-fn shipped_typed_version_is_demoted() {
-    let manifest = r#"{
-        "name": "shapes",
-        "version": "1.0.0",
-        "exports": { ".": { "full-types": "./index.sound.ts", "default": "./index.js" } }
-    }"#;
-    let files = [
-        ("main.ts", r#"import "shapes";"#),
-        ("node_modules/shapes/package.json", manifest),
-        ("node_modules/shapes/index.js", INSTALLED_SHAPES),
-        ("node_modules/shapes/index.sound.ts", MISTYPED_SHAPES),
-    ];
-    assert_shipped_typed_version_is_demoted(&files, "index.js", "index.sound.ts");
-}
-
-#[test]
-fn shipped_typed_version_outside_nearest_manifest_is_demoted() {
-    let manifest = r#"{
-        "name": "shapes",
-        "version": "1.0.0",
-        "exports": { ".": { "full-types": "./src/index.ts", "default": "./dist/esm/index.js" } }
-    }"#;
-    let files = [
-        ("main.ts", r#"import "shapes";"#),
-        ("node_modules/shapes/package.json", manifest),
-        (
-            "node_modules/shapes/dist/esm/package.json",
-            r#"{ "type": "module" }"#,
-        ),
-        ("node_modules/shapes/dist/esm/index.js", INSTALLED_SHAPES),
-        ("node_modules/shapes/src/index.ts", MISTYPED_SHAPES),
-    ];
-    assert_shipped_typed_version_is_demoted(&files, "dist/esm/index.js", "src/index.ts");
-}
-
-#[test]
-fn project_typed_version_is_demoted() {
-    let manifest = r#"{ "name": "shapes", "version": "1.0.0", "main": "./index.js" }"#;
-    let files = [
-        ("main.ts", r#"import "shapes";"#),
-        ("node_modules/shapes/package.json", manifest),
-        ("node_modules/shapes/index.js", INSTALLED_SHAPES),
-        (".full-types/shapes/index.ts", MISTYPED_SHAPES),
-    ];
-    let disk = project_disk(&files, 1);
-    let script = HostScript {
-        typed_versions: &[(
-            "node_modules/shapes/index.js",
-            ".full-types/shapes/index.ts",
-        )],
-        ..HostScript::default()
-    };
-    with_host(
-        &ScriptedHost(&disk, script),
-        PROJECT,
-        "./main.ts",
-        |program| {
-            let shapes = program.file("node_modules/shapes/index.js");
-            assert!(program.files().module(shapes).is_from_external_library);
-            let build = check_only(program);
-            assert_eq!(build.roles.demoted, [type_error_in(shapes)]);
-            assert_eq!(build.roles.role(shapes), FileRole::Inferred);
-            assert_eq!(build.reported(shapes, 2322), [WITHDRAWS_TRUST]);
-        },
-    );
-}
-
-const TYPED_SHAPES_PACKAGE: [(&str, &str); 2] = [
-    ("node_modules/shapes/a.js", ".full-types/shapes/a.ts"),
-    ("node_modules/shapes/b.js", ".full-types/shapes/b.ts"),
-];
-
-fn with_typed_shapes_package(typed_b_text: &str, then: impl FnOnce(&TestProgram<'_, '_>)) {
-    let files = [
-        (
-            "main.ts",
-            "import \"shapes/a.js\";\nimport \"shapes/b.js\";\n",
-        ),
-        (
-            "node_modules/shapes/package.json",
-            r#"{ "name": "shapes", "version": "1.0.0" }"#,
-        ),
-        ("node_modules/shapes/a.js", INSTALLED_SHAPES),
-        ("node_modules/shapes/b.js", "export const sides = 4;\n"),
-        (".full-types/shapes/a.ts", MISTYPED_SHAPES),
-        (".full-types/shapes/b.ts", typed_b_text),
-    ];
-    let disk = project_disk(&files, 1);
-    let script = HostScript {
-        typed_versions: &TYPED_SHAPES_PACKAGE,
-        ..HostScript::default()
-    };
-    with_host(&ScriptedHost(&disk, script), PROJECT, "./main.ts", then);
-}
-
-#[test]
-fn rejected_neighbor_is_demoted() {
-    let with_extra_statement = "export const sides: number = 4;\nexport const more = 1;\n";
-    with_typed_shapes_package(with_extra_statement, |program| {
-        let files = program.files();
-        let a = program.file("node_modules/shapes/a.js");
-        let b = program.file("node_modules/shapes/b.js");
-        assert_eq!(files.role(a), FileRole::Checked);
-        assert_eq!(files.role(b), FileRole::Inferred);
-        let build = check_only(program);
-        let expected = Demotion {
-            file: a,
-            cause: DemotionCause::RejectedNeighbor,
-        };
-        assert_eq!(build.roles.demoted, [expected]);
-        assert_eq!(build.roles.role(a), FileRole::Inferred);
-        assert_eq!(files.role(a), FileRole::Checked);
-        assert!(!build.roles.is_checked(a));
-        assert!(!build.has_diagnostics(a));
-    });
-}
-
-#[test]
-fn accepted_neighbor_is_not_demoted() {
-    with_typed_shapes_package("export const sides: number = 4;\n", |program| {
-        let a = program.file("node_modules/shapes/a.js");
-        let b = program.file("node_modules/shapes/b.js");
-        assert_eq!(program.files().role(b), FileRole::Checked);
-        let build = check_only(program);
-        assert_eq!(build.roles.demoted, [type_error_in(a)]);
-        assert_eq!(build.roles.role(a), FileRole::Inferred);
-        assert_eq!(build.roles.role(b), FileRole::Checked);
-        assert_eq!(build.reported(a, 2322), [WITHDRAWS_TRUST]);
     });
 }
 

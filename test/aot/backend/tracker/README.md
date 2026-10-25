@@ -1,7 +1,7 @@
 # An issue tracker on Bun.serve and Bun.sql, and the same in Go and in Rust
 
 `app/` is a web application of 2,000 lines of strict TypeScript. It uses no framework and no package: `Bun.serve` and its
-routes, `Bun.sql` on Postgres, validation by declared types (`JSON.parse<T>()` from `"bun"`, `validate<T>()` from `"bun:bundle"`), template strings. It is written the way one
+routes, `Bun.sql` on Postgres, checks of what comes in written by hand (`app/validation.ts`), template strings. It is written the way one
 writes TypeScript: interfaces, `async` and `await`, `map` and `join`, `Map` and `Set`. Nothing in it is written for a compiler.
 
 | | pages | JSON |
@@ -28,15 +28,13 @@ application: the same routes, the same SQL, the same bytes in every answer. Both
 end, which is what templ, maud and askama generate. Independent queries of a request go to Postgres together in all three:
 `Promise.all`, `pgx.Batch`, `tokio::try_join!`.
 
-`by-hand/validation.ts`, laid over `app/`, has the same checks written out by hand, for a Bun that cannot validate by type.
-
 ## The test
 
 `exchanges.ts` holds the requests: 3,300 of them, to every route, with what is rare (nobody signed in, a session that is over, odd
 parameters, bodies of the wrong type, forms without a token) and a sequence that writes. `bun exchanges.ts compare a=<port> b=<port>`
 sends each to every server and shows where two answers part.
 
-`tracker.test.ts` is opt-in and needs Postgres. It builds `app/` with `--aot`, runs `by-hand/` without, and compares. Its first lines
+`tracker.test.ts` is opt-in and needs Postgres. It builds `app/` with `--aot`, runs it without, and compares. Its first lines
 say how to run it, and how to have Go and Rust compared too.
 
 ## Microbenchmarks
@@ -74,8 +72,7 @@ day's traffic.
 ```sh
 psql "$DATABASE_URL" -f schema.sql
 (cd app && bun install && bun build --compile --aot --target=bun ./server.ts --outfile ../out/aot)
-cp -r app out/app-by-hand && cp -r by-hand/. out/app-by-hand/
-(cd out/app-by-hand && bun build --compile --target=bun ./server.ts --outfile ../jit)
+(cd app && bun build --compile --target=bun ./server.ts --outfile ../out/jit)
 (cd rivals/go && go build -o ../../out/go .)
 (cd rivals/rust && cargo build --release && cp target/release/tracker ../../out/rust)
 cc -O2 -pthread -o out/load ../measure/load.c

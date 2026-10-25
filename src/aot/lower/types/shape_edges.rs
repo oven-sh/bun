@@ -1,4 +1,4 @@
-use bun_sema::check::aot::{SchemaConstraint, ShapeKind, TupleElementKind};
+use bun_sema::check::aot::{ShapeKind, TupleElementKind};
 
 use super::{EdgeKind, TypeEdge, TypeEdges};
 use crate::builtins::type_name_of;
@@ -24,11 +24,6 @@ pub(super) fn collect_edges(
             parameter: None,
             constraint: Some(constraint),
         } => edges.push(edge(EdgeKind::Transparent, constraint)),
-        ShapeKind::Constrained { base, constraints } => {
-            if !constraints.contains(&SchemaConstraint::Int32) {
-                edges.push(edge(EdgeKind::Transparent, base));
-            }
-        }
         ShapeKind::Array { element, .. } => edges.push(edge(EdgeKind::Contents, element)),
         ShapeKind::Tuple { elements, .. } => {
             for element in elements {
@@ -72,6 +67,7 @@ pub(super) fn collect_edges(
         | ShapeKind::StringLiteral(_)
         | ShapeKind::TemplateLiteral { .. }
         | ShapeKind::Symbol
+        | ShapeKind::Int32 { .. }
         | ShapeKind::AnyObject
         | ShapeKind::Function(_)
         | ShapeKind::ClassConstructor(_)
@@ -93,10 +89,6 @@ mod tests {
 
     const DECLARATIONS: &str = "declare module \"bun\" {\n\
         type int32 = number & { readonly \"bun.int32\"?: true };\n\
-        namespace Schema {\n\
-        type Int = { readonly \"bun.int\"?: true };\n\
-        type Min<N extends number> = { readonly \"bun.min\"?: N };\n\
-        }\n\
         }\n";
 
     /// The type of each parameter, and whether the build has to prove that it is an `int32`.
@@ -105,7 +97,7 @@ mod tests {
         let [first, second] = types;
         let main = format!(
             "/// <reference path=\"./bun-declarations.d.ts\" />
-import type {{ Schema, int32 }} from \"bun\";
+import type {{ int32 }} from \"bun\";
 export function probe(first: {first}, second: {second}): void {{}}
 "
         );
@@ -132,15 +124,15 @@ export function probe(first: {first}, second: {second}): void {{}}
     }
 
     #[test]
-    fn int32_constraint_is_found_among_others() {
-        let types = lower_parameters(["Schema.Min<0> & int32", "int32 & Schema.Min<0>"]);
+    fn int32_is_found_beside_other_parts() {
+        let types = lower_parameters(["{ brand?: true } & int32", "int32 & { brand?: true }"]);
         let int32 = Type::integers(i32::MIN.into(), i32::MAX.into());
         assert_eq!(types, vec![(int32, true); 2]);
     }
 
     #[test]
-    fn other_constraints_are_not_int32() {
-        let types = lower_parameters(["number & Schema.Int & Schema.Min<0>", "number"]);
+    fn other_brands_are_not_int32() {
+        let types = lower_parameters(["number & { brand?: true }", "number"]);
         assert_eq!(
             types,
             vec![(Type::primitives(Primitives::NUMBER), false); 2]

@@ -41,7 +41,6 @@ const underCollections: Environment[] = [
 ];
 
 type Row = { folder: string; flags: string[]; programs: string[]; isGenerated?: boolean };
-const innerObjects = (...programs: string[]): Row => ({ folder: "inner-objects", flags: [], programs });
 
 // ./what-the-back-end-is-told-is-checked-at-run-time.test.ts holds each of these to the line that names what was told.
 const toldTheBackEnd = (check: string, ...programs: string[]): Row => ({
@@ -63,20 +62,6 @@ const ofFamily = (family: string, ...programs: string[]): Row => ({
 
 /** The programs under ./programs that must notice each sabotage. */
 const noticedBy: Record<string, Row | Row[]> = {
-  StackNamesNoInnerCell: innerObjects("the-inner-object-is-held-by-a-local-variable-alone.ts"),
-  InnerObjectIsVisitedWithoutItsFields: innerObjects(
-    "the-field-is-pointed-at-another-object.ts",
-    "an-old-outer-object-gets-young-things.ts",
-  ),
-  InnerArrayIsVisitedWithoutItsElements: innerObjects("an-array-is-born-in-the-cell-of-its-object.ts"),
-  InnerCellVisitedInPlaceStaysWhite: innerObjects(
-    "young-objects-are-stored-through-an-alias-into-an-old-cell.ts",
-    "an-array-is-born-in-the-cell-of-its-object.ts",
-  ),
-  InnerCellIsMarkedWithoutItsOuterCell: innerObjects(
-    "only-the-inner-object-is-still-held.ts",
-    "an-object-with-a-room-lies-in-the-cell-of-a-third.ts",
-  ),
   NoCallCollects: {
     folder: "collector",
     flags: ["--aot-validate"],
@@ -272,12 +257,7 @@ const noticedBy: Record<string, Row | Row[]> = {
   ),
 };
 /** What no program can show, and the test of the engine that shows it (./engine-tests.test.ts runs those). */
-const noticedByTheEngineTestsAlone: Record<string, string> = {
-  // It needs a 32-bit reference in half a word of the stack as the only holder.
-  NarrowReferenceOnStackNamesNoInnerCell: "inner-objects/sabotaged/narrow-reference-on-stack-names-no-inner-cell",
-  // A program notices it only through a word that an earlier frame left on the stack, and which words are left hangs on how Bun was linked.
-  InnerCellLetGoKeepsItsHeader: "inner-objects/sabotaged/inner-cell-let-go-keeps-its-header",
-};
+const noticedByTheEngineTestsAlone: Record<string, string> = {};
 /** What stops the build itself, which then says where it stood: ./a-build-that-stops-says-where.test.ts holds each to its line. */
 const stopTheBuild = [
   "FunctionPassFailsAssertion",

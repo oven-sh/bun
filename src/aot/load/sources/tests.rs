@@ -34,7 +34,6 @@ use crate::load::source_provider::{
     DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, Resolution, ResolveRequest, SourceFile,
     SourceProvider, WithoutServices,
 };
-use crate::load::typed_packages::TypedPackages;
 use crate::options::{LoadOptions, Options, PathOptions};
 use crate::statistics::{LimitId, LimitValues, Loss, Stage};
 
@@ -205,7 +204,6 @@ fn with_freeze_input<R>(
     let archive = Archive::embedded();
     let runtime_modules = RuntimeModules::new(archive, false);
     let messages = LoadMessages::default();
-    let typed_packages = TypedPackages::new(&disk, b"/project");
     let limits = LimitValues::for_host();
     let application_host = LoadHost::new(LoadHostInput {
         disk: &disk,
@@ -214,8 +212,6 @@ fn with_freeze_input<R>(
         runtime_modules: &runtime_modules,
         messages: &messages,
         builtin_names: &builtin_names,
-        typed_packages: &typed_packages,
-        defined: &|_: &[u8]| None,
         platform: host_platform(),
         limits: &limits,
     });

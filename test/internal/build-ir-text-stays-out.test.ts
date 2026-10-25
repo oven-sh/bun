@@ -62,8 +62,8 @@ test("a release build may define no symbol of IR text", () => {
     "_RNvNtNtCs1234_7bun_aot2ir5print13print_program",
   ])
     expect({ symbol, isForbidden: matches(forbidden, symbol) }).toEqual({ symbol, isForbidden: true });
-  // The parser of JSON that the compiler builds for `JSON.parse<T>` is the product's.
-  expect(matches(forbidden, "_ZN3JSC3AOT5Typed17JSONParserBuilder8emitNodeENS1_13ResultNodeRefE")).toBe(false);
+  // The reader of the program as bytes ships.
+  expect(matches(forbidden, "_ZN3JSC3AOT5Typed6Reader10readHeaderEv")).toBe(false);
 });
 
 test("a build with assertions is not looked at", () => {

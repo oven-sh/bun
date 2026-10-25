@@ -75,34 +75,6 @@ pub(crate) fn options_from_bundler<'r>(
     })
 }
 
-/// For a question about one file, whose text the caller holds. Nothing is built, so every option of the bundler is taken.
-pub(crate) fn options_for_one_file<'r>(
-    input: &OptionsInput<'r, '_, '_>,
-    path: &[u8],
-    text: &[u8],
-) -> Options<'r> {
-    let mut load = load_options(input);
-    load.in_memory_files = vec![(path.to_vec(), text.to_vec())];
-    load.in_memory_file_keys = Vec::new();
-    Options {
-        aot: input.aot,
-        executable_identity: input.executable_identity,
-        image_form: input.image_form,
-        entry_points: vec![path.to_vec()],
-        code: code_options(input),
-        typescript_libs: input.typescript_libs,
-        load,
-        paths: PathOptions {
-            module_prefix: input.module_prefix.to_vec(),
-            root_directory: bun_core::dirname(path).unwrap_or(path).to_vec(),
-            entry_point_names: vec![path.to_vec()],
-        },
-        removable: RemovableOptions::default(),
-        lists_modules: false,
-        minifies_identifiers: false,
-    }
-}
-
 #[rustfmt::skip]
 fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> bool {
     // Every field is named: a new bundler option must not compile until it is classified here.

@@ -6,7 +6,7 @@ use super::{
 use bun_sema::check::aot::{DiagnosticClass, Effect};
 use bun_sema::program::{FileId, FileRole, Files};
 use bun_sema::resolve::Host;
-use bun_sema::util::{FxHashSet, SharedSort};
+use bun_sema::util::SharedSort;
 
 pub fn decide_roles<'s>(
     loaded: &LoadedProgram<'s>,
@@ -18,7 +18,6 @@ pub fn decide_roles<'s>(
     let file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));
     let mut roles: Vec<FileRole> = file_ids.map(|file| files.role(file)).collect();
     let mut demoted = find_unverified_files(files);
-    demoted.extend(find_rejected_neighbors(files, files_to_lower));
     for demotion in &demoted {
         roles[demotion.file.idx()] = FileRole::Inferred;
     }
@@ -139,41 +138,6 @@ fn find_unverified_files(files: &Files<'_>) -> Vec<Demotion> {
         .map(|file| Demotion {
             file,
             cause: DemotionCause::UnverifiedTypes,
-        })
-        .collect()
-}
-
-fn find_rejected_neighbors(files: &Files<'_>, files_to_lower: &[FileId]) -> Vec<Demotion> {
-    let in_package = |file: FileId| {
-        let compiled = files.compiled(file)?;
-        Some((compiled, compiled.package?.directory))
-    };
-    let rejected_directories: FxHashSet<&[u8]> = files_to_lower
-        .iter()
-        .filter_map(|&file| in_package(file))
-        .filter(|(compiled, _)| {
-            let rejected = compiled.rejected_typed_version;
-            rejected.is_some_and(|it| !it.kind.is_fault_of_manifest())
-        })
-        .map(|(_, directory)| directory)
-        .collect();
-    if rejected_directories.is_empty() {
-        return Vec::new();
-    }
-    let is_neighbor = |file: FileId| {
-        files.role(file) == FileRole::Checked
-            && in_package(file).is_some_and(|(compiled, directory)| {
-                compiled.typed_source_path.is_some() && rejected_directories.contains(directory)
-            })
-    };
-    let neighbors = files_to_lower
-        .iter()
-        .copied()
-        .filter(|&file| is_neighbor(file));
-    neighbors
-        .map(|file| Demotion {
-            file,
-            cause: DemotionCause::RejectedNeighbor,
         })
         .collect()
 }

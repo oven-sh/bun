@@ -18,10 +18,6 @@ The first six are the test types of the [TechEmpower Framework Benchmarks](https
 `rivals/go` (net/http, pgx) and `rivals/rust` (axum, tokio-postgres, deadpool, reqwest, askama, mimalloc) answer the same routes. The JSON
 is the same to the byte. In the fortunes page only the spelling of the escapes differs.
 
-`by-type/` holds two modules of the shop once more: the order and the carrier's answer are validated from their declared types, with
-`JSON.parse<Order>()` and `JSON.parse<RatesAnswer>()` (`JSON` from `"bun"`), in place of zod. Laid over `app/` they make a second program that answers
-the same. It needs `--aot` (`bun build --compile --aot` or `bun run --aot`).
-
 ## The test
 
 `backend.test.ts` builds `app/server.ts` with `--aot` and compares what it answers with `answers.ts`, which computes every answer
@@ -38,8 +34,6 @@ cc -O2 -pthread -o out/load measure/load.c              # the client
 (cd app && bun install)
 (cd app && bun build --compile --aot --target=bun ./server.ts --outfile ../out/aot)
 (cd app && bun build --compile --target=bun ./server.ts --outfile ../out/jit)
-cp -r app out/app-by-type && cp -r by-type/. out/app-by-type/
-(cd out/app-by-type && bun build --compile --aot --target=bun ./server.ts --outfile ../aot.made)
 (cd app && bun build --compile --target=bun ./carrier.ts --outfile ../out/carrier)
 (cd rivals/go && go build -o ../../out/go .)
 (cd rivals/rust && cargo build --release && cp target/release/backend ../../out/rust)

@@ -13,20 +13,18 @@ use crate::load::runtime_roots::{RuntimeRoots, collect_runtime_roots};
 use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
-use crate::load::typed_packages::TypedPackages;
 use crate::load::worker_files::find_embedded_files_that_start_workers;
 use crate::load::{PerProject, ProjectId, SourceKind, Sources};
-use crate::package_diagnostics::{PackageView, report_rejected_versions};
 use crate::statistics::{LimitId, LimitValues, Stage, StatisticId, Statistics};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
-use bun_sema::fold::{Constant, Define, DefinePath, DefineRoot, DefineValue, FoldInputs};
+use bun_sema::fold::FoldInputs;
 use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::program::{FileId, Files, MainModule};
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
-use bun_sema_driver::host::{Disk, from_native};
+use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
     CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
     find_configuration_of_each_entry_point, load_program,
@@ -98,12 +96,10 @@ struct SharedLoadInputs<'c, 's> {
     further_runtime_sessions: &'s [Session],
     atoms: Interner<'s>,
     application_fold: &'c FoldInputs<'s>,
-    application_defines: &'s [Define<'s>],
     builtin_names: &'c BuiltinNames,
     manifest: &'static Manifest,
     runtime_modules: &'c RuntimeModules,
     messages: &'c LoadMessages,
-    typed_packages: &'c TypedPackages<'c>,
 }
 
 impl<'a> Build<'a> {
@@ -161,7 +157,6 @@ impl<'a> Build<'a> {
         #[cfg(test)]
         let runtime_modules = runtime_modules.with_replaced_sources(&options.load.in_memory_files);
         let messages = LoadMessages::default();
-        let typed_packages = TypedPackages::new(&disk, &from_native(&options.load.project_root));
         let provided = messages.with_log(|log| {
             self.provider
                 .fold_options(application_session.arena(), &atoms, log)
@@ -180,24 +175,14 @@ impl<'a> Build<'a> {
             further_runtime_sessions,
             atoms,
             application_fold: &application_fold,
-            application_defines: provided.defines,
             builtin_names: &builtin_names,
             manifest: archive.manifest(),
             runtime_modules: &runtime_modules,
             messages: &messages,
-            typed_packages: &typed_packages,
         };
         let result = self.load_projects(&shared, asset_reads, then);
-        drop(typed_packages);
         self.leftovers.push(Box::new(disk));
         result
-    }
-
-    pub(super) fn reports_typed_versions(&self, project: ProjectId) -> bool {
-        match project {
-            ProjectId::Application => !self.options.aot.runs_in_place,
-            ProjectId::Runtime => false,
-        }
     }
 
     fn load_projects<R>(
@@ -212,8 +197,6 @@ impl<'a> Build<'a> {
             ..options.code.clone()
         };
         let limits = self.limits.clone();
-        let defined =
-            |path: &[u8]| find_defined_string(shared.application_defines, &shared.atoms, path);
         let host = LoadHost::new(LoadHostInput {
             disk: shared.disk,
             provider: self.provider,
@@ -221,8 +204,6 @@ impl<'a> Build<'a> {
             runtime_modules: shared.runtime_modules,
             messages: shared.messages,
             builtin_names: shared.builtin_names,
-            typed_packages: shared.typed_packages,
-            defined: &defined,
             platform: self.platform,
             limits: &limits,
         });
@@ -424,7 +405,6 @@ impl<'a> Build<'a> {
                 },
             );
             let runtime_code = CodeOptions {
-                typed_condition: None,
                 tsconfig_override: Some([VIRTUAL_ROOT, b"tsconfig.json"].concat()),
                 max_computed_candidates: max_computed_candidates(&self.limits),
                 ..CodeOptions::bun_run(VIRTUAL_ROOT.strip_suffix(b"/").unwrap_or(VIRTUAL_ROOT))
@@ -486,7 +466,6 @@ impl<'a> Build<'a> {
                     atoms: shared.atoms,
                     messages: shared.messages,
                     builtin_names: shared.builtin_names,
-                    typed_packages: shared.typed_packages,
                     can_load_code_at_run_time,
                     loads_code_by_unknown_names_alone,
                     finish_asset_reads: project.finish_asset_reads,
@@ -628,7 +607,7 @@ impl<'a> Build<'a> {
                 host_loaded_modules,
                 is_world: false,
             };
-            self.freeze_project(loaded, &input, shared)
+            self.freeze_project(loaded, &input)
         };
         let sources = PerProject {
             application: freeze(ProjectId::Application, &[])?,
@@ -665,7 +644,6 @@ impl<'a> Build<'a> {
         &mut self,
         loaded: &LoadedProgram<'_>,
         input: &FreezeInput<'_, '_>,
-        shared: &SharedLoadInputs<'_, '_>,
     ) -> Result<Sources, Stage> {
         let frozen = freeze_sources(input, &self.parallel_runner());
         let FrozenSources {
@@ -682,16 +660,6 @@ impl<'a> Build<'a> {
             self.diagnostics.add_fold_errors(view, file);
         }
         self.statistics.add_counters(view, counters);
-        if self.reports_typed_versions(input.project) {
-            let packages = PackageView {
-                view,
-                packages: shared.typed_packages,
-            };
-            let defined =
-                |path: &[u8]| find_defined_string(shared.application_defines, &shared.atoms, path);
-            self.full_types_refused_at_load =
-                report_rejected_versions(&mut self.diagnostics, packages, &defined);
-        }
         Ok(sources)
     }
 }
@@ -777,43 +745,6 @@ fn loads_modules_by_names_that_are_not_constant(files: &Files<'_>) -> bool {
     })
 }
 
-fn dotted_path(path: DefinePath<'_>, atoms: &Interner<'_>) -> Vec<u8> {
-    let root: &[u8] = match path.root {
-        DefineRoot::Global(name) => atoms.bytes(name),
-        DefineRoot::ImportMeta => b"import.meta",
-    };
-    let mut text = root.to_vec();
-    for &member in path.members {
-        text.push(b'.');
-        text.extend_from_slice(atoms.bytes(member));
-    }
-    text
-}
-
-pub(super) fn find_defined_string(
-    defines: &[Define<'_>],
-    atoms: &Interner<'_>,
-    path: &[u8],
-) -> Option<Vec<u8>> {
-    let define = defines
-        .iter()
-        .rfind(|define| dotted_path(define.path, atoms) == path)?;
-    match define.value {
-        DefineValue::Constant(Constant::String(text)) => Some(atoms.bytes(text).to_vec()),
-        DefineValue::Constant(
-            Constant::Undefined
-            | Constant::Null
-            | Constant::Boolean(_)
-            | Constant::Number(_)
-            | Constant::BigInt(_),
-        )
-        | DefineValue::GlobalPath(_)
-        | DefineValue::Data(_)
-        | DefineValue::RuntimeValue(_)
-        | DefineValue::RuntimeConstant(_) => None,
-    }
-}
-
 pub(super) fn max_computed_candidates(limits: &LimitValues) -> u32 {
     let limit = limits.get(LimitId::MaxComputedSpecifierCandidates);
     u32::try_from(limit).unwrap_or(u32::MAX)
@@ -825,112 +756,9 @@ mod tests {
     use crate::compile::testing::{BUNDLED_LIBS, TestProject, default_settings, describe_messages};
     use crate::load::source_provider::WithoutServices;
     use bun_ast::Log;
-    use bun_sema::atom::Atom;
-    use bun_sema::fold::Decision;
+    use bun_sema::fold::{Constant, Decision};
     use bun_sema::hir::{ExprId, ExprKind};
     use bun_sema_driver::ThreadCaches;
-
-    fn define<'s>(
-        root: DefineRoot,
-        members: &[&[u8]],
-        value: DefineValue<'s>,
-        session: &'s Session,
-        atoms: &Interner<'s>,
-    ) -> Define<'s> {
-        let members: Vec<Atom> = members.iter().map(|name| atoms.intern(name)).collect();
-        Define {
-            path: DefinePath {
-                root,
-                members: session.arena().alloc_slice_copy(&members),
-            },
-            value,
-        }
-    }
-
-    fn string(text: &[u8], atoms: &Interner<'_>) -> DefineValue<'static> {
-        DefineValue::Constant(Constant::String(atoms.intern(text)))
-    }
-
-    #[test]
-    fn string_define_is_found_by_dotted_path() {
-        let session = Session::new();
-        let atoms = Interner::new_in(&session);
-        let global = |name: &[u8]| DefineRoot::Global(atoms.intern(name));
-        let defines = [
-            define(
-                global(b"process"),
-                &[b"env", b"NODE_ENV"],
-                string(b"production", &atoms),
-                &session,
-                &atoms,
-            ),
-            define(
-                global(b"MODE"),
-                &[],
-                string(b"test", &atoms),
-                &session,
-                &atoms,
-            ),
-            define(
-                DefineRoot::ImportMeta,
-                &[b"env", b"MODE"],
-                string(b"server", &atoms),
-                &session,
-                &atoms,
-            ),
-        ];
-        let find = |path: &[u8]| find_defined_string(&defines, &atoms, path);
-        assert_eq!(find(b"process.env.NODE_ENV"), Some(b"production".to_vec()));
-        assert_eq!(find(b"MODE"), Some(b"test".to_vec()));
-        assert_eq!(find(b"import.meta.env.MODE"), Some(b"server".to_vec()));
-        for path in [
-            &b""[..],
-            b"process",
-            b"process.env",
-            b"process.env.NODE_ENV.length",
-            b"env.NODE_ENV",
-            b"NODE_ENV",
-            b"env.MODE",
-        ] {
-            assert_eq!(find(path), None, "{}", path.escape_ascii());
-        }
-    }
-
-    #[test]
-    fn later_define_of_same_path_wins() {
-        let session = Session::new();
-        let atoms = Interner::new_in(&session);
-        let mode = DefineRoot::Global(atoms.intern(b"MODE"));
-        let of = |value| define(mode, &[], value, &session, &atoms);
-        let find = |defines: &[Define<'_>]| find_defined_string(defines, &atoms, b"MODE");
-        let (first, second) = (string(b"first", &atoms), string(b"second", &atoms));
-        assert_eq!(find(&[of(first), of(second)]), Some(b"second".to_vec()));
-        let no_string = DefineValue::Constant(Constant::Boolean(true));
-        assert_eq!(find(&[of(first), of(no_string)]), None);
-    }
-
-    #[test]
-    fn define_of_other_value_is_no_string() {
-        let session = Session::new();
-        let atoms = Interner::new_in(&session);
-        let mode = DefineRoot::Global(atoms.intern(b"MODE"));
-        let renamed: &[Atom] = session.arena().alloc_slice_copy(&[atoms.intern(b"OTHER")]);
-        for value in [
-            DefineValue::Constant(Constant::Undefined),
-            DefineValue::Constant(Constant::Null),
-            DefineValue::Constant(Constant::Boolean(true)),
-            DefineValue::Constant(Constant::Number(1.0)),
-            DefineValue::Constant(Constant::BigInt(atoms.intern(b"1"))),
-            DefineValue::GlobalPath(renamed),
-        ] {
-            let defines = [define(mode, &[], value, &session, &atoms)];
-            assert_eq!(
-                find_defined_string(&defines, &atoms, b"MODE"),
-                None,
-                "{value:?}"
-            );
-        }
-    }
 
     fn can_runtime_sources_load_code(admits_inspector: bool, external_packages: &[&[u8]]) -> bool {
         const NAME: &[u8] = b"CAN_LOAD_CODE_AT_RUN_TIME";

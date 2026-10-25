@@ -95,7 +95,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let container = self.queries.without_nullish(container).ok()?;
         let elements = match self.queries.type_shape(container).ok()?.kind {
             ShapeKind::Tuple { elements, .. } => elements,
-            ShapeKind::Constrained { base, .. } => return self.find_tuple_contents(base, position),
+            ShapeKind::Int32 { base } => return self.find_tuple_contents(base, position),
             _ => return None,
         };
         let mut contents = TypeTable::NEVER;

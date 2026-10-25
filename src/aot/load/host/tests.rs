@@ -250,7 +250,6 @@ fn with_host_under<R>(
     let builtin_names = BuiltinNames::new(&atoms);
     let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
     let messages = LoadMessages::default();
-    let typed_packages = TypedPackages::new(&disk, &from_native(root));
     let limits = LimitValues::for_host();
     let host = LoadHost::new(LoadHostInput {
         disk: &disk,
@@ -259,8 +258,6 @@ fn with_host_under<R>(
         runtime_modules: &runtime_modules,
         messages: &messages,
         builtin_names: &builtin_names,
-        typed_packages: &typed_packages,
-        defined: &|_: &[u8]| None,
         platform: host_platform(),
         limits: &limits,
     });
@@ -802,38 +799,6 @@ fn entry_point_with_unknown_name_that_is_not_text_is_a_file() {
         let tsx = HostLoaderKind::Loader(Loader::Tsx);
         assert_eq!(kind_of(b"with.dots.in-its-name"), Some(tsx));
         assert_eq!(kind_of(b"main.ts"), Some(HostLoaderKind::ByName));
-        assert!(fixture.take_messages().is_empty());
-    });
-}
-
-#[test]
-fn typed_file_is_typescript_and_hidden_from_plugins() {
-    let directory = TemporaryDirectory::new("host_typed_file");
-    directory.write_typed_package("export const x = 1;\n", "export const x: number = 1;\n");
-    let aot = AotOptions::default();
-    with_host_under(aot, directory.path(), Vec::new(), |fixture| {
-        let host = fixture.host;
-        let package_directory = [&from_native(directory.path())[..], b"/node_modules/p"].concat();
-        let installed = [&package_directory[..], b"/x.js"].concat();
-        let package = EnclosingPackage {
-            directory: &package_directory,
-            name: b"p",
-            version: b"1.0.0",
-        };
-        assert_eq!(host.typed_version(&installed, None), None);
-        let typed = host.typed_version(&installed, Some(package));
-        let typed = typed.expect("full types");
-        assert!(typed.ends_with(b"/.full-types/p/lay/x.js"));
-        assert_eq!(host.script_kind(&typed), Some(ScriptKind::Ts));
-        assert_eq!(loader_of(host, &typed, None), BY_NAME);
-        let parsed = fixture.parse(&typed, BY_NAME);
-        assert_eq!(parsed.hir.kind, FileKind::Ts);
-        assert!(!parsed.hir.is_js && !parsed.hir.has_errors);
-        let source = payload_of(&parsed);
-        let expected = (SourceKind::Program, Loader::Ts);
-        assert_eq!((source.kind, source.loader), expected);
-        assert!(!host.is_plugin_source(&typed));
-        assert!(fixture.take_calls().is_empty());
         assert!(fixture.take_messages().is_empty());
     });
 }

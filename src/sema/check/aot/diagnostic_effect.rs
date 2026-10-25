@@ -7,7 +7,6 @@ pub enum FileOrigin {
     NoFile,
     ProgramSource,
     ProgramJavaScript,
-    ProjectTypedVersion,
     DependencySource,
     DependencyJavaScript,
     Declarations,
@@ -16,12 +15,11 @@ pub enum FileOrigin {
 }
 
 impl FileOrigin {
-    pub const COUNT: usize = 9;
+    pub const COUNT: usize = 8;
     pub const ALL: [FileOrigin; FileOrigin::COUNT] = [
         FileOrigin::NoFile,
         FileOrigin::ProgramSource,
         FileOrigin::ProgramJavaScript,
-        FileOrigin::ProjectTypedVersion,
         FileOrigin::DependencySource,
         FileOrigin::DependencyJavaScript,
         FileOrigin::Declarations,
@@ -55,7 +53,6 @@ fn effect_of_error(origin: FileOrigin, class: DiagnosticClass) -> Effect {
         (
             DiagnosticClass::Style,
             FileOrigin::ProgramJavaScript
-            | FileOrigin::ProjectTypedVersion
             | FileOrigin::DependencySource
             | FileOrigin::DependencyJavaScript
             | FileOrigin::Declarations
@@ -68,17 +65,11 @@ fn effect_of_error(origin: FileOrigin, class: DiagnosticClass) -> Effect {
             FileOrigin::NoFile
             | FileOrigin::ProgramSource
             | FileOrigin::ProgramJavaScript
-            | FileOrigin::ProjectTypedVersion
             | FileOrigin::DependencySource
             | FileOrigin::DependencyJavaScript
             | FileOrigin::Declarations,
         ) => Effect::StopsBuild,
         (DiagnosticClass::EarlyError, FileOrigin::EvaluatedText) => Effect::WithdrawsTrust,
-        (DiagnosticClass::MissingDeclaration, FileOrigin::ProjectTypedVersion) => Effect::Dropped,
-        (
-            DiagnosticClass::TypeScriptGrammar | DiagnosticClass::Semantic,
-            FileOrigin::ProjectTypedVersion,
-        ) => Effect::WithdrawsTrust,
         (
             DiagnosticClass::TypeScriptGrammar
             | DiagnosticClass::Semantic
@@ -126,22 +117,16 @@ mod tests {
     };
 
     const EXPECTED_FOR_ERRORS: [(DiagnosticClass, [Effect; FileOrigin::COUNT]); 7] = [
-        (DiagnosticClass::EarlyError, [S, S, S, S, S, S, S, I, T]),
-        (
-            DiagnosticClass::TypeScriptGrammar,
-            [S, S, D, T, D, D, D, D, D],
-        ),
-        (DiagnosticClass::Semantic, [S, S, D, T, T, D, D, T, D]),
+        (DiagnosticClass::EarlyError, [S, S, S, S, S, S, I, T]),
+        (DiagnosticClass::TypeScriptGrammar, [S, S, D, D, D, D, D, D]),
+        (DiagnosticClass::Semantic, [S, S, D, T, D, D, T, D]),
         (
             DiagnosticClass::MissingDeclaration,
-            [S, S, D, D, D, D, D, D, D],
+            [S, S, D, D, D, D, D, D],
         ),
-        (DiagnosticClass::Style, [S, S, D, D, D, D, D, D, D]),
-        (
-            DiagnosticClass::DeclarationFile,
-            [D, D, D, D, D, D, D, D, D],
-        ),
-        (DiagnosticClass::EmittedOutput, [D, D, D, D, D, D, D, D, D]),
+        (DiagnosticClass::Style, [S, S, D, D, D, D, D, D]),
+        (DiagnosticClass::DeclarationFile, [D, D, D, D, D, D, D, D]),
+        (DiagnosticClass::EmittedOutput, [D, D, D, D, D, D, D, D]),
     ];
 
     #[test]
@@ -188,10 +173,7 @@ mod tests {
         for origin in FileOrigin::ALL {
             let is_expected = matches!(
                 origin,
-                FileOrigin::ProjectTypedVersion
-                    | FileOrigin::DependencySource
-                    | FileOrigin::Runtime
-                    | FileOrigin::EvaluatedText
+                FileOrigin::DependencySource | FileOrigin::Runtime | FileOrigin::EvaluatedText
             );
             assert_eq!(origin.can_lose_trust(), is_expected, "{origin:?}");
         }

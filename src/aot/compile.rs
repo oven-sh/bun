@@ -12,7 +12,6 @@ mod module_list;
 mod module_reach_tests;
 #[cfg(test)]
 mod paths;
-mod plan_stage;
 mod program_reach;
 pub(crate) mod removable;
 mod runtime_reach;
@@ -46,16 +45,13 @@ use crate::known_helpers::KnownHelpers;
 use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_the_other};
 use crate::load::source_provider::SourceProvider;
 use crate::load::sources::parsed_source;
-use crate::load::typed_packages::TypedPackages;
 use crate::load::worker_files::WorkerFile;
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
 use crate::options::{Options, PathOptions};
-use crate::package_diagnostics::PackageView;
 use crate::report::SourceTexts;
 use crate::statistics::{LimitValues, Stage, StageClock, StatisticId, Statistics};
-use crate::validation_plans::ValidationPlans;
 use bun_ast::{Kind, Loader, Log, Msg};
 use bun_core::ZBox;
 use bun_sema::atom::Interner;
@@ -72,7 +68,7 @@ use bun_sys::{Fd, File};
 use bun_trim::Feature;
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -85,7 +81,6 @@ pub struct ProgramSummary {
     pub names: ProgramNames,
     pub texts: SourceTexts,
     pub statistics: Statistics,
-    pub validates_by_type: bool,
     /// Where `Options::lists_modules` asks for it.
     pub modules: Option<ModuleList>,
 }
@@ -171,7 +166,6 @@ pub(crate) struct Build<'a> {
     import_graph: Option<ImportGraph>,
     /// `QueryInputs::checked_elsewhere` of the program that is lowered as the application.
     pub(crate) checked_elsewhere: Vec<FileId>,
-    full_types_refused_at_load: BTreeSet<Vec<u8>>,
     pub(crate) place: ProgramPlace,
     /// Of a build that loads the files of several programs together.
     pub(crate) programs: Option<ProgramsOfOneLoad<'a>>,
@@ -216,7 +210,6 @@ pub(crate) struct LoadedBuild<'b, 's> {
     pub atoms: Interner<'s>,
     pub messages: &'b LoadMessages,
     pub builtin_names: &'b BuiltinNames,
-    pub typed_packages: &'b TypedPackages<'b>,
     pub can_load_code_at_run_time: bool,
     /// It can for no other reason than that a loader is given a name that the build does not know.
     pub loads_code_by_unknown_names_alone: bool,
@@ -254,7 +247,6 @@ struct FrontEndOutput {
     texts: SourceTexts,
     entry_points: Vec<EntryPointPaths>,
     folders: Vec<FolderPaths>,
-    validates_by_type: bool,
     modules: Option<ListedModules>,
     writes_preload: bool,
 }
@@ -267,7 +259,6 @@ impl FrontEndOutput {
             names: self.names,
             texts: self.texts,
             statistics,
-            validates_by_type: self.validates_by_type,
             modules: self.modules.map(|modules| modules.list),
         };
         (self.program, summary)
@@ -286,13 +277,6 @@ impl<'s> LoadedProject<'_, 's> {
 impl<'b, 's> LoadedBuild<'b, 's> {
     pub(crate) fn project(&self, project: ProjectId) -> &LoadedProject<'b, 's> {
         self.projects.get(project)
-    }
-
-    pub(crate) fn packages(&self, project: ProjectId) -> PackageView<'_, 's> {
-        PackageView {
-            view: self.project(project).view(),
-            packages: self.typed_packages,
-        }
     }
 }
 
@@ -324,26 +308,6 @@ pub fn emit_program(
     let ((bytes, output), statistics) = build.finish(result, log)?;
     let (_, summary) = output.into_parts(statistics);
     Ok(EmittedProgram { bytes, summary })
-}
-
-/// What the run time makes the validators of the one entry point's `JSON.parse<T>()` and `validate<T>()` calls of. Nothing is
-/// compiled: the file and what it imports are loaded, and the checker is asked for each `T`.
-/// `None`: they could not be loaded, and `log` says why.
-pub fn plan_validated_calls(
-    options: &Options<'_>,
-    provider: &dyn SourceProvider,
-    log: &mut Log,
-) -> Option<ValidationPlans> {
-    let caches = ThreadCaches::default();
-    let mut build = Build::new(options, provider, &caches, LimitValues::for_host());
-    match build.plan_validated_calls() {
-        // What else is wrong with the files does not keep a program that is not compiled from running.
-        Ok(plans) => Some(plans),
-        Err(stage) => {
-            drop(build.finish::<()>(Err(stage), log));
-            None
-        }
-    }
 }
 
 // The allocator gives free pages, and the free blocks inside pages that are still in use, back to the system. That lowers the
@@ -702,7 +666,6 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     first.further_programs.push(program.engine);
     first.summary.entry_points.extend(summary.entry_points);
     first.summary.folders.extend(summary.folders);
-    first.summary.validates_by_type |= summary.validates_by_type;
     if let (Some(listed), Some(further)) = (&mut first.summary.modules, summary.modules) {
         add_modules(listed, further);
     }
@@ -943,7 +906,7 @@ fn compile_programs<'a>(
             Ok(emitted) => emitted,
             Err(stage) => return Err(build.finish::<()>(Err(stage), log).unwrap_err()),
         };
-        if options.aot.checks_only && !output.validates_by_type {
+        if options.aot.checks_only {
             engine_options.check_only();
         }
         let engine = build.run_engine(bytes, &engine_options, &output);
@@ -1039,7 +1002,6 @@ impl<'a> Build<'a> {
             circular_runtime_files: Vec::new(),
             import_graph: None,
             checked_elsewhere: Vec::new(),
-            full_types_refused_at_load: BTreeSet::new(),
             place: ProgramPlace::Only,
             programs: None,
             left_entry_points: Vec::new(),

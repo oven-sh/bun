@@ -1043,7 +1043,7 @@ export type CodeGraphFile = {
   isInTypesProgram: boolean;
   typeEdges: string[];
   codeEdges: string[];
-  // The rest is read from `CompiledModule`. Without one: 0, null, [], [], null, null.
+  // The rest is read from `CompiledModule`. Without one: 0, null, [], [], false.
   loader: number;
   moduleFormat: "Esm" | "CommonJs" | null;
   sites: {
@@ -1055,8 +1055,7 @@ export type CodeGraphFile = {
     externalKind: "UncompiledCode" | "HostValue" | null;
   }[];
   impliedAnswers: string[];
-  typedSourcePath: string | null;
-  erasureMismatch: string | null;
+  isAotSource: boolean;
 };
 
 export type CodeGraph = {

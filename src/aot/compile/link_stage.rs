@@ -174,11 +174,8 @@ impl Build<'_> {
             _ => collect_folder_paths(application),
         };
         self.leftovers.push(leftovers);
-        let mut expected_results = program.expected_results.iter();
-        let validates_by_type = expected_results.any(|expected| !expected.validation.is_empty());
         Ok(FrontEndOutput {
             writes_preload,
-            validates_by_type,
             program,
             body_remap,
             names,

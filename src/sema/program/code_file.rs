@@ -3,16 +3,15 @@ use super::code_imports::resolve_code_imports;
 use super::code_load::{Analyzed, CodeTarget, LoadKey, ParsedCodeFile};
 use super::*;
 use crate::bind::{BindOptions, RuntimeBindOptions};
-use crate::erasure::{Erasure, ErasureMismatchKind, check_erasure_with_ranges};
 use crate::file_analysis::{FileAnalysis, FileInputs, analyze_file};
 use crate::fold::FoldInputs;
 use crate::hir_from_data::HostValue;
-use crate::import_sites::{AutomaticJsx, JsxMode};
+use crate::import_sites::{AutomaticJsx, JsxMode, find_exported_requires};
 use crate::module_format::DeclaredModuleType;
 use crate::resolve::{
-    CodeImportForm, CodeImportKind, CodeParseRequest, CodeRead, CodeRequest, CodeResolution,
-    HostPayload, HostResolution, JsxRuntime, JsxSettings, MacroRequest, ParsedCode,
-    TransformRequest, TranspileSettings, TreeChange, TypedVersionOrigin,
+    CodeImportForm, CodeImportKind, CodeParseRequest, CodeRequest, CodeResolution, HostPayload,
+    HostResolution, JsxRuntime, JsxSettings, MacroRequest, ParsedCode, TransformRequest,
+    TranspileSettings, TreeChange,
 };
 use std::cmp::Ordering;
 
@@ -22,10 +21,6 @@ struct AcceptedTree<'s, 'r> {
     host_values: &'s [(ExprId, HostValue<'s>)],
     payload: Option<HostPayload>,
     request: CodeParseRequest<'r>,
-    typed_source_path: Option<&'r [u8]>,
-    installed_text: Option<InstalledText<'s>>,
-    rejected_typed_version: Option<RejectedTypedVersion<'r>>,
-    typed_version_origin: Option<TypedVersionOrigin>,
 }
 
 impl<'s> AcceptedTree<'s, '_> {
@@ -41,7 +36,6 @@ impl<'s> AcceptedTree<'s, '_> {
             text: std::mem::take(&mut self.hir.text),
             source_len: self.hir.source_len,
             has_module_syntax: self.hir.has_module_syntax,
-            is_typed_version: self.hir.is_typed_version,
             has_errors: true,
             has_parse_diagnostics: true,
             ran_out_of_stack: true,
@@ -56,6 +50,7 @@ pub(super) fn load_code_file<'s, 'r>(
     target: CodeTarget<'r>,
     text: Cow<'static, [u8]>,
     is_called_before_it_runs: bool,
+    imported_requires: &[ImportedRequire],
 ) -> ParsedCodeFile<'s, 'r> {
     let &CodeLoadContext {
         resolver,
@@ -69,6 +64,7 @@ pub(super) fn load_code_file<'s, 'r>(
     let settings = resolver.transpile_settings(path);
     let mut tree = accept_tree(context, arena, key, settings, text);
     debug_assert!(tree.hir.kind != FileKind::Declaration);
+    tree.hir.imported_requires = ArenaFew::from_iter_in(imported_requires.iter().copied(), arena);
     let is_script_for_project = match tree.request.options.written_module_detection {
         ModuleDetection::Force => false,
         ModuleDetection::Legacy => true,
@@ -104,6 +100,8 @@ pub(super) fn load_code_file<'s, 'r>(
     let mut code = resolve_code_imports(context, key, &tree.hir, analyzed);
     code.add_implied(context, key, &tree.hir, &bound, &mut tree.payload);
     code.requests = summarize_requests(context, key, &tree.hir, &bound, &code);
+    let decisions = &code.analyzed.analysis.decisions;
+    code.exported_requires = find_exported_requires(&tree.hir, &bound, decisions);
     ParsedCodeFile {
         parse: Parse {
             hir: tree.hir,
@@ -159,71 +157,6 @@ fn accept_tree<'s, 'r>(
         settings,
         declared_module_type: resolver.declared_module_type(path),
     };
-    let can_have_typed_version =
-        key.loader == HostLoader::default() && is_javascript_file(host, path);
-    let typed_version = match can_have_typed_version {
-        true => resolver.typed_version_of(path),
-        false => None,
-    };
-    let (rejected, typed_version) = match typed_version {
-        Some(typed) if typed.rejected_as.is_some() => (Some(typed), None),
-        typed_version => (None, typed_version),
-    };
-    let typed = typed_version.and_then(|typed| match host.read_code(typed.path) {
-        CodeRead::Text(typed_text) => Some((typed, typed_text)),
-        CodeRead::Deferred => None,
-    });
-    let mut rejected_typed_version = rejected.and_then(|typed| {
-        Some(RejectedTypedVersion {
-            path: typed.path,
-            kind: typed.rejected_as?,
-            installed_range: (0, 0),
-        })
-    });
-    let mut typed_version_origin = None;
-    if let Some((typed, typed_text)) = typed {
-        typed_version_origin = Some(typed.origin);
-        let typed_request = CodeParseRequest {
-            path: typed.path,
-            reads_jsdoc: is_javascript_file(host, typed.path),
-            ..request
-        };
-        let mut typed_code = host.parse_code(arena, &typed_request, &typed_text, atoms);
-        typed_code.hir.is_typed_version = true;
-        let erasure_request = CodeParseRequest {
-            reads_jsdoc: false,
-            ..request
-        };
-        let installed = host.parse_code(arena, &erasure_request, &text, atoms);
-        let (erasure, ranges) = check_erasure_with_ranges(&typed_code.hir, &installed.hir);
-        let (kind, installed_node) = match erasure {
-            Erasure::Exact if typed_code.hir.kind != FileKind::Declaration => {
-                return AcceptedTree {
-                    hir: typed_code.hir,
-                    text: typed_text,
-                    host_values: typed_code.host_values,
-                    payload: typed_code.payload,
-                    request: typed_request,
-                    typed_source_path: Some(typed.path),
-                    installed_text: Some(InstalledText {
-                        text: slice_in(&text[..], arena),
-                        functions: slice_in(&ranges.functions, arena),
-                        classes: slice_in(&ranges.classes, arena),
-                        token_offsets: slice_in(&ranges.token_offsets, arena),
-                    }),
-                    rejected_typed_version: None,
-                    typed_version_origin,
-                };
-            }
-            Erasure::Mismatch(mismatch) => (mismatch.kind, mismatch.untyped),
-            Erasure::Exact | Erasure::Unknown => (ErasureMismatchKind::NodeKind, NodeData::File),
-        };
-        rejected_typed_version = Some(RejectedTypedVersion {
-            path: typed.path,
-            kind,
-            installed_range: byte_range_of_node(&installed.hir, installed_node),
-        });
-    }
     let ParsedCode {
         hir,
         host_values,
@@ -235,10 +168,6 @@ fn accept_tree<'s, 'r>(
         host_values,
         payload,
         request,
-        typed_source_path: None,
-        installed_text: None,
-        rejected_typed_version,
-        typed_version_origin,
     }
 }
 
@@ -335,10 +264,7 @@ fn analyze<'s, 'r>(
         is_package_type_module: resolver.is_package_type_module(path),
         package: resolver.enclosing_package(path),
         side_effects: resolver.declared_side_effects(path),
-        typed_source_path: tree.typed_source_path,
-        installed_text: tree.installed_text,
-        rejected_typed_version: tree.rejected_typed_version,
-        typed_version_origin: tree.typed_version_origin,
+        is_aot_source: !is_javascript_file(host, path) && resolver.is_in_aot_package(path),
     };
     (bound, analyzed)
 }

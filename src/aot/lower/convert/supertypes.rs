@@ -78,9 +78,7 @@ fn classify_shape<'x>(kind: &'x ShapeKind<'_>) -> ComparedShape<'x> {
             parameter: None,
             constraint,
         } => ComparedShape::Transparent(constraint.as_slice()),
-        ShapeKind::Constrained { base, .. } => {
-            ComparedShape::Transparent(core::slice::from_ref(base))
-        }
+        ShapeKind::Int32 { base } => ComparedShape::Transparent(core::slice::from_ref(base)),
         ShapeKind::Class(class) => ComparedShape::Class(*class),
         ShapeKind::Object => ComparedShape::ObjectType,
         ShapeKind::Tuple { elements, .. } => ComparedShape::Tuple(elements),

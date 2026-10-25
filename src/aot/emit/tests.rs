@@ -13,9 +13,8 @@ use crate::ir::generated::{
     Data, DataMember, DataNode, Entry, EvalBinding, EvalScope, ExpectedResult, Field, Function,
     FunctionFlags, FunctionVisibility, Header, HostRead, ImportPhase, Layout, LayoutKind, LimitId,
     MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest, ModuleRequestKind, ProgramList,
-    RequiredName, RuntimeFunctionEntry, SCHEMA_HASH, StaticField, SyntheticExport, TemplatePart,
-    TemplatePlaceholder, TextFormat, TypeSite, TypeSiteKind, UndeclaredMembers, ValidatedPrimitive,
-    ValidationMember, ValidationNode, ValidationRule, ValidationShape, Variable, WebAssemblyModule,
+    RequiredName, RuntimeFunctionEntry, SCHEMA_HASH, StaticField, SyntheticExport, TypeSite,
+    TypeSiteKind, Variable, WebAssemblyModule,
 };
 use crate::ir::testing::{build_function, function_with_parameters};
 use crate::ir::{
@@ -74,104 +73,11 @@ fn create_declared_type(names: &Names) -> DeclaredType {
 }
 
 fn create_expected_result(names: &Names) -> ExpectedResult {
-    let member = ValidationMember {
-        key: names.key,
-        node: 1,
-        field: Some(0),
-        is_optional: true,
-    };
-    let template = ValidationRule::Template {
-        head: names.text,
-        parts: vec![TemplatePart {
-            placeholder: TemplatePlaceholder::Number,
-            text: names.name,
-        }],
-    };
-    let object = ValidationNode {
-        shape: ValidationShape::Object {
-            layout: Some(LAYOUT),
-            members: vec![member],
-            undeclared: UndeclaredMembers::Rejected,
-            undeclared_value: None,
-        },
-        ty: names.object,
-        rules: Vec::new(),
-        text: Some(names.text),
-    };
-    let string = ValidationNode {
-        shape: ValidationShape::Primitive {
-            primitive: ValidatedPrimitive::String,
-        },
-        ty: TypeTable::STRING,
-        rules: vec![
-            template,
-            ValidationRule::MinimumLength { length: 1 },
-            ValidationRule::Pattern {
-                source: names.text,
-                is_unicode: true,
-            },
-            ValidationRule::Pattern {
-                source: names.name,
-                is_unicode: false,
-            },
-        ],
-        text: None,
-    };
-    let tuple = ValidationNode {
-        shape: ValidationShape::Tuple {
-            elements: vec![0, 1],
-            required: 1,
-            rest: Some(1),
-        },
-        ty: TypeTable::ARRAY,
-        rules: vec![
-            ValidationRule::UniqueItems,
-            ValidationRule::Contains {
-                node: 1,
-                minimum: 1,
-                maximum: Some(2),
-            },
-        ],
-        text: None,
-    };
-    let unknown = ValidationNode {
-        shape: ValidationShape::Unknown,
-        ty: TypeTable::ANYTHING,
-        rules: vec![
-            ValidationRule::Not { node: 1 },
-            ValidationRule::If {
-                condition: 0,
-                then: 1,
-                otherwise: 2,
-            },
-            ValidationRule::ExactlyOne { nodes: vec![0, 1] },
-            ValidationRule::Every { nodes: vec![1, 2] },
-            ValidationRule::PatternMembers {
-                sources: vec![names.text, names.name],
-                nodes: vec![1, 2],
-            },
-            ValidationRule::MemberNames { node: 1 },
-            ValidationRule::MinimumMembers { count: 1 },
-            ValidationRule::MaximumMembers { count: 2 },
-            ValidationRule::DependentMembers {
-                key: names.name,
-                names: vec![names.text],
-            },
-            ValidationRule::DependentNode {
-                key: names.text,
-                node: 0,
-            },
-            ValidationRule::Format {
-                format: TextFormat::RelativeJsonPointer,
-            },
-        ],
-        text: None,
-    };
     ExpectedResult {
         ty: names.object,
         layouts: vec![LAYOUT],
-        site: Some(SITE),
-        validation: vec![object, string, tuple, unknown],
+        site: None,
+        validation: Vec::new(),
     }
 }
 
@@ -549,8 +455,16 @@ fn counts_match_program() {
     for (list, count) in expected_counts {
         assert_eq!(count_of(&header, list), count, "{}", list.name());
     }
+    // The front end makes no validation nodes.
+    let empty_lists = [
+        ProgramList::TemplateParts,
+        ProgramList::ValidationRules,
+        ProgramList::ValidationMembers,
+        ProgramList::ValidationNodes,
+    ];
     for list in ProgramList::ALL {
-        assert!(count_of(&header, list) > 0, "{}", list.name());
+        let is_empty = count_of(&header, list) == 0;
+        assert_eq!(is_empty, empty_lists.contains(&list), "{}", list.name());
     }
 }
 

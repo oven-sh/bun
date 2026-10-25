@@ -4,7 +4,7 @@ import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/run-programs";
-import { canTrim, featureNamed, model, tempDirForAotBuilds } from "./compile-trim-features";
+import { canTrim, featureNamed, getMappedSegments, model, tempDirForAotBuilds } from "./compile-trim-features";
 
 // An AOT-compiled program never runs the CLI or the JIT, so --aot removes the code that only those two need.
 const removedByAot = new Set(
@@ -46,22 +46,16 @@ const allToolStrings = Object.entries(toolStrings).flatMap(([tool, strings]) =>
 const findToolStrings = (file: Buffer) =>
   allToolStrings.filter(each => file.includes(each.slice(each.indexOf(": ") + 2)));
 
+const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, segment) => sum + segment.length, 0);
+
 const importsItsArguments = `
-  import { validate } from "bun:bundle";
   import { join } from "node:path";
-  console.log("compiled:", validate<{ x: number }>({ x: 1 }).x);
   for (const name of process.argv.slice(2)) {
-    try {
-      console.log(name + ":", ...(await import(join(process.cwd(), name))).output);
-    } catch (error) {
-      console.log(name + ":", "threw", (error as Error).message);
-    }
+    console.log(name + ":", ...(await import(join(process.cwd(), name))).output);
   }
 `;
 
 const filesOnDisk = {
-  "validate.ts": `import { validate } from "bun:bundle";\nexport const output = [validate<{ a: number }>({ a: "one" }).a];`,
-  "parse.ts": `import { JSON } from "bun";\nexport const output = [JSON.parse<{ a: number }>('{"a":"one"}').a];`,
   "plain.ts": `export const output: string[] = ["loaded"];`,
 };
 
@@ -96,18 +90,16 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
       const executable = readFileSync(hello);
       expect(findToolStrings(bun)).toEqual(allToolStrings);
       expect(findToolStrings(executable)).toEqual([]);
-      if (isLinux) expect(executable.length / bun.length).toBeLessThan(0.53);
+      if (isLinux) expect(countMappedBytes(executable) / countMappedBytes(bun)).toBeLessThan(0.53);
     }, 600_000);
 
-    test("a file imported at run time can't call validate<T>() or JSON.parse<T>()", async () => {
+    test("loads a TypeScript file imported at run time", async () => {
       using dir = tempDirForAotBuilds("compile-aot-size", { "program.ts": importsItsArguments, "cwd/empty": "" });
       const cwd = join(String(dir), "cwd");
       const program = await build(String(dir), "program", ["--aot-allow-code-from-disk"]);
       for (const [name, text] of Object.entries(filesOnDisk)) writeFileSync(join(cwd, name), text);
       const { stdout, exitCode } = await spawned([program, ...Object.keys(filesOnDisk)], cwd, bunEnv);
-      expect(stdout.replaceAll(/: threw .*validate<T>\(\).*/g, ": threw")).toBe(
-        "compiled: 1\nvalidate.ts: threw\nparse.ts: threw\nplain.ts: loaded\n",
-      );
+      expect(stdout).toBe("plain.ts: loaded\n");
       expect(exitCode).toBe(0);
     }, 600_000);
   });

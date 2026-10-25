@@ -29,10 +29,11 @@ use bun_sema::program::{
     CodeAnswer, CompiledModule, ComputedTargets, FileId, Files, HostLoader, HostModuleId,
 };
 use bun_sema::resolve::{
-    CachedConfig, CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions,
-    CodeParseRequest, CodeRequest, CodeResolution, ComputedCandidate, ComputedCodeRequest,
-    ComputedResolution, Host, HostResolution, JsxSettings, Options, ParseOptions, ParsedCode,
-    Paths, Resolver, ScriptKind, TranspileSettings, inside, is_declaration_file_name, is_same_path,
+    AOT_CONDITION, CachedConfig, CodeFailure, CodeHost, CodeImportForm, CodeImportKind,
+    CodeOptions, CodeParseRequest, CodeRequest, CodeResolution, ComputedCandidate,
+    ComputedCodeRequest, ComputedResolution, Host, HostResolution, JsxSettings, Options,
+    ParseOptions, ParsedCode, Paths, Resolver, ScriptKind, TranspileSettings, inside,
+    is_declaration_file_name, is_same_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::FxHashSet;
@@ -631,7 +632,7 @@ fn vm_code_options(vm: &VirtualMachine, root: &[u8], options: &CompareOptions<'_
     let separator: &[u8] = if cfg!(windows) { b";" } else { b":" };
     let tsconfig_override = vm.transpiler.resolver.opts.tsconfig_override.as_deref();
     let mut code = code_options_with_limits(root, &LimitValues::for_host());
-    code.typed_condition = None;
+    code.remove_condition(AOT_CONDITION);
     let conditions = options.conditions.iter().map(|it| it.to_vec());
     code.conditions.extend(conditions);
     code.preserves_symlinks = options.preserves_symlinks;
@@ -873,9 +874,6 @@ impl GraphDescriber<'_, '_> {
         let module_format = compiled.map(|it| debug_name(&it.analysis.module_format));
         let sites = compiled.map(|it| self.describe_sites(it));
         let implied_answers = compiled.map(|it| self.answers(it.implied_answers));
-        let typed_source_path = compiled.and_then(|it| it.typed_source_path);
-        let rejected_typed_version = compiled.and_then(|it| it.rejected_typed_version);
-        let erasure_mismatch = rejected_typed_version.map(|it| debug_name(&it.kind));
         json_object([
             ("path", self.path(file)),
             ("role", debug_name(&module.role)),
@@ -892,10 +890,9 @@ impl GraphDescriber<'_, '_> {
                 Json::Array(implied_answers.unwrap_or_default()),
             ),
             (
-                "typedSourcePath",
-                typed_source_path.map_or(Json::Null, path_json),
+                "isAotSource",
+                Json::Bool(compiled.is_some_and(|it| it.is_aot_source)),
             ),
-            ("erasureMismatch", erasure_mismatch.unwrap_or(Json::Null)),
         ])
     }
 
@@ -960,7 +957,6 @@ pub(crate) fn describe_code_graph(
     let host = DiskWithBuiltinModules::new(threads, &working_directory);
     let limits = LimitValues::for_host();
     let mut code = code_options_with_limits(&working_directory, &limits);
-    code.typed_condition = Some(b"full-types".to_vec());
     for condition in strings::tokenize(conditions_argument, b"\n") {
         code.add_custom_condition(condition);
     }

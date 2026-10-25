@@ -1,8 +1,7 @@
 // A program under ./programs is held against plain Bun, run on the spot. A <program>.expected.txt takes plain Bun's place: it says "here --aot differs on purpose", and the files together are the whole
 // list of such differences. A stored output that is what plain Bun prints says nothing, hides the day on which the two part, and makes the list longer than it is: it fails here. Delete the file.
-// The exception is a program that validates. Plain Bun validates too, so it prints the same, but the stored output is what says that bad data is rejected: if validation stopped working in both, the two would still agree.
 import { expect } from "bun:test";
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { dirname, join } from "path";
 import { generators } from "./generate";
@@ -60,23 +59,13 @@ const isKept = (name: string) =>
 // A script writes the program. What is stored for it lies beside it where it is written.
 const written = new Map(stored.filter(name => !isKept(name)).map(name => [name, pathOfWrittenProgram(name)]));
 
-/** Whether the program calls `JSON.parse<T>()` from "bun" or `validate<T>()`, in its entry point or in a file that it imports by a relative path. */
-function validates(path: string, seen = new Set<string>()): boolean {
-  if (seen.has(path) || !statSync(path, { throwIfNoEntry: false })?.isFile()) return false;
-  seen.add(path);
-  const text = readFileSync(path, "utf8");
-  if (/\b(JSON|validate)\b[^;\n]* from "bun(:bundle)?"|\bBun\.JSON\b/.test(text)) return true;
-  const imported = [...text.matchAll(/\b(?:from|import|require)\s*\(?\s*["'](\.[^"']+)["']/g)];
-  return imported.some(([, specifier]) => validates(join(dirname(path), specifier), seen));
-}
-
 async function saysNothing(name: string): Promise<boolean> {
   const beside = written.get(name)?.replace(/([\\/]main)?\.[a-z]+$/, "") ?? join(root, name);
   const path = [
     ...extensions.map(extension => `${beside}.${extension}`),
     ...extensions.map(extension => join(beside, `main.${extension}`)),
   ].find(existsSync);
-  if (!path || validates(path)) return false;
+  if (!path) return false;
   const options = existsSync(beside + ".json") ? JSON.parse(readFileSync(beside + ".json", "utf8")) : {};
   // There the reference is an executable without --aot, which a build has to make: the runner of the folder compares with it.
   if (options.reference === "compiled") return false;

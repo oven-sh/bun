@@ -1,6 +1,6 @@
 use super::runtime_reach::{ReachInput, find_reached_runtime_code};
 use super::{BoundApplication, BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject};
-use crate::diagnostics::{DiagnosticBuffer, InternalError};
+use crate::diagnostics::{DiagnosticBuffer, InternalError, ProgramView};
 use crate::ir::generated::FunctionRole;
 use crate::ir::{FunctionId, FunctionKey, Id};
 use crate::link::{KeyContext, LinkUnit, Rehoming};
@@ -11,9 +11,7 @@ use crate::lower::{
     lower_file,
 };
 use crate::modules::{ApplicationGraph, Library, LinkedProject, ModuleGraph, ModuleRef, Shape};
-use crate::package_diagnostics::{
-    PackageView, report_package_errors, report_unchecked_versions, report_used_versions,
-};
+use crate::package_diagnostics::report_package_errors;
 use crate::report;
 use crate::statistics::{Counters, Stage, StatisticId};
 use bun_core::current_work;
@@ -32,7 +30,6 @@ use bun_sema_driver::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 
 pub(crate) struct LoweredUnit {
@@ -64,7 +61,6 @@ struct Worlds {
     lowered: Vec<FileId>,
     units: Vec<LinkUnit>,
     demoted: Vec<Demotion>,
-    demoted_directories: Vec<Vec<u8>>,
 }
 
 struct ProjectToLower<'a, 'b, 's> {
@@ -114,7 +110,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             &self.decided.roles,
             &self.decided.files_to_lower,
             &|checker, file| {
-                let path = self.loaded.loaded.files().diagnostic_path(file);
+                let path = self.loaded.loaded.files().module(file).file_name();
                 let _work = current_work::working_on(current_work::Step::Lower, path);
                 assert!(!self.panics, "--aot-sabotage=LoweringPanics");
                 if !is_well_formed(self.loaded.loaded.files(), file)
@@ -235,18 +231,7 @@ impl Build<'_> {
             checked.application.lowered.len() + checked.runtime.lowered.len() + worlds.units.len();
         let mut units = Vec::with_capacity(unit_count);
         checked.map(|project, checked| {
-            let demoted_by_worlds: &[Vec<u8>] = match project {
-                ProjectId::Application => &worlds.demoted_directories,
-                ProjectId::Runtime => &[],
-            };
-            self.report_project(
-                loaded,
-                project,
-                &decided,
-                checked,
-                &mut units,
-                demoted_by_worlds,
-            );
+            self.report_project(loaded, project, &decided, checked, &mut units);
         });
         units.extend(worlds.units);
         units
@@ -261,10 +246,9 @@ impl Build<'_> {
         let mut groups: BTreeMap<Vec<u8>, (Option<Vec<u8>>, Vec<FileId>)> = BTreeMap::new();
         let mut by_directory: FxHashMap<Vec<u8>, (Vec<u8>, Option<Vec<u8>>)> = FxHashMap::default();
         for &file in files.compiled_files() {
-            let Some(typed) = (files.compiled(file)).and_then(|it| it.typed_source_path) else {
-                continue;
-            };
-            if files.role(file) != FileRole::Checked
+            if !files.compiled(file).is_some_and(|it| it.is_aot_source)
+                || application.loaded.origin(file) != FileOrigin::DependencySource
+                || files.role(file) != FileRole::Checked
                 || bound.graph.shape(ModuleRef::File(file)) == Shape::AsToday
                 || files.entry_points().contains(&file)
                 || files.hir(file).check_directive == Some(false)
@@ -272,12 +256,14 @@ impl Build<'_> {
             {
                 continue;
             }
-            let directory = host.directory_of(typed).into_owned();
+            let directory = host
+                .directory_of(files.module(file).file_name())
+                .into_owned();
             let (key, manifest_path) = by_directory.entry(directory).or_insert_with_key(|it| {
-                let manifest_path = config::find_manifest_of_full_types(host, it);
+                let manifest_path = config::find_package_with_compiler_options(host, it);
                 let project = (manifest_path.as_ref())
-                    .map(|path| config::load_for_full_types(host, &Session::new(), path));
-                let key = project.map(|project| project.key_of_full_types());
+                    .map(|path| config::load_for_aot_package(host, &Session::new(), path));
+                let key = project.map(|project| project.key_of_compiler_options());
                 (key.unwrap_or_default(), manifest_path)
             });
             let group = groups.entry(key.clone());
@@ -365,7 +351,6 @@ impl Build<'_> {
             atoms: loaded.atoms,
             messages: loaded.messages,
             builtin_names: loaded.builtin_names,
-            typed_packages: loaded.typed_packages,
             can_load_code_at_run_time: loaded.can_load_code_at_run_time,
             loads_code_by_unknown_names_alone: loaded.loads_code_by_unknown_names_alone,
             finish_asset_reads: loaded.finish_asset_reads,
@@ -390,22 +375,19 @@ impl Build<'_> {
             .filter(|&file| roles.role(file) == FileRole::Checked && !roles.has_early_error(file))
             .collect();
         let id = ProjectId::Application;
-        let demoted_directories = self.report_check_diagnostics(
-            world_build.packages(id),
+        self.report_check_diagnostics(
+            world_build.project(id).view(),
             &roles,
             roles.diagnostics.clone(),
             &roles.incomplete,
         );
-        let demoted_directories = demoted_directories.into_iter().map(<[u8]>::to_vec);
-        worlds.demoted_directories.extend(demoted_directories);
         for demotion in &roles.demoted {
             if let Some(file) = to_application[demotion.file.idx()] {
                 worlds.demoted.push(Demotion { file, ..*demotion });
             }
         }
-        let is_typed = |file: &FileId| {
-            (world_files.compiled(*file)).is_some_and(|it| it.typed_source_path.is_some())
-        };
+        let is_typed =
+            |file: &FileId| (world_files.compiled(*file)).is_some_and(|it| it.is_aot_source);
         self.checked_elsewhere = (world_files.compiled_files().iter().copied())
             .filter(|file| is_typed(file) && !own.contains(file))
             .collect();
@@ -534,36 +516,14 @@ impl Build<'_> {
         decided: &PerProject<DecidedProject>,
         checked: CheckedProgram<Option<LoweredUnit>>,
         units: &mut Vec<LinkUnit>,
-        directories_demoted_by_worlds: &[Vec<u8>],
     ) {
         let roles = &decided.get(project).roles;
-        let packages = loaded.packages(project);
-        let view = packages.view;
-        let mut demoted_directories = self.report_check_diagnostics(
-            packages,
-            roles,
-            roles.diagnostics.clone(),
-            &roles.incomplete,
-        );
+        let view = loaded.project(project).view();
+        self.report_check_diagnostics(view, roles, roles.diagnostics.clone(), &roles.incomplete);
         let in_parallel = self.parallel_runner();
         report::count_files(&mut self.statistics, view, roles, &in_parallel);
-        demoted_directories.extend(self.report_check_diagnostics(
-            packages,
-            roles,
-            checked.diagnostics,
-            &checked.incomplete,
-        ));
-        demoted_directories.extend(directories_demoted_by_worlds.iter().map(|it| &it[..]));
+        self.report_check_diagnostics(view, roles, checked.diagnostics, &checked.incomplete);
         self.diagnostics.add_load_messages(loaded.messages);
-        if self.reports_typed_versions(project) {
-            report_unchecked_versions(&mut self.diagnostics, packages, roles);
-            report_used_versions(
-                &mut self.diagnostics,
-                packages,
-                &demoted_directories,
-                &self.full_types_refused_at_load,
-            );
-        }
 
         for (file, lowered) in checked.lowered {
             let Some(lowered) = lowered else {
@@ -602,19 +562,18 @@ impl Build<'_> {
         }
     }
 
-    fn report_check_diagnostics<'s>(
+    fn report_check_diagnostics(
         &mut self,
-        packages: PackageView<'_, 's>,
+        view: ProgramView<'_, '_>,
         roles: &RoleDecision,
         diagnostics: Vec<BuildDiagnostic>,
         incomplete: &[Incomplete],
-    ) -> BTreeSet<&'s [u8]> {
-        let errors = report_package_errors(&mut self.diagnostics, packages, diagnostics, roles);
+    ) {
+        let errors = report_package_errors(&mut self.diagnostics, view, diagnostics, roles);
         self.has_withdrawn_trust |= errors.has_withdrawn_trust;
         self.diagnostics
             .add_build_diagnostics(Stage::Check, errors.remaining);
         self.diagnostics.add_incomplete_files(incomplete);
-        errors.demoted_directories
     }
 
     pub(crate) fn lowering_options(&self) -> LoweringOptions {
@@ -689,9 +648,7 @@ impl Build<'_> {
         let is_in_dependency = |file: &FileId| {
             matches!(
                 loaded_project.loaded.origin(*file),
-                FileOrigin::DependencySource
-                    | FileOrigin::DependencyJavaScript
-                    | FileOrigin::ProjectTypedVersion
+                FileOrigin::DependencySource | FileOrigin::DependencyJavaScript
             )
         };
         let compiled = files.compiled_files().iter().copied();

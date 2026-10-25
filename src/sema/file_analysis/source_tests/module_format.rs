@@ -348,12 +348,6 @@ const OTHER_MODULE_COMPARISONS: &[&str] = &[
     "function f(require) { require.main === module; }",
 ];
 
-const TYPED_VERSION_FORMATS: &[(&str, ModuleFormat)] = &[
-    (r#"import type { A } from "m"; f();"#, CommonJs),
-    (r#"import { type A } from "m"; f();"#, CommonJs),
-    (r#"import { a } from "m"; a();"#, Esm),
-];
-
 fn sites(s: &Analyzed<'_>) -> Vec<(ImportSiteKind, String)> {
     let specifier_text = |site: &ImportSite| match site.specifier {
         ImportSpecifier::Constant(text) => s.workspace.text(text).to_owned(),
@@ -477,19 +471,6 @@ fn check_main_module_comparison(text: &str, main: Option<bool>, expected: Decisi
             assert_eq!(s.analysis.module_format, format, "{path}: {text}: {main:?}");
         });
     }
-}
-
-fn analyze_typed_version<'s>(
-    w: &Workspace<'s>,
-    text: &str,
-    declared_module_type: DeclaredModuleType,
-) -> FileAnalysis<'s> {
-    let source = Source {
-        is_typed_version: true,
-        declared_module_type: Some(declared_module_type),
-        ..Source::new("a.ts", text)
-    };
-    w.analyze(&source, &w.fold_inputs(&Fold::NONE)).analysis
 }
 
 #[test]
@@ -646,26 +627,6 @@ fn preserved_unused_import_is_site() {
         let s = w.analyze(&Source::new("a.ts", r#"import { A } from "m";"#), &fold);
         assert_eq!(s.analysis.import_sites.len(), 1);
     });
-}
-
-#[test]
-fn typed_version_import_sites() {
-    with_workspace(|w| {
-        let text = r#"import { A } from "m"; let x: A;"#;
-        let analysis = analyze_typed_version(w, text, DeclaredModuleType::Unknown);
-        assert_eq!(analysis.import_sites.len(), 1);
-        assert!(analysis.unused_import_symbols.is_empty());
-    });
-}
-
-#[test]
-fn typed_version_formats() {
-    for &(text, format) in TYPED_VERSION_FORMATS {
-        with_workspace(|w| {
-            let analysis = analyze_typed_version(w, text, DeclaredModuleType::CommonJs);
-            assert_eq!(analysis.module_format, format, "{text}");
-        });
-    }
 }
 
 #[test]

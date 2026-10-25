@@ -16,7 +16,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::commonjs::CommonJsState;
 use super::context::{FileInputs, SourceKind};
 use super::data::DataState;
-use super::validate::ValidationState;
 use super::{FileLowering, FunctionLowering};
 use crate::builtins::id::{BuiltinId, RuntimeFunction};
 use crate::ir::{DataId, FunctionId, StringId, ValueId};
@@ -32,7 +31,6 @@ pub(in crate::lower) use library::{LibraryFunctionForm, library_function_form};
 #[derive(Default)]
 pub(crate) struct ModuleState {
     pub(in crate::lower) data: DataState,
-    pub(in crate::lower) validation: ValidationState,
     pub(in crate::lower) commonjs: CommonJsState,
 }
 

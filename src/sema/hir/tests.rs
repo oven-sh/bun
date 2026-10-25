@@ -362,38 +362,6 @@ fn module_declaration_makes_every_function_strict() {
 }
 
 #[test]
-fn typed_version_has_javascript_semantics() {
-    let cases = [
-        (false, false, true),
-        (false, true, false),
-        (true, false, false),
-        (true, true, false),
-    ];
-    for (is_js, is_typed_version, expected) in cases {
-        let file = FileBuilder {
-            is_js,
-            is_typed_version,
-            ..Default::default()
-        };
-        assert_eq!(file.has_typescript_semantics(), expected);
-    }
-}
-
-#[test]
-fn loaded_and_shared_files_keep_typed_version() {
-    let file = FileBuilder {
-        is_typed_version: true,
-        ..Default::default()
-    };
-    with_file(file, |hir| {
-        assert!(hir.is_typed_version);
-        let session = Session::new();
-        assert!(hir.share(session.arena(), &session).is_typed_version);
-    });
-    with_file(FileBuilder::default(), |hir| assert!(!hir.is_typed_version));
-}
-
-#[test]
 fn runtime_members() {
     let mut file = FileBuilder::default();
     let decorator = add_ident(&mut file);

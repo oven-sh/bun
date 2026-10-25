@@ -4,6 +4,7 @@ import { afterAll, expect } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
 import { bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
+import { openInstructionCounter } from "../analysis-scaling/measure-check";
 import type { Route } from "../servers/answers";
 import { describe, test } from "../supported";
 import {
@@ -15,12 +16,20 @@ import {
   type Readings,
 } from "./compare-builds";
 
+function canCountInstructions() {
+  const closeCounter = openInstructionCounter(process.pid);
+  closeCounter?.();
+  return closeCounter !== undefined;
+}
+
 const skipped =
   isDebug || isASAN
     ? "a debug or ASAN build counts other instructions"
     : !isLinux || isMusl || process.arch !== "x64"
       ? "it counts with perf_event_open of glibc, on x64"
-      : undefined;
+      : !canCountInstructions()
+        ? "this machine does not allow perf_event_open"
+        : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/compare-builds.test.ts: ${skipped}`);
 
 describe("compare()", () => {

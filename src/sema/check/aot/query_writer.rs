@@ -579,7 +579,7 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
             | ShapeKind::ClassConstructor(_)
             | ShapeKind::Array { .. }
             | ShapeKind::Tuple { .. }
-            | ShapeKind::Constrained { .. } => {}
+            | ShapeKind::Int32 { .. } => {}
         }
     }
 

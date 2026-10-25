@@ -103,17 +103,6 @@ fn default_host_claims_no_specifier() {
 }
 
 #[test]
-fn default_host_has_no_typed_version() {
-    let package = EnclosingPackage {
-        directory: b"/project",
-        name: b"project",
-        version: b"1.0.0",
-    };
-    assert_eq!(Bare.typed_version(MAIN, Some(package)), None);
-    assert_eq!(Bare.typed_version(MAIN, None), None);
-}
-
-#[test]
 fn default_host_selects_loader_by_path_alone() {
     let settings = default_settings();
     let loader = Bare.loader_of(&LoaderRequest {

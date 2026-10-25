@@ -9,7 +9,7 @@ pub(super) struct Projects<'s> {
     by_config_path: ShardedMap<Vec<u8>, ConfigAnswer<'s>>,
     lenient_by_package: ShardedMap<Vec<u8>, &'s Options>,
     lenient_template: OnceLock<Options>,
-    full_types_by_directory: ShardedMap<Vec<u8>, Option<ConfigAnswer<'s>>>,
+    aot_sources_by_directory: ShardedMap<Vec<u8>, Option<ConfigAnswer<'s>>>,
     naming_types: Guarded<Vec<&'s Options>>,
 }
 
@@ -55,7 +55,7 @@ impl<'s> Projects<'s> {
             by_config_path: ShardedMap::default(),
             lenient_by_package: ShardedMap::default(),
             lenient_template: OnceLock::new(),
-            full_types_by_directory: ShardedMap::default(),
+            aot_sources_by_directory: ShardedMap::default(),
             naming_types: Guarded::new(Vec::new()),
         }
     }
@@ -86,17 +86,17 @@ impl<'s> Projects<'s> {
         project
     }
 
-    pub(super) fn governing_full_types(
+    pub(super) fn governing_aot_source(
         &self,
         context: &CodeLoadContext<'_, 's, '_>,
         path: &[u8],
     ) -> Option<&'s Options> {
         let directory = dirname::<Posix>(path);
-        let stated = match self.full_types_by_directory.get_ref(directory) {
+        let stated = match self.aot_sources_by_directory.get_ref(directory) {
             Some(&known) => known,
             None => {
-                let found = self.find_full_types(context, directory);
-                *(self.full_types_by_directory).insert_ref(directory.to_vec(), found)
+                let found = self.find_package_options(context, directory);
+                *(self.aot_sources_by_directory).insert_ref(directory.to_vec(), found)
             }
         };
         match stated {
@@ -106,7 +106,7 @@ impl<'s> Projects<'s> {
         }
     }
 
-    fn find_full_types(
+    fn find_package_options(
         &self,
         context: &CodeLoadContext<'_, 's, '_>,
         directory: &[u8],
@@ -114,7 +114,7 @@ impl<'s> Projects<'s> {
         if context.resolver.is_under_tsconfig_override(directory) {
             return None;
         }
-        let manifest_path = config::find_manifest_of_full_types(context.host, directory)?;
+        let manifest_path = config::find_package_with_compiler_options(context.host, directory)?;
         if let Some(&known) = self.by_config_path.get_ref(&manifest_path) {
             return Some(known);
         }
@@ -123,7 +123,7 @@ impl<'s> Projects<'s> {
             true => ConfigAnswer::Program,
             false => {
                 let scratch = Session::new();
-                let project = config::load_for_full_types(context.host, &scratch, &manifest_path);
+                let project = config::load_for_aot_package(context.host, &scratch, &manifest_path);
                 let options = governing_options(context, project.options);
                 ConfigAnswer::Project(self.session.keep(options))
             }

@@ -43,6 +43,4 @@ src/js/internal/repl/await.ts
 src/js/internal/repl/acorn.ts
 src/js/internal/repl/acorn-walk.ts
 
-# full types of npm packages: the packages' own code, pinned byte for byte
-packages/full-types
 test/aot/typed-packages/react-reconciler-host/typed-bundle

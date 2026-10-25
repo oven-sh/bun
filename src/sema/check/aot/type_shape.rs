@@ -1,4 +1,4 @@
-use super::answers::{ClassRef, SchemaConstraint, TypeParameterRef};
+use super::answers::{ClassRef, TypeParameterRef};
 use super::builtin_types::{BuiltinTypeClass, Denotation};
 use super::trust::Trust;
 use crate::atom::Atom;
@@ -92,9 +92,9 @@ pub enum ShapeKind<'c> {
     Class(ClassRef),
     Object,
     Union(&'c [TypeId]),
-    Constrained {
+    /// `int32`, or `int32 & T`. `base` is the type without the tag.
+    Int32 {
         base: TypeId,
-        constraints: &'c [SchemaConstraint<'c>],
     },
 }
 

@@ -18,8 +18,9 @@ pub use jsx::{
 };
 pub use macro_calls::macro_callee;
 pub use made_requires::{
-    OwnRequire, find_own_require, find_result_expression, holds_import_meta_require,
-    is_made_require, is_require_made_for_own_file, may_still_be_undefined,
+    ExportedRequire, OwnRequire, find_exported_requires, find_own_require, find_result_expression,
+    holds_import_meta_require, is_made_require, is_require_made_for_own_file,
+    may_still_be_undefined,
 };
 pub(crate) use made_requires::{find_imported_export, settled_symbol};
 pub(crate) use scan::collect_import_sites;
@@ -95,6 +96,7 @@ pub(crate) struct ImportScan<'s> {
     pub unused_import_symbols: &'s [SymbolId],
     pub imports_used_only_in_dead_code: &'s [SymbolId],
     pub module_require_objects: &'s [ExprId],
+    pub requires_of_other_files: &'s [(u32, Atom)],
     pub pending_macro_calls: &'s [ExprId],
     pub first_runtime_import: Option<ImportId>,
     pub has_import_equals_require: bool,

@@ -60,28 +60,19 @@ case_tests! {
     };
     exported_import_equals_exposes: PROGRAM, "export import jsc = require(\"bun:jsc\");", |case|
         assert!(case.exposes(jsc_namespace()));
-    bundle_import: PROGRAM, "import { validate } from \"bun:bundle\"; validate(x);", |case| {
-        assert_eq!(case.symbol_id("validate"), Some(BuiltinId::BunBundleValidate));
-        assert_builtin(case, "validate", BuiltinId::BunBundleValidate);
-        assert_mutability(case, "validate", Mutability::AlwaysLocked);
+    bundle_import: PROGRAM, "import { feature } from \"bun:bundle\"; feature(x);", |case|
+        assert_eq!(case.symbol_id("feature"), Some(BuiltinId::BunBundleFeature));
+    bundle_namespace_import: PROGRAM, "import * as b from \"bun:bundle\"; b.feature(x);", |case| {
+        assert_builtin(case, "b.feature", BuiltinId::BunBundleFeature);
+        assert_mutability(case, "b.feature", Mutability::AlwaysLocked);
     };
-    bundle_namespace_import: PROGRAM, "import * as b from \"bun:bundle\"; b.validate(x);", |case| {
-        assert_builtin(case, "b.validate", BuiltinId::BunBundleValidate);
-        assert_mutability(case, "b.validate", Mutability::AlwaysLocked);
+    type_only_bundle_import: PROGRAM, "import { type feature } from \"bun:bundle\";", |case| {
+        assert_eq!(case.symbol("feature"), None);
+        assert!(!case.mentions(BuiltinId::BunBundleFeature));
     };
-    type_only_bundle_import: PROGRAM, "import { type validate } from \"bun:bundle\";", |case| {
-        assert_eq!(case.symbol("validate"), None);
-        assert!(!case.mentions(BuiltinId::BunBundleValidate));
-    };
-    macro_import_is_not_bundle_import: PROGRAM, "import { validate } from \"./m\" with { type: \"macro\" }; validate(x);", |case| {
-        assert_eq!(case.symbol("validate"), None);
-        assert_unresolved(case, "validate");
-    };
-    json_export_of_bun_is_its_own_object: PROGRAM, "import { JSON } from \"bun\"; JSON.parse(t); JSON.stringify(t);", |case| {
-        assert_eq!(find_member(BuiltinId::Bun, "JSON"), Some(BuiltinId::BunJSON));
-        assert_eq!(case.symbol_id("JSON"), Some(BuiltinId::BunJSON));
-        assert_builtin(case, "JSON.parse", BuiltinId::BunJSONParse);
-        assert_builtin(case, "JSON.stringify", BuiltinId::JSONStringify);
+    macro_import_is_not_bundle_import: PROGRAM, "import { feature } from \"./m\" with { type: \"macro\" }; feature(x);", |case| {
+        assert_eq!(case.symbol("feature"), None);
+        assert_unresolved(case, "feature");
     };
     property_naming_own_holder: PROGRAM, "Function.constructor; globalThis.globalThis;", |case| {
         assert_builtin(case, "Function.constructor", BuiltinId::Function);

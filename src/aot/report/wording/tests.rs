@@ -164,19 +164,6 @@ fn cause_messages_are_sentences() {
 }
 
 #[test]
-fn fixes_that_suggest_typed_parse_name_its_import() {
-    let wordings = report_wordings();
-    let mut fixes = wordings
-        .iter()
-        .filter(|text| text.contains("JSON.parse<T>("))
-        .peekable();
-    assert!(fixes.peek().is_some());
-    for fix in fixes {
-        assert!(fix.contains("import { JSON } from \"bun\""), "{fix}");
-    }
-}
-
-#[test]
 fn cause_wordings_differ() {
     assert_distinct(&UnprovenCause::ALL.map(|cause| cause_wording(cause).message));
     assert_distinct(&UnprovenCause::ALL.map(|cause| cause_wording(cause).fix));

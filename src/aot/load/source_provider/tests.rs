@@ -58,7 +58,6 @@ fn has_no_plugins_or_defines() {
     assert!(options.defines.is_empty());
     assert!(options.dropped_calls.is_empty());
     assert!(options.features.is_empty());
-    assert!(options.compiler_functions.is_empty());
     assert!(!options.preserves_unused_imports);
 
     let request = ResolveRequest {

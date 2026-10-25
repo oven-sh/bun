@@ -2558,11 +2558,6 @@ pub mod parse_worker {
             .bundler_feature_flags
             .as_deref()
             .map(|s| Box::new(bun_core::handle_oom(s.clone())));
-        if loader.is_typescript() && bun_paths::is_absolute(source.path.text) {
-            use crate::aot::validation_plans::{Output, plan_source};
-            // SAFETY: `transpiler` is live, and the parse reads its options alone.
-            opts.features.validation_plans = plan_source(unsafe { &*transpiler }, Output::Bundle);
-        }
         // JavaScriptCore implements `using` / `await using` natively, so when
         // targeting Bun there is no need to lower them.
         opts.features.lower_using = !target.is_bun();

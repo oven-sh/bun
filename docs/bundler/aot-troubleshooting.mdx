@@ -97,23 +97,6 @@ Common causes:
 - The package has a `"bun"` export condition. The bundler takes it and the type checker doesn't. Add `"customConditions": ["bun"]` to `compilerOptions`.
 - The package relies on a declaration file of its own that nothing imports. List that file under `"files"` in your `tsconfig.json`.
 
-### A package has full types, and the build doesn't use them
-
-```txt
-warn: TS100056: The full types of "each-row" in .full-types/each-row can't be used: they are for version 1.0.0, but 1.0.1 is installed. Replace them with the full types for 1.0.1, or remove them
-note: 2 packages have full types, and 1 is compiled from them
-```
-
-The build doesn't stop. It compiles that package from its JavaScript, which behaves the same and can run slower. The last note counts the packages that have [full types](/bundler/aot-libraries#why-a-package-needs-its-types), and for each one that isn't compiled from them, a warning says what the build found, why it isn't used and what to do.
-
-| Warning                                  | What it's about                                                                                                                 |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `"…" is compiled without types, because` | [The full-types file that a package ships](/bundler/aot-libraries#when-the-full-types-file-cant-be-used), or its `package.json` |
-| `TS100056`                               | [Full types in `.full-types/` or `@oven/full-types-<name>`](/bundler/aot-libraries#add-types-to-a-package-you-dont-maintain)    |
-| `TS100067`                               | A folder that looks like full types, in a place or under a name that `bun compile` doesn't read                                 |
-| `TS100068`, `TS100070`                   | `"compilerOptions"` that's in the wrong place, or has an error                                                                  |
-| `TS100009`                               | [A type error](#a-package-has-type-errors-so-its-compiled-without-types) in the full types                                      |
-
 ### `bun compile` can't cross-compile
 
 ```txt
@@ -246,11 +229,11 @@ note: 1. unknown-object: An object from untyped code is used as this type here, 
 
 note: 2 of 2 untyped accesses in dependencies
 note: why (external-data): The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).
-note: fix: validate it where it enters typed code: import { JSON } from "bun" for JSON.parse<T>(text), or import { validate } from "bun:bundle" for validate<T>(value). Or build a new object of this type from it.
+note: fix: build a new object of this type from it where it enters typed code.
 note: https://bun.com/docs/bundler/aot-explain#unknown-object
 ```
 
-A JavaScript package isn't untyped because it's JavaScript. The compiler tracks its objects as it tracks yours. So look first at what your code passes to the package: an object that comes from `JSON.parse`, as here, is unknown inside the package too. For the rest, [the package's full types](/bundler/aot-libraries#add-types-to-a-package-you-dont-maintain) add types to its files and leave its code as it is.
+A JavaScript package isn't untyped because it's JavaScript. The compiler tracks its objects as it tracks yours. So look first at what your code passes to the package: an object that comes from `JSON.parse`, as here, is unknown inside the package too. For the rest, a package can [point `bun compile` at its TypeScript](/bundler/aot-libraries) with the `"aot"` condition.
 
 **A guard fails in hot code.** A value that doesn't match its declared type sends the function to its slow path, every time. Nothing is printed, because nothing goes wrong. [Find the guards that fail](/bundler/aot-debugging#find-the-guards-that-fail) shows how to list them and how to log them.
 

@@ -1,12 +1,9 @@
 use super::walk::WalkStep;
 use super::{AnythingReason, ShapeKind, TypeShape};
-use crate::atom::Atom;
-use crate::check::aot::answers::{GaveUp, MemberName, SchemaConstraint};
+use crate::check::aot::answers::GaveUp;
 use crate::check::aot::builtin_types::Denotation;
-use crate::check::aot::program_symbols::{SchemaAlias, is_brand_key};
 use crate::check::aot::queries::Queries;
-use crate::check::aot::schema_constraints::{SchemaPart, closes_object, find_refusal};
-use crate::types::TypeId;
+use crate::types::{Origin, TypeData, TypeId};
 use smallvec::SmallVec;
 
 #[derive(Default)]
@@ -49,7 +46,7 @@ impl<'c> IntersectionSummary<'c> {
             | ShapeKind::TemplateLiteral { .. } => {
                 self.narrow_primitive.get_or_insert(shape);
             }
-            ShapeKind::Union(_) | ShapeKind::Constrained { .. } => {
+            ShapeKind::Union(_) | ShapeKind::Int32 { .. } => {
                 self.has_composite_part = true;
                 self.add_object(shape);
             }
@@ -80,68 +77,31 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if self.c.reduced(ty).is_never() {
             return Ok(WalkStep::Finished(TypeShape::undeclared(ShapeKind::Never)));
         }
-        let mut constraints: SmallVec<[SchemaConstraint<'c>; 4]> = SmallVec::new();
-        let mut rest: SmallVec<[TypeId; 4]> = SmallVec::new();
-        let mut first_alias = None;
-        for &part in parts {
-            match self.schema_part(part)? {
-                SchemaPart::NotSchema => rest.push(part),
-                SchemaPart::Int32Tag => constraints.push(SchemaConstraint::Int32),
-                SchemaPart::Alias(alias, constraint) => {
-                    first_alias.get_or_insert(alias);
-                    constraints.push(constraint);
-                }
-            }
-        }
-        if rest.len() == parts.len() {
+        let rest: SmallVec<[TypeId; 4]> = parts
+            .iter()
+            .copied()
+            .filter(|&part| !self.is_int32_tag(part))
+            .collect();
+        if rest.is_empty() || rest.len() == parts.len() {
             return Ok(WalkStep::Finished(self.shape_of_intersection(ty, parts)?));
         }
         let base = match rest[..] {
-            [] => {
-                let shape = match first_alias {
-                    Some(alias) => self.shape_of_aliases_alone(alias, &constraints)?,
-                    None => self.shape_of_intersection(ty, parts)?,
-                };
-                return Ok(WalkStep::Finished(shape));
-            }
             [only] => only,
             _ => self.c.intersection(&rest),
         };
-        // The type would promise of every key what only a key that matches no pattern holds.
-        let has_patterns = constraints
-            .iter()
-            .any(|constraint| matches!(constraint, SchemaConstraint::PatternProperties { .. }));
-        if has_patterns && !self.index_signatures(base)?.is_empty() {
-            constraints.push(self.refuse_alias(SchemaAlias::PatternProperties)?);
-        }
         Ok(WalkStep::Finished(TypeShape::undeclared(
-            ShapeKind::Constrained {
-                base,
-                constraints: self.list(&constraints),
-            },
+            ShapeKind::Int32 { base },
         )))
     }
 
-    // `{} & Schema.MinProperties<1>` and `unknown & Schema.MinProperties<1>` are `Schema.MinProperties<1>` alone, so rules alone do not say what they are rules of. `Schema.Strict` and `Schema.DeepStrict` do: an object without members.
-    pub(super) fn shape_of_aliases_alone(
-        &self,
-        first_alias: SchemaAlias,
-        constraints: &[SchemaConstraint<'c>],
-    ) -> Result<TypeShape<'c>, GaveUp> {
-        if constraints.iter().any(closes_object) {
-            return Ok(TypeShape::undeclared(ShapeKind::Constrained {
-                base: TypeId::EMPTY_TYPE_LITERAL,
-                constraints: self.list(constraints),
-            }));
+    fn is_int32_tag(&self, part: TypeId) -> bool {
+        match *self.c.data(part) {
+            TypeData::Anon {
+                origin: Origin::TypeLiteral(file, node),
+                ..
+            } => self.c.p.aot_symbols().is_int32_tag(file, node),
+            _ => false,
         }
-        let refusal = match find_refusal(constraints) {
-            Some(refusal) => refusal,
-            None => self.refuse_alias(first_alias)?,
-        };
-        Ok(TypeShape::undeclared(ShapeKind::Constrained {
-            base: TypeId::UNKNOWN,
-            constraints: self.list(&[refusal]),
-        }))
     }
 
     fn shape_of_intersection(
@@ -178,7 +138,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return Ok(TypeShape::undeclared(ShapeKind::Never));
         }
         if let Some(primitive) = summary.narrow_primitive.or(summary.wide_primitive) {
-            return self.shape_of_branded_primitive(parts, primitive);
+            return Ok(primitive);
         }
         let Some(first_object) = summary.first_object else {
             return Ok(TypeShape::undeclared(ShapeKind::Anything(
@@ -198,46 +158,5 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }));
         }
         Ok(self.shape_of_object_type(ty))
-    }
-
-    // Of several the first by its bytes, so that every build names the same one.
-    fn find_brand_key(&mut self, part: TypeId) -> Result<Option<Atom>, GaveUp> {
-        if !self.type_shape(part)?.has_members() {
-            return Ok(None);
-        }
-        let members = self.listed_members(part)?;
-        let keys = members.iter().filter_map(|member| match member.name {
-            MemberName::String(name) => is_brand_key(self.atom_bytes(name)).then_some(name),
-            MemberName::Symbol(_) | MemberName::Private(_) => None,
-        });
-        Ok(keys.min_by_key(|&key| self.atom_bytes(key)))
-    }
-
-    // Nobody reads the members of an object type that stands beside a primitive. `Readonly<Schema.MinLength<8>>` is not the type literal of the alias, so it gives no constraint, and the rule that it spells would be lost.
-    fn shape_of_branded_primitive(
-        &mut self,
-        parts: &[TypeId],
-        primitive: TypeShape<'c>,
-    ) -> Result<TypeShape<'c>, GaveUp> {
-        let mut rest: SmallVec<[TypeId; 4]> = SmallVec::new();
-        let mut keys: SmallVec<[Atom; 1]> = SmallVec::new();
-        for &part in parts {
-            match self.find_brand_key(part)? {
-                Some(key) => keys.push(key),
-                None => rest.push(part),
-            }
-        }
-        let Some(key) = keys.into_iter().min_by_key(|&key| self.atom_bytes(key)) else {
-            return Ok(primitive);
-        };
-        let base = match rest[..] {
-            [] => TypeId::UNKNOWN,
-            [only] => only,
-            _ => self.c.intersection(&rest),
-        };
-        Ok(TypeShape::undeclared(ShapeKind::Constrained {
-            base,
-            constraints: self.list(&[SchemaConstraint::Refused(key)]),
-        }))
     }
 }

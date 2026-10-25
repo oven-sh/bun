@@ -13,7 +13,6 @@ struct Target {
     path: String,
     loader: HostLoader,
     host_module: Option<HostModuleId>,
-    typed_path: Option<String>,
     increases_depth: bool,
 }
 
@@ -22,7 +21,6 @@ fn target(path: &str) -> Target {
         path: path.to_owned(),
         loader: HostLoader::default(),
         host_module: None,
-        typed_path: None,
         increases_depth: false,
     }
 }
@@ -34,7 +32,6 @@ fn targets_of(parsed: &ParsedCodeFile<'_, '_>) -> Vec<Target> {
         path: text(target.key.path),
         loader: target.key.loader,
         host_module: target.host_module,
-        typed_path: target.typed_path.map(text),
         increases_depth: target.increases_depth,
     });
     targets.collect()
@@ -257,25 +254,20 @@ fn macro_import_statement_is_erased() {
 }
 
 #[test]
-fn type_attribute_selects_loader_and_excludes_typed_version() {
+fn type_attribute_selects_loader() {
     let host = StatementsHost {
         loaders: &[("/p/lib.js", Some("text"), TEXT_LOADER)],
-        typed_versions: &[("/p/lib.js", "/p/lib.ts")],
         ..host_of(&[
             (
                 "/p/a.ts",
                 "import \"./lib.js\"\nimport \"./lib.js\" with { type: \"text\" }\nimport \"./b\"",
             ),
             ("/p/lib.js", ""),
-            ("/p/lib.ts", ""),
             ("/p/b.ts", ""),
         ])
     };
     with_context(&host, |context| {
-        let as_code = Target {
-            typed_path: Some("/p/lib.ts".to_owned()),
-            ..target("/p/lib.js")
-        };
+        let as_code = target("/p/lib.js");
         let as_text = Target {
             loader: TEXT_LOADER,
             ..target("/p/lib.js")

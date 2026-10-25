@@ -217,7 +217,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn emit_call_expression(
         &mut self,
         call: ExprId,
-        mut callee: Callee,
+        callee: Callee,
         mut arguments: Arguments,
         tail: Tail<'_>,
     ) -> ValueId {
@@ -230,32 +230,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             is_never_inlined: false,
         };
         self.set_position(self.file.last_mapped_position(site.callee));
-        let fragment = &self.file.fragment;
-        let is_validated = options
-            .expected_result
-            .is_some_and(|expected| fragment.is_validated(expected));
-        // The parser of the engine stands in the place of the `parse` that throws only for this call, which validates or says `any`.
-        let may_parse = is_validated || self.file.asks_for_no_check(call);
-        if may_parse && self.file.calls_parse_of_bun(site.callee) {
-            callee.function = self.builder.builtin(BuiltinId::JSONParse);
-        }
-        // `JSON.parse<T>(...list)`, or a callee that isn't resolved: an ordinary call, and `validate<T>()` of what it returns.
-        let is_resolved = self.file.calls_validating_function(site.callee);
-        if is_validated && (matches!(arguments, Arguments::List(_)) || !is_resolved) {
-            let unchecked = CallOptions {
-                expected_result: None,
-                ..options
-            };
-            let parsed = self.emit_call_at(callee, arguments, unchecked);
-            let validate = self.builder.builtin(BuiltinId::BunBundleValidate);
-            callee = Callee {
-                function: validate,
-                this: None,
-                key: None,
-                name: None,
-            };
-            arguments = Arguments::Values(SmallVec::from_slice(&[parsed]));
-        }
         match tail {
             Tail::No => {
                 let value = self.emit_call_at(callee, arguments, options);

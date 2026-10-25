@@ -2067,7 +2067,6 @@ row("the class as a value", () => { const C: any = hide(Point); return typeof C 
 row("toString of a class and of a function", () => { function f(a: number): number { return a } return String(f).replace(/\s+/g, " ").slice(0, 12) + " " + String(Point).slice(0, 11) });
 //// only-a-false-value-arrives.ts
 // Each written type here is reached by one value only, and that value does not fit. The analysis of the whole program finds that nothing passes the test, so the code behind it is dead; the test itself still runs and throws a TypeError at the place that wrote the type. A type parameter tests nothing, an object type is satisfied by any object, and a literal type by any primitive of its kind.
-import { JSON as TypedJSON } from "bun";
 function describe(error: unknown): string {
   if (!(error instanceof Error)) return "thrown: " + String(error);
   const e = error;
@@ -2506,16 +2505,6 @@ async function attempt(name: string, f: () => unknown): Promise<void> {
 {
   const v: any = "4";
   await attempt("cast-angle", () => (<number>v) * 2);
-}
-{
-  interface Point { x: number }
-  await attempt("parse-typed", () => TypedJSON.parse<Point>('{"x":"4"}').x);
-}
-{
-  await attempt("parse-typed-primitive", () => TypedJSON.parse<number>('"4"'));
-}
-{
-  await attempt("parse-typed-array", () => TypedJSON.parse<number[]>('["4"]')[0]);
 }
 {
   await attempt("awaited", () => (async () => { const n: number = await (Promise.resolve("4") as any); return n * 2; })());

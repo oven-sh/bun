@@ -34,7 +34,6 @@ pub struct QueryStatistics {
     pub asked: u64,
     pub gave_up: [u32; GaveUp::COUNT],
     pub members_gave_up: [u32; GaveUp::COUNT],
-    pub invalid_schema_arguments: u32,
     /// See `Checker::closed_cycle_count`.
     pub closed_cycles: u32,
 }
@@ -284,150 +283,9 @@ pub struct ClassShape<'c> {
     pub has_computed_static_name: bool,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-#[repr(u8)]
-pub enum SchemaFormat {
-    Email,
-    Uuid,
-    Ipv4,
-    Ipv6,
-    Date,
-    DateTime,
-    Url,
-    Time,
-    Duration,
-    Hostname,
-    Uri,
-    UriReference,
-    Regex,
-    JsonPointer,
-    RelativeJsonPointer,
-}
-
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum SchemaDefault {
-    Null,
-    Boolean(bool),
-    Number(f64),
-    String(Atom),
-}
-
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum SchemaConstraint<'c> {
-    Int32,
-    Int,
-    Min(f64),
-    Max(f64),
-    Above(f64),
-    Below(f64),
-    MultipleOf(f64),
-    MinLength(u32),
-    MaxLength(u32),
-    MinItems(u32),
-    MaxItems(u32),
-    Pattern {
-        source: Atom,
-        is_unicode: bool,
-    },
-    Format(SchemaFormat),
-    Message(Atom),
-    Default(SchemaDefault),
-    Strict,
-    DeepStrict,
-    UniqueItems,
-    Contains {
-        ty: TypeId,
-        minimum: u32,
-        maximum: Option<u32>,
-    },
-    Not {
-        ty: TypeId,
-    },
-    If {
-        condition: TypeId,
-        then: TypeId,
-        otherwise: TypeId,
-    },
-    OneOf {
-        arms: &'c [TypeId],
-    },
-    AllOf {
-        parts: &'c [TypeId],
-    },
-    /// Each row of `table` is the source of a pattern and the type of what a key that matches it holds. `others` is the type of what a key holds that no member names and no pattern matches.
-    PatternProperties {
-        table: &'c [(Atom, TypeId)],
-        others: TypeId,
-    },
-    PropertyNames {
-        ty: TypeId,
-    },
-    MinProperties(u32),
-    MaxProperties(u32),
-    /// Each is a key and the names that must be present where the key is.
-    DependentRequired(&'c [(Atom, &'c [Atom])]),
-    /// Each is a key and the type of the whole object where the key is present.
-    DependentSchemas(&'c [(Atom, TypeId)]),
-    /// No validator may be built from the type. The text is the keyword of `Schema.Refused<"keyword">`, the name of an alias of `Schema` whose arguments say no rule or that has nothing beside it, or the key of a brand outside the type literal of its alias.
-    Refused(Atom),
-}
-
-impl SchemaConstraint<'_> {
-    /// The types that the constraint tests a value, or a part of it, against.
-    pub fn for_each_type<E>(self, mut visit: impl FnMut(TypeId) -> Result<(), E>) -> Result<(), E> {
-        match self {
-            SchemaConstraint::Contains { ty, .. }
-            | SchemaConstraint::Not { ty }
-            | SchemaConstraint::PropertyNames { ty } => visit(ty),
-            SchemaConstraint::If {
-                condition,
-                then,
-                otherwise,
-            } => {
-                visit(condition)?;
-                visit(then)?;
-                visit(otherwise)
-            }
-            SchemaConstraint::OneOf { arms: types } | SchemaConstraint::AllOf { parts: types } => {
-                types.iter().try_for_each(|&ty| visit(ty))
-            }
-            SchemaConstraint::PatternProperties { table, others } => {
-                table.iter().try_for_each(|&(_, ty)| visit(ty))?;
-                visit(others)
-            }
-            SchemaConstraint::DependentSchemas(entries) => {
-                entries.iter().try_for_each(|&(_, ty)| visit(ty))
-            }
-            SchemaConstraint::Int32
-            | SchemaConstraint::Int
-            | SchemaConstraint::Min(_)
-            | SchemaConstraint::Max(_)
-            | SchemaConstraint::Above(_)
-            | SchemaConstraint::Below(_)
-            | SchemaConstraint::MultipleOf(_)
-            | SchemaConstraint::MinLength(_)
-            | SchemaConstraint::MaxLength(_)
-            | SchemaConstraint::MinItems(_)
-            | SchemaConstraint::MaxItems(_)
-            | SchemaConstraint::Pattern { .. }
-            | SchemaConstraint::Format(_)
-            | SchemaConstraint::Message(_)
-            | SchemaConstraint::Default(_)
-            | SchemaConstraint::Strict
-            | SchemaConstraint::DeepStrict
-            | SchemaConstraint::UniqueItems
-            | SchemaConstraint::MinProperties(_)
-            | SchemaConstraint::MaxProperties(_)
-            | SchemaConstraint::DependentRequired(_)
-            | SchemaConstraint::Refused(_) => Ok(()),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::atom::known;
 
     #[test]
     fn gave_up_count_matches_all() {
@@ -458,49 +316,6 @@ mod tests {
         let mut parameters = [at(2, 0), at(1, 3), at(1, 0)];
         parameters.sort();
         assert_eq!(parameters, [at(1, 0), at(1, 3), at(2, 0)]);
-    }
-
-    #[test]
-    fn every_type_of_a_constraint_is_visited_in_order() {
-        let types_of = |constraint: SchemaConstraint<'_>| {
-            let mut types = Vec::new();
-            let visited: Result<(), ()> = constraint.for_each_type(|ty| {
-                types.push(ty);
-                Ok(())
-            });
-            assert_eq!(visited, Ok(()));
-            types
-        };
-        let (string, number, null) = (TypeId::STRING, TypeId::NUMBER, TypeId::NULL);
-        assert!(types_of(SchemaConstraint::UniqueItems).is_empty());
-        assert_eq!(types_of(SchemaConstraint::Not { ty: string }), [string]);
-        let conditional = SchemaConstraint::If {
-            condition: string,
-            then: number,
-            otherwise: null,
-        };
-        assert_eq!(types_of(conditional), [string, number, null]);
-        let arms = [number, string];
-        assert_eq!(types_of(SchemaConstraint::OneOf { arms: &arms }), arms);
-        assert_eq!(types_of(SchemaConstraint::AllOf { parts: &arms }), arms);
-        let table = [(known::length, number), (known::call, string)];
-        let patterns = SchemaConstraint::PatternProperties {
-            table: &table,
-            others: null,
-        };
-        assert_eq!(types_of(patterns), [number, string, null]);
-    }
-
-    #[test]
-    fn a_visit_that_fails_ends_the_walk() {
-        let arms = [TypeId::NUMBER, TypeId::STRING];
-        let mut visits = 0;
-        let visited = SchemaConstraint::OneOf { arms: &arms }.for_each_type(|_| {
-            visits += 1;
-            Err(GaveUp::Unresolved)
-        });
-        assert_eq!(visited, Err(GaveUp::Unresolved));
-        assert_eq!(visits, 1);
     }
 
     #[test]

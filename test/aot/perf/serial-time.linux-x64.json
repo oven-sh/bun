@@ -38,7 +38,6 @@
   "Optimize | ChooseCallingConventions": 94,
   "Optimize | DeferClosuresInFields": 26,
   "Optimize | AllocateInFrames": 305,
-  "Optimize | AllocateInnerObjects": 46,
   "Optimize | ReuseEnvironments": 167,
   "PlanSlots | PlanSlots": 49,
   "Select | Select": 94,

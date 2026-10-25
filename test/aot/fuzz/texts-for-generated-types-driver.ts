@@ -1,73 +1,57 @@
 // The half of texts-for-generated-types.ts that runs inside the generated program. It is handed one case per generated type: a
-// description of the type, the calls that parse by it, and a function that reads every member through the type beside a twin that
+// description of the type, the calls that parse under it, and a function that reads every member through the type beside a twin that
 // reads the same members through `any`. It makes texts from the description, spells them in many ways, changes them, and asks of each:
 //
 //   is it JSON           a parser written here, one character at a time, says so; every call must agree (SyntaxError or not)
-//   is it a T            a checker written here walks the description over what that parser found; every call must agree
-//   what comes back      the same value as JSON.parse(text): kinds, order of keys, -0, the last of two equal keys, "__proto__" as a key
+//   what comes back      the same value as JSON.parse(text), whether it is a T or not: kinds, order of keys, -0, the last of two equal keys, "__proto__" as a key
 //   what typed code sees the reader through the type and the reader through `any` over JSON.parse(text) print the same
 //
 // A disagreement is one line that starts with "DIFFERS" and holds the type, the text and both answers as JSON.
 
 export type Description =
-  | {
-      kind: "number";
-      whole?: boolean;
-      min?: number;
-      max?: number;
-      above?: number;
-      below?: number;
-      step?: number;
-      fallback?: number;
-    }
-  | { kind: "int32"; fallback?: number }
-  | { kind: "string"; min?: number; max?: number; pattern?: string; fallback?: string }
-  | { kind: "boolean"; fallback?: boolean }
+  | { kind: "number" }
+  | { kind: "int32" }
+  | { kind: "string" }
+  | { kind: "boolean" }
   | { kind: "null" }
   | { kind: "literal"; value: string | number | boolean }
   | { kind: "anything" }
   | { kind: "object or array" }
-  | { kind: "array"; of: Description; min?: number; max?: number }
+  | { kind: "array"; of: Description }
   | { kind: "tuple"; of: Description[] }
   | { kind: "record"; of: Description }
-  | { kind: "object"; members: Member[]; closed?: boolean; rest?: Description }
+  | { kind: "object"; members: Member[]; rest?: Description }
   | { kind: "union"; of: Description[] }
   | { kind: "named"; index: number };
 export type Member = { name: string; optional: boolean; type: Description };
 
+/** Nothing is checked in any of these: what is no T arrives as what JSON.parse gives, and typed code reads what is there. */
 export interface Case {
   name: string;
   type: string;
   description: Description;
-  /** The type has values for members that a text leaves out. */
-  fills?: boolean;
-  /** Parses by the type and reads some members, or none; the value goes nowhere else. A case with this has none of the others. */
+  /** Parses under the type and reads some members, or none; the value goes nowhere else. A case with this has none of the others. */
   inPart?: (text: string) => string;
-  /** Each parses by the type in another way: name and call. */
+  /** Each parses under the type in another way: name and call. */
   parsers?: [string, (text: string) => unknown][];
-  /** Takes a value that is no text. */
-  validate?: (value: unknown) => unknown;
-  readTyped?: (text: string) => string;
-  /** Nothing is checked on these three: what is no T arrives as what JSON.parse gives, and typed code reads what is there. */
   readCast?: (text: string) => string;
   readBody?: (bytes: Uint8Array<ArrayBuffer>) => Promise<string>;
   readRequest?: (bytes: Uint8Array<ArrayBuffer>) => Promise<string>;
   readUntyped: (value: any) => string;
-  /** What a server does with a request: reads its body as JSON under the type unchecked, or as text that is parsed by the type. */
-  serveCast?: (request: Request) => Promise<string>;
-  serveChecked?: (request: Request) => Promise<string>;
-  /** Parses by the type, hands the value to `change`, and reads every member through the type. */
+  /** What a server does with a request: reads its body as JSON under the type. */
+  serve?: (request: Request) => Promise<string>;
+  /** Parses under the type, hands the value to `change`, and reads every member through the type. */
   readChanged?: (text: string, change: (value: unknown) => void) => string;
-  /** Parses by the type with one of `revivers`: its name and the call. */
+  /** Parses under the type with one of `revivers`: its name and the call. */
   revived?: [keyof typeof revivers, (text: string) => unknown][];
-  /** Parses by the type behind an await. */
+  /** Parses under the type behind an await. */
   parseLater?: (text: string) => Promise<unknown>;
 }
 
 class Stopped extends Error {}
 let calls = 0;
 
-/** Revivers that change what the text said. The type is asked about what they return. */
+/** Revivers that change what the text said. */
 export const revivers = {
   "numbers and a half": (_: string, held: unknown) => (typeof held === "number" ? held + 0.5 : held),
   "nothing for null": (_: string, held: unknown) => (held === null ? undefined : held),
@@ -291,96 +275,6 @@ function slowParse(text: string): Tree | typeof noJSON {
 
 let named: Description[] = [];
 
-function codePoints(text: string): number {
-  let count = 0;
-  for (let at = 0; at < text.length; at++) {
-    const unit = text.charCodeAt(at);
-    if (unit >= 0xd800 && unit < 0xdc00 && at + 1 < text.length) {
-      const low = text.charCodeAt(at + 1);
-      if (low >= 0xdc00 && low < 0xe000) at++;
-    }
-    count++;
-  }
-  return count;
-}
-
-const fallbackOf = (description: Description): number | string | boolean | undefined =>
-  description.kind === "number" ||
-  description.kind === "int32" ||
-  description.kind === "string" ||
-  description.kind === "boolean"
-    ? description.fallback
-    : undefined;
-
-/** A tree that fits, with the members that the text leaves out and the type has a value for: behind the others, in the order of the declaration. */
-function filledIn(description: Description, tree: Tree): Tree {
-  switch (description.kind) {
-    case "array":
-      return (tree as Tree[]).map(item => filledIn(description.of, item));
-    case "tuple":
-      return (tree as Tree[]).map((item, at) => filledIn(description.of[at], item));
-    case "record": {
-      const found = new Found();
-      found.names = (tree as Found).names;
-      found.values = (tree as Found).values.map(value => filledIn(description.of, value));
-      return found;
-    }
-    case "object": {
-      const found = new Found();
-      found.names = [...(tree as Found).names];
-      found.values = (tree as Found).values.map((value, at) => {
-        const member = description.members.find(one => one.name === found.names[at]);
-        return member ? filledIn(member.type, value) : description.rest ? filledIn(description.rest, value) : value;
-      });
-      const indexes: [string, Tree][] = [];
-      for (const member of description.members) {
-        const fallback = fallbackOf(member.type);
-        if (fallback === undefined || found.names.includes(member.name)) continue;
-        if (isIndex(member.name)) indexes.push([member.name, fallback]);
-        else {
-          found.names.push(member.name);
-          found.values.push(fallback);
-        }
-      }
-      if (!indexes.length) return found;
-      const table = new Map<string, Tree>(indexes);
-      found.names.forEach((name, at) => table.set(name, found.values[at]));
-      return close(table);
-    }
-    case "union":
-      for (const arm of description.of) if (fits(arm, tree)) return filledIn(arm, tree);
-      return tree;
-    case "named":
-      return filledIn(named[description.index], tree);
-    default:
-      return tree;
-  }
-}
-
-/** What the slow parser would have found for a value of plain data. Nothing, if a list has a gap or holds undefined: JSON has no word for that. */
-function treeOf(value: unknown): Tree | undefined {
-  if (value === null || typeof value === "number" || typeof value === "string" || typeof value === "boolean")
-    return value;
-  if (typeof value !== "object") return undefined;
-  if (Array.isArray(value)) {
-    const items: Tree[] = [];
-    for (let at = 0; at < value.length; at++) {
-      const item = treeOf(value[at]);
-      if (item === undefined) return undefined;
-      items.push(item);
-    }
-    return items;
-  }
-  const found = new Found();
-  for (const name of Object.keys(value)) {
-    const held = treeOf((value as any)[name]);
-    if (held === undefined) return undefined;
-    found.names.push(name);
-    found.values.push(held);
-  }
-  return found;
-}
-
 function valueOf(tree: Tree): unknown {
   if (Array.isArray(tree)) return tree.map(valueOf);
   if (!(tree instanceof Found)) return tree;
@@ -396,32 +290,14 @@ function valueOf(tree: Tree): unknown {
   return object;
 }
 
-export const patterns: Record<string, RegExp> = {
-  "^[a-z]*$": /^[a-z]*$/,
-  "^a": /^a/,
-  "z$": /z$/,
-  "^[a-c]+z?$": /^[a-c]+z?$/,
-};
-
 function fits(description: Description, tree: Tree): boolean {
   switch (description.kind) {
     case "number":
-      if (typeof tree !== "number" || tree - tree !== 0) return false;
-      if (description.whole && Math.floor(tree) !== tree) return false;
-      if (description.min !== undefined && !(tree >= description.min)) return false;
-      if (description.max !== undefined && !(tree <= description.max)) return false;
-      if (description.above !== undefined && !(tree > description.above)) return false;
-      if (description.below !== undefined && !(tree < description.below)) return false;
-      if (description.step !== undefined && tree % description.step !== 0) return false;
-      return true;
+      return typeof tree === "number" && tree - tree === 0;
     case "int32":
       return typeof tree === "number" && Math.floor(tree) === tree && tree >= -2147483648 && tree <= 2147483647;
     case "string":
-      if (typeof tree !== "string") return false;
-      if (description.min !== undefined && codePoints(tree) < description.min) return false;
-      if (description.max !== undefined && codePoints(tree) > description.max) return false;
-      if (description.pattern !== undefined && !patterns[description.pattern].test(tree)) return false;
-      return true;
+      return typeof tree === "string";
     case "boolean":
       return typeof tree === "boolean";
     case "null":
@@ -434,8 +310,6 @@ function fits(description: Description, tree: Tree): boolean {
       return typeof tree === "object" && tree !== null;
     case "array":
       if (!Array.isArray(tree)) return false;
-      if (description.min !== undefined && tree.length < description.min) return false;
-      if (description.max !== undefined && tree.length > description.max) return false;
       for (const item of tree) if (!fits(description.of, item)) return false;
       return true;
     case "tuple":
@@ -448,15 +322,9 @@ function fits(description: Description, tree: Tree): boolean {
       return true;
     case "object": {
       if (!(tree instanceof Found)) return false;
-      let declared = 0;
       for (const member of description.members) {
         const at = tree.names.indexOf(member.name);
-        if (at < 0) {
-          if (!member.optional && fallbackOf(member.type) === undefined) return false;
-          continue;
-        }
-        declared++;
-        if (!fits(member.type, tree.values[at])) return false;
+        if (at < 0 ? !member.optional : !fits(member.type, tree.values[at])) return false;
       }
       if (description.rest) {
         for (let at = 0; at < tree.names.length; at++)
@@ -466,7 +334,7 @@ function fits(description: Description, tree: Tree): boolean {
           )
             return false;
       }
-      return !description.closed || declared === tree.names.length;
+      return true;
     }
     case "union":
       for (const arm of description.of) if (fits(arm, tree)) return true;
@@ -988,27 +856,9 @@ const notJSON = [
   '{"a":{"a":{"a":',
 ];
 
-function numberFor(description: Extract<Description, { kind: "number" }>): string {
-  if (chance(0.3)) {
-    const edges: number[] = [];
-    for (const edge of [description.min, description.max, description.above, description.below])
-      if (edge !== undefined) edges.push(edge, edge + 1, edge - 1, edge + 0.5, edge - 0.5);
-    if (description.step !== undefined)
-      edges.push(
-        description.step,
-        description.step * 3,
-        -description.step,
-        description.step * 1e15,
-        description.step / 2,
-      );
-    if (edges.length) return respell(pick(edges));
-  }
-  const low = description.min ?? description.above ?? -1000;
-  const high = description.max ?? description.below ?? low + 2000;
-  let value = low + below(Math.max(1, Math.floor(high - low) + 1));
-  if (description.step !== undefined) value = Math.round(value / description.step) * description.step;
-  if (!description.whole && description.step === undefined && chance(0.4))
-    return chance(0.5) ? respell(value + below(1000) / 1000) : anyNumber();
+function makeNumber(): string {
+  const value = below(2001) - 1000;
+  if (chance(0.4)) return chance(0.5) ? respell(value + below(1000) / 1000) : anyNumber();
   if (chance(0.15)) return anyNumber();
   return respell(value);
 }
@@ -1026,26 +876,6 @@ function respell(value: number): string {
   if (draw === 5 && /0$/.test(plain) && plain !== "0" && plain !== "-0") return plain.slice(0, -1) + "e1";
   if (draw === 6) return plain + "." + "0".repeat(pick([17, 30, 400]));
   return plain;
-}
-
-function stringFor(description: Extract<Description, { kind: "string" }>): string {
-  if (description.pattern !== undefined || description.min !== undefined || description.max !== undefined) {
-    const low = description.min ?? 0;
-    const high = description.max ?? low + 8;
-    const length = chance(0.7)
-      ? low + below(high - low + 1)
-      : pick([low - 1, low, high, high + 1, 0].filter(count => count >= 0));
-    const from =
-      description.pattern !== undefined && chance(0.85)
-        ? ["a", "b", "c", "z"]
-        : chance(0.6)
-          ? ["a", "b", "z"]
-          : ["a", "😀", "\ud800", "é", "日", "\udc00", "A", "0"];
-    let value = "";
-    for (let count = 0; count < length; count++) value += pick(from);
-    return spellString(value, escaping);
-  }
-  return anyString();
 }
 
 /** Something that is nearly this literal. */
@@ -1089,12 +919,11 @@ function makeMembers(description: Extract<Description, { kind: "object" }>, dept
   const written: Written[] = [];
   const tight = depth > 6 || budget < 0;
   for (const member of description.members) {
-    if (member.optional || fallbackOf(member.type) !== undefined ? tight || chance(0.45) : oddity > 0 && chance(oddity))
-      continue;
+    if (member.optional ? tight || chance(0.45) : oddity > 0 && chance(oddity)) continue;
     written.push({ name: member.name, text: make(member.type, depth + 1) });
   }
   const declared = description.members;
-  if (!tight && chance(description.closed ? oddity : 0.25)) {
+  if (!tight && chance(0.25)) {
     const many = huge && depth < 2 && chance(0.3) ? pick([300, 300, 5000]) : 0;
     for (let count = many; count > 0; count--)
       written.push({
@@ -1159,11 +988,11 @@ function make(description: Description, depth: number): string {
   }
   switch (description.kind) {
     case "number":
-      return numberFor(description);
+      return makeNumber();
     case "int32":
       return chance(0.6) ? pick(wholeNumbers) : chance(0.5) ? respell(below(4294967296) - 2147483648) : anyNumber();
     case "string":
-      return stringFor(description);
+      return anyString();
     case "boolean":
       return pick(["true", "false"]);
     case "null":
@@ -1179,19 +1008,13 @@ function make(description: Description, depth: number): string {
     case "object or array":
       return chance(0.5) ? "[" + anything(depth + 1) + "]" : '{"a":' + anything(depth + 1) + "}";
     case "array": {
-      const low = description.min ?? 0;
-      const high = description.max ?? low + 4;
-      if (huge && depth < 2 && description.max === undefined && chance(0.3)) {
+      if (huge && depth < 2 && chance(0.3)) {
         const item = sure(description.of);
         if (item.length < 40)
           return "[" + (item + ",").repeat(pick([65534, 65535, 65536, 262144])) + make(description.of, depth + 1) + "]";
       }
       let count =
-        depth > 6 || budget < 0
-          ? low
-          : chance(0.9)
-            ? low + below(high - low + 1)
-            : pick([0, low - 1, high + 1, 17, 70].filter(length => length >= 0));
+        depth > 6 || budget < 0 ? 0 : chance(0.9) ? below(5) : pick([0, 5, 17, 70]);
       let text = "[" + space();
       for (let at = 0; at < count; at++) text += (at ? space() + "," + space() : "") + make(description.of, depth + 1);
       return text + space() + "]";
@@ -1236,8 +1059,6 @@ function make(description: Description, depth: number): string {
 let heights: number[] = [];
 function height(description: Description): number {
   switch (description.kind) {
-    case "array":
-      return description.min ? 1 + height(description.of) : 0;
     case "tuple":
       return description.of.reduce((most, item) => Math.max(most, 1 + height(item)), 0);
     case "object":
@@ -1432,8 +1253,8 @@ let differences = 0;
 let pairs = 0;
 /** The heap is kept full on purpose: a RangeError may come out of anything, and ends the question that met it. */
 let filling = false;
-const counts = { accepted: 0, refused: 0, "no JSON": 0 };
-const plainParse = globalThis.JSON.parse;
+const counts = { "a T": 0, "no T": 0, "no JSON": 0 };
+const plainParse = JSON.parse;
 
 function report(what: string, test: Case, text: string, how: string, expected: string, got: string): void {
   differences++;
@@ -1442,7 +1263,7 @@ function report(what: string, test: Case, text: string, how: string, expected: s
     long.length > 1500 ? long.slice(0, 700) + " ... " + (long.length - 1400) + " more ... " + long.slice(-700) : long;
   console.log(
     "DIFFERS " +
-      globalThis.JSON.stringify({
+      JSON.stringify({
         what,
         case: test.name,
         type: short(test.type),
@@ -1462,14 +1283,7 @@ function answerOf(run: () => unknown): { threw: string; value: unknown } {
     if (error instanceof SyntaxError) return { threw: "SyntaxError", value: undefined };
     if (error instanceof RangeError && filling) throw error;
     if (error instanceof RangeError) return { threw: "RangeError", value: undefined };
-    if (error instanceof TypeError)
-      return {
-        threw:
-          Array.isArray((error as any).issues) && (error as any).issues.length > 0
-            ? "TypeError"
-            : "TypeError without issues: " + error.message,
-        value: undefined,
-      };
+    if (error instanceof TypeError) return { threw: "TypeError", value: undefined };
     return { threw: "another error: " + String(error), value: undefined };
   }
 }
@@ -1495,25 +1309,26 @@ function ask(test: Case, text: string): void {
   if (trace)
     console.error(
       "ASK " +
-        globalThis.JSON.stringify([test.name, how, text.length > 3000 ? text.slice(0, 3000) : text, text.length]),
+        JSON.stringify([test.name, how, text.length > 3000 ? text.slice(0, 3000) : text, text.length]),
     );
   const tree = slowParse(text);
   const deep = deepest > 400;
   if (deepest > 2000) {
     // Too deep for the functions here that call themselves: the calls only have to end in one of the ways they may.
-    for (const [name, parse] of test.parsers ?? [["JSON.parse<T>, read in part", test.inPart!]]) {
+    for (const [name, parse] of test.parsers ?? [["read in part", test.inPart!]]) {
       const answer = answerOf(() => parse(hold(text, how)));
+      // A TypeError is the reader's own: it reads a member of what is no object.
       if (
-        tree === noJSON
-          ? answer.threw !== "SyntaxError" && answer.threw !== "RangeError"
-          : answer.threw !== "" && answer.threw !== "TypeError" && answer.threw !== "RangeError"
+        answer.threw !== (tree === noJSON ? "SyntaxError" : "") &&
+        answer.threw !== "RangeError" &&
+        !(test.inPart && tree !== noJSON && answer.threw === "TypeError")
       )
         report(
           name + ": ends otherwise",
           test,
           text,
           how,
-          tree === noJSON ? "SyntaxError" : "a value or a TypeError",
+          tree === noJSON ? "SyntaxError" : "a value",
           answer.threw || "a value",
         );
     }
@@ -1529,42 +1344,17 @@ function ask(test: Case, text: string): void {
       tree === noJSON ? "no JSON" : "JSON",
       plain.threw || "a value",
     );
-  const expected = tree === noJSON ? "SyntaxError" : fits(test.description, tree) ? "" : "TypeError";
-  counts[tree === noJSON ? "no JSON" : expected === "" ? "accepted" : "refused"]++;
+  const expected = tree === noJSON ? "SyntaxError" : "";
+  const isAT = tree !== noJSON && fits(test.description, tree);
+  counts[tree === noJSON ? "no JSON" : isAT ? "a T" : "no T"]++;
   const spelled = tree === noJSON ? "" : spellTree(tree);
-  // What the type fills in is there after a parse by the type and after validate, not under a reviver.
-  const filled = expected === "" && test.fills ? filledIn(test.description, tree as Tree) : undefined;
-  const spelledFilled = filled === undefined ? spelled : spellTree(filled);
-  const plainFilled = filled === undefined ? plain.value : valueOf(filled);
   if (tree !== noJSON && plain.threw === "" && spellValue(plain.value) !== spelled)
     report("what JSON.parse without a type gives", test, text, how, spelled, spellValue(plain.value));
   if (test.inPart) {
-    const answer = answerOf(() => test.inPart!(hold(text, how)));
-    if (deep && answer.threw === "RangeError") return;
-    // A TypeError without issues is the reader's own: a union told apart by a name that another arm's value has as well.
-    if (expected === "" && answer.threw.startsWith("TypeError without issues")) {
-      const untyped = endOf(() => test.readUntyped(plainFilled));
-      if (untyped !== "TypeError")
-        report("typed code reads a part of it otherwise", test, text, how, untyped, answer.threw);
-    } else if (answer.threw !== expected)
-      report(
-        "JSON.parse<T>, read in part" +
-          (expected === "TypeError" && answer.threw === ""
-            ? ": takes what is no T"
-            : expected === "" && answer.threw === "TypeError"
-              ? ": refuses a T"
-              : ": ends otherwise"),
-        test,
-        text,
-        how,
-        expected || "a value",
-        answer.threw || "prints " + answer.value,
-      );
-    else if (expected === "") {
-      const untyped = endOf(() => test.readUntyped(plainFilled));
-      if (untyped !== "prints " + answer.value)
-        report("typed code reads a part of it otherwise", test, text, how, untyped, "prints " + answer.value);
-    }
+    const typed = endOf(() => test.inPart!(hold(text, how)));
+    if (deep && typed === "RangeError") return;
+    const untyped = tree === noJSON ? "SyntaxError" : endOf(() => test.readUntyped(plain.value));
+    if (typed !== untyped) report("typed code reads a part of it otherwise", test, text, how, untyped, typed);
     return;
   }
   for (const [name, parse] of test.parsers!) {
@@ -1572,12 +1362,7 @@ function ask(test: Case, text: string): void {
     if (deep && answer.threw === "RangeError") continue;
     if (answer.threw !== expected) {
       report(
-        name +
-          (expected === "TypeError" && answer.threw === ""
-            ? ": takes what is no T"
-            : expected === "" && answer.threw === "TypeError"
-              ? ": refuses a T"
-              : ": ends otherwise"),
+        name + ": ends otherwise",
         test,
         text,
         how,
@@ -1588,32 +1373,16 @@ function ask(test: Case, text: string): void {
     }
     if (expected !== "") continue;
     const got = spellValue(answer.value);
-    const wanted = name.includes("reviver") ? spelled : spelledFilled;
-    if (got !== wanted) report(name + ": another value", test, text, how, wanted, got);
+    if (got !== spelled) report(name + ": another value", test, text, how, spelled, got);
     else if (chance(0.25)) {
       const way = below(4);
       const other = spellValueInOtherWays(answer.value, way);
-      if (other !== wanted) report(name + ": another value, read in way " + way, test, text, how, wanted, other);
-      const written = globalThis.JSON.stringify(answer.value);
-      const writtenPlain = globalThis.JSON.stringify(name.includes("reviver") ? plain.value : plainFilled);
+      if (other !== spelled) report(name + ": another value, read in way " + way, test, text, how, spelled, other);
+      const written = JSON.stringify(answer.value);
+      const writtenPlain = JSON.stringify(plain.value);
       if (written !== writtenPlain)
         report(name + ": JSON.stringify writes it otherwise", test, text, how, writtenPlain, written);
     }
-  }
-  if (tree !== noJSON && plain.threw === "" && test.validate) {
-    const answer = answerOf(() => test.validate!(plain.value));
-    if (deep && answer.threw === "RangeError") {
-    } else if (answer.threw !== expected)
-      report(
-        "validate" + (expected === "TypeError" && answer.threw === "" ? ": takes what is no T" : ": ends otherwise"),
-        test,
-        text,
-        how,
-        expected || "a value",
-        answer.threw || "a value: " + spellValue(answer.value),
-      );
-    else if (expected === "" && spellValue(answer.value) !== spelledFilled)
-      report("validate: another value", test, text, how, spelledFilled, spellValue(answer.value));
   }
   if (test.revived && !deep && chance(0.3)) {
     const [name, parse] = pick(test.revived);
@@ -1621,42 +1390,18 @@ function ask(test: Case, text: string): void {
     const reference = answerOf(() => plainParse(hold(text, how), revivers[name]));
     calls = 0;
     const answer = answerOf(() => parse(hold(text, how)));
-    const revivedTree = reference.threw === "" ? treeOf(reference.value) : undefined;
-    if (reference.threw !== "") {
-      if (answer.threw !== reference.threw)
-        report(
-          "JSON.parse<T> with a reviver, " + name + ": ends otherwise",
-          test,
-          text,
-          how,
-          reference.threw,
-          answer.threw || "a value: " + spellValue(answer.value),
-        );
-    } else if (revivedTree !== undefined) {
-      const wanted = fits(test.description, revivedTree) ? "" : "TypeError";
-      if (answer.threw !== wanted)
-        report(
-          "JSON.parse<T> with a reviver, " +
-            name +
-            (wanted === "TypeError" && answer.threw === "" ? ": takes what is no T" : ": ends otherwise"),
-          test,
-          text,
-          how,
-          wanted || "a value: " + spellValue(reference.value),
-          answer.threw || "a value: " + spellValue(answer.value),
-        );
-      else if (wanted === "" && spellValue(answer.value) !== spellValue(reference.value))
-        report(
-          "JSON.parse<T> with a reviver, " + name + ": another value",
-          test,
-          text,
-          how,
-          spellValue(reference.value),
-          spellValue(answer.value),
-        );
-    } else if (answer.threw === "" && spellValue(answer.value) !== spellValue(reference.value))
+    if (answer.threw !== reference.threw)
       report(
-        "JSON.parse<T> with a reviver, " + name + ": another value",
+        "with a reviver, " + name + ": ends otherwise",
+        test,
+        text,
+        how,
+        reference.threw || "a value: " + spellValue(reference.value),
+        answer.threw || "a value: " + spellValue(answer.value),
+      );
+    else if (answer.threw === "" && spellValue(answer.value) !== spellValue(reference.value))
+      report(
+        "with a reviver, " + name + ": another value",
         test,
         text,
         how,
@@ -1667,9 +1412,9 @@ function ask(test: Case, text: string): void {
   if (tree !== noJSON && plain.threw === "" && !deep && test.readCast) {
     const cast = endOf(() => test.readCast!(hold(text, how)));
     const untyped = endOf(() => test.readUntyped(plain.value));
-    if (cast !== untyped) report("typed code reads what a cast let in otherwise", test, text, how, untyped, cast);
+    if (cast !== untyped) report("typed code reads it otherwise", test, text, how, untyped, cast);
   }
-  if (expected === "" && !deep && test.readChanged && chance(0.3)) {
+  if (isAT && !deep && test.readChanged && chance(0.3)) {
     const drawn = next();
     let changed: unknown;
     let after = 0;
@@ -1682,7 +1427,7 @@ function ask(test: Case, text: string): void {
       }),
     );
     state = drawn;
-    const twin = valueOf(filled === undefined ? (tree as Tree) : filled);
+    const twin = valueOf(tree as Tree);
     changeValue(twin);
     const same = state === after;
     const untyped = endOf(() => test.readUntyped(twin));
@@ -1698,11 +1443,6 @@ function ask(test: Case, text: string): void {
       );
     else if (spellValue(changed) !== spellValue(twin))
       report("another value after a change", test, text, how, spellValue(twin), spellValue(changed));
-  }
-  if (expected === "" && !deep && test.readTyped) {
-    const typed = endOf(() => test.readTyped!(hold(text, how)));
-    const untyped = endOf(() => test.readUntyped(plainFilled));
-    if (typed !== untyped) report("typed code reads it otherwise", test, text, how, untyped, typed);
   }
 }
 
@@ -1801,23 +1541,18 @@ async function askLater(test: Case, text: string): Promise<void> {
   pairs++;
   if (trace)
     console.error(
-      "ASK LATER " + globalThis.JSON.stringify([test.name, text.length > 3000 ? text.slice(0, 3000) : text]),
+      "ASK LATER " + JSON.stringify([test.name, text.length > 3000 ? text.slice(0, 3000) : text]),
     );
   const tree = slowParse(text);
   if (deepest > 400) return;
-  const expected =
-    tree === noJSON
-      ? "SyntaxError"
-      : fits(test.description, tree)
-        ? "a value: " + spellTree(test.fills ? filledIn(test.description, tree) : tree)
-        : "TypeError";
+  const expected = tree === noJSON ? "SyntaxError" : "a value: " + spellTree(tree);
   let got: string;
   try {
     got = "a value: " + spellValue(await test.parseLater(text));
   } catch (error) {
     got = nameOfError(error);
   }
-  if (got !== expected) report("JSON.parse<T> behind an await", test, text, "as it is", expected, got);
+  if (got !== expected) report("a parse behind an await", test, text, "as it is", expected, got);
 }
 
 const strayBytes = [
@@ -1854,28 +1589,18 @@ let served: Case[] = [];
 
 /** The bytes go to a server of this process over the loopback, whole or in pieces cut at any byte. */
 async function askServer(test: Case, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
-  if (!test.serveCast || !test.serveChecked || bytes.length > 100000) return;
+  if (!test.serve || bytes.length > 100000) return;
   server ??= Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
     async fetch(request) {
-      const [, how, name] = new URL(request.url).pathname.split("/");
+      const name = new URL(request.url).pathname.slice(1);
       const wanted = served.find(one => one.name === name)!;
       try {
         // Written as JSON: half a surrogate pair does not survive in the bytes of an answer.
-        return new Response(
-          globalThis.JSON.stringify(
-            "prints " + (await (how === "cast" ? wanted.serveCast! : wanted.serveChecked!)(request)),
-          ),
-        );
+        return new Response(JSON.stringify("prints " + (await wanted.serve!(request))));
       } catch (error) {
-        return new Response(
-          globalThis.JSON.stringify(
-            error instanceof TypeError && !Array.isArray((error as any).issues)
-              ? "TypeError of the reader"
-              : nameOfError(error),
-          ),
-        );
+        return new Response(JSON.stringify(nameOfError(error)));
       }
     },
   });
@@ -1885,50 +1610,34 @@ async function askServer(test: Case, bytes: Uint8Array<ArrayBuffer>): Promise<vo
   pairs++;
   if (trace)
     console.error(
-      "ASK SERVER " + globalThis.JSON.stringify([test.name, Buffer.from(bytes).toString("hex").slice(0, 6000)]),
+      "ASK SERVER " + JSON.stringify([test.name, Buffer.from(bytes).toString("hex").slice(0, 6000)]),
     );
-  const ofReader = (end: string): string => (end === "TypeError" ? "TypeError of the reader" : end);
-  const isAT = tree !== noJSON && fits(test.description, tree);
-  const expectations = {
-    cast: tree === noJSON ? "SyntaxError" : ofReader(endOf(() => test.readUntyped(plainParse(decoded)))),
-    checked:
-      tree === noJSON
-        ? "SyntaxError"
-        : !isAT
-          ? "TypeError"
-          : ofReader(
-              endOf(() =>
-                test.readUntyped(test.fills ? valueOf(filledIn(test.description, tree)) : plainParse(decoded)),
-              ),
-            ),
-  };
-  for (const how of ["cast", "checked"] as const) {
-    let body: Uint8Array<ArrayBuffer> | ReadableStream<Uint8Array<ArrayBuffer>> = bytes;
-    if (chance(0.4) && bytes.length) {
-      const pieces: Uint8Array<ArrayBuffer>[] = [];
-      for (let at = 0; at < bytes.length;) {
-        const size = 1 + below(pick([2, 8, 64, 1000]));
-        pieces.push(bytes.slice(at, at + size));
-        at += size;
-      }
-      body = new ReadableStream({
-        start(controller) {
-          for (const piece of pieces) controller.enqueue(piece);
-          controller.close();
-        },
-      });
+  const expected = tree === noJSON ? "SyntaxError" : endOf(() => test.readUntyped(plainParse(decoded)));
+  let body: Uint8Array<ArrayBuffer> | ReadableStream<Uint8Array<ArrayBuffer>> = bytes;
+  if (chance(0.4) && bytes.length) {
+    const pieces: Uint8Array<ArrayBuffer>[] = [];
+    for (let at = 0; at < bytes.length;) {
+      const size = 1 + below(pick([2, 8, 64, 1000]));
+      pieces.push(bytes.slice(at, at + size));
+      at += size;
     }
-    const got = plainParse(await (await fetch(server.url + how + "/" + test.name, { method: "POST", body })).text());
-    if (got !== expectations[how])
-      report(
-        "a server reads a body otherwise, " + how,
-        test,
-        Buffer.from(bytes).toString("hex"),
-        body === bytes ? "bytes, here in hex" : "bytes in pieces, here in hex",
-        expectations[how],
-        got,
-      );
+    body = new ReadableStream({
+      start(controller) {
+        for (const piece of pieces) controller.enqueue(piece);
+        controller.close();
+      },
+    });
   }
+  const got = plainParse(await (await fetch(server.url + test.name, { method: "POST", body })).text());
+  if (got !== expected)
+    report(
+      "a server reads a body otherwise",
+      test,
+      Buffer.from(bytes).toString("hex"),
+      body === bytes ? "bytes, here in hex" : "bytes in pieces, here in hex",
+      expected,
+      got,
+    );
 }
 
 /** The bytes of a body, read as JSON under a type that nothing checks. */
@@ -1950,13 +1659,13 @@ async function askBody(test: Case, text: string): Promise<void> {
   pairs++;
   if (trace)
     console.error(
-      "ASK BYTES " + globalThis.JSON.stringify([test.name, Buffer.from(bytes).toString("hex").slice(0, 6000)]),
+      "ASK BYTES " + JSON.stringify([test.name, Buffer.from(bytes).toString("hex").slice(0, 6000)]),
     );
   const decoded = lenientDecoder.decode(bytes);
   const tree = slowParse(decoded);
   if (deepest > 400) return;
   const expected = tree === noJSON ? "SyntaxError" : endOf(() => test.readUntyped(plainParse(decoded)));
-  counts[tree === noJSON ? "no JSON" : "accepted"]++;
+  counts[tree === noJSON ? "no JSON" : fits(test.description, tree) ? "a T" : "no T"]++;
   for (const [name, read] of [
     ["Response", test.readBody],
     ["Request", test.readRequest],
@@ -1982,51 +1691,24 @@ async function askBody(test: Case, text: string): Promise<void> {
 /** A small text that is a value of the type for sure. */
 function sure(description: Description): string {
   switch (description.kind) {
-    case "number": {
-      const { min, max, above, below: under, step } = description;
-      for (const value of [
-        0,
-        1,
-        min,
-        max,
-        (min ?? 0) + 1,
-        (max ?? 0) - 1,
-        (above ?? 0) + 1,
-        (under ?? 0) - 1,
-        (above ?? 0) + 0.5,
-        step,
-        (step ?? 1) * Math.ceil(((min ?? above ?? 0) + 1) / (step ?? 1)),
-        (step ?? 1) * Math.floor(((max ?? under ?? 0) - 1) / (step ?? 1)),
-      ])
-        if (value !== undefined && fits(description, value)) return String(value);
+    case "number":
       return "0";
-    }
     case "int32":
       return "7";
     case "string":
-      for (const value of [
-        "",
-        "a",
-        "z",
-        "az",
-        "az".padStart(description.min ?? 0, "a"),
-        "a".repeat(description.min ?? 0),
-        "z".repeat(description.min ?? 0),
-      ])
-        if (fits(description, value)) return '"' + value + '"';
       return '""';
     case "boolean":
       return "true";
     case "null":
       return "null";
     case "literal":
-      return globalThis.JSON.stringify(description.value);
+      return JSON.stringify(description.value);
     case "anything":
       return "0";
     case "object or array":
       return "[]";
     case "array":
-      return "[" + Array.from({ length: description.min ?? 0 }, () => sure(description.of)).join(",") + "]";
+      return "[]";
     case "tuple":
       return "[" + description.of.map(sure).join(",") + "]";
     case "record":
@@ -2062,7 +1744,6 @@ function around(description: Description, target: number, level: number, open: n
       return around(named[description.index], target, level + 1, [...open, description.index]);
     }
     case "array": {
-      if ((description.min ?? 0) > 1 || description.max === 0) return undefined;
       const inner = around(description.of, target, level + 1, open);
       return inner && ["[" + inner[0], inner[1] + "]"];
     }
@@ -2114,7 +1795,7 @@ function around(description: Description, target: number, level: number, open: n
 
 const mayEnd = (answer: string, ...ways: string[]): boolean => ways.includes(answer);
 
-/** A value nested `levels` deep: the whole of it, the front of it alone, and with something at the bottom that is no T or no JSON. */
+/** A value nested `levels` deep: the whole of it, the front of it alone, and with something at the bottom that is no T or no JSON. A reader may throw a TypeError of its own. */
 function askDeep(test: Case, index: number, levels: number): void {
   oddity = 0;
   spacing = 0;
@@ -2174,7 +1855,7 @@ function askDeep(test: Case, index: number, levels: number): void {
   ]);
   for (const [what, text, ways] of texts) {
     pairs++;
-    if (trace) console.error("ASK DEEP " + globalThis.JSON.stringify([test.name, what, levels]));
+    if (trace) console.error("ASK DEEP " + JSON.stringify([test.name, what, levels]));
     const answer = answerOf(() => parse(text));
     if (!mayEnd(answer.threw, ...ways))
       report(
@@ -2400,10 +2081,10 @@ export async function run(cases: Case[], descriptions: Description[]): Promise<v
   console.log(
     "texts " +
       pairs +
-      " accepted " +
-      counts.accepted +
-      " refused " +
-      counts.refused +
+      " a T " +
+      counts["a T"] +
+      " no T " +
+      counts["no T"] +
       " no JSON " +
       counts["no JSON"] +
       " differences " +

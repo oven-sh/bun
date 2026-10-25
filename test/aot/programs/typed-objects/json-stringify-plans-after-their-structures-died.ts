@@ -1,5 +1,5 @@
 // Objects with undeclared keys are written, dropped and collected; then objects with other keys are parsed, so that new structures lie where the old ones lay, and written.
-import { JSON } from "bun"; const host: any = globalThis;
+const host: any = globalThis;
 const collect: () => void = host.Bun ? () => host.Bun.gc(true) : host.gc;
 let serial = 0;
 function longText(): string {
@@ -27,7 +27,7 @@ function generation(number: number): number {
     const members = ['"id":' + set, '"name":' + longText()];
     for (let at = 0; at < 1 + (set % 7); at++) members.splice(1 + (at % 2), 0, '"g' + number + "s" + set + "k" + at + '":' + (at % 2 ? String(number * 1000 + set) : longText()));
     texts.push("{" + members.join(",") + "}");
-    values.push(JSON.parse<Item>(texts[set]));
+    values.push(JSON.parse(texts[set]) as Item);
   }
   for (let round = 0; round < 3; round++) for (let set = 0; set < 60; set++) if (JSON.stringify(values[set]) !== texts[set]) different++;
   for (let set = 0; set < 60; set++) if (JSON.stringify({ held: values[set], list: [values[set]] }) !== '{"held":' + texts[set] + ',"list":[' + texts[set] + "]}") different++;

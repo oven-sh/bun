@@ -28,22 +28,13 @@ impl FileLowering<'_, '_, '_, '_> {
             header.name = name;
             header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);
         }
-        header.text = match self.compiled.installed_text {
-            Some(installed) => {
-                let (start, end) =
-                    (installed.classes.get(class.idx()).copied()).unwrap_or_default();
-                SourceRange { start, end }
-            }
-            None => {
-                let end = match self.bound.class_owner[class.idx()] {
-                    ClassOwner::Expr(expression) => hir[expression].end,
-                    ClassOwner::Stmt(statement) => hir[statement].loc.end,
-                };
-                SourceRange {
-                    start: self.type_ranges.map_offset(node.text_start),
-                    end: self.type_ranges.map_offset(end),
-                }
-            }
+        let end = match self.bound.class_owner[class.idx()] {
+            ClassOwner::Expr(expression) => hir[expression].end,
+            ClassOwner::Stmt(statement) => hir[statement].loc.end,
+        };
+        header.text = SourceRange {
+            start: self.type_ranges.map_offset(node.text_start),
+            end: self.type_ranges.map_offset(end),
         };
         header.kind = match is_derived_class(hir, class) {
             true => FunctionKind::DerivedConstructor,

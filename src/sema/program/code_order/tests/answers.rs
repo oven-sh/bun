@@ -1,10 +1,8 @@
 use super::*;
-use crate::erasure::ErasureMismatchKind;
 use crate::module_format::DeclaredModuleType;
 use crate::program::code_test_host::TEXT_LOADER;
 use crate::resolve::{
     CodeFailure, ComputedUnknown, EnclosingPackage, ExternalKind, HostResolution,
-    TypedVersionOrigin,
 };
 
 fn node_modules() -> Vec<(&'static str, HostResolution)> {
@@ -284,37 +282,5 @@ fn compiled_module_records_how_file_was_loaded() {
             compiled_at(files, "/node_modules/pkg/index.js").package,
             Some(expected)
         );
-    });
-}
-
-#[test]
-fn rejected_typed_version_is_recorded() {
-    const INSTALLED: &str = "/node_modules/pkg/index.js";
-    const TYPED: &str = "/node_modules/pkg/typed.ts";
-    let host = StatementsHost {
-        typed_versions: &[(INSTALLED, TYPED)],
-        ..host_of(&[
-            ("/main.ts", "import \"pkg\""),
-            (INSTALLED, "a\nbb"),
-            (TYPED, "a\nx"),
-        ])
-    };
-    with_program(&host, &["/main.ts"], |files| {
-        let installed = file_at(files, INSTALLED);
-        assert_eq!(files.role(installed), FileRole::Inferred);
-        assert_eq!(files.diagnostic_path(installed), INSTALLED.as_bytes());
-        let compiled = compiled_at(files, INSTALLED);
-        assert_eq!(compiled.typed_source_path, None);
-        assert_eq!(
-            compiled.typed_version_origin,
-            Some(TypedVersionOrigin::Host)
-        );
-        let expected = RejectedTypedVersion {
-            path: TYPED.as_bytes(),
-            kind: ErasureMismatchKind::Name,
-            installed_range: (2, 4),
-        };
-        assert_eq!(compiled.rejected_typed_version, Some(expected));
-        assert_eq!(files.by_path.get(TYPED.as_bytes()), None);
     });
 }

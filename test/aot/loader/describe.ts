@@ -31,7 +31,6 @@ export interface TreeGraph extends Disposable {
 }
 
 function withRelativePaths(file: CodeGraphFile, relativeTo: (text: string) => string): TreeFile {
-  const { typedSourcePath } = file;
   return {
     ...file,
     path: relativeTo(file.path),
@@ -39,7 +38,6 @@ function withRelativePaths(file: CodeGraphFile, relativeTo: (text: string) => st
     codeEdges: file.codeEdges.map(relativeTo),
     impliedAnswers: file.impliedAnswers.map(relativeTo),
     sites: file.sites.map(site => ({ ...site, answer: relativeTo(site.answer) })),
-    typedSourcePath: typedSourcePath && relativeTo(typedSourcePath),
   };
 }
 

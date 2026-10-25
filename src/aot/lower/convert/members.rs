@@ -108,7 +108,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let container = self.queries.without_nullish(container).ok()?;
         match self.queries.type_shape(container).ok()?.kind {
             ShapeKind::Array { element, .. } => Some(element),
-            ShapeKind::Constrained { base, .. } => self.find_array_element_type(base),
+            ShapeKind::Int32 { base } => self.find_array_element_type(base),
             _ => None,
         }
     }
@@ -127,7 +127,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 | ShapeKind::NumberLiteral(_)
                 | ShapeKind::NumericEnumMember(_) => {}
                 ShapeKind::Union(members) => pending.extend_from_slice(members),
-                ShapeKind::Constrained { base, .. } => pending.push(base),
+                ShapeKind::Int32 { base } => pending.push(base),
                 _ => return false,
             }
         }

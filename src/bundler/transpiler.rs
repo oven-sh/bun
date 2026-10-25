@@ -1572,11 +1572,6 @@ impl<'a> Transpiler<'a> {
                     .and_then(|s| s.clone().ok().map(Box::new));
                 opts.features.define_hash = self.options.define.user_hash;
                 opts.features.repl_mode = self.options.repl_mode;
-                // A text without a file has nothing beside it that its types could come from.
-                if loader.is_typescript() && bun_paths::is_absolute(source.path.text) {
-                    use crate::aot::validation_plans::{Output, plan_source};
-                    opts.features.validation_plans = plan_source(self, Output::RunsInPlace);
-                }
 
                 // we'll just always enable top-level await
                 // this is incorrect for Node.js files which are CommonJS modules

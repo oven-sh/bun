@@ -472,7 +472,7 @@ import "shapes";
 import type { Size } from "./types";
 export type Copy = Size;
 "#;
-    let shapes_manifest = r#"{ "name": "shapes", "version": "1.0.0", "main": "./index.js" }"#;
+    let shapes_manifest = r#"{ "name": "shapes", "version": "1.0.0", "exports": { "aot": "./index.aot.ts", "default": "./index.js" } }"#;
     let files = [
         ("main.ts", main_text),
         ("own.js", "export {};\n"),
@@ -483,18 +483,12 @@ export type Copy = Size;
         ("node_modules/shapes/package.json", shapes_manifest),
         ("node_modules/shapes/index.js", "export const sides = 4;\n"),
         (
-            ".full-types/shapes/index.ts",
+            "node_modules/shapes/index.aot.ts",
             "export const sides: number = 4;\n",
         ),
     ];
     let disk = project_disk(&files, 1);
-    let script = HostScript {
-        typed_versions: &[(
-            "node_modules/shapes/index.js",
-            ".full-types/shapes/index.ts",
-        )],
-        ..HostScript::default()
-    };
+    let script = HostScript::default();
     with_host(
         &ScriptedHost(&disk, script),
         PROJECT,
@@ -510,8 +504,8 @@ export type Copy = Size;
                     FileOrigin::DependencyJavaScript,
                 ),
                 (
-                    "node_modules/shapes/index.js",
-                    FileOrigin::ProjectTypedVersion,
+                    "node_modules/shapes/index.aot.ts",
+                    FileOrigin::DependencySource,
                 ),
             ];
             for (path, origin) in expected {

@@ -44,23 +44,6 @@ pub trait CodeHost: Host {
         Vec::new()
     }
 
-    fn typed_version(
-        &self,
-        _path: &[u8],
-        _package: Option<EnclosingPackage<'_>>,
-    ) -> Option<Vec<u8>> {
-        None
-    }
-
-    /// Full types that count only if the package ships none.
-    fn installed_typed_version(
-        &self,
-        _path: &[u8],
-        _package: Option<EnclosingPackage<'_>>,
-    ) -> Option<Vec<u8>> {
-        None
-    }
-
     fn compiler_declarations(&self) -> Vec<Vec<u8>> {
         Vec::new()
     }

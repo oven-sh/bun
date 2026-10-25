@@ -11,6 +11,7 @@ mod data;
 mod decorators;
 mod dispose;
 mod exception;
+mod expected_result;
 mod expression;
 mod fragment;
 mod function;
@@ -35,7 +36,6 @@ mod switch;
 mod template;
 mod types;
 mod typescript;
-mod validate;
 mod yield_star;
 
 use bun_sema::check::Checker;
@@ -54,9 +54,6 @@ pub use self::fragment::{Fragment, ModuleFragment};
 pub(crate) use self::layouts::late_answers;
 pub use self::layouts::{DefinedObjectType, DefinedObjectTypes, ObjectTypeKey};
 pub use self::module::{LeftOutDeclarations, LibraryFunctions, collect_library_functions};
-pub use self::validate::{
-    PlanInputs, PlannedCall, PlannedFile, plan_validated_calls, write_json_schema,
-};
 
 pub(crate) use self::context::{FileLowering, FunctionLowering};
 pub(crate) use self::convert::FamilyFacts;

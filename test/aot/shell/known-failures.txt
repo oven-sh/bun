@@ -436,47 +436,27 @@ constant-containers/sets-of-constant-strings	// IR+  = NewSetFromTable( table=\d
 constant-containers/sets-of-constant-strings	// IR= 1 fresh  = NewSetFromTable( table=\d+)?( @|$)
 copies-of-heirs/types-kept-object-assign-onto-an-instance	// IR= 1 kept : number = 
 data-from-outside/any-into-generic-field	// IR- ^layout (L\d+) .*name="OnlyTypedValuesEnter" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-data-from-outside/clone-as-undefined-value	// COUNTER: CloneAsFieldLimitReached >= 1
 data-from-outside/dictionary-delete-keeps-layouts	// IR+ : number = PropGet v\d+ name="serial"
 data-from-outside/dictionary-delete-keeps-layouts	// IR+ ^layout L\d+ .*name="Looks" .* representation=Typed
 data-from-outside/generic-wrapper-used-from-javascript	// IR+ ^layout (L\d+) .*name="Wrapper" [\s\S]*^function f\d+ "make" Plain .* -> (undefined\|null\|)?=?\1!?( |$)
 data-from-outside/generic-wrapper-used-from-javascript	// IR+ ^layout L\d+ .*name="Wrapper" .* representation=Typed
-data-from-outside/json-imported-from-bun	// IR+ ^layout L\d+ .*name="User" .* representation=Typed
 data-from-outside/json-into-class-containers	// IR- ^layout (L\d+) .*name="NeverGiven" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 data-from-outside/json-into-class-containers	// IR- ^layout (L\d+) .*name="WithAPrivateField" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 data-from-outside/json-into-class-containers	// IR- ^layout (L\d+) .*name="WithAPrivateName" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-data-from-outside/json-parse-equal-texts-same-arm	// IR+ ^ .*JSONGiveUpIfKeyRepeats
-data-from-outside/json-parse-equal-texts-same-arm	// IR+ ^ .*JSONGiveUpIfMemberRepeats
 data-from-outside/json-parse-into-a-union-of-records-stays-compiled	// IR+ ^ .*JSONParseString
 data-from-outside/json-parse-into-declared-types	// IR+ JSONStartsWith v\d+ text="\\x22id\\x22:"
 data-from-outside/json-parse-recursive-union-retry	// IR+ ^ .*JSONTryRetry
 data-from-outside/json-parse-type-argument-keys-in-another-order-stay-in-line	// IR+ ^ .*JSONKeyOrderAppend
 data-from-outside/json-parse-type-argument-undeclared-keys-stay-compiled	// IR+ ^ .*JSONKeyOrderApply
-data-from-outside/json-parse-type-argument-union-by-discriminant	// IR+ JSONFindMember v\d+ name="kind"
 data-from-outside/parsed-objects-changed-by-untyped-code	// IR+ ^ .* = JSONSourceOpen v
 data-from-outside/plain-objects-into-class-types	// IR+ ^layout (L\d+) .*name="GivenToAReducer" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 data-from-outside/plain-objects-into-class-types	// IR- ^layout (L\d+) .*name="CastFromATypedValue" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-data-from-outside/shared-validation-functions	// IR+ JSONStartsWith v\d+ text="\\x22height\\x22:"
 data-from-outside/spread-literal-returned-by-a-callback-over-rows	// IR+ ^layout (L\d+) .*name="Hit" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b
 data-from-outside/spread-literal-returned-by-a-callback-over-rows	// IR+ ^layout (L\d+) .*name="Marked" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b
 data-from-outside/spread-literal-returned-by-a-callback-over-rows	// IR+ ^layout (L\d+) .*name="Numbered" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b
 data-from-outside/sql-typed-rows	// IR+ ^layout (L\d+) .*name="Comment" [\s\S]*^function f\d+ (-|"[^"]*") Arrow .*\((undefined\|null\|)?=?\1!?[,)]
-data-from-outside/typed-parse-result-field-reads	// IR= 1 readsGiven  = PropGet v\d+ name="from"(?!.* isFallback)
-data-from-outside/typed-parse-result-field-reads	// IR= 1 readsKept : number = PropGet v\d+ name="y"(?!.* isFallback)
-data-from-outside/typed-parse-result-field-reads	// IR= 1 readsParsed : number = PropGet v\d+ name="x"(?!.* isFallback)
-data-from-outside/typed-parse-result-field-reads	// IR= 1 readsParsed : number = PropGet v\d+ name="y"(?!.* isFallback)
-data-from-outside/typed-parse-result-field-reads	// IR= 1 readsRevived : number = PropGet v\d+ name="x"(?!.* isFallback)
 data-from-outside/unknown-property-is-not-assignable-to-a-method	// IR+ ^layout L\d+ .*name="Store" .* representation=Typed
 data-from-outside/unknown-property-is-not-assignable-to-a-method	// IR- ^layout (L\d+) .*name="Store" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-data-from-outside/validate-imported-from-bun-bundle	// IR+ ^layout L\d+ .*name="User" .* representation=Typed
-data-from-outside/validated-results-stay-open	// IR+ ^layout L\d+ .*name="Login" .* representation=Typed
-data-from-outside/validated-results-stay-open	// IR+ ^layout L\d+ .*name="Nested" .* representation=Typed
-data-from-outside/validated-results-stay-open	// IR+ ^layout L\d+ .*name="User" .* representation=Typed
-data-from-outside/validated-results-stay-open	// IR+ ^layout L\d+ .*name="Within" .* representation=Typed
-data-from-outside/validation-error-message-is-the-path-and-the-first-issue	// IR= 0 formatPath GetModuleVariable
-data-from-outside/validation-issues-from-shared-routine	// IR= 0 report : =?L[0-9]+ = NewObject 
-data-from-outside/validators-shared-between-types	// IR+ JSONStartsWith v\d+ text="\\x22street\\x22:"
-data-from-outside/validators-shared-between-types	// IR+ JSONStartsWith v\d+ text="\\x22zip\\x22:"
 escape-analysis/captured-variables-and-tail-calls	//!
 escape-analysis/captured-variables-in-async-functions	//!
 escape-analysis/captured-variables-on-stack	//!

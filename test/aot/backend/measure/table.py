@@ -10,10 +10,10 @@ import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'servers', 'measure'))
 import layers
 
-ORDER = ['aot', 'aot.previous', 'aot.made', 'released', 'jit', 'node', 'aot.2', 'aot.m2', 'go', 'rust']
+ORDER = ['aot', 'aot.previous', 'released', 'jit', 'node', 'aot.2', 'go', 'rust']
 TESTS = ['plaintext', 'json', 'db'] + ['queries%d' % n for n in (1, 5, 10, 15, 20)] + ['fortunes'] + ['updates%d' % n for n in (1, 5, 10, 15, 20)] + ['product', 'quote']
-NAMES = {'aot': '--aot', 'aot.previous': '--aot, previous Bun', 'aot.made': '--aot, validated from the type', 'released': 'Bun 1.4.3', 'jit': 'our JIT build', 'node': 'Node', 'go': 'Go', 'rust': 'Rust',
-         'aot.2': '--aot again, beside Go and Rust', 'aot.m2': '--aot, validated from the type, again, beside Go and Rust'}
+NAMES = {'aot': '--aot', 'aot.previous': '--aot, previous Bun', 'released': 'Bun 1.4.3', 'jit': 'our JIT build', 'node': 'Node', 'go': 'Go', 'rust': 'Rust',
+         'aot.2': '--aot again, beside Go and Rust'}
 METRICS = [('requests_a_second', 'Requests a second', '%.0f', 1), ('early_requests_a_second', 'Requests a second over the first 10,000 requests of a fresh process', '%.0f', 1), ('p50_us', 'Latency p50 in the closed loop, us', '%.0f', -1), ('p99_us', 'Latency p99 in the closed loop, us', '%.0f', -1),
            ('paced_p50_us', 'Latency p50 at the fixed rate, us', '%.0f', -1), ('paced_p99_us', 'Latency p99 at the fixed rate, us', '%.0f', -1), ('cpu_us', 'CPU a request, us (user + kernel, all threads)', '%.2f', -1),
            ('kernel_us', 'of which in the kernel, us', '%.2f', -1), ('instructions', 'User instructions a request', '%.0f', -1), ('cycles', 'User cycles a request', '%.0f', -1), ('ic_cache_fill_l2', 'Lines of code the first-level cache took from the L2, a request (EVENTS=ic_cache_fill_l2)', '%.0f', -1), ('l2_cache_req_stat.ic_fill_miss', 'Lines of code that came from beyond the L2, a request', '%.0f', -1), ('counted_requests_a_second', 'Requests a second while the hardware counters are on (what counting costs)', '%.0f', 1), ('postgres_us', "Postgres' CPU a request, us", '%.1f', -1),

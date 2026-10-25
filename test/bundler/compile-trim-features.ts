@@ -11,6 +11,26 @@ export const repositoryRoot: string = join(import.meta.dir, "..", "..");
 export function tempDirForAotBuilds(basename: string, files: Record<string, string>): ReturnType<typeof tempDirWithBunTypes> {
   return tempDirWithBunTypes(basename, { "tsconfig.json": `{ "compilerOptions": { "types": ["bun"] } }`, ...files });
 }
+
+// CI tests a Bun with symbols and debug information. They are in sections that no loader maps, and an executable gets a copy of them.
+export function getMappedSegments(file: Buffer): Buffer[] {
+  const isElf64 = file.length >= 64 && file.readUInt32BE(0) === 0x7f454c46 && file[4] === 2 && file[5] === 1;
+  if (!isElf64) return [file];
+  const [headers, headerSize, count] = [
+    Number(file.readBigUInt64LE(0x20)),
+    file.readUInt16LE(0x36),
+    file.readUInt16LE(0x38),
+  ];
+  return Array.from({ length: count }, (_, index) => headers + index * headerSize)
+    .filter(at => file.readUInt32LE(at) === 1)
+    .map(at =>
+      file.subarray(
+        Number(file.readBigUInt64LE(at + 8)),
+        Number(file.readBigUInt64LE(at + 8) + file.readBigUInt64LE(at + 32)),
+      ),
+    );
+}
+
 export const model: FeatureModel = loadFeatures(repositoryRoot);
 export const builtinEntries: BuiltinEntry[] = builtinFeatureUses();
 export const isModule = ({ kind }: BuiltinEntry): boolean => kind === "Module";

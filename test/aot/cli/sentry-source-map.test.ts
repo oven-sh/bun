@@ -1,10 +1,10 @@
 // docs/bundler/aot-debugging.mdx, "Use with Sentry": an executable built with --minify --sourcemap=external reports errors through
 // the stock @sentry/bun SDK, and the map beside the executable leads from the event back to the sources. Nothing is sent: the
-// transport prints the envelopes.
+// transport prints the envelopes. The SDK is installed into the temporary folder, so that no other test sees its packages.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
-import { mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { built, slot, spawned } from "../run-programs";
 import { describe, test } from "../supported";
@@ -14,6 +14,7 @@ const buildLimit = 300_000;
 const frameFile = isWindows ? "B:\\~BUN\\root\\compiled.js" : "/$bunfs/root/compiled.js";
 
 const program = {
+  "package.json": JSON.stringify({ name: "app", private: true, dependencies: { "@sentry/bun": "11.9.0" } }),
   "app.ts": `import * as Sentry from "@sentry/bun";
 import { chargeCustomer, chargeCustomerLater } from "./billing/charge-customer";
 
@@ -112,14 +113,12 @@ interface SourceMap {
   x_facebook_sources: [FunctionMap][];
 }
 
-function linkSentry(folder: string) {
-  const sdk = realpathSync(dirname(Bun.resolveSync("@sentry/bun/package.json", import.meta.dir)));
-  mkdirSync(join(folder, "node_modules", "@sentry"), { recursive: true });
-  symlinkSync(sdk, join(folder, "node_modules", "@sentry", "bun"), "junction");
-}
-
 async function build(folder: string) {
-  linkSentry(folder);
+  const install = await spawned([bunExe(), "install", "--ignore-scripts"], folder, env);
+  expect({ stderr: install.stderr, exitCode: install.exitCode }).toEqual({
+    stderr: expect.not.stringMatching(/^error\b/m),
+    exitCode: 0,
+  });
   const flags = ["--minify", "--sourcemap=external", "--outfile", "dist/app"];
   const result = await spawned([bunExe(), "compile", "app.ts", ...flags], folder, env);
   built(result);

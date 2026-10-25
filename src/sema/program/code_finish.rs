@@ -126,16 +126,7 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
             side_effects: entry.side_effects,
             host_module: entry.host_module,
             loader: entry.key.loader,
-            typed_source_path: analyzed.typed_source_path.map(|path| slice_in(path, arena)),
-            installed_text: analyzed.installed_text,
-            rejected_typed_version: analyzed.rejected_typed_version.map(|rejected| {
-                RejectedTypedVersion {
-                    path: slice_in(rejected.path, arena),
-                    kind: rejected.kind,
-                    installed_range: rejected.installed_range,
-                }
-            }),
-            typed_version_origin: analyzed.typed_version_origin,
+            is_aot_source: analyzed.is_aot_source,
         });
         module.compiled = Some(compiled);
 

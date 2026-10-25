@@ -4,9 +4,9 @@ use super::*;
 use crate::fold::{FoldInputs, FoldOptions};
 use crate::hir_from_data::{DataModule, DataModuleTree, DataValue, HostValue, module_from_data};
 use crate::resolve::{
-    CodeHost, CodeImportKind, CodeOptions, CodeParseRequest, CodeRead, CodeRequest,
-    EnclosingPackage, FinishedFile, HostPayload, HostResolution, LoaderRequest, MacroRequest,
-    ParsedCode, TransformRequest, TreeChange, is_declaration_file_name,
+    CodeHost, CodeImportKind, CodeOptions, CodeParseRequest, CodeRead, CodeRequest, FinishedFile,
+    HostPayload, HostResolution, LoaderRequest, MacroRequest, ParsedCode, TransformRequest,
+    TreeChange, is_declaration_file_name,
 };
 use bun_threading::io_thread_pool;
 use std::sync::Once;
@@ -57,7 +57,6 @@ pub(super) struct StatementsHost {
     pub(super) rejects_background_reads: bool,
     pub(super) loaders: &'static [(&'static str, Option<&'static str>, HostLoader)],
     pub(super) loader_requests: Guarded<Vec<RecordedLoaderRequest>>,
-    pub(super) typed_versions: &'static [(&'static str, &'static str)],
     pub(super) plugin_sources: &'static [&'static str],
     pub(super) implied: Vec<(&'static str, Vec<HostResolution>)>,
     pub(super) max_macro_values: usize,
@@ -85,7 +84,6 @@ impl Default for StatementsHost {
             rejects_background_reads: false,
             loaders: &[],
             loader_requests: Guarded::new(Vec::new()),
-            typed_versions: &[],
             plugin_sources: &[],
             implied: Vec::new(),
             max_macro_values: 0,
@@ -318,15 +316,6 @@ impl CodeHost for StatementsHost {
         let modules = self.runtime_modules.iter();
         let matches = modules.filter(|module| is_match(module.0.as_bytes()));
         matches.map(|module| module.1.clone()).collect()
-    }
-
-    fn typed_version(
-        &self,
-        path: &[u8],
-        _package: Option<EnclosingPackage<'_>>,
-    ) -> Option<Vec<u8>> {
-        let typed = self.find_by_path(self.typed_versions, path)?;
-        Some(typed.as_bytes().to_vec())
     }
 
     fn loader_of(&self, request: &LoaderRequest<'_>) -> HostLoader {

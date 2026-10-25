@@ -5,7 +5,7 @@ use bun_sema::check::Requested;
 use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject, Effect, FileOrigin, effect_of};
 use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::program::{CodeAnswer, FileId, FileRole, Files, Sym};
-use bun_sema::resolve::{CodeHost, TypedVersionOrigin};
+use bun_sema::resolve::CodeHost;
 
 pub(super) fn compute_origins(
     files: &Files<'_>,
@@ -29,7 +29,6 @@ fn origin_of(
         FileOrigin::NoFile
         | FileOrigin::ProgramSource
         | FileOrigin::ProgramJavaScript
-        | FileOrigin::ProjectTypedVersion
         | FileOrigin::DependencySource
         | FileOrigin::DependencyJavaScript
         | FileOrigin::Declarations
@@ -38,15 +37,10 @@ fn origin_of(
     if files.is_compiled(file) && host.is_evaluated_text(files.module(file).file_name()) {
         return FileOrigin::EvaluatedText;
     }
-    let is_project_typed_version = files.compiled(file).is_some_and(|compiled| {
-        compiled.typed_source_path.is_some()
-            && compiled.typed_version_origin == Some(TypedVersionOrigin::Host)
-    });
     let is_dependency = files.module(file).is_from_external_library
         || project_origin == FileOrigin::DependencySource;
     match (files.role(file), is_dependency) {
         (FileRole::TypesOnly, _) => FileOrigin::Declarations,
-        (FileRole::Checked, _) if is_project_typed_version => FileOrigin::ProjectTypedVersion,
         (FileRole::Checked, true) => FileOrigin::DependencySource,
         (FileRole::Checked, false) => FileOrigin::ProgramSource,
         (FileRole::Inferred, true) => FileOrigin::DependencyJavaScript,
@@ -87,7 +81,6 @@ pub(super) fn requested_diagnostics(origin: FileOrigin, role: FileRole) -> Reque
             FileOrigin::NoFile
             | FileOrigin::ProgramSource
             | FileOrigin::ProgramJavaScript
-            | FileOrigin::ProjectTypedVersion
             | FileOrigin::DependencySource
             | FileOrigin::DependencyJavaScript
             | FileOrigin::Declarations
@@ -137,15 +130,6 @@ impl ProgramOrigins<'_, '_> {
         match diagnostic.file {
             Some(file) => self.origins[file.idx()],
             None => self.project_origin,
-        }
-    }
-
-    fn use_diagnostic_path(&self, diagnostic: &mut Diagnostic) {
-        if let (Some(files), Some(file)) = (self.files, diagnostic.file) {
-            let path = files.diagnostic_path(file);
-            if diagnostic.path != path {
-                diagnostic.path = path.to_vec();
-            }
         }
     }
 
@@ -220,12 +204,6 @@ impl ProgramOrigins<'_, '_> {
     }
 
     pub(super) fn apply_effects(&self, mut diagnostics: Vec<Diagnostic>) -> Vec<BuildDiagnostic> {
-        for diagnostic in &mut diagnostics {
-            self.use_diagnostic_path(diagnostic);
-            for related in &mut diagnostic.related {
-                self.use_diagnostic_path(related);
-            }
-        }
         crate::sort_and_deduplicate(&mut diagnostics);
         let with_effects = diagnostics.into_iter().filter_map(|mut diagnostic| {
             let origin = self.origin_of(&diagnostic);
@@ -270,12 +248,6 @@ mod tests {
             (ProgramSource, FileRole::Checked, Requested::All),
             (
                 ProgramJavaScript,
-                FileRole::Inferred,
-                Requested::EarlyErrors,
-            ),
-            (ProjectTypedVersion, FileRole::Checked, Requested::All),
-            (
-                ProjectTypedVersion,
                 FileRole::Inferred,
                 Requested::EarlyErrors,
             ),

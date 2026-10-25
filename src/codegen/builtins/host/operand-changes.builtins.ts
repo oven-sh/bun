@@ -143,7 +143,6 @@ const constructorsRequiringNew = [
   "Bun.SHA512",
   "Bun.SHA512_256",
   "Bun.Transpiler",
-  "Bun.Validator",
 ];
 const requiresNew = {
   returns: b.never,

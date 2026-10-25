@@ -33,7 +33,6 @@ impl<'s> FoldInputs<'s> {
             roots: slice_in(&trie.roots, arena),
             root_filter,
             features: options.features,
-            compiler_functions: options.compiler_functions,
             preserves_unused_imports: options.preserves_unused_imports,
             max_string_bytes: options.max_string_bytes,
             is_called_before_it_runs: false,
@@ -113,10 +112,6 @@ impl<'s> FoldInputs<'s> {
 
     pub(super) fn has_feature(&self, flag: Atom) -> bool {
         self.features.contains(&flag)
-    }
-
-    pub(super) fn is_compiler_function(&self, name: Atom) -> bool {
-        self.compiler_functions.contains(&name)
     }
 
     #[inline]

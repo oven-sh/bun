@@ -395,26 +395,6 @@ fn replaced_function_reports_nothing() {
 }
 
 #[test]
-fn validate_call_in_component_file_is_compiled() {
-    let text = [
-        "import { validate } from 'bun:bundle';\n\
-         export const check = (value: unknown) => validate<{ a: string }>(value);\n",
-        HELLO,
-    ]
-    .concat();
-    with_compiled_tree(&text, |tree| {
-        assert!(tree.has_compiled_components());
-        assert!(tree.cache_size(tree.function_named("Hello")).is_some());
-        let errors = tree.files.analysis(tree.file).errors;
-        assert!(errors.is_empty(), "{errors:?}");
-        let [call] = tree.calls_of("validate")[..] else {
-            panic!("expected one call of validate");
-        };
-        assert!(!tree.hir()[call].type_args.is_empty());
-    });
-}
-
-#[test]
 fn compiled_component_links() {
     let files = with_react_package(&[("main.tsx", HELLO)]);
     let mode = ReactCompilerMode::Client;

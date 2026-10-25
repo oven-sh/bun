@@ -31,7 +31,7 @@ pub(crate) fn collect_import_sites<'s>(
     let jsx_sites = create_jsx_sites(file.jsx, jsx_imports);
     let mut statements = scan_statements(inputs, statement_uses, jsx_sites);
     let first_call_site = statements.sites.len() as u32;
-    let module_require_objects = scan_calls(inputs, &mut statements.sites);
+    let calls = scan_calls(inputs, &mut statements.sites);
     let pending_macro_calls = find_pending_macro_calls(hir, bound, decisions, file.host_values);
     let sites = statements.sites;
     let mut sites_by_kind: Vec<u32> = (0..sites.len() as u32).collect();
@@ -46,7 +46,8 @@ pub(crate) fn collect_import_sites<'s>(
         jsx_imports,
         unused_import_symbols: slice_in(&unused_import_symbols, arena),
         imports_used_only_in_dead_code: slice_in(&imports_used_only_in_dead_code, arena),
-        module_require_objects: slice_in(&module_require_objects, arena),
+        module_require_objects: slice_in(&calls.module_require_objects, arena),
+        requires_of_other_files: slice_in(&calls.requires_of_other_files, arena),
         pending_macro_calls: slice_in(&pending_macro_calls, arena),
         first_runtime_import: statements.first_runtime_import,
         has_import_equals_require: statements.has_import_equals_require,

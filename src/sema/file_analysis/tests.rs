@@ -335,25 +335,6 @@ fn empty_file_format() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn typed_version_keeps_unused_import() {
-    for (is_typed_version, site_count, unused_count) in [(false, 0, 1), (true, 1, 0)] {
-        let session = Session::new();
-        let workspace = Workspace::new(&session);
-        let mut file = FileBuilder {
-            is_typed_version,
-            ..FileBuilder::default()
-        };
-        let import = add_default_import(&mut file);
-        let analyzed = workspace.analyze(file, &[import]);
-        assert!(!analyzed.hir.is_js);
-        assert_eq!(analyzed.analysis.module_format, ModuleFormat::Esm);
-        assert_eq!(analyzed.analysis.import_sites.len(), site_count);
-        assert_eq!(analyzed.analysis.unused_import_symbols.len(), unused_count);
-    }
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
 fn fold_errors_precede_scan_errors() {
     let session = Session::new();
     let workspace = Workspace::new(&session);

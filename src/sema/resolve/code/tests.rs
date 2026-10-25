@@ -1,7 +1,7 @@
+mod aot_condition;
 mod computed_specifiers;
 mod constant_specifiers;
 mod host_defaults;
-mod typed_version_lookup;
 
 use super::CodeImportKind::Import;
 use super::memory_host::MemoryHost;

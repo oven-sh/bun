@@ -362,48 +362,6 @@ fn statement_syntax_by_kind() {
 }
 
 #[test]
-fn typed_version_esm_syntax() {
-    let cases = [
-        (true, EsmSyntax::None),
-        (false, EsmSyntax::ImportOrImportMeta),
-    ];
-    for (type_only, expected) in cases {
-        let mut file = FileBuilder {
-            is_typed_version: true,
-            ..Default::default()
-        };
-        let body = [add_import(
-            &mut file,
-            known::module,
-            type_only,
-            ExprId::NONE,
-        )];
-        let syntax = with_file(file, &body, file_esm_syntax);
-        assert_eq!(syntax, expected, "type_only: {type_only}");
-    }
-}
-
-#[test]
-fn typed_version_type_import_format() {
-    let cases = [(true, ModuleFormat::CommonJs), (false, ModuleFormat::Esm)];
-    for (is_typed_version, format) in cases {
-        let mut file = FileBuilder {
-            is_typed_version,
-            has_module_syntax: true,
-            ..Default::default()
-        };
-        let body = [add_import(&mut file, known::module, true, ExprId::NONE)];
-        let inputs = FileInputs {
-            declared_module_type: DeclaredModuleType::CommonJs,
-            ..DEFAULT_INPUTS
-        };
-        let summary = analyze_with_inputs(file, &body, inputs);
-        assert_eq!(summary.format, format, "{is_typed_version}");
-        assert_eq!(summary.site_count, 0);
-    }
-}
-
-#[test]
 fn export_assignment_evidence() {
     let cases = [(false, ModuleFormat::CommonJs), (true, ModuleFormat::Esm)];
     for (is_nested, format) in cases {
@@ -495,7 +453,7 @@ fn import_statement_in_commonjs_names_evidence() {
     ];
     for (statements, evidence) in cases {
         let mut file = FileBuilder {
-            is_typed_version: true,
+            is_js: true,
             has_module_syntax: true,
             ..Default::default()
         };

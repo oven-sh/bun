@@ -1,4 +1,0 @@
-an object a false
-an array a false
-present inner,a {"inner":{"x":2},"a":1}
-present and undefined a,inner true undefined

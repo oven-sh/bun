@@ -424,12 +424,11 @@ fn language_follows_file_name() {
 }
 
 #[test]
-fn project_has_no_plugins_or_typed_versions() {
+fn project_has_no_plugins() {
     with_host(|fixture| {
         let host = fixture.host;
         assert!(!host.read_source(FS_SOURCE).is_empty());
         assert!(!host.is_plugin_source(FS_SOURCE));
-        assert_eq!(host.typed_version(FS_SOURCE, None), None);
         assert!(host.finish_deferred_reads().is_empty());
     });
 }

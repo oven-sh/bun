@@ -4236,9 +4236,44 @@ impl<'h> Resolver<'h> {
         Found::No
     }
 
+    /// Under `--aot` the file that "aot" names is the module for the checker too, wherever "types" stands.
+    fn export_target(
+        &self,
+        package_dir: &[u8],
+        module_name: &[u8],
+        target: &Json,
+        subpath: &[u8],
+        is_pattern: IsPattern,
+        key: &[u8],
+        is_imports: IsImports,
+        look: Look,
+    ) -> Found {
+        let walk = |skips_types: bool| {
+            self.walk_export_target(
+                package_dir,
+                module_name,
+                target,
+                subpath,
+                is_pattern,
+                key,
+                is_imports,
+                look,
+                skips_types,
+            )
+        };
+        let custom_conditions = &self.options.custom_conditions;
+        if custom_conditions.iter().any(|it| it == AOT_CONDITION)
+            && names_condition(target, AOT_CONDITION)
+            && let Found::File(path) = walk(true)
+        {
+            return Found::File(path);
+        }
+        walk(false)
+    }
+
     /// `loadModuleFromTargetExportOrImport`. `subpath`: the text matched by the `*` of `key` if
-    /// `is_pattern`, or else the text after `key`.
-    fn export_target<'j>(
+    /// `is_pattern`, or else the text after `key`. With `skips_types` it finds only what stands below "aot".
+    fn walk_export_target<'j>(
         &self,
         package_dir: &[u8],
         module_name: &[u8],
@@ -4248,6 +4283,7 @@ impl<'h> Resolver<'h> {
         key: &[u8],
         is_imports: IsImports,
         look: Look,
+        skips_types: bool,
     ) -> Found {
         /// An object or an array whose targets are being searched.
         enum Entered<'a> {
@@ -4260,7 +4296,9 @@ impl<'h> Resolver<'h> {
             match entered {
                 Entered::Conditions(condition, rest) => {
                     for (next, target) in rest.by_ref() {
-                        if self.condition_matches(next, look) {
+                        let is_skipped =
+                            skips_types && (next == b"types" || next.starts_with(b"types@"));
+                        if !is_skipped && self.condition_matches(next, look) {
                             look.trace(6403, &[Arg::Bytes(field), Arg::Bytes(next)]);
                             *condition = next.as_slice();
                             return Some(target);
@@ -4310,6 +4348,14 @@ impl<'h> Resolver<'h> {
                 }
                 entered.push(inner);
             };
+            let is_below_aot = || {
+                entered.iter().any(|it| {
+                    matches!(it, Entered::Conditions(condition, _) if *condition == AOT_CONDITION)
+                })
+            };
+            if skips_types && matches!(found, Found::File(_)) && !is_below_aot() {
+                return Found::No;
+            }
             // Back out to the innermost entry that has another target to try. A result ends the search.
             loop {
                 let Some(innermost) = entered.last_mut() else {
@@ -4957,6 +5003,19 @@ const VERSION: &[u8] = VERSION_C.to_bytes();
 const VERSION_MAJOR_MINOR: &[u8] = b"7.0";
 
 /// `IsApplicableVersionedTypesKey`
+fn names_condition(target: &Json, condition: &[u8]) -> bool {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return false;
+    }
+    match target {
+        Json::Object(conditions) => conditions
+            .iter()
+            .any(|(key, value)| key == condition || names_condition(value, condition)),
+        Json::Array(targets) => targets.iter().any(|it| names_condition(it, condition)),
+        _ => false,
+    }
+}
+
 pub(crate) fn is_applicable_versioned_types_key(key: &[u8]) -> bool {
     key.strip_prefix(b"types@")
         .and_then(try_parse_version_range)

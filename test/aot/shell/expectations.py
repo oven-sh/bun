@@ -71,12 +71,12 @@ TYPED_BODY_ROLES = ('Source', 'AllocatedThisVersion', 'ResultWorker')
 COROUTINE_BODY_ROLES = ('CoroutineBody', 'AsyncWorker')
 ROLE_CLASSES = {'Continuation': 'continuation', 'GenericEntrypoint': 'generic entrypoint', 'EntryChecks': 'entry', 'TableEntrypoint': 'entry', 'TableLookup': 'entry'}
 BODY_ROLES = ('Source', 'Library', 'Model', 'GenericVersion', 'AllocatedThisVersion', 'CoroutineRamp', 'CoroutineBody', 'BoundFunction', 'ResultWrapper', 'ResultWorker', 'ParameterWrapper', 'OutlinedBody', 'Serializer', 'Parser',
-              'ValidatingParser', 'Validator', 'ChainStep', 'StubBody', 'CalleeVersion', 'CallSiteVersion', 'ConstructBody', 'AsyncWorker')
+              'ChainStep', 'StubBody', 'CalleeVersion', 'CallSiteVersion', 'ConstructBody', 'AsyncWorker')
 # The role column of an F line of the map (describeFunctions) -> FunctionRole. `generic-<word of its target>` is a GenericEntrypoint.
 # `entry` and `module` are the words of every function that holds top-level code of a module, whatever its role. None of them has a name.
 MAP_ROLES = {'entry': 'Source', 'module': 'Source', 'typed': 'Source', 'untyped': 'Source', 'library': 'Library', 'model': 'Model', 'version': 'GenericVersion',
              'allocated this version': 'AllocatedThisVersion', 'ramp': 'CoroutineRamp', 'coroutine body': 'CoroutineBody', 'bound': 'BoundFunction', 'result-wrapper': 'ResultWrapper', 'result-worker': 'ResultWorker',
-             'parameter-wrapper': 'ParameterWrapper', 'outlined': 'OutlinedBody', 'continuation': 'Continuation', 'serializer': 'Serializer', 'parser': 'Parser', 'validating parser': 'ValidatingParser', 'validator': 'Validator',
+             'parameter-wrapper': 'ParameterWrapper', 'outlined': 'OutlinedBody', 'continuation': 'Continuation', 'serializer': 'Serializer', 'parser': 'Parser',
              'chain step': 'ChainStep', 'stub body': 'StubBody', 'callee version': 'CalleeVersion', 'call site version': 'CallSiteVersion', 'construct body': 'ConstructBody',
              'async worker': 'AsyncWorker', 'entry checks': 'EntryChecks', 'table entrypoint': 'TableEntrypoint', 'table lookup': 'TableLookup'}
 # offsetof(ImageHeader, codeOffset) in AOTImageFormat.h: magic 8, stamp 8, identity 16, size 8. codeSize follows.

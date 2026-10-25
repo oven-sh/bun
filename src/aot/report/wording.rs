@@ -73,7 +73,7 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
         ),
         UnprovenCause::UnknownObject => (
             "An object from untyped code is used as this type here, so it can have any shape.",
-            "validate it where it enters typed code: import { JSON } from \"bun\" for JSON.parse<T>(text), or import { validate } from \"bun:bundle\" for validate<T>(value). Or build a new object of this type from it.",
+            "build a new object of this type from it where it enters typed code.",
         ),
         UnprovenCause::NonLayoutObject => (
             "An array, a function or a built-in object is used as this type here.",
@@ -157,11 +157,11 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
         ),
         UnprovenCause::UndescribedNativeResult => (
             "The value is the result of a built-in function whose result type the compiler doesn't know.",
-            "narrow the result, or check it with validate<T>(value).",
+            "narrow the result.",
         ),
         UnprovenCause::UnseenCode => (
             "The value comes from code that isn't in the executable.",
-            "keep eval'd code and modules loaded at run time away from this value, or check it with validate<T>(value).",
+            "keep eval'd code and modules loaded at run time away from this value.",
         ),
         UnprovenCause::UncheckedConversionOfUntracked => (
             "A value that nothing checked against its declared type can reach this access.",
@@ -169,7 +169,7 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
         ),
         UnprovenCause::DataFromOutside => (
             "The value comes from outside the program (JSON.parse, response.json(), a file loaded at run time).",
-            "import { JSON } from \"bun\" and parse it with JSON.parse<T>(text), or import { validate } from \"bun:bundle\" and check it with validate<T>(value).",
+            "check its fields, and build a new object of this type from them.",
         ),
         UnprovenCause::ThrownByRunTime => (
             "The value was caught, and anything can be thrown.",
@@ -177,7 +177,7 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
         ),
         UnprovenCause::ParameterOfEscapedFunction => (
             "A function is handed to code the compiler can't see here, which can call it with any arguments.",
-            "call the function from your own code, or hand over a small wrapper that checks its arguments with validate<T>(value).",
+            "call the function from your own code, or hand over a small wrapper that checks its arguments.",
         ),
         UnprovenCause::ContentsOfEscapedObject => (
             "An object is handed to code the compiler can't see here, which can write anything into it.",
@@ -213,7 +213,7 @@ pub(super) fn check_wording(cause: CheckCause) -> CheckWording {
         CheckCause::UnknownObject => CheckWording {
             counted_as: "on a value from untyped code",
             headline: "the value may come from untyped code",
-            fix: "narrow it first: typeof for a primitive. For an object, import { JSON } from \"bun\" and call JSON.parse<T>(text), or import { validate } from \"bun:bundle\" and call validate<T>(value)",
+            fix: "narrow it first: typeof for a primitive. For an object, check its fields and build a new object of the type from them",
         },
         CheckCause::UnknownCallee => CheckWording {
             counted_as: "on the result of an unknown callee",
@@ -264,7 +264,7 @@ pub(super) fn ill_typed_cause_wording(cause: IllTypedCause) -> Option<IllTypedWo
         IllTypedCause::Assertion => (
             "unsound-cast",
             "An 'as' cast changes the type here, and nothing checks it.",
-            "remove the cast, or check the value first with validate<T>(value).",
+            "remove the cast, or narrow the value first.",
         ),
         IllTypedCause::SuppressedError => (
             "suppressed-error",
@@ -279,7 +279,7 @@ pub(super) fn ill_typed_cause_wording(cause: IllTypedCause) -> Option<IllTypedWo
         IllTypedCause::OutsideData => (
             "external-data",
             "The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).",
-            "import { JSON } from \"bun\" and parse it with JSON.parse<T>(text), or import { validate } from \"bun:bundle\" and check it with validate<T>(value).",
+            "check its fields, and build a new object of this type from them.",
         ),
         IllTypedCause::LayoutOutsideFamily => (
             "unexpected-shape",
@@ -406,7 +406,7 @@ pub(super) fn decline_sentence(kind: DeclineKind) -> &'static str {
             "code with expected types got no fast path, so it always takes the slow path"
         }
         DeclineKind::ResultNodeInterpreted => {
-            "part of a JSON.parse<T> or validate<T> type is handled by the generic validator, not compiled code"
+            "part of the type that a parse is written under is built by the generic parser, not compiled code"
         }
         DeclineKind::GenericVersionNotCreated => {
             "a function got no slow path, so values are guarded at every use instead of checked once"
@@ -611,9 +611,7 @@ pub(super) fn interpreted_cause_sentence(reason: u32) -> Option<&'static str> {
         InterpretedCause::TooManyNodes => Some("the type has more parts than the limit allows"),
         InterpretedCause::RepeatedRecursion => Some("two members of a union are both recursive"),
         InterpretedCause::MemberKeyIsNotText => Some("the key of a member is a symbol"),
-        InterpretedCause::LayoutIsNotModeled => {
-            Some("no call in the program parses or validates this type")
-        }
+        InterpretedCause::LayoutIsNotModeled => Some("no call in the program parses this type"),
         InterpretedCause::MemberIsNotNamedField => {
             Some("a member is not a named field of the object")
         }
@@ -755,7 +753,7 @@ pub(super) fn missed_optimization_code(kind: DeclineKind) -> &'static str {
         DeclineKind::LoopNotVersioned => "loop-guards-not-hoisted",
         DeclineKind::LoopBoundNotClamped => "bounds-checks-not-hoisted",
         DeclineKind::StretchNotGuarded => "no-fast-path",
-        DeclineKind::ResultNodeInterpreted => "generic-validator",
+        DeclineKind::ResultNodeInterpreted => "generic-parser",
         DeclineKind::GenericVersionNotCreated => "guarded-at-every-use",
     }
 }

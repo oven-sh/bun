@@ -12,7 +12,6 @@ mod output;
 mod page_bundles;
 mod paths;
 mod services;
-pub(crate) mod validation_plans;
 
 use crate::bundle_v2::{BundleV2, FileMap, JSBundlerPlugin, dispatch};
 use crate::{EventLoop, OutputFile, Transpiler};
@@ -72,7 +71,6 @@ pub struct AotBuild {
     pub names: ProgramNames,
     pub texts: SourceTexts,
     pub statistics: Statistics,
-    pub validates_by_type: bool,
     /// For a build that writes a metafile.
     pub modules: Option<ModuleList>,
 }

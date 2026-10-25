@@ -179,21 +179,6 @@ fn member_of_object_with_second_name_has_both_paths() {
 }
 
 #[test]
-fn each_parse_has_its_own_path() {
-    let values = BuiltinValuePaths::collect(Platforms::LINUX);
-    let paths = values.paths();
-    let paths_of = |id: BuiltinId| -> Vec<PathParts<'_>> {
-        let value = BuiltinValueIndex(id.to_wire());
-        let of_value = paths.iter().filter(|path| path.value == value);
-        of_value.map(|path| (path.module, path.names)).collect()
-    };
-    let of_global: [PathParts<'_>; 1] = [(None, &["JSON", "parse"])];
-    let of_bun: [PathParts<'_>; 1] = [(None, &["Bun", "JSON", "parse"])];
-    assert_eq!(paths_of(BuiltinId::JSONParse), of_global);
-    assert_eq!(paths_of(BuiltinId::BunJSONParse), of_bun);
-}
-
-#[test]
 fn excluded_values() {
     let values = BuiltinValuePaths::collect(Platforms::LINUX);
     let paths = values.paths();
@@ -205,7 +190,7 @@ fn excluded_values() {
         BuiltinId::ModuleRequire,
         BuiltinId::ModuleRequireResolve,
         BuiltinId::ImportMetaResolve,
-        BuiltinId::BunBundleValidate,
+        BuiltinId::BunBundleFeature,
         BuiltinId::GlobalThis,
     ];
     for id in excluded {

@@ -8,33 +8,6 @@ pub fn source_positions(source: &[u8], line_starts: Vec<u32>) -> SourcePositions
     }
 }
 
-pub fn installed_source_positions(
-    installed_source: &[u8],
-    line_starts: &[u32],
-    token_offsets: &[(u32, u32)],
-) -> SourcePositions {
-    let adjustments = compute_column_adjustments(installed_source, line_starts);
-    let tokens = token_offsets.iter().map(|&(offset, installed_offset)| {
-        let line = line_starts.partition_point(|&start| start <= installed_offset) - 1;
-        let line_start = line_starts[line];
-        let preceding = adjustments.partition_point(|it| it.offset <= installed_offset);
-        let adjustment = preceding.checked_sub(1).map(|last| &adjustments[last]);
-        let column = match adjustment.filter(|it| it.offset > line_start) {
-            Some(it) => it.column + (installed_offset - it.offset),
-            None => installed_offset - line_start,
-        };
-        ColumnAdjustment {
-            offset,
-            line: line as u32,
-            column,
-        }
-    });
-    SourcePositions {
-        line_starts: Vec::new(),
-        column_adjustments: tokens.collect(),
-    }
-}
-
 fn compute_column_adjustments(source: &[u8], line_starts: &[u32]) -> Vec<ColumnAdjustment> {
     let mut adjustments = Vec::new();
     if source.is_ascii() {

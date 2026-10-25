@@ -1,10 +1,9 @@
 use super::description::{
-    Description, Key, Tag, class_description, constraint_description, leaf, leaf_bytes, leaf_word,
-    member_name_key,
+    Description, Key, Tag, class_description, leaf, leaf_bytes, leaf_word, member_name_key,
 };
 use super::{ObjectOrigin, TypeIdentity};
 use crate::bind::{Bound, ScopeId, ScopeKind};
-use crate::check::aot::answers::{GaveUp, SchemaConstraint, WrittenType};
+use crate::check::aot::answers::{GaveUp, WrittenType};
 use crate::check::aot::builtin_types::BuiltinTypeClass;
 use crate::check::aot::queries::Queries;
 use crate::check::aot::trust::Trust;
@@ -316,8 +315,10 @@ impl Walk {
             }
             ShapeKind::Object => self.describe_object(queries, ty),
             ShapeKind::Union(members) => self.describe_union(queries, members),
-            ShapeKind::Constrained { base, constraints } => {
-                self.describe_constrained(queries, base, constraints)
+            ShapeKind::Int32 { base } => {
+                let mut description = Description::new(Tag::Int32);
+                description.written(self.describe_part(queries, base)?);
+                Ok(description.finish())
             }
         }
     }
@@ -422,28 +423,6 @@ impl Walk {
         for key in keys {
             description.written(key);
         }
-        Ok(description.finish())
-    }
-
-    fn describe_constrained(
-        &mut self,
-        queries: &mut Queries<'_, '_, '_>,
-        base: TypeId,
-        constraints: &[SchemaConstraint<'_>],
-    ) -> Result<Key, GaveUp> {
-        let mut description = Description::new(Tag::Constrained);
-        description.written(self.describe_part(queries, base)?);
-        let mut keys: Vec<Key> = Vec::with_capacity(constraints.len());
-        for &constraint in constraints {
-            let mut of_constraint = constraint_description(queries, constraint);
-            constraint.for_each_type(|ty| -> Result<(), GaveUp> {
-                of_constraint.written(self.describe_part(queries, ty)?);
-                Ok(())
-            })?;
-            keys.push(of_constraint.finish());
-        }
-        keys.sort_unstable();
-        description.keys(&keys);
         Ok(description.finish())
     }
 

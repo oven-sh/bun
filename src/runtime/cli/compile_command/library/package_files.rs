@@ -9,7 +9,7 @@ use bun_options_types::Format;
 use bun_options_types::context::ContextData;
 use bun_paths::resolve_path::platform_to_posix_in_place;
 use bun_sema::json::Json;
-use bun_sema::resolve::TYPED_CONDITION;
+use bun_sema::resolve::AOT_CONDITION;
 use bun_sema_driver::sound_files::typed_path_beside;
 
 use super::declarations::{declaration_path, is_declaration_file};
@@ -302,13 +302,13 @@ impl WrittenFiles<'_> {
     fn conditions_of(&self, file: usize) -> Expr {
         let file = &self.exported[file];
         let mut conditions = E::Object::default();
+        if let Some(typed) = &file.typed {
+            let typed = self.json.relative_path(typed);
+            self.json.put(&mut conditions, AOT_CONDITION, typed);
+        }
         if let Some(declarations) = &file.declarations {
             let declarations = self.json.relative_path(declarations);
             self.json.put(&mut conditions, b"types", declarations);
-        }
-        if let Some(typed) = &file.typed {
-            let typed = self.json.relative_path(typed);
-            self.json.put(&mut conditions, TYPED_CONDITION, typed);
         }
         let javascript = self.json.relative_path(&file.javascript);
         self.json.put(&mut conditions, b"default", javascript);

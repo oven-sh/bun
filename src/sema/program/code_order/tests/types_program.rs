@@ -1,6 +1,5 @@
 use super::*;
 use crate::program::code_test_host::to_paths;
-use crate::resolve::TypedVersionOrigin;
 
 const TYPESCRIPT_IMPORTS_JAVASCRIPT: &[(&str, &str)] =
     &[("/main.ts", "import \"./dep.js\""), ("/dep.js", "")];
@@ -217,97 +216,6 @@ fn file_of_package_reached_by_relative_path_is_not_external() {
         let is_external = |path| files.module(file_at(files, path)).is_from_external_library;
         assert!(is_external("/node_modules/dep/index.ts"));
         assert!(!is_external("/node_modules/dep/util.ts"));
-    });
-}
-
-#[test]
-fn typed_version_stands_for_installed_file() {
-    const INSTALLED: &str = "/node_modules/pkg/index.js";
-    const TYPED: &str = "/node_modules/pkg/typed.ts";
-    let host = StatementsHost {
-        typed_versions: &[(INSTALLED, TYPED)],
-        ..host_of(&[
-            ("/main.ts", "import \"pkg\""),
-            (INSTALLED, "a"),
-            (TYPED, "import type t from \"./types\"\na"),
-            ("/node_modules/pkg/types.ts", ""),
-        ])
-    };
-    with_program(&host, &["/main.ts"], |files| {
-        let (main, installed) = (file_at(files, "/main.ts"), file_at(files, INSTALLED));
-        assert_eq!(files.by_path.get(TYPED.as_bytes()), None);
-        assert_eq!(name_of(files, installed), INSTALLED);
-        assert_eq!(files.diagnostic_path(installed), TYPED.as_bytes());
-        assert_eq!(files.diagnostic_path(main), b"/main.ts");
-        assert_eq!(files.role(installed), FileRole::Checked);
-        assert!(files.module(installed).is_in_types_program);
-        assert!(files.hir(installed).is_typed_version);
-
-        let compiled = compiled_at(files, INSTALLED);
-        assert_eq!(compiled.typed_source_path, Some(TYPED.as_bytes()));
-        assert_eq!(
-            compiled.typed_version_origin,
-            Some(TypedVersionOrigin::Host)
-        );
-        assert_eq!(compiled.rejected_typed_version, None);
-
-        assert_eq!(files.code_answers(main), [CodeAnswer::File(installed)]);
-        assert_eq!(imported_files(files, main), [installed]);
-        let types = file_at(files, "/node_modules/pkg/types.ts");
-        assert_eq!(imported_files(files, installed), [types]);
-    });
-}
-
-fn strict_build<'a>(host: &'a StatementsHost, entry_points: &'a [&'a str]) -> TestBuild<'a> {
-    TestBuild {
-        options: Options {
-            no_implicit_any: true,
-            specifies_no_implicit_any: true,
-            ..Options::default()
-        },
-        ..TestBuild::new(host, entry_points)
-    }
-}
-
-#[test]
-fn typed_version_stands_for_installed_file_in_strict_project() {
-    const INSTALLED: &str = "/node_modules/pkg/index.js";
-    let host = StatementsHost {
-        typed_versions: &[(INSTALLED, "/node_modules/pkg/typed.ts")],
-        ..host_of(&[
-            ("/main.ts", "import \"pkg\""),
-            (INSTALLED, "a"),
-            ("/node_modules/pkg/typed.ts", "a"),
-        ])
-    };
-    with_build(&strict_build(&host, &["/main.ts"]), |files| {
-        let (main, installed) = (file_at(files, "/main.ts"), file_at(files, INSTALLED));
-        assert_eq!(files.role(installed), FileRole::Checked);
-        assert_eq!(imported_files(files, main), [installed]);
-    });
-}
-
-#[test]
-fn rejected_typed_version_is_untyped_import_in_strict_project() {
-    const INSTALLED: &str = "/node_modules/pkg/index.js";
-    let host = StatementsHost {
-        typed_versions: &[(INSTALLED, "/node_modules/pkg/typed.ts")],
-        ..host_of(&[
-            ("/main.ts", "import \"pkg\""),
-            (INSTALLED, "a"),
-            ("/node_modules/pkg/typed.ts", "b"),
-        ])
-    };
-    with_build(&strict_build(&host, &["/main.ts"]), |files| {
-        let (main, installed) = (file_at(files, "/main.ts"), file_at(files, INSTALLED));
-        assert_eq!(files.role(installed), FileRole::Inferred);
-        assert!(
-            compiled_at(files, INSTALLED)
-                .rejected_typed_version
-                .is_some()
-        );
-        assert!(files.module(main).imports.is_empty());
-        assert_eq!(files.module(main).untyped_imports.len(), 1);
     });
 }
 

@@ -1190,7 +1190,6 @@ const plainObjects = [
   "Bun",
   "Bun.CSRF",
   "Bun.FFI",
-  "Bun.JSON",
   "Bun.JSON5",
   "Bun.JSONC",
   "Bun.JSONL",

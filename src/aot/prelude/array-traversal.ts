@@ -22,18 +22,20 @@ function storeInNewArray(out: unknown[], position: number, value: unknown): void
   if (!isStored) out[position] = value;
 }
 
-function appendParts(out: unknown[], position: number, parts: unknown): number {
+// An array never holds 2 ** 32 elements, so the position fits an unsigned 32-bit integer.
+function appendParts(out: unknown[], start: number, parts: unknown): number {
+  let position = start >>> 0;
   if (!$isArray(parts)) {
     if (position >= out.length) $growNewArray(out, position);
     storeInNewArray(out, position, parts);
-    return position + 1;
+    return (position + 1) >>> 0;
   }
   const count = $toLength(parts.length);
   for (let index = 0; index < count; index++) {
     if (!(index in parts)) continue;
     if (position >= out.length) $growNewArray(out, position);
     storeInNewArray(out, position, parts[index]);
-    position++;
+    position = (position + 1) >>> 0;
   }
   return position;
 }
@@ -104,7 +106,9 @@ export function traverseArray(
   let text = "";
   let out: unknown[] | undefined = undefined;
   if (endKind === endArray && !isDense) out = $newArrayLike<unknown>(count, array);
-  else if (endKind === endArray || endKind === endFlatMap) out = $newArrayWithCapacity<unknown>(count, array);
+  else if (endKind === endArray) out = $newArrayWithCapacity<unknown>(count, array);
+  // Leaves room for two elements per call. The capacity is a guess that no program can observe.
+  else if (endKind === endFlatMap) out = $newArrayWithCapacity<unknown>((count + count) >>> 0, array);
 
   // A store that the new array does not take leaves the loop, which is entered anew: what the loop knows of the two arrays it has from in front of itself.
   let position = first;

@@ -28,7 +28,6 @@ Library/Caches
 *.big
 *.blob
 *.bun
-!packages/full-types/**/*.bun/
 *.crash
 *.database
 *.db
@@ -100,7 +99,6 @@ node_modules
 node_modules_*
 !test/aot/programs/**/node_modules/
 !test/aot/programs/**/dist/
-!packages/full-types/**/dist/
 !test/aot/ir/**/node_modules/
 out
 out.*
@@ -208,7 +206,6 @@ Heap-*.json.*
 isolate-*.log
 core
 !test/aot/**/core/
-!packages/full-types/**/core/
 core.[0-9]*
 # Legacy codegen outputs (no longer written, but old build trees still have
 # them on disk; keep ignored so they don't show as untracked).

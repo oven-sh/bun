@@ -15,7 +15,6 @@ use crate::load::source_provider::SourceProvider;
 use crate::options::Options;
 use crate::report::{ReportEntry, ReportInput, ReportMessage, SourceTexts};
 use crate::statistics::{StatisticId, Statistics};
-use crate::validation_plans::ValidationPlans;
 
 macro_rules! linked_functions {
     ($($visibility:vis fn $name:ident $(<$($lifetime:lifetime),*>)? ($($argument:ident: $type:ty),* $(,)?) $(-> $result:ty)?;)*) => {
@@ -45,7 +44,6 @@ macro_rules! define_linked_functions {
 
 linked_functions! {
     pub fn bun_aot_compile(options: &Options<'_>, provider: &dyn SourceProvider, log: &mut Log) -> Result<Compilation, BuildFailed>;
-    pub fn bun_aot_plan_validated_calls(options: &Options<'_>, provider: &dyn SourceProvider, log: &mut Log) -> Option<ValidationPlans>;
     pub fn bun_aot_log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]);
     pub(crate) fn bun_aot_parse_json<'s>(text: &[u8], arena: &'s Arena, atoms: &Interner<'s>) -> Option<&'s DataValue<'s>>;
     pub fn bun_aot_check_option_word(earlier_words: &[Box<[u8]>], word: &[u8]) -> Result<(), RejectedOptionWord>;

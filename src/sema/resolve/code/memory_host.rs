@@ -1,6 +1,5 @@
 use super::*;
 use crate::program::HostModuleId;
-use std::sync::atomic::{AtomicUsize, Ordering as MemoryOrdering};
 
 const MAX_FOLLOWED_LINKS: usize = 16;
 
@@ -17,9 +16,6 @@ pub(crate) struct MemoryHost {
     links: Vec<(Vec<u8>, Vec<u8>)>,
     runtime_modules: Vec<(Vec<u8>, HostResolution)>,
     claims: Vec<Claim>,
-    typed: Vec<(Vec<u8>, Vec<u8>)>,
-    installed_typed: Vec<(Vec<u8>, Vec<u8>)>,
-    typed_version_calls: AtomicUsize,
     reads: bun_threading::Guarded<FxHashMap<Vec<u8>, usize>>,
 }
 
@@ -73,20 +69,6 @@ impl MemoryHost {
             resolution,
         });
         self
-    }
-
-    pub(crate) fn typed(mut self, path: &str, typed: &str) -> MemoryHost {
-        self.typed.push((path.into(), typed.into()));
-        self
-    }
-
-    pub(crate) fn installed_typed(mut self, path: &str, typed: &str) -> MemoryHost {
-        self.installed_typed.push((path.into(), typed.into()));
-        self
-    }
-
-    pub(crate) fn typed_version_calls(&self) -> usize {
-        self.typed_version_calls.load(MemoryOrdering::Relaxed)
     }
 
     pub(crate) fn reads(&self, path: &str) -> usize {
@@ -233,29 +215,6 @@ impl CodeHost for MemoryHost {
         matches
             .map(|specifier| self.resolve_runtime_module(specifier))
             .collect()
-    }
-
-    fn typed_version(&self, path: &[u8], package: Option<EnclosingPackage<'_>>) -> Option<Vec<u8>> {
-        self.typed_version_calls
-            .fetch_add(1, MemoryOrdering::Relaxed);
-        if let Some(package) = package {
-            assert!(contains_path(package.directory, path, true));
-            assert!(self.is_file(&inside(package.directory, b"package.json")));
-        }
-        let path = self.follow_links(path);
-        let mut versions = self.typed.iter();
-        let (_, typed) = versions.find(|(installed, _)| self.follow_links(installed) == path)?;
-        Some(typed.clone())
-    }
-
-    fn installed_typed_version(
-        &self,
-        path: &[u8],
-        _package: Option<EnclosingPackage<'_>>,
-    ) -> Option<Vec<u8>> {
-        let mut versions = self.installed_typed.iter();
-        let (_, typed) = versions.find(|(installed, _)| installed == path)?;
-        Some(typed.clone())
     }
 }
 
@@ -663,51 +622,6 @@ mod tests {
         assert_eq!(claim(b"local", b"/p/a.ts"), HostResolution::Erased);
         assert_eq!(claim(b"local", b"/p/b.ts"), HostResolution::Unclaimed);
         assert_eq!(claim(b"local", b""), HostResolution::Unclaimed);
-    }
-
-    #[test]
-    fn typed_versions_follow_links() {
-        let manifest = r#"{"name": "pkg", "version": "1.0.0"}"#;
-        let files = [
-            ("/real/pkg/package.json", manifest),
-            ("/real/pkg/index.js", ""),
-        ];
-        let host = MemoryHost::new(&files)
-            .link("/p/node_modules/pkg", "/real/pkg")
-            .typed(
-                "/p/node_modules/pkg/index.js",
-                "/p/.full-types/pkg/index.ts",
-            );
-        let package = |directory: &'static [u8]| {
-            Some(EnclosingPackage {
-                directory,
-                name: b"pkg",
-                version: b"1.0.0",
-            })
-        };
-        let real = package(b"/real/pkg");
-        let typed = Some(b"/p/.full-types/pkg/index.ts".to_vec());
-        assert_eq!(host.typed_version(b"/real/pkg/index.js", real), typed);
-        assert_eq!(host.typed_version(b"/real/pkg/index.js", None), typed);
-        let linked = package(b"/p/node_modules/pkg");
-        assert_eq!(
-            host.typed_version(b"/p/node_modules/pkg/index.js", linked),
-            typed
-        );
-        assert_eq!(host.typed_version(b"/real/pkg/other.js", real), None);
-        assert_eq!(host.typed_version_calls(), 4);
-    }
-
-    #[test]
-    #[should_panic(expected = "contains_path")]
-    fn typed_version_rejects_package_beside_file() {
-        let host = MemoryHost::new(&[("/p/a/package.json", "{}"), ("/p/b/index.js", "")]);
-        let package = EnclosingPackage {
-            directory: b"/p/a",
-            name: b"a",
-            version: b"1.0.0",
-        };
-        host.typed_version(b"/p/b/index.js", Some(package));
     }
 
     #[test]

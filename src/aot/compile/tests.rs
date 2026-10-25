@@ -1026,9 +1026,9 @@ fn module_without_source_file_has_no_text() {
 }
 
 #[test]
-fn typed_version_text_is_the_typed_file() {
+fn text_of_a_package_is_the_file_under_the_aot_condition() {
     const TYPED: &str = "export const x: number = 1;\n";
-    let directory = TemporaryDirectory::new("compile_typed_version_text");
+    let directory = TemporaryDirectory::new("compile_aot_condition_text");
     directory.write("tsconfig.json", CONFIGURATION);
     directory.write("app.ts", "import \"p\";\n");
     directory.write_typed_package("export const x = 1;\n", TYPED);
@@ -1039,13 +1039,13 @@ fn typed_version_text_is_the_typed_file() {
     let modules = (0..linked.program.modules.len()).map(ModuleId::new);
     let package_sources: Vec<(&BStr, &BStr)> = modules
         .filter_map(|module| linked.summary.texts.get(module))
-        .filter(|source| source.path.ends_with(b"/x.js"))
+        .filter(|source| source.path.contains_str("/node_modules/p/"))
         .map(|source| (BStr::new(&source.path), BStr::new(source.text())))
         .collect();
     let [(path, text)] = package_sources[..] else {
         panic!("{package_sources:?}");
     };
-    assert!(path.ends_with(b"/.full-types/p/lay/x.js"));
+    assert!(path.ends_with(b"/node_modules/p/x.aot.ts"));
     assert_eq!(text, TYPED);
 }
 
@@ -1114,24 +1114,4 @@ fn build_that_compiles_refuses_the_whole_program() {
     let project = TestProject::with_entry_points(&files, 2, &default_settings());
     let (result, _) = link_project(&project, &WithoutServices);
     assert_eq!(expect_failure(result).refused_entry_points, None);
-}
-
-#[test]
-fn summary_says_whether_the_program_validates_by_type() {
-    let validates = |text: &str| {
-        link_successfully(&[("a.ts", text), GLOBALS])
-            .summary
-            .validates_by_type
-    };
-    assert!(!validates("console.log(JSON.parse(\"1\"));"));
-    assert!(!validates("console.log(JSON.parse(\"1\") as number);"));
-    assert!(validates(
-        "import { JSON } from \"bun\"; console.log(JSON.parse<number>(\"1\"));"
-    ));
-    // The type argument of the global is one that the program declared.
-    assert!(!validates(
-        "declare global { interface JSON { parse<T>(text: string): T } }\n\
-         export {};\n\
-         console.log(JSON.parse<number>(\"1\"));"
-    ));
 }

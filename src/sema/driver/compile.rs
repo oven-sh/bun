@@ -125,7 +125,6 @@ pub struct BuildDiagnostic {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum DemotionCause {
     TypeError,
-    RejectedNeighbor,
     UnverifiedTypes,
     EarlyError,
 }

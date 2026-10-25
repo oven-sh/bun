@@ -1,22 +1,22 @@
-// Draws TypeScript types, writes a program that parses by each of them with `JSON.parse<T>(text)` and `validate<T>(value)`, builds it
-// and lets it run. The program makes its own texts, as many as the time allows: texts that are a T, nearly a T, JSON of another
-// shape, nearly JSON. texts-for-generated-types-driver.ts says what it asks of each.
+// Draws TypeScript types, writes a program that parses texts under each of them (`JSON.parse(text) as T`, a variable of type T, the
+// body of a request or a response), builds it and lets it run. The program makes its own texts, as many as the time allows: texts
+// that are a T, nearly a T, JSON of another shape, nearly JSON. texts-for-generated-types-driver.ts says what it asks of each.
 //
+// The type is only what the compiler expects. Nothing is checked and nothing throws because of it: every call gives what `JSON.parse(text)` gives.
 // For every type the program also holds a function that reads each member through the type, and a twin with the same body whose
-// parameter is `any`. What was parsed by the type goes to the first, what `JSON.parse(text)` gives to the second: both print the same.
+// parameter is `any`. What was parsed under the type goes to the first, what `JSON.parse(text)` gives to the second: both print the same.
 //
-//   bun test/aot/fuzz/texts-for-generated-types.ts --seconds 600 --jobs 16 --out /tmp/texts [--bun <path>] [--seed <n>] [--types 40] [--run-seconds 20] [--flags "--aot-validate;--aot-heat=everything-is-hot"] [--from-source] [--stress 1,2,3,5,7,11] [--growth] [--full-heap] [--workers]
+//   bun test/aot/fuzz/texts-for-generated-types.ts --seconds 600 --jobs 16 --out /tmp/texts [--bun <path>] [--seed <n>] [--types 40] [--run-seconds 20] [--flags "--aot-validate;--aot-heat=everything-is-hot"] [--stress 1,2,3,5,7,11] [--growth] [--full-heap] [--workers]
 //   bun test/aot/fuzz/texts-for-generated-types.ts --print <seed> [--types 40]      the program of one seed
 //
 // --growth asks one thing only: texts that grow sixteenfold, of many kinds, may take sixteen times as long, not their square.
 // --full-heap keeps what is parsed until no more fits into a small heap, again and again. --workers runs the program in Workers that are ended after a few milliseconds.
-// --from-source runs the program with `bun run --aot`, which walks a description of T where an executable runs code made for T.
 // <out>/findings/<seed>/ holds the program, what it printed and how it ended.
 import { spawn } from "bun";
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { Random } from "./random";
-import { patterns, revivers, type Description, type Member } from "./texts-for-generated-types-driver";
+import { revivers, type Description, type Member } from "./texts-for-generated-types-driver";
 
 const plainNames = [
   "id",
@@ -117,9 +117,7 @@ export function program(seed: number, count: number): string {
   let self = 0;
   let usesSelf = false;
   let portion = 1;
-  let fills = false;
   let unions = 0;
-  let allowsFallbacks = false;
   const enums: string[] = [];
   const shareable: number[] = [];
   const mentionsNamed = (description: Description): boolean => JSON.stringify(description).includes('"named"');
@@ -144,26 +142,8 @@ export function program(seed: number, count: number): string {
     }
   };
 
-  function number(): Description {
-    const description: Extract<Description, { kind: "number" }> = { kind: "number" };
-    if (random.chance(0.55)) return description;
-    if (random.chance(0.6)) description.whole = true;
-    const low = random.pick([-5, 0, 1, 10, -2147483648, -1000000, 0.5]);
-    if (random.chance(0.4)) description[random.chance(0.7) ? "min" : "above"] = low;
-    if (random.chance(0.4))
-      description[random.chance(0.7) ? "max" : "below"] = low + random.pick([1, 10, 255, 65535, 4294967295, 1e15]);
-    if (random.chance(0.15)) description.step = random.pick([2, 5, 10, 0.5, 0.25]);
-    return description;
-  }
-
-  function string(): Description {
-    const description: Extract<Description, { kind: "string" }> = { kind: "string" };
-    if (random.chance(0.7)) return description;
-    if (random.chance(0.5)) description.min = random.between(1, 4);
-    if (random.chance(0.5)) description.max = (description.min ?? 0) + random.between(0, 6);
-    if (random.chance(0.3)) description.pattern = random.pick(Object.keys(patterns));
-    return description;
-  }
+  const number = (): Description => ({ kind: "number" });
+  const string = (): Description => ({ kind: "string" });
 
   const literal = (): Description => ({
     kind: "literal",
@@ -221,24 +201,12 @@ export function program(seed: number, count: number): string {
     const simple = size > 20;
     const withRest = unions === 0 && random.chance(0.08);
     for (let at = 0; at < size; at++) {
-      let type = random.chance(0.12)
+      const type = random.chance(0.12)
         ? ({ kind: "int32" } as Description)
         : simple || withRest
           ? scalar()
           : typeAt(depth + 1);
-      let optional = random.chance(0.25);
-      if (allowsFallbacks && !optional && random.chance(0.15)) {
-        if (type.kind === "int32") type = { kind: "int32", fallback: random.pick([0, 7, -1, 2147483647, -2147483648]) };
-        else if (type.kind === "boolean") type = { kind: "boolean", fallback: random.chance(0.5) };
-        else if (type.kind === "number" && Object.keys(type).length === 1)
-          type = { kind: "number", fallback: random.pick([0, 1, 8080, 1.5, -2.25, 1e21, 4294967296]) };
-        else if (type.kind === "string" && Object.keys(type).length === 1)
-          type = {
-            kind: "string",
-            fallback: random.pick(["", "x", "a longer text than the others", "\u00e9", "\u65e5", '"']),
-          };
-        if ("fallback" in type) fills = true;
-      }
+      const optional = random.chance(0.25);
       members.push({ name: nameOfMember(taken, withRest), optional, type });
     }
     if (withRest)
@@ -249,9 +217,7 @@ export function program(seed: number, count: number): string {
           ? { kind: "anything" }
           : { kind: "union", of: [{ kind: "number" }, { kind: "string" }, { kind: "boolean" }, { kind: "null" }] },
       };
-    return members.length && random.chance(0.12)
-      ? { kind: "object", members, closed: true }
-      : { kind: "object", members };
+    return { kind: "object", members };
   }
 
   const scalar = (): Description =>
@@ -338,15 +304,7 @@ export function program(seed: number, count: number): string {
       [3, literal],
       [inUnion ? 0 : 1, () => ({ kind: "anything" })],
       [inUnion ? 0 : 1, () => ({ kind: "object or array" })],
-      [
-        7,
-        () => {
-          const description: Extract<Description, { kind: "array" }> = { kind: "array", of: typeAt(depth + 1) };
-          if (random.chance(0.15)) description.min = random.between(1, 2);
-          if (random.chance(0.15)) description.max = (description.min ?? 0) + random.between(0, 3);
-          return description;
-        },
-      ],
+      [7, () => ({ kind: "array", of: typeAt(depth + 1) })],
       [3, () => ({ kind: "tuple", of: Array.from({ length: random.between(0, 4) }, () => typeAt(depth + 1)) })],
       [3, () => ({ kind: "record", of: typeAt(depth + 1) })],
       [9, () => object(depth)],
@@ -437,33 +395,10 @@ export function program(seed: number, count: number): string {
   function write(description: Description, inner: boolean): string {
     const grouped = (text: string): string => (inner ? "(" + text + ")" : text);
     switch (description.kind) {
-      case "number": {
-        const tags = ["number"];
-        if (description.whole) tags.push("Schema.Int");
-        if (description.min !== undefined) tags.push(`Schema.Min<${description.min}>`);
-        if (description.max !== undefined) tags.push(`Schema.Max<${description.max}>`);
-        if (description.above !== undefined) tags.push(`Schema.Above<${description.above}>`);
-        if (description.below !== undefined) tags.push(`Schema.Below<${description.below}>`);
-        if (description.step !== undefined) tags.push(`Schema.MultipleOf<${description.step}>`);
-        if (description.fallback !== undefined) tags.push(`Schema.Default<${description.fallback}>`);
-        return tags.length > 1 ? grouped(tags.join(" & ")) : "number";
-      }
+      case "number":
       case "int32":
-        return description.fallback === undefined
-          ? "int32"
-          : grouped(`int32 & Schema.Default<${description.fallback}>`);
-      case "string": {
-        const tags = ["string"];
-        if (description.min !== undefined) tags.push(`Schema.MinLength<${description.min}>`);
-        if (description.max !== undefined) tags.push(`Schema.MaxLength<${description.max}>`);
-        if (description.pattern !== undefined) tags.push(`Schema.Pattern<${JSON.stringify(description.pattern)}>`);
-        if (description.fallback !== undefined) tags.push(`Schema.Default<${JSON.stringify(description.fallback)}>`);
-        return tags.length > 1 ? grouped(tags.join(" & ")) : "string";
-      }
+      case "string":
       case "boolean":
-        return description.fallback === undefined
-          ? "boolean"
-          : grouped(`boolean & Schema.Default<${description.fallback}>`);
       case "null":
         return description.kind;
       case "literal":
@@ -472,12 +407,8 @@ export function program(seed: number, count: number): string {
         return random.chance(0.5) ? "any" : "unknown";
       case "object or array":
         return "object";
-      case "array": {
-        const tags = [write(description.of, true) + "[]"];
-        if (description.min !== undefined) tags.push(`Schema.MinItems<${description.min}>`);
-        if (description.max !== undefined) tags.push(`Schema.MaxItems<${description.max}>`);
-        return tags.length > 1 ? grouped(tags.join(" & ")) : tags[0];
-      }
+      case "array":
+        return write(description.of, true) + "[]";
       case "tuple":
         return "[" + description.of.map(item => write(item, false)).join(", ") + "]";
       case "record":
@@ -497,7 +428,6 @@ export function program(seed: number, count: number): string {
             ].join("; ") +
             " }"
           );
-        if (description.closed) return grouped("{ " + members.map(member).join("; ") + " } & Schema.Strict");
         if (members.length > 1 && random.chance(0.1)) {
           const at = random.between(1, members.length - 1);
           return grouped(
@@ -660,8 +590,6 @@ export function program(seed: number, count: number): string {
 
   for (self = 0; self < count; self++) {
     usesSelf = false;
-    fills = false;
-    allowsFallbacks = random.chance(0.25);
     const drawn = random.weighted<() => Description>([
       [10, () => object(0)],
       [3, () => ({ kind: "array", of: object(1) })],
@@ -669,7 +597,7 @@ export function program(seed: number, count: number): string {
       [4, recursive],
       [5, () => typeAt(0)],
     ])();
-    // A type argument that is `any` or `unknown` by an alias checks nothing, and the build says so.
+    // `any` and `unknown` expect nothing.
     const description: Description = drawn.kind === "anything" ? { kind: "array", of: drawn } : drawn;
     current = description;
     descriptions.push(description);
@@ -677,7 +605,6 @@ export function program(seed: number, count: number): string {
     declarations.push(`type T${self} = ${type};`);
     // Some types are only ever read in part, by typed code that hands the value to nobody.
     const inPart = !usesSelf && !mentionsNamed(description) && random.chance(0.3);
-    const marks = fills ? " fills: true," : "";
     portion = inPart ? random.pick([0, 0.2, 0.5]) : 1;
     const body = read(description, "value", 0, "\u00a7");
     portion = 1;
@@ -688,30 +615,30 @@ export function program(seed: number, count: number): string {
       declarations.push(
         `function read${self}${suffix}(value: ${parameter}): string { let out = ""; ${body.replaceAll("\u00a7", suffix)} return out; }`,
       );
+    const head = `  { name: "T${self}", type: ${JSON.stringify(type)}, description: descriptions[${self}],`;
+    const parsed = `JSON.parse(text) as T${self}`;
     if (inPart) {
-      cases.push(
-        `  { name: "T${self}", type: ${JSON.stringify(type)}, description: descriptions[${self}],${marks} inPart: text => read${self}(Checked.parse<T${self}>(text)), readUntyped: read${self}u },`,
-      );
+      cases.push(`${head} inPart: text => read${self}(${parsed}), readUntyped: read${self}u },`);
       continue;
     }
-    if (!fills) shareable.push(self);
-    // A type that fills something in takes no reviver: the build stops.
-    const revived = fills
-      ? ""
-      : ` revived: [${Object.keys(revivers)
-          .map(
-            name =>
-              `[${JSON.stringify(name)}, text => Checked.parse<T${self}>(text, revivers[${JSON.stringify(name)}])]`,
-          )
-          .join(", ")}],`;
+    shareable.push(self);
+    const revived = Object.keys(revivers)
+      .map(name => `[${JSON.stringify(name)}, text => JSON.parse(text, revivers[${JSON.stringify(name)}]) as T${self}]`)
+      .join(", ");
+    const parsers = [
+      `["a cast", text => ${parsed}]`,
+      `["a variable of the type", text => { const held: T${self} = JSON.parse(text); return held; }]`,
+      `["a cast in a generator", text => { for (const held of (function* () { yield none; yield ${parsed}; })()) if (held !== none) return held; }]`,
+      `["a cast with a reviver", text => JSON.parse(text, (_, held) => held) as T${self}]`,
+    ].join(", ");
+    const request = `new Request("http://localhost/", { method: "POST", body: bytes })`;
     cases.push(
-      `  { name: "T${self}", type: ${JSON.stringify(type)}, description: descriptions[${self}],${marks} parseLater: async text => { await null; return Checked.parse<T${self}>(text); },${revived} parsers: [["JSON.parse<T>", text => Checked.parse<T${self}>(text)], ["JSON.parse<T> in a generator", text => { for (const held of (function* () { yield none; yield Checked.parse<T${self}>(text); })()) if (held !== none) return held; }]${fills ? "" : `, ["JSON.parse<T> with a reviver", text => Checked.parse<T${self}>(text, (_, held) => held)]`}], validate: value => validate<T${self}>(value), readTyped: text => read${self}(Checked.parse<T${self}>(text)), serveCast: async request => read${self}((await request.json()) as T${self}), serveChecked: async request => read${self}(Checked.parse<T${self}>(await request.text())), readChanged: (text, change) => { const value = Checked.parse<T${self}>(text); change(value); return read${self}(value); }, readCast: text => read${self}(JSON.parse(text) as T${self}), readBody: async bytes => read${self}((await new Response(bytes).json()) as T${self}), readRequest: async bytes => read${self}((await new Request("http://localhost/", { method: "POST", body: bytes }).json()) as T${self}), readUntyped: read${self}u },`,
+      `${head} parseLater: async text => { await null; return ${parsed}; }, revived: [${revived}], parsers: [${parsers}], serve: async request => read${self}((await request.json()) as T${self}), readChanged: (text, change) => { const value = ${parsed}; change(value); return read${self}(value); }, readCast: text => read${self}(${parsed}), readBody: async bytes => read${self}((await new Response(bytes).json()) as T${self}), readRequest: async bytes => read${self}((await ${request}.json()) as T${self}), readUntyped: read${self}u },`,
     );
   }
 
   return `// texts-for-generated-types.ts --print ${seed} --types ${count}
-import { JSON as Checked, type Schema, type int32 } from "bun";
-import { validate } from "bun:bundle";
+import type { int32 } from "bun";
 import { revivers, run, spellValue, type Case, type Description } from "./texts-for-generated-types-driver";
 
 const none = Symbol();
@@ -744,7 +671,6 @@ if (import.meta.main) {
   const flagSets = option("flags", "")
     .split(";")
     .map(set => set.split(" ").filter(Boolean));
-  const fromSource = process.argv.includes("--from-source");
   const growth = process.argv.includes("--growth");
   const full = process.argv.includes("--full-heap");
   const workers = process.argv.includes("--workers");
@@ -831,18 +757,14 @@ console.log("texts " + started + " differences 0");
 `,
       );
     const entry = workers ? "./start.ts" : "./program.ts";
-    let argv = [bun, "run", "--aot", entry];
-    if (!fromSource) {
-      const built = await command(
-        [bun, "build", "--compile", "--aot", ...flagSets[mine % flagSets.length], entry, "--outfile", "./program"],
-        folder,
-        1800,
-      );
-      if (built.ended !== "exit 0") {
-        said = "the build: " + built.ended + "\n" + built.stdout.slice(-4000) + built.stderr.slice(-8000);
-        bad = true;
-      }
-      argv = ["./program"];
+    const built = await command(
+      [bun, "build", "--compile", "--aot", ...flagSets[mine % flagSets.length], entry, "--outfile", "./program"],
+      folder,
+      1800,
+    );
+    if (built.ended !== "exit 0") {
+      said = "the build: " + built.ended + "\n" + built.stdout.slice(-4000) + built.stderr.slice(-8000);
+      bad = true;
     }
     if (!bad) {
       // A collection at every n-th allocation that leaves the fast path; what it frees is overwritten.
@@ -858,7 +780,7 @@ console.log("texts " + started + " differences 0");
             };
       const ran = await command(
         [
-          ...argv,
+          "./program",
           "--seed",
           String(mine),
           "--seconds",

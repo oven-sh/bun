@@ -212,7 +212,7 @@ impl Checker<'_, '_> {
     pub fn check_file(&mut self, file: FileId) -> Checked {
         let _work = current_work::working_on(
             current_work::Step::Check,
-            self.files().diagnostic_path(file),
+            self.files().module(file).file_name(),
         );
         if let Some(previous) = self.task.file
             && previous != file

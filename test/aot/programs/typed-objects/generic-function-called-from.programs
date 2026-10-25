@@ -1792,7 +1792,7 @@ show("many times over", () => {
 });
 //// json-stringify-code-that-runs-inside-a-write.ts
 // While a typed object with undeclared keys is being written, a toJSON method or an accessor of a value below it runs code that writes tens of thousands of other kinds of object, parses, collects, and changes the object that is being written.
-import { JSON } from "bun"; interface Item { id: number }
+interface Item { id: number }
 interface Holder { first: number; items: Item[]; last: string }
 const host: any = globalThis;
 const collect: () => void = host.Bun ? () => host.Bun.gc(true) : host.gc;
@@ -1801,7 +1801,7 @@ let serial = 0;
 function crowd(count: number): Item[] {
   const items: string[] = [];
   for (let at = 0; at < count; at++) items.push('{"id":' + at + ',"k' + ++serial + '":' + at + "}");
-  return JSON.parse<Item[]>("[" + items.join(",") + "]");
+  return JSON.parse("[" + items.join(",") + "]") as Item[];
 }
 const text = '{"a":"before","first":1,"b":{"inner":1},"items":[{"id":1,"x":1}],"c":"behind","last":"l","d":{"e":null},"f":"' + "x".repeat(40) + '"}';
 const expected = (b: string) => text.replace('{"inner":1}', b);
@@ -1819,20 +1819,20 @@ let depth = 0;
 for (const [label, deed] of deeds) {
   const answers: string[] = [];
   {
-    const holder: any = JSON.parse<Holder>(text);
+    const holder: any = JSON.parse(text) as Holder;
     for (let round = 0; round < 3; round++) JSON.stringify(holder);
     holder.b.toJSON = () => { deed(holder); return 7; };
     answers.push(JSON.stringify(holder) === expected("7") ? "same" : "DIFFERENT");
     answers.push(JSON.stringify([holder, holder]) === "[" + expected("7") + "," + expected("7") + "]" ? "same" : "DIFFERENT");
   }
   {
-    const holder: any = JSON.parse<Holder>(text);
+    const holder: any = JSON.parse(text) as Holder;
     for (let round = 0; round < 3; round++) JSON.stringify(holder);
     Object.defineProperty(holder.b, "inner", { get() { deed(holder); return 8; }, enumerable: true });
     answers.push(JSON.stringify(holder) === expected('{"inner":8}') ? "same" : "DIFFERENT");
   }
   {
-    const holder: any = JSON.parse<Holder>(text);
+    const holder: any = JSON.parse(text) as Holder;
     for (let round = 0; round < 3; round++) JSON.stringify(holder);
     holder.items[0].x = { toJSON() { deed(holder); return 9; } };
     answers.push(JSON.stringify(holder) === text.replace('"x":1', '"x":9') ? "same" : "DIFFERENT");
@@ -1858,7 +1858,7 @@ for (const [label, change] of changes) {
     holder.b.toJSON = () => { change(holder); return 7; };
     return holder;
   };
-  const typed = JSON.stringify(make(text => JSON.parse<Holder>(text)));
+  const typed = JSON.stringify(make(text => JSON.parse(text) as Holder));
   const plain = JSON.stringify(make(host.JSON.parse));
   console.log("code that " + label + ": " + (typed === plain ? "same" : "DIFFERENT: " + typed + " | " + plain));
 }
@@ -1919,8 +1919,7 @@ measure("with another property of its own", () => JSON.stringify(ownOther));
 measure("of classes that extend Date", () => JSON.stringify(subclass));
 measure("a date by itself", () => JSON.stringify(usual.createdAt));
 //// json-stringify-deep-values-that-were-parsed-by-a-type.ts
-// Deep values that JSON.parse<T> made are written, validated, cloned and compared with what plain objects give.
-import { JSON } from "bun"; import { validate } from "bun:bundle";
+// Deep values that `JSON.parse(text) as T` made are written, cloned and compared with what plain objects give.
 type Tree = { kids: Tree[] };
 type Chain = { next: Chain | null; name: string };
 type Deep = Deep[];
@@ -1933,13 +1932,13 @@ function say(run: () => unknown): string {
     return error.name + ": " + error.message;
   }
 }
-const roads: [string, (text: string) => unknown, (value: unknown) => unknown, (levels: number) => string][] = [
-  ["Tree", text => JSON.parse<Tree>(text), value => validate<Tree>(value), levels => '{"kids":['.repeat(levels) + "]}".repeat(levels)],
-  ["Tree with undeclared keys", text => JSON.parse<Tree>(text), value => validate<Tree>(value), levels => '{"u":1,"kids":['.repeat(levels) + '],"v":"w"}'.repeat(levels)],
-  ["Chain", text => JSON.parse<Chain>(text), value => validate<Chain>(value), levels => '{"next":'.repeat(levels) + "null" + ',"name":"n"}'.repeat(levels)],
-  ["Deep", text => JSON.parse<Deep>(text), value => validate<Deep>(value), levels => "[".repeat(levels) + "]".repeat(levels)],
+const roads: [string, (text: string) => unknown, (levels: number) => string][] = [
+  ["Tree", text => JSON.parse(text) as Tree, levels => '{"kids":['.repeat(levels) + "]}".repeat(levels)],
+  ["Tree with undeclared keys", text => JSON.parse(text) as Tree, levels => '{"u":1,"kids":['.repeat(levels) + '],"v":"w"}'.repeat(levels)],
+  ["Chain", text => JSON.parse(text) as Chain, levels => '{"next":'.repeat(levels) + "null" + ',"name":"n"}'.repeat(levels)],
+  ["Deep", text => JSON.parse(text) as Deep, levels => "[".repeat(levels) + "]".repeat(levels)],
 ];
-for (const [label, parse, validate, text] of roads) {
+for (const [label, parse, text] of roads) {
   for (const levels of [10, 47, 48, 49, 50, 100, 1000]) {
     const given = text(levels);
     const typed = parse(given);
@@ -1948,7 +1947,6 @@ for (const [label, parse, validate, text] of roads) {
       [say(() => JSON.stringify(typed)), say(() => JSON.stringify(plain))],
       [say(() => JSON.stringify(typed, null, 1)), say(() => JSON.stringify(plain, null, 1))],
       [say(() => JSON.stringify([typed, { a: typed }])), say(() => JSON.stringify([plain, { a: plain }]))],
-      [say(() => JSON.stringify(validate(typed))), say(() => JSON.stringify(validate(plain)))],
       [say(() => JSON.stringify(structuredClone(typed))), say(() => JSON.stringify(structuredClone(plain)))],
     ];
     console.log(label + ", " + levels + " levels: " + answers.map(([one, other]) => (one === other ? "same" : "DIFFERENT: " + one + " | " + other)).join(", "));

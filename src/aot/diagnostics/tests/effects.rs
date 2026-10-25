@@ -5,9 +5,7 @@ use bun_sema::program::FileId;
 
 use super::super::{COMPILER_DIAGNOSTIC_CLASS, Diagnostic, Diagnostics, ProgramView, Span};
 use super::{file_named, kinds_and_codes, kinds_and_texts, take_diagnostics, text, written};
-use crate::compile::testing::{
-    TYPED_PACKAGE_JSON, TYPED_PACKAGE_SOUND_JSON, default_settings, with_loaded_build,
-};
+use crate::compile::testing::{TYPED_PACKAGE_JSON, default_settings, with_loaded_build};
 use crate::diagnostic_codes::Code;
 use crate::load::ProjectId;
 
@@ -21,19 +19,17 @@ const MISSING_DECLARATION: &str = "export const x = missing;\n";
 const IMPLICIT_ANY: &str = "export function f(a) {\n  return a;\n}\n";
 const DUPLICATE_LABEL: &str = "again: {\n  again: {}\n}\n";
 const NOTHING: [(Kind, u32); 0] = [];
-const COUNT_OF_FULL_TYPES: (Kind, u32) = (Kind::Note, 0);
-
 const CHECKS_DECLARATION_FILES: &str = concat!(
     r#"{"compilerOptions":{"lib":["ESNext"],"target":"ESNext","module":"Preserve","#,
     r#""moduleDetection":"force","moduleResolution":"bundler","noEmit":true,"strict":true,"#,
     r#""skipLibCheck":false,"skipDefaultLibCheck":true}}"#,
 );
 
-const EVERY_ORIGIN: [(&str, &str); 11] = [
+const EVERY_ORIGIN: [(&str, &str); 7] = [
     (
         "main.ts",
         "/// <reference path=\"./globals.d.ts\" />\n\
-         import \"./plain.js\";\nimport \"dep\";\nimport \"untyped\";\nimport \"p\";\n\
+         import \"./plain.js\";\nimport \"dep\";\nimport \"untyped\";\n\
          Function(\"return 1\");\n",
     ),
     ("plain.js", "export {};\n"),
@@ -45,19 +41,11 @@ const EVERY_ORIGIN: [(&str, &str); 11] = [
         r#"{"name":"untyped","version":"1.0.0","main":"index.js"}"#,
     ),
     ("node_modules/untyped/index.js", "module.exports = 1;\n"),
-    ("node_modules/p/package.json", TYPED_PACKAGE_JSON),
-    ("node_modules/p/x.js", "export const x = 1;\n"),
-    (".full-types/p/full-types.json", TYPED_PACKAGE_SOUND_JSON),
-    (".full-types/p/lay/x.js", "export const x: number = 1;\n"),
 ];
 
-const APPLICATION_FILES: [(FileOrigin, &str); 6] = [
+const APPLICATION_FILES: [(FileOrigin, &str); 5] = [
     (FileOrigin::ProgramSource, "/project/main.ts"),
     (FileOrigin::ProgramJavaScript, "/project/plain.js"),
-    (
-        FileOrigin::ProjectTypedVersion,
-        "/project/node_modules/p/x.js",
-    ),
     (
         FileOrigin::DependencySource,
         "/project/node_modules/dep/index.ts",
@@ -74,11 +62,6 @@ const COMPILER_DIAGNOSTIC_EFFECTS: [(FileOrigin, Effect, Effect); FileOrigin::CO
     (FileOrigin::ProgramSource, Effect::StopsBuild, Effect::Warns),
     (
         FileOrigin::ProgramJavaScript,
-        Effect::StopsBuild,
-        Effect::Warns,
-    ),
-    (
-        FileOrigin::ProjectTypedVersion,
         Effect::StopsBuild,
         Effect::Warns,
     ),
@@ -175,13 +158,12 @@ fn check_dependency_javascript(text: &str) -> Vec<(Kind, u32)> {
     check_dependency(JAVASCRIPT_PACKAGE, "node_modules/dep/index.js", text)
 }
 
-fn check_project_typed_version(installed: &str, typed: &str) -> Vec<(Kind, u32)> {
+fn check_aot_source(typed: &str) -> Vec<(Kind, u32)> {
     check(&[
         ("main.ts", "import \"p\";\n"),
         ("node_modules/p/package.json", TYPED_PACKAGE_JSON),
-        ("node_modules/p/x.js", installed),
-        (".full-types/p/full-types.json", TYPED_PACKAGE_SOUND_JSON),
-        (".full-types/p/lay/x.js", typed),
+        ("node_modules/p/x.js", "export {};\n"),
+        ("node_modules/p/x.aot.ts", typed),
     ])
 }
 
@@ -290,9 +272,7 @@ fn type_error_in_program_source_stops_build() {
 #[test]
 fn signatures_of_compiler_declarations_take_no_parameter_types_away() {
     let source =
-        "export const parse: typeof JSON.parse = (text, reviver) => JSON.parse(text, reviver);
-export const count = Bun.JSON.parse<number>(\"1\");
-";
+        "export const parse: typeof JSON.parse = (text, reviver) => JSON.parse(text, reviver);\n";
     assert_eq!(check(&[("main.ts", source)]), NOTHING);
 }
 
@@ -329,9 +309,8 @@ fn type_error_in_dependency_javascript_is_dropped() {
 }
 
 #[test]
-fn type_error_in_project_typed_version_withdraws_trust() {
-    let shown = check_project_typed_version("export const x = \"a\";\n", TYPE_ERROR);
-    assert_eq!(shown, [(Kind::Warn, 100009), COUNT_OF_FULL_TYPES]);
+fn type_error_in_aot_source_withdraws_trust() {
+    assert_eq!(check_aot_source(TYPE_ERROR), [(Kind::Warn, 100009)]);
 }
 
 #[test]
@@ -356,11 +335,7 @@ fn missing_declaration_stops_build_only_in_program_source() {
 fn style_error_stops_build_only_in_program_source() {
     assert_eq!(check(&[("main.ts", IMPLICIT_ANY)]), [(Kind::Err, 7006)]);
     assert_eq!(check_dependency_source(IMPLICIT_ANY), NOTHING);
-    let typed_version_is_used = [(Kind::Note, 0), COUNT_OF_FULL_TYPES];
-    assert_eq!(
-        check_project_typed_version(IMPLICIT_ANY, IMPLICIT_ANY),
-        typed_version_is_used
-    );
+    assert_eq!(check_aot_source(IMPLICIT_ANY), NOTHING);
 }
 
 #[test]

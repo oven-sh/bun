@@ -29,7 +29,6 @@ impl<'h> Resolver<'h> {
         let search = CodeSearch {
             kind,
             extensions: options.extension_orders.for_kind(kind, false),
-            uses_typed_condition: false,
         };
         let answer = match self.search_code(specifier, directory, search) {
             SearchResult::File(found) => {
@@ -183,13 +182,6 @@ impl<'h> Resolver<'h> {
             true => found.to_vec(),
             false => real,
         }
-    }
-
-    pub(super) fn find_other_file(&self, result: SearchResult, path: &[u8]) -> Option<Vec<u8>> {
-        let SearchResult::File(found) = result else {
-            return None;
-        };
-        Some(self.module_path(&found)).filter(|other| other.as_slice() != path)
     }
 
     pub(super) fn code_file(&self, path: &[u8], host_module: Option<HostModuleId>) -> CodeFile<'h> {

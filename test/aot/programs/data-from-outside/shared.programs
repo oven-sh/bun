@@ -54,7 +54,7 @@ function describe(value: unknown): string {
 function differs(parse: (text: string) => unknown, text: string): number {
   const typed = outcome(parse, text);
   const plain = outcome(plainParse, text);
-  if (typed === plain || (typed === "refused" && !plain.startsWith("SyntaxError"))) return 0;
+  if (typed === plain) return 0;
   if (shown++ < 12) console.log("DIFFERENT on " + JSON.stringify(text).slice(0, 300) + "\n  typed: " + typed.slice(0, 300) + "\n  plain: " + plain.slice(0, 300));
   return 1;
 }
@@ -83,15 +83,6 @@ async function «1»(«2»: AsyncIterable<{ length: number }>) {
   for await (const «3» of «2») total += «3».length;
   return total;
 }
-////: lines-4
-function «1»(«2»: () => unknown): «3» {
-  try {
-    «2»();
-    return «4»;
-  } catch {
-    return «5»;
-  }
-}
 ////: lines-5
 function «1»(text: string): «2» {
   return JSON.parse(text);
@@ -105,7 +96,7 @@ function outcome(parse: (text: string) => unknown, text: string): string {
   try {
     return show(parse(text));
   } catch (error: any) {
-    return error.name === "TypeError" && error.issues?.length > 0 ? "refused" : error.name + ": " + error.message;
+    return error.name + ": " + error.message;
   }
 }
 ////: random

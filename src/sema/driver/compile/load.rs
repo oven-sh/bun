@@ -232,7 +232,7 @@ fn find_project(
     let config_path = match (request.entry_points, &code.tsconfig_override) {
         (EntryPoints::Configured(_, Some(manifest_path)), _) => {
             let session = Session::new();
-            return Ok(config::load_for_full_types(host, &session, manifest_path));
+            return Ok(config::load_for_aot_package(host, &session, manifest_path));
         }
         (EntryPoints::Configured(_, None), _) => None,
         (_, Some(path)) if host.is_dir(path) => Some(join(path, b"tsconfig.json")),

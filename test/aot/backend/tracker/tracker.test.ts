@@ -1,5 +1,5 @@
 // An opt-in test. ./app is an issue tracker on Bun.serve and Bun.sql: see ./README.md. It is built with `bun build --compile --aot`
-// and started. The same sources with ./by-hand laid over them run without --aot. Both get every request of ./exchanges.ts, each on a
+// and started. The same sources run without --aot. Both get every request of ./exchanges.ts, each on a
 // copy of the database of its own, and must answer alike to the byte.
 //
 //   AOT_TRACKER_DATABASE_URL=postgres://.. bun test test/aot/backend/tracker
@@ -41,12 +41,6 @@ describe.skipIf(!databaseUrl || !!unsupported)("compile/aot/backend/tracker", ()
   let exchanges: Exchange[] = [];
   let sql: SQL;
 
-  function folderOf(name: string, ...layers: string[]): string {
-    const folder = String(tempDir(name, {}));
-    for (const layer of layers) cpSync(join(import.meta.dir, layer), folder, { recursive: true });
-    return folder;
-  }
-
   async function install(folder: string) {
     if (process.env.AOT_TRACKER_MODULES)
       return symlinkSync(process.env.AOT_TRACKER_MODULES, join(folder, "node_modules"));
@@ -77,24 +71,24 @@ describe.skipIf(!databaseUrl || !!unsupported)("compile/aot/backend/tracker", ()
     elsewhere.pathname = "/postgres";
     sql = new SQL({ url: String(elsewhere), max: 1 });
 
-    const byHand = folderOf("aot-tracker-by-hand", "app", "by-hand");
-    await start("plain", [bunExe(), "server.ts"], byHand);
+    const folder = String(tempDir("aot-tracker", {}));
+    cpSync(join(import.meta.dir, "app"), folder, { recursive: true });
+    await install(folder);
+    await start("plain", [bunExe(), "server.ts"], folder);
 
-    const byType = folderOf("aot-tracker", "app");
-    await install(byType);
-    const executable = join(byType, `server-compiled${isWindows ? ".exe" : ""}`);
+    const executable = join(folder, `server-compiled${isWindows ? ".exe" : ""}`);
     built(
       await spawned(
         [bunExe(), "build", "--compile", "--aot", "--target=bun", "./server.ts", "--outfile", executable],
-        byType,
+        folder,
         bunEnv,
       ),
     );
-    await start("aot", [executable], byType, { BUN_JSC_crashIfInterpreterIsUsed: "1" });
+    await start("aot", [executable], folder, { BUN_JSC_crashIfInterpreterIsUsed: "1" });
 
     for (const rival of (process.env.AOT_TRACKER_RIVALS ?? "").split(" ").filter(Boolean)) {
       const [name, path] = rival.split("=") as [string, string];
-      await start(name, [path], byType);
+      await start(name, [path], folder);
     }
   }, 600_000);
 

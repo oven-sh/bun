@@ -7,7 +7,7 @@ for p in sys.argv[1:]:
     for l in open(p):
         f = l.rstrip('\n').split('\t')
         if f[0] == 'ROW' and len(f) > 6: rows[(int(f[3]), f[1], f[2])] = dict(x.split('=', 1) for x in f[4:])
-PAIRS = [x.split(':') for x in os.environ.get('PAIRS', 'aot:aot.previous,aot:released,aot:jit,aot.made:released,aot.made:jit,aot.made:aot,aot.2:go,aot.2:rust,aot.m2:go,aot.m2:rust').split(',')]
+PAIRS = [x.split(':') for x in os.environ.get('PAIRS', 'aot:aot.previous,aot:released,aot:jit,aot.2:go,aot.2:rust').split(',')]
 T = ['plaintext', 'json', 'db', 'queries5', 'queries20', 'fortunes', 'updates20', 'quote']
 print('| cores | test | column | against | the middle | starts with its sign | start by start, % | its requests a second | the other\'s |\n|---:|---|---|---|---:|---:|---|---|---|')
 for cores in sorted(set(k[0] for k in rows)):

@@ -1323,90 +1323,6 @@ export function read(holder: Holder) {
   kChanging = Symbol("other");
   return [holder[kCopied], holder[kTaken], kChanging, take(names)];
 }
-//// schema-constraints/every-constraint.queries.txt
-# Each `Schema` alias from "bun" becomes a constraint on the type it is intersected with.
-every-constraint.ts:3 shape `number & Schema.Int` = Constrained(number; Int)
-every-constraint.ts:4 shape `number & Schema.Min<1>` = Constrained(number; Min(1))
-every-constraint.ts:5 shape `number & Schema.Max<9>` = Constrained(number; Max(9))
-every-constraint.ts:6 shape `number & Schema.Above<0>` = Constrained(number; Above(0))
-every-constraint.ts:7 shape `number & Schema.Below<1>` = Constrained(number; Below(1))
-every-constraint.ts:8 shape `number & Schema.MultipleOf<5>` = Constrained(number; MultipleOf(5))
-every-constraint.ts:9 shape `string & Schema.MinLength<2>` = Constrained(string; MinLength(2))
-every-constraint.ts:10 shape `string & Schema.MaxLength<9>` = Constrained(string; MaxLength(9))
-every-constraint.ts:11 shape `string[] & Schema.MinItems<1>` = Constrained(string[]; MinItems(1))
-every-constraint.ts:12 shape `string[] & Schema.MaxItems<9>` = Constrained(string[]; MaxItems(9))
-every-constraint.ts:13 shape `string & Schema.Pattern<"^a">` = Constrained(string; Pattern("^a"))
-every-constraint.ts:14 shape `string & Schema.Format<"email">` = Constrained(string; Format(Email))
-every-constraint.ts:15 shape `number & Schema.Message<"no">` = Constrained(number; Message("no"))
-every-constraint.ts:16 shape `number & Schema.Default<1>` = Constrained(number; Default(1))
-every-constraint.ts:17 shape `{ a: 1 } & Schema.Strict` = Constrained({ a: 1; }; Strict)
-every-constraint.ts:18 shape `{ a: 1 } & Schema.DeepStrict` = Constrained({ a: 1; }; DeepStrict)
-every-constraint.ts:19 shape `number & Schema.Min<1> & Schema.Max<9>` = Constrained(number; Min(1), Max(9))
-//// schema-constraints/every-constraint.ts
-// Each `Schema` alias from "bun" becomes a constraint on the type it is intersected with.
-import type { Schema } from "bun";
-let v1: number & Schema.Int;
-let v2: number & Schema.Min<1>;
-let v3: number & Schema.Max<9>;
-let v4: number & Schema.Above<0>;
-let v5: number & Schema.Below<1>;
-let v6: number & Schema.MultipleOf<5>;
-let v7: string & Schema.MinLength<2>;
-let v8: string & Schema.MaxLength<9>;
-let v9: string[] & Schema.MinItems<1>;
-let v10: string[] & Schema.MaxItems<9>;
-let v11: string & Schema.Pattern<"^a">;
-let v12: string & Schema.Format<"email">;
-let v13: number & Schema.Message<"no">;
-let v14: number & Schema.Default<1>;
-let v15: { a: 1 } & Schema.Strict;
-let v16: { a: 1 } & Schema.DeepStrict;
-let v17: number & Schema.Min<1> & Schema.Max<9>;
-export {};
-//// schema-constraints/invalid-arguments.queries.txt
-# A `Schema` alias with an invalid argument becomes a refused rule that names the alias, so the build error can name it and nothing is validated by less than what was written.
-invalid-arguments.ts:3 shape `number & Schema.Min<number>` = Constrained(number; Refused("Min"))
-invalid-arguments.ts:4 shape `string & Schema.MinLength<-1>` = Constrained(string; Refused("MinLength"))
-invalid-arguments.ts:5 shape `string & Schema.MinLength<1.5>` = Constrained(string; Refused("MinLength"))
-invalid-arguments.ts:6 shape `string & Schema.Format<"email" | "uuid">` = Constrained(string; Refused("Format"))
-invalid-arguments.ts:7 shape `number & Schema.Int & Schema.Min<number>` = Constrained(number; Int, Refused("Min"))
-//// schema-constraints/invalid-arguments.ts
-// A `Schema` alias with an invalid argument becomes a refused rule that names the alias, so the build error can name it and nothing is validated by less than what was written.
-import type { Schema } from "bun";
-let v1: number & Schema.Min<number>;
-let v2: string & Schema.MinLength<-1>;
-let v3: string & Schema.MinLength<1.5>;
-let v4: string & Schema.Format<"email" | "uuid">;
-let v5: number & Schema.Int & Schema.Min<number>;
-export {};
-//// schema-constraints/own-schema-namespace.queries.txt
-# A program's own `namespace Schema` adds no constraint: only `Schema` from "bun" does.
-own-schema-namespace.ts:3 shape `number & Schema.Min<1>` = Number
-//// schema-constraints/own-schema-namespace.ts
-// A program's own `namespace Schema` adds no constraint: only `Schema` from "bun" does.
-namespace Schema { export type Min<N extends number> = { readonly min?: N }; }
-let v1: number & Schema.Min<1>;
-export {};
-//// schema-constraints/renamed-alias.queries.txt
-# A `Schema` alias under a second name is the same constraint: the type literal that declares the tag decides, not the name the type is written with.
-renamed-alias.ts:5 shape `number & Positive` = Constrained(number; Min(1))
-renamed-alias.ts:6 shape `number & AtLeast<3>` = Constrained(number; Min(3))
-//// schema-constraints/renamed-alias.ts
-// A `Schema` alias under a second name is the same constraint: the type literal that declares the tag decides, not the name the type is written with.
-import type { Schema } from "bun";
-type Positive = Schema.Min<1>;
-type AtLeast<N extends number> = Schema.Min<N>;
-let v1: number & Positive;
-let v2: number & AtLeast<3>;
-export {};
-//// schema-constraints/strict-object.queries.txt
-# `Schema.Strict` is a constraint on an object type.
-strict-object.ts:3 shape `{ id: number } & Schema.Strict` = Constrained({ id: number; }; Strict)
-//// schema-constraints/strict-object.ts
-// `Schema.Strict` is a constraint on an object type.
-import type { Schema } from "bun";
-let v1: { id: number } & Schema.Strict;
-export {};
 //// two-call-signatures/lenient-folder/inner/handler.ts
 interface Handler { (value: number): string; (value: string): string }
 export const describe: Handler = value => value.toFixed(1);
@@ -1605,18 +1521,6 @@ const { skipped: s2, ...b } = { skipped: true, length: "s" };
 let v1: typeof a;
 let v2: typeof b;
 export {};
-//// type-identity/constraint-order.queries.txt
-# The order of `Schema` constraints does not change an identity. The constraints themselves do.
-same: constraint-order.ts:3 identity `number & Schema.Min<1> & Schema.Max<9>` <=> constraint-order.ts:4 identity `number & Schema.Max<9> & Schema.Min<1>`
-different: constraint-order.ts:5 identity `number & Schema.Min<1>` <=> constraint-order.ts:6 identity `number & Schema.Max<1>`
-//// type-identity/constraint-order.ts
-// The order of `Schema` constraints does not change an identity. The constraints themselves do.
-import type { Schema } from "bun";
-let v1: number & Schema.Min<1> & Schema.Max<9>;
-let v2: number & Schema.Max<9> & Schema.Min<1>;
-let v3: number & Schema.Min<1>;
-let v4: number & Schema.Max<1>;
-export {};
 //// type-identity/cycle-in-two-files-of-one-task-long.ts
 // More than a hundred times as much to check as in the two short files together, imported by cycle-in-two-files-of-one-task.ts.
 const one = 1;
@@ -1692,26 +1596,19 @@ let second: Second;
 let first: First;
 export {};
 //// type-identity/declaration-order.queries.txt
-# A type literal is a declaration with one order of members. Two type literals have two identities, whether they list the same members in another order or in the same one. The order of `Schema` constraints is in the shape and not in the identity.
-ordered: declaration-order.ts:4 has `{ b: string; a: number }` = b Field string checked string
-ordered: declaration-order.ts:4 has `{ b: string; a: number }` = a Field number checked number
-different: declaration-order.ts:3 identity `{ a: number; b: string }` <=> declaration-order.ts:4 identity `{ b: string; a: number }`
-different: declaration-order.ts:3 identity `{ a: number; b: string }` <=> declaration-order.ts:5 identity `{ a: number; b: string }`
-different: declaration-order.ts:8 identity `{ p: { a: number; b: string } }` <=> declaration-order.ts:9 identity `{ p: { b: string; a: number } }`
-
-declaration-order.ts:6 shape `number & Schema.Min<1> & Schema.Max<9>` = Constrained(number; Min(1), Max(9))
-declaration-order.ts:7 shape `number & Schema.Max<9> & Schema.Min<1>` = Constrained(number; Max(9), Min(1))
-same: declaration-order.ts:6 identity `number & Schema.Min<1> & Schema.Max<9>` <=> declaration-order.ts:7 identity `number & Schema.Max<9> & Schema.Min<1>`
+# A type literal is a declaration with one order of members. Two type literals have two identities, whether they list the same members in another order or in the same one.
+ordered: declaration-order.ts:3 has `{ b: string; a: number }` = b Field string checked string
+ordered: declaration-order.ts:3 has `{ b: string; a: number }` = a Field number checked number
+different: declaration-order.ts:2 identity `{ a: number; b: string }` <=> declaration-order.ts:3 identity `{ b: string; a: number }`
+different: declaration-order.ts:2 identity `{ a: number; b: string }` <=> declaration-order.ts:4 identity `{ a: number; b: string }`
+different: declaration-order.ts:5 identity `{ p: { a: number; b: string } }` <=> declaration-order.ts:6 identity `{ p: { b: string; a: number } }`
 //// type-identity/declaration-order.ts
-// A type literal is a declaration with one order of members. Two type literals have two identities, whether they list the same members in another order or in the same one. The order of `Schema` constraints is in the shape and not in the identity.
-import type { Schema } from "bun";
+// A type literal is a declaration with one order of members. Two type literals have two identities, whether they list the same members in another order or in the same one.
 let v1: { a: number; b: string };
 let v2: { b: string; a: number };
 let v3: { a: number; b: string };
-let v4: number & Schema.Min<1> & Schema.Max<9>;
-let v5: number & Schema.Max<9> & Schema.Min<1>;
-let v6: { p: { a: number; b: string } };
-let v7: { p: { b: string; a: number } };
+let v4: { p: { a: number; b: string } };
+let v5: { p: { b: string; a: number } };
 export {};
 //// type-identity/dense-cycle-of-tuple-aliases.queries.txt
 # A cycle of types is described as one component, in time that does not grow with the number of paths through it. The identity of a member does not depend on where the walk enters the cycle, and members that are alike have one identity.
@@ -2887,7 +2784,7 @@ Alias.Shifted;
 //// written-type/generic-alias.queries.txt
 # A generic alias instantiated with `int32` gives `int32`.
 generic-alias.ts:4 written `Id<int32>` = int32
-generic-alias.ts:4 shape `Id<int32>` = Constrained(number; Int32)
+generic-alias.ts:4 shape `Id<int32>` = Int32(number)
 generic-alias.ts:4 variable `a` = int32
 //// written-type/generic-alias.ts
 // A generic alias instantiated with `int32` gives `int32`.
@@ -2940,20 +2837,20 @@ export {};
 //// written-type/int32-forms.queries.txt
 # Every way to name `int32` from "bun" gives the type `int32`, a number with the constraint `Int32`: imports, aliases, `import("bun").int32`, `| undefined` and parentheses.
 int32-forms.ts:6 written `int32` = int32
-int32-forms.ts:6 shape `int32` = Constrained(number; Int32)
+int32-forms.ts:6 shape `int32` = Int32(number)
 int32-forms.ts:6 variable `a` = int32
 int32-forms.ts:7 written `Whole` = int32
-int32-forms.ts:7 shape `Whole` = Constrained(number; Int32)
+int32-forms.ts:7 shape `Whole` = Int32(number)
 int32-forms.ts:8 written `Count` = int32
-int32-forms.ts:8 shape `Count` = Constrained(number; Int32)
+int32-forms.ts:8 shape `Count` = Int32(number)
 int32-forms.ts:9 written `Inline` = int32
-int32-forms.ts:9 shape `Inline` = Constrained(number; Int32)
+int32-forms.ts:9 shape `Inline` = Int32(number)
 int32-forms.ts:10 written `int32 | undefined` = int32 | undefined
 int32-forms.ts:10 shape `int32 | undefined` = Union(undefined | int32)
 int32-forms.ts:11 signature `g` = (int32 checked int32) this unwritten checked any returns unwritten checked void
 int32-forms.ts:12 signature `r` = () this unwritten checked any returns int32 checked int32
 int32-forms.ts:13 written `int32` = int32
-int32-forms.ts:13 shape `int32` = Constrained(number; Int32)
+int32-forms.ts:13 shape `int32` = Int32(number)
 int32-forms.ts:15 has `K` = field Field int32 checked int32
 //// written-type/int32-forms.ts
 // Every way to name `int32` from "bun" gives the type `int32`, a number with the constraint `Int32`: imports, aliases, `import("bun").int32`, `| undefined` and parentheses.
@@ -2977,14 +2874,14 @@ export {};
 int32-in-containers.ts:3 written `int32[]` = int32[]
 int32-in-containers.ts:3 shape `int32[]` = Array(int32)
 int32-in-containers.ts:3 written `int32` = int32
-int32-in-containers.ts:3 shape `int32` = Constrained(number; Int32)
+int32-in-containers.ts:3 shape `int32` = Int32(number)
 int32-in-containers.ts:4 written `Map<string, int32>` = Map<string, int32>
 int32-in-containers.ts:4 written `int32` = int32
-int32-in-containers.ts:4 shape `int32` = Constrained(number; Int32)
+int32-in-containers.ts:4 shape `int32` = Int32(number)
 int32-in-containers.ts:6 written `Box<int32>` = Box<int32>
 int32-in-containers.ts:6 has `Box<int32>` = v Field int32 checked int32
 int32-in-containers.ts:6 written `int32` = int32
-int32-in-containers.ts:6 shape `int32` = Constrained(number; Int32)
+int32-in-containers.ts:6 shape `int32` = Int32(number)
 //// written-type/int32-in-containers.ts
 // `int32` is a type, so a container keeps it: the element of an array, a type argument and the member it instantiates are `int32`.
 import type { int32 } from "bun";
@@ -3024,7 +2921,7 @@ export {};
 //// written-type/long-alias-chain.queries.txt
 # A chain of aliases to `int32` is `int32`, whatever its length.
 long-alias-chain.ts:68 written `A64` = int32
-long-alias-chain.ts:68 shape `A64` = Constrained(number; Int32)
+long-alias-chain.ts:68 shape `A64` = Int32(number)
 long-alias-chain.ts:68 variable `a` = int32
 //// written-type/long-alias-chain.ts
 // A chain of aliases to `int32` is `int32`, whatever its length.
@@ -3101,7 +2998,7 @@ export {};
 own-int32-alias.ts:3 written `int32` = number
 own-int32-alias.ts:3 shape `int32` = Number
 own-int32-alias.ts:3 variable `a` = number
-absent: own-int32-alias.ts:3 shape `int32` = Constrained(number; Int32)
+absent: own-int32-alias.ts:3 shape `int32` = Int32(number)
 //// written-type/own-int32-alias.ts
 // A program's own `type int32 = number` is a plain `number`: only `int32` from "bun" has the constraint.
 type int32 = number;

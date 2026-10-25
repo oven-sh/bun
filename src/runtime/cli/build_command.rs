@@ -171,7 +171,7 @@ impl BuildCommand {
             );
             Global::exit(1);
         }
-        // The full-types file is the bundle with the types of its sources put back, by way of its source map.
+        // The .aot.ts file is the bundle with the types of its sources put back, by way of its source map.
         let has_typescript_entry_point =
             (this_transpiler.options.entry_points.iter()).any(|path| {
                 !matches!(
@@ -1274,7 +1274,7 @@ impl BuildCommand {
                             "declaration"
                         }
                         options::OutputKind::Asset if super::compile_command::is_typed_file(f) => {
-                            "full types"
+                            "aot source"
                         }
                         options::OutputKind::Asset => "asset",
                         options::OutputKind::Sourcemap => "source map",

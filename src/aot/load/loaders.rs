@@ -124,15 +124,6 @@ pub(crate) fn script_kind_of(loader: Loader) -> Option<ScriptKind> {
     }
 }
 
-pub(crate) fn script_loader(kind: ScriptKind) -> Loader {
-    match kind {
-        ScriptKind::Js => Loader::Js,
-        ScriptKind::Jsx => Loader::Jsx,
-        ScriptKind::Ts => Loader::Ts,
-        ScriptKind::Tsx => Loader::Tsx,
-    }
-}
-
 pub(crate) fn reads_raw_bytes(loader: Loader) -> bool {
     matches!(
         loader,
@@ -195,18 +186,6 @@ mod tests {
         assert_eq!(to_host_loader(Loader::Jsx, b"/project/a.js"), BY_NAME);
         assert_eq!(to_host_loader(Loader::Text, b"/project/a.txt"), BY_NAME);
         assert_eq!(to_host_loader(Loader::Text, b"/project/a.ts"), text);
-    }
-
-    #[test]
-    fn script_loader_inverts_script_kind() {
-        for kind in [
-            ScriptKind::Js,
-            ScriptKind::Jsx,
-            ScriptKind::Ts,
-            ScriptKind::Tsx,
-        ] {
-            assert_eq!(script_kind_of(script_loader(kind)), Some(kind));
-        }
     }
 
     #[test]

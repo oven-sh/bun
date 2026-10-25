@@ -32,7 +32,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             (Some(self), Some(&mut *code)),
             &|_| (),
         );
-        if let Some(declaration) = self.find_own_declaration(key, &loaded, &code) {
+        if let Some(declaration) = self.find_own_declaration(key, &loaded) {
             loaded.imports.push(declaration);
         }
         (Box::new(loaded), code, payload)
@@ -42,11 +42,8 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         &self,
         key: LoadKey<'r>,
         loaded: &Loaded<'s, 'r>,
-        code: &LoadedCode<'s, 'r>,
     ) -> Option<Resolution<'r>> {
-        let is_untyped =
-            loaded.module.role == FileRole::Inferred && code.analyzed.typed_source_path.is_none();
-        if !is_untyped {
+        if loaded.module.role != FileRole::Inferred {
             return None;
         }
         let path = match key.loader == HostLoader::default() {
@@ -90,35 +87,23 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         code: Option<&LoadedCode<'s, 'r>>,
         current: TypesQuestion<'q, 's, 'r>,
     ) -> TypesQuestion<'q, 's, 'r> {
-        let typed_source_path = code.and_then(|code| code.analyzed.typed_source_path);
-        let (text_path, question) = match typed_source_path {
-            Some(text_path) => {
-                let (resolver, from) = self.resolver.redirect_for_resolution(text_path);
-                let project = referenced_project_options(self.options, resolver);
-                let question = TypesQuestion {
-                    resolver,
-                    from,
-                    project,
-                };
-                (text_path, question)
-            }
-            None => (path, current),
-        };
-        if question.project.is_some() || role == FileRole::TypesOnly {
-            return question;
+        if current.project.is_some() || role == FileRole::TypesOnly {
+            return current;
         }
-        let governing = match (typed_source_path, code) {
-            (Some(_), _) => self.projects.governing_full_types(self, text_path),
-            (None, Some(_)) => self.projects.governing_code(self, text_path),
-            (None, None) => self.projects.governing(self, text_path),
+        let governing = match code {
+            Some(code) if code.analyzed.is_aot_source => {
+                self.projects.governing_aot_source(self, path)
+            }
+            Some(_) => self.projects.governing_code(self, path),
+            None => self.projects.governing(self, path),
         };
         match governing {
             Some(options) => TypesQuestion {
                 resolver: self.project_resolvers.resolver_for(self.resolver, options),
-                from: text_path,
+                from: path,
                 project: Some(options),
             },
-            None => question,
+            None => current,
         }
     }
 
@@ -139,9 +124,7 @@ pub(super) fn resolver_of_governed_module<'q, 's: 'r, 'r>(
     program: &'q Resolver<'r>,
     module: &'q Module<'s>,
 ) -> (&'q Resolver<'r>, &'q [u8]) {
-    let typed_source_path = module.compiled.and_then(|it| it.typed_source_path);
-    let from_path = typed_source_path.unwrap_or_else(|| module.file_name());
-    let (resolver, from) = program.redirect_for_resolution(from_path);
+    let (resolver, from) = program.redirect_for_resolution(module.file_name());
     match module.redirect_for_resolution {
         Some(options) if referenced_project_options(program.options(), resolver).is_none() => {
             (project_resolvers.resolver_for(program, options), from)
@@ -212,19 +195,6 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
         }
     }
 
-    pub(super) fn has_typed_version(
-        &self,
-        host: &dyn Host,
-        key: (Atom, ResolutionMode),
-        found: &[u8],
-    ) -> bool {
-        let Some(index) = self.find_target(key.0, key.1) else {
-            return false;
-        };
-        let target = &self.targets[index as usize];
-        target.typed_path.is_some() && is_same_file(host, found, target)
-    }
-
     fn find_target(&self, specifier: Atom, mode: ResolutionMode) -> Option<u32> {
         let (matching, other) = match mode {
             ResolutionMode::Require => (CodeImportKind::Require, CodeImportKind::Import),
@@ -266,13 +236,13 @@ fn is_same_file(host: &dyn Host, found: &[u8], target: &CodeTarget<'_>) -> bool 
     if target.key.loader != HostLoader::default() {
         return false;
     }
-    if target.key.path == found || target.typed_path == Some(found) {
-        return true;
-    }
-    let (types_file, is_case_sensitive) = (host.realpath(found), host.is_case_sensitive());
-    let is_types_file =
-        |path: &[u8]| is_same_path(&types_file, &host.realpath(path), is_case_sensitive);
-    is_types_file(target.key.path) || target.typed_path.is_some_and(is_types_file)
+    let code_file = target.key.path;
+    code_file == found
+        || is_same_path(
+            &host.realpath(found),
+            &host.realpath(code_file),
+            host.is_case_sensitive(),
+        )
 }
 
 #[cfg(test)]

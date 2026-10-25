@@ -253,25 +253,23 @@ fn project_for_build(
     project
 }
 
-pub fn default_options_of_full_types() -> Vec<(Vec<u8>, Json)> {
+pub fn default_options_of_aot_package() -> Vec<(Vec<u8>, Json)> {
     let text = |value: &[u8]| Json::String(value.to_vec());
-    let options: [(&[u8], Json); 6] = [
+    let options: [(&[u8], Json); 7] = [
         (b"target", text(b"esnext")),
         (b"module", text(b"preserve")),
         (b"moduleResolution", text(b"bundler")),
         (b"noEmit", Json::Bool(true)),
+        (b"allowImportingTsExtensions", Json::Bool(true)),
         (b"skipLibCheck", Json::Bool(true)),
         (b"strict", Json::Bool(true)),
     ];
     options.map(|(name, value)| (name.to_vec(), value)).into()
 }
 
-pub fn find_manifest_of_full_types(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
+/// The nearest `package.json` that states `compilerOptions`, up to `node_modules`.
+pub fn find_package_with_compiler_options(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     for dir in ancestors(dir) {
-        let path = join(dir, b"full-types.json");
-        if host.is_file(&path) {
-            return Some(path);
-        }
         let path = join(dir, b"package.json");
         let text = host.is_file(&path).then(|| host.read(&path)).flatten();
         let session = Session::new();
@@ -288,10 +286,10 @@ pub fn find_manifest_of_full_types(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8
     None
 }
 
-pub fn load_for_full_types(host: &dyn Host, session: &Session, manifest_path: &[u8]) -> Project {
+pub fn load_for_aot_package(host: &dyn Host, session: &Session, manifest_path: &[u8]) -> Project {
     let mut errors = Vec::new();
     let stated = parse_config(host, session, manifest_path, &mut errors).unwrap_or_default();
-    let mut compiler = default_options_of_full_types();
+    let mut compiler = default_options_of_aot_package();
     merge_compiler_options(&mut compiler, stated.compiler, &[]);
     let raw = Raw {
         compiler,
@@ -315,7 +313,7 @@ pub fn load_for_full_types(host: &dyn Host, session: &Session, manifest_path: &[
 }
 
 impl Project {
-    pub fn key_of_full_types(&self) -> Vec<u8> {
+    pub fn key_of_compiler_options(&self) -> Vec<u8> {
         let mut options: Vec<&(Vec<u8>, Json)> = self.raw_compiler_options.iter().collect();
         options.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         let mut key = self.options.base_url.clone();

@@ -1,4 +1,6 @@
-use super::made_requires::{find_own_require, follow_settled_bindings, holds_import_meta_require};
+use super::made_requires::{
+    OwnRequire, find_own_require, follow_settled_bindings, holds_import_meta_require,
+};
 use super::{ImportSite, ImportSiteKind, ImportSpecifier, ScanInputs};
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{Binding, Bound, CommonJsVariable, Parent, ScopeKind};
@@ -220,7 +222,34 @@ pub(crate) fn is_free_common_js(
         && !is_in_with_scope(bound, e)
 }
 
-pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite>) -> Vec<ExprId> {
+// The path of the file whose `require` a call goes through, if the file imports that `require`.
+fn find_path_to_resolve_from(inputs: &ScanInputs<'_, '_>, call: ExprId) -> Option<Atom> {
+    let &ScanInputs {
+        hir,
+        bound,
+        decisions,
+        ..
+    } = inputs;
+    let Some(CallForm::Call { callee, .. }) = find_call_form(hir, call) else {
+        return None;
+    };
+    let callee = hir.skip_type_assertions(callee);
+    let object = hir.member_key(callee).map(|(object, _)| object);
+    let written = [Some(callee), object.map(|it| hir.skip_type_assertions(it))];
+    written.into_iter().flatten().find_map(|require| {
+        match find_own_require(hir, bound, Some(decisions), require) {
+            Some(OwnRequire::OfOtherFile(path)) => Some(path),
+            Some(OwnRequire::OfFile | OwnRequire::Made) | None => None,
+        }
+    })
+}
+
+pub(super) struct ScannedCalls {
+    pub(super) module_require_objects: Vec<ExprId>,
+    pub(super) requires_of_other_files: Vec<(u32, Atom)>,
+}
+
+pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite>) -> ScannedCalls {
     let &ScanInputs {
         hir,
         bound,
@@ -228,6 +257,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         ..
     } = inputs;
     let mut module_require_objects = Vec::new();
+    let mut requires_of_other_files = Vec::new();
     for index in 0..hir.exprs.len() {
         let call = ExprId(index as u32);
         let Some(form) = find_call_form(hir, call) else {
@@ -242,11 +272,19 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         let site = create_call_site(inputs, &found);
         if !is_ordinary_builtin_call(&site) {
             module_require_objects.extend(found.module_require_object);
+            if !hir.imported_requires.is_empty()
+                && let Some(path) = find_path_to_resolve_from(inputs, call)
+            {
+                requires_of_other_files.push((sites.len() as u32, path));
+            }
             sites.push(site);
         }
     }
     module_require_objects.shared_sort_unstable();
-    module_require_objects
+    ScannedCalls {
+        module_require_objects,
+        requires_of_other_files,
+    }
 }
 
 fn is_ordinary_builtin_call(site: &ImportSite) -> bool {

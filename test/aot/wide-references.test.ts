@@ -42,12 +42,7 @@ test("a program that outgrows the range of 32-bit references says which option l
   expect(plain.exitCode).toBe(0);
 
   expect(await run([narrow], cwd, bunEnv)).toEqual({ stdout: plain.stdout, stderr: "", exitCode: 0 });
-  // The pinned engine throws this error behind the last check of the operation that ran out of room, which the validator of a build with assertions reports.
-  const full = await run(withoutCoreDump([narrow]), cwd, {
-    ...bunEnv,
-    BUN_JSC_markedBlockCageSizeInMB: "64",
-    BUN_JSC_validateExceptionChecks: "0",
-  });
+  const full = await run(withoutCoreDump([narrow]), cwd, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: "64" });
   expect(full.exitCode).not.toBe(0);
   expect(full.stdout).not.toContain(plain.stdout);
   expect(full.stderr).toContain("Build with --aot-huge-heap to remove the limit.");

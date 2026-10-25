@@ -92,7 +92,6 @@ const NESTED_PATHS: Fold<'static> = Fold {
 };
 const FEATURES: Fold<'static> = Fold {
     features: &["ON"],
-    compiler_functions: &["validate"],
     ..Fold::NONE
 };
 
@@ -1744,17 +1743,6 @@ fn feature_import_errors() {
             assert_eq!(s.analysis.errors[0].node, expected);
         },
     );
-    folded(
-        "a.ts",
-        r#"import { validate } from "bun:bundle";"#,
-        Fold::NONE,
-        |s| {
-            let expected = FoldErrorKind::UnknownBundleExport(s.workspace.atom("validate"));
-            assert_eq!(kinds(s), [expected]);
-            let expected = NodeData::ImportSpec(ImportSpecId(0));
-            assert_eq!(s.analysis.errors[0].node, expected);
-        },
-    );
 }
 
 #[test]
@@ -1764,14 +1752,6 @@ fn feature_without_errors() {
             assert!(kinds(s).is_empty(), "{test}");
         });
     }
-    folded(
-        "a.ts",
-        r#"import { validate } from "bun:bundle";"#,
-        FEATURES,
-        |s| {
-            assert!(kinds(s).is_empty());
-        },
-    );
 }
 
 #[test]

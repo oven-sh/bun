@@ -117,92 +117,14 @@ export const invalidOrders: Record<string, string> = {
   "text that is not JSON": '{"customer":',
 };
 
-/** The routes of ./app/<name>-validated.ts. The order is a type with the rules of the zod schema (./app/validated.ts), and the build generates the checks. Only an --aot build has them. */
-export const validatedRoutes: Route[] = [
-  // validate<Order>(await request.json())
-  { name: "validated", method: "POST", path: "/shops/west/validated-orders", type: "application/json", request: JSON.stringify(order), expectedBody: receipt },
-  // JSON.parse<Order>(await request.text())
-  { name: "parsed", method: "POST", path: "/shops/west/parsed-orders", type: "application/json", request: JSON.stringify(order), expectedBody: receipt },
-];
-
 /** The routes that take an order once more, with an order whose last item is wrong: everything is checked, and then refused. */
-export const refusedRoutes: Route[] = [...routes.filter(route => route.method === "POST"), ...validatedRoutes].map(route => ({
+export const refusedRoutes: Route[] = routes.filter(route => route.method === "POST").map(route => ({
   ...route,
   name: route.name + "-refused",
   request: JSON.stringify({ ...order, items: [...order.items.slice(0, -1), { ...order.items.at(-1), quantity: 0 }] }),
   status: 400,
   expectedBody: invalidOrderBody,
 }));
-
-const text = JSON.stringify(order);
-const withCustomer = (customer: object) => JSON.stringify({ ...order, customer: { ...order.customer, ...customer } });
-const withItem = (item: unknown) => JSON.stringify({ ...order, items: [item, ...rest] });
-const withFirst = (item: object) => withItem({ ...first, ...item });
-
-/** Orders at the edges of the rules. zod and the generated checks must accept the same ones. */
-export const acceptedOrders: Record<string, string> = {
-  "the order": text,
-  "no coupon": JSON.stringify({ customer: order.customer, items: order.items }),
-  "an empty coupon": JSON.stringify({ ...order, coupon: "" }),
-  "a coupon of 16 characters": JSON.stringify({ ...order, coupon: "c".repeat(16) }),
-  "a name of one character": withCustomer({ name: "Z" }),
-  "a name of 100 characters": withCustomer({ name: "z".repeat(100) }),
-  // Both count code points: these are 200 and 64 UTF-16 units.
-  "a name of 100 characters outside the basic plane": withCustomer({ name: "\u{1F35E}".repeat(100) }),
-  "a sku of 32 characters outside the basic plane": withFirst({ sku: "\u{1F35E}".repeat(32) }),
-  "the largest safe id": withCustomer({ id: Number.MAX_SAFE_INTEGER }),
-  "an id with an exponent": text.replace('"id":4711', '"id":4.711e3'),
-  "an id that is written twice": text.replace('"id":4711', '"id":0,"id":4711'),
-  "an email address outside ASCII": withCustomer({ email: "zo\u00EB@ex\u00E4mple.com" }),
-  "a sku of 32 characters": withFirst({ sku: "s".repeat(32) }),
-  "a quantity of 1000": withFirst({ quantity: 1000 }),
-  "a price of zero": withFirst({ unitCents: 0 }),
-  "a price of minus zero": text.replace('"unitCents":199', '"unitCents":-0'),
-  "one item": JSON.stringify({ ...order, items: [first] }),
-  "100 items": JSON.stringify({ ...order, items: Array(100).fill(first) }),
-  "the keys in another order": JSON.stringify({ coupon: order.coupon, items: order.items.map(({ sku, quantity, unitCents }) => ({ unitCents, quantity, sku })), customer: { email: order.customer.email, id: order.customer.id, name: order.customer.name } }),
-  "white space": JSON.stringify(order, null, 2) + "\n",
-};
-
-export const expectedReceipt = (body: string) => receiptFor(JSON.parse(body));
-
-/** zod and the generated checks must refuse these, and those of `invalidOrders`. */
-export const refusedOrders: Record<string, string> = {
-  "an empty name": withCustomer({ name: "" }),
-  "a name of 101 characters": withCustomer({ name: "z".repeat(101) }),
-  "a name of 101 characters outside the basic plane": withCustomer({ name: "\u{1F35E}".repeat(101) }),
-  "an id of zero": withCustomer({ id: 0 }),
-  "an id that is negative": withCustomer({ id: -4711 }),
-  "an id that is text": withCustomer({ id: "4711" }),
-  "an id beyond the safe integers": text.replace('"id":4711', '"id":9007199254740992'),
-  "an id that overflows": text.replace('"id":4711', '"id":1e400'),
-  "an email address with two @": withCustomer({ email: "zoe@example@com" }),
-  "an email address with a space": withCustomer({ email: "zoe@exam ple.com" }),
-  "an email address that ends with a line feed": withCustomer({ email: "zoe@example.com\n" }),
-  "a customer that is an array": JSON.stringify({ ...order, customer: [4711, "Zoe", "zoe@example.com"] }),
-  "a customer that is null": JSON.stringify({ ...order, customer: null }),
-  "a key __proto__": text.replace('"id":4711', '"__proto__":{"id":1},"id":4711'),
-  "an empty sku": withFirst({ sku: "" }),
-  "a sku of 33 characters": withFirst({ sku: "s".repeat(33) }),
-  "a quantity of 1001": withFirst({ quantity: 1001 }),
-  "a quantity that is true": withFirst({ quantity: true }),
-  "a price below zero": withFirst({ unitCents: -1 }),
-  "a price beyond the safe integers": text.replace('"unitCents":199', '"unitCents":1e300'),
-  "an item without a price": withItem({ sku: first!.sku, quantity: first!.quantity }),
-  "an item that is null": withItem(null),
-  "an item that is an array": withItem(["SKU-1000", 1, 199]),
-  "no items": JSON.stringify({ ...order, items: [] }),
-  "101 items": JSON.stringify({ ...order, items: Array(101).fill(first) }),
-  "items that are an object": JSON.stringify({ ...order, items: { 0: first, length: 1 } }),
-  "a coupon of 17 characters": JSON.stringify({ ...order, coupon: "c".repeat(17) }),
-  "a coupon that is a number": JSON.stringify({ ...order, coupon: 10 }),
-  "a body that is null": "null",
-  "a body that is an array": "[]",
-  "a body that is a number": "5",
-  "a body that is text": '"order"',
-  "an empty body": "",
-  "an order and more text": text + "{}",
-};
 
 function summary(id: number) {
   return { id, name: `User ${id}`, orders: 5, totalCents: [0, 1, 2, 3, 4].reduce((sum, n) => sum + 1000 + n * 250 + id, 0) };
@@ -276,4 +198,4 @@ export const apiRoutes: Route[] = [
 ];
 
 // Used by ./measure/measure.py.
-if (import.meta.main) console.log(JSON.stringify({ routes, effectRoutes, apiRoutes, validatedRoutes, refusedRoutes, invalidOrders, invalidOrderBody }));
+if (import.meta.main) console.log(JSON.stringify({ routes, effectRoutes, apiRoutes, refusedRoutes, invalidOrders, invalidOrderBody }));

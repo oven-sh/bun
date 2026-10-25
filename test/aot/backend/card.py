@@ -25,7 +25,6 @@ The columns:
     jit            <bun> build --compile: the same Bun as a JIT
     released       <released bun> build --compile
     go, rust       rivals/go, rivals/rust
-    aot.made       shop only: --aot with by-type/ laid over app/ (validation from declared types in place of zod)
 
 The steps (--steps, all by default, in this order):
 
@@ -152,8 +151,6 @@ def build_native(destination, symbols):
 def build():
     app = os.path.join(source, "app")
     plain = lay_out("app", app)
-    without_types = lay_out("app-by-hand", app, os.path.join(source, "by-hand")) if tracker else plain
-    by_type = None if tracker else lay_out("app-by-type", app, os.path.join(source, "by-type"))
     for folder, symbols in (("bin", False), ("sym", True)):
         destination = os.path.join(out, folder)
         buns = {}
@@ -163,11 +160,9 @@ def build():
                 shutil.copy(bun, buns[name])
                 if not symbols:
                     subprocess.run(["strip", "-s", buns[name]], stderr=subprocess.DEVNULL)
-        columns = [("aot", "bun", plain, ["--aot"]), ("jit", "bun", without_types, []), ("released", "released", without_types, [])]
+        columns = [("aot", "bun", plain, ["--aot"]), ("jit", "bun", plain, []), ("released", "released", plain, [])]
         if options.previous:
             columns.append(("aot.previous", "previous", plain, ["--aot"]))
-        if by_type:
-            columns.append(("aot.made", "bun", by_type, ["--aot"]))
         for column, bun, folder_of_sources, flags in columns:
             run([buns[bun], "build", "--compile", *flags, "--target=bun", "./server.ts", "--outfile", os.path.join(destination, column)], "build.txt", cwd=folder_of_sources, env=dict(environment, **({"BUN_JSC_aotMapFilePath": os.path.join(destination, column + ".map")} if flags else {})))
         if tracker and not symbols:
@@ -177,7 +172,6 @@ def build():
         if not tracker:
             run([buns["released"], "build", "--compile", "--target=bun", "./carrier.ts", "--outfile", os.path.join(destination, "carrier")], "build.txt", cwd=plain)
             shutil.copy(os.path.join(destination, "aot"), os.path.join(destination, "aot.2"))
-            shutil.copy(os.path.join(destination, "aot.made"), os.path.join(destination, "aot.m2"))
         build_native(destination, symbols)
         run(["cc", "-O2", "-pthread", "-o", os.path.join(destination, "load"), os.path.join(HERE, "measure", "load.c")], "build.txt")
     if tracker:
@@ -306,13 +300,13 @@ def rates():
         return
     side_by_side = dict(PACED_ROUNDS=0, LONGEST=25, READ_FROM=20, WARM_SECONDS=max(50, options.seconds))
     first = "+".join(built("bin", ["aot", "aot.previous", "released", "jit"]))
-    measure("rates-quote", "bin", "quote", ["aot", "aot.made", "released", "jit", "aot.2", "aot.m2", "go", "rust"], WARM=40000, TOGETHER="aot+aot.made+released+jit/aot.2+aot.m2+go+rust", **side_by_side)
+    measure("rates-quote", "bin", "quote", ["aot", "released", "jit", "aot.2", "go", "rust"], WARM=40000, TOGETHER="aot+released+jit/aot.2+go+rust", **side_by_side)
     measure("rates", "bin", options.tests or "db,queries20,fortunes,updates20,json,plaintext", first.split("+") + ["aot.2", "go", "rust"], TOGETHER=first + "/aot.2+go+rust", **side_by_side)
 
 
 def profile_layers():
     alone = dict(LAYERS="yes", LOADED_STARTS=1, STARTS=1, PACED_ROUNDS=0, SETTLE=0, WARM_SECONDS=25, READ_FROM=15, SPARE_CORES="")
-    columns = built("sym", ["aot", "aot.made", "jit", "released", "go", "rust"])
+    columns = built("sym", ["aot", "jit", "released", "go", "rust"])
     measure("layers", "sym", options.layer_tests or ("mix,issue,list,api-issue,api-list" if tracker else "db,queries20,fortunes,updates20,json,quote"), columns, **alone)
 
 

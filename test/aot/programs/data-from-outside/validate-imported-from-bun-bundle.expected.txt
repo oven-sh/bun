@@ -1,8 +1,0 @@
-validate {"id":1,"name":"a","more":true} TypeError: Expected id to be an integer, received 1.5
-with an alias {"id":2,"name":"b"} TypeError: Missing required property name
-called above the import {"id":3,"name":"c"} TypeError: Expected value to be an object, received null
-given 1
-a local given 2
-a function in a block given 3
-a method given 4
-5 1

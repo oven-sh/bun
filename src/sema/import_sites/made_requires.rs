@@ -118,10 +118,10 @@ fn is_create_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     }
 }
 
-fn filename_may_be_modified(hir: &File<'_>, bound: &Bound<'_>) -> bool {
-    let filename = Binding::CommonJs(CommonJsVariable::Filename);
+fn may_be_modified(hir: &File<'_>, bound: &Bound<'_>, variable: CommonJsVariable) -> bool {
+    let variable = Binding::CommonJs(variable);
     let mut stores = bound.runtime.unbound_name_stores().iter();
-    stores.any(|&(target, _)| bound.binding(target) == filename)
+    stores.any(|&(target, _)| bound.binding(target) == variable)
         || !bound.runtime.eval_scopes().is_empty()
         || bound.file_uses_arguments() && has_mapped_arguments(hir, CodeUnit::File)
 }
@@ -129,7 +129,7 @@ fn filename_may_be_modified(hir: &File<'_>, bound: &Bound<'_>) -> bool {
 fn names_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     let e = hir.skip_type_assertions(e);
     if is_free_common_js(hir, bound, e, CommonJsVariable::Filename) {
-        return !filename_may_be_modified(hir, bound);
+        return !may_be_modified(hir, bound, CommonJsVariable::Filename);
     }
     let is_import_meta_member = matches!(hir.member_key(e), Some((object, MemberKey::Name(name)))
         if (name == known::url || name == known::meta_filename || name == known::path)
@@ -152,6 +152,8 @@ fn is_made_for_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
 pub enum OwnRequire {
     OfFile,
     Made,
+    // Imported from the file at this path, which exports its own `require`.
+    OfOtherFile(Atom),
 }
 
 const LONGEST_CHAIN_OF_BINDINGS: usize = 8;
@@ -333,11 +335,130 @@ fn follow_to_own_require(
             if is_made_for_own_file(hir, bound, e) {
                 return Some(OwnRequire::Made);
             }
+            if let Some(path) = find_imported_require(hir, bound, e) {
+                return Some(OwnRequire::OfOtherFile(path));
+            }
             return is_parameter_with_require_of_file(e).then_some(OwnRequire::OfFile);
         };
         e = source;
     }
     None
+}
+
+fn path_of_imported_require(hir: &File<'_>, specifier: Atom, export: Atom) -> Option<Atom> {
+    let mut imported = hir.imported_requires.iter();
+    let found = imported.find(|it| it.specifier == specifier && it.export == export)?;
+    Some(found.path)
+}
+
+fn find_require_imported_as(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> Option<Atom> {
+    let mut declarations = bound.symbol(symbol).decls.iter();
+    let (import, export) = declarations.find_map(|&declaration| match declaration {
+        Decl::ImportSpec(spec) => {
+            (!hir[spec].type_only).then_some((hir[spec].import, hir[spec].imported))
+        }
+        Decl::ImportDefault(import) => Some((import, known::default)),
+        _ => None,
+    })?;
+    match hir[import].type_only {
+        true => None,
+        false => path_of_imported_require(hir, hir[import].spec, export),
+    }
+}
+
+fn find_imported_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<Atom> {
+    if hir.imported_requires.is_empty() {
+        return None;
+    }
+    let Some((object, MemberKey::Name(export))) = hir.member_key(e) else {
+        return find_require_imported_as(hir, bound, settled_symbol(hir, bound, e)?);
+    };
+    let namespace = settled_symbol(hir, bound, hir.skip_type_assertions(object))?;
+    let mut declarations = bound.symbol(namespace).decls.iter();
+    let import = declarations.find_map(|&declaration| match declaration {
+        Decl::ImportNamespace(import) => (!hir[import].type_only).then_some(import),
+        _ => None,
+    })?;
+    path_of_imported_require(hir, hir[import].spec, export)
+}
+
+// A `require` that a file exports, and the path of the file that it resolves from. `None` is the exporting file.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ExportedRequire {
+    pub export: Atom,
+    pub path: Option<Atom>,
+}
+
+fn find_require_written_as(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    e: ExprId,
+) -> Option<Option<Atom>> {
+    match find_own_require(hir, bound, Some(decisions), e)? {
+        OwnRequire::OfFile => {
+            (!may_be_modified(hir, bound, CommonJsVariable::Require)).then_some(None)
+        }
+        OwnRequire::Made => Some(None),
+        OwnRequire::OfOtherFile(path) => Some(Some(path)),
+    }
+}
+
+fn find_require_held_by(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    symbol: SymbolId,
+) -> Option<Option<Atom>> {
+    let stability = bound.binding_stability(symbol);
+    match (stability, bound.binding_initializer(hir, symbol)) {
+        (BindingStability::Stable, BindingInitializer::Expression(source)) => {
+            find_require_written_as(hir, bound, decisions, source)
+        }
+        (BindingStability::Linked, BindingInitializer::Import) => {
+            find_require_imported_as(hir, bound, symbol).map(Some)
+        }
+        _ => None,
+    }
+}
+
+// esbuild writes `export { __require }` into the chunk that its other chunks share.
+pub fn find_exported_requires(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+) -> Vec<ExportedRequire> {
+    let exports = bound.table(bound.symbol(bound.file_symbol).exports);
+    let path_of = |declaration: Decl| match declaration {
+        Decl::ExportSpec(specifier) => {
+            let item = hir[specifier];
+            let statement = hir[item.export];
+            if item.type_only || statement.type_only {
+                return None;
+            }
+            if statement.has_module_specifier {
+                return path_of_imported_require(hir, statement.spec, item.local).map(Some);
+            }
+            match bound.exported_binding(specifier) {
+                Binding::Symbol(local) => find_require_held_by(hir, bound, decisions, local),
+                Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => None,
+            }
+        }
+        Decl::Var(_) => {
+            find_require_held_by(hir, bound, decisions, bound.declared_symbol(declaration))
+        }
+        Decl::ExportExpr(statement) => match hir[statement].kind {
+            StmtKind::ExportDefault(value) => find_require_written_as(hir, bound, decisions, value),
+            _ => None,
+        },
+        _ => None,
+    };
+    let exported = exports.iter().filter_map(|&(export, symbol)| {
+        let mut declarations = bound.symbol(symbol).decls.iter();
+        let path = declarations.find_map(|&declaration| path_of(declaration))?;
+        Some(ExportedRequire { export, path })
+    });
+    exported.collect()
 }
 
 fn settled_initializer(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<ExprId> {

@@ -164,10 +164,6 @@ impl Statistics {
             StatisticId::CheckerMembersGivenUp,
             sum(&queries.members_gave_up),
         );
-        self.count(
-            StatisticId::SchemaArgumentsDropped,
-            u64::from(queries.invalid_schema_arguments),
-        );
     }
 
     pub(crate) fn add_counters(&mut self, view: ProgramView<'_, '_>, counters: Counters) {
@@ -471,14 +467,12 @@ mod tests {
         queries.gave_up[0] = 2;
         queries.gave_up[3] = 1;
         queries.members_gave_up[1] = 4;
-        queries.invalid_schema_arguments = 3;
         let mut statistics = Statistics::default();
         statistics.add_queries(queries);
         statistics.add_queries(queries);
         assert_eq!(statistics.get(StatisticId::CheckerQueries), 10);
         assert_eq!(statistics.get(StatisticId::CheckerQueriesGivenUp), 6);
         assert_eq!(statistics.get(StatisticId::CheckerMembersGivenUp), 8);
-        assert_eq!(statistics.get(StatisticId::SchemaArgumentsDropped), 6);
     }
 
     #[test]

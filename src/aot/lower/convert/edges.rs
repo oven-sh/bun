@@ -38,7 +38,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     ..
                 } => pending.push(constraint),
                 ShapeKind::Union(members) => pending.extend_from_slice(members),
-                ShapeKind::Constrained { base, .. } => pending.push(base),
+                ShapeKind::Int32 { base } => pending.push(base),
                 ShapeKind::Never
                 | ShapeKind::Undefined
                 | ShapeKind::Null

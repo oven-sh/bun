@@ -588,8 +588,8 @@ lines.push("among many: " + read(many, key()) + " " + read(many, long("j", 8, 4)
 for (const nothing of [null, undefined]) { try { read(nothing, key()); } catch (error) { lines.push("of " + nothing + ": " + (error as Error).constructor.name); } }
 console.log(lines.join("\n"));
 //// very-many-added-keys-however-the-object-was-made.ts
-// An object with more added keys than one entry of a key order counts keeps its fields, its key order and its class, however it was made: parsed and cast, parsed by type, assigned to, spread, stored key by key, cloned.
-import { JSON } from "bun"; type Row = { first: number; late?: number };
+// An object with more added keys than one entry of a key order counts keeps its fields, its key order and its class, however it was made: parsed and cast, parsed into an annotated variable, assigned to, spread, stored key by key, cloned.
+type Row = { first: number; late?: number };
 const members: string[] = [];
 for (let i = 0; i < 70000; i++) members.push('"k' + i + '":' + i);
 const text = '{"first":0,' + members.join(",") + ',"late":1}';
@@ -598,7 +598,8 @@ function tell(label: string, row: Row) {
   console.log(label, keys.length, keys[0], keys[1], keys[keys.length - 2], keys[keys.length - 1], row.first, row.late);
 }
 tell("cast", globalThis.JSON.parse(text) as Row);
-try { tell("type argument", JSON.parse<Row>(text)); } catch (error) { console.log("type argument", (error as Error).name); }
+const annotated: Row = JSON.parse(text);
+tell("annotated", annotated);
 class Bag { first = 0; late?: number; mark(value: number) { this.late = value } }
 const assigned = Object.assign(new Bag(), globalThis.JSON.parse(text)) as Bag;
 tell("assigned", assigned);

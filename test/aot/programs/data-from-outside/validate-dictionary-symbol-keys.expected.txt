@@ -1,3 +1,0 @@
-without a default undefined a
-with a default undefined a 1
-a dictionary type used twice, with a default undefined undefined 1

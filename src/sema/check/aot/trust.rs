@@ -88,7 +88,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub(super) fn is_transparent_alias(&self, alias: Sym) -> bool {
-        self.c.p.aot_symbols().is_compiler_known_alias(alias)
+        self.c.p.aot_symbols().int32_alias() == Some(alias)
             || self.is_declared_in_type_function_files(alias)
     }
 

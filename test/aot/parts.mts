@@ -375,7 +375,6 @@ export const rows: Row[] = [
   ),
   ["aot/servers/api-servers", 0, "./servers/one-server", "testServers", ["api", "api-bun,api-thin,api-hono,api-elysia"]],
   ["aot/servers/api-servers-on-node-http", 0, "./servers/one-server", "testServers", ["api", "api-node,api-express,api-fastify,api-koa"]],
-  ["aot/servers/validated-servers", 0, "./servers/one-server", "testServers", ["validated", "1"]],
   ["aot/servers/every-pass-changes-one-of-the-servers", 0, "./servers/one-server", "testServers", ["every-pass-changes-a-real-program", "1"]],
   ["aot/startup-scaling/startup-scaling", 4, "./startup-scaling/startup-scaling", "describePart"],
   ["aot/trimmed-against-whole", 4, "./trimmed-against-whole-cases", "trimmedAgainstWhole"],

@@ -1,5 +1,5 @@
-// Texts nested 100 to 1,000,000 levels deep through recursive types, through members of unknown type and through undeclared keys, at the top of the stack and near its end: JSON.parse<T> gives the value or a RangeError, nothing else, and goes on working afterwards.
-import { JSON } from "bun"; type Tree = { kids: Tree[] };
+// Texts nested 100 to 1,000,000 levels deep through recursive types, through members of unknown type and through undeclared keys, at the top of the stack and near its end: `JSON.parse(text) as T` gives the value or a RangeError, nothing else, and goes on working afterwards.
+type Tree = { kids: Tree[] };
 type Chain = { next: Chain | null };
 type Link = { name: string; next?: Link };
 type Deep = Deep[];
@@ -12,18 +12,18 @@ type Point = { x: number; y: number };
 
 type Road = { label: string; parse: (text: string) => unknown; text: (levels: number) => string; depth: (levels: number) => number };
 const roads: Road[] = [
-  { label: "records and arrays", parse: text => JSON.parse<Tree>(text), text: levels => '{"kids":['.repeat(levels) + "]}".repeat(levels), depth: levels => 2 * levels },
-  { label: "records", parse: text => JSON.parse<Chain>(text), text: levels => '{"next":'.repeat(levels) + "null" + "}".repeat(levels), depth: levels => levels },
-  { label: "an optional member behind another", parse: text => JSON.parse<Link>(text), text: levels => '{"name":"n","next":'.repeat(levels) + '{"name":"last"}' + "}".repeat(levels), depth: levels => levels + 1 },
-  { label: "records in another order, with undeclared keys", parse: text => JSON.parse<Link>(text), text: levels => '{"other":1,"next":'.repeat(levels) + '{"name":"last"}' + ',"name":"n"}'.repeat(levels), depth: levels => levels + 1 },
-  { label: "arrays", parse: text => JSON.parse<Deep>(text), text: levels => "[".repeat(levels) + "]".repeat(levels), depth: levels => levels },
-  { label: "dictionaries", parse: text => JSON.parse<Bag>(text), text: levels => '{"k":'.repeat(levels) + "{}" + "}".repeat(levels), depth: levels => levels + 1 },
-  { label: "tuples", parse: text => JSON.parse<Pair>(text), text: levels => "[".repeat(levels) + "]".repeat(levels), depth: levels => levels },
-  { label: "a tagged union", parse: text => JSON.parse<Either>(text), text: levels => '{"kind":"node","below":'.repeat(levels) + '{"kind":"leaf"}' + "}".repeat(levels), depth: levels => levels + 1 },
-  { label: "a tagged union, the tag last", parse: text => JSON.parse<Either>(text), text: levels => '{"below":'.repeat(levels) + '{"kind":"leaf"}' + ',"kind":"node"}'.repeat(levels), depth: levels => levels + 1 },
-  { label: "arrays under unknown", parse: text => JSON.parse<Loose>(text), text: levels => '{"value":' + "[".repeat(levels) + "]".repeat(levels) + "}", depth: levels => levels + 1 },
-  { label: "objects under any", parse: text => JSON.parse<Any>(text), text: levels => '{"value":' + '{"a":'.repeat(levels) + "1" + "}".repeat(levels) + "}", depth: levels => levels + 1 },
-  { label: "arrays under an undeclared key", parse: text => JSON.parse<Point>(text), text: levels => '{"x":1,"y":2,"other":' + "[".repeat(levels) + "]".repeat(levels) + "}", depth: levels => levels + 1 },
+  { label: "records and arrays", parse: text => JSON.parse(text) as Tree, text: levels => '{"kids":['.repeat(levels) + "]}".repeat(levels), depth: levels => 2 * levels },
+  { label: "records", parse: text => JSON.parse(text) as Chain, text: levels => '{"next":'.repeat(levels) + "null" + "}".repeat(levels), depth: levels => levels },
+  { label: "an optional member behind another", parse: text => JSON.parse(text) as Link, text: levels => '{"name":"n","next":'.repeat(levels) + '{"name":"last"}' + "}".repeat(levels), depth: levels => levels + 1 },
+  { label: "records in another order, with undeclared keys", parse: text => JSON.parse(text) as Link, text: levels => '{"other":1,"next":'.repeat(levels) + '{"name":"last"}' + ',"name":"n"}'.repeat(levels), depth: levels => levels + 1 },
+  { label: "arrays", parse: text => JSON.parse(text) as Deep, text: levels => "[".repeat(levels) + "]".repeat(levels), depth: levels => levels },
+  { label: "dictionaries", parse: text => JSON.parse(text) as Bag, text: levels => '{"k":'.repeat(levels) + "{}" + "}".repeat(levels), depth: levels => levels + 1 },
+  { label: "tuples", parse: text => JSON.parse(text) as Pair, text: levels => "[".repeat(levels) + "]".repeat(levels), depth: levels => levels },
+  { label: "a tagged union", parse: text => JSON.parse(text) as Either, text: levels => '{"kind":"node","below":'.repeat(levels) + '{"kind":"leaf"}' + "}".repeat(levels), depth: levels => levels + 1 },
+  { label: "a tagged union, the tag last", parse: text => JSON.parse(text) as Either, text: levels => '{"below":'.repeat(levels) + '{"kind":"leaf"}' + ',"kind":"node"}'.repeat(levels), depth: levels => levels + 1 },
+  { label: "arrays under unknown", parse: text => JSON.parse(text) as Loose, text: levels => '{"value":' + "[".repeat(levels) + "]".repeat(levels) + "}", depth: levels => levels + 1 },
+  { label: "objects under any", parse: text => JSON.parse(text) as Any, text: levels => '{"value":' + '{"a":'.repeat(levels) + "1" + "}".repeat(levels) + "}", depth: levels => levels + 1 },
+  { label: "arrays under an undeclared key", parse: text => JSON.parse(text) as Point, text: levels => '{"x":1,"y":2,"other":' + "[".repeat(levels) + "]".repeat(levels) + "}", depth: levels => levels + 1 },
 ];
 
 function depthOf(value: any): number {
@@ -41,7 +41,7 @@ function answer(parse: (text: string) => unknown, text: string): string {
   try {
     return "depth " + depthOf(parse(text));
   } catch (error: any) {
-    return error.name === "TypeError" && error.issues?.length > 0 ? "refused" : error.name + ": " + error.message;
+    return error.name + ": " + error.message;
   }
 }
 

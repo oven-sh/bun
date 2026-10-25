@@ -4075,8 +4075,10 @@ impl<'a> Resolver<'a> {
 
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..];
+            // `bun run --aot` finds `x.mts` for "./x.mjs" in a package too, like `bun build --compile --aot`.
             let ts_exts = rewritten_file_extensions(ext, || {
-                resolved_dir_info.is_node_modules() || resolved_dir_info.is_inside_node_modules()
+                (resolved_dir_info.is_node_modules() || resolved_dir_info.is_inside_node_modules())
+                    && !self.opts.conditions.import.contains_key(b"aot")
             });
 
             if !ts_exts.is_empty() {
@@ -6137,8 +6139,10 @@ impl<'a> Resolver<'a> {
         // TypeScript-specific behavior: try rewriting ".js" to ".ts".
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..base.len()];
-            let exts =
-                rewritten_file_extensions(ext, || strings::path_contains_node_modules_folder(path));
+            let exts = rewritten_file_extensions(ext, || {
+                strings::path_contains_node_modules_folder(path)
+                    && !self.opts.conditions.import.contains_key(b"aot")
+            });
             if !exts.is_empty() {
                 let segment = &base[0..last_dot];
                 let tail = &mut bufs!(load_as_file)[path.len() - base.len()..];

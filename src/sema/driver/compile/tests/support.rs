@@ -9,9 +9,8 @@ use bun_sema::hir::{self, ExprId};
 use bun_sema::hir_from_data::{DataValue, HostValue};
 use bun_sema::program::{FileRole, HostLoader, HostModuleId};
 use bun_sema::resolve::{
-    CachedConfig, CodeHost, CodeOptions, CodeParseRequest, CodeRequest, EnclosingPackage,
-    ExternalKind, FinishedFile, HostPayload, HostResolution, LoaderRequest, MacroRequest,
-    ParseOptions, ParsedCode, Paths,
+    CachedConfig, CodeHost, CodeOptions, CodeParseRequest, CodeRequest, ExternalKind, FinishedFile,
+    HostPayload, HostResolution, LoaderRequest, MacroRequest, ParseOptions, ParsedCode, Paths,
 };
 use bun_sema_standalone as _;
 use std::num::NonZeroUsize;
@@ -609,7 +608,6 @@ impl CodeHost for SlowToQueueAgain<'_> {
 
 #[derive(Default)]
 pub(super) struct HostScript<'a> {
-    pub typed_versions: &'a [(&'a str, &'a str)],
     pub attribute_loader: HostLoader,
     pub implied_files: &'a [(&'a str, &'a str)],
     pub evaluated_texts: &'a [&'a str],
@@ -651,16 +649,6 @@ impl CodeHost for ScriptedHost<'_> {
             true => HostResolution::Module(HostModuleId(7)),
             false => HostResolution::Unclaimed,
         }
-    }
-
-    fn typed_version(
-        &self,
-        path: &[u8],
-        _package: Option<EnclosingPackage<'_>>,
-    ) -> Option<Vec<u8>> {
-        let mut versions = self.1.typed_versions.iter();
-        let found = versions.find(|(installed, _)| inside(PROJECT, installed.as_bytes()) == path);
-        found.map(|(_, typed)| inside(PROJECT, typed.as_bytes()))
     }
 
     fn loader_of(&self, request: &LoaderRequest<'_>) -> HostLoader {

@@ -16,9 +16,7 @@ impl ImportGraph {
         for index in 0..file_count {
             let file = FileId(index as u32);
             let module = files.module(file);
-            for path in [module.file_name(), files.diagnostic_path(file)] {
-                file_of_path.insert(to_native(path).to_vec(), index as u32);
-            }
+            file_of_path.insert(to_native(module.file_name()).to_vec(), index as u32);
             for target in module.edges.iter().chain(module.code_edges) {
                 referrers[target.idx()].push(index as u32);
             }

@@ -1,5 +1,4 @@
 use super::*;
-use crate::erasure::ErasureMismatchKind;
 use crate::import_sites::ImportSiteKind;
 use crate::program::HostModuleId;
 
@@ -16,11 +15,9 @@ mod packages;
 mod search;
 #[cfg(test)]
 mod tests;
-mod typed_versions;
 
 pub use self::config::{JsxRuntime, JsxSettings, TranspileSettings};
-pub use self::options::{CodeOptions, ExtensionOrders};
-pub use self::typed_versions::{TYPED_CONDITION, javascript_path_beside, typed_path_beside};
+pub use self::options::{AOT_CONDITION, CodeOptions, ExtensionOrders};
 
 use self::config::ConfigCaches;
 use self::manifest::CodeManifest;
@@ -105,19 +102,6 @@ pub enum ExternalKind {
     HostValue,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum TypedVersionOrigin {
-    Package,
-    Host,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct TypedVersionFile<'h> {
-    pub path: &'h [u8],
-    pub origin: TypedVersionOrigin,
-    pub rejected_as: Option<ErasureMismatchKind>,
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CodeFile<'h> {
     pub path: &'h [u8],
@@ -183,7 +167,6 @@ pub enum SiteResolution<'h> {
 struct CodeSearch<'a> {
     kind: CodeImportKind,
     extensions: &'a [Vec<u8>],
-    uses_typed_condition: bool,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -198,7 +181,6 @@ pub(super) struct CodeState<'h> {
     options: &'h CodeOptions,
     resolutions: Memo<&'h [u8], CodeResolution<'h>>,
     manifests: Memo<&'h [u8], Option<&'h CodeManifest<'h>>>,
-    typed_versions: Memo<&'h [u8], Option<TypedVersionFile<'h>>>,
     /// For the file that "module" names in a package, the file that `require` of the package finds.
     required_files: Memo<&'h [u8], &'h [u8]>,
     configs: ConfigCaches<'h>,
@@ -220,7 +202,6 @@ impl<'h> Resolver<'h> {
             options: code,
             resolutions: Memo::new(false),
             manifests: Memo::new(false),
-            typed_versions: Memo::new(false),
             required_files: Memo::new(false),
             configs: ConfigCaches::new(false),
         };

@@ -5,8 +5,8 @@ use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 use bun_sema::config::{
-    self, Project, default_options_of_full_types, find_manifest_of_full_types, load_for_full_types,
-    load_options_for_build,
+    self, Project, default_options_of_aot_package, find_package_with_compiler_options,
+    load_for_aot_package, load_options_for_build,
 };
 use bun_sema::json::Json;
 use bun_sema::program::FileId;
@@ -14,7 +14,7 @@ use bun_sema::session::Session;
 use bun_sema_driver::host::{Disk, Provided, from_native};
 use bun_sema_driver::sound_files::{
     ModuleTypes, Output, annotate_implicit_any, emitted_declarations_of, module_types, sound_files,
-    tsconfig_of_sources, typed_path_beside, why_programs_refuse,
+    tsconfig_of_sources, typed_path_beside,
 };
 use bun_sema_driver::{Diagnostic, PlanOptions, Report, Request};
 use bun_threading::Guarded;
@@ -23,7 +23,7 @@ use super::declarations::{LIBS_WITHOUT_CONFIGURATION, bundler_path};
 use super::{Entries, Paths, already_read, request, script_kinds_by_extension, with_pages};
 
 const SKIPPED_TYPED_FILES: &str =
-    "the full types that bun compile compiles a package from are left out";
+    "the .aot.ts files that --aot compiles a package from are left out";
 
 pub(crate) struct WrittenJavaScript<'a> {
     pub(crate) path: &'a [u8],
@@ -187,10 +187,10 @@ pub(crate) fn warn_unless_package_states(
 ) {
     let outdir = from_native(outdir);
     let disk = Disk::with_already_read(1, Default::default(), &outdir);
-    let manifest_path = find_manifest_of_full_types(&disk, &outdir);
+    let manifest_path = find_package_with_compiler_options(&disk, &outdir);
     let stated = match &manifest_path {
         Some(path) => {
-            options_that_types_depend_on(&load_for_full_types(&disk, &Session::new(), path))
+            options_that_types_depend_on(&load_for_aot_package(&disk, &Session::new(), path))
         }
         None => vec![(b"strict".to_vec(), Json::Bool(true))],
     };
@@ -203,7 +203,7 @@ pub(crate) fn warn_unless_package_states(
         None,
         bun_ast::Loc::EMPTY,
         format_args!(
-            "package.json needs \"compilerOptions\": {}: bun compile type checks a package's full types under them, and as strict without them",
+            "package.json needs \"compilerOptions\": {}: --aot type checks a package's .aot.ts files under them, and as strict without them",
             BStr::new(&wanted),
         ),
     );
@@ -249,7 +249,7 @@ pub(crate) fn typed_files_for_build(
         .concat(),
         b"/// <reference lib=\"esnext\" />\n".to_vec(),
     )];
-    // The full-types files are judged as a project that installs the package judges them: without the sources, under what the
+    // The typed files are judged as a project that installs the package judges them: without the sources, under what the
     // package.json says of them. What the application's own tsconfig.json asks for does not count.
     let outdir_without_slash = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let typed_names = paths.iter().filter_map(|(path, _)| {
@@ -258,7 +258,7 @@ pub(crate) fn typed_files_for_build(
         Some(Json::String([b".", inside].concat()))
     });
     let compiler_options = options_of_sources(cwd, tsconfig);
-    let mut all_options = default_options_of_full_types();
+    let mut all_options = default_options_of_aot_package();
     config::merge_compiler_options(&mut all_options, compiler_options.clone(), &[]);
     let mut config_text = Vec::new();
     Json::Object(vec![
@@ -266,7 +266,7 @@ pub(crate) fn typed_files_for_build(
         (b"files".to_vec(), Json::Array(typed_names.collect())),
     ])
     .stringify(&mut config_text);
-    let config_path = [outdir_without_slash, b"/tsconfig.full.json"].concat();
+    let config_path = [outdir_without_slash, b"/tsconfig.aot.json"].concat();
     let without_sources = Some((config_path, config_text));
     let sources_tsconfig = tsconfig;
     let tsconfig_path = without_sources.as_ref().map(|file| bundler_path(&file.0));
@@ -391,12 +391,6 @@ pub(crate) fn typed_files_for_build(
     }
     if !report.incomplete.is_empty() {
         return warn(format_args!("they could not be type checked"));
-    }
-    let refusal = (found.typed.iter().zip(&outputs)).find_map(|((path, text), output)| {
-        why_programs_refuse((path, text), (output.path, output.javascript))
-    });
-    if let Some(why) = refusal {
-        return warn(format_args!("{why}"));
     }
     let typed_files = found.typed.into_iter().map(|(path, text)| TypedFile {
         path: bundler_path(&path),

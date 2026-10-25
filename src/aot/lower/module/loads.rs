@@ -9,13 +9,14 @@ use bun_sema::import_sites::{
     find_require_call, holds_import_meta_require, is_made_require, is_require_made_for_own_file,
     may_still_be_undefined,
 };
+use bun_sema::program::FileId;
 use smallvec::smallvec;
 
 use crate::builtins::id::{BuiltinId, RuntimeModule};
 use crate::builtins::table::{self, Platforms, Scope};
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::generated::{BlockRole, ModuleRequestKind};
-use crate::ir::{BlockId, Edge, StringId, TypeTable, ValueId};
+use crate::ir::{BlockId, Edge, ModuleId, StringId, TypeTable, ValueId};
 use crate::load::loader_aliases::resolve_loader_alias;
 use crate::load::named_loads::modules_named_in;
 use crate::load::sources::parsed_source;
@@ -62,6 +63,8 @@ struct AnsweredSite<'g> {
     specifier_node: ExprId,
     answer: SiteAnswer<'g>,
     plan: Option<PlannedSite>,
+    // The file whose `require` is called, if this file imports it.
+    resolved_from: Option<FileId>,
 }
 
 impl AnsweredSite<'_> {
@@ -225,11 +228,11 @@ pub(crate) fn lower_import_call(
             let options = second.map(|second| lowering.lower_expression(second));
             lowering.lower_arguments_for_effect(args, 2);
             lowering.set_position(position);
+            let referrer = lowering.file.module_id();
             if options.is_none() {
                 let load = ComputedLoad::Import;
-                return lowering.emit_computed_load(load, node, specifier, candidates);
+                return lowering.emit_computed_load(load, referrer, node, specifier, candidates);
             }
-            let referrer = lowering.file.module_id();
             lowering
                 .builder
                 .import_dynamic(specifier, options, referrer)
@@ -280,6 +283,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             return self.try_lower_choice_of_builtin_modules(call, id, chain_exit);
         };
+        let resolved_from = analysis.path_to_resolve_from(site).and_then(|path| {
+            let queries = &self.file.queries;
+            queries.files().by_path.get(queries.atom_bytes(path))
+        });
         let site = analysis.import_sites[site];
         if has_spread_argument(hir, arguments) {
             return None;
@@ -301,6 +308,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             plan: create_plan(modules.site(self.file.file, call), || {
                 modules.is_site_read_as_value(self.file.file, call)
             }),
+            resolved_from,
         };
         // The transpiler writes `require(..)` in place of `module.require(..)` without reading `module`, and `Bun` in place of `require("bun")` without reading `require`.
         if is_module_require
@@ -333,13 +341,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     }
                     CalleeTest::IsFilled
                 }
-                CalleeKnowledge::Unresolved
-                    if find_own_require(hir, bound, decisions, callee)
-                        == Some(OwnRequire::OfFile) =>
-                {
-                    CalleeTest::Expected(BuiltinId::ModuleRequire)
+                CalleeKnowledge::Unresolved => {
+                    match find_own_require(hir, bound, decisions, callee)? {
+                        OwnRequire::OfFile => CalleeTest::Expected(BuiltinId::ModuleRequire),
+                        OwnRequire::OfOtherFile(_) => CalleeTest::IsFilled,
+                        OwnRequire::Made => return None,
+                    }
                 }
-                CalleeKnowledge::Unresolved => return None,
                 CalleeKnowledge::Bound => {
                     return Some(self.lower_untested_call(call, arguments, operation, site));
                 }
@@ -383,6 +391,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             specifier_node: argument,
             answer: SiteAnswer::Module(module),
             plan: None,
+            resolved_from: None,
         };
         let operation = ModuleOperation::Require;
         if !is_made_require || may_still_be_undefined(hir, self.file.bound, hir[id].callee) {
@@ -420,6 +429,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             specifier_node: argument,
             answer: SiteAnswer::Computed(Candidates::Modules(&spelled_modules)),
             plan: None,
+            resolved_from: None,
         };
         let test = match self.file.classify_callee(hir[id].callee) {
             CalleeKnowledge::Expected(expected) => CalleeTest::Expected(expected),
@@ -453,6 +463,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             plan: create_plan(modules.site_at(own_file, kind), || {
                 modules.holder(own_file, name).is_none()
             }),
+            resolved_from: None,
         };
         Some(self.emit_require(site, None))
     }
@@ -493,7 +504,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.builder.strict_eq(receiver, expected_receiver)
             }
             // Nothing else stores to the binding that holds it, and where that is still empty the read of the method has thrown.
-            OwnRequire::Made => self.builder.boolean(true),
+            OwnRequire::Made | OwnRequire::OfOtherFile(_) => self.builder.boolean(true),
         };
         self.builder.write_variable(is_followed, is_require);
         self.jump(decided);
@@ -611,9 +622,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             SiteAnswer::Computed(candidates) => {
                 let specifier = specifier.unwrap_or_else(|| self.builder.undefined());
                 let node = site.specifier_node;
-                self.emit_computed_load(ComputedLoad::Require, node, specifier, candidates)
+                let referrer = self.referrer_of(site);
+                let load = ComputedLoad::Require;
+                self.emit_computed_load(load, referrer, node, specifier, candidates)
             }
-            SiteAnswer::Failed(failure) => self.emit_require_failure(site.specifier, failure, true),
+            SiteAnswer::Failed(failure) => self.emit_require_failure(site, failure, true),
             SiteAnswer::Erased => self.builder.undefined(),
         }
     }
@@ -749,6 +762,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn emit_computed_load(
         &mut self,
         load: ComputedLoad,
+        referrer: ModuleId,
         node: ExprId,
         specifier: ValueId,
         candidates: Candidates<'_>,
@@ -760,7 +774,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let modules_of_every_value = self.file.find_modules_of_every_value(node, spelled_modules);
         let spelled_modules = modules_of_every_value.as_deref().unwrap_or(spelled_modules);
         if spelled_modules.is_empty() {
-            return self.emit_load_by_name(load, specifier);
+            return self.emit_load_by_name(load, referrer, specifier);
         }
         let result = self.builder.create_variable(None);
         let mut strings: Vec<StringId> = Vec::with_capacity(spelled_modules.len());
@@ -793,7 +807,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if modules_of_every_value.is_some() {
             self.builder.unreachable();
         } else {
-            let loaded = self.emit_load_by_name(load, specifier);
+            let loaded = self.emit_load_by_name(load, referrer, specifier);
             self.builder.write_variable(result, loaded);
             self.jump(done);
         }
@@ -802,8 +816,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.read_variable(result)
     }
 
-    fn emit_load_by_name(&mut self, load: ComputedLoad, specifier: ValueId) -> ValueId {
-        let referrer = self.file.module_id();
+    fn emit_load_by_name(
+        &mut self,
+        load: ComputedLoad,
+        referrer: ModuleId,
+        specifier: ValueId,
+    ) -> ValueId {
         match load {
             ComputedLoad::Require => self.builder.require_dynamic(specifier, referrer),
             ComputedLoad::Import => self.builder.import_dynamic(specifier, None, referrer),
@@ -822,13 +840,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             },
             SiteAnswer::Computed(_) => {
                 let specifier = specifier.unwrap_or_else(|| self.builder.undefined());
-                let referrer = self.file.module_id();
+                let referrer = self.referrer_of(site);
                 self.builder
                     .resolve_dynamic(specifier, referrer, false, false)
             }
-            SiteAnswer::Failed(failure) => {
-                self.emit_require_failure(site.specifier, failure, false)
-            }
+            SiteAnswer::Failed(failure) => self.emit_require_failure(site, failure, false),
             SiteAnswer::Erased => self.builder.undefined(),
         }
     }
@@ -849,17 +865,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     // The error of `require` and of `require.resolve` is worded by the host's resolver, which is told which of the two asks. It is another than that of `import`.
+    // The module that the host's resolver starts from at run time.
+    fn referrer_of(&mut self, site: AnsweredSite<'_>) -> ModuleId {
+        match site.resolved_from {
+            Some(file) => self.file.fragment.declare_module(ModuleRef::File(file)),
+            None => self.file.module_id(),
+        }
+    }
+
     fn emit_require_failure(
         &mut self,
-        specifier: ImportSpecifier,
+        site: AnsweredSite<'_>,
         failure: ModuleFailureId,
         is_for_require: bool,
     ) -> ValueId {
-        match specifier {
+        match site.specifier {
             ImportSpecifier::Constant(text) => {
                 let text = self.file.intern_atom(text);
                 let specifier = self.builder.string(text);
-                let referrer = self.file.module_id();
+                let referrer = self.referrer_of(site);
                 self.builder
                     .resolve_dynamic(specifier, referrer, false, is_for_require);
             }
@@ -973,7 +997,7 @@ fn find_operation(
 #[derive(Copy, Clone)]
 enum CalleeTest {
     Expected(BuiltinId),
-    // The callee is a binding that one statement fills with `import.meta.require` or with what `createRequire` makes, and nothing else stores to.
+    // The callee is a binding that one statement fills with `import.meta.require`, with what `createRequire` makes or with the `require` of the file that exports it, and nothing else stores to.
     IsFilled,
     // `require.call(receiver, p)` and `require.apply(receiver, [p])`.
     Method {

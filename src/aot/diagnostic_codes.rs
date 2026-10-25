@@ -33,14 +33,6 @@ diagnostic_codes! {
     Legacy 100001..=100049 {
         PackageCompiledWithoutTypes = 100009, Warning, "'{0}' has {1} (the first at {2}), so {3} of its {4} files are compiled without their types. They still work, but run slower.";
         FileCompiledWithoutTypes = 100010, Warning, "'{0}' has {1} (the first at {2}), so it is compiled without its types. It still works, but runs slower.";
-        TypedVersionHasTypeErrors = 100021, Error, "The full types of '{0}' in {1} have type errors ({2}), the first at {3}";
-    }
-    LegacyValidation 100107..=100107 {
-        UnsupportedValidationType = 100107, Error, "{0}<{1}>() cannot validate '{2}'. Only types that JSON can represent can be validated.";
-    }
-    Validation 100115..=100119 {
-        RefusedValidationRule = 100115, Error, "{0}() cannot check '{1}', so it cannot validate this type. A rule that cannot be checked is never skipped.";
-        RuleBesideNullish = 100116, Error, "'{0}' does not accept null or undefined, because a rule of Schema cannot stand beside them in an intersection. Write them outside of it: (string & Schema.MinLength<1>) | null";
     }
     Build 100050..=100099 {
         UnsupportedOption = 100050, Error, "--aot does not support {0}";
@@ -49,15 +41,8 @@ diagnostic_codes! {
         MacrosDisabled = 100053, Error, "Macros are disabled";
         EmbeddedFileNameCollision = 100054, Error, "Two files with different contents would be embedded as \"{0}\": \"{1}\" and \"{2}\"";
         ProgramTooLarge = 100055, Error, "The program is too large to compile: its IR is {0} bytes, and the limit is 4 GB";
-        TypedPackageNotUsed = 100056, Warning, "The full types of \"{0}\" in {1} can't be used: {2}";
         FileNestedTooDeeply = 100060, Error, "The code in \"{0}\" is nested too deeply to be compiled";
         OutputNotWritten = 100061, Error, "Cannot write \"{0}\": {1}";
-        TypedPackageUsed = 100062, Note, "\"{0}\" {1} is compiled from its full types in {2}";
-        ShippedTypedVersionNotUsed = 100065, Warning, "\"{0}\" is compiled without types, because its full types in {1} can't be used: {2}";
-        FullTypesFolderNotRead = 100067, Warning, "bun compile doesn't read {0}: {1}";
-        CompilerOptionsNotRead = 100068, Warning, "\"{0}\" in {1} is ignored, so the full types of \"{2}\" are type checked as strict. bun compile reads \"compilerOptions\" at the top level of that file";
-        FullTypesSummary = 100069, Note, "{0} full types, and {1} compiled from them";
-        CompilerOptionsInvalid = 100070, Warning, "\"compilerOptions\" in {0} has an error, so the full types of \"{1}\" are type checked without that option: {2}";
     }
     Fold 100100..=100149 {
         FeatureArgumentCount = 100100, Error, "feature() requires exactly one string argument";
@@ -100,43 +85,19 @@ diagnostic_codes! {
         FunctionIntrospection = 100302, Warning, "'{0}' is always null on a compiled function.";
         InvalidRuntimeSource = 100305, Error, "Bun's own source cannot be compiled: {0}";
         LibraryFileHasTopLevelCode = 100501, Error, "A library file can only declare functions and types";
-        ValidationTypeParameter = 100503, Error, "'{0}' is a type parameter here, so there is no type to validate against.";
-        TypedParseNeedsTypeArgument = 100504, Error, "JSON.parse() from \"bun\" needs a type argument: JSON.parse<User>(text). Use JSON.parse<any>(text) to skip validation";
-        ValidateNeedsTypeArgument = 100505, Error, "validate() needs a type argument: validate<User>(value)";
-        ValidateNeedsTypeScript = 100506, Error, "validate() from \"bun:bundle\" needs a type argument, so it only works in TypeScript files";
-        ValidateArgumentCount = 100507, Error, "validate() requires exactly one argument";
-        ValidateOptionalCall = 100508, Error, "validate?.() isn't supported. Call it directly: validate<User>(value)";
-        ValidateIsNotAValue = 100509, Error, "validate() from \"bun:bundle\" can only be called. It can't be assigned, passed as an argument or exported";
         JsxKeyIgnored = 100510, Warning, "\"key\" prop ignored. Must be a string, number or symbol.";
         JsxKeyAfterSpread = 100511, Warning, "\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.";
-        JsonFromBunIsExported = 100512, Error, "JSON from \"bun\" can't be exported. Import it in each file that uses it";
-        TypedParseCalleeIsNotResolved = 100514, Warning, "This call is declared as JSON.parse from \"bun\", but the compiler can't tell which function it calls. If it's that one, the call throws at run time. If it's another function, its result is validated. Import JSON from \"bun\" in this file and call JSON.parse<User>(text) directly";
         InvalidRegExpFlags = 100515, Error, "Invalid flags \"{0}\" in regular expression";
-        ValidatorSchemaIsNotRead = 100516, Error, "{0} is compiled from its schema, and the build can't read {1} here. Write the schema as a literal, a const that holds one, or an imported JSON file";
-        ValidatorSchemaIsNotCompiled = 100517, Error, "{0} can't compile this schema: {1}";
-        ValidationTypeIsAny = 100518, Error, "'{0}' is any here, so there is no type to validate against. To skip validation, write any itself";
-        TypedParseReviverWithDefault = 100520, Error, "JSON.parse<{0}>() can't take a second argument, because {0} uses Schema.Default. What a reviver returns is returned as it is, so nothing would be filled in. Write validate<{0}>(JSON.parse(text, reviver))";
-        TypedParseIsNotCalled = 100521, Error, "JSON.parse<{0}> only validates where it is called: JSON.parse<{0}>(text). Kept in a variable or passed on, it would parse without validating";
     }
     Builtins 100700..=100749 {}
 }
 
 pub const RETIRED_NUMBERS: &[u32] = &[
-    100013, 100015, 100017, 100033, 100034, 100059, 100063, 100109, 100120, 100300, 100303, 100304,
-    100500, 100502, 100513, 100519,
-];
-
-pub const WITHOUT_PRINTED_NUMBER: &[Code] = &[
-    Code::TypedPackageUsed,
-    Code::ShippedTypedVersionNotUsed,
-    Code::FullTypesSummary,
+    100013, 100015, 100017, 100021, 100033, 100034, 100056, 100059, 100062, 100063, 100065, 100067,
+    100068, 100069, 100070, 100109, 100120, 100300, 100303, 100304, 100500, 100502, 100513, 100519,
 ];
 
 impl Code {
-    pub fn prints_number(self) -> bool {
-        !WITHOUT_PRINTED_NUMBER.contains(&self)
-    }
-
     pub fn message(self, arguments: &[impl AsRef<[u8]>]) -> Vec<u8> {
         let mut out = Vec::new();
         bun_sema::messages::format(&mut out, self.template(), arguments);
@@ -264,23 +225,6 @@ mod tests {
         assert_eq!(
             BStr::new(&Code::JsxKeyAfterSpread.message(&["unused"])),
             Code::JsxKeyAfterSpread.template()
-        );
-    }
-
-    #[test]
-    fn three_codes_omit_number() {
-        let unnumbered: Vec<Code> = Code::ALL
-            .iter()
-            .filter(|code| !code.prints_number())
-            .copied()
-            .collect();
-        assert_eq!(
-            unnumbered,
-            [
-                Code::TypedPackageUsed,
-                Code::ShippedTypedVersionNotUsed,
-                Code::FullTypesSummary
-            ]
         );
     }
 }

@@ -155,20 +155,4 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             BuiltinShape::Class(class) => self.inputs.builtin_types.has_exact_type(class.class),
         }
     }
-
-    pub(in crate::check::aot) fn compute_is_builtin_subtype(
-        &mut self,
-        ty: TypeId,
-    ) -> Result<bool, GaveUp> {
-        if self.type_shape(ty)?.builtin_shape().is_none() {
-            return Ok(false);
-        }
-        Ok(match self.c.data(ty) {
-            TypeData::Ref { target, .. } => {
-                !self.c.is_array(ty) && self.inputs.builtin_types.class_of(*target).is_none()
-            }
-            TypeData::Intersection(_) => true,
-            _ => false,
-        })
-    }
 }

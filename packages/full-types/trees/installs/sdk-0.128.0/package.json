@@ -1,8 +1,0 @@
-{
-  "name": "full-types-trees-sdk-0.128.0",
-  "private": true,
-  "dependencies": {
-    "@anthropic-ai/sdk": "0.128.0",
-    "@types/node": "22.20.5"
-  }
-}

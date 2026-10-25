@@ -1,2 +1,0 @@
-takes {"a":1}
-refuses with TypeError

@@ -36,74 +36,9 @@ const texts: string[] = [
   '{"id":2,"name":"b","at":{"x":3,"y":4},"next":null,"more":1,"evenMore":{"deep":[1,2]}}',
   '{}', '[]', '[1,2]', '7', '"text"', 'true', 'null',
 ];
-//// json-parse-type-argument-refuses-a-large-text-in-workers-that-are-ended.ts
-// The first JSON.parse<T> of a Worker reads a large text that compiled code does not accept to the end: its first or its last row is refused, or every name has to match a pattern. Each Worker is ended from outside at another moment of that first call: the main thread has made the text and timed a parse of it without a type, and the moments lie within three times as long.
-import { JSON } from "bun"; import type { Schema } from "bun";
-
-type Row = { id: number; name: string; tags: string[]; inner: { a: number; b?: string } };
-type Named = { id: number; name: string & Schema.Pattern<"^name [0-9]+$"> };
-
-const rowAt = (at: number) => ({ id: at, name: "name " + at, tags: ["t", String(at)], inner: at % 2 ? { a: at, b: "b" } : { a: at } });
-const refused = { id: "no number", name: "name", tags: [], inner: { a: 1 } };
-
-function lengthOrError(text: string): number {
-  try {
-    return JSON.parse<Row[]>(text).length;
-  } catch (error) {
-    return String(error).length;
-  }
-}
-
-const kinds: Record<string, { first?: unknown; last?: unknown; work: (text: string) => unknown }> = {
-  "the first row is refused and the error is read": { first: refused, work: lengthOrError },
-  "the last row is refused and the error is read": { last: refused, work: lengthOrError },
-  "the last row is refused and nobody looks at the error": {
-    last: refused,
-    work: text => {
-      try {
-        return JSON.parse<Row[]>(text).length;
-      } catch {
-        return -1;
-      }
-    },
-  },
-  "every name has to match a pattern": { work: text => JSON.parse<Named[]>(text).length },
-};
-
-if (Bun.isMainThread) {
-  const rounds = Number(process.env.COUNT ?? 12);
-  const rows = Array.from({ length: 60_000 }, (_, at) => rowAt(at));
-  for (const [name, { first, last }] of Object.entries(kinds)) {
-    const text = JSON.stringify([...(first ? [first] : []), ...rows, ...(last ? [last] : [])]);
-    let once = Infinity;
-    for (let turn = 0; turn < 3; turn++) {
-      const began = performance.now();
-      globalThis.JSON.parse(text);
-      once = Math.min(once, performance.now() - began);
-    }
-    for (let round = 0; round < rounds; round++) {
-      const worker = new Worker(new URL(import.meta.url));
-      const closed = new Promise<void>(resolve => worker.addEventListener("close", () => resolve()));
-      await new Promise<void>(resolve => {
-        worker.onmessage = () => resolve();
-        worker.postMessage([name, text]);
-      });
-      await new Promise(resolve => setTimeout(resolve, (3 * once * round) / rounds));
-      worker.terminate();
-      await closed;
-    }
-    console.log(name + ": " + rounds + " Workers ended");
-  }
-} else {
-  addEventListener("message", (event: MessageEvent<[string, string]>) => {
-    const [name, text] = event.data;
-    postMessage("ready");
-    for (;;) kinds[name].work(text);
-  });
-}
 //// json-parse-type-argument-result-is-what-json-parse-gives.ts
-// JSON.parse<T>(text) returns, in every way a program can observe, what JSON.parse(text) returns. T only adds the throw.
-import { JSON } from "bun"; interface Address { street: string; city: string; zip?: string }
+// `JSON.parse(text) as T` returns, in every way a program can observe, what JSON.parse(text) returns.
+interface Address { street: string; city: string; zip?: string }
 interface User {
   id: number;
   name: string;
@@ -157,7 +92,7 @@ const users = [
   `{"id":1,"name":"a","nickname":"n","nickname":"m","tags":[],"address":${address}}`,
 ];
 for (const text of users) {
-  const typed = JSON.parse<User>(text);
+  const typed = JSON.parse(text) as User;
   console.log(show(typed) === show(globalThis.JSON.parse(text)), JSON.stringify(typed) === JSON.stringify(globalThis.JSON.parse(text)), show(typed));
   console.log(typed.id, typed.name, typed.nickname, typed.tags.length, typed.address.city, typed.address.zip, typed.boss?.name);
 }
@@ -168,7 +103,7 @@ const drawings = [
   '{"names":{"a":1,"a":2},"size":[0,0],"shapes":[{"kind":"circle","radius":1,"side":"also"}]}',
 ];
 for (const text of drawings) {
-  const typed = JSON.parse<Drawing>(text);
+  const typed = JSON.parse(text) as Drawing;
   console.log(show(typed) === show(globalThis.JSON.parse(text)), show(typed));
   let sum = 0;
   for (const shape of typed.shapes) sum += shape.kind === "circle" ? shape.radius : shape.side;
@@ -176,23 +111,23 @@ for (const text of drawings) {
 }
 for (const text of ["1", "-0", "1.5e3", '"text"', "true", "null", "[1,2]", '["a"]', "[]", ' [ 1 , 2 ] ']) {
   const results: string[] = [];
-  try { results.push(show(JSON.parse<number>(text))); } catch { results.push("-"); }
-  try { results.push(show(JSON.parse<string>(text))); } catch { results.push("-"); }
-  try { results.push(show(JSON.parse<boolean | null>(text))); } catch { results.push("-"); }
-  try { results.push(show(JSON.parse<number[]>(text))); } catch { results.push("-"); }
+  try { results.push(show(JSON.parse(text) as number)); } catch { results.push("-"); }
+  try { results.push(show(JSON.parse(text) as string)); } catch { results.push("-"); }
+  try { results.push(show(JSON.parse(text) as boolean | null)); } catch { results.push("-"); }
+  try { results.push(show(JSON.parse(text) as number[])); } catch { results.push("-"); }
   console.log(text, show(globalThis.JSON.parse(text)), results.filter(result => result !== "-").every(result => result === show(globalThis.JSON.parse(text))));
 }
-const kept = JSON.parse<User>(users[4]) as User & { extra: number; more: { x: unknown[] } };
+const kept = (JSON.parse(users[4]) as User) as User & { extra: number; more: { x: unknown[] } };
 kept.id += 1;
 kept.extra += 1;
 (kept as any).later = true;
 delete (kept as any).more;
 console.log(show(kept), JSON.stringify(kept));
-console.log(JSON.stringify(JSON.parse<User>(users[5]), null, 1));
-console.log(JSON.stringify({ ...JSON.parse<User>(users[4]) }), JSON.stringify(Object.entries(JSON.parse<User>(users[3]))));
+console.log(JSON.stringify(JSON.parse(users[5]) as User, null, 1));
+console.log(JSON.stringify({ ...(JSON.parse(users[4]) as User) }), JSON.stringify(Object.entries(JSON.parse(users[3]) as User)));
 //// json-parse-type-argument-tags-that-are-no-texts.ts
-// Unions told apart by numbers, booleans, null and a mix of them: the tag in every spelling, in every place, twice, missing, of another kind: JSON.parse<T> gives what JSON.parse gives, or refuses it.
-import { JSON } from "bun"; const plainParse: (text: string) => any = globalThis.JSON.parse;
+// Unions told apart by numbers, booleans, null and a mix of them: the tag in every spelling, in every place, twice, missing, of another kind: `JSON.parse(text) as T` gives what JSON.parse gives.
+const plainParse: (text: string) => any = globalThis.JSON.parse;
 
 ////= show
 
@@ -211,12 +146,12 @@ type Tuples = [1, string] | [2, number] | [true, null];
 const tags = ["0", "-0", "0.0", "0e5", "1", "1.0", "1e0", "10e-1", "0.1e1", "1.00", "01", "+1", "2", "2.0", "20e-1", "10", "1e1", "100e-1", "-1", "-1.0", "-10e-1", "1.5", "15e-1", "1.50", "100", "1e2", "1E+2", "1e21", "1000000000000000000000", "1e+21", "10e20", "3", "1.0000000000000001", "0.9999999999999999999", "1e400", "-1e400", "1e-400", "true", "false", "null", '"1"', '"one"', '"\\u006fne"', '"true"', "[1]", "{}", '{"kind":1}', "tru", "nul", "", "1 ", " 1", "1,", "1}"];
 const rests = ['"a":1', '"b":"s"', '"c":true', '"d":null', '"e":[1]', '"f":{"g":1}', '"h":1', '"i":1', '"b":1', '"a":"s"', '"u":{"kind":2}', '"below":null', '"more":{"on":true,"a":1}', '"other":"o"'];
 const roads: [string, string, (text: string) => unknown][] = [
-  ["numbers", "kind", text => JSON.parse<ByNumber>(text)],
-  ["numbers in a list", "kind", text => JSON.parse<ByNumber[]>("[" + text + "," + text + "]")],
-  ["flags", "on", text => JSON.parse<ByFlag>(text)],
-  ["null, a number, a text, true", "v", text => JSON.parse<ByNull>(text)],
-  ["nested", "kind", text => JSON.parse<Nested>(text)],
-  ["with an arm without a tag", "kind", text => JSON.parse<WithRest>(text)],
+  ["numbers", "kind", text => JSON.parse(text) as ByNumber],
+  ["numbers in a list", "kind", text => JSON.parse("[" + text + "," + text + "]") as ByNumber[]],
+  ["flags", "on", text => JSON.parse(text) as ByFlag],
+  ["null, a number, a text, true", "v", text => JSON.parse(text) as ByNull],
+  ["nested", "kind", text => JSON.parse(text) as Nested],
+  ["with an arm without a tag", "kind", text => JSON.parse(text) as WithRest],
 ];
 for (const [label, name, parse] of roads) {
   const plainRoad = label === "numbers in a list";
@@ -230,7 +165,7 @@ for (const [label, name, parse] of roads) {
     }
     const typed = outcome(parse, text);
     const plain = outcome(plainParse, "[" + text + "," + text + "]");
-    if (typed !== plain && !(typed === "refused" && !plain.startsWith("SyntaxError"))) different++;
+    if (typed !== plain) different++;
   };
   for (const tag of tags) {
     for (const rest of rests) {
@@ -253,146 +188,27 @@ for (const [label, name, parse] of roads) {
   let texts = 0;
   for (const tag of tags) for (const second of ['"s"', "1", "null", "true", "[]"]) for (const text of ["[" + tag + "," + second + "]", "[ " + tag + " , " + second + " ]", "[" + tag + "]", "[" + tag + "," + second + ",1]"]) {
     texts++;
-    different += differs(text => JSON.parse<Tuples>(text), text);
+    different += differs(text => JSON.parse(text) as Tuples, text);
   }
   console.log("tuples: " + texts + " texts: " + different + " differ");
 }
-//// json-parse-type-argument-template-literal-types.ts
-// Template literal types are validated as TypeScript itself matches a string literal against them.
-// For every pair of a type and a string, what JSON.parse<T>() says at run time is compared with what the type checker says of `"text" extends T`:
-// the checker's answers are the literal types 1 and 0 of a tuple, read back from the `expected` of the issues that a tuple of 2s gets.
-import { JSON } from "bun"; let pairs = 0, accepted = 0, disagreements = 0;
-////= lines-4	accepts	parse	boolean	true	false
-function issuesOf(parse: () => unknown): { expected: string }[] {
-  try {
-    parse();
-    return [];
-  } catch (error) {
-    return (error as Bun.Schema.Error).issues;
-  }
-}
-function compare(name: string, texts: string[], fits: (text: string) => boolean, answers: { expected: string }[]): void {
-  let line = "";
-  texts.forEach((text, index) => {
-    const expected = answers[index].expected === "1";
-    const found = fits(text);
-    pairs++;
-    if (found) accepted++;
-    if (found !== expected) {
-      disagreements++;
-      console.log("DISAGREES", name, JSON.stringify(text), "the checker says", expected, "the validator says", found);
-    }
-    line += found ? "1" : "0";
-  });
-  console.log(name, line);
-}
-
-type T0 = `rgb:${string}`;
-compare("`rgb:${string}`", ["rgb:", "rgb:x", "rgb", "Rgb:x", " rgb:x", "rgb:rgb:", ""], text => accepts(() => JSON.parse<T0>(JSON.stringify(text))), issuesOf(() => JSON.parse<["rgb:" extends T0 ? 1 : 0, "rgb:x" extends T0 ? 1 : 0, "rgb" extends T0 ? 1 : 0, "Rgb:x" extends T0 ? 1 : 0, " rgb:x" extends T0 ? 1 : 0, "rgb:rgb:" extends T0 ? 1 : 0, "" extends T0 ? 1 : 0]>("[2,2,2,2,2,2,2]")));
-type T1 = `${string}-${string}-${string}-${string}-${string}`;
-compare("`${string}-${string}-${string}-${string}-${string}`", ["123e4567-e89b-12d3-a456-426614174000", "----", "---", "a-b-c-d", "a-b-c-d-e", "a-b-c-d-e-f", "", "-----"], text => accepts(() => JSON.parse<T1>(JSON.stringify(text))), issuesOf(() => JSON.parse<["123e4567-e89b-12d3-a456-426614174000" extends T1 ? 1 : 0, "----" extends T1 ? 1 : 0, "---" extends T1 ? 1 : 0, "a-b-c-d" extends T1 ? 1 : 0, "a-b-c-d-e" extends T1 ? 1 : 0, "a-b-c-d-e-f" extends T1 ? 1 : 0, "" extends T1 ? 1 : 0, "-----" extends T1 ? 1 : 0]>("[2,2,2,2,2,2,2,2]")));
-type T2 = `/api/${string}`;
-compare("`/api/${string}`", ["/api/", "/api/a/b", "/api", "/web/a", "api/"], text => accepts(() => JSON.parse<T2>(JSON.stringify(text))), issuesOf(() => JSON.parse<["/api/" extends T2 ? 1 : 0, "/api/a/b" extends T2 ? 1 : 0, "/api" extends T2 ? 1 : 0, "/web/a" extends T2 ? 1 : 0, "api/" extends T2 ? 1 : 0]>("[2,2,2,2,2]")));
-type T3 = `${string}.json`;
-compare("`${string}.json`", [".json", "a.json", "a.json ", "json", "a.jsonx", ".json.json"], text => accepts(() => JSON.parse<T3>(JSON.stringify(text))), issuesOf(() => JSON.parse<[".json" extends T3 ? 1 : 0, "a.json" extends T3 ? 1 : 0, "a.json " extends T3 ? 1 : 0, "json" extends T3 ? 1 : 0, "a.jsonx" extends T3 ? 1 : 0, ".json.json" extends T3 ? 1 : 0]>("[2,2,2,2,2,2]")));
-type T4 = `a${string}b`;
-compare("`a${string}b`", ["ab", "a", "b", "", "aab", "abb", "aXb", "ba", "aba"], text => accepts(() => JSON.parse<T4>(JSON.stringify(text))), issuesOf(() => JSON.parse<["ab" extends T4 ? 1 : 0, "a" extends T4 ? 1 : 0, "b" extends T4 ? 1 : 0, "" extends T4 ? 1 : 0, "aab" extends T4 ? 1 : 0, "abb" extends T4 ? 1 : 0, "aXb" extends T4 ? 1 : 0, "ba" extends T4 ? 1 : 0, "aba" extends T4 ? 1 : 0]>("[2,2,2,2,2,2,2,2,2]")));
-type T5 = `ab${string}ba`;
-compare("`ab${string}ba`", ["aba", "abba", "ab", "ba", "abXba", "ababa"], text => accepts(() => JSON.parse<T5>(JSON.stringify(text))), issuesOf(() => JSON.parse<["aba" extends T5 ? 1 : 0, "abba" extends T5 ? 1 : 0, "ab" extends T5 ? 1 : 0, "ba" extends T5 ? 1 : 0, "abXba" extends T5 ? 1 : 0, "ababa" extends T5 ? 1 : 0]>("[2,2,2,2,2,2]")));
-type T6 = `${string}ab${string}ab`;
-compare("`${string}ab${string}ab`", ["abab", "ab", "aab", "abXab", "XabYab", "abab ", "ababab"], text => accepts(() => JSON.parse<T6>(JSON.stringify(text))), issuesOf(() => JSON.parse<["abab" extends T6 ? 1 : 0, "ab" extends T6 ? 1 : 0, "aab" extends T6 ? 1 : 0, "abXab" extends T6 ? 1 : 0, "XabYab" extends T6 ? 1 : 0, "abab " extends T6 ? 1 : 0, "ababab" extends T6 ? 1 : 0]>("[2,2,2,2,2,2,2]")));
-type T7 = `${number}`;
-compare("`${number}`", ["1", "-1", "+1", "1.5", ".5", "5.", "1e3", "1e999", "-1e999", "0x10", "0X1f", "-0x10", "0b11", "0o7", "0b2", " 1", "1 ", " ", "", "\t1\n", "Infinity", "-Infinity", "NaN", "1_000", "1n", "00", "012", "1,5", "1.2.3", "e3", "."], text => accepts(() => JSON.parse<T7>(JSON.stringify(text))), issuesOf(() => JSON.parse<["1" extends T7 ? 1 : 0, "-1" extends T7 ? 1 : 0, "+1" extends T7 ? 1 : 0, "1.5" extends T7 ? 1 : 0, ".5" extends T7 ? 1 : 0, "5." extends T7 ? 1 : 0, "1e3" extends T7 ? 1 : 0, "1e999" extends T7 ? 1 : 0, "-1e999" extends T7 ? 1 : 0, "0x10" extends T7 ? 1 : 0, "0X1f" extends T7 ? 1 : 0, "-0x10" extends T7 ? 1 : 0, "0b11" extends T7 ? 1 : 0, "0o7" extends T7 ? 1 : 0, "0b2" extends T7 ? 1 : 0, " 1" extends T7 ? 1 : 0, "1 " extends T7 ? 1 : 0, " " extends T7 ? 1 : 0, "" extends T7 ? 1 : 0, "\t1\n" extends T7 ? 1 : 0, "Infinity" extends T7 ? 1 : 0, "-Infinity" extends T7 ? 1 : 0, "NaN" extends T7 ? 1 : 0, "1_000" extends T7 ? 1 : 0, "1n" extends T7 ? 1 : 0, "00" extends T7 ? 1 : 0, "012" extends T7 ? 1 : 0, "1,5" extends T7 ? 1 : 0, "1.2.3" extends T7 ? 1 : 0, "e3" extends T7 ? 1 : 0, "." extends T7 ? 1 : 0]>("[2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]")));
-type T8 = `${number}px`;
-compare("`${number}px`", ["1px", "-1px", "+1px", "1.5px", ".5px", "5.px", "1e3px", "1e999px", "-1e999px", "0x10px", "0X1fpx", "-0x10px", "0b11px", "0o7px", "px", "1", "1 px", "1pxpx"], text => accepts(() => JSON.parse<T8>(JSON.stringify(text))), issuesOf(() => JSON.parse<["1px" extends T8 ? 1 : 0, "-1px" extends T8 ? 1 : 0, "+1px" extends T8 ? 1 : 0, "1.5px" extends T8 ? 1 : 0, ".5px" extends T8 ? 1 : 0, "5.px" extends T8 ? 1 : 0, "1e3px" extends T8 ? 1 : 0, "1e999px" extends T8 ? 1 : 0, "-1e999px" extends T8 ? 1 : 0, "0x10px" extends T8 ? 1 : 0, "0X1fpx" extends T8 ? 1 : 0, "-0x10px" extends T8 ? 1 : 0, "0b11px" extends T8 ? 1 : 0, "0o7px" extends T8 ? 1 : 0, "px" extends T8 ? 1 : 0, "1" extends T8 ? 1 : 0, "1 px" extends T8 ? 1 : 0, "1pxpx" extends T8 ? 1 : 0]>("[2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]")));
-type T9 = `${number}-${number}`;
-compare("`${number}-${number}`", ["1-2", "-1-2", "1--2", "1-", "-2", "-", "1-2-3", "1e-2-3", "1.5-2.5"], text => accepts(() => JSON.parse<T9>(JSON.stringify(text))), issuesOf(() => JSON.parse<["1-2" extends T9 ? 1 : 0, "-1-2" extends T9 ? 1 : 0, "1--2" extends T9 ? 1 : 0, "1-" extends T9 ? 1 : 0, "-2" extends T9 ? 1 : 0, "-" extends T9 ? 1 : 0, "1-2-3" extends T9 ? 1 : 0, "1e-2-3" extends T9 ? 1 : 0, "1.5-2.5" extends T9 ? 1 : 0]>("[2,2,2,2,2,2,2,2,2]")));
-type T10 = `${string}-${number}`;
-compare("`${string}-${number}`", ["a-1", "-1", "1-2-3", "a-", "a-b", "--1", "a-1e3"], text => accepts(() => JSON.parse<T10>(JSON.stringify(text))), issuesOf(() => JSON.parse<["a-1" extends T10 ? 1 : 0, "-1" extends T10 ? 1 : 0, "1-2-3" extends T10 ? 1 : 0, "a-" extends T10 ? 1 : 0, "a-b" extends T10 ? 1 : 0, "--1" extends T10 ? 1 : 0, "a-1e3" extends T10 ? 1 : 0]>("[2,2,2,2,2,2,2]")));
-type T11 = `${number}-${string}`;
-compare("`${number}-${string}`", ["1-a", "1-", "-1-a", "a-1", "1-2-3"], text => accepts(() => JSON.parse<T11>(JSON.stringify(text))), issuesOf(() => JSON.parse<["1-a" extends T11 ? 1 : 0, "1-" extends T11 ? 1 : 0, "-1-a" extends T11 ? 1 : 0, "a-1" extends T11 ? 1 : 0, "1-2-3" extends T11 ? 1 : 0]>("[2,2,2,2,2]")));
-type T12 = `${bigint}`;
-compare("`${bigint}`", ["0", "-0", "00", "01", "123", "-123", "+1", "--1", "-", "0x1F", "0X1f", "-0x1", "0x", "0b101", "0b2", "0o17", "0o8", "1.0", "1e3", " 1", "1 ", "", "1n", "1_0", "12345678901234567890123"], text => accepts(() => JSON.parse<T12>(JSON.stringify(text))), issuesOf(() => JSON.parse<["0" extends T12 ? 1 : 0, "-0" extends T12 ? 1 : 0, "00" extends T12 ? 1 : 0, "01" extends T12 ? 1 : 0, "123" extends T12 ? 1 : 0, "-123" extends T12 ? 1 : 0, "+1" extends T12 ? 1 : 0, "--1" extends T12 ? 1 : 0, "-" extends T12 ? 1 : 0, "0x1F" extends T12 ? 1 : 0, "0X1f" extends T12 ? 1 : 0, "-0x1" extends T12 ? 1 : 0, "0x" extends T12 ? 1 : 0, "0b101" extends T12 ? 1 : 0, "0b2" extends T12 ? 1 : 0, "0o17" extends T12 ? 1 : 0, "0o8" extends T12 ? 1 : 0, "1.0" extends T12 ? 1 : 0, "1e3" extends T12 ? 1 : 0, " 1" extends T12 ? 1 : 0, "1 " extends T12 ? 1 : 0, "" extends T12 ? 1 : 0, "1n" extends T12 ? 1 : 0, "1_0" extends T12 ? 1 : 0, "12345678901234567890123" extends T12 ? 1 : 0]>("[2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]")));
-type T13 = `${bigint}n`;
-compare("`${bigint}n`", ["0n", "-0n", "00n", "01n", "123n", "-123n", "+1n", "--1n", "-n", "0x1Fn", "0X1fn", "-0x1n", "n", "1"], text => accepts(() => JSON.parse<T13>(JSON.stringify(text))), issuesOf(() => JSON.parse<["0n" extends T13 ? 1 : 0, "-0n" extends T13 ? 1 : 0, "00n" extends T13 ? 1 : 0, "01n" extends T13 ? 1 : 0, "123n" extends T13 ? 1 : 0, "-123n" extends T13 ? 1 : 0, "+1n" extends T13 ? 1 : 0, "--1n" extends T13 ? 1 : 0, "-n" extends T13 ? 1 : 0, "0x1Fn" extends T13 ? 1 : 0, "0X1fn" extends T13 ? 1 : 0, "-0x1n" extends T13 ? 1 : 0, "n" extends T13 ? 1 : 0, "1" extends T13 ? 1 : 0]>("[2,2,2,2,2,2,2,2,2,2,2,2,2,2]")));
-type T14 = `${string}${string}`;
-compare("`${string}${string}`", ["", "a", "ab", "abc"], text => accepts(() => JSON.parse<T14>(JSON.stringify(text))), issuesOf(() => JSON.parse<["" extends T14 ? 1 : 0, "a" extends T14 ? 1 : 0, "ab" extends T14 ? 1 : 0, "abc" extends T14 ? 1 : 0]>("[2,2,2,2]")));
-type T15 = `${string}${number}`;
-compare("`${string}${number}`", ["", "1", "12", "a1", "a", "ab1", "a 1"], text => accepts(() => JSON.parse<T15>(JSON.stringify(text))), issuesOf(() => JSON.parse<["" extends T15 ? 1 : 0, "1" extends T15 ? 1 : 0, "12" extends T15 ? 1 : 0, "a1" extends T15 ? 1 : 0, "a" extends T15 ? 1 : 0, "ab1" extends T15 ? 1 : 0, "a 1" extends T15 ? 1 : 0]>("[2,2,2,2,2,2,2]")));
-type T16 = `${number}${string}`;
-compare("`${number}${string}`", ["", "1", "1a", "12a", "a1", "-1", " a"], text => accepts(() => JSON.parse<T16>(JSON.stringify(text))), issuesOf(() => JSON.parse<["" extends T16 ? 1 : 0, "1" extends T16 ? 1 : 0, "1a" extends T16 ? 1 : 0, "12a" extends T16 ? 1 : 0, "a1" extends T16 ? 1 : 0, "-1" extends T16 ? 1 : 0, " a" extends T16 ? 1 : 0]>("[2,2,2,2,2,2,2]")));
-type T17 = `${string}${string}${string}x`;
-compare("`${string}${string}${string}x`", ["x", "ax", "abx", "abcx", "ab"], text => accepts(() => JSON.parse<T17>(JSON.stringify(text))), issuesOf(() => JSON.parse<["x" extends T17 ? 1 : 0, "ax" extends T17 ? 1 : 0, "abx" extends T17 ? 1 : 0, "abcx" extends T17 ? 1 : 0, "ab" extends T17 ? 1 : 0]>("[2,2,2,2,2]")));
-type T18 = `${boolean}!`;
-compare("`${boolean}!`", ["true!", "false!", "True!", "!", "true"], text => accepts(() => JSON.parse<T18>(JSON.stringify(text))), issuesOf(() => JSON.parse<["true!" extends T18 ? 1 : 0, "false!" extends T18 ? 1 : 0, "True!" extends T18 ? 1 : 0, "!" extends T18 ? 1 : 0, "true" extends T18 ? 1 : 0]>("[2,2,2,2,2]")));
-type T19 = `${"a" | "b"}-${string}`;
-compare("`${\"a\" | \"b\"}-${string}`", ["a-", "b-x", "c-x", "a", "ab-x"], text => accepts(() => JSON.parse<T19>(JSON.stringify(text))), issuesOf(() => JSON.parse<["a-" extends T19 ? 1 : 0, "b-x" extends T19 ? 1 : 0, "c-x" extends T19 ? 1 : 0, "a" extends T19 ? 1 : 0, "ab-x" extends T19 ? 1 : 0]>("[2,2,2,2,2]")));
-type T20 = `${"x" | "y"}${1 | 2}`;
-compare("`${\"x\" | \"y\"}${1 | 2}`", ["x1", "y2", "x3", "z1", "x", "x12"], text => accepts(() => JSON.parse<T20>(JSON.stringify(text))), issuesOf(() => JSON.parse<["x1" extends T20 ? 1 : 0, "y2" extends T20 ? 1 : 0, "x3" extends T20 ? 1 : 0, "z1" extends T20 ? 1 : 0, "x" extends T20 ? 1 : 0, "x12" extends T20 ? 1 : 0]>("[2,2,2,2,2,2]")));
-type T21 = `<${`a${string}`}>`;
-compare("`<${`a${string}`}>`", ["<a>", "<ab>", "<b>", "<a", "a>"], text => accepts(() => JSON.parse<T21>(JSON.stringify(text))), issuesOf(() => JSON.parse<["<a>" extends T21 ? 1 : 0, "<ab>" extends T21 ? 1 : 0, "<b>" extends T21 ? 1 : 0, "<a" extends T21 ? 1 : 0, "a>" extends T21 ? 1 : 0]>("[2,2,2,2,2]")));
-type T22 = `${null}-${undefined}`;
-compare("`${null}-${undefined}`", ["null-undefined", "null-", "-undefined"], text => accepts(() => JSON.parse<T22>(JSON.stringify(text))), issuesOf(() => JSON.parse<["null-undefined" extends T22 ? 1 : 0, "null-" extends T22 ? 1 : 0, "-undefined" extends T22 ? 1 : 0]>("[2,2,2]")));
-type T23 = `\u00e9${string}\u00fc`;
-compare("`\\u00e9${string}\\u00fc`", ["\u00e9\u00fc", "\u00e9x\u00fc", "\u00e9", "e\u0301\u00fc", "\u00e9\u5c71\u00fc"], text => accepts(() => JSON.parse<T23>(JSON.stringify(text))), issuesOf(() => JSON.parse<["\u00e9\u00fc" extends T23 ? 1 : 0, "\u00e9x\u00fc" extends T23 ? 1 : 0, "\u00e9" extends T23 ? 1 : 0, "e\u0301\u00fc" extends T23 ? 1 : 0, "\u00e9\u5c71\u00fc" extends T23 ? 1 : 0]>("[2,2,2,2,2]")));
-type T24 = `${string}\u2192${string}`;
-compare("`${string}\\u2192${string}`", ["\u2192", "a\u2192b", "ab", "\u2190"], text => accepts(() => JSON.parse<T24>(JSON.stringify(text))), issuesOf(() => JSON.parse<["\u2192" extends T24 ? 1 : 0, "a\u2192b" extends T24 ? 1 : 0, "ab" extends T24 ? 1 : 0, "\u2190" extends T24 ? 1 : 0]>("[2,2,2,2]")));
-type T25 = `\ud83c\udf89${string}`;
-compare("`\\ud83c\\udf89${string}`", ["\ud83c\udf89", "\ud83c\udf89x", "\ud83c", "\udf89", "x\ud83c\udf89"], text => accepts(() => JSON.parse<T25>(JSON.stringify(text))), issuesOf(() => JSON.parse<["\ud83c\udf89" extends T25 ? 1 : 0, "\ud83c\udf89x" extends T25 ? 1 : 0, "\ud83c" extends T25 ? 1 : 0, "\udf89" extends T25 ? 1 : 0, "x\ud83c\udf89" extends T25 ? 1 : 0]>("[2,2,2,2,2]")));
-type T26 = `a.b*${string}(c)`;
-compare("`a.b*${string}(c)`", ["a.b*(c)", "a.b*x(c)", "aXb*(c)", "a.bbb(c)"], text => accepts(() => JSON.parse<T26>(JSON.stringify(text))), issuesOf(() => JSON.parse<["a.b*(c)" extends T26 ? 1 : 0, "a.b*x(c)" extends T26 ? 1 : 0, "aXb*(c)" extends T26 ? 1 : 0, "a.bbb(c)" extends T26 ? 1 : 0]>("[2,2,2,2]")));
-type T27 = `${string}\n${string}`;
-compare("`${string}\\n${string}`", ["\n", "a\nb", "ab", "a\r\nb", "\n\n"], text => accepts(() => JSON.parse<T27>(JSON.stringify(text))), issuesOf(() => JSON.parse<["\n" extends T27 ? 1 : 0, "a\nb" extends T27 ? 1 : 0, "ab" extends T27 ? 1 : 0, "a\r\nb" extends T27 ? 1 : 0, "\n\n" extends T27 ? 1 : 0]>("[2,2,2,2,2]")));
-type T28 = `${any}x`;
-compare("`${any}x`", ["x", "ax", "a"], text => accepts(() => JSON.parse<T28>(JSON.stringify(text))), issuesOf(() => JSON.parse<["x" extends T28 ? 1 : 0, "ax" extends T28 ? 1 : 0, "a" extends T28 ? 1 : 0]>("[2,2,2]")));
-type T29 = `id:${number}` | `name:${string}` | "none";
-compare("`id:${number}` | `name:${string}` | \"none\"", ["id:1", "id:x", "name:", "name:x", "none", "None", "id:"], text => accepts(() => JSON.parse<T29>(JSON.stringify(text))), issuesOf(() => JSON.parse<["id:1" extends T29 ? 1 : 0, "id:x" extends T29 ? 1 : 0, "name:" extends T29 ? 1 : 0, "name:x" extends T29 ? 1 : 0, "none" extends T29 ? 1 : 0, "None" extends T29 ? 1 : 0, "id:" extends T29 ? 1 : 0]>("[2,2,2,2,2,2,2]")));
-console.log("pairs", pairs, "accepted", accepted, "disagreements", disagreements);
-
-type Id = `${string}-${string}-${string}-${string}-${string}`;
-interface Row {
-  id: Id;
-  parent: Id | null;
-  color: "red" | "green" | `rgb:${string}`;
-  path?: `/api/${string}`;
-  sizes: `${number}px`[];
-}
-function describe(run: () => unknown): string {
-  try {
-    return JSON.stringify(run());
-  } catch (error) {
-    const issues = (error as { issues?: { path: (string | number)[]; code: string; expected: string; received: string }[] }).issues;
-    return (error as Error).constructor.name + ": " + (issues ? issues.map(issue => issue.path.join(".") + " " + issue.code + " " + issue.expected + " " + issue.received).join("; ") : (error as Error).message);
-  }
-}
-for (const text of [
-  '{"id":"1-2-3-4-5","parent":null,"color":"rgb:102030","path":"/api/x","sizes":["1px","2.5px"]}',
-  '{"id":"1-2-3-4-5","parent":"a-b-c-d-e","color":"red","sizes":[]}',
-  '{"sizes":["1px"],"color":"green","parent":null,"id":"\\u0031-2-3-4-5"}',
-  '{"id":"1-2-3-4","parent":"x","color":"rgb","path":"/web/x","sizes":["px",1]}',
-  '{"id":5,"parent":null,"color":"red","sizes":["1px"]}',
-]) {
-  console.log(describe(() => JSON.parse<Row>(text)));
-}
-const summaryOf = (row: Row): string => row.id.toUpperCase() + row.color.length;
-console.log(summaryOf(JSON.parse<Row>('{"id":"a-b-c-d-e","parent":null,"color":"rgb:x","sizes":[]}')));
 //// json-parse-type-argument-texts-broken-far-below-take-linear-time.ts
-// JSON.parse<T> of texts that are no JSON at their deepest place, or that nest past the end of the stack: the error is JSON.parse's, and no level of the text is read again for each level around it, so each answer comes within a second.
-import { JSON } from "bun"; type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+// `JSON.parse(text) as T` of texts that are no JSON at their deepest place, or that nest past the end of the stack: the error is JSON.parse's, and no level of the text is read again for each level around it, so each answer comes within a second.
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 type Chain = { extra: unknown; next: Chain | null };
 type Link = { name: string; next?: Link };
 type Rows = { rows: Rows[] };
 
 const nest = (open: string, middle: string, close: string, levels: number) => open.repeat(levels) + middle + close.repeat(levels);
 const kinds: [string, (text: string) => unknown, (levels: number) => string][] = [
-  ["arrays that are never closed", text => JSON.parse<Json>(text), levels => "[".repeat(levels)],
-  ["objects that are never closed", text => JSON.parse<Json>(text), levels => '{"k":'.repeat(levels)],
-  ["a word cut short under unknown", text => JSON.parse<Chain>(text), levels => nest('{"extra":1,"next":', '{"extra":tru,"next":null}', "}", levels)],
-  ["a string without its end under unknown", text => JSON.parse<Chain>(text), levels => nest('{"extra":1,"next":', '{"extra":"s,"next":null}', "}", levels)],
-  ["an array cut short under unknown", text => JSON.parse<Chain>(text), levels => nest('{"extra":1,"next":', '{"extra":[1,],"next":null}', "}", levels)],
-  ["a number without digits under an undeclared key", text => JSON.parse<Link>(text), levels => nest('{"name":"n","next":', '{"name":"n","other":-}', "}", levels)],
-  ["an object cut short under an undeclared key", text => JSON.parse<Link>(text), levels => nest('{"name":"n","next":', '{"name":"n","other":{"a":}}', "}", levels)],
-  ["records in arrays, a key without quotes", text => JSON.parse<Rows>(text), levels => nest('{"rows":[', "{rows:[]}", "]}", levels)],
+  ["arrays that are never closed", text => JSON.parse(text) as Json, levels => "[".repeat(levels)],
+  ["objects that are never closed", text => JSON.parse(text) as Json, levels => '{"k":'.repeat(levels)],
+  ["a word cut short under unknown", text => JSON.parse(text) as Chain, levels => nest('{"extra":1,"next":', '{"extra":tru,"next":null}', "}", levels)],
+  ["a string without its end under unknown", text => JSON.parse(text) as Chain, levels => nest('{"extra":1,"next":', '{"extra":"s,"next":null}', "}", levels)],
+  ["an array cut short under unknown", text => JSON.parse(text) as Chain, levels => nest('{"extra":1,"next":', '{"extra":[1,],"next":null}', "}", levels)],
+  ["a number without digits under an undeclared key", text => JSON.parse(text) as Link, levels => nest('{"name":"n","next":', '{"name":"n","other":-}', "}", levels)],
+  ["an object cut short under an undeclared key", text => JSON.parse(text) as Link, levels => nest('{"name":"n","next":', '{"name":"n","other":{"a":}}', "}", levels)],
+  ["records in arrays, a key without quotes", text => JSON.parse(text) as Rows, levels => nest('{"rows":[', "{rows:[]}", "]}", levels)],
 ];
 
 for (const [label, parse, text] of kinds) {
@@ -409,8 +225,8 @@ for (const [label, parse, text] of kinds) {
   }
 }
 //// json-parse-type-argument-texts-from-every-source.ts
-// The text comes from buffers, decoders, files, responses, streams and other makers of strings, whole and in slices: JSON.parse<T> gives what JSON.parse gives.
-import { JSON } from "bun"; import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// The text comes from buffers, decoders, files, responses, streams and other makers of strings, whole and in slices: `JSON.parse(text) as T` gives what JSON.parse gives.
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -428,7 +244,7 @@ function check(text: string): void {
     let typed = "";
     let plain = "";
     try {
-      typed = JSON.stringify(JSON.parse<Row[]>(given));
+      typed = JSON.stringify(JSON.parse(given) as Row[]);
     } catch (error: any) {
       typed = error.name + ": " + error.message;
     }
@@ -484,7 +300,7 @@ for (const [label, text] of [["ASCII", ascii], ["Latin-1", latin], ["16-bit", wi
 rmSync(folder, { recursive: true, force: true });
 //// json-parse-type-argument-thousands-of-kinds-below-a-holder.ts
 // A holder with undeclared keys of its own holds up to 66,000 items that each have an undeclared key of their own name: more kinds of object than the parser and the writer remember, met while the holder is being parsed and written.
-import { JSON } from "bun"; interface Item { id: number }
+interface Item { id: number }
 interface Holder { first: number; items: Item[]; last: string }
 let serial = 0;
 const host: any = globalThis;
@@ -497,16 +313,16 @@ for (const count of [10, 255, 256, 257, 4095, 4096, 4097, 16383, 16384, 16385, 2
   }
   const text = '{"a":"before","first":1,"b":[1,2],"items":[' + items.join(",") + '],"c":"behind","last":"l","d":{"e":null},"f":"' + "x".repeat(40) + '"}';
   const written = JSON.stringify(host.JSON.parse(text));
-  for (let round = 0; round < 3; round++) console.log(count + " kinds more (" + serial + " in all), round " + round + ": " + (JSON.stringify(JSON.parse<Holder>(text)) === written ? "same" : "DIFFERENT"));
+  for (let round = 0; round < 3; round++) console.log(count + " kinds more (" + serial + " in all), round " + round + ": " + (JSON.stringify(JSON.parse(text) as Holder) === written ? "same" : "DIFFERENT"));
 }
 //// json-parse-type-argument-three-types-of-one-shape-with-an-optional-member.ts
-// Three types of one shape, each with a required member and an optional member of its own type, are the type argument of JSON.parse. The texts have the optional member or not, the keys in the
+// Three types of one shape, each with a required member and an optional member of its own type, are what the result of JSON.parse is cast to. The texts have the optional member or not, the keys in the
 // declared order or another one, and keys that no type declares in front, between and behind. The order of the keys of what comes back is that of the text. The output is that of plain Bun.
 ////= lines-6	First
 ////= lines-6	Second
 ////= lines-6	Third
 
-import { JSON } from "bun"; const texts = [
+const texts = [
   '{"name":"a"}',
   '{"name":"b","inner":{"name":"c"}}',
   '{"inner":{"name":"d"},"name":"e"}',
@@ -516,78 +332,15 @@ import { JSON } from "bun"; const texts = [
 ];
 for (let round = 0; round < 2; round++) {
   for (const text of texts) {
-    const first = JSON.parse<First>(text);
-    const second = JSON.parse<Second>(text);
-    const third = JSON.parse<Third>(text);
+    const first = JSON.parse(text) as First;
+    const second = JSON.parse(text) as Second;
+    const third = JSON.parse(text) as Third;
     console.log(JSON.stringify(first), Object.keys(second).join(), third.name + (third.inner ? third.inner.name : "-"));
   }
 }
-//// json-parse-type-argument-throws-on-a-misfit.ts
-// JSON.parse<T>(text) throws a TypeError with `issues` when the text is JSON and not a T, and the SyntaxError of JSON.parse(text) when it is not JSON.
-import { JSON } from "bun"; import type { Schema } from "bun";
-interface Item { sku: string & Schema.MaxLength<4>; quantity: number & Schema.Int & Schema.Min<1> & Schema.Max<99>; note?: string }
-interface Order { id: number; items: Item[] & Schema.MinItems<1>; to: { name: string; city: string }; kind: "gift" | "plain"; coupon: string | null }
-type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
-
-function attempt(what: string, parse: () => unknown): void {
-  try {
-    console.log(what, "accepted", JSON.stringify(parse()));
-  } catch (error: any) {
-    console.log(what, error instanceof TypeError ? "TypeError" : error instanceof SyntaxError ? "SyntaxError" : "other", error.message, JSON.stringify(error.issues));
-  }
-}
-const order = { id: 7, items: [{ sku: "a", quantity: 1 }], to: { name: "n", city: "c" }, kind: "gift", coupon: null };
-const orders: [string, unknown][] = [
-  ["as it should be", order],
-  ["a required property is missing", { ...order, id: undefined }],
-  ["a number is a string", { ...order, id: "7" }],
-  ["null for an object", { ...order, to: null }],
-  ["an array for an object", { ...order, to: [] }],
-  ["an object for an array", { ...order, items: {} }],
-  ["below, in an array", { ...order, items: [{ sku: "a", quantity: 1 }, { sku: "b", quantity: "2" }] }],
-  ["two things at once", { ...order, id: null, to: { name: 1, city: "c" } }],
-  ["no member of a union of literals", { ...order, kind: "other" }],
-  ["an optional property of another kind", { ...order, items: [{ sku: "a", quantity: 1, note: 5 }] }],
-  ["an optional property that is null", { ...order, items: [{ sku: "a", quantity: 1, note: null }] }],
-  ["too long", { ...order, items: [{ sku: "abcde", quantity: 1 }] }],
-  ["not whole", { ...order, items: [{ sku: "a", quantity: 1.5 }] }],
-  ["too small, too big", { ...order, items: [{ sku: "a", quantity: 0 }, { sku: "a", quantity: 100 }] }],
-  ["too few", { ...order, items: [] }],
-  ["more than is declared", { extra: 1, ...order, more: [1] }],
-];
-for (const [what, value] of orders) attempt(what, () => JSON.parse<Order>(JSON.stringify(value)));
-attempt("the root is of another kind", () => JSON.parse<Order>("[]"));
-attempt("the root is null", () => JSON.parse<Order>("null"));
-attempt("a number too large for a double", () => JSON.parse<{ n: number }>('{"n":1e400}'));
-attempt("the later of two wins, and fits", () => JSON.parse<{ n: number }>('{"n":"x","n":1}'));
-attempt("the later of two wins, and does not fit", () => JSON.parse<{ n: number }>('{"n":1,"n":"x"}'));
-attempt("no arm of a union", () => JSON.parse<Shape>('{"kind":"circle","side":1}'));
-attempt("no arm of a union by its tag", () => JSON.parse<Shape>('{"kind":"line"}'));
-attempt("a tuple of another length", () => JSON.parse<[number, string]>("[1]"));
-attempt("a value of a dictionary", () => JSON.parse<Record<string, number>>('{"a":1,"b":"2"}'));
-attempt("a primitive", () => JSON.parse<number>('"1"'));
-attempt("strict, as declared", () => JSON.parse<{ a: number } & Schema.Strict>('{"a":1}'));
-attempt("strict, with more", () => JSON.parse<{ a: number } & Schema.Strict>('{"a":1,"b":2}'));
-attempt("a reviver makes it fit", () => JSON.parse<{ a: number }>('{"a":"1"}', (key, value) => (key === "a" ? Number(value) : value)));
-attempt("a reviver makes it misfit", () => JSON.parse<{ a: number }>('{"a":1}', (key, value) => (key === "a" ? String(value) : value)));
-for (const text of ["", "{", '{"id":7', '{"id":7,}', "[1,]", "nul", '{"id":7} x', "{'id':7}", '{"id":07}', '"\n"', "﻿{}"]) {
-  let plain = "";
-  try {
-    globalThis.JSON.parse(text);
-  } catch (error: any) {
-    plain = error.name + ": " + error.message;
-  }
-  let typed = "";
-  try {
-    JSON.parse<Order>(text);
-  } catch (error: any) {
-    typed = error.name + ": " + error.message;
-  }
-  console.log(JSON.stringify(text), typed === plain, typed);
-}
 //// json-parse-type-argument-undeclared-keys-in-every-place.ts
 // Undeclared keys stand before, between and behind the declared ones, once and many times over. The result is what JSON.parse(text) gives.
-import { JSON } from "bun"; interface Point { x: number; y: number; label?: string }
+interface Point { x: number; y: number; label?: string }
 interface Segment { id: number; from: Point; to: Point; note?: string; tags: string[] }
 interface Named { id: number; name: string }
 interface Numbered { id: number }
@@ -626,8 +379,8 @@ function orders<T>(items: T[]): T[][] {
 }
 
 const asObject = (members: string[]) => "{" + members.join(",") + "}";
-const point = (text: string) => JSON.parse<Point>(text);
-const segment = (text: string) => JSON.parse<Segment>(text);
+const point = (text: string) => JSON.parse(text) as Point;
+const segment = (text: string) => JSON.parse(text) as Segment;
 
 check("every order of two members and three others", orders(['"x":1', '"y":2', '"p":3', '"q":"four"', '"r":null']).map(asObject), point);
 check("every order with the optional member", orders(['"x":1', '"y":2', '"label":"l"', '"p":[1,{"a":2}]', '"q":{"b":{"c":[]}}']).map(asObject), point);
@@ -660,16 +413,16 @@ check("at every level", inner.flatMap(from => inner.flatMap(to => [`{"id":1,"fro
 const turns: string[] = [];
 for (let i = 0; i < 12; i++) turns.push(`{"id":${i},"name":"n${i}"}`, `{"name":"n","id":${i},"more":1}`, `{"id":${i},"more":1,"name":"n"}`);
 let turn = 0;
-check("a name that one type declares and another does not", turns, text => (turn++ & 1 ? JSON.parse<Named>(text) : JSON.parse<Numbered>(text)));
+check("a name that one type declares and another does not", turns, text => (turn++ & 1 ? (JSON.parse(text) as Named) : JSON.parse(text) as Numbered));
 
-check("an index signature", ['{"id":1}', '{"id":1,"a":2,"b":"c"}', '{"a":2,"id":1,"b":"c"}', '{"a":2,"a":3,"id":1}', '{"0":1,"id":1,"a":2}', '{"id":1,"__proto__":3}'], text => JSON.parse<Bag>(text));
+check("an index signature", ['{"id":1}', '{"id":1,"a":2,"b":"c"}', '{"a":2,"id":1,"b":"c"}', '{"a":2,"a":3,"id":1}', '{"0":1,"id":1,"a":2}', '{"id":1,"__proto__":3}'], text => JSON.parse(text) as Bag);
 
 const wide = ['"a":1', '"b":"two"', '"c":true', '"d":null', '"g":[1,2]', '"h":{"id":1,"o":1}'];
 const wider: string[] = [];
 for (let at = 0; at <= wide.length; at++) {
   for (const more of [['"o":1'], ['"e":5'], ['"f":"f"', '"o":1'], ['"o":1', '"p":2', '"e":5'], ['"f":"f"', '"e":5']]) wider.push(asObject([...wide.slice(0, at), ...more, ...wide.slice(at)]), asObject([...wide.slice(at), ...more, ...wide.slice(0, at)]));
 }
-check("eight members of several kinds", wider, text => JSON.parse<Wide>(text));
+check("eight members of several kinds", wider, text => JSON.parse(text) as Wide);
 
 const changes: [string, (value: any) => void][] = [
   ["a new key", value => { value.added = 1; }],
@@ -710,14 +463,13 @@ const texts: string[] = [];
 for (let i = 0; i < 3000; i++) {
   const text = `{"x":${i},"k${i % 7}":"${"v".repeat(i % 50)}","y":${-i},"list":[${i},{"deep":"${i}"}]${i % 3 ? "" : ',"label":"l' + i + '"'},"last":${i % 2 ? "null" : '{"a":' + i + "}"}}`;
   texts.push(text);
-  kept.push(JSON.parse<Point>(text));
+  kept.push(JSON.parse(text) as Point);
 }
 let changed = 0;
 for (let i = 0; i < kept.length; i++) changed += Number(show(kept[i]) !== show(globalThis.JSON.parse(texts[i])));
 console.log("kept for a while: " + kept.length + " objects, " + changed + " differ");
 //// json-parse-type-argument-unions-that-contain-themselves.ts
 // A union that contains itself: the arms are told apart by a constant member of any kind, wherever it stands, and no nested value is parsed twice: a text of sixty levels would otherwise take longer than the sun has left.
-import { JSON } from "bun"; import { validate } from "bun:bundle";
 type ByNumber = { below: ByNumber | null; k: 1 } | { below: ByNumber | null; k: 2 };
 type ByBoolean = { below: ByBoolean | null; k: true } | { below: ByBoolean | null; k: false };
 type ByNull = { below: ByNull | null; k: null } | { below: ByNull | null; k: 1 };
@@ -731,100 +483,45 @@ function nested(levels: number, tail: string): string {
 }
 ////= say-2
 for (const levels of [1, 2, 3, 20, 40, 60, 63, 64, 65, 66, 200]) {
-  say("number tags " + levels, text => JSON.parse<ByNumber>(text), nested(levels, ',"k":2}'));
-  say("number tags, the first arm " + levels, text => JSON.parse<ByNumber>(text), nested(levels, ',"k":1}'));
-  say("number tags, in turn " + levels, text => JSON.parse<ByNumber>(text), nested(2 * levels, ',"k":1}').replaceAll(',"k":1},"k":1}', ',"k":2},"k":1}'));
-  say("number tags, written otherwise " + levels, text => JSON.parse<ByNumber>(text), nested(levels, ' , "k" : 2.0e0 }'));
-  say("number tags, in front " + levels, text => JSON.parse<ByNumber>(text), '{"k":2,"below":'.repeat(levels) + "null" + "}".repeat(levels));
-  say("number tags, no arm has it " + levels, text => JSON.parse<ByNumber>(text), nested(levels, ',"k":3}'));
-  say("number tags, the innermost is wrong " + levels, text => JSON.parse<ByNumber>(text), nested(levels, ',"k":2}').replace('null,"k":2', 'null,"k":"2"'));
-  say("true | false " + levels, text => JSON.parse<ByBoolean>(text), nested(levels, ',"k":false}'));
-  say("true | false, neither " + levels, text => JSON.parse<ByBoolean>(text), nested(levels, ',"k":0}'));
-  say("null | 1 " + levels, text => JSON.parse<ByNull>(text), nested(levels, ',"k":null}'));
-  say("text tags " + levels, text => JSON.parse<ByText>(text), nested(levels, ',"k":"two"}'));
-  say("text tags, no arm has it " + levels, text => JSON.parse<ByText>(text), nested(levels, ',"k":"three"}'));
-  say("within lists " + levels, text => JSON.parse<InList>(text), '{"list":[{"list":[],"k":1},'.repeat(levels) + '{"k":2,"list":[]}' + '],"k":2}'.repeat(levels));
-  say("tags of four kinds " + levels, text => JSON.parse<Mixed>(text), nested(levels, ',"k":null}'));
-  say("tags of four kinds, in turn " + levels, text => JSON.parse<Mixed>(text), nested(4 * levels, ',"k":2}').replaceAll(',"k":2},"k":2},"k":2},"k":2}', ',"k":"one"},"k":2},"k":false},"k":null}'));
-  say("tags of four kinds, no arm has it " + levels, text => JSON.parse<Mixed>(text), nested(levels, ',"k":true}'));
+  say("number tags " + levels, text => JSON.parse(text) as ByNumber, nested(levels, ',"k":2}'));
+  say("number tags, the first arm " + levels, text => JSON.parse(text) as ByNumber, nested(levels, ',"k":1}'));
+  say("number tags, in turn " + levels, text => JSON.parse(text) as ByNumber, nested(2 * levels, ',"k":1}').replaceAll(',"k":1},"k":1}', ',"k":2},"k":1}'));
+  say("number tags, written otherwise " + levels, text => JSON.parse(text) as ByNumber, nested(levels, ' , "k" : 2.0e0 }'));
+  say("number tags, in front " + levels, text => JSON.parse(text) as ByNumber, '{"k":2,"below":'.repeat(levels) + "null" + "}".repeat(levels));
+  say("number tags, no arm has it " + levels, text => JSON.parse(text) as ByNumber, nested(levels, ',"k":3}'));
+  say("number tags, the innermost is wrong " + levels, text => JSON.parse(text) as ByNumber, nested(levels, ',"k":2}').replace('null,"k":2', 'null,"k":"2"'));
+  say("true | false " + levels, text => JSON.parse(text) as ByBoolean, nested(levels, ',"k":false}'));
+  say("true | false, neither " + levels, text => JSON.parse(text) as ByBoolean, nested(levels, ',"k":0}'));
+  say("null | 1 " + levels, text => JSON.parse(text) as ByNull, nested(levels, ',"k":null}'));
+  say("text tags " + levels, text => JSON.parse(text) as ByText, nested(levels, ',"k":"two"}'));
+  say("text tags, no arm has it " + levels, text => JSON.parse(text) as ByText, nested(levels, ',"k":"three"}'));
+  say("within lists " + levels, text => JSON.parse(text) as InList, '{"list":[{"list":[],"k":1},'.repeat(levels) + '{"k":2,"list":[]}' + '],"k":2}'.repeat(levels));
+  say("tags of four kinds " + levels, text => JSON.parse(text) as Mixed, nested(levels, ',"k":null}'));
+  say("tags of four kinds, in turn " + levels, text => JSON.parse(text) as Mixed, nested(4 * levels, ',"k":2}').replaceAll(',"k":2},"k":2},"k":2},"k":2}', ',"k":"one"},"k":2},"k":false},"k":null}'));
+  say("tags of four kinds, no arm has it " + levels, text => JSON.parse(text) as Mixed, nested(levels, ',"k":true}'));
   for (const tail of [',"k":null}', ',"k":"one"}', ',"k":2}', ',"k":false}']) {
-    say("tags of four kinds, read by the engine and converted " + tail + " " + levels, text => JSON.parse<Mixed>(text), nested(levels, tail).replace("below", "\\u0062elow"));
-    say("tags of four kinds, validated and converted " + tail + " " + levels, text => validate<Mixed>(globalThis.JSON.parse(text)), nested(levels, tail));
+    say("tags of four kinds, read by the engine and converted " + tail + " " + levels, text => JSON.parse(text) as Mixed, nested(levels, tail).replace("below", "\\u0062elow"));
   }
-  say("a text or null, read by the engine and converted " + levels, text => JSON.parse<TextOrNull>(text), nested(levels, ',"k":null}').replace("below", "\\u0062elow"));
+  say("a text or null, read by the engine and converted " + levels, text => JSON.parse(text) as TextOrNull, nested(levels, ',"k":null}').replace("below", "\\u0062elow"));
 }
 function tree(levels: number): string {
   return levels ? '{"left":' + tree(levels - 1) + ',"right":' + tree(levels - 1) + ',"k":' + (levels & 1 ? "null" : '"one"') + "}" : "null";
 }
 for (const levels of [1, 2, 6, 10]) {
-  say("a tree of two branches " + levels, text => JSON.parse<Wide>(text), tree(levels));
-  say("a tree of two branches, validated and converted " + levels, text => validate<Wide>(globalThis.JSON.parse(text)), tree(levels));
+  say("a tree of two branches " + levels, text => JSON.parse(text) as Wide, tree(levels));
 }
 
 type Flat = { value: number; unit: string } | { error: string; code: number } | { value: string };
 type Below = { a: { x: number }; n: number } | { a: { y: number }; n: number } | { a: { x: number }; n: string };
 type Lists = number[] | string[] | [boolean, number[]] | { list: number[] } | { list: string[] };
 type Tagged = { kind: 1; parts: number[] } | { kind: 2; parts: string[] } | { kind: number; parts?: unknown };
-for (const text of ['{"value":1,"unit":"m"}', '{"error":"none","code":4}', '{"value":"v"}', '{"value":"v","o":{"deep":[1,{"er":2}]}}', '{"o":[[]],"code":4,"error":"e"}', '{"value":1}', '{"value":null}', "{}", "[]", "null"]) say("arms that hold no objects " + text, given => JSON.parse<Flat>(given), text);
-for (const text of ['{"a":{"x":1},"n":1}', '{"a":{"y":1},"n":1}', '{"a":{"x":1},"n":"s"}', '{"n":"s","a":{"x":1}}', '{"a":{"y":1},"n":"s"}', '{"a":{"x":1,"y":1},"n":1}', '{"a":{},"n":1}', '{"a":{"x":1}}']) say("arms that differ below " + text, given => JSON.parse<Below>(given), text);
-for (const text of ["[]", "[1,2]", '["a"]', '[1,"a"]', "[true,[1]]", '[true,["a"]]', '{"list":[]}', '{"list":[1]}', '{"list":["a"]}', '{"list":[1,"a"]}', '{"list":[[]]}']) say("lists " + text, given => JSON.parse<Lists>(given), text);
-for (const text of ['{"kind":1,"parts":[1]}', '{"kind":2,"parts":["a"]}', '{"kind":1,"parts":["a"]}', '{"parts":["a"],"kind":1}', '{"kind":3,"parts":{"any":[1]}}', '{"kind":3}', '{"kind":"1","parts":[1]}', '{"parts":[1]}']) say("the arm that the tag names refuses " + text, given => JSON.parse<Tagged>(given), text);
-//// json-parse-type-argument-unsure-refusals.ts
-// JSON.parse<T>: a union goes on to its next arm only after a sure refusal. Repeated keys, undeclared members, defaults and the order of keys never change which arm is taken, what is refused or how long it takes.
-import { JSON } from "bun"; import type { Schema } from "bun";
-
-function shown(parse: () => unknown): string {
-  try {
-    return "accepted " + JSON.stringify(parse());
-  } catch (error: any) {
-    return "refused " + error.name + " with " + (error.issues ? error.issues.length : "no") + " issues";
-  }
-}
-
-type Sized = { a: number; d: number & Schema.Default<1> };
-console.log("undeclared member first:", shown(() => JSON.parse<Sized | Record<string, number>>('{"x":0,"a":1}')));
-console.log("undeclared member last, then white space:", shown(() => JSON.parse<Sized | Record<string, number>>('{"a":1,"x":0 }')));
-console.log("undeclared members everywhere:", shown(() => JSON.parse<{ a: number; b: number }>('{"x":0 , "a":1,"y":[1] ,"b":2,"z":null\n}')));
-console.log("undeclared member, then a trailing comma:", shown(() => JSON.parse<Sized>('{"a":1,"x":0,}')));
-
-type Counted = { x: number; d: number & Schema.Default<1> };
-console.log("first of two members has another type:", shown(() => JSON.parse<Counted | Record<string, unknown>>('{"x":"s","x":1}')));
-console.log("last of two members has another type:", shown(() => JSON.parse<Counted | Record<string, unknown>>('{"x":1,"x":"s"}')));
-console.log("only member has another type:", shown(() => JSON.parse<Counted | Record<string, unknown>>('{"x":"s"}')));
-console.log("same, keys out of order:", shown(() => JSON.parse<Counted | Record<string, unknown>>('{"d":2,"x":"s","x":1}')));
-console.log("same, one level down:", shown(() => JSON.parse<{ in: Counted } | { in: Record<string, unknown> }>('{"in":{"x":"s","x":1}}')));
-
-type Marked = { a: unknown; d: number & Schema.Default<1> };
-console.log("dictionary key again:", shown(() => JSON.parse<Record<string, number> | Marked>('{"a":"s","a":1}')));
-console.log("dictionary key once:", shown(() => JSON.parse<Record<string, number> | Marked>('{"a":"s"}')));
-type Indexed = { k: number; [key: string]: number };
-console.log("key under an index signature again:", shown(() => JSON.parse<Indexed | { k: number; q: unknown; d: number & Schema.Default<1> }>('{"k":1,"q":"s","q":2}')));
-
-console.log("default below its minimum:", shown(() => JSON.parse<{ port: number & Schema.Min<1024> & Schema.Default<80> }>("{}")));
-console.log("same on the generic path:", shown(() => JSON.parse<{ port: number & Schema.Min<1024> & Schema.Default<80> }>('{"\\u0078":1}')));
-console.log("null for a string:", shown(() => JSON.parse<{ name: string & Schema.Default<null> }>("{}")));
-console.log("null for an object:", shown(() => JSON.parse<{ inner: { v: number } & Schema.Default<null> }>("{}")));
-console.log("string for a number:", shown(() => JSON.parse<{ port: number & Schema.Default<"80"> }>("{}")));
-console.log("defaults that fit:", shown(() => JSON.parse<{ port: number & Schema.Min<1> & Schema.Default<80>; host: string & Schema.Default<"localhost"> }>("{}")));
-console.log("defaults after the keys of the text:", shown(() => JSON.parse<{ port: number & Schema.Default<80>; host: string }>('{"more":1,"host":"h"}')));
-console.log("default in an arm of a member:", shown(() => JSON.parse<{ z: (number & Schema.Default<1>) | string }>("{}")));
-console.log("refused default, then another arm:", shown(() => JSON.parse<{ port: number & Schema.Min<1024> & Schema.Default<80> } | Record<string, number>>("{}")));
-
-interface User { id: number; name?: string; email?: string }
-console.log("optional members out of order:", shown(() => JSON.parse<User>('{"id":1,"email":"e","name":"n"}')));
-console.log("every member out of order:", shown(() => JSON.parse<User>('{"email":"e","more":[],"name":"n","id":1}')));
-
-console.log("strict:", shown(() => JSON.parse<{ id: number } & Schema.Strict>('{"id":1}')), shown(() => JSON.parse<{ id: number } & Schema.Strict>('{"id":1,"more":2}')));
-
-interface Nested { child?: Nested; a: number; b: number }
-let text = '{"b":1,"a":1}';
-for (let level = 0; level < 64; level++) text = '{"child":' + text + ',"b":1,"a":1}';
-let levels = 0;
-for (let node: Nested | undefined = JSON.parse<Nested>(text); node; node = node.child) levels++;
-console.log("keys out of order at every level:", levels);
+for (const text of ['{"value":1,"unit":"m"}', '{"error":"none","code":4}', '{"value":"v"}', '{"value":"v","o":{"deep":[1,{"er":2}]}}', '{"o":[[]],"code":4,"error":"e"}', '{"value":1}', '{"value":null}', "{}", "[]", "null"]) say("arms that hold no objects " + text, given => JSON.parse(given) as Flat, text);
+for (const text of ['{"a":{"x":1},"n":1}', '{"a":{"y":1},"n":1}', '{"a":{"x":1},"n":"s"}', '{"n":"s","a":{"x":1}}', '{"a":{"y":1},"n":"s"}', '{"a":{"x":1,"y":1},"n":1}', '{"a":{},"n":1}', '{"a":{"x":1}}']) say("arms that differ below " + text, given => JSON.parse(given) as Below, text);
+for (const text of ["[]", "[1,2]", '["a"]', '[1,"a"]', "[true,[1]]", '[true,["a"]]', '{"list":[]}', '{"list":[1]}', '{"list":["a"]}', '{"list":[1,"a"]}', '{"list":[[]]}']) say("lists " + text, given => JSON.parse(given) as Lists, text);
+for (const text of ['{"kind":1,"parts":[1]}', '{"kind":2,"parts":["a"]}', '{"kind":1,"parts":["a"]}', '{"parts":["a"],"kind":1}', '{"kind":3,"parts":{"any":[1]}}', '{"kind":3}', '{"kind":"1","parts":[1]}', '{"parts":[1]}']) say("the arm that the tag names does not fit " + text, given => JSON.parse(given) as Tagged, text);
 //// json-parse-type-argument-what-an-outer-object-stands-on-is-replaced.ts
 // Something is emptied, grown or replaced while an outer object of the same parse still stands on it.
-import { JSON } from "bun"; interface Node { id: number; below: Node | null; name: string }
+interface Node { id: number; below: Node | null; name: string }
 interface Item { id: number }
 interface Holder { first: number; items: Item[]; last: string }
 let different = 0;
@@ -841,7 +538,7 @@ for (const inner of [1, 2, 3, 5, 31, 32, 33, 63, 64, 65, 70, 127, 128, 129, 200]
   for (let round = 0; round < 3; round++) {
     const deepest = `{${[...others("i" + serial++ + "_", inner, fresh), '"id":3', '"below":null', '"name":"c"'].join(",")}}`;
     const middle = `{${[...others("m", 3, fresh), '"id":2', ...others("n", 2, fresh), `"below":${deepest}`, ...others("o", inner % 7, fresh), '"name":"b"'].join(",")}}`;
-    check(text => JSON.parse<Node>(text), `{${[...others("a", 3, fresh), '"id":1', `"below":${middle}`, ...others("b", 3, fresh), '"name":"a"', ...others("c", 2, fresh)].join(",")}}`);
+    check(text => JSON.parse(text) as Node, `{${[...others("a", 3, fresh), '"id":1', `"below":${middle}`, ...others("b", 3, fresh), '"name":"a"', ...others("c", 2, fresh)].join(",")}}`);
   }
 }
 for (const count of [10, 300, 5000, 16383, 16384, 16385, 17000, 34000]) {
@@ -849,14 +546,14 @@ for (const count of [10, 300, 5000, 16383, 16384, 16385, 17000, 34000]) {
   const text = `{"a":"before","first":1,"b":[1,2],"items":[${items.join(",")}],"c":"behind","last":"l","d":{"e":null}}`;
   for (let round = 0; round < 2; round++) {
     compared++;
-    const holder = JSON.parse<Holder>(text);
+    const holder = JSON.parse(text) as Holder;
     if (Object.keys(holder).join() !== "a,first,b,items,c,last,d" || holder.items.length !== count || Object.keys(holder.items[count - 1]).join() !== Object.keys(globalThis.JSON.parse(items[count - 1])).join()) different++;
   }
 }
 console.log(compared + " compared, " + different + " differ");
 //// json-parse-type-argument-what-is-learned-while-an-outer-object-is-open.ts
 // While an outer object is still being parsed, with undeclared keys of its own in front of and behind the member, the objects inside it change what the parser has learned: the first object of the same type that spills, and more orders of keys than are remembered. Nothing is written: the keys and values are walked.
-import { JSON } from "bun"; interface Self { name: string; inner?: Self; list?: Self[] }
+interface Self { name: string; inner?: Self; list?: Self[] }
 interface Item { id: number }
 interface Holder { first: number; items: Item[]; last: string }
 interface Other1 { name: string; inner?: Other1 }
@@ -886,23 +583,23 @@ function check(label: string, parse: (text: string) => unknown, texts: string[])
   for (const text of texts) for (let round = 0; round < 3; round++) if (walk(parse(text)) !== walk(plainParse(text))) different++;
   console.log(label + ": " + texts.length + " texts: " + different + " differ");
 }
-check("the first object that spills lies inside", text => JSON.parse<Self>(text), [selfText(1, 70, 3)]);
-check("then others", text => JSON.parse<Self>(text), [1, 2, 3, 5].flatMap(levels => [0, 1, 2, 3, 4, 63, 64, 65, 70, 127, 128, 129, 200].flatMap(inside => [0, 1, 3, 40].map(around => selfText(levels, inside, around)))));
-check("deeper first", text => JSON.parse<Other1>(text), [selfText(6, 65, 2), selfText(6, 3, 2), selfText(2, 130, 70)]);
-check("many around, few inside", text => JSON.parse<Other2>(text), [selfText(3, 1, 70), selfText(3, 70, 1), selfText(3, 64, 64)]);
-check("growing", text => JSON.parse<Other3>(text), Array.from({ length: 140 }, (_, count) => selfText(2, count, count >> 1)));
-check("lists of itself", text => JSON.parse<Self>(text), [3, 70, 130].map(inside => "{" + [...extras("a", 3), '"name":"n"', '"list":[' + [selfText(0, inside, 0), selfText(1, inside, 2), selfText(0, 1, 0)].join(",") + "]", ...extras("b", 3)].join(",") + "}"));
+check("the first object that spills lies inside", text => JSON.parse(text) as Self, [selfText(1, 70, 3)]);
+check("then others", text => JSON.parse(text) as Self, [1, 2, 3, 5].flatMap(levels => [0, 1, 2, 3, 4, 63, 64, 65, 70, 127, 128, 129, 200].flatMap(inside => [0, 1, 3, 40].map(around => selfText(levels, inside, around)))));
+check("deeper first", text => JSON.parse(text) as Other1, [selfText(6, 65, 2), selfText(6, 3, 2), selfText(2, 130, 70)]);
+check("many around, few inside", text => JSON.parse(text) as Other2, [selfText(3, 1, 70), selfText(3, 70, 1), selfText(3, 64, 64)]);
+check("growing", text => JSON.parse(text) as Other3, Array.from({ length: 140 }, (_, count) => selfText(2, count, count >> 1)));
+check("lists of itself", text => JSON.parse(text) as Self, [3, 70, 130].map(inside => "{" + [...extras("a", 3), '"name":"n"', '"list":[' + [selfText(0, inside, 0), selfText(1, inside, 2), selfText(0, 1, 0)].join(",") + "]", ...extras("b", 3)].join(",") + "}"));
 
 for (const count of [10, 4096, 16383, 16384, 16385, 20000, 40000]) {
   const items: string[] = [];
   for (let at = 0; at < count; at++) items.push(at % 2 ? '{"k' + ++serial + '":1,"id":' + at + "}" : '{"id":' + at + ',"k' + ++serial + '":1,"m":2}');
-  check(count + " orders inside an open holder", text => JSON.parse<Holder>(text), ['{"a":"before","first":1,"b":[1,2],"items":[' + items.join(",") + '],"c":"behind","last":"l","d":{"e":null}}']);
+  check(count + " orders inside an open holder", text => JSON.parse(text) as Holder, ['{"a":"before","first":1,"b":[1,2],"items":[' + items.join(",") + '],"c":"behind","last":"l","d":{"e":null}}']);
 }
 //// json-parse-type-argument-what-is-no-text.ts
-// What is handed to JSON.parse<T> is no string: JSON.parse converts it to one first.
-import { JSON } from "bun"; type Point = { x: number; y: number };
+// What is handed to `JSON.parse(text) as T` is no string: JSON.parse converts it to one first.
+type Point = { x: number; y: number };
 const plainParse: (text: any) => any = globalThis.JSON.parse;
-////= say-3	=== "TypeError" && error.issues ? "refused" : error.name + ": " + error.message
+////= say-3	+ ": " + error.message
 let calls = 0;
 const given: [string, () => any][] = [
   ["bytes of 1", () => new Uint8Array([49])],
@@ -927,38 +624,25 @@ const given: [string, () => any][] = [
   ["a throwing toString", () => ({ toString() { throw new RangeError("mine"); } })],
 ];
 for (const [label, make] of given) {
-  const answers = [say(() => JSON.parse<number>(make())), say(() => JSON.parse<Point>(make())), say(() => JSON.parse<number[]>(make())), say(() => JSON.parse<{ v: unknown }>(make()))];
+  const answers = [say(() => JSON.parse(make()) as number), say(() => JSON.parse(make()) as Point), say(() => JSON.parse(make()) as number[]), say(() => JSON.parse(make()) as { v: unknown })];
   const plain = say(() => plainParse(make()));
-  console.log(label + ": plain " + plain + " | " + answers.map(answer => (answer === plain ? "same" : answer === "refused" && !plain.includes("Error") ? "refused" : "DIFFERENT: " + answer)).join(" | "));
+  console.log(label + ": plain " + plain + " | " + answers.map(answer => (answer === plain ? "same" : "DIFFERENT: " + answer)).join(" | "));
 }
 console.log("toString was called " + calls + " times");
-//// json-parse-union-uncertain-tag.ts
-// JSON.parse<T>(text) takes the arm that JSON.parse's own value of the tag selects, also where the text repeats the tag or has it after a value too deep to skip.
-import { JSON } from "bun"; import type { Schema } from "bun";
-type A = { kind: "a"; x: number };
-type B = { kind: "b"; x: string; n: number & Schema.Default<1> };
-type Named = { v: { kind: "a" } | { kind: "b" }; d: number & Schema.Default<1> } | { v: unknown };
-type Chain = { next: Chain | null };
-type Deep = { kind: "a"; t: Chain; n: number & Schema.Default<1> } | { kind: "b" } | { t: Chain };
-
-console.log("the arm of the first tag refuses", JSON.stringify(JSON.parse<{ v: A | B } | { v: unknown }>('{"v":{"kind":"a","x":"s","kind":"b"}}')));
-console.log("the first tag names no arm", JSON.stringify(JSON.parse<Named>('{"v":{"kind":1,"kind":"a"}}')));
-const deep: any = JSON.parse<Deep>('{"t":' + '{"next":'.repeat(70) + "null" + "}".repeat(70) + ',"kind":"a"}');
-console.log("the tag after seventy levels", Object.keys(deep).join(), deep.n);
 //// json-parse-untagged-recursive-union.ts
 // Arms without a tag that share a recursive member and differ after it: no nested value is parsed once per arm, so sixty levels end.
-import { JSON } from "bun"; type List = { next: List | null; a: number } | { next: List | null; b: number };
+type List = { next: List | null; a: number } | { next: List | null; b: number };
 type Pair = { a: Pair | null; b: 1 } | { a: Pair | null; c: 2 };
 function nested(head: string, levels: number, tail: string): string {
   return head.repeat(levels) + "null" + tail.repeat(levels);
 }
 ////= say-2
 for (const levels of [1, 2, 20, 40, 60]) {
-  say("the first arm " + levels, text => JSON.parse<List>(text), nested('{"next":', levels, ',"a":1}'));
-  say("the second arm " + levels, text => JSON.parse<List>(text), nested('{"next":', levels, ',"b":1}'));
-  say("a literal member in each arm " + levels, text => JSON.parse<Pair>(text), nested('{"a":', levels, ',"c":2}'));
+  say("the first arm " + levels, text => JSON.parse(text) as List, nested('{"next":', levels, ',"a":1}'));
+  say("the second arm " + levels, text => JSON.parse(text) as List, nested('{"next":', levels, ',"b":1}'));
+  say("a literal member in each arm " + levels, text => JSON.parse(text) as Pair, nested('{"a":', levels, ',"c":2}'));
 }
-for (const levels of [1, 2]) say("neither arm " + levels, text => JSON.parse<List>(text), nested('{"next":', levels, ',"c":1}'));
+for (const levels of [1, 2]) say("neither arm " + levels, text => JSON.parse(text) as List, nested('{"next":', levels, ',"c":1}'));
 //// json-stringify-across-every-end-of-a-buffer.ts
 // JSON.stringify of compiled objects writes keys, numbers and short strings into room that it has asked for once.
 // Here every such write is moved across every place where a buffer ends or grows: the 8,192 characters on the stack, and 1,024 doubled.
@@ -1147,44 +831,6 @@ say(
 );
 
 say("at the end", () => JSON.stringify(issue).length + " " + JSON.stringify([new Date(22)]));
-//// json-stringify-of-what-validate-returned-stays-compiled.ts
-// A type that the program only ever gets from validate<T>() is written by the code compiled for it: its keys are expected in the order of the declaration.
-declare const aotRuntimeCounters: () => string;
-const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
-import { validate } from "bun:bundle";
-declare const aotOperationCount: undefined | ((name: string) => number);
-interface Inner { x: number; label: string }
-interface Flat { id: number; name: string; paid: boolean; price: number }
-interface Nested { id: number; inner: Inner }
-interface Circle { kind: "circle"; radius: number }
-interface Square { kind: "square"; side: number }
-interface Drawn { id: number; shape: Circle | Square }
-interface Noted { id: number; note?: string }
-const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const finished = () => (counted ? (counted("operationAOTJSONWriterFinish") - writersFailed()) : 0);
-function measure(label: string, run: () => string, isCompiled: boolean): void {
-  for (let i = 0; i < 10; i++) run();
-  const before = finished();
-  let written = "";
-  for (let i = 0; i < 100; i++) written = run();
-  console.log(label + ": " + written, counted ? finished() - before === (isCompiled ? 100 : 0) : true);
-}
-const from = (text: string): unknown => JSON.parse(text);
-const flat = validate<Flat>(from('{"id":1,"name":"n","paid":true,"price":1.5}'));
-measure("declared order", () => JSON.stringify(flat), true);
-const nested = validate<Nested>(from('{"id":1,"inner":{"x":2,"label":"l"}}'));
-measure("an object below", () => JSON.stringify(nested), true);
-const circle = validate<Drawn>(from('{"id":1,"shape":{"kind":"circle","radius":2}}'));
-measure("a union below", () => JSON.stringify(circle), true);
-const noted = validate<Noted>(from('{"id":1,"note":"n"}'));
-measure("an optional member", () => JSON.stringify(noted), true);
-const bare = validate<Noted>(from('{"id":1}'));
-measure("without it", () => JSON.stringify(bare), true);
-const turned = validate<Flat>(from('{"price":1.5,"paid":true,"name":"n","id":1}'));
-measure("another order", () => JSON.stringify(turned), true);
-const told = validate<Flat>(from('{"id":1,"name":"n","paid":true,"price":1.5}'));
-(told as any).toJSON = () => "told";
-measure("toJSON of its own", () => JSON.stringify(told), false);
 //// json-stringify-with-a-replacer-that-changes-the-object.ts
 // JSON.stringify with a replacer walks the fields of a compiled object as they were listed when the walk began, and reads each when its turn comes:
 // what the replacer or a toJSON does to the object in between is seen as the language says.

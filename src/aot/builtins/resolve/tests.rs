@@ -124,13 +124,8 @@ fn create_fold_inputs<'s>(setup: Setup, atoms: &Interner<'s>, arena: &'s Arena) 
     let defines: Vec<Define<'s>> = defines
         .map(|&define| create_define(define, atoms, arena))
         .collect();
-    let compiler_functions: Vec<Atom> = table::members(BuiltinId::BunBundle)
-        .iter()
-        .map(|&member| atoms.intern(table::text_of_name(table::entry(member).name)))
-        .collect();
     let options = FoldOptions {
         defines: arena.alloc_slice_copy(&defines),
-        compiler_functions: arena.alloc_slice_copy(&compiler_functions),
         max_string_bytes: MAX_FOLDED_STRING_BYTES,
         ..FoldOptions::default()
     };

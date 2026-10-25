@@ -1,11 +1,10 @@
 use super::*;
-use crate::erasure::ErasureMismatchKind;
 use crate::file_analysis::FileAnalysis;
 use crate::import_sites::JsxMode;
 use crate::module_format::DeclaredModuleType;
 use crate::resolve::{
     CodeFailure, ComputedUnknown, DeclaredSideEffects, EnclosingPackage, ExternalKind, HostPayload,
-    JsxSettings, TranspileSettings, TypedVersionOrigin,
+    JsxSettings, TranspileSettings,
 };
 use std::any::Any;
 
@@ -62,21 +61,6 @@ pub enum ComputedTargets<'s> {
     },
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct RejectedTypedVersion<'a> {
-    pub path: &'a [u8],
-    pub kind: ErasureMismatchKind,
-    pub installed_range: (u32, u32),
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct InstalledText<'s> {
-    pub text: &'s [u8],
-    pub functions: &'s [(u32, u32)],
-    pub classes: &'s [(u32, u32)],
-    pub token_offsets: &'s [(u32, u32)],
-}
-
 pub struct CompiledModule<'s> {
     pub analysis: FileAnalysis<'s>,
     pub code_answers: &'s [CodeAnswer<'s>],
@@ -90,10 +74,8 @@ pub struct CompiledModule<'s> {
     pub side_effects: DeclaredSideEffects<'s>,
     pub host_module: Option<HostModuleId>,
     pub loader: HostLoader,
-    pub typed_source_path: Option<&'s [u8]>,
-    pub installed_text: Option<InstalledText<'s>>,
-    pub rejected_typed_version: Option<RejectedTypedVersion<'s>>,
-    pub typed_version_origin: Option<TypedVersionOrigin>,
+    /// TypeScript of a package whose `exports` name the "aot" condition.
+    pub is_aot_source: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -375,13 +357,6 @@ impl<'s> Files<'s> {
     pub fn host_payload(&self, file: FileId) -> Option<&'s (dyn Any + Send + Sync)> {
         let payloads = self.code_graph.host_payloads;
         payloads.get(file.idx())?.as_deref()
-    }
-
-    #[inline]
-    pub fn diagnostic_path(&self, file: FileId) -> &'s [u8] {
-        let module = self.module(file);
-        let typed_source_path = module.compiled.and_then(|it| it.typed_source_path);
-        typed_source_path.unwrap_or_else(|| module.file_name())
     }
 }
 

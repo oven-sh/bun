@@ -7,10 +7,8 @@ pub(crate) fn statement_esm_syntax(hir: &File<'_>, stmt: StmtId) -> EsmSyntax {
     if hir.is_export_declaration(stmt) {
         return EsmSyntax::ExportOrTopLevelAwait;
     }
-    let StmtKind::Import(import) = hir[stmt].kind else {
-        return EsmSyntax::None;
-    };
-    if hir.is_typed_version && hir.is_type_only_import(import) || hir.is_in_jsdoc(hir[stmt].start) {
+    let is_import = matches!(hir[stmt].kind, StmtKind::Import(_));
+    if !is_import || hir.is_in_jsdoc(hir[stmt].start) {
         return EsmSyntax::None;
     }
     EsmSyntax::ImportOrImportMeta

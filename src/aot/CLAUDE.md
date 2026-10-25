@@ -86,10 +86,14 @@ Judge by real programs of several kinds (a command-line application that starts 
 
 ## Compare output
 
-A refactoring of the compiler must not change what it generates. Build the same programs with both Buns and compare:
+A refactoring of the compiler must not change what it generates:
 
-- the IR: `--aot-out=<file>` and a checksum. It does not depend on where code is placed;
-- the executables: `test/aot/same-program-at-any-thread-count.test.ts` and `a-build-that-verifies-the-program-makes-the-same-executable.test.ts` show how to compare two builds.
+```sh
+bun test/aot/tools/same-output.ts --before <bun> --after <bun> [<program or folder>..]
+```
+
+It builds each program with both Buns and compares the IR that the front end hands over and the machine code of every function. It prints `IDENTICAL`, or the programs and functions that differ. Without
+programs it takes the 260 small benchmarks, in a minute. Give it large programs too: a server with its packages, the type checker of the `typescript` package.
 
 Identical output shows that nothing moved **on those programs**. It is no evidence that a change is sound: deleting the "I don't know" arm of an analysis that no test program reaches leaves all output identical, and
 miscompiles the next user's program.

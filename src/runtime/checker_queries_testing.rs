@@ -100,8 +100,7 @@ pub(crate) fn describe_checker_queries(
     let limits = LimitValues::for_host();
     // Printed paths are the loader's, which are real paths.
     let mut root = host.realpath(directory);
-    let mut code = code_options_with_limits(&root, &limits);
-    code.typed_condition = Some(b"full-types".to_vec());
+    let code = code_options_with_limits(&root, &limits);
     if !root.ends_with(b"/") {
         root.push(b'/');
     }

@@ -22,7 +22,6 @@ const PROGRAM: [(&str, &str); 8] = [
     (
         "main.ts",
         r#"/// <reference path="./bun-declarations.d.ts" />
-import { validate } from "bun:bundle";
 import { checkPoint } from "./checks.ts";
 import { Circle, createUnitCircle } from "./circle.ts";
 import { scale } from "./legacy.cjs";
@@ -39,25 +38,21 @@ let total = 0;
 for (const shape of shapes) {
   total += shape.area();
 }
-export const center: Point = validate<Point>({ x: scale(total), y: 0 });
+export const center: Point = read<Point>({ x: scale(total), y: 0 });
 export const label: string = settings.label;
 "#,
     ),
     (
         "bun-declarations.d.ts",
-        r#"declare module "bun:bundle" {
-  function validate<T>(value: unknown): T;
-}
-"#,
+        "declare function read<T>(value: unknown): T;\n",
     ),
     (
         "checks.ts",
         r#"/// <reference path="./bun-declarations.d.ts" />
-import { validate } from "bun:bundle";
 import type { Point } from "./point.ts";
 
 export function checkPoint(value: unknown): Point {
-  return validate<Point>(value);
+  return read<Point>(value);
 }
 "#,
     ),

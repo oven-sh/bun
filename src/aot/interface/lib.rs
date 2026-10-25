@@ -16,8 +16,7 @@ pub mod options;
 pub mod report;
 pub mod statistics;
 
-pub use bun_options_types::validation_plans;
-pub use compile::{BuildFailed, Compilation, compile, plan_validated_calls};
+pub use compile::{BuildFailed, Compilation, compile};
 pub use linked::signatures;
 pub use load::source_provider::{SourceProvider, WithoutServices};
 pub use opaque::Opaque;

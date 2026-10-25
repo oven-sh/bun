@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDirWithBunTypes as tem
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/run-programs";
-import { canTrim } from "./compile-trim-features";
+import { canTrim, getMappedSegments } from "./compile-trim-features";
 
 const keyWidth = 8;
 const base = 16777619;
@@ -74,25 +74,6 @@ function whatIsCompressedIn(bytes: Buffer): Uint8Array[] {
     position = bytes.indexOf(magic, position + 1);
   }
   return contents;
-}
-
-// CI tests the Bun that still has its symbols. The names of its functions lie in sections that no loader maps, and --trim leaves those as they are.
-function whatIsMappedOf(file: Buffer): Buffer[] {
-  const isElf64 = file.length >= 64 && file.readUInt32BE(0) === 0x7f454c46 && file[4] === 2 && file[5] === 1;
-  if (!isElf64) return [file];
-  const [headers, headerSize, count] = [
-    Number(file.readBigUInt64LE(0x20)),
-    file.readUInt16LE(0x36),
-    file.readUInt16LE(0x38),
-  ];
-  return Array.from({ length: count }, (_, index) => headers + index * headerSize)
-    .filter(at => file.readUInt32LE(at) === 1)
-    .map(at =>
-      file.subarray(
-        Number(file.readBigUInt64LE(at + 8)),
-        Number(file.readBigUInt64LE(at + 8) + file.readBigUInt64LE(at + 32)),
-      ),
-    );
 }
 
 const heldByWhatStays = ["exhaustive-deps", "rules-of-hooks", "use-memo", "Substitutions for pattern "];
@@ -193,7 +174,7 @@ const listed = said([bunExe(), "lint", "--rules", "--format", "json"], String(di
 describe.skipIf(!canTrim)("an executable without the Bun command line holds none of its texts", () => {
   const whole = readFileSync(bunExe());
   const everythingIn = (bytes: Buffer) => [bytes, ...whatIsCompressedIn(bytes)];
-  const trimmed = whatIsMappedOf(file).flatMap(everythingIn);
+  const trimmed = getMappedSegments(file).flatMap(everythingIn);
 
   interface Rule {
     id: string;

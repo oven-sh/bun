@@ -1,7 +1,8 @@
 // `--explain` and the percentage in the last line of a build are one account:
 //   100% means that the report has no entry, and less than 100% that it has one;
 //   an access has one cause, so together the entries count what is missing from 100%;
-//   the fix that an entry suggests removes the entry, and the percentage reaches 100%;
+//   the fix that an entry suggests removes the entry, and the percentage reaches 100%. Parsed data is the exception: the
+//   function that checks it still reads an unknown object, so its entry stays (`notYet` says so);
 //   the text, the JSON and the last line of the build say the same;
 //   an entry that says why its guard is there gives a reason that the compiler recorded.
 // `cases` has a program per cause (before) and the same program fixed as the entry says (after).
@@ -95,16 +96,24 @@ const cases: Record<string, Case> = {
 const address = config.host + ":" + config.port;
 console.log(address);
 `,
-    after: `import { JSON } from "bun"; interface Config {
+    after: `interface Config {
   host: string;
   port: number;
 }
 
-const config = JSON.parse<Config>('{"host":"localhost","port":3000}');
+function readConfig(value: unknown): Config {
+  if (typeof value !== "object" || value === null) throw new Error("config: not an object");
+  const { host, port } = value as Record<string, unknown>;
+  if (typeof host !== "string") throw new Error("config: host must be a string");
+  if (typeof port !== "number") throw new Error("config: port must be a number");
+  return { host, port };
+}
+
+const config = readConfig(JSON.parse('{"host":"localhost","port":3000}'));
 const address = config.host + ":" + config.port;
 console.log(address);
 `,
-    notYet: "the entry says not-a-plain-object",
+    notYet: "the reads of config are free, and readConfig's own read of the parsed object keeps the entry",
   },
   "parsed data reaches a type": {
     reason: "unknown-object",
@@ -112,10 +121,15 @@ console.log(address);
     types: ["Item"],
     at: `for (const item of JSON.parse('[{"sku":"B-2","price":10}]')) items.push(item);`,
     before: itemProgram(`for (const item of JSON.parse('[{"sku":"B-2","price":10}]')) items.push(item);`),
-    after:
-      `import { JSON } from "bun"; ` +
-      itemProgram(`for (const item of JSON.parse<Item[]>('[{"sku":"B-2","price":10}]')) items.push(item);`),
-    notYet: "JSON.parse<Item[]>(text) does not remove the entry",
+    after: itemProgram(`function readItem(value: unknown): Item {
+  if (typeof value !== "object" || value === null) throw new Error("item: not an object");
+  const { sku, price } = value as Record<string, unknown>;
+  if (typeof sku !== "string") throw new Error("item: sku must be a string");
+  if (typeof price !== "number") throw new Error("item: price must be a number");
+  return { sku, price };
+}
+for (const item of JSON.parse('[{"sku":"B-2","price":10}]')) items.push(readItem(item));`),
+    notYet: "the read of item.price is free, and readItem's own read of the parsed object keeps the entry",
   },
   "an object is passed to code from new Function()": {
     reason: "passed-to-untyped-code",

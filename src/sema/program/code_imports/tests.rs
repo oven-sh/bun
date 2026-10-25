@@ -291,11 +291,10 @@ fn constant_prefix_is_specifier_or_start_of_pattern() {
 }
 
 #[test]
-fn target_has_loader_and_typed_path_of_file() {
+fn target_has_loader_of_file() {
     let host = StatementsHost {
         loaders: &[("/p/lib.js", Some("text"), TEXT_LOADER)],
-        typed_versions: &[("/p/lib.js", "/p/lib.ts"), ("/bun/os.ts", "/bun/typed.ts")],
-        ..host_of(&[("/p/lib.js", ""), ("/p/lib.ts", ""), ("/bun/os.ts", "")])
+        ..host_of(&[("/p/lib.js", ""), ("/bun/os.ts", "")])
     };
     with_context(&host, |context| {
         let library = CodeFile {
@@ -326,9 +325,6 @@ fn target_has_loader_and_typed_path_of_file() {
             key(b"/bun/os.ts", HostLoader::default()),
         ];
         assert_eq!(keys, expected);
-        let typed_paths: Vec<Option<&[u8]>> =
-            (targets.iter()).map(|target| target.typed_path).collect();
-        assert_eq!(typed_paths, [Some(&b"/p/lib.ts"[..]), None, None]);
         let host_modules: Vec<Option<HostModuleId>> =
             (targets.iter()).map(|target| target.host_module).collect();
         assert_eq!(host_modules, [None, None, Some(HostModuleId(7))]);

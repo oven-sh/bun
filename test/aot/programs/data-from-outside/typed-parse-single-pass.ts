@@ -1,6 +1,6 @@
-// Text that is a T is read once by JSON.parse<T>(), whatever the order of its members, its white space and the members that T does not declare: the engine's parser and the validation behind it are for what is refused and for an escape in a key.
+// Text that is a T is read once by `JSON.parse(text) as T`, whatever the order of its members, its white space and the members that T does not declare: the engine's parser is for text that is no T and for an escape in a key.
 // IR+ ^ .*JSONStartsWith
-import { JSON } from "bun"; declare const aotOperationCount: undefined | ((name: string) => number);
+declare const aotOperationCount: undefined | ((name: string) => number);
 interface Item { sku: string; quantity: number; note?: string }
 interface Order { id: number; items: Item[]; to: { name: string; city: string }; kind: "gift" | "plain"; coupon: string | null }
 
@@ -12,7 +12,7 @@ function count(what: string, texts: string[], againExpected: number): void {
   let sum = 0;
   for (const text of texts) {
     try {
-      sum += JSON.parse<Order>(text).items.length;
+      sum += (JSON.parse(text) as Order).items.length;
     } catch {
       sum += 100;
     }
@@ -28,4 +28,4 @@ count("with a member written twice", ['{"id":6,"id":7,"items":[],"to":{"name":"n
 count("with escapes in strings", ['{"id":7,"items":[{"sku":"\\u0061\\n","quantity":1}],"to":{"name":"\\"","city":"c"},"kind":"gift","coupon":null}'], 0);
 count("16 bits", [JSON.stringify({ ...order, coupon: "Ā" })], 0);
 count("with an escape in a key", ['{"\\u0069d":7,"items":[],"to":{"name":"n","city":"c"},"kind":"gift","coupon":null}'], 1);
-count("what is refused", [JSON.stringify({ ...order, id: "7" }), JSON.stringify({ ...order, kind: "other" }), JSON.stringify({ ...order, items: [{ sku: "a", quantity: 1, note: null }] }), "{", ""], 5);
+count("what is no T", [JSON.stringify({ ...order, id: "7" }), JSON.stringify({ ...order, kind: "other" }), JSON.stringify({ ...order, items: [{ sku: "a", quantity: 1, note: null }] }), "{", ""], 5);

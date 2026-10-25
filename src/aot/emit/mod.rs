@@ -9,7 +9,7 @@ mod tables;
 mod tests;
 
 pub use external_bodies::{ExternalBodies, ExternalFunctionBodies};
-pub use positions::{installed_source_positions, source_positions};
+pub use positions::source_positions;
 
 use crate::ir::generated::LimitId;
 use crate::ir::{InParallel, Program};

@@ -1,8 +1,10 @@
 use super::code_barrels::{BarrelRequests, NOT_LOADED, erase_waiting_sites};
 use super::code_file::load_code_file;
+use super::code_imports::files_of;
 use super::code_load::{CodeEntry, CodeTarget, LoadKey, ParsedCodeFile};
 use super::code_types::predicted_type_files;
 use super::*;
+use crate::import_sites::{ImportSiteKind, ImportSpecifier};
 use crate::resolve::{
     CodeRead, DeclaredSideEffects, EnclosingPackage, HostPayload, TranspileSettings,
     is_declaration_file_name,
@@ -23,6 +25,7 @@ struct WalkedFile<'s, 'r> {
     parsed: Option<Box<ParsedCodeFile<'s, 'r>>>,
     targets: Vec<u32>,
     is_called_before_it_runs: bool,
+    imported_requires: Vec<ImportedRequire>,
 }
 
 impl<'r> WalkedFile<'_, 'r> {
@@ -52,6 +55,7 @@ struct WalkState<'s, 'r> {
     deferred: Vec<u32>,
     in_progress: usize,
     barrels: BarrelRequests,
+    has_exported_requires: bool,
 }
 
 impl WalkState<'_, '_> {
@@ -205,6 +209,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             parsed: None,
             targets: Vec::new(),
             is_called_before_it_runs: false,
+            imported_requires: Vec::new(),
         });
         let key = context.canonical_key(target.key);
         state.index_of.insert(key, index);
@@ -221,6 +226,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         mut parsed: Box<ParsedCodeFile<'s, 'r>>,
     ) {
         let requests = std::mem::take(&mut parsed.code.requests);
+        state.has_exported_requires |= !parsed.code.exported_requires.is_empty();
         let file = &mut state.files[index as usize];
         file.targets = vec![NOT_LOADED; parsed.code.targets.len()];
         file.parsed = Some(parsed);
@@ -437,9 +443,11 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 }
                 let file = &state.files[index as usize];
                 let (target, is_called_early) = (file.target, file.is_called_before_it_runs);
+                let requires = file.imported_requires.clone();
                 drop(state);
                 let arena = *arena.get_or_insert_with(|| context.session.arena());
-                let parsed = load_code_file(context, arena, target, text, is_called_early);
+                let parsed =
+                    load_code_file(context, arena, target, text, is_called_early, &requires);
                 let parsed = Box::new(parsed);
                 self.add_parsed_file(&mut self.state.lock(), index, parsed);
                 let has_more = self.queue_found_files(start.plugin_reader);
@@ -468,7 +476,10 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     state = self.state.lock();
                     continue;
                 }
-                if state.deferred.is_empty() && forget_files_called_before_they_run(&mut state) {
+                if state.deferred.is_empty()
+                    && (forget_files_called_before_they_run(&mut state)
+                        || forget_files_that_import_requires(&context.atoms, &mut state))
+                {
                     state.in_progress += 1;
                     drop(state);
                     self.queue_found_files(start.plugin_reader);
@@ -611,14 +622,91 @@ fn forget_files_called_before_they_run(state: &mut WalkState<'_, '_>) -> bool {
         .filter(|&file| is_on_cycle(&state.files, file))
         .collect();
     for &index in &called_early {
-        let file = &mut state.files[index as usize];
-        file.is_called_before_it_runs = true;
-        file.parsed = None;
-        file.targets.clear();
-        state.barrels.forget_parsed_file(index);
-        state.found.push(index);
+        state.files[index as usize].is_called_before_it_runs = true;
+        forget_parsed_file(state, index);
     }
     !called_early.is_empty()
+}
+
+fn forget_parsed_file(state: &mut WalkState<'_, '_>, index: u32) {
+    let file = &mut state.files[index as usize];
+    file.parsed = None;
+    file.targets.clear();
+    state.barrels.forget_parsed_file(index);
+    state.found.push(index);
+}
+
+fn names_export(hir: &hir::File<'_>, site: ImportSiteKind, export: Atom) -> bool {
+    match site {
+        ImportSiteKind::Import(import) => {
+            let import = &hir[import];
+            import.namespace.is_some()
+                || export == known::default && import.default.is_some()
+                || import.named.iter().any(|it| hir[it].imported == export)
+        }
+        ImportSiteKind::ExportFrom(statement) => {
+            let mut items = hir[statement].items.iter();
+            items.any(|it| hir[it].local == export)
+        }
+        _ => false,
+    }
+}
+
+fn find_imported_requires(
+    atoms: &Interner<'_>,
+    files: &[WalkedFile<'_, '_>],
+    file: &WalkedFile<'_, '_>,
+) -> Vec<ImportedRequire> {
+    let Some(parsed) = &file.parsed else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let mut next_target = 0;
+    let sites = parsed.code.analyzed.analysis.import_sites;
+    for (site, &resolution) in sites.iter().zip(&parsed.code.resolutions) {
+        let target = next_target;
+        next_target += files_of(resolution).count();
+        let ImportSpecifier::Constant(specifier) = site.specifier else {
+            continue;
+        };
+        if next_target == target || file.targets[target] == NOT_LOADED {
+            continue;
+        }
+        let exporter = &files[file.targets[target] as usize];
+        let Some(exporting) = &exporter.parsed else {
+            continue;
+        };
+        for require in &exporting.code.exported_requires {
+            if names_export(&parsed.parse.hir, site.kind, require.export) {
+                found.push(ImportedRequire {
+                    specifier,
+                    export: require.export,
+                    path: (require.path).unwrap_or_else(|| atoms.intern(exporter.target.key.path)),
+                });
+            }
+        }
+    }
+    found
+}
+
+// esbuild exports its `__require` helper from a chunk that the other chunks import. What they load through it is known once that chunk is parsed, so they are parsed again.
+fn forget_files_that_import_requires(atoms: &Interner<'_>, state: &mut WalkState<'_, '_>) -> bool {
+    if !state.has_exported_requires {
+        return false;
+    }
+    let mut importers: Vec<(u32, Vec<ImportedRequire>)> = Vec::new();
+    for (index, file) in state.files.iter().enumerate() {
+        let found = find_imported_requires(atoms, &state.files, file);
+        if found != file.imported_requires {
+            importers.push((index as u32, found));
+        }
+    }
+    let has_importers = !importers.is_empty();
+    for (index, found) in importers {
+        state.files[index as usize].imported_requires = found;
+        forget_parsed_file(state, index);
+    }
+    has_importers
 }
 
 fn erase_sites_nothing_asked_for(state: &mut WalkState<'_, '_>) {

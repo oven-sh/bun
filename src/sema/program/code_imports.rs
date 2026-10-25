@@ -18,7 +18,14 @@ pub(super) fn resolve_code_imports<'s, 'r>(
     let sites = analyzed.analysis.import_sites;
     let mut resolutions = Vec::with_capacity(sites.len());
     let mut targets = Vec::new();
-    for site in sites {
+    for (index, site) in sites.iter().enumerate() {
+        let key = match analyzed.analysis.path_to_resolve_from(index) {
+            Some(path) => LoadKey {
+                path: context.resolver.keep(atoms.bytes(path)),
+                ..key
+            },
+            None => key,
+        };
         let resolution = resolve_site(context, key, hir, site);
         resolutions.push(resolution);
         let origin = TargetOrigin {
@@ -46,6 +53,7 @@ pub(super) fn resolve_code_imports<'s, 'r>(
         targets_by_specifier: FxHashMap::default(),
         types_answers: Vec::new(),
         requests: ImportRequests::default(),
+        exported_requires: Vec::new(),
     };
     code.index_targets_by_specifier();
     code
@@ -55,10 +63,12 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
     pub(super) fn index_targets_by_specifier(&mut self) {
         self.targets_by_specifier.clear();
         let mut target = 0;
-        let sites = self.analyzed.analysis.import_sites;
-        for (site, &resolution) in sites.iter().zip(&self.resolutions) {
+        let analysis = &self.analyzed.analysis;
+        let sites = analysis.import_sites.iter().enumerate();
+        for ((index, site), &resolution) in sites.zip(&self.resolutions) {
             if let SiteResolution::Constant(CodeResolution::File(_)) = resolution
                 && let ImportSpecifier::Constant(specifier) = site.specifier
+                && analysis.path_to_resolve_from(index).is_none()
             {
                 let kind = CodeImportKind::from_site(site.kind);
                 self.targets_by_specifier
@@ -286,14 +296,6 @@ fn add_target<'r>(
     } = origin;
     let request = resolver.loader_request(file.path, kind, type_attribute, embed_attribute);
     let loader = host.loader_of(&request);
-    let can_have_typed_version =
-        loader == HostLoader::default() && is_javascript_file(host, file.path);
-    let typed_path = match can_have_typed_version {
-        true => (resolver.typed_version_of(file.path))
-            .filter(|typed| typed.rejected_as.is_none())
-            .map(|typed| typed.path),
-        false => None,
-    };
     let index = targets.len() as u32;
     targets.push(CodeTarget {
         key: LoadKey {
@@ -301,7 +303,6 @@ fn add_target<'r>(
             loader,
         },
         host_module: file.host_module,
-        typed_path,
         increases_depth,
         has_loader_attribute: type_attribute.is_some(),
     });

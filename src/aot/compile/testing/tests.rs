@@ -472,7 +472,7 @@ fn temporary_directory_is_removed_when_dropped() {
 }
 
 #[test]
-fn on_disk_project_compiles_typed_version() {
+fn on_disk_project_compiles_file_under_the_aot_condition() {
     let directory = TemporaryDirectory::new("testing_typed_package");
     let configuration = write_configuration(&default_settings());
     directory.write(CONFIGURATION_FILE, str::from_utf8(&configuration).unwrap());
@@ -482,14 +482,15 @@ fn on_disk_project_compiles_typed_version() {
     let typed_paths = run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
         build.with_loaded_projects(|_, loaded| {
             let files = loaded.project(ProjectId::Application).loaded.files();
-            let compiled_files = files.compiled_files().iter();
-            let compiled = compiled_files.filter_map(|&file| files.compiled(file));
-            let typed_paths = compiled.filter_map(|compiled| compiled.typed_source_path);
-            Ok(typed_paths.map(<[u8]>::to_vec).collect::<Vec<_>>())
+            let compiled_files = files.compiled_files().iter().copied();
+            let typed_files = compiled_files
+                .filter(|&file| files.compiled(file).is_some_and(|it| it.is_aot_source));
+            let typed_paths = typed_files.map(|file| files.module(file).file_name().to_vec());
+            Ok(typed_paths.collect::<Vec<_>>())
         })
     });
     let [typed_path] = typed_paths.as_slice() else {
-        panic!("{} files have full types", typed_paths.len());
+        panic!("{} files are aot sources", typed_paths.len());
     };
-    assert!(typed_path.ends_with(b"/.full-types/p/lay/x.js"));
+    assert!(typed_path.ends_with(b"/node_modules/p/x.aot.ts"));
 }

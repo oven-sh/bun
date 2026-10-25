@@ -21,7 +21,7 @@ pub(crate) struct TypedOutputs<'a> {
     pub(crate) writes_package_json: bool,
 }
 
-/// `index.full.ts`: `index.js` with its types, which `bun compile` compiles in its place.
+/// `index.aot.ts`: `index.js` with its types, which `--aot` compiles.
 pub(crate) fn is_typed_file(file: &OutputFile) -> bool {
     file.output_kind == OutputKind::Asset
         && file.loader == Loader::Ts

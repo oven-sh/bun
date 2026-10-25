@@ -1,4 +1,4 @@
-use super::{FoldError, FoldErrorKind, FoldInputs};
+use super::{FoldError, FoldErrorKind};
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{Bound, ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, SymbolId};
 use crate::hir::{
@@ -9,7 +9,6 @@ use crate::hir::{
 pub(super) fn find_feature_import(
     hir: &File<'_>,
     bound: &Bound<'_>,
-    inputs: &FoldInputs<'_>,
     errors: &mut Vec<FoldError>,
 ) -> SymbolId {
     let mut feature_specifier = None;
@@ -19,8 +18,7 @@ pub(super) fn find_feature_import(
             let first = *feature_specifier.get_or_insert(specifier);
             (first != specifier).then_some(FoldErrorKind::FeatureImportedTwice)
         } else {
-            let is_export = inputs.is_compiler_function(imported);
-            (!is_export).then_some(FoldErrorKind::UnknownBundleExport(imported))
+            Some(FoldErrorKind::UnknownBundleExport(imported))
         };
         if let Some(kind) = error {
             let node = NodeData::ImportSpec(specifier);

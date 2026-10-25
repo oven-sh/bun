@@ -12,7 +12,6 @@ use super::kept_answers::{
 use super::prototype_links::NamedValues;
 use super::type_identity::{ObjectOrigin, TypeIdentity};
 use super::type_shape::{BuiltinShape, PrimitiveKinds, TypeShape};
-use super::written_union_order::{WrittenPlace, WrittenUnionOrders};
 use crate::atom::{Atom, known};
 use crate::bind::{BindingKind, Bound, Decl, Parent, SymbolId};
 use crate::check::jsx::{JsxName, JsxReferenceKind};
@@ -22,7 +21,7 @@ use crate::check::{Checker, ContextFlags, Requested, WORK_TRAP_DISARMED};
 use crate::hir::{self, EnumMemberId, ExprId, ExprKind, FnId, ParamId, PatId, TypeNodeId};
 use crate::program::{FileId, FileRole, Files, Sym};
 use crate::session::Arena;
-use crate::types::{EnumValue, Origin, SigId, TypeData, TypeId, tf};
+use crate::types::{EnumValue, SigId, TypeId, tf};
 use crate::util::FxHashMap;
 use std::hash::Hash;
 use std::rc::Rc;
@@ -180,10 +179,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.c.was_discarded()
     }
 
-    pub fn count_limits_hit(&self) -> u64 {
-        self.c.count_limits_hit()
-    }
-
     pub fn note_idle(&mut self) {
         debug_assert!(self.depth == 0);
         self.c.idle_between_statements();
@@ -262,10 +257,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             false => &mut self.statistics.members_gave_up,
         };
         counts[reason as usize] += 1;
-    }
-
-    pub(super) fn note_invalid_schema_argument(&mut self) {
-        self.statistics.invalid_schema_arguments += 1;
     }
 
     pub(super) fn ask_written(
@@ -787,36 +778,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.ask_written(|queries| queries.compute_written_type(queries.file, node))
     }
 
-    pub fn written_place(&mut self, node: TypeNodeId) -> WrittenPlace {
-        self.find_written_place(self.file, node)
-    }
-
-    pub fn written_union_orders(
-        &mut self,
-        node: TypeNodeId,
-        max_declarations: usize,
-    ) -> WrittenUnionOrders {
-        let orders = self.ask(|queries| {
-            Ok(queries.compute_written_union_orders(queries.file, node, max_declarations))
-        });
-        orders.unwrap_or_default()
-    }
-
-    pub fn template_literal_text(&mut self, ty: TypeId) -> Vec<u8> {
-        let template = self.find_template_literal_part(ty).unwrap_or(ty);
-        self.type_text(template)
-    }
-
-    fn find_template_literal_part(&self, ty: TypeId) -> Option<TypeId> {
-        match self.c.data(ty) {
-            TypeData::Template { .. } => Some(ty),
-            TypeData::Intersection(parts) => parts
-                .iter()
-                .find_map(|&part| self.find_template_literal_part(part)),
-            _ => None,
-        }
-    }
-
     pub fn parameter_type(&mut self, parameter: ParamId) -> CheckedType {
         self.ask(|queries| {
             let file = queries.file;
@@ -1029,24 +990,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             |answers| &mut answers.accepted_class_constructors,
             |queries| queries.compute_accepted_class_constructors(object_type),
         )
-    }
-
-    pub fn is_builtin_subtype(&mut self, ty: TypeId) -> Result<bool, GaveUp> {
-        self.ask(|queries| queries.compute_is_builtin_subtype(ty))
-    }
-
-    pub fn says_more_than_its_shape(&self, ty: TypeId) -> bool {
-        match self.c.data(ty) {
-            TypeData::StringMapping { .. } => true,
-            TypeData::Anon { origin, .. } => matches!(
-                origin,
-                Origin::EnumObject(_)
-                    | Origin::Module(_)
-                    | Origin::Namespace { .. }
-                    | Origin::GlobalThis
-            ),
-            _ => false,
-        }
     }
 
     pub fn object_members(&mut self, object_type: TypeId) -> Result<&'c [ObjectMember], GaveUp> {

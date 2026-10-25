@@ -27,7 +27,6 @@ pub struct ModuleFragment {
     pub body: Option<FunctionId>,
     pub data: Option<DataId>,
     pub positions: SourcePositions,
-    pub has_installed_positions: bool,
     pub function_text: Vec<u8>,
 }
 
@@ -362,12 +361,6 @@ impl FragmentBuilder {
     pub(crate) fn add_expected_result(&mut self, expected: ExpectedResult) -> ExpectedResultId {
         expected.for_each_reference(&mut |reference| self.note_what_is_built(reference));
         add_record(&mut self.expected_results, expected)
-    }
-
-    pub(crate) fn is_validated(&self, expected: ExpectedResultId) -> bool {
-        !self.expected_results[expected.index()]
-            .validation
-            .is_empty()
     }
 
     // What a call is declared to answer where nothing of the compiler's builds the answer.

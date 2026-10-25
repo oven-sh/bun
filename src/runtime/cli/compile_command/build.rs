@@ -89,8 +89,7 @@ pub(crate) fn compile_to_executable(
 
     let outfile = match request.product {
         CompileProduct::ReportsOnly => None,
-        CompileProduct::GraphBytesIfSourceCannotRun if !build.validates_by_type => None,
-        CompileProduct::GraphBytes | CompileProduct::GraphBytesIfSourceCannotRun => Some(None),
+        CompileProduct::GraphBytes => Some(None),
         CompileProduct::Executable { outfile } => Some(Some(outfile)),
     };
     let written = outfile.map_or(Ok(()), |outfile| {

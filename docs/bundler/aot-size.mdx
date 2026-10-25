@@ -194,7 +194,7 @@ aot: trim: uses process (escapes, so any member may be used)
 
 A read such as `process[name]` also costs what `settings[name]` costs. And if the key turns out to be `"dlopen"`, the native addon that your program loads can ask for a feature that `--trim` removed.
 
-`Bun` is different. A member of `Bun` counts as used where your code names it on `Bun`: `Bun.file(path)`, `const { file } = Bun`, `import { file } from "bun"`. `Bun[name]`, `{ ...Bun }`, `for (const name in Bun)`, `console.log(Bun)` and passing `Bun` to code that the compiler can't follow name no member, so they keep nothing. Every name is still there, and `typeof Bun[name]` is what it is under `bun run`. Calling a member that nothing names throws the error in [Using a removed feature](#using-a-removed-feature). To keep one, name it somewhere in your code or add it to [`compile.trim.allow`](#keep-a-feature).
+`Bun` is different. A member of `Bun` counts as used where your code names it on `Bun`: `Bun.file(path)`, `const { file } = Bun`, `import { file } from "bun"`. A constant key names the member too: `Bun["file"]`, or `Bun[key]` after `const key = "file"`. `Bun[name]`, `{ ...Bun }`, `for (const name in Bun)`, `console.log(Bun)` and passing `Bun` to code that the compiler can't follow name no member, so they keep nothing. Neither does a key that your code puts together with a call, such as `Bun[["fi", "le"].join("")]`. Every name is still there, and `typeof Bun[name]` is what it is under `bun run`. Calling a member that nothing names throws the error in [Using a removed feature](#using-a-removed-feature). To keep one, name it somewhere in your code or add it to [`compile.trim.allow`](#keep-a-feature).
 
 ### `Intl`, `Temporal` and `WebAssembly`
 

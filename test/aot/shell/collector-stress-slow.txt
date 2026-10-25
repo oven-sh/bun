@@ -15,7 +15,6 @@ data-from-outside/json-parse-type-argument-more-orders-of-keys-than-a-table-hold
 data-from-outside/json-parse-type-argument-nesting-to-the-end-of-the-stack    full, young
 data-from-outside/json-parse-type-argument-strings-and-keys-of-every-kind    full, young
 data-from-outside/json-parse-without-a-type    full
-data-from-outside/validation-compiled-and-interpreted-agree    full, young
 literal-strings/unknown-strings-survive-gc    full
 small-benchmarks/binary-trees    full
 strings/dynamic-lookup-keys    full

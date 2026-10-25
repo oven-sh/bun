@@ -254,9 +254,6 @@ impl RecordBuilder<'_, '_, '_> {
         if let Some(unit) = unit {
             let fragment = &mut units[unit as usize].module;
             record.positions = core::mem::take(&mut fragment.positions);
-            if fragment.has_installed_positions {
-                record.flags |= ModuleFlags::HAS_INSTALLED_POSITIONS;
-            }
             record.function_text = core::mem::take(&mut fragment.function_text);
         }
         let Some(unit) = unit.filter(|_| !graph.is_library(file.file)) else {

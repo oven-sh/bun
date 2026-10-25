@@ -90,7 +90,7 @@ Type annotations matter where the compiler can't track a value on its own. The r
 
 - **With a declared type, the code after it stays on the fast path.** A [guard](#when-a-value-doesnt-match-its-type) checks the value once, where it reaches the type. After `n: number`, the compiled code works with a raw number.
 - **Without one, nothing is known about the value.** Every `+`, every comparison and every property access that the value reaches has to find out what it has.
-- **`JSON.parse<T>(text)` and `validate<T>(value)` take a type.** They [validate data where it enters](#validate-data-where-it-enters), and create objects with the fixed layout of `T`.
+- **A parse uses the declared type too.** `const config: Config = JSON.parse(text)` [creates objects with the fixed layout of `Config`](#declare-the-type-where-you-parse).
 
 ## When a value doesn't match its type
 
@@ -142,12 +142,12 @@ The compiler removes a guard where it can prove the value. A call from typed cod
 
 A guard checks the kind of a primitive or the shape of an object. It doesn't look inside an array or an object.
 
-| Declared type                           | Passes the guard                                                                                                                                            |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `number`, `string`, `boolean`, `bigint` | A value of that kind                                                                                                                                        |
-| A class, an interface or an object type | An object that was created as that type: with `new`, as an object literal of that type, or by `JSON.parse<T>` or `validate<T>`. This guard is a shape check |
-| An array type, such as `number[]`       | An array. A `Proxy` around an array doesn't                                                                                                                 |
-| Any type                                | [`undefined` and `null`](#undefined-and-null)                                                                                                               |
+| Declared type                           | Passes the guard                                                                                                                                                                                      |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `number`, `string`, `boolean`, `bigint` | A value of that kind                                                                                                                                                                                  |
+| A class, an interface or an object type | An object that was created as that type: with `new`, as an object literal of that type, or by [a parse that is declared as that type](#declare-the-type-where-you-parse). This guard is a shape check |
+| An array type, such as `number[]`       | An array. A `Proxy` around an array doesn't                                                                                                                                                           |
+| Any type                                | [`undefined` and `null`](#undefined-and-null)                                                                                                                                                         |
 
 [`bun check --aot --explain=guards`](/bundler/aot-debugging#list-them-from-your-source) lists every guard that can fail. [`--aot-log-type-mismatches`](/bundler/aot-debugging#log-them-at-run-time) logs the ones that do.
 
@@ -227,41 +227,79 @@ undefined
 7
 ```
 
-The object has a different shape from a `User` that your own code creates. So every property access that it can reach needs a shape check first. This object fails the check, and its properties are looked up by name. [`bun compile --explain`](/bundler/aot-explain) points to the line where the object comes from.
+Nothing says that the text matches `User`, so every property access that the object can reach needs a shape check first. This object has a different shape from a `User` that your own code creates. It fails the check, and its properties are looked up by name. [`bun compile --explain`](/bundler/aot-explain) points to the line where the object comes from.
 
 The same goes for a value whose type comes from a JavaScript package's declaration file (`.d.ts`). Nothing has checked that file against the package's code.
 
-### Validate data where it enters
+### Declare the type where you parse
 
-`validate<T>(value)`, imported from `"bun:bundle"`, checks a value against a type you've already declared. `JSON.parse<T>(text)`, with `JSON` imported from `"bun"`, does the same while it parses.
+This text matches `User`. The object still fails the guard of `greet`, because a guard compares shapes, and nothing told `JSON.parse` about `User`.
 
-```ts checked.ts icon="/icons/typescript.svg"
-import { JSON } from "bun";
-
+```ts parsed.ts icon="/icons/typescript.svg"
 interface User {
   id: number;
   name: string;
 }
 
-const user = JSON.parse<User>('{"id":7,"name":"Ada"}');
-console.log(typeof user.id, user.name);
-console.log(JSON.parse<User>('{"id":"7","name":"Ada"}'));
+function greet(user: User): string {
+  return user.name + " #" + user.id;
+}
+
+const user: any = JSON.parse('{"id":7,"name":"Ada"}');
+console.log(greet(user));
 ```
 
+[`--aot-log-type-mismatches`](/bundler/aot-debugging#log-them-at-run-time) logs every guard that fails.
+
 ```bash terminal icon="terminal"
-bun compile ./checked.ts && ./checked
+bun --aot-log-type-mismatches parsed.ts
 ```
 
 ```txt
-number Ada
-TypeError: id must be number, received string
+[aot] type-mismatch 2890618d9d59 argument parsed.ts:6:16 (greet): expected User, got untyped object; continued; count 1; from parsed.ts:11
+Ada #7
 ```
 
-These two do throw. That's what they're for. They work wherever Bun reads your TypeScript, under plain `bun run` and `bun test` too: see [Where it works](/bundler/validate#where-it-works). If the data matches, the compiler trusts the result: `user.id` is one load from a known offset, with no guard.
+Now declare what the text contains.
 
-[Validate data by its type](/bundler/validate) has the types they can check, the shape of the error, and rules such as a minimum length.
+```ts parsed.ts icon="/icons/typescript.svg"
+interface User {
+  id: number;
+  name: string;
+}
 
-To use your own checks and your own error messages, take the value as `unknown`, narrow it, and build a new object from it. [The `unknown-object` entry of `--explain`](/bundler/aot-explain#unknown-object) has an example.
+function greet(user: User): string {
+  return user.name + " #" + user.id;
+}
+
+const user: User = JSON.parse('{"id":7,"name":"Ada"}'); // [!code highlight]
+console.log(greet(user));
+```
+
+```bash terminal icon="terminal"
+bun --aot-log-type-mismatches parsed.ts
+```
+
+```txt
+Ada #7
+```
+
+Nothing is logged. Bun compiles a parser for the type that a call of `JSON.parse` is declared as.
+
+| You write                                                       | The declared type is                 |
+| --------------------------------------------------------------- | ------------------------------------ |
+| `const user: User = JSON.parse(text)`                           | The annotation                       |
+| `JSON.parse(text) as User`                                      | The cast                             |
+| `greet(JSON.parse(text))`                                       | The parameter of your function       |
+| `function read(text: string): User { return JSON.parse(text) }` | The return type                      |
+| `const user: User = await response.json()`                      | The annotation. `request.json()` too |
+
+- **If the text matches the type, the parser creates the objects with the fixed layout of `User`.** They pass every guard for `User`, so typed code stays on its fast path.
+- **If it doesn't, you get what the ordinary `JSON.parse` returns,** as in `user.ts` above.
+- **Nothing is checked, and nothing throws** except the `SyntaxError` for a text that isn't JSON.
+- **The shape checks stay.** The compiler can't know what's in the text, and a text can have keys that `User` doesn't declare. So every access to a `User` checks the shape first, anywhere in the program. `--explain` lists the call under [unknown-object](/bundler/aot-explain#unknown-object) and [property-added](/bundler/aot-explain#property-added).
+
+So declare the type for objects that mostly come from parsed data. To remove the checks, or to reject data that doesn't match, take the value as `unknown`, narrow it, and build a new object from it. [The `unknown-object` entry of `--explain`](/bundler/aot-explain#unknown-object) has an example.
 
 ### What costs nothing
 
@@ -280,15 +318,15 @@ When the compiler can't prove which objects reach a property access, it doesn't 
 
 | Pattern                                                                                                          | What it costs                                                                                                          | Instead                                                                                                                                                           |
 | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `JSON.parse(text) as Config`                                                                                     | Every access that the object can reach needs a shape check first. In cold code, it looks the property up by name       | `JSON.parse<Config>(text)`, with `JSON` from `"bun"`                                                                                                              |
-| Unchecked data in an `any` that is returned or passed as a declared type                                         | The same                                                                                                               | Return a new object literal, or `validate<T>(value)`                                                                                                              |
+| `JSON.parse(text) as Config`                                                                                     | Every access that the object can reach needs a shape check first. In cold code, it looks the property up by name       | Fine where the data is read a few times. For hot code, [build a new object from it](/bundler/aot-explain#unknown-object)                                          |
+| Unchecked data in an `any` that is returned or passed as a declared type                                         | The same                                                                                                               | Return a new object literal                                                                                                                                       |
 | An object passed to code that isn't in the executable, such as a module loaded at run time                       | The same, for every access to its type                                                                                 | [Pass only the fields the other code needs](/bundler/aot-explain#passed-to-untyped-code), not the object                                                          |
 | A `delete` of a required property, `Object.defineProperty`, `Object.setPrototypeOf`, a store with a computed key | The same, for every access to the object's type                                                                        | Each of them has [an entry of its own](/bundler/aot-explain#causes), with a fix                                                                                   |
 | `Object.freeze(value)`, `Object.seal(value)`, `Object.preventExtensions(value)`                                  | Every store to a field of that type checks for a frozen object first                                                   | Freeze only what has to be frozen. `readonly` and `Readonly<T>` catch a store at build time, and cost nothing                                                     |
 | `class HttpError extends Error`, or any other built-in base class                                                | The built-in constructor allocates the instances, so their fields can't be at fixed offsets. They're looked up by name | This is fine for error classes. For a class with many instances, [hold the built-in object in a field](/bundler/aot-explain#builtin-base) instead of extending it |
 | `eval`, `new Function`, `node:vm`                                                                                | Bun interprets that code                                                                                               | [Code from strings](/bundler/aot-compatibility#code-from-strings)                                                                                                 |
 
-External data only slows down the code it reaches. If a parsed object ends up in one array, the reads from that array need a shape check, and reads of the same type elsewhere stay proven.
+External data only slows down the code it reaches. If a parsed object ends up in one array, the reads from that array need a shape check, and reads of the same type elsewhere stay proven. The exception is a parse that's [declared as the type](#declare-the-type-where-you-parse).
 
 Changing an object's shape slows down every access to that type, anywhere in the program, because any object of the type could be the one that changed. [Read an entry](/bundler/aot-explain#read-an-entry) works through an example.
 
@@ -345,7 +383,7 @@ Because the build proves every store that it sees, typed code has nothing to che
 |                                                                                                                                      | `[cursor.line] = pair`, `for (cursor.line of lines)` and `advance(cursor, ...rest)`, which the build can't track: store the value in a `number` variable first, then `n \| 0` |
 
 - **A call that the build can't see gets a guard,** like every other type. `numbers.map(half)` passes `half` around as a value, so the build doesn't know what it's called with. Such a call guards each `int32` argument, and `1.5` takes the slow version of the function. So does a call through an `any` or from a JavaScript file.
-- **Untyped code can store anything in a field.** Storing `1.5` in `cursor.column` through an `any` works as in plain JavaScript, and the field reads `1.5` afterwards. Typed code that reads `cursor.column` from that object falls back to its slow path. [`JSON.parse<T>(text)`](/bundler/validate) checks an `int32` property as a whole number in range.
+- **Untyped code can store anything in a field.** Storing `1.5` in `cursor.column` through an `any` works as in plain JavaScript, and the field reads `1.5` afterwards. Typed code that reads `cursor.column` from that object falls back to its slow path.
 - **Declare a member `int32` in every type that the object is used as,** such as a class and the interface it implements. If the interface says `number`, a store through the interface is a store of a `number`, and `1.5` ends up in the field the same way. The same goes for an object that was created as `{ column: number }` and is then passed as `{ column: int32 }`: TypeScript allows that, and the build doesn't look inside the object.
 - **`int32` only counts when it's the whole type** of a variable, field, parameter or return value. Inside another type, as in `int32[]` or `Map<string, int32>`, it's a `number`. `column?: int32` is an `int32` or `undefined`.
 
@@ -354,4 +392,4 @@ You rarely need `int32` for a local variable. The compiler infers the range of a
 ## See also
 
 - [Get more of your program typed](/bundler/aot-explain) explains the typed percentage and every cause that `--explain` reports.
-- [Full types of packages](/bundler/aot-libraries#add-types-to-a-package-you-dont-maintain) give a JavaScript package its types back, without changing its code.
+- [The `"aot"` condition](/bundler/aot-libraries) lets a package point `bun compile` at its TypeScript.

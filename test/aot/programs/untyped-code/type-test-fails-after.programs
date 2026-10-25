@@ -571,7 +571,7 @@ show("a validator and a serializer", () => [check(make()), check({ ...make(), o:
 show("a literal with a spread, a pattern with a rest", () => [literal(make()), destructured(make()), destructured({ ...make(), o: 7 } as T)]);
 show("not objects", () => [1, "ab", true].map(v => tried(() => readAll(v))).concat([null, undefined].map(v => tried(() => readAll(v)))));
 //// typed-objects-to-untyped-importer/main.ts
-// An untyped file imports functions of a full-types file and is handed the full-types file's own objects: it reads them, stores to them what fits, adds to them, and hands them back.
+// An untyped file imports functions of a typed file and is handed the typed file's own objects: it reads them, stores to them what fits, adds to them, and hands them back.
 import { rows } from "./reader.js";
 import { currentRoot, describe, labels, topOf } from "./state";
 let sum = 0;

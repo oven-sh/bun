@@ -240,29 +240,5 @@ export default b.declarations(
       throws: true,
       implementation: b.generic,
     },
-    validate: {
-      args: { value: b.any },
-      returns: b.any,
-      capability: "js",
-      throws: true,
-      runsOnlyOperandCode: true,
-      uses: {
-        value: [
-          b.returned,
-          b.runsTransitively(
-            "OwnKeys",
-            "OwnValues",
-            "Iterate",
-            "PrototypeChain",
-            "ToPrimitive",
-            b.named("length"),
-            b.calls("startsWith", "endsWith", "indexOf", "slice"),
-          ),
-          b.reachableValuesStoredIn(b.result),
-        ],
-      },
-      typedResultForm: { form: "ValidatedValue", source: "value" },
-      implementation: b.compiled("prelude/validation", "validate"),
-    },
   }),
 );

@@ -106,7 +106,7 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
     ctx.bundler_options.outfile = Box::from(&b"program"[..]);
 
     let product = match checks_only {
-        true => CompileProduct::GraphBytesIfSourceCannotRun,
+        true => CompileProduct::ReportsOnly,
         false => CompileProduct::GraphBytes,
     };
     let outcome = match compile_from_context(&mut *ctx, product) {
@@ -134,17 +134,6 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
         Ok(Ok(outcome)) => outcome,
     };
     print_log(ctx.log_ref());
-    let runs_tests = ctx
-        .bundler_options
-        .aot
-        .as_ref()
-        .is_some_and(|aot| aot.runs_tests);
-    if checks_only && outcome.graph_bytes.is_some() {
-        super::compile_options::check_runtime_conflicts(&ctx, true);
-    }
-    if checks_only && runs_tests && outcome.graph_bytes.is_some() {
-        super::compile_options::check_test_conflicts(&mut *ctx);
-    }
     let check_result = watched.map(|watched| write_check_result(&[], Some(watched)));
     let handover = match &outcome.graph_bytes {
         Some(graph_bytes) => Handover {

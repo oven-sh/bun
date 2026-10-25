@@ -173,10 +173,8 @@ impl FrozenRun {
             let span = Span::of_node(hir, file, NodeData::Expr(string));
             counters.gave_up(LimitId::MaxFoldedStringBytes, Some(span));
         }
-        let used = u64::from(compiled.typed_source_path.is_some());
-        counters.count(StatisticId::TypedVersionsUsed, used);
-        let rejected = u64::from(compiled.rejected_typed_version.is_some());
-        counters.count(StatisticId::TypedVersionsRejected, rejected);
+        let is_aot_source = u64::from(compiled.is_aot_source);
+        counters.count(StatisticId::TypedVersionsUsed, is_aot_source);
         for site in &payload.evaluated_text_sites {
             let answer = compiled.implied_answers.get(site.implied_answer as usize);
             let Some(&CodeAnswer::File(text_file)) = answer else {
@@ -237,7 +235,7 @@ fn freeze_file(
     );
     let (diagnostic_path, display_path): (Box<[u8]>, Box<[u8]>) = match (kind, plugin_module) {
         (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, None) => {
-            let native_path = to_native(files.diagnostic_path(file));
+            let native_path = to_native(files.module(file).file_name());
             let project_root = &input.options.load.project_root;
             (
                 native_path.into(),

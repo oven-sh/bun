@@ -167,8 +167,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             builtins: file_inputs.builtins,
             max_captures: inputs.limits.get(LimitId::MaxCaptures) as usize,
         });
-        let has_types_in_function_text =
-            inputs.options.embeds_function_text && !hir.is_js && compiled.installed_text.is_none();
+        let has_types_in_function_text = inputs.options.embeds_function_text && !hir.is_js;
         let type_ranges = match has_types_in_function_text {
             true => find_type_ranges(hir),
             false => TypeRanges::default(),

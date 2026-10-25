@@ -2397,6 +2397,14 @@ pub enum CommentDirectiveKind {
     Ignore,
 }
 
+/// `import { export } from "specifier"` binds the `require` of the file at `path`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ImportedRequire {
+    pub specifier: Atom,
+    pub export: Atom,
+    pub path: Atom,
+}
+
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
@@ -2404,8 +2412,6 @@ pub struct FileIn<S: Storage> {
     /// `.js`, `.jsx`, `.mjs`, `.cjs`. Parsed like `.tsx`: TypeScript-only syntax is accepted and reported as an error
     /// afterwards.
     pub is_js: bool,
-    /// Full types of a JavaScript file: TypeScript syntax that runs by the rules of that file. Set by the loader.
-    pub is_typed_version: bool,
     /// The file is parsed as Flow (`Dialect::flow`). Flow syntax that TypeScript lacks is represented with TypeScript's
     /// nodes. `bun_sema_parser`'s `flow.rs` explains how. Only a formatter gets such a file.
     pub is_flow: bool,
@@ -2416,6 +2422,8 @@ pub struct FileIn<S: Storage> {
     pub is_forced_module: bool,
     /// A script for its project that a build runs as a module: what `bun run` drops of it stays global. Set by the loader.
     pub is_script_with_code: bool,
+    /// The imports that bind the `require` of another file. Set by the loader.
+    pub imported_requires: S::Few<ImportedRequire>,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -3077,11 +3085,11 @@ macro_rules! file_in_storage {
         $file {
             kind: $this.kind,
             is_js: $this.is_js,
-            is_typed_version: $this.is_typed_version,
             is_flow: $this.is_flow,
             check_directive: $this.check_directive,
             is_forced_module: $this.is_forced_module,
             is_script_with_code: $this.is_script_with_code,
+            imported_requires: $few!($this.imported_requires),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,

@@ -258,12 +258,7 @@ pub(super) fn to_driver_diagnostic(
     diagnostic: &Diagnostic,
 ) -> driver::Diagnostic {
     let code = diagnostic.code;
-    // The driver prints the code 0 without `TS0: `.
-    let number = if code.prints_number() {
-        code.number()
-    } else {
-        0
-    };
+    let number = code.number();
     let category = diagnostic.severity.category();
     let text = code.message(&diagnostic.arguments);
     let reported = new_driver_diagnostic(number, category, text, &diagnostic.arguments);

@@ -27,7 +27,7 @@ impl<'t, 's> Locator<'t, 's> {
     }
 
     pub fn locate(&self, start: u32, end: u32, reported: Diagnostic) -> Diagnostic {
-        let path = self.files.diagnostic_path(self.file);
+        let path = self.files.module(self.file).file_name();
         let (text, starts) = (self.text, &self.starts);
         Diagnostic {
             file: Some(self.file),

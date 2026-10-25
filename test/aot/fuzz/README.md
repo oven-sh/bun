@@ -141,13 +141,12 @@ bun test/aot/fuzz/run.ts --sources unsound-types --count-only --out /tmp/census 
 bun test/aot/generated/unsound-types.ts /tmp/programs --count=1000 && bun test/aot/fuzz/type-check.ts /tmp/programs
 ```
 
-## Texts parsed by generated types (`texts-for-generated-types.ts`)
+## Texts parsed under generated types (`texts-for-generated-types.ts`)
 
-A tool of its own, beside `run.ts`. It draws TypeScript types, writes one program that parses by each of them with `JSON.parse<T>(text)` (`JSON` from `"bun"`) and `validate<T>(value)`, builds
-it, and lets it run. The program makes its own texts for as long as it is given: texts that are a `T`, nearly a `T`, JSON of another shape, nearly JSON, spelled and held
-in many ways. It needs no second run to compare with: a parser and a checker written in the program, one character and one node at a time, say what each call has to answer.
-For every type it also holds a function that reads each member through the type and a twin with the same body whose parameter is `any`; both print the same, also for
-`JSON.parse(text) as T` and `(await request.json()) as T`, where nothing is checked and the value may be anything.
+A tool of its own, beside `run.ts`. It draws TypeScript types, writes one program that parses texts under each of them (`JSON.parse(text) as T`, a variable of type `T`,
+`(await request.json()) as T`), builds it, and lets it run. The program makes its own texts for as long as it is given: texts that are a `T`, nearly a `T`, JSON of another shape, nearly JSON,
+spelled and held in many ways. It needs no second run to compare with: nothing is checked and the value may be anything, so every call gives what a parser written in the program, one character
+at a time, and `JSON.parse(text)` give. For every type it also holds a function that reads each member through the type and a twin with the same body whose parameter is `any`; both print the same.
 
 ```sh
 bun test/aot/fuzz/texts-for-generated-types.ts --seconds 3600 --jobs 16 --out /tmp/texts                     # the Bun that runs this is the Bun under test
@@ -156,7 +155,6 @@ bun test/aot/fuzz/texts-for-generated-types.ts --seconds 3600 --jobs 16 --out /t
 .. --full-heap                  # what is parsed is kept until no more fits into a small heap, again and again
 .. --workers                    # the program runs in Workers that are ended after a few milliseconds
 .. --growth                     # texts that grow sixteenfold may take sixteen times as long, not their square
-.. --from-source                # `bun run --aot` in place of an executable
 ```
 
 `<out>/findings/<seed>/` holds the program and what it printed. `./program --seed <seed> --seconds 20 --only T7 --trace` prints each text before it is asked.

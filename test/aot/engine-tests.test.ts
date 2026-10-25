@@ -67,42 +67,8 @@ const isKnownOnWindows = (line: string) =>
   line.includes(": run-in-shell: ") ||
   unexplainedOnWindows.some(file => line.replaceAll("\\", "/").includes(`/${file}:`));
 
-// TODO: on macOS the testaot of the pinned engine fails these in its own harness, not in the engine. Its child that uses an image has no
-// SharedArrayBuffer (the first four), holds the code of the image in memory that is not executable (the next four), and stores into
-// pages of the image that the loader has made read-only (the last three). They leave the list with the next engine that is pinned.
 // TODO: on arm64 it prints another output.
 const notYetOnArm64 = isArm64 ? ["dictionary-access-by-name/programs/uncacheable-dictionary-files-nothing"] : [];
-const failsInTheTestProgramItself = isMacOS
-  ? [
-      "locked-realm-members/program-writes-to-locked-members",
-      "locked-realm-members/program-writes-to-species",
-      "locked-realm-members/start-up-locks-members",
-      "locked-realm-members/start-up-marks-instances-pristine",
-      "naked-constructor/class-names-class-constructor",
-      "native-module-exports/deferred-export-is-read-when-first-module-that-binds-it-is-linked",
-      "native-module-exports/module-with-source-exports-properties-of-its-object",
-      "native-module-exports/native-module-exports-what-host-lists",
-      "global-bindings/worker-has-its-own-records",
-      "image/instances/two-realms-have-instances",
-      "saved-frame/skipped-words",
-    ]
-  : [];
-
-// TODO: what these expect of x86-64 was taken where a loop poll is a load that faults, which is Linux alone. On macOS a poll is a
-// comparison with a call there too, and testaot has no word yet by which a test could say so.
-const expectsLoopPollsThatFault =
-  isMacOS && !isArm64
-    ? [
-        "codegen/compile-functions/outlinable-rare-code-everything-is-hot.ir",
-        "codegen/compile-functions/outlinable-rare-code.ir",
-        "codegen/loop-polls/a-loop-that-counts-up-to-the-length-of-a-view.ir",
-        "codegen/loop-polls/loop-without-rotation.ir",
-        "codegen/loop-polls/loops-that-count-up-to-a-length.ir",
-        "codegen/loop-polls/rotated-loop.ir",
-        "codegen/null-checks/narrow-references.ir",
-        "codegen/prologue/a-tail-call-polls-without-a-frame.ir",
-      ]
-    : [];
 // TODO: on the Intel Macs of CI the four parts of the native tests do not end within the five minutes that the runner gives a file.
 const nativeTestsOutlastTheRunner = isMacOS && !isArm64;
 // The runner gives a file twice the time under a sanitizer.
@@ -114,10 +80,7 @@ function expectEveryTestPassed({ lines, stderr, exitCode }: Awaited<ReturnType<t
     return;
   }
   const failed = lines.filter(line => line.startsWith("FAIL "));
-  const isOnTheList = (line: string) =>
-    failsInTheTestProgramItself.some(name => line.startsWith(`FAIL ${name}: `)) ||
-    notYetOnArm64.some(name => line.startsWith(`FAIL ${name}: `)) ||
-    expectsLoopPollsThatFault.some(file => line.includes(`/${file}:`));
+  const isOnTheList = (line: string) => notYetOnArm64.some(name => line.startsWith(`FAIL ${name}: `));
   if (failed.length && failed.every(isOnTheList)) {
     expect(lines.at(-1)).toMatch(/^[1-9][0-9]* passed, [1-9][0-9]* failed, [0-9]+ todo$/);
     return;

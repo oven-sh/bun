@@ -1,4 +1,4 @@
-// The programs that parse by a type, write and validate while the collector runs. json-parse-*.test.ts run them under harsher collections than the other files of this folder.
+// The programs that parse under a type and write while the collector runs. json-parse-*.test.ts run them under harsher collections than the other files of this folder.
 const inFolder = (names: string[]) => names.map(name => "data-from-outside/json-parse-type-argument-" + name);
 
 export const narrowRecords = inFolder(["while-the-collector-runs-1", "while-the-collector-runs-6", "while-the-collector-runs-7"]);

@@ -77,8 +77,8 @@ describe.concurrent.each(["", ":2", ":2:1", ":2:2", ":7:1", ":100:1"])("--aot-te
 // Each program holds one kind of prediction and little else: more places with the line than without it.
 const kinds = {
   "a text parsed by a type": [
-    `import { JSON } from "bun"; type Pair = { left: number; right: { name: string; tags: string[] } };\nconst text = '{"left":1,"right":{"name":"n","tags":["a","b"]}}';\n`,
-    `const pair = JSON.parse<Pair>(text);\nconsole.log(pair.left, pair.right.name, pair.right.tags.join());\n`,
+    `type Pair = { left: number; right: { name: string; tags: string[] } };\nconst text = '{"left":1,"right":{"name":"n","tags":["a","b"]}}';\n`,
+    `const pair = JSON.parse(text) as Pair;\nconsole.log(pair.left, pair.right.name, pair.right.tags.join());\n`,
     "1 n a,b\n",
   ],
   "an object of a declared type made a text": [

@@ -9,15 +9,15 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::DiagnosticClass;
-use bun_sema::erasure::{Erasure, check_erasure};
+use bun_sema::erasure::find_type_ranges;
 use bun_sema::hir::{self, DiagnosticKind, ExprId};
 use bun_sema::hir_from_data::HostValue;
 use bun_sema::program::{HostLoader, HostModuleId};
 use bun_sema::resolve::{
     CodeHost, CodeImportForm, CodeImportKind, CodeParseRequest, CodeRead, CodeRequest,
-    EnclosingPackage, ExternalKind, FileStamp, FinishedFile, Host, HostPayload, HostResolution,
-    LoaderRequest, MacroRequest, ModuleDetection, ParsedCode, ScriptKind, TransformRequest,
-    TreeChange, is_declaration_file_name, to_path, to_path_in,
+    ExternalKind, FileStamp, FinishedFile, Host, HostPayload, HostResolution, LoaderRequest,
+    MacroRequest, ModuleDetection, ParsedCode, ScriptKind, TransformRequest, TreeChange,
+    is_declaration_file_name, to_path, to_path_in,
 };
 use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
@@ -40,7 +40,7 @@ use crate::load::externals::{contains, is_external};
 use crate::load::is_host_path;
 use crate::load::loaders::{
     BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path,
-    loader_named_by_path, script_kind_of, script_loader, to_host_loader,
+    loader_named_by_path, script_kind_of, to_host_loader,
 };
 use crate::load::macros;
 use crate::load::named_loads::find_library_modules_named_in_choices;
@@ -52,7 +52,6 @@ use crate::load::runtime_types;
 use crate::load::source_provider::{SourceFile, SourceProvider};
 use crate::load::sources::{ParsedSource, PluginModuleName, SourceKind, parsed_source_mut};
 use crate::load::test_runner_names;
-use crate::load::typed_packages::{TypedPackagePlace, TypedPackages};
 use crate::options::Options;
 use crate::statistics::LimitValues;
 
@@ -60,6 +59,13 @@ const BUNDLE_MODULE: &[u8] = b"bun:bundle";
 const IN_PLACE_OF_NO_PROGRAM: &[u8] = b"export {};";
 
 // The first sentence of the parser on a text that ECMAScript refuses, and where.
+fn has_syntax_errors(hir: &hir::File<'_>) -> bool {
+    hir.has_errors
+        || hir.has_parse_diagnostics
+        || hir.ran_out_of_stack
+        || (hir.diagnostics.iter()).any(|it| it.kind == DiagnosticKind::Js)
+}
+
 fn describe_parse_failure(hir: &hir::File<'_>, text: &[u8]) -> Option<Vec<u8>> {
     let mut diagnostics = hir.diagnostics.iter();
     let first = diagnostics
@@ -105,9 +111,6 @@ pub(crate) struct LoadHostInput<'a> {
     pub runtime_modules: &'a RuntimeModules,
     pub messages: &'a LoadMessages,
     pub builtin_names: &'a BuiltinNames,
-    pub typed_packages: &'a TypedPackages<'a>,
-    // The string that the build defines a dotted path as.
-    pub defined: &'a (dyn Fn(&[u8]) -> Option<Vec<u8>> + Sync),
     pub platform: Platforms,
     pub limits: &'a LimitValues,
 }
@@ -136,7 +139,6 @@ enum ServedBy {
     EvaluatedText,
     Declarations(&'static [u8]),
     RuntimeTypes,
-    TypedFile(ScriptKind),
     Disk,
 }
 
@@ -199,25 +201,9 @@ impl<'a> LoadHost<'a> {
         self.background_reads.lock().clone()
     }
 
-    fn typed_version_in(
-        &self,
-        place: TypedPackagePlace,
-        path: &[u8],
-        package: Option<EnclosingPackage<'_>>,
-    ) -> Option<Vec<u8>> {
-        // Full types whose full-types.json does not fit what is installed are not used: the build says so and goes on.
-        let packages = self.input.typed_packages;
-        let mismatch = packages.find_manifest_mismatch(package?, self.input.defined);
-        if mismatch.is_some() {
-            return None;
-        }
-        packages.typed_version(place, path, package)
-    }
-
     fn served_by(&self, path: &[u8]) -> ServedBy {
         if !is_host_path(path) {
-            let script_kind = self.input.typed_packages.script_kind(path);
-            return script_kind.map_or(ServedBy::Disk, ServedBy::TypedFile);
+            return ServedBy::Disk;
         }
         if self.plugins.virtual_module(path).is_some() {
             return ServedBy::PluginModule;
@@ -254,10 +240,7 @@ impl<'a> LoadHost<'a> {
                     && !is_declaration_file_name(path)
                     && self.default_loader(path) != Loader::Html
             }
-            ServedBy::EvaluatedText
-            | ServedBy::Declarations(_)
-            | ServedBy::RuntimeTypes
-            | ServedBy::TypedFile(_) => false,
+            ServedBy::EvaluatedText | ServedBy::Declarations(_) | ServedBy::RuntimeTypes => false,
         }
     }
 
@@ -390,7 +373,7 @@ impl Host for LoadHost<'_> {
             ServedBy::EvaluatedText => self.evaluated_texts.read(path),
             ServedBy::Declarations(text) => Some(Cow::Borrowed(text)),
             ServedBy::RuntimeTypes => runtime_types::read(path).map(Cow::Owned),
-            ServedBy::TypedFile(_) | ServedBy::Disk => self.disk.read(path),
+            ServedBy::Disk => self.disk.read(path),
         }
     }
 
@@ -428,7 +411,7 @@ impl Host for LoadHost<'_> {
             | ServedBy::EvaluatedText
             | ServedBy::Declarations(_)
             | ServedBy::RuntimeTypes => true,
-            ServedBy::TypedFile(_) | ServedBy::Disk => false,
+            ServedBy::Disk => false,
         }
     }
 
@@ -448,7 +431,6 @@ impl Host for LoadHost<'_> {
 
     fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
         match self.served_by(path) {
-            ServedBy::TypedFile(kind) => return Some(kind),
             ServedBy::EvaluatedText | ServedBy::Declarations(_) | ServedBy::RuntimeTypes => {
                 return None;
             }
@@ -541,18 +523,6 @@ impl CodeHost for LoadHost<'_> {
         modules.into_iter().map(HostResolution::Module).collect()
     }
 
-    fn typed_version(&self, path: &[u8], package: Option<EnclosingPackage<'_>>) -> Option<Vec<u8>> {
-        self.typed_version_in(TypedPackagePlace::Project, path, package)
-    }
-
-    fn installed_typed_version(
-        &self,
-        path: &[u8],
-        package: Option<EnclosingPackage<'_>>,
-    ) -> Option<Vec<u8>> {
-        self.typed_version_in(TypedPackagePlace::Installed, path, package)
-    }
-
     fn compiler_declarations(&self) -> Vec<Vec<u8>> {
         vec![compiler_declarations::PATH.to_vec()]
     }
@@ -583,7 +553,7 @@ impl CodeHost for LoadHost<'_> {
             ServedBy::EvaluatedText | ServedBy::Declarations(_) | ServedBy::RuntimeTypes => {
                 return BY_NAME;
             }
-            ServedBy::PluginModule | ServedBy::TypedFile(_) | ServedBy::Disk => {}
+            ServedBy::PluginModule | ServedBy::Disk => {}
         }
         let default_loader = self.default_loader_for(path, request.kind);
         let is_embedded = matches!(request.embed_attribute, Some(b"true"));
@@ -622,7 +592,7 @@ impl CodeHost for LoadHost<'_> {
                 let text = runtime_types::read(path).map(Cow::Owned);
                 return CodeRead::Text(text.unwrap_or_else(|| self.record_unreadable(path)));
             }
-            ServedBy::PluginModule | ServedBy::TypedFile(_) | ServedBy::Disk => {}
+            ServedBy::PluginModule | ServedBy::Disk => {}
         }
         if !self.should_ask_plugins(served_by, path) {
             return CodeRead::Text(without_commonjs_wrapper(self.disk.read_source(path)));
@@ -699,7 +669,6 @@ impl CodeHost for LoadHost<'_> {
             false => self.plugin_loader(path),
         };
         let loader = match served_by {
-            ServedBy::TypedFile(script_kind) => script_loader(script_kind),
             ServedBy::EvaluatedText => Loader::Js,
             ServedBy::Declarations(_) | ServedBy::RuntimeTypes => Loader::Ts,
             ServedBy::PluginModule | ServedBy::Disk => plugin_loader.unwrap_or(requested_loader),
@@ -768,7 +737,10 @@ impl CodeHost for LoadHost<'_> {
             };
             let as_javascript = parse_for_compile(arena, &javascript_options, text, atoms);
             // Nothing says that the text is TypeScript, and it is JavaScript too.
-            if check_erasure(&hir, &as_javascript) == Erasure::Exact {
+            let is_javascript = !has_syntax_errors(&hir)
+                && !has_syntax_errors(&as_javascript)
+                && find_type_ranges(&hir).is_empty();
+            if is_javascript {
                 hir.check_directive = Some(false);
             }
         }

@@ -120,14 +120,7 @@ export default b.declarations(
   operation("tryPutByValDirect", "TryPutByValDirect"),
   operation("tryPutIndex", "TryPutIndex"),
 
-  b.intrinsic("getOwnPropertySymbols", "Call", builtin("Object.getOwnPropertySymbols")),
-  b.intrinsic("hasOwn", "Call", builtin("Object.hasOwn")),
-  b.intrinsic("jsonParse", "Call", builtin("JSON.parse")),
   b.intrinsic("jsonStringify", "Call", builtin("JSON.stringify")),
-  b.intrinsic("numberIsFinite", "Call", builtin("Number.isFinite")),
-  b.intrinsic("numberIsInteger", "Call", builtin("Number.isInteger")),
-  b.intrinsic("objectKeys", "Call", builtin("Object.keys")),
-  b.intrinsic("urlCanParse", "Call", builtin("URL.canParse")),
 
   b.intrinsic("assert", "Call", erased),
   b.intrinsic("bundleError", "Call", { intrinsic: "BundleError" }),

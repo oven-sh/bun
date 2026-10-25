@@ -5,7 +5,7 @@ mod top_level_await;
 
 pub(crate) use top_level_await::has_live_top_level_await;
 
-use crate::atom::Interner;
+use crate::atom::{Atom, Interner};
 use crate::bind::{BindOptions, Bound, SymbolId};
 use crate::fold::{Decisions, FoldError, FoldInputs};
 use crate::hir::{ExprId, File};
@@ -37,6 +37,7 @@ pub struct FileAnalysis<'s> {
     pub errors: &'s [FoldError],
     pub strings_over_limit: &'s [ExprId],
     pub relies_on_running_before_calls: bool,
+    requires_of_other_files: &'s [(u32, Atom)],
     sites_by_kind: &'s [u32],
     first_call_site: u32,
 }
@@ -54,6 +55,13 @@ impl FileAnalysis<'_> {
             .binary_search_by(|&site| sites[site as usize].kind.cmp(&kind))
             .ok()?;
         Some(self.sites_by_kind[found] as usize)
+    }
+
+    // The path that the specifier of a site is resolved from, if the call goes through the `require` of another file.
+    pub fn path_to_resolve_from(&self, site: usize) -> Option<Atom> {
+        let others = self.requires_of_other_files;
+        let found = others.binary_search_by_key(&(site as u32), |it| it.0);
+        Some(others[found.ok()?].1)
     }
 
     pub fn import_site_of_call(&self, call: ExprId) -> Option<usize> {

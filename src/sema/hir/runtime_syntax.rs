@@ -9,7 +9,7 @@ use crate::node::Node;
 impl<S: Storage> FileIn<S> {
     #[inline]
     pub fn has_typescript_semantics(&self) -> bool {
-        !self.is_js && !self.is_typed_version
+        !self.is_js
     }
 
     fn runtime_key(&self, key: PropKey, name_pos: u32) -> PropKey {

@@ -2,8 +2,6 @@
 // the TechEmpower Framework Benchmarks (plaintext, JSON, one query, several queries, fortunes, updates) and a small shop in several
 // modules (a route with parameters, a session, a body validated with zod, two queries, a request to another HTTP service, and
 // an answer of two kilobytes). It is built with `bun build --compile --aot`, started, and asked. ./answers.ts has what is right.
-// ./by-type holds two modules of the shop once more, with JSON.parse<Order>() and JSON.parse<RatesAnswer>() in place of zod.
-// Laid over ./app they make a second program, which must answer the same.
 //
 //   AOT_BACKEND=1 bun test test/aot/backend
 //   AOT_BACKEND_MODULES=<a node_modules folder> ..     the packages are already installed there, and nothing is downloaded
@@ -62,9 +60,7 @@ else if (!hasPostgres)
 
 describe.skipIf(!wanted || !hasPostgres || !!unsupported)("compile/aot/backend", () => {
   const folder = String(tempDir("aot-backend", {}));
-  const folderByType = String(tempDir("aot-backend-by-type", {}));
   const executable = join(folder, `server-compiled${isWindows ? ".exe" : ""}`);
-  const executableByType = join(folderByType, `server-compiled${isWindows ? ".exe" : ""}`);
   let sql: SQL;
   let env: Record<string, string | undefined>;
 
@@ -91,11 +87,7 @@ describe.skipIf(!wanted || !hasPostgres || !!unsupported)("compile/aot/backend",
     await sql?.close();
   });
 
-  const compiled = (validation = "with zod") =>
-    started([validation === "by type" ? executableByType : executable], folder, {
-      ...env,
-      BUN_JSC_crashIfInterpreterIsUsed: "1",
-    });
+  const compiled = () => started([executable], folder, { ...env, BUN_JSC_crashIfInterpreterIsUsed: "1" });
 
   async function asked(origin: string, path: string, init?: RequestInit) {
     const response = await fetch(origin + path, init);
@@ -138,17 +130,6 @@ describe.skipIf(!wanted || !hasPostgres || !!unsupported)("compile/aot/backend",
       await spawned(
         [bunExe(), "build", "--compile", "--aot", "--target=bun", "./server.ts", "--outfile", executable],
         folder,
-        bunEnv,
-      ),
-    );
-
-    cpSync(join(import.meta.dir, "app"), folderByType, { recursive: true });
-    cpSync(join(import.meta.dir, "by-type"), folderByType, { recursive: true });
-    symlinkSync(join(folder, "node_modules"), join(folderByType, "node_modules"));
-    built(
-      await spawned(
-        [bunExe(), "build", "--compile", "--aot", "--target=bun", "./server.ts", "--outfile", executableByType],
-        folderByType,
         bunEnv,
       ),
     );
@@ -217,8 +198,8 @@ describe.skipIf(!wanted || !hasPostgres || !!unsupported)("compile/aot/backend",
     }
   });
 
-  test.each(["with zod", "by type"])("the shop, validated %s", async validation => {
-    using server = await compiled(validation);
+  test("the shop", async () => {
+    using server = await compiled();
     expect(await asked(server.origin, "/api/shops/west/products/2")).toEqual({
       status: 200,
       type: "application/json",
@@ -252,28 +233,24 @@ describe.skipIf(!wanted || !hasPostgres || !!unsupported)("compile/aot/backend",
     expect(answered).toEqual(Object.fromEntries(Object.keys(badOrders).map(what => [what, 400])));
   });
 
-  test.each(["with zod", "by type"])(
-    "answers the same after a few thousand requests, validated %s",
-    async validation => {
-      using server = await compiled(validation);
-      let wrong: unknown;
-      await Promise.all(
-        Array.from({ length: 16 }, async (_, connection) => {
-          for (let n = 0; n < 200 && !wrong; n++) {
-            const { token, request, answer } = orders[(connection + n) % orders.length]!;
-            const quote = await quoted(server.origin, token, request);
-            if (quote.status !== 200 || quote.body !== answer) wrong = quote;
-            const page = await asked(server.origin, "/fortunes");
-            if (page.body !== fortunesPage) wrong = page;
-            const worlds: World[] = await (await fetch(server.origin + "/updates?queries=5")).json();
-            if (worlds.length !== 5) wrong = worlds;
-          }
-        }),
-      );
-      expect(wrong).toBeUndefined();
-    },
-    120_000,
-  );
+  test("answers the same after a few thousand requests", async () => {
+    using server = await compiled();
+    let wrong: unknown;
+    await Promise.all(
+      Array.from({ length: 16 }, async (_, connection) => {
+        for (let n = 0; n < 200 && !wrong; n++) {
+          const { token, request, answer } = orders[(connection + n) % orders.length]!;
+          const quote = await quoted(server.origin, token, request);
+          if (quote.status !== 200 || quote.body !== answer) wrong = quote;
+          const page = await asked(server.origin, "/fortunes");
+          if (page.body !== fortunesPage) wrong = page;
+          const worlds: World[] = await (await fetch(server.origin + "/updates?queries=5")).json();
+          if (worlds.length !== 5) wrong = worlds;
+        }
+      }),
+    );
+    expect(wrong).toBeUndefined();
+  }, 120_000);
 
   test("plain Bun answers the same", async () => {
     using server = await started([bunExe(), "./server.ts"], folder, env);
@@ -282,8 +259,8 @@ describe.skipIf(!wanted || !hasPostgres || !!unsupported)("compile/aot/backend",
       expect((await quoted(server.origin, token, request)).body).toBe(answer);
   });
 
-  test("`bun run --aot` answers the same, validated by type", async () => {
-    using server = await started([bunExe(), "run", "--aot", "./server.ts"], folderByType, env);
+  test("`bun run --aot` answers the same", async () => {
+    using server = await started([bunExe(), "run", "--aot", "./server.ts"], folder, env);
     for (const { token, request, answer } of orders)
       expect((await quoted(server.origin, token, request)).body).toBe(answer);
     const answered: Record<string, number> = {};

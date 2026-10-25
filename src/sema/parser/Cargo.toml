@@ -88,8 +88,8 @@ name = "analysis_data_modules"
 path = "../file_analysis/source_tests/data_modules.rs"
 
 [[test]]
-name = "analysis_erasure"
-path = "../file_analysis/source_tests/erasure.rs"
+name = "analysis_type_ranges"
+path = "../file_analysis/source_tests/type_ranges.rs"
 
 [lints]
 workspace = true

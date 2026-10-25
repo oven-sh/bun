@@ -146,7 +146,9 @@ impl<'h> Resolver<'h> {
         let base_start = strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1);
         let dot = base_start + strings::last_index_of_char(&path[base_start..], b'.')?;
         let (stem, extension) = path.split_at(dot);
-        let rewritten = rewritten_extensions(extension, is_in_node_modules(path));
+        let conditions = &self.code_options().conditions;
+        let honors_aot = conditions.iter().any(|it| it == AOT_CONDITION);
+        let rewritten = rewritten_extensions(extension, !honors_aot && is_in_node_modules(path));
         self.find_file_with_extension(stem, rewritten)
     }
 
@@ -331,14 +333,19 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn node_modules_rewrites_js_but_not_mjs() {
+    fn node_modules_rewrites_js_and_mjs() {
         let project = empty_files(&["/p/a.mts"]);
         assert_eq!(resolve(&project, "./a.mjs", Import), "/p/a.mts");
 
-        let dependency = empty_files(&["/p/node_modules/x/a.mts", "/p/node_modules/x/b.ts"]);
+        let dependency = empty_files(&[
+            "/p/node_modules/x/a.mts",
+            "/p/node_modules/x/b.ts",
+            "/p/node_modules/x/c.cts",
+        ]);
         let import = |specifier| resolve_in_dependency(&dependency, specifier, Import);
-        assert_eq!(import("./a.mjs"), NOT_FOUND);
+        assert_eq!(import("./a.mjs"), "/p/node_modules/x/a.mts");
         assert_eq!(import("./b.js"), "/p/node_modules/x/b.ts");
+        assert_eq!(import("./c.cjs"), "/p/node_modules/x/c.cts");
     }
 
     #[test]
@@ -613,14 +620,26 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn target_in_node_modules_keeps_mjs() {
+    fn target_in_node_modules_keeps_mjs_without_the_aot_condition() {
         let project = empty_files(&["/p/src/a.mts"]);
         assert_eq!(probe(&project, "/p/src/a.mjs", Exact), "/p/src/a.mts");
 
         let dependency = empty_files(&["/p/node_modules/a.mts", "/p/node_modules/b.ts"]);
         let probe_exact = |path| probe(&dependency, path, Exact);
-        assert_eq!(probe_exact("/p/node_modules/a.mjs"), "None");
+        assert_eq!(
+            probe_exact("/p/node_modules/a.mjs"),
+            "/p/node_modules/a.mts"
+        );
         assert_eq!(probe_exact("/p/node_modules/b.js"), "/p/node_modules/b.ts");
+
+        let mut like_bun_run = CodeOptions::bun_run(b"/p");
+        like_bun_run.remove_condition(AOT_CONDITION);
+        let resolve = |specifier| {
+            let importer = "/p/node_modules/index.js";
+            resolve_in(&dependency, &like_bun_run, importer, specifier, Import)
+        };
+        assert_eq!(resolve("./a.mjs"), NOT_FOUND);
+        assert_eq!(resolve("./b.js"), "/p/node_modules/b.ts");
     }
 
     #[test]

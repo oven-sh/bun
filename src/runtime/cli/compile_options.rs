@@ -948,7 +948,7 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     }));
 }
 
-pub(crate) fn check_runtime_conflicts(ctx: &Context<'_>, compiles: bool) {
+fn check_runtime_conflicts(ctx: &Context<'_>, compiles: bool) {
     match (ctx.debug.hot_reload, compiles) {
         (HotReload::None, _) | (_, false) => {}
         (HotReload::Watch, true) if ctx.debug.watch_flag => exit_with_message(
@@ -970,7 +970,7 @@ pub(crate) fn check_runtime_conflicts(ctx: &Context<'_>, compiles: bool) {
     }
 }
 
-pub(crate) fn check_test_conflicts(ctx: Context<'_>) {
+fn check_test_conflicts(ctx: Context<'_>) {
     let options = &mut ctx.test_options;
     if options.repeat_count > 1 {
         exit_with_message(b"--aot does not support --rerun-each (or \"rerunEach\" in bunfig.toml): a compiled module only runs once per process");

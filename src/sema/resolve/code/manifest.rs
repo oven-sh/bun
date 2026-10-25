@@ -29,7 +29,7 @@ pub(in crate::resolve) struct CodeManifest<'h> {
     main_fields: &'h [(&'h [u8], &'h [u8])],
     pub(super) exports: Option<ExportsEntry<'h>>,
     pub(super) imports: Option<ExportsEntry<'h>>,
-    pub(super) typed_field: Option<&'h [u8]>,
+    names_aot_condition: bool,
     side_effects: DeclaredSideEffects<'h>,
 }
 
@@ -108,6 +108,18 @@ impl<'h> Resolver<'h> {
         }
         ancestors(dirname::<Posix>(path))
             .find_map(|ancestor| self.code_manifest(ancestor)?.package())
+    }
+
+    /// Whether the `exports` of the package that holds `path` name the "aot" condition.
+    pub fn is_in_aot_package(&self, path: &[u8]) -> bool {
+        path.starts_with(b"/")
+            && ancestors(dirname::<Posix>(path))
+                .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
+                .find_map(|ancestor| {
+                    self.code_manifest(ancestor)
+                        .filter(|it| it.exports.is_some())
+                })
+                .is_some_and(|manifest| manifest.names_aot_condition)
     }
 
     pub fn is_same_package(&self, importer: &[u8], path: &[u8]) -> bool {
@@ -234,6 +246,7 @@ fn read_manifest<'h>(
     };
     let name = non_empty_string_property(json, b"name").unwrap_or_default();
     let version = non_empty_string_property(json, b"version").unwrap_or_default();
+    let exports = subpath_table(b"exports");
     Some(CodeManifest {
         directory,
         path,
@@ -241,12 +254,26 @@ fn read_manifest<'h>(
         version: slice_in(version, arena),
         module_type,
         main_fields: slice_in(&main_field_values, arena),
-        exports: subpath_table(b"exports"),
+        names_aot_condition: exports
+            .is_some_and(|exports| names_condition(&exports, AOT_CONDITION)),
+        exports,
         imports: subpath_table(b"imports"),
-        typed_field: non_empty_string_property(json, TYPED_CONDITION)
-            .map(|target| slice_in(target, arena)),
         side_effects: read_side_effects(arena, directory, json),
     })
+}
+
+fn names_condition(entry: &ExportsEntry<'_>, condition: &[u8]) -> bool {
+    if !StackCheck::init().is_safe_to_recurse() {
+        return false;
+    }
+    match *entry {
+        ExportsEntry::Invalid | ExportsEntry::Null | ExportsEntry::Target(_) => false,
+        ExportsEntry::Array(items) => items.iter().any(|item| names_condition(item, condition)),
+        ExportsEntry::Map(map) => map
+            .entries
+            .iter()
+            .any(|(key, value)| *key == condition || names_condition(value, condition)),
+    }
 }
 
 fn read_side_effects<'h>(

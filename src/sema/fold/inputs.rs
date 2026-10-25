@@ -41,7 +41,6 @@ pub struct FoldOptions<'s> {
     pub defines: &'s [Define<'s>],
     pub dropped_calls: &'s [DefinePath<'s>],
     pub features: &'s [Atom],
-    pub compiler_functions: &'s [Atom],
     pub preserves_unused_imports: bool,
     pub max_string_bytes: usize,
 }
@@ -59,7 +58,6 @@ pub struct FoldInputs<'s> {
     pub(super) roots: &'s [(DefineRoot, u32)],
     pub(super) root_filter: u64,
     pub(super) features: &'s [Atom],
-    pub(super) compiler_functions: &'s [Atom],
     pub(super) preserves_unused_imports: bool,
     pub(super) max_string_bytes: usize,
     pub(super) is_called_before_it_runs: bool,

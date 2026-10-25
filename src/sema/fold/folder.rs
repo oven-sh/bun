@@ -95,7 +95,7 @@ pub(super) fn run<'s>(
         file,
         atoms,
         evaluator: Evaluator::new(atoms, inputs.max_string_bytes, &over_limit_count),
-        feature_symbol: find_feature_import(hir, bound, inputs, &mut errors),
+        feature_symbol: find_feature_import(hir, bound, &mut errors),
         loader_names: OnceCell::new(),
         this_of_file: OnceCell::new(),
         run_order: OnceCell::new(),

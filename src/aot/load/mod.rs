@@ -25,7 +25,6 @@ pub(crate) mod runtime_types;
 pub mod source_provider;
 pub mod sources;
 pub(crate) mod test_runner_names;
-pub(crate) mod typed_packages;
 pub(crate) mod worker_files;
 
 #[cfg(not(test))]

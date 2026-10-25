@@ -4,4 +4,3 @@
 
 /// <reference path="../index.d.ts" />
 /// <reference path="./import-attributes.d.ts" />
-/// <reference path="./json.d.ts" />

@@ -1,4 +1,4 @@
-use crate::emit::{installed_source_positions, source_positions};
+use crate::emit::source_positions;
 use crate::ir::generated::ColumnAdjustment;
 
 fn find_line_starts(text: &str) -> Vec<u32> {
@@ -64,17 +64,6 @@ fn adjacent_characters() {
         adjustment(12, 0, 6),
     ];
     assert_eq!(adjustments_of("a\u{e9}\u{20AC}\u{1F600}\u{e9}b"), expected);
-}
-
-#[test]
-fn installed_positions_are_keyed_by_compiled_offsets() {
-    let installed = "a;\n\u{e9} b;";
-    let token_offsets = [(10, 0), (40, 6)];
-    let line_starts = find_line_starts(installed);
-    let positions = installed_source_positions(installed.as_bytes(), &line_starts, &token_offsets);
-    assert!(positions.line_starts.is_empty());
-    let expected = [adjustment(10, 0, 0), adjustment(40, 1, 2)];
-    assert_eq!(positions.column_adjustments, expected);
 }
 
 #[test]

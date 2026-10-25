@@ -23,8 +23,8 @@ use bun_paths::resolve_path::dirname;
 mod build_options;
 
 pub use self::build_options::{
-    compile_build_overrides, default_options_of_full_types, find_manifest_of_full_types,
-    load_for_build, load_for_build_with_unlisted_files, load_for_full_types,
+    compile_build_overrides, default_options_of_aot_package, find_package_with_compiler_options,
+    load_for_aot_package, load_for_build, load_for_build_with_unlisted_files,
     load_options_for_build, load_referenced_projects_for_build,
 };
 

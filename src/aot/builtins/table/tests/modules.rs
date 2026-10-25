@@ -200,8 +200,8 @@ fn bundle_exports_have_hidden_root() {
     assert_eq!(entry(BuiltinId::BunBundle).holder, None);
     assert_eq!(entry(BuiltinId::BunBundle).module, None);
     assert_eq!(module_by_specifier(b"bun:bundle"), None);
-    let found = own_member(BuiltinId::BunBundle, name("validate"));
-    assert_eq!(found, Some(BuiltinId::BunBundleValidate));
+    let found = own_member(BuiltinId::BunBundle, name("feature"));
+    assert_eq!(found, Some(BuiltinId::BunBundleFeature));
     assert_eq!(find_name(b"bun:bundle").and_then(global), None);
 }
 

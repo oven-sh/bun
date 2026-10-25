@@ -67,7 +67,6 @@ pub(crate) fn finish_build(
         names,
         texts,
         statistics,
-        validates_by_type,
         modules,
     } = summary;
     let (output_files, entry_points) =
@@ -82,7 +81,6 @@ pub(crate) fn finish_build(
         names,
         texts,
         statistics,
-        validates_by_type,
         modules,
     }
 }

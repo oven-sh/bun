@@ -109,14 +109,6 @@ await askRoute(request => {
 const table = { a() { return 1; }, b() { return 2; } };
 [...table.__proto__] = [];
 tell(() => table["toSp" + given + "liced"](0).length);
-//// a-validation-plan-as-text
-const pattern = JSON.stringify([0, [[2, "string", null, [["pattern", "^[a-z]+$"]]]], []]) + given;
-const url = JSON.stringify([0, [[2, "string", null, [["format", ""]]]], []]) + given;
-tell(() => Bun.validate("ab", pattern));
-tell(() => Bun.validate("A1", pattern));
-tell(() => Bun.validate("http://a/b", url));
-tell(() => JSON.stringify(Bun.safeValidate("A1", pattern)).slice(0, 20));
-tell(() => Bun.parse('"ab"', pattern));
 //// a-file-of-function-overrides-in-the-environment
 //@ env BUN_JSC_functionOverrides=/dev/null
 console.log("ran");

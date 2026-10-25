@@ -1,5 +1,5 @@
-// The pages about bun compile, and the page about validation, show commands and what they print. Each command that is directly followed by its output is run
-// here. Every line of the output on the page has to be printed, in that order; a page may leave lines out.
+// The pages about bun compile show commands and what they print. Each command that is directly followed by its output
+// is run here. Every line of the output on the page has to be printed, in that order; a page may leave lines out.
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
@@ -60,14 +60,8 @@ const withoutTimes = (text: string) =>
     .split("\n")
     .map(line => line.replace(/ *\[\d+(\.\d+)?m?s\]/, "").trimEnd());
 
-// TODO: JSON.parse<T> still answers an object without the layout of T for some valid texts, so the access behind it keeps its test.
-const isNotYetTrue = (page: string, example: Example) =>
-  page === "aot-explain.mdx" &&
-  example.filesAbove["main.ts"]?.includes("JSON.parse<Item>(") &&
-  example.printed.includes("100% of property accesses are one load: 1 free, 0 tested, 0 by name (1)");
-
 const pages = readdirSync(join(import.meta.dir, "..", "..", "docs", "bundler")).filter(name =>
-  /^(aot.*|validate)\.mdx$/.test(name),
+  /^aot.*\.mdx$/.test(name),
 );
 
 describe.skipIf(!compiles || !hasTheShellOfThePages).each(pages)("docs/bundler/%s", name => {
@@ -103,6 +97,5 @@ describe.skipIf(!compiles || !hasTheShellOfThePages).each(pages)("docs/bundler/%
     });
     expect({ found, output }).toEqual({ found: expected, output });
   };
-  test.todo.each(titled.filter(([, it]) => isNotYetTrue(name, it)))("%s", printsWhatThePageSays, 120_000);
-  test.concurrent.each(titled.filter(([, it]) => !isNotYetTrue(name, it)))("%s", printsWhatThePageSays, 120_000);
+  test.concurrent.each(titled)("%s", printsWhatThePageSays, 120_000);
 });

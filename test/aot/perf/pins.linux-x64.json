@@ -1158,13 +1158,9 @@
     "jit": 73
   },
   "array/flat-map": {
-    "typed": 2712.9,
-    "untyped": 2778.3,
-    "jit": 475.5,
-    "best": {
-      "typed": 2712.9,
-      "untyped": 2496.7
-    }
+    "typed": 977.6,
+    "untyped": 944.8,
+    "jit": 475.5
   },
   "text/three-parts-of-which-two-are-empty": {
     "typed": 355.8,

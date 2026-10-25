@@ -7,13 +7,12 @@ one line of JSON for each server, route and build. Every response is compared wi
 `tanstack-typed` is TanStack Start once more, with the full types of react, react-dom and seroval from `packages/full-types` in `.full-types/`.
 `koa-typed`, `express-typed` and `fastify-typed` are those servers once more, with the full types of their packages installed as `node_modules/@oven/full-types-<name>`.
 
-`bun-validated`, `hono-validated` and `express-validated` take the order of the route `post` and check it against a type in place of a zod schema (`../app/validated.ts`): `validate<Order>(await request.json())`
-and `JSON.parse<Order>(await request.text())` (`JSON` from `"bun"`). Only an `--aot` build has those, so they are programs of their own, and columns beside zod:
+The order of the route `post` is checked by zod, and that of the route `hand` by checks written by hand. As columns side by side:
 
     python3 test/aot/servers/measure/measure.py --servers bun,hono,express --routes post,post-refused --column zod=<bun>:--aot --column hand=<bun>:--aot#hand \
-        --column validate=<bun>:--aot@*-validated#validated --column parse=<bun>:--aot@*-validated#parsed --column jit-zod=<bun> --column released-zod=<released bun> --cores 0-15 --out rows.jsonl
+        --column jit-zod=<bun> --column released-zod=<released bun> --cores 0-15 --out rows.jsonl
 
-`post-refused` sends the same order with a wrong last item. `../validated.test.ts` holds the three servers to what zod accepts and refuses.
+`post-refused` sends the same order with a wrong last item.
 
 ## Compiled ahead of time against the JIT, in one command
 

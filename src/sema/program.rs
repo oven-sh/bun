@@ -7157,11 +7157,6 @@ impl<'s> Files<'s> {
         let (Ok(Parse { hir, bound, .. }) | Err(Parse { hir, bound, .. })) = &parsed;
         let role = FileRole::of_tree(hir);
         debug_assert!(build.is_some() || code.is_none());
-        // What a full-types file writes relative to itself is relative to where its text is.
-        let typed_source_path = code
-            .as_deref()
-            .and_then(|code| code.analyzed.typed_source_path);
-        let text_path = typed_source_path.unwrap_or(path);
         let is_esm = options.resolves_like_node && specifies_esm;
         let package_json_without_type =
             if !is_lib && matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18) {
@@ -7250,7 +7245,7 @@ impl<'s> Files<'s> {
             {
                 return None;
             }
-            let stem = join(dirname::<Posix>(text_path), text);
+            let stem = join(dirname::<Posix>(path), text);
             let for_tsx: &'static [u8] = if options.jsx == JsxEmit::Preserve {
                 b".jsx"
             } else {
@@ -7370,11 +7365,6 @@ impl<'s> Files<'s> {
                 let program = is_governed.then_some(program_resolver)?;
                 program.resolve_module_name(text, from, mode)
             });
-            // A full-types file stands for the installed file: what is not beside its text is beside that file.
-            let resolved = resolved.or_else(|| {
-                typed_source_path?;
-                resolver.resolve_module_name(text, path, mode)
-            });
             let Some(resolved) = resolved else {
                 if let Some(code) = code.as_deref_mut() {
                     code.answer_types_from_named_loader(spec, mode);
@@ -7451,7 +7441,7 @@ impl<'s> Files<'s> {
                 let span = first.map(|u| (u.pos, end_of_string_literal(&hir.text, u.pos)));
                 UnsupportedExtension { code, span }
             });
-            // The file that runs stands for its full types and for its other names.
+            // The file that runs stands for its other names.
             let in_program = match (code.as_deref(), redirect) {
                 (Some(code), None) => code.program_path(host, key, found),
                 _ => found,
@@ -7459,9 +7449,6 @@ impl<'s> Files<'s> {
             if in_program != found && resolved.resolved_file_name == found {
                 redirected_imports.push((spec, mode, atoms.intern(found)));
             }
-            // It is TypeScript under the name of the installed file. `remove_code_only_edges` drops a rejected one.
-            let has_typed_version = redirect.is_none()
-                && (code.as_deref()).is_some_and(|code| code.has_typed_version(host, key, found));
             imports.push(Resolution {
                 spec,
                 mode,
@@ -7471,8 +7458,7 @@ impl<'s> Files<'s> {
                     && redirect.is_none_or(|output| host.is_file(output)),
                 increases_depth: resolved.is_external_library_import,
                 package_id: resolved.package_id.filter(|_| redirect.is_none()),
-                is_importable: matches!(diagnostic, None | Some(6142))
-                    || diagnostic == Some(7016) && has_typed_version,
+                is_importable: matches!(diagnostic, None | Some(6142)),
                 unsupported_extension,
             });
         }
@@ -7489,8 +7475,8 @@ impl<'s> Files<'s> {
             let value = atoms.bytes(value);
             match kind {
                 ReferenceKind::Path => {
-                    let written = referenced_path(value, text_path);
-                    match referenced_file(host, program_options, &written, text_path) {
+                    let written = referenced_path(value, path);
+                    match referenced_file(host, program_options, &written, path) {
                         Ok(found) => match program_options.parse_file_redirect(&found) {
                             Some(output) if host.is_file(output) => {
                                 references.push((resolver.keep(output), false, false, None));

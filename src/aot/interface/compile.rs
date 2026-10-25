@@ -6,7 +6,6 @@ use crate::engine::EngineResult;
 use crate::link::ProgramNames;
 pub use crate::linked::bun_aot_compile as compile;
 /// Of the one entry point of the options. `None`: the file or what it imports could not be loaded, and the log says why.
-pub use crate::linked::bun_aot_plan_validated_calls as plan_validated_calls;
 use crate::module_list::ModuleList;
 use crate::report::SourceTexts;
 use crate::statistics::{Stage, Statistics};
@@ -17,7 +16,6 @@ pub struct ProgramSummary {
     pub names: ProgramNames,
     pub texts: SourceTexts,
     pub statistics: Statistics,
-    pub validates_by_type: bool,
     /// Where `Options::lists_modules` asks for it.
     pub modules: Option<ModuleList>,
 }

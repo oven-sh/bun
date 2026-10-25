@@ -15,7 +15,6 @@ pub struct CodeOptions {
     pub working_directory: Vec<u8>,
     pub conditions: Vec<Vec<u8>>,
     pub custom_conditions: Vec<Vec<u8>>,
-    pub typed_condition: Option<Vec<u8>>,
     pub main_fields: Vec<Vec<u8>>,
     pub has_default_main_fields: bool,
     pub prefers_module_field: bool,
@@ -28,6 +27,9 @@ pub struct CodeOptions {
     pub forced_jsx_development: Option<bool>,
     pub max_computed_candidates: u32,
 }
+
+/// The condition of `exports` and `imports` that names what `--aot` compiles.
+pub const AOT_CONDITION: &[u8] = b"aot";
 
 fn byte_strings(texts: &[&str]) -> Vec<Vec<u8>> {
     texts.iter().map(|text| text.as_bytes().to_vec()).collect()
@@ -49,11 +51,10 @@ impl Options {
 
 impl CodeOptions {
     pub fn bun_run(working_directory: &[u8]) -> CodeOptions {
-        CodeOptions {
+        let mut options = CodeOptions {
             working_directory: working_directory.to_vec(),
             conditions: byte_strings(&["bun", "node", "node-addons"]),
             custom_conditions: Vec::new(),
-            typed_condition: Some(TYPED_CONDITION.to_vec()),
             main_fields: byte_strings(&["module", "main", "jsnext:main"]),
             has_default_main_fields: true,
             prefers_module_field: false,
@@ -65,6 +66,14 @@ impl CodeOptions {
             jsx: JsxSettings::default(),
             forced_jsx_development: None,
             max_computed_candidates: 1024,
+        };
+        options.add_custom_condition(AOT_CONDITION);
+        options
+    }
+
+    pub fn remove_condition(&mut self, condition: &[u8]) {
+        for list in [&mut self.conditions, &mut self.custom_conditions] {
+            list.retain(|it| it != condition);
         }
     }
 
@@ -84,7 +93,6 @@ impl CodeOptions {
         condition == b"default"
             || condition == kind_condition
             || self.conditions.iter().any(|it| it == condition)
-            || (search.uses_typed_condition && self.typed_condition.as_deref() == Some(condition))
     }
 }
 
@@ -121,16 +129,12 @@ impl ExtensionOrders {
 mod tests {
     use super::*;
 
-    fn search(kind: CodeImportKind, uses_typed_condition: bool) -> CodeSearch<'static> {
-        CodeSearch {
+    fn is_match(options: &CodeOptions, condition: &str, kind: CodeImportKind) -> bool {
+        let search = CodeSearch {
             kind,
             extensions: &[],
-            uses_typed_condition,
-        }
-    }
-
-    fn is_match(options: &CodeOptions, condition: &str, kind: CodeImportKind) -> bool {
-        options.matches_condition(condition.as_bytes(), search(kind, false))
+        };
+        options.matches_condition(condition.as_bytes(), search)
     }
 
     #[test]
@@ -167,32 +171,30 @@ mod tests {
         assert!(!is_match(&options, "require", Import));
         assert!(!is_match(&options, "require", EntryPoint));
 
-        let untyped = CodeOptions {
-            typed_condition: None,
-            ..options.clone()
-        };
+        let mut without_aot = options.clone();
+        without_aot.remove_condition(AOT_CONDITION);
         for kind in [EntryPoint, Import, Require] {
-            for condition in ["default", "bun", "node", "node-addons"] {
+            for condition in ["default", "bun", "node", "node-addons", "aot"] {
                 assert!(is_match(&options, condition, kind), "{condition}");
             }
-            for condition in ["browser", "module", "types", "full-types"] {
+            for condition in ["browser", "module", "types"] {
                 assert!(!is_match(&options, condition, kind), "{condition}");
             }
-            assert!(options.matches_condition(b"full-types", search(kind, true)));
-            assert!(!untyped.matches_condition(b"full-types", search(kind, true)));
+            assert!(!is_match(&without_aot, "aot", kind));
         }
     }
 
     #[test]
     fn custom_conditions_are_kept_apart() {
         let mut options = CodeOptions::bun_run(b"/p");
-        assert!(options.custom_conditions.is_empty());
+        assert_eq!(options.custom_conditions, byte_strings(&["aot"]));
         for condition in ["worker", "bun", "worker"] {
             options.add_custom_condition(condition.as_bytes());
         }
-        let all = byte_strings(&["bun", "node", "node-addons", "worker"]);
+        let all = byte_strings(&["bun", "node", "node-addons", "aot", "worker"]);
         assert_eq!(options.conditions, all);
-        assert_eq!(options.custom_conditions, byte_strings(&["worker", "bun"]));
+        let custom = byte_strings(&["aot", "worker", "bun"]);
+        assert_eq!(options.custom_conditions, custom);
     }
 
     #[test]

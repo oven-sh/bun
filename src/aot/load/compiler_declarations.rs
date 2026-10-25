@@ -14,7 +14,6 @@ mod tests {
     use crate::load::project::ProjectId;
 
     const BUN_TYPES: &[u8] = include_bytes!("../../../packages/bun-types/bun.d.ts");
-    const TAGGED_ALIAS_COUNT: usize = 29;
     const PROGRAM_WITH_OTHER_DECLARATIONS: [(&str, &str); 3] = [
         (
             "main.ts",
@@ -26,9 +25,6 @@ mod tests {
             "other.d.ts",
             "declare module \"bun\" {\n\
                type int32 = string;\n\
-               namespace Schema {\n\
-                 type Min<N extends number> = string;\n\
-               }\n\
                function inspect(value: unknown): string;\n\
              }\n",
         ),
@@ -117,14 +113,8 @@ mod tests {
             assert!(!files.hir(declarations).has_errors);
             assert!(!files.module(declarations).is_module());
             assert!(files_declaring(files, bun_module(files)).contains(&declarations));
-            let global = global_bun(files);
-            let schema = member_of(files, global, b"Schema");
-            for member in [
-                member_of(files, global, b"int32"),
-                member_of(files, schema, b"Int"),
-            ] {
-                assert_eq!(files_declaring(files, member), [declarations]);
-            }
+            let int32 = member_of(files, global_bun(files), b"int32");
+            assert_eq!(files_declaring(files, int32), [declarations]);
         });
     }
 
@@ -132,14 +122,8 @@ mod tests {
     fn names_stay_theirs_where_other_files_declare_them() {
         with_application_files(&PROGRAM_WITH_OTHER_DECLARATIONS, |files, declarations| {
             for container in [bun_module(files), global_bun(files)] {
-                let schema = member_of(files, container, b"Schema");
-                let theirs = [
-                    member_of(files, container, b"int32"),
-                    member_of(files, schema, b"Min"),
-                ];
-                for member in theirs {
-                    assert_eq!(files_declaring(files, member), [declarations]);
-                }
+                let int32 = member_of(files, container, b"int32");
+                assert_eq!(files_declaring(files, int32), [declarations]);
                 let inspect = member_of(files, container, b"inspect");
                 assert!(!files_declaring(files, inspect).contains(&declarations));
             }
@@ -150,7 +134,7 @@ mod tests {
     fn tagged_aliases_are_written_as_in_bun_types() {
         let mut aliases = type_aliases(TEXT);
         aliases.retain(|alias| contains(alias, b"\"bun."));
-        assert_eq!(aliases.len(), TAGGED_ALIAS_COUNT);
+        assert_eq!(aliases.len(), 1);
         let published = type_aliases(BUN_TYPES);
         for alias in aliases {
             assert!(published.contains(&alias), "{}", BStr::new(&alias));

@@ -43,7 +43,6 @@ const known: Record<string, string> = {
   "ir/AOTVerifierOperations.cpp": "Opcode 1",
   "ir/AOTVerifierTypes.cpp": "Opcode 1",
   "passes/AOTAddGenericVersion.cpp": "Opcode 3",
-  "passes/AOTAllocateInnerObjects.cpp": "Opcode 1",
   "passes/AOTCallModules.cpp": "Opcode 1",
   "passes/AOTDeferredClosuresAndConstantCollections.cpp": "Opcode 1",
   "passes/AOTEnvironments.cpp": "Opcode 1",

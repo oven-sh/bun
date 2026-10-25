@@ -298,7 +298,6 @@ impl<'a> Options<'a> {
                 standard_decorators: f.standard_decorators,
                 remove_cjs_module_wrapper: f.remove_cjs_module_wrapper,
                 runtime_transpiler_cache: None,
-                validation_plans: None,
                 lower_using: f.lower_using,
                 bundler_feature_flags: None,
                 define_hash: f.define_hash,
@@ -1349,46 +1348,6 @@ impl<'a> Parser<'a> {
                 });
                 uses_dirname = false;
                 uses_filename = false;
-            }
-        }
-
-        // `var validator, validator2;`: see `P::create_validator_method`.
-        if !p.validator_variables.is_empty() {
-            let count = p.validator_variables.len();
-            let mut declared_symbols =
-                bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
-            let mut decls = G::DeclList::init_capacity(count);
-            for index in 0..count {
-                let variable = p.validator_variables[index];
-                decls.append_assume_capacity(G::Decl {
-                    binding: p.b(B::Identifier { r#ref: variable }, bun_ast::Loc::EMPTY),
-                    value: None,
-                });
-                declared_symbols.append_assume_capacity(DeclaredSymbol {
-                    ref_: variable,
-                    is_top_level: true,
-                });
-            }
-            let mut decls = Some(decls);
-            let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
-                p.s(
-                    S::Local {
-                        kind: js_ast::LocalKind::KVar,
-                        decls: decls.take().expect("one statement"),
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                )
-            });
-            before.push(js_ast::Part {
-                stmts: part_stmts.into(),
-                declared_symbols,
-                ..Default::default()
-            });
-
-            // `T` may be declared in another file, and the cache goes by the text of this one.
-            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                cache.input_hash = None;
             }
         }
 

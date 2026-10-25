@@ -161,7 +161,22 @@ if !shape.trust.is_trusted() {
 }
 ```
 
-A package can move from the third row to the first by shipping typed source that `bun compile` compiles in place of its JavaScript. [Publish a library for `bun compile`](/bundler/aot-libraries) says how.
+A package can move from the third row to the first. It ships its typed source, and names it under an `"aot"` condition in the `exports` of its own `package.json`.
+
+```json title="package.json" icon="file-json"
+{
+  "name": "greeter",
+  "exports": {
+    ".": {
+      "aot": "./dist/index.aot.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  }
+}
+```
+
+`bun compile` resolves imports with that condition on, so `dist/index.aot.ts` simply is the module: the file that's checked, and the file that's compiled. `"types"` isn't read for that export, whatever the order of the keys. It's a `.ts` file like any other, so its role is `Checked`. If it has a type error, the build warns and compiles the file without its types, and it still runs. Every other tool skips a condition that it doesn't know and takes `dist/index.js`. Nothing compares the two files, so keeping them in step is the package's job. [Publish a library for `bun compile`](/bundler/aot-libraries) says how to build such a package.
 
 ### What each kind of type becomes
 
@@ -211,7 +226,7 @@ TypeScript is unsound on purpose. `any`, `as`, `!`, index signatures, `JSON.pars
 
 The rule:
 
-- **A type is a fact about what the program makes.** An object literal, a `new`, the sum of two numbers, the result of a validating parse.
+- **A type is a fact about what the program makes.** An object literal, a `new`, the sum of two numbers.
 - **A type is a prediction about what the program receives.** An argument from a caller that the build can't see, data from outside, the result of a function that only has a declaration, an element of a container that untyped code can write.
 
 A fact needs no code. A prediction is tested once, where the value arrives. After a test that passes, the prediction is a fact too.
@@ -316,7 +331,7 @@ The flow analysis follows values through the whole program. For each `Check` it 
 - **The fields are narrower than declared.** The only `x` that's ever stored is `1`, so `x` is an integer and gets a four-byte slot. That's safe for the same reason: the build has seen every store, and an object that passes the test for `L0` was made by this program.
 - **The result is proven.** Numbers times numbers plus numbers is a number.
 
-Flow has three answers for a check. The third one is the least obvious. Say it sees a value arrive that doesn't fit, like the direct result of `JSON.parse` at a parameter of type `Vec`. A test there would fail in ordinary runs and send every call down the slow path. So the check is dropped and the value continues untyped.
+Flow has three answers for a check. The third one is the least obvious. Say it sees a value arrive that doesn't fit, like an object from `Object.create(null)` at a parameter of type `Vec`. A test there would fail in ordinary runs and send every call down the slow path. So the check is dropped and the value continues untyped.
 
 ### The guard, the fast path, the slow path
 
@@ -392,7 +407,189 @@ bun compile --aot-log-type-mismatches ./dot.ts && ./dot
 [aot] type-mismatch b00255316568 argument dot.ts:6:22 (dot): expected Vec, got untyped object; continued; count 1; from dot.ts:14
 ```
 
-That's the honest cost of the design. A prediction that's wrong in shape is slow, even when it's right in spirit. The fix is to turn the prediction into a fact where the data comes in, and [Validation at the boundary](#validation-at-the-boundary) picks the example up again.
+That's the honest cost of the design. A prediction that's wrong in shape is slow, even when it's right in spirit.
+
+### Say what you expect
+
+`message` is an `any`, so nothing told the compiler what the text holds. One annotation does.
+
+```ts dot-declared.ts icon="/icons/typescript.svg"
+interface Vec {
+  x: number;
+  y: number;
+}
+
+function dot(a: Vec, b: Vec): number {
+  return a.x * b.x + a.y * b.y;
+}
+
+const unit: Vec = { x: 1, y: 0.5 };
+const message: { vec: Vec } = JSON.parse(process.argv[2] ?? '{"vec":{"x":3,"y":4}}');
+
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += dot(unit, message.vec);
+console.log(sum);
+```
+
+```bash terminal icon="terminal"
+bun compile --aot-log-type-mismatches ./dot-declared.ts && ./dot-declared
+```
+
+```txt
+5000
+```
+
+Nothing is logged. The guard is still there, and now it passes.
+
+TypeScript takes the annotation without a check, because `JSON.parse` returns `any`. To the compiler it's a prediction like any other: data from outside, expected to be a `{ vec: Vec }`. But this one is about a value that a built-in is about to allocate, so there's something better to do with it than to test the result. `SelectTypedResults` makes a parser for the expected type and calls that first.
+
+```txt
+    v13: boolean @Boolean = JSONSourceOpen v12
+    TestAndBranch v13 -> taken b4(| 0), notTaken b8()
+  b4(v14: guard @Void):
+    v15: cursor @RawWord = JSONSourceStart v14
+    v16: cursor @RawWord = JSONSkipWhitespace v15
+    v17: undefined @Void = CallDirect v16 function=f1506
+    v18: int[0, 2] @Int32 = ResultAt v17
+    v19: undefined|null|L1 @JSValue = ResultAt v17 index=1
+    v20: cursor @RawWord = ResultAt v17 index=2
+    Switch v18 cases=[1] -> case b5(), otherwise b7()
+  ..
+  b8() frequency=Rare:
+    v25: null|boolean|number|string|object @JSValue = CallBuiltin -, v12, v24 overload=JSONParse/0
+```
+
+`f1506` is a function with `role=Parser`. It's written in the same IR as everything else, so the same passes optimize it and the same back end compiles it. It reads the bytes of the text through a cursor that lives in a register, and it allocates objects with the layouts of `{ vec: Vec }` and `Vec`. It returns three values in registers: a status, the object and the new cursor. No tree of boxed values is built on the way.
+
+Keys in another order, and keys that the type doesn't name, are no trouble. Where the text doesn't fit the type, the parser gives up, and the original call of `JSON.parse` in `b8` parses the text from the start. Then you get ordinary objects, the guard fails, and the program does what it does under `bun run`.
+
+```bash terminal icon="terminal"
+bun compile --aot-log-type-mismatches ./dot-declared.ts && ./dot-declared '{"vec":{"x":"3","y":4}}'
+```
+
+```txt
+[aot] type-mismatch d410bc586c26 variable dot-declared.ts:11:31 (module): expected { vec }, got untyped object; continued; count 1
+```
+
+So the parser checks nothing for you, and the type stays a prediction. The reads behind it are loads from slots, behind tests that pass. The build's summary counts them as `tested`, not as `free`.
+
+`JSON.parse(text) as { vec: Vec }` does the same as the annotation, and so does passing the result straight to a typed parameter. The table of built-ins marks the calls that can take a parser this way with `typedResultForm`: `JSON.parse`, the `json()` of a `Request`, a `Response` or a `Blob`, and the rows of a `Bun.sql` query.
+
+### Make the object yourself
+
+To get from a prediction to a fact, follow the rule. A type is a fact about what the program makes, so make the `Vec`.
+
+```ts dot-copy.ts icon="/icons/typescript.svg"
+interface Vec {
+  x: number;
+  y: number;
+}
+
+function dot(a: Vec, b: Vec): number {
+  return a.x * b.x + a.y * b.y;
+}
+
+const unit: Vec = { x: 1, y: 0.5 };
+const message = JSON.parse(process.argv[2] ?? '{"vec":{"x":3,"y":4}}');
+const vec: Vec = { x: message.vec.x, y: message.vec.y };
+
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += dot(unit, vec);
+console.log(sum);
+```
+
+```bash terminal icon="terminal"
+bun compile --aot-log-type-mismatches ./dot-copy.ts && ./dot-copy
+```
+
+```txt
+5000
+```
+
+Nothing is logged. `vec` is an object literal, so it has the layout of `Vec`, and flow answers the check on `b` the way it answered the one on `a`. The guard is gone.
+
+The fields are another matter. `message.vec.x` is an `any`, so the build has now seen a store to `x` of something that may not be a number. From here on, `x` of a `Vec` is whatever `JSON.parse` can yield, and `number` is only what's expected. The prediction has moved from the object to its two fields.
+
+It's cheaper there. Once `dot` is inlined, `SinkAllocations` dissolves `vec`, and the two tests end up in front of the loop. What's left in the loop is arithmetic on doubles.
+
+```txt
+    v20: boolean @Boolean = TypeTest v16 testedType=number
+    TestAndBranch v20 -> taken b4(| 0), notTaken b8(v18, v19)
+  b4(v21: number @Double):
+    v22: boolean @Boolean = TypeTest v17 testedType=number
+    TestAndBranch v22 -> taken b5(| 0), notTaken b8(v18, v19)
+  ..
+  b7(v29: int[0, 999] @Int32):
+    v30: number @Double = Mul v0, v21 form=Numbers
+    v31: number @Double = Mul v1, v23 form=Numbers
+    v32: number @Double = Add v30, v31 form=Numbers
+    v33: number @Double = Add v24, v32 form=Numbers
+    v34: int[1, 1000] @Int32 = Increment v29 form=Integers
+    Jump -> next b6(v33, v34)
+```
+
+`b8` is a second copy of the loop, for values that aren't numbers. Copying two fields checks nothing, so data of the wrong type still gets in, and still does what it does under `bun run`.
+
+```bash terminal icon="terminal"
+bun compile --aot-log-type-mismatches ./dot-copy.ts && ./dot-copy '{"vec":{"x":"3","y":4}}'
+```
+
+```txt
+[aot] type-mismatch c4f0f5db45e8 property dot-copy.ts:7:16 (dot): expected number, got string; continued; count 1; from dot-copy.ts:15
+```
+
+There's a second cost, and it's easy to miss. All objects of a layout share one plan of slots, so what's stored in a field of one `Vec` counts for every `Vec`. In `dot.ts`, `x` was a four-byte integer and `y` a raw double, and a read of either was one load. Here, a `Vec` that stays on the heap holds a field as a boxed value, or in a typed slot behind a test.
+
+To make the fields facts too, test them before you store them.
+
+```ts dot-checked.ts icon="/icons/typescript.svg"
+interface Vec {
+  x: number;
+  y: number;
+}
+
+function dot(a: Vec, b: Vec): number {
+  return a.x * b.x + a.y * b.y;
+}
+
+function toVec(value: any): Vec {
+  const { x, y } = value;
+  if (typeof x !== "number" || typeof y !== "number") throw new TypeError("expected a Vec");
+  return { x, y };
+}
+
+const unit: Vec = { x: 1, y: 0.5 };
+const message = JSON.parse(process.argv[2] ?? '{"vec":{"x":3,"y":4}}');
+const vec = toVec(message.vec);
+
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += dot(unit, vec);
+console.log(sum);
+```
+
+```bash terminal icon="terminal"
+bun compile --aot-log-type-mismatches ./dot-checked.ts && ./dot-checked
+```
+
+```txt
+5000
+```
+
+TypeScript narrows `x` and `y` to `number` behind the `if`. The front end sends the narrowed types as requests, and the engine proves them from the two `typeof` tests. Every store to a field of a `Vec` is a proven number again, so the slots hold raw numbers. The loop has two loads and no test.
+
+```txt
+  b5(v24: int[0, 999] @Int32):
+    v25: number @Double = GetSlot v16 key="x" receivers=[L0] level=Proven fieldAccess=0
+    v26: number @Double = Mul v0, v25 form=Numbers
+    v27: number @Double = GetSlot v16 key="y" receivers=[L0] level=Proven fieldAccess=1
+    v28: number @Double = Mul v1, v27 form=Numbers
+    v29: number @Double = Add v26, v28 form=Numbers
+    v30: number @Double = Add v19, v29 form=Numbers
+```
+
+This program does throw on bad data. That doesn't break the second promise: nothing throws because of a type that you declared. It throws because you wrote a `throw`.
+
+Nothing derives `toVec` from `Vec`. You write a function like it for each type that comes in from outside, and it costs a copy of the data. It pays where the objects are read many times after they arrive. Elsewhere, the annotation alone is the better deal.
 
 ### A guard in the middle of a function
 
@@ -818,16 +1015,16 @@ What survives is what the code can't reach. A fresh object that hasn't been stor
 
 ### Who uses them
 
-| Pass                                                          | Asks                                                                                                            |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `EliminateDeadCode`                                           | `isRemovableWhenUnused()`: writes nothing that anybody sees, can't throw by rule, always completes              |
-| `EliminateRedundantReads`, `HoistLoopInvariantReads`          | Does anything between the two points, or in the loop, write what this reads?                                    |
-| `EliminateGuards`, `PlaceTypeTests`                           | How far does a `Stretch` proof reach? Up to the first write to the heaps that its test reads                    |
-| `SinkAllocations`, `AllocateInFrames`, `AllocateInnerObjects` | The operand uses: is the object kept, and where?                                                                |
-| `RemoveRedundantHandlers`                                     | Can the block throw? One that can't loses its handler                                                           |
-| `RemoveRedundantBarriers`                                     | Can a collection have run since the object was allocated? If not, a store into it needs no write barrier        |
-| `SplitCoroutines`                                             | What is live across an operation that suspends?                                                                 |
-| Code generation                                               | `aot/codegen/AOTHeaps.cpp` maps the IR's heaps to B3's heap ranges, so B3's own passes work from the same facts |
+| Pass                                                 | Asks                                                                                                            |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `EliminateDeadCode`                                  | `isRemovableWhenUnused()`: writes nothing that anybody sees, can't throw by rule, always completes              |
+| `EliminateRedundantReads`, `HoistLoopInvariantReads` | Does anything between the two points, or in the loop, write what this reads?                                    |
+| `EliminateGuards`, `PlaceTypeTests`                  | How far does a `Stretch` proof reach? Up to the first write to the heaps that its test reads                    |
+| `SinkAllocations`, `AllocateInFrames`                | The operand uses: is the object kept, and where?                                                                |
+| `RemoveRedundantHandlers`                            | Can the block throw? One that can't loses its handler                                                           |
+| `RemoveRedundantBarriers`                            | Can a collection have run since the object was allocated? If not, a store into it needs no write barrier        |
+| `SplitCoroutines`                                    | What is live across an operation that suspends?                                                                 |
+| Code generation                                      | `aot/codegen/AOTHeaps.cpp` maps the IR's heaps to B3's heap ranges, so B3's own passes work from the same facts |
 
 ### Effects are checked
 
@@ -1001,7 +1198,7 @@ Much of `node:fs`, `node:stream`, `node:events` and `node:http` is TypeScript in
 
 So there's no boundary between your code and Node's API. `emitter.emit("data", chunk)` can be resolved, inlined and specialized like a call of your own function. Flow sees which listeners are registered under which names. And a module of `src/js` that your program doesn't reach isn't in the executable.
 
-Those modules use private intrinsics, written `$isCallable(x)` or `$putByIdDirect(..)`. The table lists them like any other built-in (`src/codegen/builtins/host/bun-syntax.builtins.ts`, `aot/builtins/engine-syntax.builtins.ts`).
+Those modules use private intrinsics, written `$isCallable(x)` or `$putByIdDirectPrivate(..)`. The table lists them like any other built-in (`src/codegen/builtins/host/bun-syntax.builtins.ts`, `aot/builtins/engine-syntax.builtins.ts`).
 
 ## Whole-program value flow
 
@@ -1288,12 +1485,12 @@ Captured variables live in an `Environment`, a cell with typed slots like an obj
 
 ### Allocation that doesn't happen
 
-Four passes work on allocations, in order of preference.
+Two passes take allocations off the heap, in order of preference.
 
 1. **`SinkAllocations`** dissolves an object that's only read and written locally into SSA values. It's built only on the paths that need a real cell. That's what happened to `unit` on the fast path of `dot.ts`.
 2. **`AllocateInFrames`** puts an object that doesn't outlive its activation into the machine frame: `NewObject .. storage=Frame`. That's what happened to `unit` for the slow path, which needs a real object to pass to the generic version.
-3. **`AllocateInnerObjects`** puts an object that's always created with its owner, and held by one of its fields, into the owner's cell. The field is then an address computation, not a load.
-4. Everything else is allocated from the free list of its size class, inline in hot code and through a stub in cold code.
+
+Everything else is allocated from the free list of its size class, inline in hot code and through a stub in cold code.
 
 Whether an object "doesn't outlive its activation" comes from the operand uses of every operation that it reaches, and from the summaries of the functions that it's passed to.
 
@@ -1454,9 +1651,11 @@ Two rules shape all of it.
 
 `useImage()` in `aot/image/AOTImageLoading.cpp` is all there is. It checks the header (magic, format version, a stamp that covers the CPU features the code assumes, the identity of the runtime it was linked for) and checks that each part lies in a segment with the right protection. Then it maps the code.
 
-The operating system's loader has already mapped the executable, so the code could run where it is. On Linux it's mapped a second time, from the file, at an address of its own that the kernel picks. That keeps the distance between the code of the program and the code of the runtime random. Position-independent code makes it free.
+The operating system's loader has already mapped the executable, so the code could run where it is. But on Linux, `bun` is linked at a fixed address by default, so that would be the same address in every run. There, `mapCodeOfImage()` maps the code a second time, from the executable's own file, at an address that `chooseAddressForCode()` draws at random. Then it takes the execute permission away from the first mapping. Position-independent code makes the move free. If address randomization is off for the process, as it is under a debugger, the code runs where the loader put it.
 
-From then on, the process needs no new executable memory. On Linux 6.7 and later the executable calls `prctl(PR_SET_MDWE)`, after which the kernel denies any.
+From then on, the process needs no new executable memory, so it asks the kernel to deny any: `prctl(PR_SET_MDWE)`. It sets the flag that keeps the setting from child processes, because a child may be a `bun` that needs its JIT. Linux has that flag since 6.7. An older kernel rejects the request, and the executable runs without it.
+
+That's a request. Building `bun` itself with `--hardened=on` makes it a requirement. The executables of such a `bun` are position-independent, they pass the setting on to their child processes, and they exit at start on a kernel that can't deny such memory.
 
 ### Modules
 
@@ -1474,7 +1673,7 @@ A module in the image runs at most once and isn't in `require.cache`.
 
 The collector is JavaScriptCore's: generational, mostly concurrent, non-moving mark and sweep, with conservative scanning of the stack. The compiler is designed around those properties.
 
-**Non-moving** means that a pointer in a register stays valid across a collection. Compiled code needs no stack maps for running frames, no safepoint bookkeeping at calls and no reloads after them. It's also why an address computed into the middle of a cell, for an inner object, is fine.
+**Non-moving** means that a pointer in a register stays valid across a collection. Compiled code needs no stack maps for running frames, no safepoint bookkeeping at calls and no reloads after them.
 
 **Conservative stack scanning** means that any word on the stack that looks like a pointer to a cell keeps that cell alive. B3 can keep references in any register or spill slot. The cost is that a stale word can keep garbage alive, and that the collector can't compact.
 
@@ -1512,7 +1711,9 @@ A `try` costs nothing on the path that doesn't throw. Blocks in the IR name thei
 
 A `throw` calls the run time. `unwindCompiledFrames()` (`aot/runtime/AOTUnwinding.h`) walks the frames by return address, looks each one up in the image, and finds the innermost handler that covers the call site. It restores the callee-saved registers that the frames in between had saved, and jumps.
 
-A stack trace is the same walk. Each return address maps to a function and a source position, and if the call site was inlined, to the chain of inlined frames. So `error.stack` lists functions that no longer exist as functions. Positions refer to your original TypeScript. No source map is involved, because no JavaScript was ever generated.
+A stack trace is the same walk. Each return address maps to a function and a source position, and if the call site was inlined, to the chain of inlined frames. So `error.stack` lists functions that no longer exist as functions. Positions refer to your original TypeScript. It takes no source map to get there, because no JavaScript was ever generated.
+
+Names, paths and positions are tables in the image, so a build can also leave them out. With `--sourcemap=external`, they go into a source map that's written next to the executable. A frame then reads `/$bunfs/root/compiled.js:4:2`. There's no such file. The line is the number of a function and the column is the number of a site in it, and the map leads from the two back to a name, a file, a line and a column. The map's debug ID is the build ID of the executable, which is how an error tracker finds the right map for a report. [Minified executables and external source maps](/bundler/aot-debugging#minified-executables-and-external-source-maps) has the details.
 
 Null checks are often free as well. A load from `undefined` or `null`, read as a pointer, hits the lowest pages of the address space, which the process keeps unmapped. The fault handler looks the instruction up in `FaultSites` and continues at the code that throws the `TypeError`.
 
@@ -1596,91 +1797,6 @@ The tools (the command line, the checker, the compiler itself, the JITs) are alw
 Feature detection is everywhere in npm packages. A name that disappears changes which branch they take, which makes the trimmed program a different program. `test/aot/trimmed-against-whole` builds each of its programs both ways and compares what they print.
 
 [Smaller executables](/bundler/aot-size) has the list of features and the numbers.
-
-## Validation at the boundary
-
-Back to `dot.ts`. Its guard failed 1000 times, because `JSON.parse` makes ordinary objects and a guard asks for the layout of `Vec`. The types were right. The objects were made by the wrong allocator.
-
-`JSON.parse<T>(text)`, with `JSON` imported from `"bun"`, closes that gap. It checks the data against `T` while it parses, and it makes objects with the layouts of `T`. `validate<T>(value)` from `"bun:bundle"` does the same for a value that already exists. [Validate data by its type](/bundler/validate) is the user's guide.
-
-```ts dot-checked.ts icon="/icons/typescript.svg"
-import { JSON } from "bun";
-
-interface Vec {
-  x: number;
-  y: number;
-}
-
-function dot(a: Vec, b: Vec): number {
-  return a.x * b.x + a.y * b.y;
-}
-
-const unit: Vec = { x: 1, y: 0.5 };
-const message = JSON.parse<{ vec: Vec }>(process.argv[2] ?? '{"vec":{"x":3,"y":4}}');
-
-let sum = 0;
-for (let i = 0; i < 1000; i++) sum += dot(unit, message.vec);
-console.log(sum);
-```
-
-```bash terminal icon="terminal"
-bun compile --aot-log-type-mismatches ./dot-checked.ts && ./dot-checked
-```
-
-```txt
-5000
-```
-
-No mismatch is logged. The object under `vec` is a `Vec` now, and the loop takes its fast path.
-
-### A type as data
-
-The checker evaluates `T`, and the front end sends the result with the call, as a small tree.
-
-```txt
-expectedresult x0 type=L1 layouts=[L0, L1] site=w6 validation=[
-  {shape=Object{layout=L1 members=[{key="vec" node=1 field=0}]} type=L1},
-  {shape=Object{layout=L0 members=[{key="x" node=2 field=0}, {key="y" node=2 field=1}]} type=L0 text="Vec"},
-  {shape=Primitive{primitive=Number} type=number}]
-```
-
-`variant ValidationShape` and `variant ValidationRule` in `aot/ir/schema/types.def` define the nodes: objects, arrays, tuples, dictionaries, unions, literals, and rules that a type can't express, such as a minimum or a pattern. Each object node names the layout to allocate and the field that each member goes to.
-
-### A parser per type
-
-`SelectTypedResults` replaces the call by a parser that's derived from that tree. It's written in the same IR as everything else, as a function with `role=ValidatingParser`, so the same passes optimize it and the same back end compiles it.
-
-```txt
-function f1506 role=ValidatingParser parameters=[{type=cursor}] results=[{type=int[0, 2]}, {type=undefined|L1}, {type=cursor}] {
-  b1():
-    v2: int[0, 255] @Int32 = JSONGetByte v0
-    v3: 123 @Int32 = Integer integer=123
-    v4: boolean @Boolean = StrictEq v2, v3 form=Integers
-    TestAndBranch v4 -> taken b2(), notTaken b37()
-  b2():
-    v5: cursor @RawWord = JSONSkipByte v0
-    v6: cursor @RawWord = JSONSkipWhitespace v5
-    v9: keyorder @RawWord = JSONObjectBegin layout=L1
-    v10: boolean @Boolean = JSONStartsWith v6 string="\"vec\":" [isLikely]
-    TestAndBranch v10 -> taken b3(| 0), notTaken b12()
-  b3(v11: guard @Void):
-    v12: cursor @RawWord = JSONAdvance v6, v11 string="\"vec\":"
-    v13: cursor @RawWord = JSONSkipWhitespace v12
-    v14: undefined @Void = CallDirect v13 function=f1507
-    ..
-```
-
-It reads the bytes of the text through a cursor that lives in a register. It expects `{`, then guesses that the next key is the first declared one and compares the text with `"vec":` in one step. Then it calls the parser for `Vec`, which returns three values in registers: a status, the object and the new cursor. No intermediate tree of boxed values is built, and on this path no property name is hashed or looked up.
-
-Keys in another order, undeclared keys, escapes in strings and anything else unusual leave for slower paths. The slowest one parses with the ordinary `JSON.parse` and then validates the result against the same tree.
-
-### From a prediction to a fact
-
-The result rule of the fast path is an allocation: `NewObject layout=L1`. So its type is proven the way that a literal's is. That's the whole trick. A validated value isn't trusted because it was checked. It's trusted because the program made it.
-
-Today, the slowest path can still hand back an object that doesn't have the layout of `T` for some valid texts. So one test stays behind the call, and the accesses behind it count as `tested`, not as `free`. The test passes for ordinary input, which is what the log above shows.
-
-These two calls do throw on a mismatch. That doesn't break the second promise of [Soundness](#soundness-facts-and-predictions). Nothing throws because of a type that you declared somewhere. It throws because you called a function whose job is to check.
 
 ## How it's tested
 
@@ -1774,7 +1890,7 @@ Fuzzers still find programs that it compiles wrong. Known failures are `todo`s i
 
 **No evaluation at build time and no heap snapshot.** None of your program runs during the build, except macros, which ask for it. A snapshot of an initialized heap would start faster. But it bakes in whatever the build machine's environment, clock, locale and file system said, and it's mutable data that every Worker would need a copy of. The compiler makes initialization cheap and lazy instead.
 
-**No moving collector.** Compaction and bump allocation in a nursery are attractive. But they need precise stack maps at every point where a collection can happen, in compiled code, in stubs and in all of Bun's native code, which holds raw pointers to cells. JavaScriptCore is non-moving on purpose, and the compiler takes the benefits: no maps, no reloads, interior pointers.
+**No moving collector.** Compaction and bump allocation in a nursery are attractive. But they need precise stack maps at every point where a collection can happen, in compiled code, in stubs and in all of Bun's native code, which holds raw pointers to cells. JavaScriptCore is non-moving on purpose, and the compiler takes the benefits: no maps and no reloads.
 
 **No new language.** There are no annotations, no pragmas, no restricted subset and no "strict mode for performance". `int32` is the one addition, and to TypeScript it's `number`. Whatever speeds up your program under `bun compile` is ordinary TypeScript that any other tool accepts.
 

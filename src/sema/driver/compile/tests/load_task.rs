@@ -2,10 +2,8 @@ use super::support::{
     HostScript, PROJECT, ScriptedHost, from_bun_check, project_disk, with_host, with_program,
 };
 use bstr::BString;
-use bun_sema::erasure::ErasureMismatchKind;
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::program::{FileId, FileRole, Files};
-use bun_sema::resolve::TypedVersionOrigin;
 
 fn file_at(files: &Files<'_>, path: &str) -> FileId {
     let absolute = format!("/project/{path}");
@@ -95,84 +93,37 @@ fn with_shapes_package(
             r#"{
                 "name": "shapes",
                 "version": "1.0.0",
-                "exports": { ".": { "full-types": "./index.sound.ts", "default": "./index.js" } }
+                "exports": { ".": { "aot": "./index.aot.ts", "default": "./index.js" } }
             }"#,
         ),
         ("node_modules/shapes/index.js", installed_text),
-        ("node_modules/shapes/index.sound.ts", typed_text),
+        ("node_modules/shapes/index.aot.ts", typed_text),
     ];
     with_program(&files, &["./main.ts"], 1, |program| {
         let files = program.files();
-        then(files, file_at(files, "node_modules/shapes/index.js"));
+        assert!(
+            files
+                .by_path
+                .get(b"/project/node_modules/shapes/index.js")
+                .is_none()
+        );
+        then(files, file_at(files, "node_modules/shapes/index.aot.ts"));
     });
 }
 
-fn assert_installed_file_is_compiled(files: &Files<'_>, shapes: FileId) {
-    assert_eq!(files.role(shapes), FileRole::Inferred);
-    assert!(files.hir(shapes).is_js);
-    assert!(!files.hir(shapes).is_typed_version);
-    assert_eq!(&*files.hir(shapes).text, INSTALLED_SHAPES.as_bytes());
-    assert!(files.diagnostic_path(shapes).ends_with(b"/shapes/index.js"));
-    let compiled = files.compiled(shapes).expect("a file with code");
-    assert_eq!(compiled.typed_source_path, None);
-}
-
 #[test]
-fn typed_version_by_condition() {
+fn file_under_the_aot_condition_is_compiled() {
     with_shapes_package(INSTALLED_SHAPES, TYPED_SHAPES, |files, shapes| {
         assert_eq!(files.role(shapes), FileRole::Checked);
         assert!(!files.hir(shapes).is_js);
-        assert!(files.hir(shapes).is_typed_version);
         assert_eq!(&*files.hir(shapes).text, TYPED_SHAPES.as_bytes());
-        assert!(
-            files
-                .module(shapes)
-                .file_name()
-                .ends_with(b"/shapes/index.js")
-        );
-        assert!(
-            files
-                .diagnostic_path(shapes)
-                .ends_with(b"/shapes/index.sound.ts")
-        );
         let compiled = files.compiled(shapes).expect("a file with code");
-        assert_eq!(compiled.rejected_typed_version, None);
-        assert_eq!(
-            compiled.typed_version_origin,
-            Some(TypedVersionOrigin::Package)
-        );
+        assert!(compiled.is_aot_source);
     });
 }
 
 #[test]
-fn typed_version_with_extra_statement_is_rejected() {
-    let typed_text = format!("{TYPED_SHAPES}area(1);\n");
-    with_shapes_package(INSTALLED_SHAPES, &typed_text, |files, shapes| {
-        assert_installed_file_is_compiled(files, shapes);
-        let compiled = files.compiled(shapes).expect("a file with code");
-        assert!(compiled.rejected_typed_version.is_some());
-    });
-}
-
-#[test]
-fn typed_version_with_syntax_error_is_rejected() {
-    let typed_text = "export function area(side: number): number {\n  return side * ;\n}\n";
-    with_shapes_package(INSTALLED_SHAPES, typed_text, |files, shapes| {
-        assert_installed_file_is_compiled(files, shapes);
-        let compiled = files.compiled(shapes).expect("a file with code");
-        let rejected = compiled.rejected_typed_version.expect("a rejected version");
-        assert_eq!(rejected.kind, ErasureMismatchKind::NodeKind);
-        assert!(rejected.path.ends_with(b"/shapes/index.sound.ts"));
-        assert_eq!(rejected.installed_range, (0, 0));
-        assert_eq!(
-            compiled.typed_version_origin,
-            Some(TypedVersionOrigin::Package)
-        );
-    });
-}
-
-#[test]
-fn typed_version_is_module() {
+fn file_under_the_aot_condition_is_module() {
     let installed_text = "var sides = 4;\n";
     let typed_text = "var sides: number = 4;\n";
     with_shapes_package(installed_text, typed_text, |files, shapes| {
@@ -232,37 +183,6 @@ fn source_text_is_stored() {
         let files = program.files();
         assert_eq!(&*files.hir(file_at(files, "main.ts")).text, text.as_bytes());
     });
-}
-
-#[test]
-fn typed_version_from_host() {
-    let files = [
-        ("main.js", r#"import "./shapes.js";"#),
-        ("shapes.js", INSTALLED_SHAPES),
-        ("shapes.sound.ts", TYPED_SHAPES),
-    ];
-    let disk = project_disk(&files, 1);
-    let script = HostScript {
-        typed_versions: &[("shapes.js", "shapes.sound.ts")],
-        ..HostScript::default()
-    };
-    with_host(
-        &ScriptedHost(&disk, script),
-        PROJECT,
-        "./main.js",
-        |program| {
-            let files = program.files();
-            let shapes = file_at(files, "shapes.js");
-            assert_eq!(files.role(shapes), FileRole::Checked);
-            assert_eq!(&*files.hir(shapes).text, TYPED_SHAPES.as_bytes());
-            assert!(files.diagnostic_path(shapes).ends_with(b"/shapes.sound.ts"));
-            let compiled = files.compiled(shapes).expect("a file with code");
-            assert_eq!(
-                compiled.typed_version_origin,
-                Some(TypedVersionOrigin::Host)
-            );
-        },
-    );
 }
 
 const TWO_MACRO_CALLS: &str = r#"import { m } from "./m.ts" with { type: "macro" };

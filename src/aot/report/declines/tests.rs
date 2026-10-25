@@ -395,14 +395,14 @@ fn reason_of_interpreted_node_is_cause() {
     let symbol_key = InterpretedCause::MemberKeyIsNotText.to_wire();
     assert_eq!(
         line(DeclineKind::ResultNodeInterpreted, symbol_key),
-        "missed: generic-validator at a.ts:3:5, the key of a member is a symbol"
+        "missed: generic-parser at a.ts:3:5, the key of a member is a symbol"
     );
     assert_eq!(
         line(
             DeclineKind::ResultNodeInterpreted,
             InterpretedCause::None.to_wire()
         ),
-        "missed: generic-validator at a.ts:3:5"
+        "missed: generic-parser at a.ts:3:5"
     );
     assert_eq!(
         line(DeclineKind::StretchNotGuarded, symbol_key),

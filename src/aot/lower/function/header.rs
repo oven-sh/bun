@@ -108,11 +108,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn compute_text_range(&self, function: FnId) -> SourceRange {
-        if let Some(installed) = self.compiled.installed_text {
-            let (start, end) =
-                (installed.functions.get(function.idx()).copied()).unwrap_or_default();
-            return SourceRange { start, end };
-        }
         let hir = self.hir;
         let end = match self.bound.fns[function.idx()].owner {
             FnOwner::Expr(expression) => hir[expression].end,

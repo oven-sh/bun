@@ -3,12 +3,11 @@ use super::projects::Projects;
 use super::*;
 use crate::file_analysis::FileAnalysis;
 use crate::fold::FoldInputs;
-use crate::import_sites::JsxMode;
+use crate::import_sites::{ExportedRequire, JsxMode};
 use crate::module_format::DeclaredModuleType;
 use crate::resolve::{
     CodeHost, CodeImportKind, CodeOptions, CodeResolution, DeclaredSideEffects, EnclosingPackage,
     HostPayload, JsxSettings, ProjectResolvers, SiteResolution, TranspileSettings,
-    TypedVersionOrigin,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -113,7 +112,6 @@ pub(super) struct LoadKey<'r> {
 pub(super) struct CodeTarget<'r> {
     pub(super) key: LoadKey<'r>,
     pub(super) host_module: Option<HostModuleId>,
-    pub(super) typed_path: Option<&'r [u8]>,
     pub(super) increases_depth: bool,
     pub(super) has_loader_attribute: bool,
 }
@@ -123,7 +121,6 @@ impl<'r> CodeTarget<'r> {
         CodeTarget {
             key: LoadKey { path, loader },
             host_module: None,
-            typed_path: None,
             increases_depth: false,
             has_loader_attribute: false,
         }
@@ -139,10 +136,7 @@ pub(super) struct Analyzed<'s, 'r> {
     pub(super) is_package_type_module: bool,
     pub(super) package: Option<EnclosingPackage<'r>>,
     pub(super) side_effects: DeclaredSideEffects<'r>,
-    pub(super) typed_source_path: Option<&'r [u8]>,
-    pub(super) installed_text: Option<InstalledText<'s>>,
-    pub(super) rejected_typed_version: Option<RejectedTypedVersion<'r>>,
-    pub(super) typed_version_origin: Option<TypedVersionOrigin>,
+    pub(super) is_aot_source: bool,
 }
 
 pub(super) struct LoadedCode<'s, 'r> {
@@ -153,6 +147,7 @@ pub(super) struct LoadedCode<'s, 'r> {
     pub(super) targets_by_specifier: FxHashMap<(Atom, CodeImportKind), u32>,
     pub(super) types_answers: Vec<(Atom, ResolutionMode, u32)>,
     pub(super) requests: ImportRequests,
+    pub(super) exported_requires: Vec<ExportedRequire>,
 }
 
 pub(super) struct ParsedCodeFile<'s, 'r> {

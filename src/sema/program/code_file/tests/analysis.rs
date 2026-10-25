@@ -265,7 +265,8 @@ fn binder_stack_overflow_replaces_tree_with_empty_tree() {
         with_context(&host, |context| {
             let target = CodeTarget::of_path(b"/p/deep.ts", HostLoader::default());
             let source = Cow::Owned(text.clone().into_bytes());
-            let parsed = load_code_file(context, context.session.arena(), target, source, false);
+            let parsed =
+                load_code_file(context, context.session.arena(), target, source, false, &[]);
             let hir = &parsed.parse.hir;
             assert!(hir.ran_out_of_stack && hir.has_errors && hir.has_parse_diagnostics);
             assert!(hir.body.is_empty());

@@ -1,5 +1,5 @@
 use super::*;
-use crate::atom::{Interner, known};
+use crate::atom::Interner;
 use crate::fold::{Constant, Define};
 use crate::hir_from_data::DataValue;
 use crate::session::Session;
@@ -59,14 +59,6 @@ impl<'s> Workspace<'s> {
     fn feature_inputs(&self, flag: Atom) -> FoldInputs<'s> {
         let options = FoldOptions {
             features: slice_in(&[flag], self.arena),
-            ..FoldOptions::default()
-        };
-        FoldInputs::new(options, self.arena)
-    }
-
-    fn compiler_function_inputs(&self, names: &[Atom]) -> FoldInputs<'s> {
-        let options = FoldOptions {
-            compiler_functions: slice_in(names, self.arena),
             ..FoldOptions::default()
         };
         FoldInputs::new(options, self.arena)
@@ -278,7 +270,6 @@ fn features_and_switches_pass_through() {
     assert!(inputs.is_empty());
     assert!(inputs.has_feature(workspace.atom("ON")));
     assert!(!inputs.has_feature(workspace.atom("OFF")));
-    assert!(!inputs.is_compiler_function(workspace.atom("ON")));
     assert!(!inputs.preserves_unused_imports());
     let options = FoldOptions {
         preserves_unused_imports: true,
@@ -287,12 +278,6 @@ fn features_and_switches_pass_through() {
     let inputs = FoldInputs::new(options, workspace.arena);
     assert!(!inputs.has_feature(workspace.atom("ON")));
     assert!(inputs.preserves_unused_imports());
-    let validate = workspace.atom("validate");
-    let inputs = workspace.compiler_function_inputs(&[validate]);
-    assert!(inputs.is_empty());
-    assert!(inputs.is_compiler_function(validate));
-    assert!(!inputs.is_compiler_function(known::feature));
-    assert!(!inputs.has_feature(validate));
 }
 
 #[test]

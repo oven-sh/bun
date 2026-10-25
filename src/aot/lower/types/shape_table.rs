@@ -1,6 +1,6 @@
 use bun_sema::check::aot::{
     BuiltinShape, BuiltinTypeClass, Denotation, KeptFact, MemberName, ObjectOrigin, PrimitiveKinds,
-    SchemaConstraint, ShapeKind, TupleElement, TupleElementKind,
+    ShapeKind, TupleElement, TupleElementKind,
 };
 use rustc_hash::FxHashSet;
 use smallvec::{SmallVec, smallvec};
@@ -108,12 +108,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
             }
             ShapeKind::Union(members) => self.map_union(members, children),
-            ShapeKind::Constrained { base, constraints } => {
-                match constraints.contains(&SchemaConstraint::Int32) {
-                    true => Mapped::checked(TypeTable::INT32),
-                    false => self.map_child(children, EdgeKind::Transparent, base),
-                }
-            }
+            ShapeKind::Int32 { .. } => Mapped::checked(TypeTable::INT32),
         };
         if !shape.trust.is_trusted() {
             mapped = Mapped::expected(mapped.ty);
@@ -358,7 +353,7 @@ impl FileLowering<'_, '_, '_, '_> {
             | ShapeKind::Tuple { .. }
             | ShapeKind::Builtin { .. }
             | ShapeKind::Union(_)
-            | ShapeKind::Constrained { .. } => true,
+            | ShapeKind::Int32 { .. } => true,
         }
     }
 
@@ -456,9 +451,7 @@ pub(super) fn lists_int32(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTy
         return false;
     };
     match shape.kind {
-        ShapeKind::Constrained { base, constraints } => {
-            constraints.contains(&SchemaConstraint::Int32) || lists_int32(file, base)
-        }
+        ShapeKind::Int32 { .. } => true,
         // `int32 | number` holds every number: there is nothing to prove.
         ShapeKind::Union(members) => {
             members.iter().any(|&member| lists_int32(file, member))

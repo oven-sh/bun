@@ -13,7 +13,6 @@ pub mod jsx;
 pub mod offline_mode;
 pub mod schema;
 pub mod trim;
-pub mod validation_plans;
 
 pub use error::{Error, Result};
 

@@ -210,10 +210,7 @@ mod tests {
         assert_eq!(options.entry_points, byte_strings(&["a.ts"]));
         assert_eq!(options.code.working_directory, b"/project");
         assert_eq!(options.code.conditions, defaults.conditions);
-        assert_eq!(
-            options.code.typed_condition.as_deref(),
-            Some(&b"full-types"[..])
-        );
+        assert!(options.code.conditions.contains(&b"aot".to_vec()));
         assert!(!options.code.preserves_symlinks);
         assert!(options.code.node_paths.is_empty());
         assert!(options.code.tsconfig_override.is_none());
@@ -237,7 +234,8 @@ mod tests {
         build.omits_builtin_modules = true;
         let options = build.options();
         assert_eq!(options.code.conditions.last().unwrap(), b"worker");
-        assert_eq!(options.code.custom_conditions, byte_strings(&["worker"]));
+        let custom_conditions = byte_strings(&["aot", "worker"]);
+        assert_eq!(options.code.custom_conditions, custom_conditions);
         assert!(options.code.preserves_symlinks);
         assert_eq!(
             options.code.tsconfig_override.as_deref(),

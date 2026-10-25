@@ -11,7 +11,6 @@ const LINK: &[u8] = b"/linked/";
 const LINK_TARGET: &[u8] = b"/real/";
 const ES2015_CONFIG: &str = "{ compilerOptions: { target: \"es2015\" } }";
 const INSTALLED: &str = "/node_modules/pkg/index.js";
-const TYPED: &str = "/sound/pkg/index.ts";
 const REFERENCED_SOURCE: &str = "/referenced/a.ts";
 
 const PROJECTS: &[(&str, &str)] = &[
@@ -27,8 +26,6 @@ const PROJECTS: &[(&str, &str)] = &[
     ("/packages/lib/util.js", ""),
     ("/packages/lib/types.d.ts", ""),
     (INSTALLED, "a"),
-    ("/sound/tsconfig.json", ES2015_CONFIG),
-    (TYPED, "a"),
     ("/node_modules/dep/index.js", ""),
     ("/referenced/tsconfig.json", ES2015_CONFIG),
     (REFERENCED_SOURCE, ""),
@@ -164,10 +161,7 @@ fn options_with_referenced_project() -> Options {
 }
 
 fn with_projects<R>(test: impl FnOnce(&CodeLoadContext<'_, '_, '_>) -> R) -> R {
-    let host = StatementsHost {
-        typed_versions: &[(INSTALLED, TYPED)],
-        ..host_of(PROJECTS)
-    };
+    let host = host_of(PROJECTS);
     let build = TestBuild {
         options: options_with_referenced_project(),
         ..TestBuild::new(&host, &["/main.ts"])
@@ -183,7 +177,7 @@ fn load<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> ParsedCode
     let path = context.resolver.keep(path.as_bytes());
     let target = CodeTarget::of_path(path, HostLoader::default());
     let text = context.host.read_source(path);
-    load_code_file(context, context.session.arena(), target, text, false)
+    load_code_file(context, context.session.arena(), target, text, false, &[])
 }
 
 fn load_types<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> Box<Loaded<'s, 'r>> {
@@ -262,18 +256,6 @@ fn link_and_target_are_same_file() {
 }
 
 #[test]
-fn typed_version_is_same_file() {
-    let typed = CodeTarget {
-        typed_path: Some(b"/real/typed/x.ts"),
-        ..target_of(b"/real/x.js")
-    };
-    assert!(is_same_file(&CASE_SENSITIVE, b"/linked/x.js", &typed));
-    assert!(is_same_file(&CASE_SENSITIVE, b"/real/typed/x.ts", &typed));
-    assert!(is_same_file(&CASE_SENSITIVE, b"/linked/typed/x.ts", &typed));
-    assert!(!is_same_file(&CASE_SENSITIVE, b"/real/typed/y.ts", &typed));
-}
-
-#[test]
 fn case_counts_on_case_sensitive_file_system() {
     let real = target_of(b"/real/x.ts");
     assert!(!is_same_file(&CASE_SENSITIVE, b"/linked/X.ts", &real));
@@ -283,37 +265,24 @@ fn case_counts_on_case_sensitive_file_system() {
 
 #[test]
 fn other_loader_is_never_same_file() {
-    let as_text = CodeTarget {
-        typed_path: Some(b"/real/typed/x.ts"),
-        ..CodeTarget::of_path(b"/real/x.ts", TEXT_LOADER)
-    };
+    let as_text = CodeTarget::of_path(b"/real/x.ts", TEXT_LOADER);
     assert!(!is_same_file(&CASE_SENSITIVE, b"/real/x.ts", &as_text));
     assert!(!is_same_file(&CASE_SENSITIVE, b"/linked/x.ts", &as_text));
-    assert!(!is_same_file(
-        &CASE_SENSITIVE,
-        b"/real/typed/x.ts",
-        &as_text
-    ));
 }
 
 #[test]
 fn program_path_is_path_of_running_file() {
-    let host = StatementsHost {
-        typed_versions: &[("/real/lib.js", "/real/lib.ts")],
-        ..host_of(&[
-            ("/real/a.ts", "import \"./lib.js\"\nimport \"./x\""),
-            ("/real/lib.js", ""),
-            ("/real/lib.ts", ""),
-            ("/real/x.ts", ""),
-        ])
-    };
+    let host = host_of(&[
+        ("/real/a.ts", "import \"./lib.js\"\nimport \"./x\""),
+        ("/real/lib.js", ""),
+        ("/real/x.ts", ""),
+    ]);
     with_context(&host, |context| {
         let code = load(context, "/real/a.ts").code;
         let program_path = |specifier: &[u8], found: &'static [u8]| {
             let key = (context.atoms.intern(specifier), ResolutionMode::None);
             code.program_path(&CASE_SENSITIVE, key, found)
         };
-        assert_eq!(program_path(b"./lib.js", b"/real/lib.ts"), b"/real/lib.js");
         assert_eq!(
             program_path(b"./lib.js", b"/linked/lib.js"),
             b"/real/lib.js"
@@ -479,36 +448,6 @@ fn referenced_project_answers_for_own_source() {
 }
 
 #[test]
-fn typed_version_asks_from_own_path() {
-    with_projects(|context| {
-        let parsed = load(context, INSTALLED);
-        assert_eq!(
-            parsed.code.analyzed.typed_source_path,
-            Some(TYPED.as_bytes())
-        );
-        let role = FileRole::of_tree(&parsed.parse.hir);
-        assert_eq!(role, FileRole::Checked);
-
-        let installed = INSTALLED.as_bytes();
-        let current = program_question(context, installed);
-        let question = context.types_question(role, installed, Some(&*parsed.code), current);
-        assert_eq!(question.from, TYPED.as_bytes());
-        let project = question
-            .project
-            .expect("the full types have a configuration file");
-        assert_eq!(project.target, ScriptTarget::ES2015);
-        assert!(std::ptr::eq(question.resolver.options(), project));
-
-        let without_typed_version = ask(context, FileRole::Inferred, INSTALLED);
-        assert_eq!(without_typed_version.from, installed);
-        let lenient = without_typed_version
-            .project
-            .expect("the file is in a package");
-        assert_eq!(lenient.target, ScriptTarget::None);
-    });
-}
-
-#[test]
 fn module_resolver_agrees_with_types_question() {
     with_projects(|context| {
         let mut resolvers = Vec::new();
@@ -527,7 +466,7 @@ fn module_resolver_agrees_with_types_question() {
         let expected = [
             module_resolver("/packages/lib/util.js", false, "/packages/lib/util.js"),
             module_resolver("/packages/lib/index.ts", false, "/packages/lib/index.ts"),
-            module_resolver(INSTALLED, false, TYPED),
+            module_resolver(INSTALLED, false, INSTALLED),
             module_resolver(
                 "/node_modules/dep/index.js",
                 false,

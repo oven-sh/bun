@@ -44,12 +44,7 @@ const CONFIGURATION_FILE: &str = "tsconfig.json";
 pub(super) const BUNDLED_LIBS: Libs<'static> = Libs::Bundled(bun_sema_standalone::TYPESCRIPT_LIBS);
 
 #[cfg(test)]
-pub(crate) const TYPED_PACKAGE_JSON: &str =
-    r#"{"name":"p","version":"1.0.0","type":"module","main":"x.js"}"#;
-
-#[cfg(test)]
-pub(crate) const TYPED_PACKAGE_SOUND_JSON: &str =
-    r#"{"format":2,"name":"p","version":"1.0.0","when":{},"lay":{"x.js":""},"needs":[]}"#;
+pub(crate) const TYPED_PACKAGE_JSON: &str = r#"{"name":"p","version":"1.0.0","type":"module","exports":{"aot":"./x.aot.ts","default":"./x.js"}}"#;
 
 pub fn lower_program_with_libs(
     files: &[(&str, &str)],
@@ -267,21 +262,6 @@ fn with_loaded_project<R>(
 }
 
 #[cfg(test)]
-pub(crate) fn describe_load(files: &[(&str, &str)]) -> String {
-    let project = TestProject::new(files, &default_settings());
-    let options = project.options(BUNDLED_LIBS);
-    let caches = ThreadCaches::default();
-    let mut build = Build::new(&options, &WithoutServices, &caches, project.limits.clone());
-    let result = build.with_loaded_projects(|_, _| Ok(()));
-    let mut log = Log::init();
-    let outcome = match build.finish(result, &mut log) {
-        Ok(_) => "loaded",
-        Err(failed) => failed.stage.name(),
-    };
-    format!("{outcome}: {}", describe_messages(&log))
-}
-
-#[cfg(test)]
 pub(crate) fn with_project_view<R>(
     files: &[(&str, &str)],
     then: impl FnOnce(ProgramView<'_, '_>) -> R,
@@ -485,8 +465,7 @@ impl TemporaryDirectory {
     pub(crate) fn write_typed_package(&self, installed: &str, typed: &str) {
         self.write("node_modules/p/package.json", TYPED_PACKAGE_JSON);
         self.write("node_modules/p/x.js", installed);
-        self.write(".full-types/p/full-types.json", TYPED_PACKAGE_SOUND_JSON);
-        self.write(".full-types/p/lay/x.js", typed);
+        self.write("node_modules/p/x.aot.ts", typed);
     }
 }
 

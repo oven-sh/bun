@@ -1,25 +1,14 @@
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView, Span};
-use crate::load::typed_packages::{CompilerOptionsFault, TypedPackages};
+use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView};
 use bun_sema::check::aot::{Effect, FileOrigin};
-use bun_sema::erasure::ErasureMismatchKind;
-use bun_sema::messages;
-use bun_sema::program::{FileId, Files, RejectedTypedVersion};
-use bun_sema::resolve::EnclosingPackage;
+use bun_sema::program::{FileId, Files};
 use bun_sema_driver::host::to_native;
-use bun_sema_driver::{self as driver, BuildDiagnostic, DemotionCause, RoleDecision};
+use bun_sema_driver::{self as driver, BuildDiagnostic, RoleDecision};
+use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Copy, Clone)]
-pub(crate) struct PackageView<'a, 's> {
-    pub view: ProgramView<'a, 's>,
-    pub packages: &'a TypedPackages<'a>,
-}
-
-pub(crate) struct PackageErrors<'s> {
+pub(crate) struct PackageErrors {
     pub remaining: Vec<BuildDiagnostic>,
-    pub demoted_directories: BTreeSet<&'s [u8]>,
     pub has_withdrawn_trust: bool,
 }
 
@@ -27,7 +16,6 @@ pub(crate) struct PackageErrors<'s> {
 enum GroupKey<'s> {
     DemotedPackage { name: &'s [u8], directory: &'s [u8] },
     DemotedFile { path: &'s [u8] },
-    TypedVersion { name: &'s [u8], directory: Vec<u8> },
 }
 
 struct Group {
@@ -41,143 +29,20 @@ struct PackageFileCounts {
     compiled: u32,
 }
 
-/// Returns a folder for each package whose full types, in the project or installed, are not used at all.
-pub(crate) fn report_rejected_versions(
+pub(crate) fn report_package_errors(
     diagnostics: &mut Diagnostics,
-    packages: PackageView<'_, '_>,
-    defined: &dyn Fn(&[u8]) -> Option<Vec<u8>>,
-) -> BTreeSet<Vec<u8>> {
-    let files = packages.view.files();
-    report_unread_folders(diagnostics, packages);
-    let mismatched_directories = report_manifest_mismatches(diagnostics, packages, defined);
-    let never_loaded = report_packages_never_loaded(diagnostics, packages);
-    let mut said_of_packages = BTreeSet::new();
-    for &file in files.compiled_files() {
-        let Some(compiled) = files.compiled(file) else {
-            continue;
-        };
-        let Some(rejected) = compiled.rejected_typed_version else {
-            continue;
-        };
-        let directory = compiled.package.map(|package| package.directory);
-        if directory.is_some_and(|directory| mismatched_directories.contains(directory)) {
-            continue;
-        }
-        if rejected.kind.is_fault_of_manifest()
-            && !said_of_packages.insert((directory, rejected.kind as u8))
-        {
-            continue;
-        }
-        let warning = rejected_version_diagnostic(packages, file, compiled.package, rejected);
-        diagnostics.add(Some(packages.view), warning);
-    }
-    report_unread_compiler_options(diagnostics, packages);
-    let mismatched_directories = mismatched_directories.into_iter().map(<[u8]>::to_vec);
-    mismatched_directories.chain(never_loaded).collect()
-}
-
-fn report_unread_folders(diagnostics: &mut Diagnostics, packages: PackageView<'_, '_>) {
-    let files = packages.view.files();
-    let entry_points = files.entry_points().iter();
-    let entry_points = entry_points.map(|&file| files.module(file).file_name());
-    for folder in packages.packages.unread_folders(entry_points) {
-        let warning = Diagnostic::new(
-            Code::FullTypesFolderNotRead,
-            None,
-            &[&printable(&folder.directory), &printable(&folder.reason)],
-        );
-        diagnostics.add(None, warning);
-    }
-}
-
-fn report_unread_compiler_options(diagnostics: &mut Diagnostics, packages: PackageView<'_, '_>) {
-    let files = packages.view.files();
-    let mut said = BTreeSet::new();
-    let mut asked = BTreeSet::new();
-    for &file in files.compiled_files() {
-        let Some(compiled) = files.compiled(file) else {
-            continue;
-        };
-        let (Some(typed), Some(package)) = (compiled.typed_source_path, compiled.package) else {
-            continue;
-        };
-        if !asked.insert(packages.packages.display_directory(typed)) {
-            continue;
-        }
-        if let Some((path, fault)) = packages.packages.find_fault_in_compiler_options(typed)
-            && said.insert(path.clone())
-        {
-            let (path, name) = (printable(&path), printable(package.name));
-            diagnostics.add(
-                None,
-                match fault {
-                    CompilerOptionsFault::NotRead(member) => Diagnostic::new(
-                        Code::CompilerOptionsNotRead,
-                        None,
-                        &[&printable(&member), &path, &name],
-                    ),
-                    CompilerOptionsFault::Invalid(error) => Diagnostic::new(
-                        Code::CompilerOptionsInvalid,
-                        None,
-                        &[&path, &name, &printable(&error)],
-                    ),
-                },
-            );
-        }
-    }
-}
-
-/// A file under `// @ts-nocheck` is compiled without its types, and no type error says so.
-pub(crate) fn report_unchecked_versions(
-    diagnostics: &mut Diagnostics,
-    packages: PackageView<'_, '_>,
-    roles: &RoleDecision,
-) {
-    let files = packages.view.files();
-    for demotion in &roles.demoted {
-        let typed = files
-            .compiled(demotion.file)
-            .and_then(|it| it.typed_source_path);
-        let (Some(typed), DemotionCause::UnverifiedTypes) = (typed, demotion.cause) else {
-            continue;
-        };
-        let path = files.module(demotion.file).file_name();
-        let package = files.compiled(demotion.file).and_then(|it| it.package);
-        let code = match packages.packages.is_project_version(typed) {
-            true => Code::TypedPackageNotUsed,
-            false => Code::ShippedTypedVersionNotUsed,
-        };
-        let sentence = format_sentence(
-            "{0} has a // @ts-nocheck comment, so nothing checks its types. Remove the comment",
-            &[packages.packages.display_relative_path(typed)],
-        );
-        let warning = Diagnostic::new(
-            code,
-            None,
-            &[
-                &printable(package_name(package, path)),
-                &printable(&packages.packages.display_directory(typed)),
-                &printable(&sentence),
-            ],
-        );
-        diagnostics.add(None, warning);
-    }
-}
-
-pub(crate) fn report_package_errors<'s>(
-    diagnostics: &mut Diagnostics,
-    packages: PackageView<'_, 's>,
+    view: ProgramView<'_, '_>,
     checked: Vec<BuildDiagnostic>,
     roles: &RoleDecision,
-) -> PackageErrors<'s> {
-    let files = packages.view.files();
-    let mut groups: BTreeMap<GroupKey<'s>, Group> = BTreeMap::new();
+) -> PackageErrors {
+    let files = view.files();
+    let mut groups: BTreeMap<GroupKey<'_>, Group> = BTreeMap::new();
     let mut remaining = Vec::with_capacity(checked.len());
     for reported in checked {
-        if withdraws_trust_in_runtime_file(packages, &reported) {
+        if withdraws_trust_in_runtime_file(view, &reported) {
             continue;
         }
-        let Some(key) = group_key(packages, &reported) else {
+        let Some(key) = group_key(files, &reported) else {
             remaining.push(reported);
             continue;
         };
@@ -192,90 +57,14 @@ pub(crate) fn report_package_errors<'s>(
         }
     }
     let counts = count_package_files(files, roles, &groups);
-    let demoted_directories = groups
-        .keys()
-        .filter_map(demoted_package_directory)
-        .chain(demoted_files(roles).filter_map(|file| package_directory(files, file)))
-        .collect();
     let has_withdrawn_trust = !groups.is_empty();
     for (key, group) in groups {
         diagnostics.add_with_checker_note(group_diagnostic(&key, &group, &counts), group.first);
     }
     PackageErrors {
         remaining,
-        demoted_directories,
         has_withdrawn_trust,
     }
-}
-
-pub(crate) fn report_used_versions(
-    diagnostics: &mut Diagnostics,
-    packages: PackageView<'_, '_>,
-    demoted_directories: &BTreeSet<&[u8]>,
-    refused_at_load: &BTreeSet<Vec<u8>>,
-) {
-    let files = packages.view.files();
-    let mut typed_files = Vec::new();
-    let mut rejected_directories = BTreeSet::new();
-    for &file in files.compiled_files() {
-        let Some(compiled) = files.compiled(file) else {
-            continue;
-        };
-        let Some(package) = compiled.package else {
-            continue;
-        };
-        if let Some(typed) = compiled.typed_source_path {
-            typed_files.push((package, packages.packages.display_directory(typed)));
-        }
-        if compiled.rejected_typed_version.is_some() {
-            rejected_directories.insert(package.directory);
-        }
-    }
-    let is_partly_untyped = |directory: &[u8]| {
-        demoted_directories.contains(directory) || rejected_directories.contains(directory)
-    };
-    let directories_with_full_types: BTreeSet<&[u8]> = (typed_files.iter())
-        .map(|(package, _)| package.directory)
-        .chain(rejected_directories.iter().copied())
-        .chain(refused_at_load.iter().map(Vec::as_slice))
-        .collect();
-    let used_directories: BTreeSet<&[u8]> = (typed_files.iter())
-        .map(|(package, _)| package.directory)
-        .filter(|directory| !is_partly_untyped(directory))
-        .collect();
-    let used_versions: BTreeSet<(&[u8], &[u8], Vec<u8>)> = typed_files
-        .into_iter()
-        .filter(|(package, _)| !is_partly_untyped(package.directory))
-        .map(|(package, directory)| (package.name, package.version, directory))
-        .collect();
-    for (name, version, directory) in used_versions {
-        let used = Diagnostic::new(
-            Code::TypedPackageUsed,
-            None,
-            &[
-                &printable(name),
-                &printable(version),
-                &printable(&directory),
-            ],
-        );
-        diagnostics.add(None, used);
-    }
-    let summary = match directories_with_full_types.len() {
-        0 => return,
-        1 => "1 package has".to_owned(),
-        count => format!("{count} packages have"),
-    };
-    let used = match used_directories.len() {
-        0 => "none are".to_owned(),
-        1 => "1 is".to_owned(),
-        count => format!("{count} are"),
-    };
-    let summary = Diagnostic::new(
-        Code::FullTypesSummary,
-        None,
-        &[summary.as_bytes(), used.as_bytes()],
-    );
-    diagnostics.add(None, summary);
 }
 
 fn printable(text: &[u8]) -> Vec<u8> {
@@ -287,201 +76,33 @@ fn printable(text: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-fn format_sentence(template: &str, arguments: &[&[u8]]) -> Vec<u8> {
-    let mut sentence = Vec::new();
-    messages::format(&mut sentence, template, arguments);
-    sentence
-}
-
-fn report_manifest_mismatches<'s>(
-    diagnostics: &mut Diagnostics,
-    packages: PackageView<'_, 's>,
-    defined: &dyn Fn(&[u8]) -> Option<Vec<u8>>,
-) -> BTreeSet<&'s [u8]> {
-    let files = packages.view.files();
-    let compiled_files = files.compiled_files().iter();
-    let installed_packages: BTreeMap<&'s [u8], EnclosingPackage<'s>> = compiled_files
-        .filter_map(|&file| files.compiled(file)?.package)
-        .map(|package| (package.directory, package))
-        .collect();
-    let mut mismatched_directories = BTreeSet::new();
-    for (directory, package) in installed_packages {
-        let Some(sentence) = packages.packages.find_manifest_mismatch(package, defined) else {
-            continue;
-        };
-        diagnostics.add(
-            None,
-            unused_package_diagnostic(packages, package.name, &sentence),
-        );
-        mismatched_directories.insert(directory);
-    }
-    mismatched_directories
-}
-
-fn unused_package_diagnostic(
-    packages: PackageView<'_, '_>,
-    name: &[u8],
-    sentence: &[u8],
-) -> Diagnostic {
-    Diagnostic::new(
-        Code::TypedPackageNotUsed,
-        None,
-        &[
-            &printable(name),
-            &printable(&packages.packages.display_directory_of_package(name)),
-            &printable(sentence),
-        ],
-    )
-}
-
-/// Returns the folders of their full types.
-fn report_packages_never_loaded(
-    diagnostics: &mut Diagnostics,
-    packages: PackageView<'_, '_>,
-) -> Vec<Vec<u8>> {
-    let files = packages.view.files();
-    let loaded_names: BTreeSet<&[u8]> = (files.compiled_files().iter())
-        .filter_map(|&file| Some(files.compiled(file)?.package?.name))
-        .collect();
-    let never_loaded = packages.packages.find_packages_never_loaded(&loaded_names);
-    for &name in &never_loaded {
-        let mut names = loaded_names.iter();
-        let sentence = match names.find(|loaded| loaded.eq_ignore_ascii_case(name)) {
-            Some(loaded) => format_sentence(
-                "the program imports \"{0}\", spelled differently. Rename the folder",
-                &[loaded],
-            ),
-            None => format_sentence(
-                "the program doesn't import \"{0}\". Check the name of the folder, or remove it",
-                &[name],
-            ),
-        };
-        diagnostics.add(None, unused_package_diagnostic(packages, name, &sentence));
-    }
-    let folder_of = |name| packages.packages.display_directory_of_package(name);
-    never_loaded.into_iter().map(folder_of).collect()
-}
-
-fn rejected_version_diagnostic(
-    packages: PackageView<'_, '_>,
-    file: FileId,
-    package: Option<EnclosingPackage<'_>>,
-    rejected: RejectedTypedVersion<'_>,
-) -> Diagnostic {
-    let path = packages.view.files().module(file).file_name();
-    let installed = match package {
-        Some(package) => package.relative_path(path),
-        None => to_native(path),
-    };
-    let typed = packages.packages.display_relative_path(rejected.path);
-    let (start, end) = rejected.installed_range;
-    let code = match packages.packages.is_project_version(rejected.path) {
-        true => Code::TypedPackageNotUsed,
-        false => Code::ShippedTypedVersionNotUsed,
-    };
-    Diagnostic::new(
-        code,
-        Some(Span { file, start, end }),
-        &[
-            &printable(package_name(package, path)),
-            &printable(&packages.packages.display_directory(rejected.path)),
-            &printable(&erasure_mismatch_sentence(rejected.kind, typed, installed)),
-        ],
-    )
-}
-
-fn erasure_mismatch_sentence(kind: ErasureMismatchKind, typed: &[u8], installed: &[u8]) -> Vec<u8> {
-    match kind {
-        ErasureMismatchKind::EmitsCode => format_sentence(
-            "in {0}, TypeScript syntax that emits code can't be erased",
-            &[typed],
-        ),
-        ErasureMismatchKind::Missing => format_sentence("{0} is missing", &[typed]),
-        ErasureMismatchKind::NotExported => format_sentence(
-            "{0} is beside {1}, but no \"full-types\" condition in the \"exports\" of package.json \
-             points at it",
-            &[typed, installed],
-        ),
-        ErasureMismatchKind::NotReached => format_sentence(
-            "in the \"exports\" of package.json, the \"full-types\" condition that points at {0} \
-             comes after a condition that already matches. \
-             Put it before \"import\", \"require\" and \"default\"",
-            &[typed],
-        ),
-        ErasureMismatchKind::Misspelled => format_sentence(
-            "the \"exports\" of package.json point at {0} under a condition that isn't spelled \
-             \"full-types\"",
-            &[typed],
-        ),
-        ErasureMismatchKind::DeclarationFile => format_sentence(
-            "{0} is a declaration file. A full-types file is {1} with types added",
-            &[typed, installed],
-        ),
-        ErasureMismatchKind::OutsideExports => format_sentence(
-            "package.json points at {0} in a \"full-types\" field at the top level. \
-             It has to be a condition in \"exports\"",
-            &[typed],
-        ),
-        _ => format_sentence(
-            "{0} without its types doesn't match {1}. Was the package patched?",
-            &[typed, installed],
-        ),
-    }
-}
-
-fn package_name<'p>(package: Option<EnclosingPackage<'p>>, path: &'p [u8]) -> &'p [u8] {
-    match package {
-        Some(package) => package.name,
-        None => to_native(path),
-    }
-}
-
-fn withdraws_trust_in_runtime_file(
-    packages: PackageView<'_, '_>,
-    reported: &BuildDiagnostic,
-) -> bool {
-    let is_runtime_file = |file| packages.view.origin(file) == FileOrigin::Runtime;
+fn withdraws_trust_in_runtime_file(view: ProgramView<'_, '_>, reported: &BuildDiagnostic) -> bool {
+    let is_runtime_file = |file| view.origin(file) == FileOrigin::Runtime;
     let file = reported.diagnostic.file;
     reported.effect == Effect::WithdrawsTrust && file.is_some_and(is_runtime_file)
 }
 
-fn group_key<'s>(
-    packages: PackageView<'_, 's>,
-    reported: &BuildDiagnostic,
-) -> Option<GroupKey<'s>> {
-    let file = reported.diagnostic.file?;
-    let files = packages.view.files();
-    let path = files.module(file).file_name();
-    let compiled = files.compiled(file);
-    let package = compiled.and_then(|compiled| compiled.package);
-    match reported.effect {
-        Effect::WithdrawsTrust => Some(match package {
-            Some(package) => GroupKey::DemotedPackage {
-                name: package.name,
-                directory: package.directory,
-            },
-            None => GroupKey::DemotedFile {
-                path: to_native(path),
-            },
-        }),
-        Effect::StopsBuild => {
-            if packages.view.origin(file) != FileOrigin::ProjectTypedVersion {
-                return None;
-            }
-            let typed = compiled?.typed_source_path?;
-            Some(GroupKey::TypedVersion {
-                name: package_name(package, path),
-                directory: packages.packages.display_directory(typed),
-            })
-        }
-        Effect::Warns | Effect::Dropped | Effect::InternalError => None,
+fn group_key<'s>(files: &Files<'s>, reported: &BuildDiagnostic) -> Option<GroupKey<'s>> {
+    if reported.effect != Effect::WithdrawsTrust {
+        return None;
     }
+    let file = reported.diagnostic.file?;
+    let package = files.compiled(file).and_then(|compiled| compiled.package);
+    Some(match package {
+        Some(package) => GroupKey::DemotedPackage {
+            name: package.name,
+            directory: package.directory,
+        },
+        None => GroupKey::DemotedFile {
+            path: to_native(files.module(file).file_name()),
+        },
+    })
 }
 
 fn demoted_package_directory<'s>(key: &GroupKey<'s>) -> Option<&'s [u8]> {
     match *key {
         GroupKey::DemotedPackage { directory, .. } => Some(directory),
-        GroupKey::DemotedFile { .. } | GroupKey::TypedVersion { .. } => None,
+        GroupKey::DemotedFile { .. } => None,
     }
 }
 
@@ -545,16 +166,6 @@ fn group_diagnostic(
             Code::FileCompiledWithoutTypes,
             None,
             &[path, &error_count_text(group.count), &position],
-        ),
-        GroupKey::TypedVersion { name, directory } => Diagnostic::new(
-            Code::TypedVersionHasTypeErrors,
-            None,
-            &[
-                &printable(name),
-                &printable(directory),
-                group.count.to_string().as_bytes(),
-                &position,
-            ],
         ),
     }
 }

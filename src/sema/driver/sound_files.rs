@@ -8,15 +8,13 @@ use bun_sema::check::services::{
 };
 use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
 use bun_sema::config::find_config_of_package;
-use bun_sema::erasure::{Erasure, ErasureMismatchKind, check_erasure};
 use bun_sema::hir::*;
 use bun_sema::json::Json;
-use bun_sema::program::{FileId, byte_range_of_node};
+use bun_sema::program::FileId;
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 use bun_sema::types::TypeId;
 use bun_sema::util::{FxHashMap, FxHashSet};
-use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
 struct Source<'a> {
     path: &'a [u8],
@@ -4008,7 +4006,25 @@ impl<'a> Transfer<'_, 'a, '_> {
     }
 }
 
-pub use bun_sema::resolve::{javascript_path_beside, typed_path_beside};
+const TYPED_EXTENSIONS: [(&[u8], &[u8]); 3] = [
+    (b".js", b".aot.ts"),
+    (b".mjs", b".aot.mts"),
+    (b".cjs", b".aot.cts"),
+];
+
+/// `index.aot.ts` for `index.js`.
+pub fn typed_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
+    TYPED_EXTENSIONS
+        .iter()
+        .find_map(|(from, to)| Some([javascript.strip_suffix(*from)?, *to].concat()))
+}
+
+/// `index.js` for `index.aot.ts`.
+pub fn javascript_path_beside(typed: &[u8]) -> Option<Vec<u8>> {
+    TYPED_EXTENSIONS
+        .iter()
+        .find_map(|(to, from)| Some([typed.strip_suffix(*from)?, *to].concat()))
+}
 
 fn ancestors(path: &[u8]) -> impl Iterator<Item = &[u8]> {
     std::iter::successors(Some(path), |path| {
@@ -4533,55 +4549,48 @@ fn typed_outputs(
             .ok_or_else(|| format!("{shown} is not named .js, .mjs or .cjs"))?;
         found.push((typed_path, typed));
     }
+    for (typed_path, typed) in &mut found {
+        typed.text = import_typed_outputs(typed_path, &typed.text, outputs)?;
+    }
     Ok(found)
 }
 
-pub fn why_programs_refuse(
-    (typed_path, typed): (&[u8], &[u8]),
-    (javascript_path, javascript): (&[u8], &[u8]),
-) -> Option<String> {
+/// Rewrites `./chunk.js` to `./chunk.aot.ts` where `chunk.js` is one of `outputs`.
+fn import_typed_outputs(
+    typed_path: &[u8],
+    text: &[u8],
+    outputs: &[Output<'_>],
+) -> Result<Vec<u8>, String> {
+    if outputs.len() < 2 {
+        return Ok(text.to_vec());
+    }
     let session = Session::new();
     let atoms = Interner::new_in(&session);
-    let parse = |path: &[u8], text: &[u8]| {
-        let options = CompileParseOptions {
-            path,
-            script_kind: None,
-            experimental_decorators: false,
-            every_file_is_a_module: false,
-            reads_jsdoc: false,
-            keeps_function_directives: false,
-        };
-        parse_for_compile(session.arena(), &options, text, &atoms)
-    };
-    let name_of = |path: &[u8]| {
-        let slash = bun_core::strings::last_index_of_char(path, b'/');
-        BStr::new(&path[slash.map_or(0, |slash| slash + 1)..]).to_string()
-    };
-    let (mut typed_file, installed) =
-        (parse(typed_path, typed), parse(javascript_path, javascript));
-    typed_file.is_typed_version = true;
-    let place = |name: String, file: &File<'_>, text: &[u8], node: NodeData| {
-        let at = byte_range_of_node(file, node).0;
-        let starts = compute_ecma_line_starts(text);
-        let line = starts.partition_point(|&start| start <= at).max(1);
-        format!("{name}:{line}:{}", at - starts[line - 1] + 1)
-    };
-    let (typed_name, javascript_name) = (name_of(typed_path), name_of(javascript_path));
-    match check_erasure(&typed_file, &installed) {
-        Erasure::Exact => None,
-        Erasure::Unknown => Some(format!(
-            "{typed_name} or {javascript_name} has syntax errors"
-        )),
-        Erasure::Mismatch(found) if found.kind == ErasureMismatchKind::EmitsCode => Some(format!(
-            "at {}, TypeScript syntax that emits code can't be erased",
-            place(typed_name, &typed_file, typed, found.typed),
-        )),
-        Erasure::Mismatch(found) => Some(format!(
-            "without its types, {} doesn't match {}",
-            place(typed_name, &typed_file, typed, found.typed),
-            place(javascript_name, &installed, javascript, found.untyped),
-        )),
+    let file = parse(&session, &atoms, typed_path, text)?;
+    let directory = ancestors(typed_path).nth(1).unwrap_or(b"/");
+    let mut replacements: Vec<(usize, usize, Vec<u8>)> = (file.specifier_uses.iter())
+        .filter_map(|used| {
+            let specifier = atoms.bytes(used.spec);
+            let is_relative = specifier.starts_with(b"./") || specifier.starts_with(b"../");
+            let target = is_relative.then(|| absolute(directory, specifier))?;
+            outputs.iter().find(|output| output.path == target)?;
+            let start = used.pos as usize + 1;
+            let written = text.get(start..start + specifier.len())?;
+            (written == specifier).then_some(())?;
+            Some((
+                start,
+                start + specifier.len(),
+                typed_path_beside(specifier)?,
+            ))
+        })
+        .collect();
+    replacements.sort_unstable();
+    replacements.dedup();
+    let mut rewritten = text.to_vec();
+    for (start, end, specifier) in replacements.into_iter().rev() {
+        rewritten.splice(start..end, specifier);
     }
+    Ok(rewritten)
 }
 
 pub fn annotate_implicit_any(

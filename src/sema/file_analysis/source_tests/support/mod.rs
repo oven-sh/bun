@@ -2,10 +2,7 @@
 
 pub(crate) use bun_sema::atom::{Atom, Interner, known};
 pub(crate) use bun_sema::bind::*;
-pub(crate) use bun_sema::erasure::{
-    Erasure, ErasureMismatch, ErasureMismatchKind, check_erasure, check_erasure_with_ranges,
-    find_type_ranges,
-};
+pub(crate) use bun_sema::erasure::find_type_ranges;
 pub(crate) use bun_sema::file_analysis::{FileAnalysis, FileInputs, analyze_file};
 pub(crate) use bun_sema::fold::{
     Constant, Decision, Decisions, Define, DefinePath, DefineRoot, DefineValue, FoldError,
@@ -56,7 +53,6 @@ pub(crate) struct Source<'a> {
     pub(crate) declared_module_type: Option<DeclaredModuleType>,
     pub(crate) import_meta_main: Option<bool>,
     pub(crate) is_library: bool,
-    pub(crate) is_typed_version: bool,
     pub(crate) jsx: JsxMode,
 }
 
@@ -90,7 +86,6 @@ pub(crate) struct Fold<'a> {
     pub(crate) defines: &'a [(Path<'a>, Defined<'a>)],
     pub(crate) dropped_calls: &'a [Path<'a>],
     pub(crate) features: &'a [&'a str],
-    pub(crate) compiler_functions: &'a [&'a str],
     pub(crate) preserves_unused_imports: bool,
     pub(crate) max_string_bytes: usize,
 }
@@ -100,7 +95,6 @@ impl Fold<'static> {
         defines: &[],
         dropped_calls: &[],
         features: &[],
-        compiler_functions: &[],
         preserves_unused_imports: false,
         max_string_bytes: MAX_FOLDED_STRING_BYTES,
     };
@@ -134,7 +128,6 @@ impl<'a> Source<'a> {
             declared_module_type: None,
             import_meta_main: None,
             is_library: false,
-            is_typed_version: false,
             jsx: JsxMode::Classic,
         }
     }
@@ -324,7 +317,6 @@ impl<'s> Workspace<'s> {
         };
         let mut hir = parse_for_compile(self.arena, &options, source.text, &self.atoms);
         hir.text = Cow::Borrowed(self.arena.alloc_slice_copy(source.text));
-        hir.is_typed_version = source.is_typed_version;
         hir
     }
 
@@ -384,7 +376,6 @@ impl<'s> Workspace<'s> {
             }),
             dropped_calls: self.map_slice(fold.dropped_calls, |&path| self.define_path(path)),
             features: self.intern_all(fold.features),
-            compiler_functions: self.intern_all(fold.compiler_functions),
             preserves_unused_imports: fold.preserves_unused_imports,
             max_string_bytes: fold.max_string_bytes,
         };

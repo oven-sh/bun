@@ -63,7 +63,6 @@ impl RequestOrigin {
 pub(crate) enum CompileProduct<'r> {
     Executable { outfile: &'r [u8] },
     GraphBytes,
-    GraphBytesIfSourceCannotRun,
     ReportsOnly,
 }
 

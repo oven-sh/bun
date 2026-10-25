@@ -10,7 +10,7 @@ use bun_sema::session::Arena;
 use bun_trim::UsedFeatures;
 
 use crate::builtins::unlinked_files::UnlinkedFiles;
-use crate::compile::{BuildFailed, Compilation, compile, plan_validated_calls};
+use crate::compile::{BuildFailed, Compilation, compile};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::log_diagnostic;
 use crate::engine::{self, EngineModuleId, EngineResult, RejectedOptionWord};
@@ -19,7 +19,6 @@ use crate::load::source_provider::SourceProvider;
 use crate::options::Options;
 use crate::report::{self, ReportEntry, ReportInput, ReportMessage};
 use crate::statistics::{StatisticId, Statistics};
-use crate::validation_plans::ValidationPlans;
 
 fn wrap_statistics(statistics: Statistics) -> interface::statistics::Statistics {
     interface::statistics::Statistics(Opaque::new(statistics))
@@ -37,7 +36,6 @@ fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
             names: interface::link::ProgramNames(Opaque::new(summary.names)),
             texts: interface::report::SourceTexts(Opaque::new(summary.texts)),
             statistics: wrap_statistics(summary.statistics),
-            validates_by_type: summary.validates_by_type,
             modules: summary.modules,
         },
     }
@@ -76,9 +74,6 @@ interface::define_linked_functions! {
         compile(options, provider, log).map(wrap_compilation).map_err(wrap_failure)
     }
 
-    fn bun_aot_plan_validated_calls(options: &Options<'_>, provider: &dyn SourceProvider, log: &mut Log) -> Option<ValidationPlans> {
-        plan_validated_calls(options, provider, log)
-    }
 
     fn bun_aot_log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]) {
         log_diagnostic(log, code, arguments);

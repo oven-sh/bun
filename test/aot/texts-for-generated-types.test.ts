@@ -1,6 +1,6 @@
 // A small, fixed part of what test/aot/fuzz/texts-for-generated-types.ts does for as long as it is left running. Each test draws
-// 30 types, builds the program that parses by them with `bun build --compile --aot`, and lets it make and ask a fixed number of
-// texts. The program prints a line that starts with "DIFFERS" for each answer that is not what its own slow parser and checker say.
+// 30 types, builds the program that parses under them with `bun build --compile --aot`, and lets it make and ask a fixed number of
+// texts. The program prints a line that starts with "DIFFERS" for each answer that is not what its own slow parser and `JSON.parse(text)` say.
 //
 //   bun test/aot/fuzz/texts-for-generated-types.ts --print <seed> --types 30      the program of one seed
 import { expect } from "bun:test";

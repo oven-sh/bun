@@ -280,7 +280,7 @@
           {
             "group": "Extensions",
             "icon": "plug",
-            "pages": ["/bundler/plugins", "/bundler/macros", "/bundler/validate"]
+            "pages": ["/bundler/plugins", "/bundler/macros"]
           },
           {
             "group": "Optimization",

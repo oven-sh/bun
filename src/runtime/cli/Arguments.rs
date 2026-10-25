@@ -807,7 +807,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--check                          Type check the entry points and what they import. Nothing is bundled if there are type errors"
         ),
         parse_param!(
-            "--dts                            Write declaration files (.d.ts), and each output file with its types kept (.full.ts), to --outdir. Implies --check"
+            "--dts                            Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir. Implies --check"
         ),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
@@ -1356,6 +1356,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ) {
         if !args.options(b"--conditions").is_empty() {
             opts.conditions = slice_to_owned(args.options(b"--conditions"));
+        }
+        // `bun run --aot` runs the files that `bun build --compile --aot` compiles.
+        let runs_program = !matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand);
+        if runs_program && compile_options::checks_before_each_run(cmd, &args) {
+            opts.conditions.push(Box::from(&b"aot"[..]));
         }
     }
 

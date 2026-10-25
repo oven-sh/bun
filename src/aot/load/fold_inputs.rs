@@ -7,7 +7,7 @@ use bun_sema::fold::{
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::session::Arena;
 
-use crate::builtins::{BuiltinId, Platforms, table};
+use crate::builtins::Platforms;
 use crate::diagnostics::LoadMessages;
 use crate::load::data_modules::parse_json;
 use crate::load::locked_builtin_defines::{locked_builtin_defines, runtime_identity_defines};
@@ -33,7 +33,6 @@ pub(crate) fn create_application_fold_inputs<'s>(
 ) -> FoldInputs<'s> {
     let options = FoldOptions {
         defines: after_constant_globals(provided.defines, platform, arena, atoms),
-        compiler_functions: bundle_export_names(arena, atoms),
         max_string_bytes: max_string_bytes(limits),
         ..*provided
     };
@@ -119,14 +118,6 @@ fn is_same_constant(define: &Define<'_>, held: &Define<'_>) -> bool {
         )
 }
 
-fn bundle_export_names<'s>(arena: &'s Arena, atoms: &Interner<'s>) -> &'s [Atom] {
-    let names: Vec<Atom> = table::members(BuiltinId::BunBundle)
-        .iter()
-        .map(|&member| atoms.intern(table::text_of_name(table::entry(member).name)))
-        .collect();
-    arena.alloc_slice_copy(&names)
-}
-
 fn runtime_defines<'s>(
     manifest: &Manifest,
     arena: &'s Arena,
@@ -185,7 +176,7 @@ mod tests {
 
     use super::*;
     use crate::builtins::RuntimeModule;
-    use crate::compile::testing::{default_settings, with_bind_input, with_loaded_build};
+    use crate::compile::testing::{default_settings, with_loaded_build};
     use crate::diagnostics::Diagnostics;
     use crate::load::project::{PerProject, ProjectId};
 
@@ -619,15 +610,6 @@ mod tests {
         };
         assert_eq!(below(b"Object"), 1);
         assert!(below(b"Array") > 1);
-    }
-
-    #[test]
-    fn compiler_functions_are_bundle_exports() {
-        let source = "import { validate } from 'bun:bundle'; export const n = validate<number>(1);";
-        with_bind_input(&[("a.ts", source)], &default_settings(), |input| {
-            let errors = input.files.analysis(input.files.entry_points()[0]).errors;
-            assert!(errors.is_empty(), "{errors:?}");
-        });
     }
 
     #[test]

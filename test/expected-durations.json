@@ -5916,12 +5916,6 @@
   "aot/servers/thin.test.ts": {
     "default": 28000
   },
-  "aot/servers/validated-servers.test.ts": {
-    "default": 44000
-  },
-  "aot/servers/validated.test.ts": {
-    "default": 300
-  },
   "aot/shell-completions-list-flags.test.ts": {
     "default": 26,
     "asan": 319,
@@ -6567,39 +6561,6 @@
   },
   "aot/unused-values-are-removed.test.ts": {
     "default": 9860
-  },
-  "aot/validated-records-with-array-members.test.ts": {
-    "default": 1837,
-    "asan": 5787,
-    "windows": 2918
-  },
-  "aot/validation-by-types/both-modes.test.ts": {
-    "default": 27100,
-    "asan": 91784,
-    "windows": 32160
-  },
-  "aot/validation-by-types/fuzz.test.ts": {
-    "default": 102058,
-    "asan": 140974,
-    "windows": 103766
-  },
-  "aot/validation-by-types/json-parse-type-argument-without-installed-types.test.ts": {
-    "default": 1552,
-    "windows": 2549
-  },
-  "aot/validation-by-types/standard-functions-without-installed-types.test.ts": {
-    "default": 800,
-    "asan": 2159,
-    "windows": 1442
-  },
-  "aot/validation-by-types/types-that-cannot-be-validated.test.ts": {
-    "default": 3579,
-    "asan": 3648,
-    "windows": 5244
-  },
-  "aot/validation-in-packages-compiled-without-types.test.ts": {
-    "default": 3357,
-    "windows": 6335
   },
   "aot/validation-of-the-property-caches.test.ts": {
     "default": 4102
@@ -8023,13 +7984,6 @@
     "asan": 1258,
     "musl": 9416,
     "windows": 8673
-  },
-  "bundler/compile-trim-runtime-validation-by-type.test.ts": {
-    "default": 702,
-    "asan": 795,
-    "musl": 534,
-    "windows": 708,
-    "windows-aarch64": 590
   },
   "bundler/compile-trim-runtime.test.ts": {
     "default": 62644,

@@ -1,6 +1,5 @@
 /**
- * The `bun:bundle` module provides compile-time utilities: feature flags for dead-code elimination, and validation
- * against TypeScript types.
+ * The `bun:bundle` module provides compile-time utilities for dead-code elimination.
  *
  * @example
  * ```ts
@@ -72,29 +71,4 @@ declare module "bun:bundle" {
    * ```
    */
   function feature(flag: Registry extends { features: infer Features extends string } ? Features : string): boolean;
-
-  /**
-   * Validates `value` against the TypeScript type `T` and returns a copy of it typed as `T`. If `value` doesn't match,
-   * throws a `TypeError` whose `issues` property lists every mismatch. `JSON.parse<T>(text)`, with `JSON` imported from
-   * `"bun"`, does the same for JSON text.
-   *
-   * Objects and arrays that `T` describes are copied, and `value` is never modified. The copy has the same keys in the
-   * same order, including properties that `T` doesn't declare.
-   *
-   * Bun replaces each call with the checks for `T` at build time and removes the import, so `validate` doesn't exist at
-   * run time. Import it by name and call it with a type argument. It can't be re-exported, assigned or passed as an
-   * argument.
-   *
-   * It works in a TypeScript file that Bun runs, tests, compiles or bundles with `--target=bun`. Everywhere else,
-   * importing `validate` is an error.
-   *
-   * ```ts
-   * import { validate } from "bun:bundle";
-   * import type { Schema } from "bun";
-   * interface Login { name: string & Schema.MinLength<1>; password: string & Schema.MinLength<8> }
-   * const form = await request.formData();
-   * const login = validate<Login>({ name: form.get("name"), password: form.get("password") });
-   * ```
-   */
-  function validate<T>(value: unknown): T;
 }

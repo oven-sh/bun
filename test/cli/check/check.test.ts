@@ -11566,6 +11566,32 @@ a.ts(7,13): error TS7005: Variable 'pend' implicitly has an 'any[]' type.`,
       expect(exitCode).toBe(1);
     });
 
+    // a.ts is the second largest file, so with two threads its task starts first, infers the return type of `f` and is
+    // done before b.ts's task starts, while the other thread checks long.ts. The walk for `root` in the arrow function ends
+    // with an incomplete type, which has every property, and the second check of `root.v` reports.
+    test("the task of a file makes the walks that ended with an incomplete type in another task", async () => {
+      const line = `[1, "1"].map(v => typeof v === "string" ? v.length : v + 1);\n`;
+      using dir = project({
+        "a.ts": `import { f } from "./b";\nexport const x = f();\n${repeat(line, 40)}`,
+        "b.ts": `declare const c: boolean;
+declare let root: { v: number } | undefined;
+export function f() {
+  for (const key in root) {
+    while (root) { }
+    while (c) {
+      while (c) { if (c) break; }
+      try { return (() => root.v)(); } finally { }
+    }
+  }
+}
+`,
+        "long.ts": `export {};\n${repeat(line, 1000)}`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--threads", "2"]);
+      expect(stdout).toBe("b.ts(8,32): error TS2339: Property 'v' does not exist on type 'never'.");
+      expect(exitCode).toBe(1);
+    });
+
     test("a shared flow node in a `finally` block has the type of its first visit", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

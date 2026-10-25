@@ -8555,7 +8555,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub(super) fn note_checked_with_incomplete_walk(&mut self, file: FileId, e: ExprId) {
         let checked = &mut self.flow_memo.checked_with_incomplete_walk;
-        checked.insert((file, e));
+        // The next check may report an error, and a task that finds the stored type doesn't know that there's one.
+        if checked.insert((file, e)) && self.task.file != Some(file) {
+            self.note_error_in(file);
+        }
     }
 
     pub(super) fn is_checked_with_incomplete_walk(&self, file: FileId, e: ExprId) -> bool {

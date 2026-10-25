@@ -65,7 +65,9 @@
 //!   there and this task would still report it (`View::hides`). A task only moves forward in program order, so it
 //!   never finds such entries of its own. This covers the entries under nodes, not those under records. Only an error
 //!   found by a commit in the task's snapshot of the file counts, so the file doesn't change under a statement or
-//!   during a visit because of this either.
+//!   during a visit because of this either. A control flow walk that ended with an incomplete type counts as an error:
+//!   the next check of the expression may report one, and what it finds depends on `flowLoopCache`, which belongs to
+//!   the task that made the walk (`Checker::check_expression_again`).
 //! - **A comparison during which a type was inferred from the body of a function expression or of a method or an
 //!   accessor of an object literal never leaves the task** (`relations_of_this_task`). It's stored under two types, so
 //!   a task would find it that doesn't see the inferred type, which is stored under a node: its snapshot of that file

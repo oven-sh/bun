@@ -37,6 +37,7 @@
 #include "JSAeadParams.h"
 #include "JSAesGcmParams.h"
 #include "JSAesKeyParams.h"
+#include "JSArgon2Params.h"
 #include "JSCryptoAlgorithmParameters.h"
 #include "JSCryptoKey.h"
 #include "JSCryptoKeyPair.h"
@@ -52,6 +53,7 @@
 #include "JSMlDsaParams.h"
 #include "JSX25519Params.h"
 #include "AsymmetricKeyValue.h"
+#include "CryptoAlgorithmArgon2.h"
 #include "CryptoAlgorithmMLDSA.h"
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
@@ -378,6 +380,16 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmPbkdf2Params>(params);
             break;
         }
+        case CryptoAlgorithmIdentifier::Argon2d:
+        case CryptoAlgorithmIdentifier::Argon2i:
+        case CryptoAlgorithmIdentifier::Argon2id: {
+            auto params = convertDictionary<CryptoAlgorithmArgon2Params>(state, value.get());
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.nonce) || !isAcceptableVectorSource(params.secretValue) || !isAcceptableVectorSource(params.associatedData))
+                return Exception { OperationError, "Input data is too large"_s };
+            result = makeUnique<CryptoAlgorithmArgon2Params>(params);
+            break;
+        }
         default:
             return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
         }
@@ -432,6 +444,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         }
         case CryptoAlgorithmIdentifier::HKDF:
         case CryptoAlgorithmIdentifier::PBKDF2:
+        case CryptoAlgorithmIdentifier::Argon2d:
+        case CryptoAlgorithmIdentifier::Argon2i:
+        case CryptoAlgorithmIdentifier::Argon2id:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         case CryptoAlgorithmIdentifier::SHA_1:
@@ -494,6 +509,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::HKDF:
         case CryptoAlgorithmIdentifier::PBKDF2:
         case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+        case CryptoAlgorithmIdentifier::Argon2d:
+        case CryptoAlgorithmIdentifier::Argon2i:
+        case CryptoAlgorithmIdentifier::Argon2id:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
@@ -1987,6 +2005,10 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         case CryptoAlgorithmIdentifier::HKDF:
         case CryptoAlgorithmIdentifier::PBKDF2:
             return length && *length && !(*length % 8);
+        case CryptoAlgorithmIdentifier::Argon2d:
+        case CryptoAlgorithmIdentifier::Argon2i:
+        case CryptoAlgorithmIdentifier::Argon2id:
+            return CryptoAlgorithmArgon2::lengthIsValid(length);
         case CryptoAlgorithmIdentifier::X25519:
             return !length || *length <= 256;
         case CryptoAlgorithmIdentifier::ECDH: {
@@ -2126,6 +2148,9 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
         case CryptoAlgorithmIdentifier::HKDF:
         case CryptoAlgorithmIdentifier::PBKDF2:
+        case CryptoAlgorithmIdentifier::Argon2d:
+        case CryptoAlgorithmIdentifier::Argon2i:
+        case CryptoAlgorithmIdentifier::Argon2id:
             break;
         case CryptoAlgorithmIdentifier::HMAC: {
             auto hmacLength = downcast<CryptoAlgorithmHmacKeyParams>(*additionalParams).length;

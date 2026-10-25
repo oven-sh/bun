@@ -33,6 +33,7 @@
 #include "CryptoAlgorithmAES_CTR.h"
 #include "CryptoAlgorithmAES_GCM.h"
 #include "CryptoAlgorithmAES_KW.h"
+#include "CryptoAlgorithmArgon2.h"
 #include "CryptoAlgorithmChaCha20Poly1305.h"
 #include "CryptoAlgorithmECDH.h"
 #include "CryptoAlgorithmECDSA.h"
@@ -88,6 +89,9 @@ void CryptoAlgorithmRegistry::platformRegisterAlgorithms()
     registerAlgorithm<CryptoAlgorithmMLDSA87>();
     registerAlgorithm<CryptoAlgorithmMLKEM768>();
     registerAlgorithm<CryptoAlgorithmMLKEM1024>();
+    registerAlgorithm<CryptoAlgorithmArgon2d>();
+    registerAlgorithm<CryptoAlgorithmArgon2i>();
+    registerAlgorithm<CryptoAlgorithmArgon2id>();
 }
 
 } // namespace WebCore

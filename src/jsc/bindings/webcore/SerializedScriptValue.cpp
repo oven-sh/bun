@@ -382,6 +382,9 @@ enum class CryptoAlgorithmIdentifierTag {
     ML_DSA_87 = 30,
     ML_KEM_768 = 31,
     ML_KEM_1024 = 32,
+    ARGON2D = 33,
+    ARGON2I = 34,
+    ARGON2ID = 35,
 };
 
 static unsigned countUsages(CryptoKeyUsageBitmap usages)
@@ -1794,6 +1797,15 @@ private:
         case CryptoAlgorithmIdentifier::ML_KEM_1024:
             write(CryptoAlgorithmIdentifierTag::ML_KEM_1024);
             break;
+        case CryptoAlgorithmIdentifier::Argon2d:
+            write(CryptoAlgorithmIdentifierTag::ARGON2D);
+            break;
+        case CryptoAlgorithmIdentifier::Argon2i:
+            write(CryptoAlgorithmIdentifierTag::ARGON2I);
+            break;
+        case CryptoAlgorithmIdentifier::Argon2id:
+            write(CryptoAlgorithmIdentifierTag::ARGON2ID);
+            break;
         case CryptoAlgorithmIdentifier::None: {
             RELEASE_ASSERT_NOT_REACHED();
             break;
@@ -2979,6 +2991,15 @@ private:
             return true;
         case CryptoAlgorithmIdentifierTag::ML_KEM_1024:
             result = CryptoAlgorithmIdentifier::ML_KEM_1024;
+            return true;
+        case CryptoAlgorithmIdentifierTag::ARGON2D:
+            result = CryptoAlgorithmIdentifier::Argon2d;
+            return true;
+        case CryptoAlgorithmIdentifierTag::ARGON2I:
+            result = CryptoAlgorithmIdentifier::Argon2i;
+            return true;
+        case CryptoAlgorithmIdentifierTag::ARGON2ID:
+            result = CryptoAlgorithmIdentifier::Argon2id;
             return true;
         }
         return false;

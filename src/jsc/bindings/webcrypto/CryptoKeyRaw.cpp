@@ -49,7 +49,10 @@ bool CryptoKeyRaw::isValidRawAlgorithm(CryptoAlgorithmIdentifier algorithm)
 {
     return algorithm == CryptoAlgorithmIdentifier::HKDF
         || algorithm == CryptoAlgorithmIdentifier::PBKDF2
-        || algorithm == CryptoAlgorithmIdentifier::ChaCha20_Poly1305;
+        || algorithm == CryptoAlgorithmIdentifier::ChaCha20_Poly1305
+        || algorithm == CryptoAlgorithmIdentifier::Argon2d
+        || algorithm == CryptoAlgorithmIdentifier::Argon2i
+        || algorithm == CryptoAlgorithmIdentifier::Argon2id;
 }
 
 } // namespace WebCore

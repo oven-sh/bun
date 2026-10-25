@@ -973,6 +973,9 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
         case CryptoAlgorithmIdentifier::PBKDF2:
             break;
         case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+        case CryptoAlgorithmIdentifier::Argon2d:
+        case CryptoAlgorithmIdentifier::Argon2i:
+        case CryptoAlgorithmIdentifier::Argon2id:
             format = WebCore::CryptoKeyFormat::RawSecret;
             break;
         default:

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createSecretKey, type webcrypto } from "node:crypto";
+import nodeCrypto, { createSecretKey, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -1207,6 +1207,171 @@ describe("SubtleCrypto.deriveBits length", () => {
 
     const aesKey = await crypto.subtle.deriveKey(alg, priv, { name: "AES-GCM", length: 256 }, true, ["encrypt"]);
     expect(hex(await crypto.subtle.exportKey("raw", aesKey))).toBe(ecSecret);
+  });
+});
+
+describe("Argon2", () => {
+  const hex = (b: ArrayBuffer) => Buffer.from(b).toString("hex");
+  const probe = (p: Promise<unknown>) =>
+    p.then(
+      () => "ok",
+      e => `${e.name}: ${e.message}`,
+    );
+  const password = Buffer.alloc(32, 0x01);
+  const params = {
+    memory: 32,
+    passes: 3,
+    parallelism: 4,
+    nonce: Buffer.alloc(16, 0x02),
+    secretValue: Buffer.alloc(8, 0x03),
+    associatedData: Buffer.alloc(12, 0x04),
+  };
+  // RFC 9106 section 5 test vectors, as in node's test-webcrypto-derivebits-argon2.js.
+  const vectors = {
+    Argon2d: "512b391b6f1162975371d30919734294f868e3be3984f3c1a13a4db9fabe4acb",
+    Argon2i: "c814d9d1dc7f37aa13f0d77f2494bda1c8de6b016dd388d29952a4c4672b6ce8",
+    Argon2id: "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659",
+  };
+  const names = Object.keys(vectors) as (keyof typeof vectors)[];
+
+  it.each(names)("%s deriveBits, deriveKey and toCryptoKey produce the RFC 9106 tag", async name => {
+    const alg = { name, ...params };
+    const key = await crypto.subtle.importKey("raw-secret", password, name, false, ["deriveBits", "deriveKey"]);
+    expect(key.algorithm).toEqual({ name });
+    expect(key.type).toBe("secret");
+    expect(key.extractable).toBe(false);
+    expect(hex(await crypto.subtle.deriveBits(alg, key, 256))).toBe(vectors[name]);
+
+    const hmac = await crypto.subtle.deriveKey(alg, key, { name: "HMAC", hash: "SHA-256", length: 256 }, true, [
+      "sign",
+    ]);
+    expect(hex(await crypto.subtle.exportKey("raw", hmac))).toBe(vectors[name]);
+
+    const fromKeyObject = createSecretKey(password).toCryptoKey(name, false, ["deriveBits"]);
+    expect(hex(await crypto.subtle.deriveBits(alg, fromKeyObject, 256))).toBe(vectors[name]);
+
+    const cloned = structuredClone(key);
+    expect(hex(await crypto.subtle.deriveBits(alg, cloned, 256))).toBe(vectors[name]);
+  });
+
+  it.each(names)("%s matches node:crypto argon2Sync", async name => {
+    const message = new TextEncoder().encode("password");
+    const nonce = new TextEncoder().encode("salt1234");
+    const key = await crypto.subtle.importKey("raw-secret", message, name, false, ["deriveBits"]);
+    const bits = await crypto.subtle.deriveBits({ name, memory: 32, passes: 1, parallelism: 1, nonce }, key, 256);
+    const expected = (nodeCrypto as any).argon2Sync(name.toLowerCase(), {
+      message,
+      nonce,
+      memory: 32,
+      passes: 1,
+      parallelism: 1,
+      tagLength: 32,
+    });
+    expect(hex(bits)).toBe(expected.toString("hex"));
+  });
+
+  it("omitted secretValue and associatedData equal explicit empty buffers", async () => {
+    const alg = { name: "Argon2id", memory: 32, passes: 3, parallelism: 4, nonce: Buffer.alloc(16, 0x02) };
+    const key = await crypto.subtle.importKey("raw-secret", password, "Argon2id", false, ["deriveBits"]);
+    const omitted = await crypto.subtle.deriveBits(alg, key, 256);
+    const explicit = await crypto.subtle.deriveBits(
+      { ...alg, secretValue: Buffer.alloc(0), associatedData: Buffer.alloc(0), version: 0x13 },
+      key,
+      256,
+    );
+    expect(hex(omitted)).toBe(hex(explicit));
+  });
+
+  it("importKey follows node's raw-secret contract", async () => {
+    const imp = (format: string, extractable: boolean, usages: KeyUsage[]) =>
+      probe(crypto.subtle.importKey(format as any, password, "Argon2id", extractable, usages));
+    expect({
+      raw: await imp("raw", false, ["deriveBits"]),
+      jwk: await probe(crypto.subtle.importKey("jwk", { kty: "oct", k: "AQEB" }, "Argon2id", false, ["deriveBits"])),
+      extractable: await imp("raw-secret", true, ["deriveBits"]),
+      "extractable and bad usage": await imp("raw-secret", true, ["encrypt"]),
+      "bad usage": await imp("raw-secret", false, ["encrypt"]),
+      "empty usages": await imp("raw-secret", false, []),
+      "raw-secret": await imp("raw-secret", false, ["deriveKey"]),
+    }).toEqual({
+      raw: "NotSupportedError: Unable to import Argon2id using raw format",
+      jwk: "NotSupportedError: Unable to import Argon2id using jwk format",
+      extractable: "SyntaxError: Argon2id keys are not extractable",
+      "extractable and bad usage": "SyntaxError: Argon2id keys are not extractable",
+      "bad usage": "SyntaxError: Unsupported key usage for a Argon2id key",
+      "empty usages": "SyntaxError: Usages cannot be empty when importing a secret key.",
+      "raw-secret": "ok",
+    });
+  });
+
+  it("deriveBits rejects bad parameters with node's OperationError text", async () => {
+    const alg = { name: "Argon2id", memory: 32, passes: 3, parallelism: 4, nonce: Buffer.alloc(16, 0x02) };
+    const key = await crypto.subtle.importKey("raw-secret", password, "Argon2id", false, ["deriveBits", "deriveKey"]);
+    const derive = (a: object, length: number | null = 256) => probe(crypto.subtle.deriveBits(a as any, key, length));
+    expect({
+      "passes 0": await derive({ ...alg, passes: 0 }),
+      "parallelism 0": await derive({ ...alg, parallelism: 0 }),
+      "parallelism too large": await derive({ ...alg, parallelism: 2 ** 24, memory: 2 ** 27 }),
+      "memory too small": await derive({ ...alg, memory: 31 }),
+      // memory is checked against the raw parallelism value before parallelism converts.
+      "memory 8 parallelism 1.5": await derive({ ...alg, memory: 8, parallelism: 1.5 }),
+      "two bad members": await derive({ ...alg, memory: 7, nonce: Buffer.alloc(4), parallelism: 1, passes: -1 }),
+      "nonce too short": await derive({ ...alg, nonce: Buffer.alloc(7) }),
+      "version 0x10": await derive({ ...alg, version: 0x10 }),
+      "length null": await derive(alg, null),
+      "length 12": await derive(alg, 12),
+      "length 24": await derive(alg, 24),
+      "length 32": await derive(alg, 32),
+      "name mismatch": await derive({ ...alg, name: "Argon2d" }),
+      "memory too large": await derive({ ...alg, memory: 2 ** 32 - 1, parallelism: 1 }),
+      "deriveKey to HKDF": await probe(crypto.subtle.deriveKey(alg, key, "HKDF", false, ["deriveBits"])),
+    }).toEqual({
+      "passes 0": "OperationError: passes must be > 0",
+      "parallelism 0": "OperationError: parallelism must be > 0 and <= 16777215",
+      "parallelism too large": "OperationError: parallelism must be > 0 and <= 16777215",
+      "memory too small": "OperationError: memory must be at least 8 times the degree of parallelism",
+      "memory 8 parallelism 1.5": "OperationError: memory must be at least 8 times the degree of parallelism",
+      "two bad members": "OperationError: memory must be at least 8 times the degree of parallelism",
+      "nonce too short": "OperationError: nonce must be at least 8 bytes",
+      "version 0x10": "OperationError: 16 is not a valid Argon2 version",
+      "length null": "OperationError: length cannot be null",
+      "length 12": "OperationError: length must be a multiple of 8",
+      "length 24": "OperationError: length must be >= 32",
+      "length 32": "ok",
+      "name mismatch": "InvalidAccessError: Key algorithm mismatch",
+      "memory too large": "OperationError: The operation failed for an operation-specific reason",
+      "deriveKey to HKDF": "OperationError: length cannot be null",
+    });
+  });
+
+  it("SubtleCrypto.supports reports the Argon2 operations", () => {
+    const alg = { name: "Argon2id", memory: 32, passes: 3, parallelism: 4, nonce: Buffer.alloc(16, 0x02) };
+    const supports = (op: string, a: unknown, extra?: unknown) => (SubtleCrypto as any).supports(op, a, extra);
+    expect({
+      importKey: names.map(name => supports("importKey", name)),
+      "deriveBits 256": supports("deriveBits", alg, 256),
+      "deriveBits 24": supports("deriveBits", alg, 24),
+      "deriveBits null": supports("deriveBits", alg, null),
+      "deriveBits passes 0": supports("deriveBits", { ...alg, passes: 0 }, 256),
+      "deriveKey AES-GCM": supports("deriveKey", alg, { name: "AES-GCM", length: 256 }),
+      "deriveKey HKDF": supports("deriveKey", alg, "HKDF"),
+      exportKey: supports("exportKey", "Argon2id"),
+      generateKey: supports("generateKey", "Argon2id"),
+      encrypt: supports("encrypt", "Argon2id"),
+      "encapsulateKey to Argon2id": supports("encapsulateKey", "ML-KEM-768", "Argon2id"),
+    }).toEqual({
+      importKey: [true, true, true],
+      "deriveBits 256": true,
+      "deriveBits 24": false,
+      "deriveBits null": false,
+      "deriveBits passes 0": false,
+      "deriveKey AES-GCM": true,
+      "deriveKey HKDF": false,
+      exportKey: false,
+      generateKey: false,
+      encrypt: false,
+      "encapsulateKey to Argon2id": true,
+    });
   });
 });
 

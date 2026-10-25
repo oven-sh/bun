@@ -60,7 +60,10 @@ enum class CryptoAlgorithmIdentifier : uint8_t {
     ML_DSA_65,
     ML_DSA_87,
     ML_KEM_768,
-    ML_KEM_1024
+    ML_KEM_1024,
+    Argon2d,
+    Argon2i,
+    Argon2id
 };
 
 } // namespace WebCore

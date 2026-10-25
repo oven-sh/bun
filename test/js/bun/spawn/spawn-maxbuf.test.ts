@@ -174,6 +174,64 @@ describe("maxBuffer infinity does not limit the number of bytes", () => {
   });
 });
 
+// Only the sync calls of node:child_process count stdout and stderr against one maxBuffer, as Node.js does:
+// test/js/node/child_process/child-process-sync-stdio-pipes.test.ts
+describe("maxBuffer is a limit for each of stdout and stderr", () => {
+  const maxBuffer = 1000;
+  // Under the limit on each stream, over it on both together.
+  const a = Buffer.alloc(600, "a").toString();
+  const b = Buffer.alloc(600, "b").toString();
+  // The child then waits for the end of stdin: a kill for going over the limit would find it alive.
+  const script = `const fs = require("node:fs"); fs.writeSync(1, "${a}"); fs.writeSync(2, "${b}"); try { fs.readSync(0, Buffer.alloc(1)); } catch {}`;
+  const cmd = [bunExe(), "-e", script];
+  const options = { env: bunEnv, stdout: "pipe", stderr: "pipe", maxBuffer } as const;
+
+  test.concurrent("Bun.spawn", async () => {
+    await using proc = Bun.spawn({ cmd, ...options, stdin: "pipe" });
+    const take = async (stream: ReadableStream<Uint8Array>, length: number) => {
+      const reader = stream.getReader();
+      let text = "";
+      while (text.length < length) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += Buffer.from(value).toString();
+      }
+      reader.releaseLock();
+      return text;
+    };
+    const [stdout, stderr] = await Promise.all([take(proc.stdout, a.length), take(proc.stderr, b.length)]);
+    proc.stdin.end();
+    expect({ stdout, stderr, exitCode: await proc.exited, signalCode: proc.signalCode }).toEqual({
+      stdout: a,
+      stderr: b,
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test.concurrent("Bun.spawnSync", () => {
+    for (const proc of [Bun.spawnSync({ cmd, ...options }), Bun.spawnSync(cmd, options)]) {
+      expect({
+        stdout: proc.stdout.toString(),
+        stderr: proc.stderr.toString(),
+        exitCode: proc.exitCode,
+        exitedDueToMaxBuffer: proc.exitedDueToMaxBuffer,
+      }).toEqual({ stdout: a, stderr: b, exitCode: 0, exitedDueToMaxBuffer: false });
+    }
+  });
+
+  test.concurrent.each(["stdout", "stderr"] as const)("Bun.spawnSync: %s alone goes over the limit", stream => {
+    const fd = stream === "stdout" ? 1 : 2;
+    const over = [bunExe(), "-e", `require("node:fs").writeSync(${fd}, Buffer.alloc(${maxBuffer + 1}, "a"))`];
+    for (const proc of [Bun.spawnSync({ cmd: over, ...options }), Bun.spawnSync(over, options)]) {
+      expect({ exitedDueToMaxBuffer: proc.exitedDueToMaxBuffer, [stream]: proc[stream].length }).toEqual({
+        exitedDueToMaxBuffer: true,
+        [stream]: maxBuffer + 1,
+      });
+    }
+  });
+});
+
 describe("timeout kills the process", () => {
   test("Bun.spawn", async () => {
     const timeStart = Date.now();

@@ -564,11 +564,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
   const bunStdio = getBunStdioFromOptions(stdio, true);
   const stdioLength = bunStdio.length;
   // Bun.spawnSync puts what the child wrote to each pipe above stderr at the pipe's index. Other slots stay null.
-  let extraOutput: (Buffer | null)[] | undefined;
-  if (stdioLength > 3) {
-    extraOutput = [];
-    for (let i = 3; i < stdioLength; i++) $putByValDirect(extraOutput, i, null);
-  }
+  const extraOutput: (Buffer | null)[] = [];
+  for (let i = 3; i < stdioLength; i++) $putByValDirect(extraOutput, i, null);
 
   var { input } = options;
   if (input) {
@@ -605,8 +602,9 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       killSignal: options.killSignal,
       maxBuffer: options.maxBuffer,
     };
-    // A private name: only this module can ask Bun.spawnSync for these bytes.
-    if (extraOutput) $putByIdDirectPrivate(spawnOptions as any, "spawnSyncOutput", extraOutput);
+    // A private name: only this module can ask Bun.spawnSync for these bytes. A call that has it also counts all of
+    // its output pipes against one maxBuffer, as Node.js does.
+    $putByIdDirectPrivate(spawnOptions as any, "spawnSyncOutput", extraOutput);
     var {
       stdout = null,
       stderr = null,
@@ -654,7 +652,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
   if (output) {
     // node: an entry for each stdio slot, https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L765-L786
     for (let i = 3; i < stdioLength; i++) {
-      $putByValDirect(output, i, error === undefined ? extraOutput![i] : null);
+      $putByValDirect(output, i, error === undefined ? extraOutput[i] : null);
     }
 
     if (encoding && encoding !== "buffer") {

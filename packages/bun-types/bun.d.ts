@@ -8059,7 +8059,7 @@ declare module "bun" {
 
       /**
        * The maximum number of bytes the process may output. If the process goes over this limit,
-       * it is killed with signal `killSignal` (defaults to SIGTERM).
+       * it is killed with signal `killSignal` (defaults to SIGTERM). `stdout` and `stderr` each have this limit.
        *
        * @default undefined (no limit)
        */

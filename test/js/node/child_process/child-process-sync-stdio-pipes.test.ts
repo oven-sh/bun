@@ -131,33 +131,37 @@ describe("a pipe at stdio index >= 3 of a sync spawn", () => {
   // https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L648-L655
   describe("maxBuffer", () => {
     const maxBuffer = 1000;
+    const outAndErr: StdioOptions = ["ignore", "pipe", "pipe"];
     // Each stream gets its own byte, so that an entry of `output` shows which pipe it came from.
     const write = (fd: number, byte: string, length: number) =>
       length ? `fs.writeSync(${fd}, Buffer.alloc(${length}, '${byte}'));` : "";
     const writer = (out: number, err: number, three: number) =>
       `const fs = require('node:fs');` + write(1, "a", out) + write(2, "b", err) + write(3, "c", three);
 
-    const shapes: [counted: string, stdio: StdioOptions, out: number, err: number][] = [
-      ["stdout and the pipe", ["ignore", "pipe", "ignore", "pipe"], 500, 0],
-      ["stderr and the pipe", ["ignore", "ignore", "pipe", "pipe"], 0, 500],
-      ["the pipe when it is the only one", ["ignore", "ignore", "ignore", "pipe"], 0, 0],
+    // What the child writes to stdout, to stderr and to fd 3: `maxBuffer` bytes in all. The byte over the limit is one
+    // more to the last of them.
+    const shapes: [counted: string, stdio: StdioOptions, atLimit: [out: number, err: number, three: number]][] = [
+      ["stdout and stderr", ["ignore", "pipe", "pipe"], [500, 500, 0]],
+      ["stdout and stderr below an entry that is not a pipe", ["ignore", "pipe", "pipe", "ignore"], [500, 500, 0]],
+      ["stderr when it is the only pipe", ["ignore", "ignore", "pipe"], [0, 1000, 0]],
+      ["stdout and the pipe", ["ignore", "pipe", "ignore", "pipe"], [500, 0, 500]],
+      ["stderr and the pipe", ["ignore", "ignore", "pipe", "pipe"], [0, 500, 500]],
+      ["the pipe when it is the only one", ["ignore", "ignore", "ignore", "pipe"], [0, 0, 1000]],
     ];
-    for (const [counted, stdio, out, err] of shapes) {
+    for (const [counted, stdio, atLimit] of shapes) {
       for (const over of [0, 1]) {
         test(`counts ${counted}: ${over ? "one byte over the limit is ENOBUFS" : "at the limit"}`, () => {
-          const three = maxBuffer - out - err + over;
+          const last = atLimit.findLastIndex(Boolean);
+          const [out, err, three] = atLimit.map((size, i) => size + (i === last ? over : 0));
           const result = spawnSync(exe, ["-e", writer(out, err, three)], { stdio, env, maxBuffer });
           assert.deepStrictEqual(
             { error: code(result.error), message: result.error?.message, output: result.output },
             {
               error: over ? "ENOBUFS" : undefined,
               message: over ? `spawnSync ${exe} ENOBUFS` : undefined,
-              output: [
-                null,
-                stdio[1] === "pipe" ? Buffer.alloc(out, "a") : null,
-                stdio[2] === "pipe" ? Buffer.alloc(err, "b") : null,
-                Buffer.alloc(three, "c"),
-              ],
+              output: [null, Buffer.alloc(out, "a"), Buffer.alloc(err, "b"), Buffer.alloc(three, "c")]
+                .slice(0, stdio.length)
+                .map((bytes, fd) => (stdio[fd] === "pipe" ? bytes : null)),
             },
           );
           // A child that goes over the limit is killed, unless it exits first.
@@ -169,6 +173,8 @@ describe("a pipe at stdio index >= 3 of a sync spawn", () => {
     // Node.js closes every pipe inside the read that crosses the limit (SyncProcessRunner::Kill). Bun stops each
     // other reader before its next read. Either way `output` has one read above the limit at most, and a read is
     // 64 KiB at most.
+    const bytes = (output: (Buffer | null)[]) => output.reduce((sum, entry) => sum + (entry ? entry.length : 0), 0);
+
     test("the call keeps at most one read above the limit", () => {
       const pipes = 8;
       const script =
@@ -179,25 +185,85 @@ describe("a pipe at stdio index >= 3 of a sync spawn", () => {
         env,
         maxBuffer,
       });
-      const kept = output.reduce((sum, entry) => sum + (entry ? entry.length : 0), 0);
+      const kept = bytes(output);
       assert.deepStrictEqual(
         { error: code(error), entries: output.length, over: kept > maxBuffer, oneRead: kept <= maxBuffer + 64 * 1024 },
         { error: "ENOBUFS", entries: 3 + pipes, over: true, oneRead: true },
       );
     });
 
-    // 600 bytes to stdout and 600 to stderr.
-    const both = (stdio: StdioOptions) =>
-      code(spawnSync(exe, ["-e", writer(600, 600, 0)], { stdio, env, maxBuffer }).error);
-
-    // Node.js counts stdout and stderr against one maxBuffer in every call. Bun does that only in a call that
-    // reads a pipe above stderr: in any other call each of the two has a maxBuffer of its own, as before. An entry
-    // above stderr that is not a pipe changes nothing.
-    test("stdout and stderr without a pipe above stderr", () => {
-      const together = isBun ? undefined : "ENOBUFS";
+    // Each of the two is under the limit: a count made after the call would keep all of both.
+    test("the call keeps at most one read above the limit of stdout and stderr", () => {
+      const maxBuffer = 200_000;
+      const script =
+        `const fs = require('node:fs'); const chunk = Buffer.alloc(150000); ` +
+        `for (const fd of [1, 2]) for (let n = 0; n < chunk.length; ) n += fs.writeSync(fd, chunk, n);`;
+      const { error, output } = spawnSync(exe, ["-e", script], { stdio: outAndErr, env, maxBuffer });
+      const kept = bytes(output);
       assert.deepStrictEqual(
-        [both(["ignore", "pipe", "pipe"]), both(["ignore", "pipe", "pipe", "ignore"])],
-        [together, together],
+        { error: code(error), over: kept > maxBuffer, oneRead: kept <= maxBuffer + 64 * 1024 },
+        { error: "ENOBUFS", over: true, oneRead: true },
+      );
+    });
+
+    // The child writes as much as the limit to stderr, then one byte to stdout, then stays. A write to stderr does
+    // not return before the call has read it, so the byte over the limit comes when the call watches the child.
+    test("a child that goes over the limit on stdout and stderr together is killed", () => {
+      const script =
+        `const fs = require('node:fs'); const chunk = Buffer.alloc(${size}, 'b'); ` +
+        `for (let n = 0; n < chunk.length; ) n += fs.writeSync(2, chunk, n); fs.writeSync(1, 'a'); ` +
+        `setTimeout(() => {}, 3000);`;
+      const { status, signal, error, output } = spawnSync(exe, ["-e", script], {
+        stdio: outAndErr,
+        env,
+        maxBuffer: size,
+      });
+      assert.deepStrictEqual(
+        { error: code(error), status, signal, stdout: String(output[1]), stderr: output[2]?.length },
+        { error: "ENOBUFS", status: null, signal: "SIGTERM", stdout: "a", stderr: size },
+      );
+    });
+
+    // With no options the limit is 1 MiB, and stderr is a pipe.
+    test("counts stdout and stderr against the default limit", () => {
+      const limit = 1024 * 1024;
+      for (const over of [0, 1]) {
+        const script =
+          `const fs = require('node:fs'); const chunk = Buffer.alloc(${limit - 100}, 'a'); ` +
+          `for (let n = 0; n < chunk.length; ) n += fs.writeSync(1, chunk, n); ` +
+          `fs.writeSync(2, Buffer.alloc(${100 + over}, 'b'));`;
+        const { error, stdout, stderr } = spawnSync(exe, ["-e", script], { env });
+        assert.deepStrictEqual(
+          { error: code(error), stdout: stdout.length, stderr: stderr.length },
+          { error: over ? "ENOBUFS" : undefined, stdout: limit - 100, stderr: 100 + over },
+        );
+      }
+    });
+
+    // With no `stdio` option these two pipe stderr, and write it to the stderr of this process after the call.
+    for (const [name, call] of [
+      ["execFileSync", (script: string) => execFileSync(exe, ["-e", script], { env, maxBuffer })],
+      ["execSync", (script: string) => execSync(`"${exe}" -e "${script}"`, { env, maxBuffer })],
+    ] as const) {
+      test(`${name} counts stdout and stderr`, () => {
+        assert.deepStrictEqual(call(writer(maxBuffer - 1, 1, 0)), Buffer.alloc(maxBuffer - 1, "a"));
+        assert.throws(() => call(writer(maxBuffer - 1, 2, 0)), {
+          code: "ENOBUFS",
+          stdout: Buffer.alloc(maxBuffer - 1, "a"),
+          stderr: Buffer.from("bb"),
+        });
+      });
+    }
+
+    test("a stream that is not a pipe does not count", () => {
+      const { error, output } = spawnSync(exe, ["-e", writer(maxBuffer, 5000, 0)], {
+        stdio: ["ignore", "pipe", "ignore"],
+        env,
+        maxBuffer,
+      });
+      assert.deepStrictEqual(
+        { error, output },
+        { error: undefined, output: [null, Buffer.alloc(maxBuffer, "a"), null] },
       );
     });
   });

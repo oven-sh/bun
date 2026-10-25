@@ -399,7 +399,8 @@ fn spawn_maybe_sync(
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
-    // From `node:child_process`: the array that gets what each stdio pipe at index >= 3 read, at that index.
+    // From `node:child_process`: the array that gets what each stdio pipe at index >= 3 read, at that index. A call that
+    // has it counts all of its output pipes against one `maxBuffer`, as Node.js does.
     let mut extra_output_array: Option<JSValue> = None;
     #[cfg(not(windows))]
     let mut socket_fd_indices: Vec<usize> = Vec::new();
@@ -676,12 +677,12 @@ fn spawn_maybe_sync(
                 }
             }
 
-            // Only a call that reads a pipe at index >= 3 looks it up: any other keeps its `maxBuffer` accounting.
-            if is_sync
+            // A call that reads a pipe at index >= 3 looks it up before `maxBuffer`: that pipe arms the limit too.
+            let reads_extra_pipe = is_sync
                 && extra_fds
                     .iter()
-                    .any(|e| matches!(e, SpawnOptionsStdio::Buffer { .. }))
-            {
+                    .any(|e| matches!(e, SpawnOptionsStdio::Buffer { .. }));
+            if reads_extra_pipe {
                 extra_output_array =
                     args.fast_get(cx.global(), jsc::BuiltinName::spawnSyncOutput)?;
             }
@@ -824,6 +825,17 @@ fn spawn_maybe_sync(
                         max_buffer = Some(value);
                     }
                 }
+            }
+
+            // The only other call it makes a difference to: a limit that both stdout and stderr count against.
+            if is_sync
+                && !reads_extra_pipe
+                && max_buffer.is_some()
+                && stdio[1].is_piped()
+                && stdio[2].is_piped()
+            {
+                extra_output_array =
+                    args.fast_get(cx.global(), jsc::BuiltinName::spawnSyncOutput)?;
             }
 
             if !is_sync {

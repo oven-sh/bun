@@ -246,10 +246,12 @@ const result = Bun.spawnSync({
 // process exits
 ```
 
-Bun stops reading as soon as the limit is passed. The returned output can
-therefore exceed `maxBuffer` only by the single read that passed it, never by
-whatever the process manages to write before the kill lands. This matches
-Node.js.
+`stdout` and `stderr` each have this limit. Bun stops reading as soon as one of
+them passes it, so each can exceed `maxBuffer` only by a single read, never by
+whatever the process manages to write before the kill lands.
+
+`spawnSync`, `execSync` and `execFileSync` of `node:child_process` count every
+output pipe of the call against one limit, as Node.js does.
 
 ## Inter-process communication (IPC)
 

@@ -381,14 +381,13 @@ describe.concurrent("otp", () => {
   }
 
   // A web login offers to open its page on ENTER. Windows makes no offer, because `start`, its opener, is not a
-  // program that can be spawned. This gives the output of Windows the heading of the other platforms.
-  const withOffer = (out: string) =>
-    isWindows
-      ? out.replace(
-          "\nAuthenticate your account at:\n",
-          "\nAuthenticate your account at (press ENTER to open in browser):\n",
-        )
-      : out;
+  // program that can be spawned. This checks the heading of Windows, then gives it the offer of the other platforms.
+  function withOffer(out: string) {
+    if (!isWindows) return out;
+    const heading = "\nAuthenticate your account at:\n";
+    expect(out).toContain(heading);
+    return out.replace(heading, "\nAuthenticate your account at (press ENTER to open in browser):\n");
+  }
 
   /**
    * Presses ENTER while bun waits for the answer of the done url. The box around the auth url is the last thing bun
@@ -799,14 +798,15 @@ describe.concurrent("otp", () => {
     },
   );
 
-  // ENTER is a line end on stdin, whatever stdin is. Of a pipe, bun takes the bytes up to that line end and no more.
+  // ENTER is a line end on stdin, whatever stdin is. Of a pipe, bun takes the first line, all of it in one wait, and
+  // no byte after its line end. The done url makes bun wait once, so a line that is taken in parts would be cut.
   test.skipIf(!isLinux)(
-    "a line end on a piped stdin opens the page, and the rest of the pipe reaches the postpublish script",
+    "the first line of a piped stdin opens the page, and the rest of the pipe reaches the postpublish script",
     async () => {
       const otp = "otp-8";
+      let polls = 0;
       using opener = fakeOpener();
-      // The login lasts until ENTER has opened the page.
-      using mock = otpRegistry({ otp, done: () => (opener.opened() === "" ? notDoneYet() : undefined) });
+      using mock = otpRegistry({ otp, done: () => (++polls === 1 ? notDoneYet() : undefined) });
       using dir = tempDir("publish-web-login-piped-enter", {
         "package.json": JSON.stringify({
           name: "otp-pkg-8",
@@ -820,7 +820,7 @@ describe.concurrent("otp", () => {
       await using proc = spawn({
         cmd: [bunExe(), "publish"],
         cwd: String(dir),
-        stdin: Buffer.from("\nfor the script\n"),
+        stdin: Buffer.from("open the page\nfor the script\n"),
         stdout: "pipe",
         stderr: "pipe",
         env: opener.env,
@@ -829,11 +829,38 @@ describe.concurrent("otp", () => {
 
       expect(err).toBe(`$ ${bunExe()} save-stdin.js\n`);
       expect(out).toContain("\n + otp-pkg-8@8.8.8\n");
-      expect(opener.opened()).toBe(`http://localhost:${mock.port}/auth\n`);
       expect(await file(join(dir, "stdin.txt")).text()).toBe("for the script\n");
+      // The opener has its own thread, and bun does not wait for it.
+      await until(() => opener.opened() !== "");
+      expect(opener.opened()).toBe(`http://localhost:${mock.port}/auth\n`);
       expect(exitCode).toBe(0);
     },
   );
+
+  // bun takes a line that is there whatever it costs, so the search for a line end must have an end of its own.
+  test.skipIf(isWindows)("a stdin that never has a line end does not hold up a web login", async () => {
+    const otp = "otp-17";
+    let polls = 0;
+    using mock = otpRegistry({ otp, done: () => (++polls === 1 ? notDoneYet() : undefined) });
+    using dir = tempDir("publish-web-login-dev-zero", {
+      "package.json": JSON.stringify({ name: "otp-pkg-17", version: "1.7.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "publish"],
+      cwd: String(dir),
+      stdin: file("/dev/zero"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toBe("");
+    expect(out).toContain("\n + otp-pkg-17@1.7.0\n");
+    expect(exitCode).toBe(0);
+  });
 
   // bun looks for ENTER only while it waits for the next request to the done url. Here it never has to wait.
   test("a web login that the done url completes at once reads nothing of a piped stdin", async () => {

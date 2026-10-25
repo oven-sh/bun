@@ -182,7 +182,9 @@ impl EnterOffer {
             Self::Terminal(_) => line.len(),
             Self::Stdin => 1,
         };
-        loop {
+        let mut taken = 0;
+        // The deadline is for input that is not there yet. A line that is there is taken whole.
+        while taken < line.len() {
             let left = deadline.saturating_duration_since(Instant::now());
             match self.readable_within(left) {
                 Some(true) => {}
@@ -192,13 +194,14 @@ impl EnterOffer {
             match bun_sys::read(self.fd(), &mut line[..block]) {
                 Ok(0) => return Waited::EndOfInput,
                 Ok(len) if strings::contains_char(&line[..len], b'\n') => return Waited::Enter,
-                Ok(_) if left.is_zero() => return Waited::Nothing,
-                Ok(_) => {}
+                Ok(len) => taken += len,
                 // Another reader of the terminal took the line first.
                 Err(err) if err.is_retry() => return Waited::Nothing,
                 Err(_) => return Waited::EndOfInput,
             }
         }
+        // This many bytes without a line end are not ENTER, and /dev/zero never has one.
+        Waited::EndOfInput
     }
 
     /// Whether ENTER is pressed before `deadline`. It ends the offer, and so does the end of input.
@@ -215,7 +218,7 @@ impl EnterOffer {
 
     /// A line that was typed on the terminal during the last request answered the offer.
     fn take_late_enter(&self) {
-        if matches!(self, Self::Terminal(_)) {
+        if Output::is_stdin_tty() {
             let _ = self.wait(Instant::now());
         }
     }
@@ -993,12 +996,20 @@ impl PublishCommand {
     /// On a thread: `xdg-open` can stay until the browser is closed.
     fn open_in_browser(auth_url: &[u8]) {
         let auth_url = auth_url.to_vec();
-        let _ = std::thread::Builder::new()
+        let opener = std::thread::Builder::new()
             .name("WebLoginOpener".into())
             .stack_size(256 * 1024)
             .spawn(move || {
                 let _ = bun_core::spawn_sync_inherit(&[open::OPENER, auth_url.as_slice()]);
             });
+        if opener.is_err() {
+            Output::err(
+                "ThreadSpawn",
+                "failed to spawn thread for opening auth url",
+                (),
+            );
+            Output::flush();
+        }
     }
 
     fn get_otp(

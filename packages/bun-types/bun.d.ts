@@ -3686,6 +3686,10 @@ declare module "bun" {
      * JSX configuration options
      */
     jsx?: {
+      /**
+       * Choose the JSX transform. `"preserve"` retains JSX syntax for a later
+       * compiler without adding JSX runtime imports.
+       */
       runtime?: "automatic" | "classic" | "preserve";
       importSource?: string;
       factory?: string;

@@ -3404,7 +3404,6 @@ generic_index_int!(u8, u16, u32, u64, usize, i32, i64);
 pub trait Integer: Copy + Default {
     const MIN_I128: i128;
     const MAX_I128: i128;
-    const ZERO: Self;
     fn from_i32(v: i32) -> Self;
     fn from_f64(v: f64) -> Self;
 }
@@ -3413,7 +3412,6 @@ macro_rules! impl_integer {
         impl Integer for $t {
             const MIN_I128: i128 = <$t>::MIN as i128;
             const MAX_I128: i128 = <$t>::MAX as i128;
-            const ZERO: Self = 0;
             #[inline] fn from_i32(v: i32) -> Self { v as Self }
             #[inline] fn from_f64(v: f64) -> Self { v as Self }
         }

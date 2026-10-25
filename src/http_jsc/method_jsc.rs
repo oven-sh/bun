@@ -1,8 +1,7 @@
 //! JSC bridge for `bun_http_types::Method`. Keeps `bun_http_types` free of JSC types.
 
-use bun_core::String as BunString;
 use bun_http_types::Method::Method;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_jsc::{JSGlobalObject, JSValue};
 
 unsafe extern "C" {
     // SAFETY (safe fn): `Method` is a `#[repr(uN)]` scalar; `JSGlobalObject` is an
@@ -10,19 +9,6 @@ unsafe extern "C" {
     // non-null `JSGlobalObject*` and C++ mutating VM/heap state through it is
     // interior mutation invisible to Rust.
     safe fn Bun__HTTPMethod__toJS(method: Method, global_object: &JSGlobalObject) -> JSValue;
-}
-
-/// Converts a JS string
-/// value to UTF-8 and looks it up in the static method table.
-///
-/// Lives here (not in `bun_http_types`) so the base crate stays JSC-free.
-pub fn from_js(global_this: &JSGlobalObject, input: JSValue) -> JsResult<Option<Method>> {
-    let str = BunString::from_js(input, global_this)?;
-    debug_assert!(str.tag() != bun_core::Tag::Dead);
-    // `Method::which` is keyed on `&[u8]`, so materialize UTF-8 and call it
-    // directly.
-    let utf8 = str.to_utf8();
-    Ok(Method::which(utf8.slice()))
 }
 
 /// Extension trait providing `.to_js()` on `Method` (lives in the `*_jsc` crate so the

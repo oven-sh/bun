@@ -21,17 +21,13 @@ pub(super) struct SerializeTypeOptions {
     pub(super) is_optional_reverse_mapped: bool,
 }
 
-/// True if `e` is a call, or reads a property of what a call returned.
-fn is_from_call(hir: &File, mut e: ExprId) -> bool {
-    while e.is_some() {
-        e = match hir[e].kind {
-            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) => return true,
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-            ExprKind::NonNull(x) => x,
-            _ => return false,
-        };
+/// True if checking `node` resolves a call. A function's body isn't checked with the function.
+fn resolves_a_call(hir: &File, node: hir::Node) -> bool {
+    match hir.kind(node) {
+        Kind::CallExpression | Kind::NewExpression | Kind::TaggedTemplateExpression => true,
+        kind if kind.is_function_like() => false,
+        _ => hir.for_each_child(node, &mut |child| resolves_a_call(hir, child)),
     }
-    false
 }
 
 impl<'p> Printer<'_, 'p, '_> {
@@ -555,11 +551,12 @@ impl<'p> Printer<'_, 'p, '_> {
         };
         // The symbol that a property assignment declares isn't the property of the object literal's type.
         // `getTypeOfSymbol` checks the initializer again, now. Only an error type gets here with another context.
-        // `getResolvedSignature` keeps the signature of a call, so what a call returned is still the error type.
+        // `getResolvedSignature` keeps the signature of a call, so a call that failed returns the error type again. The
+        // task of another file would resolve it again, so an initializer with a call in it keeps its type.
         if ty == TypeId::ERROR
             && let NodeData::Prop(p) = self.c.hir(file).data(declaration)
             && self.c.hir(file)[p].kind == PropKind::Init
-            && !is_from_call(self.c.hir(file), self.c.hir(file)[p].value)
+            && !resolves_a_call(self.c.hir(file), declaration)
         {
             let initializer = self.c.hir(file)[p].value;
             ty = self.c.check_expression_anew(file, initializer);

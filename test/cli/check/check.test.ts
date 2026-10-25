@@ -8643,19 +8643,19 @@ export const a: never = cart.count.a;
       }
     });
 
-    // TypeScript keeps the signature that a call resolved to. So `x`, `y`, `n` and `i` are still the error type when their
-    // initializers are checked again, no matter which file's error prints them.
+    // TypeScript keeps the signature that a call resolved to. So every property but `z` and `w` is still the error type
+    // when its initializer is checked again, no matter which file's error prints it.
     test.each(["a.ts", "use.ts"])(
       "prints a property whose initializer is a failed call as `any`, for an error in %s",
       async printedIn => {
         const use = "export const inner: never = cart.ids.inner;\n";
         using dir = project({
-          "a.ts": `declare function defineStore<S = {}, G extends Record<string, unknown> = {}>(o: { state?: () => S; view?: G & ThisType<S & G> }): S & G;
+          "a.ts": `declare function defineStore<S = {}, G extends Record<string, unknown> = {}>(o: { state?: () => S; view?: G & ThisType<S & G> }): S & G; declare const flag: boolean;
 export const cart = defineStore({
   state: () => ({ name: "x" }),
   view: {
     label() { return [this.name]; },
-    ids: { get inner() { return { x: this.label(), y: this.label().length, n: new this.label(), i: this.label()[0], z: this.label, w: this.name! }; } },
+    ids: { get inner() { return { x: this.label(), y: this.label().length, n: new this.label(), i: this.label()[0], s: this.label().length + 1, o: this.label() ?? 1, t: flag ? this.label() : 1, f: this.label() satisfies unknown, m: this.label() || this.name, q: (1, this.label()), z: this.label, w: this.name! }; } },
   },
 });
 ${printedIn === "a.ts" ? use : ""}`,
@@ -8663,7 +8663,7 @@ ${printedIn === "a.ts" ? use : ""}`,
         });
         const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
         expect(stdout.split("\n").filter(line => line.includes("TS2322"))).toEqual([
-          `${printedIn}(${printedIn === "a.ts" ? 9 : 2},14): error TS2322: Type '{ x: any; y: any; n: any; i: any; z: () => string[]; w: string; }' is not assignable to type 'never'.`,
+          `${printedIn}(${printedIn === "a.ts" ? 9 : 2},14): error TS2322: Type '{ x: any; y: any; n: any; i: any; s: any; o: any; t: any; f: any; m: any; q: any; z: () => string[]; w: string; }' is not assignable to type 'never'.`,
         ]);
         expect(exitCode).toBe(1);
       },

@@ -272,6 +272,8 @@ await Bun.build({
 });
 ```
 
+A key that names a file on disk replaces the contents of that file only. Bun still compiles the file with the `tsconfig.json` and `package.json` that apply to its path. Bun compiles a key with no file on disk with the options you pass to `Bun.build`.
+
 #### Mix disk and virtual files
 
 Real files on disk can import virtual files, and virtual files can import real files:

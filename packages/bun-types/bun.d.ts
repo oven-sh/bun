@@ -3607,6 +3607,11 @@ declare module "bun" {
      * the contents of files that do exist on disk. The keys are file paths (which should
      * match how they're imported) and the values are the file contents.
      *
+     * A key that names a file on disk replaces the contents of that file only.
+     * Bun still compiles the file with the `tsconfig.json` and `package.json`
+     * that apply to its path. Bun compiles a key with no file on disk with the
+     * options of this build.
+     *
      * File contents can be provided as:
      * - `string` - The source code as a string
      * - `Blob` - A Blob containing the source code

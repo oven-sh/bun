@@ -380,10 +380,7 @@ fn evaluate_instruction(
         // `-10`). The instruction then has no lvalue and codegen prints it as a
         // statement ahead of an earlier store that is still inlined at its use:
         // `[(x = 5), -(x = 10), x++]` became `x = 10; [x = 5, -10, x++]`. The
-        // assigned variable still gets its constant (#42628). In the outermost
-        // function `promote_used_temporaries` names the earlier operand (#42859).
-        // A nested function does not run that pass. The three arms return
-        // upstream's constant where `stores_print_in_place` is off.
+        // assigned variable still gets its constant (#42628).
         InstructionValue::PostfixUpdate {
             lvalue,
             operation,

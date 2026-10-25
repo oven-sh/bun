@@ -2109,6 +2109,33 @@ describe("Readable operators in a process that has not loaded node:stream", () =
     });
   });
 
+  it.concurrent("a promise operator attaches before it returns, so destroy() right after rejects it", async () => {
+    const promiseOperators = ["every", "forEach", "reduce", "toArray", "some", "find"];
+    const result = await run(`
+      const Readable = require("node:_stream_readable");
+      process.on("uncaughtException", error => {
+        console.log(JSON.stringify({ uncaught: error.message }));
+        process.exit(1);
+      });
+      const settled = {};
+      (async () => {
+        for (const key of ${JSON.stringify(promiseOperators)}) {
+          const stream = new Readable({ read() {} });
+          const promise =
+            key === "toArray" ? stream.toArray() : key === "reduce" ? stream.reduce(() => true, 0) : stream[key](() => true);
+          stream.destroy(new Error("boom " + key));
+          settled[key] = await promise.then(() => "resolved", error => error.message);
+        }
+        console.log(JSON.stringify(settled));
+      })();
+    `);
+    expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+      stdout: Object.fromEntries(promiseOperators.map(key => [key, "boom " + key])),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it.concurrent("bad arguments throw or reject as in Node", async () => {
     const result = await run(`
       const Readable = require("node:_stream_readable");

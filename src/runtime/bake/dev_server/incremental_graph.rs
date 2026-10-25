@@ -1737,8 +1737,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         }
                     }
                     Content::Asset(_) => {
-                        let mut html_importer = false;
-                        let mut other_importer = false;
+                        let (mut pages, mut stylesheets, mut scripts) = (false, false, false);
                         let mut it = self.edge_lists[index].first_dep;
                         while let Some(edge_index) = it {
                             let entry = self.edges[edge_index.get() as usize];
@@ -1749,21 +1748,23 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             );
                             let k = k.slice();
                             let importer = &self.bundled_files.values()[dep.get() as usize];
-                            if importer.html_route_bundle_index.is_some() {
-                                html_importer = true;
-                            } else {
-                                other_importer = true;
-                            }
                             if matches!(importer.content, Content::CssRoot(_)) {
+                                stylesheets = true;
                                 entry_points.append_css(k)?;
                             } else {
+                                if importer.html_route_bundle_index.is_some() {
+                                    pages = true;
+                                } else {
+                                    scripts = true;
+                                }
                                 self.append_client_entry_point(entry_points, dep.get() as usize)?;
                             }
                             it = entry.next_dependency;
                         }
-                        // One kind of importer bundles this file again, with the loader that its imports ask for. An html link can ask for another loader than a script or a stylesheet.
-                        let one_kind_of_importer = html_importer != other_importer;
-                        if !one_kind_of_importer
+                        // One kind of importer bundles this file again, with the loader that its imports ask for. A page, a stylesheet and a script can ask for different loaders.
+                        let importer_kinds =
+                            u8::from(pages) + u8::from(stylesheets) + u8::from(scripts);
+                        if importer_kinds != 1
                             || self.bundled_files.values()[index]
                                 .html_route_bundle_index
                                 .is_some()

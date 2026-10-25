@@ -2681,7 +2681,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
 // Raw OS entropy source: getrandom(2) on Linux, getentropy on Darwin/BSD,
 // RtlGenRandom on Windows. bun_core sits below boringssl_sys in the crate
 // graph so it cannot reach `RAND_bytes`; this is used only to seed
-// `fast_random()`'s thread-local PRNG once per thread. Every other caller
+// `fast_random()`'s thread-local PRNG once per process. Every other caller
 // must use `bun_boringssl_sys::rand_bytes` (userspace DRBG, no syscall per
 // call).
 fn os_entropy(bytes: &mut [u8]) {
@@ -3489,6 +3489,7 @@ pub mod rand {
 
 /// Port of `bun.fastRandom()`. Thread-local xoshiro256++ seeded once per
 /// process from the OS CSPRNG (or `BUN_DEBUG_HASH_RANDOM_SEED` in debug).
+/// Each thread's generator starts from that seed plus the thread's index.
 pub fn fast_random() -> u64 {
     use core::cell::Cell;
     use core::sync::atomic::{AtomicU64, Ordering as O};
@@ -3512,13 +3513,14 @@ pub fn fast_random() -> u64 {
         }
         v
     }
+    static THREADS: AtomicU64 = AtomicU64::new(0);
     thread_local! {
         static PRNG: Cell<Option<rand::DefaultPrng>> = const { Cell::new(None) };
     }
     PRNG.with(|p| {
-        let mut prng = p
-            .take()
-            .unwrap_or_else(|| rand::DefaultPrng::init(random_seed()));
+        let mut prng = p.take().unwrap_or_else(|| {
+            rand::DefaultPrng::init(random_seed().wrapping_add(THREADS.fetch_add(1, O::SeqCst)))
+        });
         let v = prng.next_u64();
         p.set(Some(prng));
         v

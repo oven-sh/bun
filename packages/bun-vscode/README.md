@@ -67,13 +67,31 @@ Once the server is running, VS Code's own formatting and code action settings wo
 
 You can also run "Format Document" or "Format Selection" from the command palette.
 
-This feature requires a Bun that has `bun fmt --lsp` (Bun 1.4.5 or later). If the `bun` executable on your `PATH` (or the one set in `bun.runtime`) is older or cannot be started, the language server is skipped and a message is written to the "Bun" output channel. The server is started again after `bun.runtime` changes.
+This feature requires a Bun that has `bun fmt --lsp` (Bun 1.4.5 or later). Before starting the server, the extension runs `bun --version` with the `bun` executable on your `PATH` (or the one set in `bun.runtime`). If the reported version is older than 1.4.5, or the executable cannot be started, the language server is skipped and one line is written to the "Bun" output channel. The check runs again after `bun.runtime` changes.
 
-Formatting works on stable releases of Bun. Lint diagnostics and the `source.fixAll.bun` code action need a canary build of Bun (`bun upgrade --canary`); on a stable build the server only advertises formatting.
+Formatting works on stable releases of Bun. Lint diagnostics and the `source.fixAll.bun` code action need a build of Bun that has `bun lint` (for example a canary build, `bun upgrade --canary`); on other builds the server only advertises formatting.
+
+The language server reads these settings:
+
+```jsonc
+{
+  // If the extension should start Bun's language server (`bun fmt --lsp`) for formatting and lint fixes.
+  "bun.lsp.enable": true,
+
+  // If the language server should report lint diagnostics and offer lint fixes. Needs a build of Bun that has `bun lint`.
+  "bun.lint.enable": true,
+
+  // When lint diagnostics are refreshed: "onType" or "onSave". Needs a build of Bun that has `bun lint`.
+  "bun.lint.run": "onType",
+
+  // If the language server should format documents.
+  "bun.format.enable": true,
+}
+```
 
 To turn the formatter and linter off, set `bun.lsp.enable` to `false` in your settings.
 
-Other editors can run `bun fmt --no-script --lsp` directly as a stdio language server. Earlier formatter work for this extension was contributed in [#46571](https://github.com/oven-sh/bun/pull/46571) (cayank) and [#45253](https://github.com/oven-sh/bun/pull/45253) (Ghosty920).
+Other editors can run `bun fmt --no-script --lsp` directly as a stdio language server; see [editor integration](https://bun.com/docs/format#editor-integration) in the Bun docs. Earlier formatter work for this extension was contributed in [#46571](https://github.com/oven-sh/bun/pull/46571) (cayank) and [#45253](https://github.com/oven-sh/bun/pull/45253) (Ghosty920).
 
 ## Configuration
 
@@ -162,5 +180,14 @@ You can use the following configurations to customize the behavior of the Bun ex
 
   // If the extension should start Bun's language server (`bun fmt --lsp`) for formatting and lint fixes.
   "bun.lsp.enable": true,
+
+  // If the language server should report lint diagnostics and offer lint fixes. Needs a build of Bun that has `bun lint`.
+  "bun.lint.enable": true,
+
+  // When lint diagnostics are refreshed: "onType" or "onSave". Needs a build of Bun that has `bun lint`.
+  "bun.lint.run": "onType",
+
+  // If the language server should format documents.
+  "bun.format.enable": true,
 }
 ```

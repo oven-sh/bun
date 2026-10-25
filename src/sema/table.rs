@@ -878,6 +878,8 @@ fn is_for_all_tasks(task: &Task, value: &impl Follow) -> bool {
 }
 
 impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V, Buffered<W>, A> {
+    /// For what's inlined into the callers. The functions that aren't inlined read `slot`, so tables that differ only in
+    /// their slot share the machine code.
     #[inline]
     fn own_slot(&self) -> u32 {
         known_slot::<Buffered<W>>(self.slot)
@@ -957,7 +959,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
     /// `get` for when `Buffer::in_row` returns `None`.
     #[inline(never)]
     fn get_outside_the_row(&self, task: &Task, file: u32, index: u32) -> u32 {
-        let (slot, buffer) = (self.own_slot(), task.buffer());
+        let (slot, buffer) = (self.slot, task.buffer());
         if file == buffer.file() && Self::has_a_whole_row(task, file) {
             self.adopt(task, buffer, file);
             return buffer.in_row(slot, file, index).unwrap_or(0);
@@ -977,7 +979,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
     #[cold]
     #[inline(never)]
     fn adopt(&self, task: &Task, buffer: &mut Buffer<'_>, file: u32) {
-        let (slot, nodes) = (self.own_slot(), self.bases.range_of(FileId(file)));
+        let (slot, nodes) = (self.slot, self.bases.range_of(FileId(file)));
         buffer.cover(slot, file, &nodes, self.bases.count_in(FileId(file)));
         if !Self::has_a_whole_row(task, file) {
             return;
@@ -1015,7 +1017,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         file: u32,
         index: u32,
     ) -> Result<&'b mut u32, u32> {
-        let slot = self.own_slot();
+        let slot = self.slot;
         if file == buffer.file() {
             let is_adopted = match Self::has_a_whole_row(task, file) {
                 true => buffer.has_whole_row(slot, file),
@@ -1049,7 +1051,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
             }
             Err(published) if !replaces => return published,
             Err(published) => {
-                buffer.shadow(self.own_slot(), file, index, raw);
+                buffer.shadow(self.slot, file, index, raw);
                 (published, true)
             }
         };
@@ -1057,7 +1059,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
             return current;
         }
         if is_stored {
-            buffer.log_node(self.own_slot(), file, index);
+            buffer.log_node(self.slot, file, index);
         }
         // The entry waits in the task-local part for a commit, unless `Bases` doesn't count the node. Nothing is ever
         // published under such a node, so no other task could find the entry.

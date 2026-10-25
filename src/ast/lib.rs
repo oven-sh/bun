@@ -1304,7 +1304,7 @@ pub enum Metadata {
     },
 }
 
-/// How TypeScript reports an error, which decides what suppresses it.
+/// How TypeScript reports an error.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TypeScriptKind {
     /// `Checker.error`

@@ -7,12 +7,14 @@ import {
   gcTick,
   isASAN,
   isDebug,
+  isLinux,
   isWindows,
   tempDir,
   tempDirWithFiles,
   tls,
   tmpdirSync,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { createConnection, createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
@@ -3371,6 +3373,100 @@ describe("GC pressure mid-rewrite", () => {
     expect(stdout).toBe("iteration 0 saw 5\niteration 1 saw 5\niteration 2 saw 5\ndone\n");
     expect(exitCode).toBe(0);
   });
+
+  // The file's last piece pauses the stream between the two rewriters, so the first one's end
+  // output waits in that stream until the second one's background pull resumes it, with no frame
+  // of the first rewriter on the stack. The handler then cuts the last GC path to the stream
+  // that is delivering to it. Only an ASAN build reports the use after free.
+  it.concurrent(
+    "cancelling the output from a handler does not free the resumed input ByteStream under its delivery",
+    async () => {
+      using dir = tempDir("hr-resume-cancel", { "in.html": Buffer.alloc(256 * 1024 + 3000, "x").toString() });
+      const fixture = /* js */ `
+        const rw1 = new HTMLRewriter().onDocument({
+          end(end) {
+            end.append("<b></b>", { html: true });
+          },
+        });
+        // "element" runs inside the stream's write() into the second rewriter, "end" inside its end().
+        for (const kind of ["element", "end"]) {
+          const handled = Promise.withResolvers();
+          const handler = () => {
+            try {
+              r2.body.cancel();
+              Bun.gc(true);
+              handled.resolve();
+            } catch (e) {
+              handled.reject(e);
+            }
+          };
+          const rw2 = new HTMLRewriter();
+          if (kind === "element") rw2.on("b", { element: handler });
+          else rw2.onDocument({ end: handler });
+          const r2 = rw2.transform(rw1.transform(new Response(Bun.file("in.html"))));
+          await handled.promise;
+          console.log(kind);
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("element\nend\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The same for a pipe. Its writer is gone, so the read loop goes on past the rewriter's pause
+  // and finds the end, which then waits for the rewriter's background pull.
+  // Linux only: the pipe has to hold more than the rewriter's high-water mark with nobody reading.
+  it.concurrent.skipIf(!isLinux)(
+    "cancelling the output from a handler does not free the resumed input FileReader under its delivery",
+    async () => {
+      using dir = tempDir("hr-resume-cancel-pipe", {});
+      mkfifo(join(String(dir), "fifo"));
+      const fixture = /* js */ `
+        import { closeSync, constants, openSync, writeSync } from "node:fs";
+        const handled = Promise.withResolvers();
+        const rewriter = new HTMLRewriter().onDocument({
+          end() {
+            try {
+              response.body.cancel();
+              Bun.gc(true);
+              handled.resolve();
+            } catch (e) {
+              handled.reject(e);
+            }
+          },
+        });
+        // A blocking open waits for the other end.
+        const first = openSync("fifo", constants.O_RDONLY | constants.O_NONBLOCK);
+        const writer = openSync("fifo", constants.O_WRONLY | constants.O_NONBLOCK);
+        const reader = openSync("fifo", constants.O_RDONLY);
+        closeSync(first);
+        writeSync(writer, Buffer.alloc(20000, "x"));
+        closeSync(writer);
+        const response = rewriter.transform(new Response(Bun.file(reader)));
+        closeSync(reader);
+        await handled.promise;
+        console.log("done");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("done\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // Chained transform where the intermediate Response is a temporary: while
   // the second pipe's handler is suspended, the first pipe is parked on the

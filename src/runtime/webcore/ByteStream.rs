@@ -412,10 +412,10 @@ impl readable_stream::SourceContext for ByteStream {
     }
 }
 
-// SAFETY: `ByteStream` is always the `context` field of a `Source`
-// (ReadableStream.NewSource); never constructed standalone. Everything it
-// touches on the `Source` is a `Cell`, so the `&Source` arm suffices.
-bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent_const; }
+// SAFETY: `ByteStream` is always the `context` field of a heap-allocated
+// `Source` (ReadableStream.NewSource); never constructed standalone.
+// `parent` is the `raw` arm for releasing a ref, which can free it.
+bun_core::impl_field_parent! { ByteStream => Source.context; fn raw parent; pub fn shared parent_const; }
 
 impl ByteStream {
     #[inline]
@@ -496,6 +496,10 @@ impl ByteStream {
         if sink.is_none() {
             return;
         }
+
+        // An HTMLRewriter sink runs handlers, which can cancel the pipe (dropping its roots on this stream) and collect the wrapper.
+        // SAFETY: see `parent()`.
+        let _pin = unsafe { RefPtr::init_ref(self.parent()) };
 
         if !self.buffered.is_empty() {
             let buffered = self.buffered.take();

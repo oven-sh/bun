@@ -526,6 +526,9 @@ impl FileReader {
         if sink.is_none() {
             return;
         }
+        // An HTMLRewriter sink runs handlers, which can cancel the pipe (dropping its roots on this stream) and collect the wrapper.
+        // SAFETY: see `parent()`.
+        let _pin = unsafe { RefPtr::init_ref(self.parent()) };
         let reader_done = self.reader_finished();
         let buffered = self.drain();
         if !buffered.is_empty() {

@@ -210,12 +210,12 @@
     "codeBytes": 11082392,
     "bytesAValue": 34.48,
     "tests": {
-      "executed": 14779,
-      "failed": 581
+      "executed": 14791,
+      "failed": 559
     },
     "typeTests": {
-      "executed": 8044,
-      "failed": 531
+      "executed": 8028,
+      "failed": 509
     },
     "alwaysFailing": {
       "bun": {
@@ -285,10 +285,10 @@
     },
     "uneven": 0,
     "calls": {
-      "all": 1443,
+      "all": 1411,
       "ofFunctionsNotExpectedToRun": 10
     },
-    "accessesByName": 2886.98,
+    "accessesByName": 2865,
     "runtimeOperations": {
       "operationAOTAllocateSlow": 1,
       "operationAOTByteLengthOfAnyValue": 10,
@@ -312,7 +312,7 @@
     },
     "allocated": {
       "cells": 544.1,
-      "bytes": 35835.52
+      "bytes": 35483.52
     },
     "closures": {
       "aRound": 73.02,
@@ -549,15 +549,15 @@
     }
   },
   "koa": {
-    "codeBytes": 7535584,
-    "bytesAValue": 29.94,
+    "codeBytes": 6860920,
+    "bytesAValue": 29.36,
     "tests": {
-      "executed": 22073,
-      "failed": 848
+      "executed": 21457,
+      "failed": 844
     },
     "typeTests": {
-      "executed": 12577,
-      "failed": 695
+      "executed": 11993,
+      "failed": 694
     },
     "alwaysFailing": {
       "bun": {
@@ -614,7 +614,6 @@
           "HasNoExtraProperties 7757",
           "HasNoExtraProperties 8586",
           "HasNoExtraProperties 9210",
-          "HasNoExtraProperties 9280",
           "TypeTest 9280",
           "HasNoExtraProperties 9527",
           "TypeTest 9590",
@@ -645,15 +644,15 @@
           "IsSlotFilled 37466"
         ]
       },
-      "packages": 64,
+      "packages": 63,
       "program": 13
     },
     "uneven": 0,
     "calls": {
-      "all": 2341,
+      "all": 2299,
       "ofFunctionsNotExpectedToRun": 46
     },
-    "accessesByName": 4560.98,
+    "accessesByName": 4531,
     "runtimeOperations": {
       "operationAOTAllocateSlow": 2,
       "operationAOTCodeURIOfAnyValue": 6,
@@ -667,10 +666,11 @@
       "operationAOTFlatten": 4,
       "operationAOTGetByIdAndCache": 1,
       "operationAOTGetByValGeneric": 1,
+      "operationAOTNewArray": 1,
       "operationAOTNewArrayAtReviewedSite": 2,
       "operationAOTNewClosureSlow": 1,
       "operationAOTNumberOfAnyValue": 1,
-      "operationAOTPromiseThen": 5,
+      "operationAOTPromiseThen": 1,
       "operationAOTPutById": 1,
       "operationAOTResolvePromise": 9,
       "operationAOTResolvePromiseOrReturnResult": 8,
@@ -685,11 +685,11 @@
     },
     "allocated": {
       "cells": 1257.95,
-      "bytes": 66959.84
+      "bytes": 66619.36
     },
     "closures": {
       "aRound": 284,
-      "once": 3051
+      "once": 2998
     }
   }
 }

@@ -17,9 +17,8 @@ use bun_sema::bind::SymbolId;
 use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Sym};
-use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_sema::util::FxHashMap;
 use core::ops::Range;
-use std::collections::VecDeque;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleRef {
@@ -108,6 +107,14 @@ pub(super) struct StoredSite {
     pub referrer: ModuleRef,
     pub target: ModuleRef,
     pub is_bare: bool,
+}
+
+/// The imports that lead from the ES modules of the program to its CommonJS files.
+struct LinkedFiles {
+    /// By ES module, in the order of its requests.
+    by_importer: Vec<Vec<FileId>>,
+    /// By ES module.
+    commonjs_files_below: ReachedTargets,
 }
 
 pub(super) struct Plan {
@@ -524,35 +531,32 @@ impl ModuleGraph {
     }
 
     // The CommonJS files, or their faces, that imports between ES modules reach from `root`, in the order in which `bun run` loads them: what a module imports comes behind everything that was asked for before.
-    fn collect_prefix(&self, root: FileId, below: &ReachedTargets) -> Vec<ModuleRef> {
+    fn collect_prefix(&self, root: FileId, linked: &LinkedFiles) -> Vec<ModuleRef> {
+        let below = &linked.commonjs_files_below;
         let mut prefix = Vec::new();
         let mut remaining = below.start_walk(root);
-        let mut seen = FxHashSet::default();
-        seen.insert(root);
-        let mut importers = VecDeque::from([root]);
-        while let Some(file) = importers.pop_front() {
-            for request in self.requests(file) {
-                if remaining.is_empty() {
-                    return prefix;
-                }
-                let Some(target) = self.find_linked_file(request) else {
-                    continue;
-                };
-                match self.kind(target) {
-                    ModuleKind::SourceText => {
-                        if remaining.has_some_below(below, target) && seen.insert(target) {
-                            importers.push_back(target);
-                        }
+        if remaining.is_empty() {
+            return prefix;
+        }
+        let mut is_seen = vec![false; linked.by_importer.len()];
+        is_seen[root.idx()] = true;
+        let mut importers = vec![root];
+        let mut next = 0;
+        while let Some(&file) = importers.get(next) {
+            next += 1;
+            for &target in &linked.by_importer[file.idx()] {
+                if !below.is_target(target) {
+                    if remaining.has_some_below(below, target)
+                        && !core::mem::replace(&mut is_seen[target.idx()], true)
+                    {
+                        importers.push(target);
                     }
-                    ModuleKind::CommonJs => {
-                        if remaining.take(below, target) {
-                            prefix.push(self.face(request.target).unwrap_or(request.target));
-                        }
+                } else if remaining.take(below, target) {
+                    let target = ModuleRef::File(target);
+                    prefix.push(self.face(target).unwrap_or(target));
+                    if remaining.is_empty() {
+                        return prefix;
                     }
-                    ModuleKind::Data
-                    | ModuleKind::RuntimeSource
-                    | ModuleKind::Runtime
-                    | ModuleKind::External => {}
                 }
             }
         }
@@ -571,8 +575,7 @@ impl ModuleGraph {
         is_followed.then_some(target)
     }
 
-    // By ES module: the CommonJS files that imports between ES modules lead to.
-    fn find_commonjs_files_below(&self) -> ReachedTargets {
+    fn find_linked_files(&self) -> LinkedFiles {
         let mut successors = Vec::new();
         successors.resize_with(self.row_by_file.len(), Vec::new);
         let mut commonjs_files = Vec::new();
@@ -593,7 +596,14 @@ impl ModuleGraph {
                 successors[file.idx()].push(target);
             }
         }
-        ReachedTargets::compute(commonjs_files.into_iter(), &successors)
+        let commonjs_files_below = ReachedTargets::compute(commonjs_files.into_iter(), &successors);
+        for targets in &mut successors {
+            targets.retain(|&target| commonjs_files_below.leads_to_target(target));
+        }
+        LinkedFiles {
+            by_importer: successors,
+            commonjs_files_below,
+        }
     }
 
     /// The ES modules at which a graph of imports is linked: entry points, and what `import()` or a `require` names.
@@ -622,7 +632,7 @@ impl ModuleGraph {
     ) -> (Vec<ModuleRequest>, FxHashMap<ModuleRef, Range<u32>>) {
         let mut requests: Vec<ModuleRequest> = Vec::new();
         let mut ranges = FxHashMap::default();
-        let commonjs_files_below = self.find_commonjs_files_below();
+        let linked_files = self.find_linked_files();
         let is_es_module = |file: FileId| {
             self.is_code_of_program(ModuleRef::File(file))
                 && self.kind(file) == ModuleKind::SourceText
@@ -635,7 +645,7 @@ impl ModuleGraph {
             .map(|root| (root, Vec::new()))
             .collect();
         for_each_mut(&mut prefixes, in_parallel, &|(root, prefix)| {
-            *prefix = self.collect_prefix(*root, &commonjs_files_below);
+            *prefix = self.collect_prefix(*root, &linked_files);
         });
         let mut prefixes = prefixes.into_iter();
         for &file in self.record_files() {

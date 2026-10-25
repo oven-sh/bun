@@ -27,8 +27,8 @@ import {
   hasTypes,
   inPrograms,
   inShare,
-  isJudgedByClock,
   mayHoldWhatIsWanted,
+  measuresTimeOrMemory,
   slot,
   spawned,
   taken,
@@ -36,6 +36,7 @@ import {
   todoReason,
   unsupported,
   wanted,
+  withEverySlot,
   withoutCoreDump,
   withoutDebugInformation,
   type RunResult,
@@ -231,10 +232,10 @@ export function programsAsSeparateEntryPoints(part = 1, parts = 1) {
     type Ran = { stdout: string; stderr: string; exitCode: number; signal: NodeJS.Signals | null };
     let lists = 0;
     /** Starts `command`, which is the runner, for the programs, each in a Worker. What a signal or the clock has cut off runs again, a process a program. */
-    async function runInWorkers(command: string[], programs: string[], spell: (path: string) => string, results: Map<string, Ran>): Promise<void> {
+    async function runInWorkers(command: string[], programs: string[], spell: (path: string) => string, results: Map<string, Ran>, hold: typeof slot = slot): Promise<void> {
       const list = join(folder, `tasks-${lists++}.json`);
       writeFileSync(list, JSON.stringify(programs.map(path => ({ program: spell(path), cwd: dirname(path), env: optionsOf(path).env }))));
-      const ran = await slot(() => spawned(withoutCoreDump(command), dirname(programs[0]), { ...bunEnv, BUN_AOT_VERBOSE: "1", AOT_TASKS: list, AOT_MARK: mark }));
+      const ran = await hold(() => spawned(withoutCoreDump(command), dirname(programs[0]), { ...bunEnv, BUN_AOT_VERBOSE: "1", AOT_TASKS: list, AOT_MARK: mark }));
       rmSync(list, { force: true });
       const parts = (text: string) => text.split(new RegExp(`\\r?\\n${mark} (-?[0-9]+)\\r?\\n`));
       const [stdout, stderr] = [parts(ran.stdout), parts(ran.stderr)];
@@ -258,10 +259,11 @@ export function programsAsSeparateEntryPoints(part = 1, parts = 1) {
       return async (path: string) => (await startOf.get(path)!(), results.get(path)!);
     }
     const plainIn = inBatches(chosen, (batch, results) => runInWorkers([bunExe(), "run", join(import.meta.dir, "programs", runner)], batch, path => path, results));
-    // What compares two times runs in a process of its own: the programs beside it in a batch would take its processor.
+    // See measuresTimeOrMemory(). Such a program also runs in a process of its own: the programs beside it in a batch would take its processor.
     const alone = async (cmd: string[], path: string, nameFor: (path: string) => string) => {
       const results = new Map<string, Ran>();
-      await runInWorkers(cmd, [path], nameFor, results);
+      await Promise.all(ways.map((_, index) => buildOnce(index)));
+      await runInWorkers(cmd, [path], nameFor, results, work => withEverySlot(0, work));
       return results.get(path)!;
     };
     const plainAlone = (path: string) => alone([bunExe(), "run", join(import.meta.dir, "programs", runner)], path, path => path);
@@ -326,7 +328,7 @@ export function programsAsSeparateEntryPoints(part = 1, parts = 1) {
         nameOf(path),
         async () => {
           const options = optionsOf(path);
-          const comparesTimes = isJudgedByClock(path);
+          const comparesTimes = measuresTimeOrMemory(path);
           let reference: RunResult | undefined;
           for (const [index, way] of ways.entries()) {
             if (index === 1 && !typed.has(path)) continue;
@@ -342,7 +344,6 @@ export function programsAsSeparateEntryPoints(part = 1, parts = 1) {
             let happened = "it did not start";
             try {
               expect({ way: way.name, refused: way.refused.get(path) }).toEqual({ way: way.name, refused: undefined });
-              // Other work on the machine moves a ratio of two times for a while, so what compares times is asked up to four times. Code that is slower is slower each time.
               for (let attemptsLeft = comparesTimes ? 3 : 0; ; attemptsLeft--) {
                 const ran = await (comparesTimes ? compiledAlone(way, path) : compiledIn[index](path));
                 const result = told({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\r?\n/gm, "") });

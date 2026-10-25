@@ -27,6 +27,8 @@ const plainBunVaries: Record<string, string> = {
     "it asks whether the process grew by less than 115 MB and keeps less than 92 MB: plain Bun is over both on Linux, and on macOS under both in some runs",
   "objects/copies-of-an-object-with-very-many-names-take-time-in-proportion":
     "each line has a bound of 10 s: plain Bun is under it on a fast machine, and a debug or sanitizer build on a busy one may not be",
+  "modules/an-imported-commonjs-file-requires-a-module-that-awaits":
+    "plain Bun begins the two CommonJS files in the order in which their texts arrive, which is not one order from run to run; the stored output has them in the order of the import statements: the usual one, and what the executable always prints",
   "modules/commonjs-requires-es-modules-of-the-graph-being-linked":
     "plain Bun prints the lines of the stored output in one of several orders from run to run: which CommonJS file begins first is not one answer there; the stored order is what the executable always prints",
   "modules/imported-commonjs-files-run-in-the-order-they-are-loaded":
@@ -35,6 +37,8 @@ const plainBunVaries: Record<string, string> = {
     "plain Bun begins the second file before the first in about one run of ten on a busy machine; the stored output is what it prints in the other nine, and what the executable always prints",
   "static-modules/earlier-cases/names-imported-by-es-modules-against-later-stores":
     "plain Bun prints another first line in about one run of eight; the stored output is what it prints in the other seven, and what the executable always prints",
+  "untyped-code/contents-survive-added-properties-and-elements":
+    "what a store of a number past the end of a BigInt64Array does in plain Bun goes by the tier that runs it, so one sum of that row is another in a run now and then; the stored output is the usual one, and what the executable always prints",
   "untyped-speed/names-read-a-hundred-times-off-each-new-shape-are-not-four-times-as-slow-as-off-one-shape":
     "it compares two times: plain Bun is under the bound on some machines and over it on others",
 };

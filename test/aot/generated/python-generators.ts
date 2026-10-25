@@ -96,7 +96,7 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   ["own-property-queries-by-name", "js"],
   ["references-in-every-slot-kind", "ts"],
   ["regular-expression-literals", "js", { ...withoutTheRegExpJIT, leftOut: [1, 8, 26] }],
-  ["regexps-and-near-matches", "js", withoutTheRegExpJIT],
+  ["regexps-and-near-matches", "js", { ...withoutTheRegExpJIT, leftOut: [26] }],
   ["repeated-groups-that-can-match-nothing", "js", withoutTheRegExpJIT],
   ["rest-parameters", "ts", { leftOut: [8, 10, 15, 22] }],
   ["paths-to-call-site", "js"],

@@ -1,13 +1,9 @@
 // `require()` of an ES module.
 import { js, pkg, type Case } from "./run-packages";
 
-const differs =
-  "`require()` of a module with top-level await cannot work and throws a TypeError. What `require()` returns for an ES module is its namespace object, which cannot be written to.";
-
 export const cases: Case[] = [
   {
     name: "require-esm",
-    differs,
     files: {
       ...pkg("resm", {
         "plain.mjs": `export const a = 1;

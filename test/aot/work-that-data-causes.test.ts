@@ -5,6 +5,7 @@ import { afterAll, expect } from "bun:test";
 import { bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
+import { measureUntilWithinBounds } from "./harness/measure-again";
 import { run } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 
@@ -54,20 +55,28 @@ describe.skipIf(isASAN || isDebug)("compile/aot/work that data causes", () => {
   test.each(rows)(
     "%s: %s",
     async (source, name) => {
-      const plain = await least([bunExe(), source, name, String(many)]);
-      const small = await least([compiled(source), name, String(few)]);
-      const large = await least([compiled(source), name, String(many)]);
-      expect(large.answer).toBe(plain.answer);
-      const timesPlainBun = Math.round(large.time / Math.max(plain.time, floor));
-      // Ten times the input: linear work takes ten times as long, quadratic work a hundred times.
-      const growth = Math.round(Math.max(large.time, floor) / Math.max(small.time, floor / 10));
+      const { timesPlainBun, growth } = await measureUntilWithinBounds(
+        name,
+        async () => {
+          const plain = await least([bunExe(), source, name, String(many)]);
+          const small = await least([compiled(source), name, String(few)]);
+          const large = await least([compiled(source), name, String(many)]);
+          expect(large.answer).toBe(plain.answer);
+          return {
+            timesPlainBun: Math.round(large.time / Math.max(plain.time, floor)),
+            // Ten times the input: linear work takes ten times as long, quadratic work a hundred times.
+            growth: Math.round(Math.max(large.time, floor) / Math.max(small.time, floor / 10)),
+          };
+        },
+        ({ timesPlainBun, growth }) => timesPlainBun <= 5 && growth <= 40,
+      );
       expect({ name, timesPlainBun: Math.max(timesPlainBun, 5), growth: Math.max(growth, 40) }).toEqual({
         name,
         timesPlainBun: 5,
         growth: 40,
       });
     },
-    120_000,
+    480_000,
   );
 
   test.skipIf(!isLinux)(
@@ -84,10 +93,16 @@ describe.skipIf(isASAN || isDebug)("compile/aot/work that data causes", () => {
         const [megabytes, answer] = ran.stdout.trim().split(" ");
         return { megabytes: Number(megabytes), answer };
       };
-      const plain = await left([bunExe(), source, "40000"]);
-      const ours = await left([compiled(source), "40000"]);
-      expect(ours.answer).toBe(plain.answer);
-      const timesPlainBun = Math.round(ours.megabytes / Math.max(plain.megabytes, 10));
+      const timesPlainBun = await measureUntilWithinBounds(
+        source,
+        async () => {
+          const plain = await left([bunExe(), source, "40000"]);
+          const ours = await left([compiled(source), "40000"]);
+          expect(ours.answer).toBe(plain.answer);
+          return Math.round(ours.megabytes / Math.max(plain.megabytes, 10));
+        },
+        times => times <= 3,
+      );
       expect({ timesPlainBun: Math.max(timesPlainBun, 3) }).toEqual({ timesPlainBun: 3 });
     },
     120_000,

@@ -24,7 +24,12 @@ pub(super) fn run<'s>(
     }
     let (mut folded, mut scan) = fold_bound_file(hir, &bound, inputs, file, atoms, arena);
     let declared = file.declared_module_type;
-    let decision = decide_module_format(hir, &bound, &folded.decisions, &scan, declared);
+    let decisions_of_bun_run = folded.decisions.as_folded_by_bun_run();
+    let mut decision = decide_module_format(hir, &bound, &decisions_of_bun_run, &scan, declared);
+    if decision.error.is_some() {
+        // `bun run` refuses the file. A build that removes what is wrong with it compiles it.
+        decision = decide_module_format(hir, &bound, &folded.decisions, &scan, declared);
+    }
     let is_module = decision.format == ModuleFormat::Esm;
     if is_module && !hir.is_strict_by_syntax {
         hir.set_strict();

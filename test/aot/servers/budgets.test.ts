@@ -16,7 +16,8 @@
 //   alwaysFailing        the tests that run every round and fail every time: they cost the test and the slow side and buy nothing.
 //                        In Bun's own modules they are listed by module, kind and position, and the aim is none.
 //                        In packages and in the program itself they are counted.
-//   uneven               the tests whose counts are no whole number a round: something other than the requests decides them
+//   uneven               the tests whose counts are no whole number a round: something other than the requests decides them.
+//                        They are counted in tests and typeTests like the others.
 //   accessesByName       the accesses in a round that look a property up by its name or by a key instead of loading a slot
 //   runtimeOperations    the calls in a round out of compiled code and its stubs into functions of the run time, by function;
 //                        their sum is held against the budget
@@ -105,9 +106,11 @@ const exchanges: Exchange[] = routes.map(route => ({
   expected: { status: route.status ?? 200, type: route.type, body: route.expectedBody },
 }));
 
+const hundredths = (count: number) => Math.round(100 * count) / 100;
+
 const sum = (tests: CountedTest[]) => ({
-  executed: tests.reduce((total, test) => total + test.executed, 0),
-  failed: tests.reduce((total, test) => total + test.failed, 0),
+  executed: hundredths(tests.reduce((total, test) => total + test.executed, 0)),
+  failed: hundredths(tests.reduce((total, test) => total + test.failed, 0)),
 });
 
 const placeOf = (test: CountedTest) => `${test.kind} ${test.position}`;
@@ -116,21 +119,24 @@ function measured(
   { codeBytes, bytesAValue }: Awaited<ReturnType<typeof codeOf>>,
   { tests, uneven, calls, accessesByName, runtimeOperations, allocated, closures }: CountedWork,
 ): Budget {
-  const added = tests.filter(test => testsAddedByTheCompiler.has(test.kind));
+  const isAdded = (test: CountedTest) => testsAddedByTheCompiler.has(test.kind);
+  const added = tests.filter(isAdded);
+  const unevenAdded = uneven.filter(isAdded);
+  const counted = [...added, ...unevenAdded];
   const failing = alwaysFailing(added);
   const bun: Record<string, string[]> = {};
   for (const test of failing) if (test.owner === "bun") (bun[test.path] ??= []).push(placeOf(test));
   return {
     codeBytes,
     bytesAValue,
-    tests: sum(added),
-    typeTests: sum(added.filter(test => test.kind === "TypeTest")),
+    tests: sum(counted),
+    typeTests: sum(counted.filter(test => test.kind === "TypeTest")),
     alwaysFailing: {
       bun,
       packages: failing.filter(test => test.owner === "packages").length,
       program: failing.filter(test => test.owner === "program").length,
     },
-    uneven: uneven.filter(test => testsAddedByTheCompiler.has(test.kind)).length,
+    uneven: unevenAdded.length,
     calls: {
       all: Object.values(calls).reduce((total, count) => total + count, 0),
       ofFunctionsNotExpectedToRun: calls.cold + calls.once + calls.behindFailedTest,

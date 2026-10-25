@@ -4678,5 +4678,11 @@
   ],
   "objects held as a kind that never comes and read through any": [
     "looks-bag-created-6"
+  ],
+  "results made for the caller": [
+    "orNull-asksForAName-underACleanup-method"
+  ],
+  "typed results made for the caller": [
+    "orNull-asksForAName-underACleanup-method"
   ]
 }

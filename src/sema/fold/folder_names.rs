@@ -80,6 +80,7 @@ impl<'s> Folder<'_, 's> {
             && !self.is_delete_operand(e);
         match self.file.import_meta_main {
             Some(is_main) if is_main_read => {
+                self.mark_folded_by_build_alone(e);
                 self.decide(e, Decision::Constant(Constant::Boolean(is_main)))
             }
             Some(_) | None => Folded::UNKNOWN,
@@ -102,6 +103,7 @@ impl<'s> Folder<'_, 's> {
             return None;
         }
         self.short_circuited_links.insert(link.idx());
+        self.mark_folded_by_build_alone(link);
         let undefined = Value::from(Constant::Undefined);
         Some(Folded::new(undefined, object_value.effects))
     }
@@ -169,6 +171,10 @@ impl<'s> Folder<'_, 's> {
             return Folded::UNKNOWN;
         };
         let is_const = self.bound.binding_kind(symbol) == BindingKind::Const;
+        let is_primitive = matches!(self.folded(init).value, Value::Known(_));
+        if !is_const || !is_primitive || !self.is_folded_by_bun_run(init) {
+            self.mark_folded_by_build_alone(ident);
+        }
         match self.folded_value(init) {
             FoldedValue::Constant(constant) if is_const && self.is_library_binding(symbol) => {
                 self.decide(ident, Decision::Constant(constant))
@@ -197,6 +203,10 @@ impl<'s> Folder<'_, 's> {
             && matches!(value, DefineValue::GlobalPath(_));
         if !is_renamed_identifier && self.is_assignment_target(e) {
             return None;
+        }
+        let constant_globals = [known::undefined, known::NaN, known::Infinity];
+        if !matches!(self.hir[e].kind, ExprKind::Ident(name) if constant_globals.contains(&name)) {
+            self.mark_folded_by_build_alone(e);
         }
         Some(match value {
             DefineValue::Constant(constant) => self.decide(e, Decision::Constant(constant)),

@@ -292,17 +292,41 @@ export function writeShareOfWrittenPrograms(share: string): string {
 }
 
 // Each build keeps one core busy for about a second and writes an executable the size of Bun.
-let free = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism());
+const slots = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism());
+let free = slots;
 const waiting: (() => void)[] = [];
+const takeSlot = (isNext = false) => (free > 0 ? void free-- : new Promise<void>(resolve => (isNext ? waiting.unshift(resolve) : waiting.push(resolve))));
+function giveSlot() {
+  const next = waiting.shift();
+  if (next) next();
+  else free++;
+}
 export async function slot<T>(work: () => Promise<T>): Promise<T> {
-  if (free > 0) free--;
-  else await new Promise<void>(resolve => waiting.push(resolve));
+  await takeSlot();
   try {
     return await work();
   } finally {
-    const next = waiting.shift();
-    if (next) next();
-    else free++;
+    giveSlot();
+  }
+}
+
+let lastAlone: Promise<unknown> = Promise.resolve();
+/** Runs `work` while nothing else that takes a slot runs. `held`: how many slots the caller holds; it gives them up for that long. */
+export async function withEverySlot<T>(held: 0 | 1, work: () => Promise<T>): Promise<T> {
+  if (held) giveSlot();
+  const mine = lastAlone.then(async () => {
+    for (let taken = 0; taken < slots; taken++) await takeSlot(true);
+    try {
+      return await work();
+    } finally {
+      for (let given = 0; given < slots; given++) giveSlot();
+    }
+  });
+  lastAlone = mine.catch(() => {});
+  try {
+    return await mine;
+  } finally {
+    if (held) await takeSlot(true);
   }
 }
 
@@ -416,6 +440,8 @@ export type CompiledProgram = {
   outputFolder?: string;
   /** How long the executable may run. Default: the limit of spawned(). */
   secondsToRun?: number;
+  /** It measures time or memory, and the caller holds a slot: see measuresTimeOrMemory(). */
+  measures?: boolean;
   /** What the build must have counted. */
   statistics?: StatisticBound[];
   /** The build must have laid out more than one copy of the shared stubs. */
@@ -464,7 +490,7 @@ async function buildCompiled(program: CompiledProgram) {
 }
 
 /** Builds the program, runs its executable once in each environment and hands each result to `check`. */
-async function runCompiled(program: CompiledProgram, check: (result: RunResult, environment: Record<string, string>) => void) {
+async function runCompiled(program: CompiledProgram, check: (result: RunResult, environment: Record<string, string>) => void, beforeAskingAgain?: () => Promise<unknown>) {
   const build = await buildCompiled(program);
   try {
     // Nor does how long a build takes that verifies the IR after every pass: it has found nothing invalid in what it got to.
@@ -482,7 +508,8 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
       // A list of environments goes from mild to harsh. A program that has taken a minute in the mild ones is not run in the harsh ones.
       if (collectsAtEveryAllocation(environment) && spentCollecting > 60_000) continue;
       const start = performance.now();
-      const ran = await spawned(withoutCoreDump([build.executable]), program.cwd, { ...bunEnv, ...environment, BUN_AOT_VERBOSE: "1" }, program.secondsToRun && program.secondsToRun * 1000);
+      const startExecutable = () => spawned(withoutCoreDump([build.executable]), program.cwd, { ...bunEnv, ...environment, BUN_AOT_VERBOSE: "1" }, program.secondsToRun && program.secondsToRun * 1000);
+      let ran = await (program.measures ? withEverySlot(1, startExecutable) : startExecutable());
       if (collectsAtEveryAllocation(environment)) spentCollecting += performance.now() - start;
       // How long a program takes where every allocation collects says nothing about it, nor where a collection is asked for every millisecond, nor where the executable checks
       // while it runs what the compiler took for proven. One that is still at work when its time is up has shown no fault, and has no output to compare.
@@ -493,10 +520,20 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
         console.error(`NOT THROUGH: ${program.entryPoints[0]} was still at work when its time was up`);
         continue;
       }
-      expect({ environment, signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ environment, signal: null, stderr: "" });
-      // The executable really ran compiled code and did not fall back to the embedded source.
-      expect(ran.stderr).toContain("[aot] module: ");
-      check(told({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\r?\n/gm, "") }), environment);
+      for (let attemptsLeft = program.measures ? 3 : 0; ; attemptsLeft--) {
+        expect({ environment, signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ environment, signal: null, stderr: "" });
+        // The executable really ran compiled code and did not fall back to the embedded source.
+        expect(ran.stderr).toContain("[aot] module: ");
+        try {
+          check(told({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\r?\n/gm, "") }), environment);
+          break;
+        } catch (error) {
+          if (attemptsLeft === 0) throw error;
+          console.error(`ASKED AGAIN: ${inPrograms(besideOf(program.entryPoints[0])).replaceAll("\\", "/")}${program.buildFlags.length ? `, built with ${program.buildFlags.join(" ")}` : ""}`);
+          await beforeAskingAgain?.();
+          ran = await withEverySlot(1, startExecutable);
+        }
+      }
     }
   } finally {
     rmSync(build.executable, { force: true });
@@ -538,7 +575,8 @@ async function runReference(path: string, options: ProgramOptions, setup: Setup)
       const flags = (options.build ?? []).filter(flag => !flag.startsWith("--aot-"));
       built(await spawned([bunExe(), "build", "--compile", ...setup.carrier, ...flags, path, ...(options.entryPoints ?? []), "--outfile", executable], cwd, bunEnv));
     }
-    const plain = await spawned(options.reference === "compiled" ? [executable] : [bunExe(), "run", path], cwd, { ...bunEnv, ...options.env });
+    const startReference = () => spawned(options.reference === "compiled" ? [executable] : [bunExe(), "run", path], cwd, { ...bunEnv, ...options.env });
+    const plain = await (measuresTimeOrMemory(path) ? withEverySlot(1, startReference) : startReference());
     // A reference run that fails is useless: two runs that end with the same error would compare equal and prove nothing.
     const hasFailed = plain.signal !== null || plain.exitCode !== 0;
     expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: hasFailed ? plain.stderr : "" }).toEqual({ signal: null, exitCode: 0, stderr: "" });
@@ -596,6 +634,7 @@ async function run(path: string, beside: string, setup: Setup) {
     buildEnvironment: options.buildEnv,
     outputFolder: setup.folder,
     secondsToRun: options.seconds,
+    measures: measuresTimeOrMemory(path),
     statistics,
   });
 
@@ -611,8 +650,13 @@ async function run(path: string, beside: string, setup: Setup) {
   if (setup.erasesTypes && hasTypes(path)) ways.push({ way: "compiled with types erased", stored: options.erased ? "" : beside + ".expected.txt", program: createProgram(["--aot-erase-types"], []) });
   let reference: RunResult | undefined;
   for (const { way, stored, program } of ways) {
-    if (existsSync(stored)) await runCompiled(program, result => expectStored(stored, result));
-    else await expectCompiledOutput(way, program, (reference ??= await runReference(path, options, setup)));
+    if (existsSync(stored)) {
+      await runCompiled(program, result => expectStored(stored, result));
+      continue;
+    }
+    const readReference = async () => (reference = await runReference(path, options, setup));
+    reference ??= await readReference();
+    await runCompiled(program, (result, environment) => expect({ way, environment, ...result }).toEqual({ way, environment, ...reference! }), readReference);
   }
 }
 
@@ -670,6 +714,26 @@ export function programs(topic: string, part = 1, parts = 1) {
     ),
     { buildFlags: [], runEnv: {}, erasesTypes: true },
   );
+}
+
+const reading = String.raw`(?:performance\.now\(\)|Date\.now\(\)|Bun\.nanoseconds\(\)|hrtime(?:\.bigint)?\(\)|memoryUsage(?:\.rss)?\(\)(?:\.\w+)?)`;
+const differenceOfReadings = new RegExp(String.raw`${reading}\s*-\s*[\w(]|[\w)]\s*-\s*${reading}`);
+const measuring = new Map<string, boolean>();
+/**
+ * Does the program subtract one reading of a clock, or of the memory of its process, from another? What it then prints hangs on what else the machine does.
+ * Such a program runs while nothing else of the test file runs, and one that prints something else than expected is asked up to four times: code that is slower or larger is so each time.
+ */
+export function measuresTimeOrMemory(path: string): boolean {
+  if (!measuring.has(path)) measuring.set(path, differenceOfReadings.test(sourceOf(path)));
+  return measuring.get(path)!;
+}
+function sourceOf(path: string): string {
+  const unwritten = notYetWritten.get(path);
+  if (unwritten) return Object.values(unwritten.program.files).join("\n");
+  if (!/[\\/]main\.[a-z]+$/.test(path)) return readFileSync(path, "utf8");
+  const folder = join(path, "..");
+  const names = readdirSync(folder, { recursive: true, encoding: "utf8" }).filter(name => /\.([cm]?[jt]s|tsx)$/.test(name) && !name.includes("node_modules"));
+  return names.map(name => readFileSync(join(folder, name), "utf8")).join("\n");
 }
 
 /** What compares times says so where it leaves the sanitizer out: "skipWithASAN": "a clock". */

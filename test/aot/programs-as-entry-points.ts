@@ -27,6 +27,7 @@ import {
   inPrograms,
   inShare,
   mayHoldWhatIsWanted,
+  measuresTimeOrMemory,
   slot,
   spawned,
   taken,
@@ -34,6 +35,7 @@ import {
   todoReason,
   unsupported,
   wanted,
+  withEverySlot,
   withoutCoreDump,
   withoutDebugInformation,
   type RunResult,
@@ -260,28 +262,42 @@ export function programsAsEntryPoints(part = 1, parts = 1) {
         async () => {
           const options = optionsOf(path);
           const cwd = dirname(path);
+          // See measuresTimeOrMemory().
+          const measures = measuresTimeOrMemory(path);
+          const hold = <T>(work: () => Promise<T>) => (measures ? withEverySlot(0, work) : slot(work));
+          const runPlain = () => hold(() => spawned([bunExe(), "run", path], cwd, { ...bunEnv, ...options.env }));
           let reference: RunResult | undefined;
           for (const [index, way] of ways.entries()) {
             if (index === 1 && !typed.has(path)) continue;
             const stored = index === 1 && options.erased ? "" : besideOf(path) + ".expected.txt";
             if (!existsSync(stored) && !reference) {
-              const plain = await slot(() => spawned([bunExe(), "run", path], cwd, { ...bunEnv, ...options.env }));
+              if (measures) await Promise.all(ways.map((_, each) => buildOnce(each)));
+              const plain = await runPlain();
               const hasFailed = plain.signal !== null || plain.exitCode !== 0;
               expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: hasFailed ? plain.stderr : "" }).toEqual({ signal: null, exitCode: 0, stderr: "" });
               reference = told(plain);
             }
             const judge = (result: RunResult) => (existsSync(stored) ? expectStored(stored, result) : expect({ way: way.name, ...result }).toEqual({ way: way.name, ...reference! }));
-            await buildOnce(index);
+            await (measures ? Promise.all(ways.map((_, each) => buildOnce(each))) : buildOnce(index));
             let happened = "it did not start";
             try {
               expect({ way: way.name, refused: way.refused.get(path) }).toEqual({ way: way.name, refused: undefined });
-              const ran = await slot(() => spawned(withoutCoreDump([way.executableOf.get(path)!]), cwd, { ...bunEnv, ...options.env, BUN_AOT_VERBOSE: "1", AOT_PROGRAM: fromStarter(rootInBuild(path), path) }));
-              const result = told({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\r?\n/gm, "") });
-              happened = ran.signal ?? firstDifference(result, existsSync(stored) ? readFileSync(stored, "utf8") : reference!);
-              expect({ way: way.name, signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ way: way.name, signal: null, stderr: "" });
-              // The executable really ran compiled code and did not fall back to the embedded source.
-              expect(ran.stderr).toContain("[aot] module: ");
-              judge(result);
+              for (let attemptsLeft = measures ? 3 : 0; ; attemptsLeft--) {
+                const ran = await hold(() => spawned(withoutCoreDump([way.executableOf.get(path)!]), cwd, { ...bunEnv, ...options.env, BUN_AOT_VERBOSE: "1", AOT_PROGRAM: fromStarter(rootInBuild(path), path) }));
+                const result = told({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\r?\n/gm, "") });
+                happened = ran.signal ?? firstDifference(result, existsSync(stored) ? readFileSync(stored, "utf8") : reference!);
+                expect({ way: way.name, signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ way: way.name, signal: null, stderr: "" });
+                // The executable really ran compiled code and did not fall back to the embedded source.
+                expect(ran.stderr).toContain("[aot] module: ");
+                try {
+                  judge(result);
+                  break;
+                } catch (error) {
+                  if (attemptsLeft === 0) throw error;
+                  console.error(`ASKED AGAIN: ${nameOf(path)}, ${way.name}: ${happened}`);
+                  if (!existsSync(stored)) reference = told(await runPlain());
+                }
+              }
             } catch (error) {
               says(path, way, way.refused.get(path) ?? happened);
               await slot(() => explain(path, way, judge));

@@ -1,8 +1,9 @@
-use super::dead_code::mark_nodes_below;
+use super::dead_code::{DeadRoots, mark_nodes_below};
 use super::evaluate::{Evaluator, Value};
 use super::feature_flags::find_feature_import;
 use super::folder_commonjs::LoaderNames;
 use super::inputs::{FoldInputs, PathState};
+use super::known_to_bun_run::ExcludedOperand;
 use super::run_order::RunOrder;
 use super::{
     Constant, Decision, Decisions, FoldError, FoldResult, FoldedConstant, FoldedValue, NodeBits,
@@ -71,7 +72,8 @@ pub(super) struct Folder<'a, 's> {
     pub(super) paths_from_own_directory: Vec<ExprId>,
     pub(super) paths_made_by_calls: Vec<ExprId>,
     pub(super) has_followed_path_call: Cell<bool>,
-    pub(super) excluded_operands: Vec<ExprId>,
+    pub(super) excluded_operands: Vec<ExcludedOperand>,
+    pub(super) folded_by_build_alone: PositionSet,
     pub(super) conditions: FxHashMap<ExprId, bool>,
     pub(super) short_circuited_links: PositionSet,
     pub(super) call_errors: Vec<(ExprId, FoldError)>,
@@ -111,6 +113,7 @@ pub(super) fn run<'s>(
         paths_made_by_calls: Vec::new(),
         has_followed_path_call: Cell::new(false),
         excluded_operands: Vec::new(),
+        folded_by_build_alone: PositionSet::new(hir.exprs.len()),
         conditions: FxHashMap::default(),
         short_circuited_links: PositionSet::new(hir.exprs.len()),
         call_errors: Vec::new(),
@@ -142,6 +145,9 @@ impl<'s> Folder<'_, 's> {
             if let Value::Known(_) = folded.value {
                 self.values[index] = folded.value;
                 self.effects[index] = folded.effects;
+            }
+            if self.has_operand_folded_by_build_alone(e) {
+                self.folded_by_build_alone.insert(index);
             }
         }
     }
@@ -243,7 +249,20 @@ impl<'s> Folder<'_, 's> {
         self.specifiers.shared_sort_unstable_by_key(|entry| entry.0);
         self.paths_from_own_directory.shared_sort_unstable();
         self.paths_made_by_calls.shared_sort_unstable();
-        let dead = mark_nodes_below(self.hir, self.find_dead_roots());
+        let DeadRoots { all, in_bun_run } = self.find_dead_roots();
+        let dead_in_bun_run = (in_bun_run != all)
+            .then(|| mark_nodes_below(self.hir, in_bun_run))
+            .map(|dead| {
+                let exprs = NodeBits::freeze(&dead.exprs, arena);
+                (exprs, NodeBits::freeze(&dead.stmts, arena))
+            });
+        let dead = mark_nodes_below(self.hir, all);
+        let (dead_exprs, dead_stmts) = (
+            NodeBits::freeze(&dead.exprs, arena),
+            NodeBits::freeze(&dead.stmts, arena),
+        );
+        let (dead_exprs_in_bun_run, dead_stmts_in_bun_run) =
+            dead_in_bun_run.unwrap_or((dead_exprs, dead_stmts));
         let decisions = Decisions {
             decided: slice_in(&self.decided, arena),
             constants: slice_in(&self.collect_constants(&dead), arena),
@@ -251,8 +270,10 @@ impl<'s> Folder<'_, 's> {
             paths_from_own_directory: slice_in(&self.paths_from_own_directory, arena),
             paths_made_by_calls: slice_in(&self.paths_made_by_calls, arena),
             data_literals: NodeBits::freeze(&self.data_literals, arena),
-            dead_exprs: NodeBits::freeze(&dead.exprs, arena),
-            dead_stmts: NodeBits::freeze(&dead.stmts, arena),
+            dead_exprs,
+            dead_stmts,
+            dead_exprs_in_bun_run,
+            dead_stmts_in_bun_run,
             dead_functions: NodeBits::freeze(&dead.functions, arena),
             short_circuited_links: NodeBits::freeze(&self.short_circuited_links, arena),
             truthy_without_effects: NodeBits::freeze(&self.collect_truthy_without_effects(), arena),

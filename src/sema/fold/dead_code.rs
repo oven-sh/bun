@@ -1,37 +1,59 @@
 use super::children::{TreeNode, push_children};
 use super::evaluate::Value;
-use super::folder::{Folder, MarkedNodes};
+use super::folder::{Effects, Folder, MarkedNodes};
 use crate::bind::Parent;
 use crate::hir::{BinOp, CaseId, ExprId, File, FnBody, IdList, Span, StmtId, StmtKind};
 use crate::util::PositionSet;
 
+#[derive(Default)]
+pub(super) struct DeadRoots {
+    pub(super) all: Vec<TreeNode>,
+    pub(super) in_bun_run: Vec<TreeNode>,
+}
+
 impl<'s> Folder<'_, 's> {
-    pub(super) fn find_dead_roots(&self) -> Vec<TreeNode> {
-        let operands = self.excluded_operands.iter();
-        let operands = operands.filter_map(|operand| operand.some());
-        let mut roots: Vec<TreeNode> = operands.map(TreeNode::Expr).collect();
+    pub(super) fn find_dead_roots(&self) -> DeadRoots {
+        let mut roots = DeadRoots::default();
+        for excluded in &self.excluded_operands {
+            let operand = excluded.operand.some().map(TreeNode::Expr);
+            roots.all.extend(operand);
+            roots
+                .in_bun_run
+                .extend(operand.filter(|_| excluded.is_excluded_by_bun_run));
+        }
         let stmts = (0..self.hir.stmts.len()).map(|index| StmtId(index as u32));
         let reached = stmts.filter(|&stmt| self.bound.parent_of_stmt(stmt) != Parent::None);
         for stmt in reached {
-            self.push_excluded_parts(stmt, &mut roots);
+            if let StmtKind::If { test, yes, no } = self.hir[stmt].kind {
+                let excluded = match self.condition(test) {
+                    Some(true) => no.some(),
+                    Some(false) => yes.some(),
+                    None => None,
+                };
+                roots.all.extend(excluded.map(TreeNode::Stmt));
+                if excluded.is_some() && self.is_folded_by_bun_run(test) {
+                    // `bun run` forgets a statement of the file that folds away, its test included.
+                    let is_whole_statement = (yes.is_none() || no.is_none())
+                        && self.folded(test).effects == Effects::None
+                        && self.bound.parent_of_stmt(stmt) == Parent::File;
+                    let removed = excluded.map(|part| if is_whole_statement { stmt } else { part });
+                    roots.in_bun_run.extend(removed.map(TreeNode::Stmt));
+                }
+            } else {
+                self.push_excluded_parts(stmt, &mut roots.all);
+            }
         }
-        self.push_statements_never_reached(&mut roots);
+        self.push_statements_never_reached(&mut roots.all);
         for entry in &self.decided {
-            push_children(self.hir, TreeNode::Expr(entry.0), &mut roots);
+            let first = roots.all.len();
+            push_children(self.hir, TreeNode::Expr(entry.0), &mut roots.all);
+            roots.in_bun_run.extend_from_slice(&roots.all[first..]);
         }
         roots
     }
 
     fn push_excluded_parts(&self, stmt: StmtId, roots: &mut Vec<TreeNode>) {
         match self.hir[stmt].kind {
-            StmtKind::If { test, yes, no } => {
-                let excluded = match self.condition(test) {
-                    Some(true) => no.some(),
-                    Some(false) => yes.some(),
-                    None => None,
-                };
-                roots.extend(excluded.map(TreeNode::Stmt));
-            }
             StmtKind::While { test, body } if self.condition(test) == Some(false) => {
                 roots.push(TreeNode::Stmt(body));
             }

@@ -208,11 +208,8 @@
     "typeError-allDescriptors": "an Error has own properties that hold the place in the source"
   },
   "awaited values": {
-    "immediate-logical": "the last line comes or does not come with the tick at which the process ends",
-    "immediate-loop": "the last line comes or does not come with the tick at which the process ends",
     "object-then": "the message of the engine's error quotes the source otherwise",
     "thenNotCallable-then": "the message of the engine's error quotes the source otherwise",
-    "timersPromise-loop": "the last line comes or does not come with the tick at which the process ends",
     "undefinedValue-then": "the message of the engine's error quotes the source otherwise",
     "value-then": "the message of the engine's error quotes the source otherwise"
   },
@@ -226,6 +223,7 @@
     "hostBuffer-name": "Buffer.from has no name under plain Bun",
     "hostBuffer-setPrototype": "it changes a built-in object, which an executable refuses",
     "hostEncoder-setPrototype": "it changes a built-in object, which an executable refuses",
+    "hostFunction-setPrototype": "it changes a built-in object, which an executable refuses",
     "hostPath-setPrototype": "it changes a built-in object, which an executable refuses",
     "native-setPrototype": "it changes a built-in object, which an executable refuses",
     "nativeApply-setPrototype": "it changes a built-in object, which an executable refuses",

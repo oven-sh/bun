@@ -94,6 +94,85 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
         Esm,
     ),
     ("a.js", r#"var require = 1; require;"#, Esm),
+    ("a.js", r#"const no = 0; if (no) require("a");"#, Esm),
+    ("a.js", r#"if (a && false) require("a");"#, Esm),
+    ("a.js", r#"false ? require("a") : 0;"#, Esm),
+    ("a.js", r#"1 ?? require("a");"#, Esm),
+    (
+        "a.js",
+        r#"if (typeof function () {} === "string") require("a");"#,
+        Esm,
+    ),
+    ("a.js", r#"if (typeof /a/ === "string") require("a");"#, Esm),
+    ("a.js", r#"if (typeof require === "undefined") a;"#, Esm),
+    (
+        "a.js",
+        r#"function f() { if (typeof require === "undefined") a; }"#,
+        CommonJs,
+    ),
+    ("a.js", r#"let no = 0; if (no) require("a");"#, CommonJs),
+    ("a.js", r#"var no = 0; if (no) require("a");"#, CommonJs),
+    ("a.js", r#"const o = {}; if (!o) require("a");"#, CommonJs),
+    ("a.js", r#"if (null?.a) require("a");"#, CommonJs),
+    ("a.js", r#"if (1 == "2") require("a");"#, CommonJs),
+    ("a.js", r#"while (false) require("a");"#, CommonJs),
+    ("a.js", r#"for (; false; ) require("a");"#, CommonJs),
+    ("a.js", r#"switch (1) { case 2: require("a"); }"#, CommonJs),
+    (
+        "a.js",
+        r#"function f() { return; require("a"); }"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"for (;;) { break; module.exports = 1; }"#,
+        CommonJs,
+    ),
+];
+
+const BUILD_FACTS: Fold<'static> = Fold {
+    defines: &[
+        (
+            Path::Global(&["Bun"]),
+            Defined::RuntimeValue(RuntimeValueKind::Object),
+        ),
+        (
+            Path::Global(&["process", "platform"]),
+            Defined::Value(Data::String("linux")),
+        ),
+    ],
+    ..Fold::NONE
+};
+
+const FORMATS_WITH_BUILD_FACTS: &[(&str, &str, ModuleFormat)] = &[
+    (
+        "a.js",
+        r#"if (typeof Bun === "undefined") require("a");"#,
+        CommonJs,
+    ),
+    ("a.js", r#"if (!Bun) module.exports = 1;"#, CommonJs),
+    ("a.mjs", r#"if (!Bun) exports.a = 1;"#, CommonJs),
+    ("a.js", r#"if (!Bun) this.a = 1;"#, CommonJs),
+    ("a.js", r#"Bun || __filename;"#, CommonJs),
+    ("a.js", r#"Bun ? 0 : __dirname;"#, CommonJs),
+    ("a.js", r#"Bun ?? require("a");"#, CommonJs),
+    (
+        "a.js",
+        r#"const isBun = typeof Bun === "object"; if (!isBun) require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (process.platform === "win32") require("a");"#,
+        CommonJs,
+    ),
+    ("a.js", r#"if (!Bun) module.require("a");"#, Esm),
+    ("a.js", r#"if (!Bun) { if (false) require("a"); }"#, Esm),
+    ("a.js", r#"if (Bun && false) require("a");"#, Esm),
+    ("a.js", r#"if (false && Bun) require("a");"#, Esm),
+    ("a.js", r#"if (!(!Bun || true)) require("a");"#, Esm),
+    ("a.mjs", r#"if (!Bun) require("a");"#, Esm),
+    ("a.js", r#"import "m"; if (!Bun) module.exports = 1;"#, Esm),
 ];
 
 const COMMONJS_EVIDENCE: &[(&str, CommonJsEvidence)] = &[
@@ -534,6 +613,18 @@ fn formats() {
     for &(path, text, format) in FORMATS {
         analyzed(path, text, |s| {
             assert_eq!(s.analysis.module_format, format, "{path}: {text}");
+        });
+    }
+}
+
+#[test]
+fn format_does_not_follow_what_only_a_build_folds() {
+    for &(path, text, format) in FORMATS_WITH_BUILD_FACTS {
+        with_workspace(|workspace| {
+            let fold = workspace.fold_inputs(&BUILD_FACTS);
+            let analyzed = workspace.analyze(&Source::new(path, text), &fold);
+            assert_eq!(analyzed.analysis.module_format, format, "{path}: {text}");
+            assert_eq!(analyzed.analysis.errors, [], "{path}: {text}");
         });
     }
 }

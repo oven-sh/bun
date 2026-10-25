@@ -8,6 +8,7 @@ use crate::import_sites::{ImportSpecifier, call_site_arguments};
 
 impl<'s> Folder<'_, 's> {
     pub(super) fn fold_call(&mut self, e: ExprId, call: Call) -> Folded {
+        self.mark_folded_by_build_alone(e);
         let callee_state = self.path_states.get(&call.callee);
         if callee_state.is_some_and(|state| state.is_dropped) {
             return self.decide(e, Decision::Constant(Constant::Undefined));

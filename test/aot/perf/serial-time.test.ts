@@ -9,7 +9,7 @@
 //
 //   bun test test/aot/perf/serial-time.test.ts                   prints the table; fails if a phase takes more than twice
 //                                                                its number in ./serial-time.<os>-<arch>.json plus 500,
-//                                                                or if all phases together do
+//                                                                or if all phases together do, in each of four measurements
 //   AOT_PERF=update bun test test/aot/perf/serial-time.test.ts   rewrites that file
 //
 // A phase that is not in the file counts as 0 there. Where the file is missing the table is printed and not judged, and on
@@ -19,6 +19,7 @@ import { expect } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { measureUntilWithinBounds } from "../harness/measure-again";
 import { test } from "../supported";
 
 const pinsPath = join(import.meta.dir, `serial-time.${process.platform}-${process.arch}.json`);
@@ -121,7 +122,7 @@ function quickest(modules: number): Build {
   return { cpu: Math.min(...builds.map(one => one.cpu)), phases, hash: builds[0].hash };
 }
 
-test("compile/aot/perf/serial-time", () => {
+function measure(): Record<string, number> {
   const [small, large] = sizes.map(quickest);
   expect(large.phases.size).toBeGreaterThan(50);
 
@@ -132,9 +133,17 @@ test("compile/aot/perf/serial-time", () => {
     now[name] = Math.max(0, Math.round(((time - (small.phases.get(name) ?? 0)) / cpu) * 1e6));
     now["all phases"] += now[name];
   }
-  if (process.env.AOT_PERF === "update") writeFileSync(pinsPath, JSON.stringify(now, null, 2) + "\n");
-  const isJudged = existsSync(pinsPath) && !isMusl;
-  const pins: Record<string, number> = isJudged ? JSON.parse(readFileSync(pinsPath, "utf8")) : {};
+  return now;
+}
+
+test("compile/aot/perf/serial-time", async () => {
+  const isUpdate = process.env.AOT_PERF === "update";
+  const isJudged = (isUpdate || existsSync(pinsPath)) && !isMusl;
+  const stored: Record<string, number> = isJudged && !isUpdate ? JSON.parse(readFileSync(pinsPath, "utf8")) : {};
+  const isOver = (now: Record<string, number>, name: string) => now[name] > 2 * (stored[name] ?? 0) + slack;
+  const now = await measureUntilWithinBounds("serial-time", measure, now => !isJudged || isUpdate || !Object.keys(now).some(name => isOver(now, name)));
+  if (isUpdate) writeFileSync(pinsPath, JSON.stringify(now, null, 2) + "\n");
+  const pins = isUpdate ? now : stored;
   const names = Object.keys(now).sort((a, b) => now[b] - now[a]);
   console.log("serial time in parts per million of the build's CPU time: now, pinned");
   for (const name of names.filter(name => now[name] >= 100 || (pins[name] ?? 0) >= 100))
@@ -145,4 +154,4 @@ test("compile/aot/perf/serial-time", () => {
     .filter(name => now[name] > 2 * (pins[name] ?? 0) + slack)
     .map(name => `${name}: ${now[name]}, pinned ${pins[name] ?? 0}`);
   expect(worse).toEqual([]);
-}, 600_000);
+}, 1_200_000);

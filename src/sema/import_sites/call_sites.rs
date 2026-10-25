@@ -263,12 +263,18 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         let Some(form) = find_call_form(hir, call) else {
             continue;
         };
-        if bound.parent_of_expr(call) == Parent::None || decisions.is_dead_expr(call) {
+        let is_dead = decisions.is_dead_expr(call);
+        let is_dead_in_bun_run = is_dead && decisions.as_folded_by_bun_run().is_dead_expr(call);
+        if bound.parent_of_expr(call) == Parent::None || is_dead_in_bun_run {
             continue;
         }
         let Some(found) = find_call_site(hir, bound, Some(decisions), call, form) else {
             continue;
         };
+        if is_dead {
+            module_require_objects.extend(found.module_require_object);
+            continue;
+        }
         let site = create_call_site(inputs, &found);
         if !is_ordinary_builtin_call(&site) {
             module_require_objects.extend(found.module_require_object);

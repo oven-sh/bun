@@ -80,15 +80,26 @@ describe.skipIf(!!skipped)("compile/aot/perf/equivalent-syntax", () => {
     expect(compiled.stdout).toBe(plain.stdout);
   }, 300_000);
 
+  // Startup varies by tens of thousands of instructions between runs, so each length takes the lowest of three counts.
+  async function countInstructions(loop: string, iterations: number) {
+    let lowest: number | undefined;
+    for (let run = 0; run < 3; run++) {
+      const { instructions } = await measureCommand(root, [executable, loop, String(iterations)], 300_000, env);
+      if (instructions === undefined) return undefined;
+      lowest = Math.min(lowest ?? instructions, instructions);
+    }
+    return lowest;
+  }
+
   function costOf(loop: string) {
     let cost = costs.get(loop);
     if (!cost) {
       cost = (async () => {
-        const [few, many] = [100_000, 400_000];
-        const less = await measureCommand(root, [executable, loop, String(few)], 300_000, env);
-        const more = await measureCommand(root, [executable, loop, String(many)], 300_000, env);
-        if (less.instructions === undefined || more.instructions === undefined) return undefined;
-        return Math.round(((more.instructions - less.instructions) / (many - few)) * 10) / 10;
+        const [few, many] = [100_000, 1_600_000];
+        const less = await countInstructions(loop, few);
+        const more = await countInstructions(loop, many);
+        if (less === undefined || more === undefined) return undefined;
+        return Math.round(((more - less) / (many - few)) * 10) / 10;
       })();
       costs.set(loop, cost);
     }

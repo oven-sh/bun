@@ -83,6 +83,7 @@ impl<'s> Folder<'_, 's> {
     pub(super) fn note_loader_value(&mut self, e: ExprId) -> Folded {
         self.conditions.insert(e, true);
         self.effects[e.idx()] = Effects::None;
+        self.mark_folded_by_build_alone(e);
         Folded::UNKNOWN
     }
 

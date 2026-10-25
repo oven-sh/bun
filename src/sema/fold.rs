@@ -10,6 +10,7 @@ mod folder_commonjs;
 mod folder_names;
 mod folder_operators;
 mod inputs;
+mod known_to_bun_run;
 mod run_order;
 mod string_affixes;
 
@@ -130,6 +131,8 @@ pub struct Decisions<'s> {
     dead_exprs: NodeBits<'s>,
     dead_stmts: NodeBits<'s>,
     dead_functions: NodeBits<'s>,
+    dead_exprs_in_bun_run: NodeBits<'s>,
+    dead_stmts_in_bun_run: NodeBits<'s>,
     short_circuited_links: NodeBits<'s>,
     truthy_without_effects: NodeBits<'s>,
 }
@@ -195,6 +198,15 @@ impl<'s> Decisions<'s> {
     #[inline]
     pub fn is_dead_stmt(&self, stmt: StmtId) -> bool {
         self.dead_stmts.has(stmt.idx())
+    }
+
+    /// `bun run` folds less than a build does. In the result, only the code that `bun run` removes too is dead.
+    pub fn as_folded_by_bun_run(&self) -> Decisions<'s> {
+        Decisions {
+            dead_exprs: self.dead_exprs_in_bun_run,
+            dead_stmts: self.dead_stmts_in_bun_run,
+            ..*self
+        }
     }
 
     #[inline]

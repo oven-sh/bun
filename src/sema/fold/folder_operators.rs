@@ -96,6 +96,17 @@ impl<'s> Folder<'_, 's> {
                 RuntimeValueKind::Symbol => known::symbol,
             }));
         }
+        let type_of_literal = match self.hir[operand].kind {
+            ExprKind::Fn(_) => Some(known::function),
+            ExprKind::Regex { .. } => Some(known::object),
+            _ => None,
+        };
+        if op == UnOp::Typeof
+            && let Some(type_name) = type_of_literal
+        {
+            let type_name = Value::from(Constant::String(type_name));
+            return Folded::new(type_name, self.folded(operand).effects);
+        }
         if op == UnOp::Not
             && let Some(&is_truthy) = self.conditions.get(&operand)
         {
@@ -118,16 +129,21 @@ impl<'s> Folder<'_, 's> {
                 Folded::new(right.value, left.effects.min(right.effects))
             }
             BinOp::EqEq | BinOp::EqEqEq => match self.find_main_module_equality(e) {
-                Some(is_equal) => self.decide(e, Decision::Constant(Constant::Boolean(is_equal))),
+                Some(is_equal) => self.decide_main_module_equality(e, is_equal),
                 None => self.fold_equality(op, left, right, true),
             },
             BinOp::NotEq | BinOp::NotEqEq => match self.find_main_module_equality(e) {
-                Some(is_equal) => self.decide(e, Decision::Constant(Constant::Boolean(!is_equal))),
+                Some(is_equal) => self.decide_main_module_equality(e, !is_equal),
                 None => self.fold_equality(op, left, right, false),
             },
             BinOp::In => self.fold_membership(left, right),
             _ => self.fold_operands(op, left, right),
         }
+    }
+
+    fn decide_main_module_equality(&mut self, e: ExprId, answer: bool) -> Folded {
+        self.mark_folded_by_build_alone(e);
+        self.decide(e, Decision::Constant(Constant::Boolean(answer)))
     }
 
     fn fold_membership(&self, name: ExprId, object: ExprId) -> Folded {
@@ -169,7 +185,7 @@ impl<'s> Folder<'_, 's> {
         Folded::new(Value::from(Constant::Boolean(!answer_when_equal)), effects)
     }
 
-    fn is_nullish(&self, e: ExprId) -> Option<bool> {
+    pub(super) fn is_nullish(&self, e: ExprId) -> Option<bool> {
         match self.folded(e).value {
             Value::Known(value) => Some(self.evaluator.is_nullish(value)),
             Value::Unknown => self
@@ -194,7 +210,7 @@ impl<'s> Folder<'_, 's> {
         };
         match is_decided_by_left {
             Some(true) => {
-                self.excluded_operands.push(right);
+                self.exclude_operand(right, left);
                 self.copy_condition(e, left);
                 self.folded(left)
             }
@@ -241,7 +257,7 @@ impl<'s> Folder<'_, 's> {
         };
         let Branches { yes, no } = branches;
         let (selected, excluded) = if is_true { (yes, no) } else { (no, yes) };
-        self.excluded_operands.push(excluded);
+        self.exclude_operand(excluded, test);
         self.copy_condition(e, selected);
         let (test, selected) = (self.folded(test), self.folded(selected));
         Folded::new(selected.value, test.effects.min(selected.effects))

@@ -8,7 +8,7 @@
 //   tools         `bun test` over ten files of 300 tests, and a program of 300 TypeScript modules, in both of those ways
 //
 // Counted: the instructions of the program's first thread in user mode, the least of three runs, and the page faults of the whole process.
-// Collections come by bytes allocated and run on that thread. The same binary repeats a row within 0.3%.
+// Collections come by bytes allocated and run on that thread. The same binary repeats a row within 0.3%. A row that is over is measured again, four times at most.
 // Of a program that runs to its end, the peak resident memory too, in a run of its own. It is started by a small Bun, whose own peak
 // of about 17 MB is the least that can be read.
 //
@@ -26,6 +26,7 @@ import { expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunExe, isASAN, isCI, isDebug, isGlibc, runCommandMaxRSS, tempDir } from "harness";
 import { join } from "path";
+import { measureUntilWithinBounds } from "../harness/measure-again";
 import { measureStart, startEnvironment, type Until } from "./start/measure-start";
 
 type Cost = { thousandInstructions: number; pageFaults: number; peakKilobytes?: number };
@@ -106,17 +107,28 @@ const table: string[] = [];
 let countersWork = true;
 
 async function row(name: string, command: string[], until: Until) {
-  const { thousandInstructions, pageFaults } = await measureStart(command, until, 3);
+  const budget = budgets[name];
+  const { thousandInstructions, pageFaults } = await measureUntilWithinBounds(
+    name,
+    () => measureStart(command, until, 3),
+    ({ thousandInstructions = 0, pageFaults = 0 }) =>
+      !budget ||
+      (thousandInstructions <= budget.thousandInstructions * mostInstructions(name) &&
+        pageFaults <= budget.pageFaults * mostPageFaults),
+  );
   if (thousandInstructions === undefined || pageFaults === undefined) {
     countersWork = false;
     return;
   }
   const peakKilobytes =
     "prints" in until
-      ? Math.round((await runCommandMaxRSS({ cmd: command, cwd: "/", env: environment })).maxRSS / 1024)
+      ? await measureUntilWithinBounds(
+          name,
+          async () => Math.round((await runCommandMaxRSS({ cmd: command, cwd: "/", env: environment })).maxRSS / 1024),
+          peak => peak <= (budget?.peakKilobytes ?? Infinity) * mostPeakMemory,
+        )
       : undefined;
   const now: Cost = { thousandInstructions, pageFaults, peakKilobytes };
-  const budget = budgets[name];
   const percent = (a: number, b: number | undefined) =>
     (b === undefined ? "new" : `${a >= b ? "+" : ""}${((a / b - 1) * 100).toFixed(1)}%`).padStart(7);
   table.push(

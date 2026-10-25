@@ -2,7 +2,18 @@ import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, isIPv6, isLinux, isWindows, tempDir, tls, unprivilegedSpawnOptions } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isIPv6,
+  isLinux,
+  isWindows,
+  tempDir,
+  tls,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { createServer as createTlsServer } from "node:tls";
 import { dirname, join } from "path";
 import { TestRegistry } from "registry";
@@ -741,6 +752,50 @@ ${Object.keys(opts)
       expect(
         await diagnosed(`//somehost.com/:_auth=${blob}\n`, `registry=http://somehost.com/\n//somehost.com/:_auth=\n`),
       ).toBe(true);
+    });
+
+    // More than 32 credential lines are collapsed with a hash table.
+    const others = Array.from({ length: 40 }, (_, i) => `//other${i}.example.com/:_auth=${blob}\n`).join("");
+
+    test("among many credential lines, a home line the project overrides with a value is not diagnosed", async () => {
+      expect(
+        await diagnosed(
+          `//somehost.com/:_auth=\n${others}`,
+          `registry=http://somehost.com/\n${others}//somehost.com/:_auth=${blob}\n`,
+        ),
+      ).toBe(false);
+    });
+
+    test("among many credential lines, a project line that clears the home file's value is diagnosed", async () => {
+      expect(
+        await diagnosed(
+          `${others}//somehost.com/:_auth=${blob}\n`,
+          `registry=http://somehost.com/\n//somehost.com/:_auth=\n${others}`,
+        ),
+      ).toBe(true);
+    });
+
+    // Without its trailing `/`, the key of a registry is another key that npm reads for it.
+    test.each([
+      ["the host of the registry", `registry=http://somehost.com/\n`, `//somehost.com:_auth=\n`, true],
+      ["the path of the registry", `@myorg:registry=https://somehost.com/api/\n`, `//somehost.com/api:_auth=\n`, true],
+      ["a part of that path", `@myorg:registry=https://somehost.com/api/\n`, `//somehost.com/ap:_auth=\n`, false],
+    ])("a line for %s without a trailing slash", async (_, registry, line, expected) => {
+      expect(await diagnosed(line, registry)).toBe(expected);
+    });
+
+    // More than 32 registries are found through a hash table.
+    const registries = Array.from(
+      { length: 40 },
+      (_, i) => `@scope${i}:registry=https://registry${i}.example.com/npm/\n`,
+    ).join("");
+
+    test.each([
+      ["its key", `//registry7.example.com/npm/:_auth=\n`, true],
+      ["its key without the trailing slash", `//registry7.example.com/npm:_auth=\n`, true],
+      ["a key above it", `//registry7.example.com/:_auth=\n`, false],
+    ])("among many registries, a line that names one by %s", async (_, line, expected) => {
+      expect(await diagnosed(line, registries)).toBe(expected);
     });
   });
 
@@ -1997,6 +2052,81 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
       const auth = await probeAuthorization(host => `//${host}${path}:username=bob`, { path, homeNpmrc: homeBasic });
       expect(auth).toBe(`Basic ${Buffer.from("bob:s3cret").toString("base64")}`);
     });
+
+    // Up to 32 credential lines are scanned for each key. More than that are collapsed with a hash table.
+    describe("among many other credential lines", () => {
+      const others = Array.from({ length: 40 }, (_, i) => `//other${i}.example.com/:_authToken=OTHER${i}`).join("\n");
+
+      it("a project token overrides the home file's token at the same key", async () => {
+        const auth = await probeAuthorization(host => `${others}\n//${host}${path}:_authToken=PROJECT`, {
+          path,
+          homeNpmrc: host => `//${host}${path}:_authToken=HOMETOKEN\n${others}`,
+        });
+        expect(auth).toBe("Bearer PROJECT");
+      });
+
+      it("a later line overrides an earlier one whose key is spelled another way", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}${path}:_authToken=FIRST\n${others}\n//http://${host}${path}:_authToken=LAST`,
+          { path },
+        );
+        expect(auth).toBe("Bearer LAST");
+      });
+
+      it("the project's empty _authToken falsifies the home file's token, so _auth wins", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}${path}:_authToken=\n${others}\n//${host}${path}:_auth=${basic}`,
+          { path, homeNpmrc: host => `${others}\n//${host}${path}:_authToken=HOMETOKEN` },
+        );
+        expect(auth).toBe(`Basic ${basic}`);
+      });
+
+      it("the project's empty username clears the home file's username and password pair", async () => {
+        const auth = await probeAuthorization(host => `${others}\n//${host}${path}:username=`, {
+          path,
+          homeNpmrc: host => `${homeBasic(host)}\n${others}`,
+        });
+        expect(auth).toBe(null);
+      });
+
+      it("a project username overrides the home file's at the same key", async () => {
+        const auth = await probeAuthorization(host => `${others}\n//${host}${path}:username=bob`, {
+          path,
+          homeNpmrc: host => `${others}\n${homeBasic(host)}`,
+        });
+        expect(auth).toBe(`Basic ${Buffer.from("bob:s3cret").toString("base64")}`);
+      });
+
+      const thousands = Array.from({ length: 4000 }, (_, i) => `//host${i}.example.com/:_authToken=TOKEN${i}\n`).join(
+        "",
+      );
+
+      it("the token of a registry is found among 4,000 credential lines", () => {
+        const token = (registry: string, more = "") =>
+          loadNpmrc(`registry=${registry}\n${thousands}${more}`).default_registry_token;
+        expect([0, 2000, 3999, 4000].map(i => token(`https://host${i}.example.com/`))).toEqual([
+          "TOKEN0",
+          "TOKEN2000",
+          "TOKEN3999",
+          "",
+        ]);
+        expect(token("https://host7.example.com/", "//HOST7.example.com/:_authToken=LAST\n")).toBe("LAST");
+        expect(
+          loadNpmrc(`registry=https://first.example.com/\n${thousands}registry=https://host9.example.com/\n`),
+        ).toMatchObject({
+          default_registry_url: "https://host9.example.com/",
+          default_registry_token: "TOKEN9",
+        });
+      });
+
+      it("the token of a registry is sent among 4,000 credential lines", async () => {
+        const auth = await probeAuthorization(host => `${thousands}//${host}${path}:_authToken=PROJECT`, {
+          path,
+          homeNpmrc: host => `//${host}${path}:_authToken=HOMETOKEN\n${thousands}`,
+        });
+        expect(auth).toBe("Bearer PROJECT");
+      });
+    });
   });
 
   // npm never decodes `_auth`; it forwards the value as `Basic <value>`. An opaque
@@ -2602,6 +2732,31 @@ describe(".npmrc diagnostics", () => {
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 
+  // A file of more than 32 keys is read through a hash table of its keys, and so are more than 32 credential lines.
+  it("warns once, at the first line, about an unknown option that a large file sets twice", async () => {
+    const others = Array.from({ length: 40 }, (_, i) => `other${i}=x`).join("\n");
+    const stderr = await stderrOf(
+      `registry=https://example.com/\n//example.com/:_authtoken=FIRSTSECRET\n${others}\n//example.com/:_authtoken=LASTSECRET\n`,
+    );
+    expect(stderr.match(/ignoring unknown .npmrc option _authtoken[^\n]*\n\s+at \S+[\\/]\.npmrc:\d+:/g)).toEqual([
+      expect.stringMatching(/\.npmrc:2:$/),
+    ]);
+    expect(stderr).not.toContain("SECRET");
+  });
+
+  it("reports an empty _auth once among many credential lines, for the registry it names", async () => {
+    const others = Array.from({ length: 40 }, (_, i) => `//other${i}.example.com/:_auth=`).join("\n");
+    const stderr = await stderrOf(
+      `registry=https://example.com/\n//example.com/:_auth=\n${others}\n//Example.COM/:_auth=\n`,
+    );
+    expect(stderr.match(/ignoring empty _auth value/g)).toEqual(["ignoring empty _auth value"]);
+  });
+
+  it("reports an empty _auth for each spelling of the key of a registry", async () => {
+    const stderr = await stderrOf(`registry=http://somehost.com/\n//somehost.com/:_auth=\n//somehost.com:_auth=\n`);
+    expect(stderr.match(/ignoring empty _auth value/g)).toHaveLength(2);
+  });
+
   it("prints nothing about an unknown option with --silent", async () => {
     const stderr = await stderrOf(`registry=https://example.com/\n//example.com/:_authtoken=SECRETTOKEN\n`, undefined, [
       "--silent",
@@ -2687,6 +2842,64 @@ describe(".npmrc diagnostics", () => {
       });
     });
   }
+});
+
+// A read that scans the credential lines for each line, or the credentials for each registry, takes 8 to 13 seconds
+// of CPU for these files in a debug build, and 12 to 30 seconds in a release build.
+describe.concurrent("a .npmrc of many credential lines is read in time in proportion to them", () => {
+  const lines = isDebug ? 8_000 : 64_000;
+  const numbered = (count: number, text: (i: number) => string) => {
+    let all = "";
+    for (let i = 0; i < count; i++) all += text(i);
+    return all;
+  };
+
+  test.each<[string, () => string]>([
+    ["_authToken lines", () => numbered(lines, i => `//host${i}.example.com/:_authToken=token${i}\n`)],
+    ["username lines", () => numbered(lines, i => `//host${i}.example.com/:username=user${i}\n`)],
+    [
+      "username and _password lines",
+      () =>
+        numbered(
+          lines / 2,
+          i => `//host${i}.example.com/:username=user${i}\n//host${i}.example.com/:_password=cGFzcw==\n`,
+        ),
+    ],
+    ["empty _auth lines", () => numbered(lines, i => `//host${i}.example.com/:_auth=\n`)],
+    [
+      "registries, and an empty _auth line for another host each",
+      () =>
+        numbered(
+          lines / 2,
+          i => `@scope${i}:registry=https://host${i}.example.com/\n//other${i}.example.com/:_auth=\n`,
+        ),
+    ],
+  ])(
+    "%s",
+    async (_, npmrc) => {
+      using dir = tempDir("npmrc-many-credentials", {
+        ".npmrc": npmrc(),
+        "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+        "home/.gitkeep": "",
+      });
+      const home = join(String(dir), "home");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "bin"],
+        cwd: String(dir),
+        env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+      // CPU time, in seconds. Wall-clock time means little on a busy machine.
+      expect(Number(proc.resourceUsage()!.cpuTime.total) / 1e6).toBeLessThan(isDebug || isASAN ? 4 : 1);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    },
+    60_000,
+  );
 });
 
 describe("--registry override", () => {
@@ -5020,6 +5233,23 @@ describe("trims Unicode whitespace like npm", () => {
 });
 
 describe("inline comments and boolean options", () => {
+  // The root object is scanned for a key up to 32 keys, and read through a hash table past that.
+  test.each([0, 31, 32, 33])("a [section] header after %d other keys", count => {
+    const others = Array.from({ length: count }, (_, i) => `other${i}=x\n`).join("");
+    // A key under a header is not an option.
+    expect(loadNpmrc(`${others}[section]\nsave-exact=true\n`).save_exact).toBeUndefined();
+    // A header makes an object of its name, which is a true option.
+    expect(loadNpmrc(`${others}[hoist]\n`).hoist).toBe(true);
+    // The header of a key that has a value is skipped, with the keys under it.
+    const skipped = loadNpmrc(`${others}hoist=false\n[hoist]\nsave-exact=true\n`);
+    expect([skipped.hoist, skipped.save_exact]).toEqual([false, undefined]);
+    // A later `registry=` replaces the first.
+    expect(
+      loadNpmrc(`registry=https://first.example.com/\n${others}registry=https://last.example.com/\n`)
+        .default_registry_url,
+    ).toBe("https://last.example.com/");
+  });
+
   test("an inline comment is not part of the registry url or the auth token", () => {
     // ini cuts an unquoted value at the first unescaped `;` or `#`. With the
     // comment left in, the registry URL no longer matched its `//host/` credential.

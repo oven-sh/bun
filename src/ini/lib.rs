@@ -46,7 +46,7 @@ pub(crate) fn inline_comment_start(val: &[u8]) -> Option<usize> {
 // ConfigOpt
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr, strum::EnumString)]
 pub enum ConfigOpt {
     /// usually `${username}:${password}` encoded in base64, but sent verbatim
     #[strum(serialize = "_auth")]
@@ -1372,10 +1372,33 @@ mod draft {
 
     /// npm's config is a flat map, so a key that's repeated across `.npmrc` files collapses to the
     /// last one read.
-    fn lookup<'a>(configs: &'a [ConfigItem], key: &[u8], opt: ConfigOpt) -> Option<&'a ConfigItem> {
-        configs
-            .iter()
-            .rfind(|conf_item| conf_item.optname == opt && *conf_item.registry_url == *key)
+    struct Collapsed<'a> {
+        configs: &'a [ConfigItem],
+        /// The last line of each `(key, option)`, if there are more than `SCAN_MAX` lines.
+        last: Option<HashMap<(&'a [u8], ConfigOpt), &'a ConfigItem>>,
+    }
+
+    impl<'a> Collapsed<'a> {
+        fn new(configs: &'a [ConfigItem]) -> Self {
+            let last = (configs.len() > SCAN_MAX).then(|| {
+                let mut last = HashMap::with_capacity(configs.len());
+                for item in configs {
+                    last.insert((&*item.registry_url, item.optname), item);
+                }
+                last
+            });
+            Collapsed { configs, last }
+        }
+
+        fn lookup(&self, key: &[u8], opt: ConfigOpt) -> Option<&'a ConfigItem> {
+            match &self.last {
+                Some(last) => last.get(&(key, opt)).copied(),
+                None => self
+                    .configs
+                    .iter()
+                    .rfind(|item| item.optname == opt && *item.registry_url == *key),
+            }
+        }
     }
 
     /// npm's `Buffer.from(value, "base64")`, which skips invalid bytes and never fails.
@@ -1393,11 +1416,11 @@ mod draft {
 
     /// Follows the order of npm's `hasAuth`, without `certfile` and `keyfile` (no mTLS), which
     /// would stop the walk.
-    fn credentials_of_key(configs: &[ConfigItem], key: &[u8]) -> Option<NpmRegistry> {
+    fn credentials_of_key(collapsed: &Collapsed<'_>, key: &[u8]) -> Option<NpmRegistry> {
         // npm's `opts[k]` truthiness test, applied after the collapse, so a later `username=`
         // clears an earlier one.
         let truthy =
-            |opt| Some(&lookup(configs, key, opt)?.value).filter(|value| !value.is_empty());
+            |opt| Some(&collapsed.lookup(key, opt)?.value).filter(|value| !value.is_empty());
         let mut credentials = NpmRegistry::default();
         if let Some(token) = truthy(ConfigOpt::_AuthToken) {
             credentials.token.clone_from(token);
@@ -1422,14 +1445,21 @@ mod draft {
         log: &mut Log,
     ) {
         install.url_auth.clear();
+        let collapsed = Collapsed::new(configs);
+        // The keys of the lines so far. Only filled if `collapsed` has its table.
+        let mut seen: HashMap<&[u8], ()> = HashMap::new();
         for ConfigItem {
             registry_url: key, ..
         } in configs
         {
-            if install.url_auth.iter().any(|entry| entry.key == *key) {
+            let handled = match collapsed.last {
+                Some(_) => seen.insert(key, ()).is_some(),
+                None => install.url_auth.iter().any(|entry| entry.key == *key),
+            };
+            if handled {
                 continue;
             }
-            if let Some(credentials) = credentials_of_key(configs, key) {
+            if let Some(credentials) = credentials_of_key(&collapsed, key) {
                 install.url_auth.push(NpmUrlAuth {
                     key: key.clone(),
                     credentials,
@@ -1442,8 +1472,9 @@ mod draft {
             .filter(|item| {
                 item.optname == ConfigOpt::_Auth
                     && item.value.is_empty()
-                    && lookup(configs, &item.registry_url, ConfigOpt::_Auth)
-                        .is_some_and(|collapsed| core::ptr::eq(collapsed, *item))
+                    && collapsed
+                        .lookup(&item.registry_url, ConfigOpt::_Auth)
+                        .is_some_and(|last| core::ptr::eq(last, *item))
             })
             .peekable();
         if empty.peek().is_none() {
@@ -1466,12 +1497,26 @@ mod draft {
             .chain(from_bunfig)
             .map(RegistryKey::from_url)
             .collect();
+        // Without its trailing `/` the key is a distinct one, which the walk visits right after the slashed one.
+        fn spellings(registry: &RegistryKey) -> [&[u8]; 2] {
+            [&registry.key, &registry.key[..registry.key.len() - 1]]
+        }
+        let registry_keys = (registries.len() > SCAN_MAX).then(|| {
+            let mut keys: HashMap<&[u8], ()> = HashMap::with_capacity(registries.len() * 2);
+            for key in registries.iter().flat_map(spellings) {
+                keys.insert(key, ());
+            }
+            keys
+        });
         for item in empty {
-            // Without its trailing `/` the key is a distinct one, which the walk visits right after the slashed one.
-            if registries.iter().any(|registry| {
-                *item.registry_url == *registry.key
-                    || *item.registry_url == registry.key[..registry.key.len() - 1]
-            }) {
+            let names_registry = match &registry_keys {
+                Some(keys) => keys.contains_key(&*item.registry_url),
+                None => registries
+                    .iter()
+                    .flat_map(spellings)
+                    .any(|key| *key == *item.registry_url),
+            };
+            if names_registry {
                 log.add_error_opts(
                     b"ignoring empty _auth value",
                     bun_ast::AddErrorOptions {

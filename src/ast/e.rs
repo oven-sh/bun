@@ -1295,7 +1295,7 @@ impl Default for Object {
     }
 }
 
-/// Dotted-key path used by the INI parser (`get_or_put_object`).
+/// The dot-separated segments of a section header of the INI parser.
 ///
 /// Node types are lifetime-free, so `next` is a raw `*mut Rope`
 /// into the bump arena. Segments are bulk-freed at arena reset.
@@ -1323,28 +1323,7 @@ impl Rope {
         tail.next = rope;
         Ok(rope)
     }
-
-    /// Re-borrow `next` as `Option<&Rope>`. Same `StoreRef` arena contract:
-    /// the pointee is a bump allocation valid until arena reset. Centralises
-    /// the one `unsafe` so the `get_or_put_object`/`get_rope` walkers
-    /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
-    #[inline]
-    pub(crate) fn next_ref<'a>(&self) -> Option<&'a Rope> {
-        // SAFETY: `next` is either null or a bump-arena allocation valid until
-        // arena reset. Read-only borrow; no `&mut` alias is
-        // outstanding at any caller (the chain is fully built before walking).
-        unsafe { self.next.cast_const().as_ref() }
-    }
 }
-
-// thiserror is not a dep of this crate; hand-roll Error+Display.
-#[derive(Debug, strum::IntoStaticStr)]
-pub enum SetError {
-    OutOfMemory,
-    Clobber,
-}
-bun_core::impl_tag_error!(SetError);
-bun_core::oom_from_alloc!(SetError);
 
 // ── live Object accessor surface ───────────────────────────────────────────
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
@@ -1418,68 +1397,6 @@ impl Object {
             key,
             Expr::allocate(bump, EString::init(value), crate::Loc::EMPTY),
         )
-    }
-
-    /// Walks `rope` segments, creating nested objects as needed, and returns
-    /// the leaf `E.Object` expression.
-    pub fn get_or_put_object(&mut self, rope: &Rope, _bump: &Bump) -> Result<Expr, SetError> {
-        let head_key = match rope.head.data.e_string() {
-            Some(s) => s.data,
-            None => return Err(SetError::Clobber),
-        };
-        if let Some(existing) = self.get(&head_key) {
-            match existing.data {
-                crate::expr::Data::EArray(array) => {
-                    let Some(next) = rope.next_ref() else {
-                        return Err(SetError::Clobber);
-                    };
-                    if let Some(last) = array.items.last() {
-                        if let crate::expr::Data::EObject(mut obj) = last.data {
-                            return obj.get_or_put_object(next, _bump);
-                        }
-                        return Err(SetError::Clobber);
-                    }
-                    return Err(SetError::Clobber);
-                }
-                crate::expr::Data::EObject(mut object) => {
-                    if let Some(next) = rope.next_ref() {
-                        return object.get_or_put_object(next, _bump);
-                    }
-                    return Ok(existing);
-                }
-                _ => return Err(SetError::Clobber),
-            }
-        }
-
-        if let Some(next) = rope.next_ref() {
-            let obj = Expr::init(Object::default(), rope.head.loc);
-            let out = match obj.data {
-                crate::expr::Data::EObject(mut o) => o.get_or_put_object(next, _bump)?,
-                _ => unreachable!(),
-            };
-            VecExt::append(
-                &mut self.properties,
-                G::Property {
-                    key: Some(rope.head),
-                    value: Some(obj),
-                    flags: own_key_property_flags(&rope.head),
-                    ..G::Property::default()
-                },
-            );
-            return Ok(out);
-        }
-
-        let out = Expr::init(Object::default(), rope.head.loc);
-        VecExt::append(
-            &mut self.properties,
-            G::Property {
-                key: Some(rope.head),
-                value: Some(out),
-                flags: own_key_property_flags(&rope.head),
-                ..G::Property::default()
-            },
-        );
-        Ok(out)
     }
 }
 

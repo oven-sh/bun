@@ -1630,26 +1630,52 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
     get_name: impl Fn(T) -> &'c [u8],
     compare: impl Fn(T, T) -> std::cmp::Ordering,
 ) -> Option<T> {
-    let runes = |text: &[u8]| -> Vec<char> {
-        let invalid = |chunk: &std::str::Utf8Chunk| !chunk.invalid().is_empty();
-        text.utf8_chunks()
-            .flat_map(|c| c.valid().chars().chain(invalid(&c).then_some('\u{FFFD}')))
-            .collect()
-    };
-    let name_runes = runes(name);
-    let maximum_length_difference = 2.max((name_runes.len() as f64 * 0.34) as usize);
-    // Candidates farther away than this aren't suggested.
-    let mut best_distance = (name_runes.len() as f64 * 0.4).floor() + 0.9;
+    let mut closest = Closest::to(name);
     let mut best: Option<T> = None;
     for candidate in candidates {
-        let candidate_name = get_name(candidate);
-        if candidate_name.is_empty()
-            || candidate_name.len().abs_diff(name_runes.len()) > maximum_length_difference
-            || candidate_name == name
-        {
-            continue;
+        let is_better = match closest.compare_with(get_name(candidate)) {
+            None => false,
+            Some(std::cmp::Ordering::Less) => true,
+            Some(_) => best.is_none_or(|best| compare(candidate, best).is_lt()),
+        };
+        if is_better {
+            best = Some(candidate);
         }
-        let candidate_runes = runes(candidate_name);
+    }
+    best
+}
+
+/// The part of `GetSpellingSuggestion` that only looks at the names.
+struct Closest<'n> {
+    name: &'n [u8],
+    name_runes: Vec<char>,
+    maximum_length_difference: usize,
+    /// The distance of the closest candidate so far. Candidates farther away than this aren't suggested.
+    best_distance: f64,
+}
+
+impl<'n> Closest<'n> {
+    fn to(name: &'n [u8]) -> Self {
+        let name_runes = runes_of(name);
+        Closest {
+            name,
+            maximum_length_difference: 2.max((name_runes.len() as f64 * 0.34) as usize),
+            best_distance: (name_runes.len() as f64 * 0.4).floor() + 0.9,
+            name_runes,
+        }
+    }
+
+    /// Returns `Less` if `candidate_name` is closer to the name than every candidate before it, and `None` if it can't
+    /// be suggested.
+    fn compare_with(&mut self, candidate_name: &[u8]) -> Option<std::cmp::Ordering> {
+        let name_runes = &self.name_runes;
+        if candidate_name.is_empty()
+            || candidate_name.len().abs_diff(name_runes.len()) > self.maximum_length_difference
+            || candidate_name == self.name
+        {
+            return None;
+        }
+        let candidate_runes = runes_of(candidate_name);
         // Two-letter names are easy to distinguish, unless they differ only by case.
         let lower = |runes: &[char]| {
             runes
@@ -1657,21 +1683,23 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
                 .flat_map(|c| c.to_lowercase())
                 .collect::<Vec<_>>()
         };
-        if candidate_name.len() < 3 && lower(&candidate_runes) != lower(&name_runes) {
-            continue;
+        if candidate_name.len() < 3 && lower(&candidate_runes) != lower(name_runes) {
+            return None;
         }
-        let Some(distance) = levenshtein_with_max(&name_runes, &candidate_runes, best_distance)
-        else {
-            continue;
-        };
-        if distance < best_distance {
-            best_distance = distance;
-            best = Some(candidate);
-        } else if best.is_none_or(|best| compare(candidate, best).is_lt()) {
-            best = Some(candidate);
+        let distance = levenshtein_with_max(name_runes, &candidate_runes, self.best_distance)?;
+        if distance < self.best_distance {
+            self.best_distance = distance;
+            return Some(std::cmp::Ordering::Less);
         }
+        Some(std::cmp::Ordering::Equal)
     }
-    best
+}
+
+fn runes_of(text: &[u8]) -> Vec<char> {
+    let invalid = |chunk: &std::str::Utf8Chunk| !chunk.invalid().is_empty();
+    text.utf8_chunks()
+        .flat_map(|c| c.valid().chars().chain(invalid(&c).then_some('\u{FFFD}')))
+        .collect()
 }
 
 /// `GetSpellingSuggestionForStrings`

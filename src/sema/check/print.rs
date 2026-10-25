@@ -663,13 +663,28 @@ fn with_printer<'p, T>(
     flags: u32,
     print: impl FnOnce(&mut Printer<'_, 'p, '_>) -> T,
 ) -> T {
+    let (mut print, mut result) = (Some(print), None);
+    call_with_printer(checker, enclosing_declaration, tracker, flags, &mut |it| {
+        result = print.take().map(|print| print(it));
+    });
+    result.expect("`call_with_printer` calls `print`")
+}
+
+/// Calls `print` once.
+fn call_with_printer<'p>(
+    checker: &mut Checker<'p, '_>,
+    enclosing_declaration: Option<Enclosing>,
+    tracker: Option<&mut dyn SymbolTracker<'p>>,
+    flags: u32,
+    print: &mut dyn FnMut(&mut Printer<'_, 'p, '_>),
+) {
     let saved = checker.relation_too_complex;
     let is_barrier = !std::mem::take(&mut checker.printing_closes_cycles);
     if is_barrier {
         checker.eager.push(checker.stack.len());
     }
     let indent = (checker.declaration_indent).filter(|_| flags & MULTILINE_OBJECT_LITERALS != 0);
-    let result = {
+    {
         let mut printer = Printer {
             c: &mut *checker,
             flags,
@@ -702,15 +717,13 @@ fn with_printer<'p, T>(
             fake_scope_type_parameters: Vec::new(),
             fake_scope_parameters: Vec::new(),
         };
-        let result = print(&mut printer);
+        print(&mut printer);
         printer.exit_context_check();
-        result
-    };
+    }
     if is_barrier {
         checker.eager.pop();
     }
     checker.relation_too_complex = saved;
-    result
 }
 
 /// A type node as the printer emits it.

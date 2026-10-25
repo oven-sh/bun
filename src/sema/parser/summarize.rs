@@ -536,23 +536,37 @@ pub fn with_summary_in_place<'s, R>(
         attach_comments,
         is_before_typescript_7_1: false,
     };
+    let (mut then, mut result) = (Some(then), None);
+    summarize_in_place(how, memory, text, atoms, &mut |summary, atoms| {
+        result = then.take().map(|then| then(summary, atoms));
+    });
+    result.expect("`summarize_in_place` calls `then`")
+}
+
+/// Calls `then` once.
+fn summarize_in_place<'s>(
+    how: ParseSettings,
+    memory: (&'s Arena, &'s Session),
+    text: &[u8],
+    atoms: &dyn Intern,
+    then: &mut dyn FnMut(Summary<'_, 's>, &dyn Intern),
+) {
     // `then` may parse another text.
     let mut scratch = take_scratch();
     // JSON is validated once it's in the arena.
-    if is_json(path, script_kind) {
+    if is_json(how.path, how.script_kind) {
         let file = parse_into_arena(&mut scratch, how, memory, text, atoms);
         return_scratch(scratch);
         return then(Summary::InArena(Box::new(file)), atoms);
     }
     let mut file = parse_file(&mut scratch, how, text, None);
-    let result = then(Summary::InPlace(&mut file), &scratch.atoms(text));
+    then(Summary::InPlace(&mut file), &scratch.atoms(text));
     // Don't keep a very large file's capacity around for every later file.
     if text.len() >= 4 << 20 {
         *file = FileBuilder::default();
     }
     scratch.recycle(file);
     return_scratch(scratch);
-    result
 }
 
 /// Why a part can't be parsed.

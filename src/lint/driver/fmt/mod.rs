@@ -121,8 +121,8 @@ impl Problem {
         };
         let mut printed = String::new();
         let _ = match colors {
-            true => message.write_format::<true>(&mut printed),
-            false => message.write_format::<false>(&mut printed),
+            true => message.write_format_uncut::<true>(&mut printed),
+            false => message.write_format_uncut::<false>(&mut printed),
         };
         printed.push_str("\n\n");
         printed.into_bytes()

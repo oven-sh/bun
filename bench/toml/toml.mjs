@@ -49,13 +49,22 @@ function lines(count, line) {
 }
 
 // One table of `count` keys, for each way a table can get its keys.
-const shapes = {
-  "keys": count => "[dependencies]\n" + lines(count, i => `${name(i)} = "1.${i}.0"\n`),
-  "non-ASCII keys": count => "[dependencies]\n" + lines(count, i => `${nonAsciiName(i)} = "1.${i}.0"\n`),
-  "dotted keys": count => "[dependencies]\n" + lines(count, i => `${name(i)}.version = "1.${i}.0"\n`),
-  "table headers": count => lines(count, i => `[dependencies.${name(i)}]\nversion = "1.${i}.0"\n`),
-  "keys of an inline table": count => `dependencies = { ${lines(count, i => `${name(i)} = "1.${i}.0", `)} }\n`,
-};
+const shapes = [
+  count => [`a table of ${count} keys`, "[dependencies]\n" + lines(count, i => `${name(i)} = "1.${i}.0"\n`)],
+  count => [
+    `a table of ${count} non-ASCII keys`,
+    "[dependencies]\n" + lines(count, i => `${nonAsciiName(i)} = "1.${i}.0"\n`),
+  ],
+  count => [
+    `a table of ${count} dotted keys`,
+    "[dependencies]\n" + lines(count, i => `${name(i)}.version = "1.${i}.0"\n`),
+  ],
+  count => [`a table of ${count} sub-tables`, lines(count, i => `[dependencies.${name(i)}]\nversion = "1.${i}.0"\n`)],
+  count => [
+    `an inline table of ${count} keys`,
+    `dependencies = { ${lines(count, i => `${i ? ", " : ""}${name(i)} = "1.${i}.0"`)} }\n`,
+  ],
+];
 
 const packages = count =>
   lines(count, i => `[[package]]\nname = "package-${i}"\nversion = "1.0.${i}"\nchecksum = "${i}"\n`);
@@ -65,10 +74,8 @@ const documents = [
   ["one key", "a = 1"],
   ["config", config],
   // A table is scanned for a key up to 64 keys, and indexed from 65.
-  ...Object.entries(shapes).flatMap(([shape, document]) =>
-    [16, 64, 65, 1024].map(count => [`${count} ${shape} in a table`, document(count)]),
-  ),
-  ["10,000 keys in a table", shapes.keys(10_000)],
+  ...shapes.flatMap(shape => [16, 64, 65, 1024].map(shape)),
+  shapes[0](10_000),
   ["1,000 [[package]] tables of 3 keys", packages(1000)],
   // Each `[[package]]` header finds `package` among the 101 keys of the root table.
   ["1,000 [[package]] tables, `package` is the first of 101 root keys", packages(1) + others + packages(999)],

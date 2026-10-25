@@ -735,8 +735,8 @@ describe("robustness", () => {
     // timed. One sample of the small document is 16 parses, which take a
     // linear parser as long as one parse of the large document. The samples
     // of the two take turns, and nothing is asserted while the clock runs,
-    // because an `expect()` can start a garbage collection. The scan took
-    // at least 9 times as long.
+    // because an `expect()` can start a garbage collection. With the scan,
+    // the large document took 8 to 19 times as long.
     test("is parsed in time linear in the number of its keys", () => {
       const shapes: [string, (n: number) => string, string][] = [
         ["keys", n => numbered(n, "k", " = 1\n") + "k0 = 1", "Cannot redefine key 'k0'"],

@@ -767,7 +767,7 @@ describe("robustness", () => {
         ["table headers", n => numbered(n, "[t", "]\n") + "[t0]", "Cannot redefine table 't0'"],
         [
           "table headers that find a late key",
-          n => numbered(n, "k", " = 1\n") + "[[z]]\n".repeat(n) + "[k0]",
+          n => numbered(n, "k", " = 1\n") + Buffer.alloc(6 * n, "[[z]]\n").toString() + "[k0]",
           "Cannot redefine key 'k0' as a table",
         ],
       ];

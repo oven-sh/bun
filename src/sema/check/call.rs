@@ -318,9 +318,10 @@ impl<'p, 's> Checker<'p, 's> {
         // `getResolvedSignature`: `links.resolvedSignature != c.resolvingSignature`, "this inner
         // resolution sets the resolvedSignature first", and `result = links.resolvedSignature`. For a call that no
         // candidate accepts, `resolveCall` has assigned its own result since ("Preemptively cache the result").
-        let replaces_inner_signature = outcome != CallOutcome::Chosen
+        let replaces_untyped_inner_call = outcome != CallOutcome::Chosen
             && !is_assigned
-            && (self.signatures_resolved_within.iter()).any(|r| r.0 == file && r.1 == call);
+            && (self.signatures_resolved_within.iter())
+                .any(|r| r.0 == file && r.1 == call && r.2.sig.is_none());
         if outcome != CallOutcome::Chosen && !is_assigned {
             self.signatures_resolved_within
                 .retain(|r| !(r.0 == file && r.1 == call));
@@ -400,7 +401,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else if let Some(reported) = reported {
             if self.is_in_flow_loop() {
                 self.keep_call_errors_in_flow_loop(file, call, reported);
-            } else if replaces_inner_signature
+            } else if replaces_untyped_inner_call
                 && self.rejected_at < serial
                 && (self.p.diagnostics_of_re_resolved_calls)
                     .get_ref(&self.task, &(file, call))

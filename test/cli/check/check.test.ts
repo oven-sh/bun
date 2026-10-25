@@ -9510,6 +9510,158 @@ export {};
       expect(exitCode).toBe(1);
     });
 
+    // `.mount(x91[0])` is resolved a second time inside its own resolution, with a signature. The outer resolution fails with
+    // the type that `x91` has inside the cycle. tsc doesn't report that, and every later request finds `any`.
+    test("a call that fails after a typed resolution inside it succeeded does not report inside a cycle", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          ...JSON.parse(tsconfig),
+          files: [
+            "m7.ts",
+            "m3.ts",
+            "m0.ts",
+            "types.ts",
+            "m5.ts",
+            "m6.ts",
+            "m9.ts",
+            "m8.ts",
+            "m2.ts",
+            "http.ts",
+            "app.ts",
+            "index.ts",
+            "m4.ts",
+          ],
+        }),
+        "app.ts": ` import type { Handler, Mw, Method, Params } from "./http";
+export type Route<M extends Method, P extends string, R> = { }
+type Join<A extends string, B extends string> = A extends "/" ? B : \`\${A}\${B}\`;
+export class App<V extends object = {}, Rs extends Route<any, any, any> = never, Base extends string = ""> {
+  private add<M extends Method, P extends string, R>(method: M, path: P, run: Handler<V, Join<Base, P>, R>) { return this as unknown as App<V, Rs | Route<M, Join<Base, P>, R>, Base>; }
+  get<P extends string, E extends object, R>(path: P, mw: Mw<V, E>, h: Handler<Omit<V, keyof E> & E, Join<Base, P>, R>): App<V, Rs | Route<"get", Join<Base, P>, R>, Base>;
+  post<P extends string, R>(path: P, h: Handler<V, Join<Base, P>, R>) { return this.add("post", path, h); }
+  use<E extends object>(mw: Mw<V, E>) { return this as unknown as App<Omit<V, keyof E> & E, Rs, Base>; }
+  mount<V2 extends object, R2 extends Route<any, any, any>, B2 extends string>(sub: App<V2, R2, B2>) { }
+}
+export function app() { return new App(""); }
+export function mw<V extends object, E extends object>(f: Mw<V, E>) {}export type Client<A> = { }
+export function client<A extends App<any, any, any>>(a: A) { }
+type Fn<T> = T extends (...a: infer P) => infer R ? { } : never;
+export function call<A extends App<any, any, any>, K extends keyof Client<A>>(a: A, k: K, ...p: Fn<Client<A>[K]>["p"]) { }
+`,
+        "http.ts": `export type Params<P extends string> = P extends \`\${infer _A}:\${infer N}/\${infer R}\` ? { } : {}
+export type Method = "get" | "post" | "put" | "delete";
+export class Res<T, S extends number = 200> { }
+export class Ctx<V extends object, P extends string, B = unknown> { }
+export type Handler<V extends object, P extends string, R> = (c: Ctx<V, P>) => R | Promise<R>;
+export type Mw<V extends object, E extends object> = (c: Ctx<V, string>) => E | Promise<E>;export declare const db: { }; export declare const flag: boolean;
+`,
+        "index.ts": `export * from "./m4";
+export * from "./m6";
+export * from "./m3";
+export * from "./m8";
+export * from "./m5";
+export { x70, x70Api, x71, x72 } from "./m7";
+
+`,
+        "m0.ts": `import { app, mw, client, call, App } from "./app"; import { db, flag, Ctx, Res } from "./http";
+import { x91 } from "./m9";
+
+
+export const x00F = (a: number) => x91[0];
+export function x00(cb = x00F, o = { }) {}
+export const x01 = mw((c: Ctx<{ }, string>) => ({ }));
+export const x02 = mw(c => { });
+`,
+        "m2.ts": `import { app, mw, client, call, App } from "./app"; import { db, flag, Ctx, Res } from "./http";
+import { x60 } from "./index";
+export const x20 = mw((c: Ctx<{ }, string>) => ({ }));
+export const x22 = () => app().use(x60.again()).use(x60.again());
+`,
+        "m3.ts": `import { app, mw, client, call, App } from "./app";
+import { x50 } from "./types";
+export const x31 = app().use(x50)
+`,
+        "m4.ts": `
+import { x22 } from "./m2";
+export const x40 = x22()
+
+`,
+        "m5.ts": `import { app, mw, client, call, App } from "./app";
+export const x50 = mw(c => ({ }));`,
+        "m6.ts": `import { app, mw, client, call, App } from "./app";import * as Nm7 from "./m7";
+import {} from "./m9";
+export const x60 = (() => { })();
+export function x61<A extends App<any, any, any>>(a: A) { return { a, c, list: a.list(), first: Nm7.x71 }}
+`,
+        "m7.ts": `import { app, mw, client, call, App } from "./app"; import { db, flag, Ctx, Res } from "./http";
+
+import * as Nm3 from "./index";
+import { x20 } from "./m2";
+import { x91, x92 } from "./m9";
+import { x61 } from "./m6";
+export const x70 = app().mount(Nm3.x31);
+
+export const x70Api = client(x70);
+export const x71 = app().use(x20)
+  .post("/files/:name", c => flag ? c.json(db.posts) : c.fail(500, "x"))
+  .get("/:org/repos/:repo", c => c.json(c.param("nope")))
+  .mount(x91[0]);
+export function x72() { return x72.dep; }
+export namespace x72 { export const dep = x61(x92).a;}
+`,
+        "m8.ts": `import { app, mw, client, call, App } from "./app";
+import { x60 } from "./m6";
+import { x71 } from "./index";
+export const x80 = app().use(x60.inner)
+  .mount(x71);
+`,
+        "m9.ts": `import { app, mw, client, call, App } from "./app";
+import { x70Api, x72 as rx72 } from "./index";
+import { x80 } from "./index";
+import { x31 } from "./index";
+import { x40 } from "./index";
+(rx72)();
+export const x91 = [x80, undefined, x31].filter(v => v !== undefined);
+export const x92 = app().mount(x40).mount(rx72.dep);
+`,
+        "types.ts": `
+import type { x50 } from "./index";
+
+   
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        "app.ts(7,3): error TS2389: Function implementation name must be 'get'.",
+        "app.ts(11,40): error TS2554: Expected 0 arguments, but got 1.",
+        "app.ts(15,91): error TS2370: A rest parameter must be of an array type.",
+        "app.ts(15,97): error TS2536: Type '\"p\"' cannot be used to index type 'Fn<Client<A>[K]>'.",
+        "m0.ts(8,23): error TS2345: Argument of type '(c: Ctx<object, string, unknown>) => void' is not assignable to parameter of type 'Mw<object, object>'.",
+        "  Type 'void' is not assignable to type 'object | Promise<object>'.",
+        "m2.ts(4,40): error TS2339: Property 'again' does not exist on type 'void'.",
+        "m2.ts(4,57): error TS2339: Property 'again' does not exist on type 'void'.",
+        "m3.ts(2,10): error TS2459: Module '\"./types\"' declares 'x50' locally, but it is not exported.",
+        "m6.ts(4,71): error TS18004: No value exists in scope for the shorthand property 'c'. Either declare one or provide an initializer.",
+        "m6.ts(4,82): error TS2339: Property 'list' does not exist on type 'A'.",
+        "m7.ts(9,30): error TS2345: Argument of type 'void' is not assignable to parameter of type 'App<any, any, any>'.",
+        "m7.ts(10,14): error TS7022: 'x71' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m7.ts(10,30): error TS2345: Argument of type 'void' is not assignable to parameter of type 'Mw<{}, object>'.",
+        "m7.ts(11,39): error TS2339: Property 'json' does not exist on type 'Ctx<Omit<{}, never> & object, \"/files/:name\", unknown>'.",
+        "m7.ts(11,47): error TS2339: Property 'posts' does not exist on type '{}'.",
+        "m7.ts(11,58): error TS2339: Property 'fail' does not exist on type 'Ctx<Omit<{}, never> & object, \"/files/:name\", unknown>'.",
+        "m7.ts(12,4): error TS2554: Expected 3 arguments, but got 2.",
+        "m7.ts(12,36): error TS2339: Property 'json' does not exist on type 'Ctx<Omit<{}, never> & object, string, unknown>'.",
+        "m7.ts(12,43): error TS2339: Property 'param' does not exist on type 'Ctx<Omit<{}, never> & object, string, unknown>'.",
+        "m7.ts(15,37): error TS7022: 'dep' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m8.ts(4,14): error TS7022: 'x80' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m8.ts(4,34): error TS2339: Property 'inner' does not exist on type 'void'.",
+        "m9.ts(7,14): error TS7022: 'x91' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m9.ts(8,14): error TS7022: 'x92' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m9.ts(8,37): error TS2339: Property 'mount' does not exist on type 'void'.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // `parts.get("zz")` is resolved inside the cycle of `log` and `app`. Its callee leads to `c`, `app`, the callback and the
     // call again. There `parts` is circular and `any`, so the inner resolution is an untyped call. The outer one gets the
     // type that `parts` computed and fails, and tsc reports that. Every later request finds `any`.

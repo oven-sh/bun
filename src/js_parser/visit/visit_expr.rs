@@ -259,8 +259,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ),
                 }
             } else if p.exports_ref.eql(e_.ref_) || p.module_ref.eql(e_.ref_) {
-                // Assigning to `exports` or `module` in a CommonJS module must be tracked to undo
-                // the `module.exports` -> `exports` optimization.
+                // An assignment to `exports` or `module` undoes the `module.exports` -> `exports` rewrite.
                 p.commonjs_module_exports_assigned_deoptimized = true;
             }
 

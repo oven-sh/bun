@@ -5196,6 +5196,9 @@ pub mod bv2_impl {
                                     .as_mut_slice()
                                     [resolve.import_record.import_record_index as usize];
                             import_record.path = path_as_static(&path);
+                            import_record
+                                .flags
+                                .remove(bun_ast::ImportRecordFlags::AT_ON_RESOLVE_PLUGINS);
                         }
                         return;
                     }
@@ -5988,7 +5991,7 @@ pub mod bv2_impl {
         pub(crate) fn enqueue_on_resolve_plugin_if_needed(
             &mut self,
             source_index: IndexInt,
-            import_record: &ImportRecord,
+            import_record: &mut ImportRecord,
             source_file: &[u8],
             import_record_index: u32,
             original_target: options::Target,
@@ -6016,6 +6019,9 @@ pub mod bv2_impl {
                         bstr::BStr::new(&import_record.path.text)
                     );
                     self.increment_scan_counter();
+                    import_record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::AT_ON_RESOLVE_PLUGINS);
                     {
                         let at_plugins = self
                             .records_at_plugins
@@ -7317,7 +7323,11 @@ pub mod bv2_impl {
             // so borrowck sees it as disjoint from `self.graph.input_files` above.
             let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
             let mut patch = |i: usize, record: &mut ImportRecord| {
-                if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
+                if let Some(source_index) = path_to_source_index_map.get_path(&record.path)
+                    && !record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::AT_ON_RESOLVE_PLUGINS)
+                {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
                     {
@@ -7373,8 +7383,14 @@ pub mod bv2_impl {
                         self.graph.ast.items_import_records_mut()[idx] = import_records;
                         return 0;
                     }
-                    // The first patch of the file can match the specifier as written to a module. The answer decides.
-                    import_records.as_mut_slice()[i].source_index = Index::INVALID;
+                    let record = &mut import_records.as_mut_slice()[i];
+                    debug_assert!(
+                        !record.source_index.is_valid(),
+                        "only the answer gives a record at the onResolve plugins its module"
+                    );
+                    record
+                        .flags
+                        .remove(bun_ast::ImportRecordFlags::AT_ON_RESOLVE_PLUGINS);
                     Some(i)
                 }
             };
@@ -7419,19 +7435,24 @@ pub mod bv2_impl {
             resolve_queue.clear();
             self.late_resolve_queue = resolve_queue;
 
-            self.patch_import_record_source_indices(
-                &mut import_records,
-                PatchImportRecordsCtx {
-                    source_path: source.path.text,
-                    loader,
-                    target,
-                    redirect_import_record_index: match answered {
-                        Some(_) => self.graph.ast.items_redirect_import_record_index()[idx],
-                        None => u32::MAX,
+            // The pass gave the answered record a module that exists. Its path is still the specifier as written, which can name another module.
+            let has_module =
+                answered.is_some_and(|i| import_records.as_slice()[i].source_index.is_valid());
+            if !has_module {
+                self.patch_import_record_source_indices(
+                    &mut import_records,
+                    PatchImportRecordsCtx {
+                        source_path: source.path.text,
+                        loader,
+                        target,
+                        redirect_import_record_index: match answered {
+                            Some(_) => self.graph.ast.items_redirect_import_record_index()[idx],
+                            None => u32::MAX,
+                        },
+                        only_records: Some(records),
                     },
-                    only_records: Some(records),
-                },
-            );
+                );
+            }
 
             if let Some(i) = answered {
                 if last_error.is_some() && self.dev_server.is_some() {

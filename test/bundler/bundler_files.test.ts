@@ -823,4 +823,53 @@ describe("bundler files option", () => {
       expect(result.success).toBe(false);
     });
   });
+
+  // The page exists only in `files`, and the answer of onResolve names it. A build for a server
+  // gives the import the manifest of the page, as it does for a page on disk.
+  test("onResolve plugin that names an in-memory HTML file gives a server build the manifest of the page", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/app/server.js"],
+      target: "bun",
+      throw: false,
+      files: {
+        "/app/server.js": `import page from "app:page"; export default page;`,
+        "/app/page.html": `<!doctype html><html><head><link rel="stylesheet" href="./page.css"></head><body><script type="module" src="./client.js"></script></body></html>`,
+        "/app/page.css": `body { color: red; }`,
+        "/app/client.js": `console.log("client of the in-memory page");`,
+      },
+      plugins: [
+        {
+          name: "names-the-page",
+          setup(build) {
+            build.onResolve({ filter: /^app:page$/ }, () => ({ path: "/app/page.html" }));
+          },
+        },
+      ],
+    });
+    expect(result.logs.map(String)).toEqual([]);
+    // The page is one output.
+    expect(result.outputs.map(output => basename(output.path)).filter(name => name.endsWith(".html"))).toEqual([
+      "page.html",
+    ]);
+
+    const outputs = new Map(
+      await Promise.all(result.outputs.map(async output => [basename(output.path), await output.text()] as const)),
+    );
+    const manifests: { index: string; files: { path: string; loader: string }[] }[] = [
+      ...(outputs.get("server.js") ?? "").matchAll(/__jsonParse\("(.+?)"\)/gs),
+    ].map(match => JSON.parse(JSON.parse('"' + match[1] + '"')));
+    expect(
+      manifests.map(manifest => ({
+        index: basename(manifest.index),
+        loaders: manifest.files.map(file => file.loader).sort(),
+      })),
+    ).toEqual([{ index: "page.html", loaders: ["css", "html", "js"] }]);
+
+    // The script of the page is a build for the browser: it has no "// @bun" line.
+    const client = outputs.get(basename(manifests[0].files.find(file => file.loader === "js")!.path)) ?? "";
+    expect({ client: client.includes("client of the in-memory page"), forBun: client.includes("// @bun") }).toEqual({
+      client: true,
+      forBun: false,
+    });
+  });
 });

@@ -2577,33 +2577,119 @@ describe("bundler", () => {
 
   // An import by absolute path names a module of the build as it is written. The answer of
   // onResolve still decides what the import is.
-  test.concurrent("plugin/onResolve answer wins over a module that the specifier names as written", async () => {
-    using dir = tempDir("plugin-answer-wins", {
-      "a.js": `export default "real";`,
-      "mock.js": `export default "mock";`,
-    });
-    const root = String(dir);
-    writeFileSync(
-      join(root, "entry.js"),
-      `import real from "./a.js"; import mock from ${JSON.stringify(join(root, "a.js"))}; console.log(real, mock);`,
+  for (const answer of ["a new module", "a module that the build has already", "an external module"] as const) {
+    test.concurrent(
+      `plugin/onResolve answer wins over a module that the specifier names as written (${answer})`,
+      async () => {
+        using dir = tempDir("plugin-answer-wins", {
+          "a.js": `export default "real";`,
+          "mock.js": `export default "mock";`,
+        });
+        const root = String(dir);
+        const direct = answer === "a module that the build has already";
+        writeFileSync(
+          join(root, "entry.js"),
+          `import real from "./a.js";
+           ${direct ? `import direct from "./mock.js";` : ""}
+           import mock from ${JSON.stringify(join(root, "a.js"))};
+           console.log(real, ${direct ? "direct, " : ""}mock);`,
+        );
+        const result = await Bun.build({
+          entrypoints: [join(root, "entry.js")],
+          outdir: join(root, "out"),
+          throw: false,
+          plugins: [
+            {
+              name: "mock",
+              setup(build) {
+                // Only the absolute specifier matches. "./a.js" goes to the resolver.
+                build.onResolve({ filter: /^(\/|[A-Za-z]:).*a\.js$/ }, () => ({
+                  path: join(root, "mock.js"),
+                  external: answer === "an external module",
+                }));
+              },
+            },
+          ],
+        });
+        expect(result.logs.map(String)).toEqual([]);
+        // mock.js is in the bundle once, also when entry.js imports it itself. An external answer leaves it out.
+        const copies = [...(await result.outputs[0].text()).matchAll(/"mock"/g)].length;
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(root, "out", "entry.js")],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, copies, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+          stdout: direct ? "real mock mock\n" : "real mock\n",
+          copies: answer === "an external module" ? 0 : 1,
+          exitCode: 0,
+          stderr: "",
+        });
+      },
     );
-    const result = await Bun.build({
-      entrypoints: [join(root, "entry.js")],
-      throw: false,
-      plugins: [
-        {
-          name: "mock",
-          setup(build) {
-            // Only the absolute specifier matches. "./a.js" goes to the resolver.
-            build.onResolve({ filter: /^(\/|[A-Za-z]:).*a\.js$/ }, () => ({ path: join(root, "mock.js") }));
+  }
+
+  // A file that is only `module.exports = require(x)` is a redirect: an import of it goes to the
+  // module of x. The specifier of that require() names a.js as written, and it is at the plugins
+  // when redirect.cjs is done. A file that imports redirect.cjs after that gets the answer too.
+  for (const answer of ["a module that the build has already", "an external module"] as const) {
+    test.concurrent(`plugin/onResolve answer for the require() of a redirect file (${answer})`, async () => {
+      using dir = tempDir("plugin-answer-redirect", {
+        "a.js": `export default "real";`,
+        "mock.js": `export default "mock";`,
+        "late.js": `import value from "./redirect.cjs"; export default value;`,
+      });
+      const root = String(dir);
+      writeFileSync(join(root, "redirect.cjs"), `module.exports = require(${JSON.stringify(join(root, "a.js"))});`);
+      writeFileSync(
+        join(root, "entry.js"),
+        `import real from "./a.js";
+         import direct from "./mock.js";
+         import early from "./redirect.cjs";
+         import late from "./late.js";
+         console.log(real, direct, early, late);`,
+      );
+      const { promise: asked, resolve: markAsked } = Promise.withResolvers<void>();
+      const result = await Bun.build({
+        entrypoints: [join(root, "entry.js")],
+        outdir: join(root, "out"),
+        throw: false,
+        plugins: [
+          {
+            name: "mock",
+            setup(build) {
+              build.onResolve({ filter: /^(\/|[A-Za-z]:).*a\.js$/ }, () => {
+                markAsked();
+                return { path: join(root, "mock.js"), external: answer === "an external module" };
+              });
+              // late.js goes on when the plugins have the require() of redirect.cjs.
+              build.onResolve({ filter: /late\.js$/ }, async () => {
+                await asked;
+                return undefined;
+              });
+            },
           },
-        },
-      ],
+        ],
+      });
+      expect(result.logs.map(String)).toEqual([]);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(root, "out", "entry.js")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+        stdout: "real mock mock mock\n",
+        exitCode: 0,
+        stderr: "",
+      });
     });
-    expect(result.logs.map(String)).toEqual([]);
-    const text = await result.outputs[0].text();
-    expect({ real: text.includes(`"real"`), mock: text.includes(`"mock"`) }).toEqual({ real: true, mock: true });
-  });
+  }
 
   // The resolver lists a directory once. It does not look at the directory of a file that
   // onResolve names, so a plugin can write more files there later, and a relative import

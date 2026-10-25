@@ -5479,17 +5479,27 @@ impl<'p, 's> Checker<'p, 's> {
         sig: SigId,
         resolve: impl FnOnce(&mut Self) -> TypeId,
     ) -> TypeId {
-        if let Some(resolved) = self.p.resolved_return_types.get(&self.task, &sig) {
+        if let Some(resolved) = self.resolved_return_type(sig) {
             return resolved;
         }
-        if let Some(raw) = self.provisional(Query::ReturnOfSignature(sig)) {
-            return TypeId(raw as u32);
+        match self.resolve_return_type_once(sig, resolve) {
+            Ok((ty, left)) => self.assign_return_type(sig, ty, left),
+            Err(circular) => circular,
         }
-        let (ty, left) = match self.resolve_return_type_once(sig, resolve) {
-            Ok(resolved) => resolved,
-            Err(circular) => return circular,
-        };
-        // `if sig.resolvedReturnType == nil`
+    }
+
+    /// `sig.resolvedReturnType`
+    fn resolved_return_type(&mut self, sig: SigId) -> Option<TypeId> {
+        if let Some(resolved) = self.p.resolved_return_types.get(&self.task, &sig) {
+            return Some(resolved);
+        }
+        let raw = self.provisional(Query::ReturnOfSignature(sig))?;
+        Some(TypeId(raw as u32))
+    }
+
+    /// `if sig.resolvedReturnType == nil { sig.resolvedReturnType = t }`. Returns `sig.resolvedReturnType`. `left` is
+    /// what `leave` returned.
+    fn assign_return_type(&mut self, sig: SigId, ty: TypeId, left: Result<Stored, Open>) -> TypeId {
         if let Some(resolved) = self.p.resolved_return_types.get(&self.task, &sig) {
             return resolved;
         }
@@ -5531,28 +5541,35 @@ impl<'p, 's> Checker<'p, 's> {
         sig: SigId,
         resolve: impl FnOnce(&mut Self) -> TypeId,
     ) -> Result<(TypeId, Result<Stored, Open>), TypeId> {
-        if !self.enter(Query::ReturnOfSignature(sig)) {
-            return Err(if self.found_cycle {
-                TypeId::ERROR
-            } else {
-                TypeId::UNRESOLVED
-            });
-        }
+        self.push_return_type_resolution(sig)?;
         let ty = resolve(self);
-        let left = self.leave(Query::ReturnOfSignature(sig));
-        if self.left_a_cycle {
-            let stored = self.cycle_result();
-            if let Some((file, func, _)) = self.sig_decl(self.types().sig_origin(sig)) {
-                self.report_circular_return_type(Some(Query::ReturnOfSignature(sig)), file, func);
-            }
-            return Err((self.p.resolved_return_types).insert(
-                &self.task,
-                sig,
-                TypeId::ANY,
-                stored,
-            ));
+        self.pop_return_type_resolution(sig, ty)
+    }
+
+    fn push_return_type_resolution(&mut self, sig: SigId) -> Result<(), TypeId> {
+        if self.enter(Query::ReturnOfSignature(sig)) {
+            Ok(())
+        } else if self.found_cycle {
+            Err(TypeId::ERROR)
+        } else {
+            Err(TypeId::UNRESOLVED)
         }
-        Ok((ty, left))
+    }
+
+    fn pop_return_type_resolution(
+        &mut self,
+        sig: SigId,
+        ty: TypeId,
+    ) -> Result<(TypeId, Result<Stored, Open>), TypeId> {
+        let left = self.leave(Query::ReturnOfSignature(sig));
+        if !self.left_a_cycle {
+            return Ok((ty, left));
+        }
+        let stored = self.cycle_result();
+        if let Some((file, func, _)) = self.sig_decl(self.types().sig_origin(sig)) {
+            self.report_circular_return_type(Some(Query::ReturnOfSignature(sig)), file, func);
+        }
+        Err((self.p.resolved_return_types).insert(&self.task, sig, TypeId::ANY, stored))
     }
 
     /// True if `mapper` maps any type parameter to another type. A declared type or signature has

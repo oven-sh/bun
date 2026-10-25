@@ -537,9 +537,18 @@ impl<'p> Printer<'_, 'p, '_> {
         declaration: hir::Node,
         try_reuse: bool,
     ) -> Node {
-        let Some(ty) = self.c.iso_type_of_declared(file, declaration) else {
+        let Some(mut ty) = self.c.iso_type_of_declared(file, declaration) else {
             return Node::simple(b"any");
         };
+        // The symbol that a property assignment declares isn't the property of the object literal's type.
+        // `getTypeOfSymbol` checks the initializer again, now. Only an error type gets here with another context.
+        if ty == TypeId::ERROR
+            && let NodeData::Prop(p) = self.c.hir(file).data(declaration)
+            && self.c.hir(file)[p].kind == PropKind::Init
+        {
+            let initializer = self.c.hir(file)[p].value;
+            ty = self.c.check_expression_anew(file, initializer);
+        }
         let ty = self.c.widen_literal(ty);
         let ty = self.c.instantiate(ty, self.mapper);
         self.serialize_type_for_declaration(

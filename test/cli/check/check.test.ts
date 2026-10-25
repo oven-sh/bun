@@ -8606,6 +8606,43 @@ take({ ...new K() });
       expect(exitCode).toBe(1);
     });
 
+    // The getter's type is first needed while the call is resolved, where `this` is only the object literal, so
+    // every property of the returned object has the error type. For the last error TypeScript prints that object from
+    // its syntax, and for a property with the error type it asks for the type of the symbol that the property assignment
+    // declares. That checks the initializer again, after the call, and reports what it finds.
+    test("prints a property that has the error type by checking its initializer again", async () => {
+      using dir = project({
+        "a.ts": `declare function defineStore<S, G>(o: { state: () => S; view: G & ThisType<S & G> }): S & G;
+export const cart = defineStore({
+  state: () => ({ name: "x" }),
+  view: {
+    boxed() { return this.name; },
+    get count() { return { a: this.name, b: this.name.length, c: this.name.nope, d: this.nope, e: [this.name] }; },
+  },
+});
+export const count: never = cart.count;
+export const a: never = cart.count.a;
+`,
+      });
+      const self = "{ boxed(): string; readonly count: { a: any; b: any; c: any; d: any; e: any[]; }; }";
+      for (const threads of [1, 8]) {
+        const { stdout, exitCode } = await check(dir, ["--threads", String(threads)]);
+        expect(stdout).toBe(
+          [
+            `a.ts(6,36): error TS2339: Property 'name' does not exist on type '${self}'.`,
+            `a.ts(6,50): error TS2339: Property 'name' does not exist on type '${self}'.`,
+            `a.ts(6,71): error TS2339: Property 'name' does not exist on type '${self}'.`,
+            "a.ts(6,76): error TS2339: Property 'nope' does not exist on type 'string'.",
+            `a.ts(6,90): error TS2339: Property 'nope' does not exist on type '${self}'.`,
+            `a.ts(6,105): error TS2339: Property 'name' does not exist on type '${self}'.`,
+            "a.ts(9,14): error TS2322: Type '{ a: string; b: number; c: any; d: any; e: any[]; }' is not assignable to type 'never'.",
+            "a.ts(10,14): error TS2322: Type 'any' is not assignable to type 'never'.",
+          ].join("\n"),
+        );
+        expect(exitCode).toBe(1);
+      }
+    });
+
     test("TS7053 prints an aliased intersection with a class by its members", async () => {
       using dir = project({
         "a.ts": `class User { id = 1 }

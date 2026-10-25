@@ -1223,24 +1223,10 @@ impl Run<'_> {
         for (eslint_path, oxlint_path) in ignored_eslint_config.iter().filter(|_| !options.silent) {
             self.note_ignored_config(eslint_path, oxlint_path);
         }
-        let (without_types, beyond_types): (Vec<_>, Vec<_>) = (js_plugins
-            .rules_skipped_for_types())
-        .into_iter()
-        .partition(|it| it.unknown.is_none());
-        let reasons: [&[u8]; 2] = [
-            b" did not run because there is no type information for the files: ",
-            b" did not run because rules that run in JavaScript cannot read this from a type: ",
-        ];
-        for (rules, reason) in [without_types, beyond_types].iter().zip(reasons) {
-            if rules.is_empty() {
-                continue;
+        let add_skipped = |ids: &[Vec<u8>], where_and_why: &[u8]| {
+            if ids.is_empty() {
+                return;
             }
-            let ids: Vec<Vec<u8>> = (rules.iter())
-                .map(|rule| match &rule.unknown {
-                    Some(unknown) => [&rule.id[..], b" (", unknown, b")"].concat(),
-                    None => rule.id.to_vec(),
-                })
-                .collect();
             let noun: &[u8] = match ids.len() {
                 1 => b" rule",
                 _ => b" rules",
@@ -1248,7 +1234,8 @@ impl Run<'_> {
             loader.add_unsupported(&[
                 ids.len().to_string().as_bytes(),
                 noun,
-                reason,
+                b" did not run",
+                where_and_why,
                 &ids.join(&b", "[..]),
                 match linter.registry().replaces_plugin(b"@typescript-eslint") {
                     true => &b""[..],
@@ -1257,7 +1244,28 @@ impl Run<'_> {
                     }
                 },
             ]);
-        }
+        };
+        let without_types = js_plugins.rules_skipped_for_types();
+        let without_types: Vec<Vec<u8>> = without_types.into_iter().map(Vec::from).collect();
+        add_skipped(
+            &without_types,
+            b" because there is no type information for the files: ",
+        );
+        let refusals = js_plugins.refusals();
+        let refused = refusals.rules.iter().map(|rule| {
+            let unknown: Vec<&[u8]> = rule.unknown.iter().map(|it| &**it).collect();
+            [&rule.id[..], b" (", &unknown.join(&b", "[..]), b")"].concat()
+        });
+        let refused: Vec<Vec<u8>> = refused.collect();
+        let noun = if refusals.files == 1 { "file" } else { "files" };
+        add_skipped(
+            &refused,
+            format!(
+                " in {} {noun} because rules that run in JavaScript cannot read this from a type: ",
+                refusals.files
+            )
+            .as_bytes(),
+        );
         for (reason, files) in std::mem::take(&mut *handed_back.lock()) {
             // This only happens where no formatter is wired up, and means nothing to the user.
             if reason != Reason::NoFormatter {

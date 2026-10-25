@@ -18,7 +18,7 @@ use bun_core::printer::json_stringify;
 use bun_core::strings::Utf16OffsetTable;
 use bun_threading::Guarded;
 use core::cell::RefCell;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -130,6 +130,8 @@ struct State {
     selector_numbers: FxHashMap<Box<[u8]>, u32>,
     loading: Loading,
     asked_for_types: Vec<AskedForTypes>,
+    /// Only [`Host::refusals`] reads it, after the last file.
+    refusals: FxHashSet<Refusal>,
     /// The kinds of node that rules have wanted the type of. It's sorted.
     kinds_with_types: Vec<NodeKind>,
 }
@@ -147,24 +149,44 @@ impl State {
 /// A rule that [has asked for types](Host::has_asked_for_types).
 struct AskedForTypes {
     rule: Arc<Rule>,
-    /// What it read from the types that isn't known. It doesn't run on any more files.
-    unknown: Option<Box<[u8]>>,
     /// [`Host::skip_for_types`]
     was_skipped: bool,
 }
 
-/// A rule that didn't run on some file.
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
-pub struct SkippedForTypes {
+/// [`Host::refuse`]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct Refusal {
+    rule: Box<[u8]>,
+    unknown: Box<[u8]>,
+    path: Box<[u8]>,
+}
+
+/// A rule that didn't run on some file because of what it read from the types.
+pub struct Refused {
     pub id: Box<[u8]>,
-    /// What it read from the types that isn't known. `None` means its files have no types.
-    pub unknown: Option<Box<[u8]>>,
+    /// What it read that isn't known, in all files. It's sorted.
+    pub unknown: Vec<Box<[u8]>>,
+}
+
+/// [`Host::refusals`]
+pub struct Refusals {
+    /// Sorted by name.
+    pub rules: Vec<Refused>,
+    /// On how many files any of them didn't run.
+    pub files: usize,
 }
 
 /// The start of the error that `getParserServices` in `@typescript-eslint/utils` throws, in every version.
 const NEEDS_TYPES_ERROR_PREFIX: &[u8] = b"You have used a rule which requires ";
 /// What follows it in the error of `refuse` in `worker/main.js`. Then comes what the rule read.
 const UNKNOWN_TYPE_INFORMATION: &[u8] = b"type information that bun lint does not have: ";
+
+/// What follows [`NEEDS_TYPES_ERROR_PREFIX`] in `thrown`, the message of an error.
+fn type_request(thrown: &[u8]) -> Option<&[u8]> {
+    // With an oxlint config, the error's class precedes the message.
+    let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
+    message.strip_prefix(NEEDS_TYPES_ERROR_PREFIX)
+}
 
 /// A run's plugins, shared by all threads.
 pub struct Host<'e> {
@@ -355,18 +377,10 @@ impl<'e> Host<'e> {
         }
     }
 
-    /// True if `rule` has asked for types. From then on it only runs on files that have types.
+    /// True if `rule` has asked for types. From then on it only runs on files that have types or can get them.
     pub fn has_asked_for_types(&self, rule: &Arc<Rule>) -> bool {
         self.has_been_asked_for_types.load(Ordering::Relaxed)
             && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(&it.rule, rule))
-    }
-
-    /// True if `rule` [has asked for types](Host::has_asked_for_types) and hasn't read anything from them that isn't
-    /// known. So it runs on a file that has types, and linting a file with types is worth it.
-    pub(crate) fn can_use_types(&self, rule: &Arc<Rule>) -> bool {
-        self.has_been_asked_for_types.load(Ordering::Relaxed)
-            && (self.state.lock().asked_for_types.iter())
-                .any(|it| Arc::ptr_eq(&it.rule, rule) && it.unknown.is_none())
     }
 
     /// True if a rule gets types from `file`'s `parserServices`, provided the file is linted with types.
@@ -374,36 +388,29 @@ impl<'e> Host<'e> {
         is_typescript_estree(file)
     }
 
-    /// False if `rule` [has asked for types](Host::has_asked_for_types) that it can't get from `file`.
-    pub(crate) fn can_run(&self, rule: &Arc<Rule>, file: &File) -> bool {
-        !self.has_asked_for_types(rule)
-            || (file.types.is_some() && Self::hands_out_types(file) && self.can_use_types(rule))
-    }
-
     /// True if `thrown`, the message of an error that `rule` threw, means the rule needs types. From then on the rule
     /// [has asked](Host::has_asked_for_types).
     pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
-        // With an oxlint config, the error's class precedes the message.
-        let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
-        let Some(what) = message.strip_prefix(NEEDS_TYPES_ERROR_PREFIX) else {
+        if type_request(thrown).is_none() {
             return false;
-        };
-        let unknown = what.strip_prefix(UNKNOWN_TYPE_INFORMATION).map(Box::from);
+        }
         let mut state = self.state.lock();
-        let asked = &mut state.asked_for_types;
-        match asked.iter_mut().find(|it| Arc::ptr_eq(&it.rule, rule)) {
-            Some(known) => known.unknown = known.unknown.take().or(unknown),
-            None => asked.push(AskedForTypes {
+        if !(state.asked_for_types.iter()).any(|it| Arc::ptr_eq(&it.rule, rule)) {
+            state.asked_for_types.push(AskedForTypes {
                 rule: Arc::clone(rule),
-                unknown,
                 was_skipped: false,
-            }),
+            });
         }
         self.has_been_asked_for_types.store(true, Ordering::Relaxed);
         true
     }
 
-    /// `rule`, which [has asked for types](Host::has_asked_for_types), didn't run on a file.
+    /// What a rule read from the types that isn't known, if that's why it threw the error with the message `thrown`.
+    pub fn unknown_type_information(thrown: &[u8]) -> Option<&[u8]> {
+        type_request(thrown)?.strip_prefix(UNKNOWN_TYPE_INFORMATION)
+    }
+
+    /// `rule`, which [has asked for types](Host::has_asked_for_types), didn't run on a file that has none.
     pub(crate) fn skip_for_types(&self, rule: &Arc<Rule>) {
         let mut state = self.state.lock();
         let mut asked = state.asked_for_types.iter_mut();
@@ -412,20 +419,48 @@ impl<'e> Host<'e> {
         }
     }
 
-    /// The rules that [were skipped](Host::skip_for_types), sorted by name.
-    pub fn rules_skipped_for_types(&self) -> Vec<SkippedForTypes> {
+    /// `rule` didn't run on the file at `path` because it read [`unknown`](Host::unknown_type_information). That says
+    /// nothing about other files: the rule is tried on each.
+    pub(crate) fn refuse(&self, rule: &Rule, unknown: &[u8], path: &[u8]) {
+        self.state.lock().refusals.insert(Refusal {
+            rule: rule.id.clone(),
+            unknown: unknown.into(),
+            path: path.into(),
+        });
+    }
+
+    /// The names of the rules that [were skipped](Host::skip_for_types), sorted.
+    pub fn rules_skipped_for_types(&self) -> Vec<Box<[u8]>> {
         let state = self.state.lock();
         let skipped = state.asked_for_types.iter().filter(|it| it.was_skipped);
-        let mut rules: Vec<SkippedForTypes> = skipped
-            .map(|it| SkippedForTypes {
-                id: it.rule.id.clone(),
-                unknown: it.unknown.clone(),
-            })
-            .collect();
+        let mut rules: Vec<Box<[u8]>> = skipped.map(|it| it.rule.id.clone()).collect();
         crate::utils::sort::sort(&mut rules);
         // Each config file that imports a plugin has its own rules.
         rules.dedup();
         rules
+    }
+
+    /// The rules that [were refused](Host::refuse).
+    pub fn refusals(&self) -> Refusals {
+        let state = self.state.lock();
+        let mut sorted: Vec<&Refusal> = state.refusals.iter().collect();
+        crate::utils::sort::sort(&mut sorted);
+        let mut rules: Vec<Refused> = Vec::new();
+        for refusal in sorted {
+            match rules.last_mut().filter(|it| it.id == refusal.rule) {
+                Some(rule) if rule.unknown.last() == Some(&refusal.unknown) => {}
+                Some(rule) => rule.unknown.push(refusal.unknown.clone()),
+                None => rules.push(Refused {
+                    id: refusal.rule.clone(),
+                    unknown: vec![refusal.unknown.clone()],
+                }),
+            }
+        }
+        let files: FxHashSet<&[u8]> = state.refusals.iter().map(|it| &it.path[..]).collect();
+        Refusals {
+            rules,
+            files: files.len(),
+        }
     }
 
     /// The answer to [`ask::TYPES`]: how many of `enabled` have asked for types, how much there is, these rules'

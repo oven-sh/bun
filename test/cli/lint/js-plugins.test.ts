@@ -2507,7 +2507,7 @@ declare const either: Shape | Store;
         const { raw, stderr, exitCode } = await lint({ ...files, ...source }, ["-f", "json", "a.ts"]);
         expect(messagesOf(raw)).toEqual([]);
         expect(stderr).toContain(
-          "1 rule did not run because rules that run in JavaScript cannot read this from a type: demo/title (Type.flags without typescript)",
+          "1 rule did not run in 1 file because rules that run in JavaScript cannot read this from a type: demo/title (Type.flags without typescript)",
         );
         expect(exitCode).toBe(2);
         const { "node_modules/typescript/package.json": __, ...others } = typed(
@@ -2535,7 +2535,7 @@ declare const either: Shape | Store;
         const { raw, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
         // `void`
         expect(messagesOf(raw)).toEqual(["16", "none"]);
-        expect(stderr).not.toContain(" did not run because");
+        expect(stderr).not.toContain(" did not run ");
         expect(exitCode).toBe(1);
       },
       timeout,
@@ -2658,7 +2658,7 @@ declare const either: Shape | Store;
       ["on the command line", "--stdin"],
     ] as const)("a rule that's turned on %s", (place, flag) => {
       const noTypes = "1 rule did not run because there is no type information for the files: ";
-      const notKnown = "1 rule did not run because rules that run in JavaScript cannot read this from a type: ";
+      const notKnown = "1 rule did not run in 1 file because rules that run in JavaScript cannot read this from a type: ";
       test.concurrent.each([
         ["gets types", facts, `"demo/title": "error"`, "a.ts", ["1024 1024 0 0"], ""],
         ["gets none under espree", facts, `"demo/title": "error"`, "a.js", [], noTypes + "demo/title"],
@@ -2708,7 +2708,7 @@ declare const either: Shape | Store;
           const expectResult = ({ raw, stderr, exitCode }: { raw: string; stderr: string; exitCode: number }) => {
             expect(messagesOf(raw)).toEqual(messages);
             if (refusal) expect(stderr).toContain(refusal);
-            else expect(stderr).not.toContain(" did not run because");
+            else expect(stderr).not.toContain(" did not run ");
             expect(exitCode).toBe(refusal ? 2 : 1);
           };
           expectResult(await lint(all, [...args, name]));
@@ -2818,9 +2818,69 @@ declare const either: Shape | Store;
         const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", "a.ts", "b.ts"]);
         expect(stdout).toBe(`<dir>/a.ts:3:1: Unexpected var, use let or const instead. [Error/no-var]\n\n1 problem`);
         expect(stderr).toContain(
-          `1 rule did not run because rules that run in JavaScript cannot read this from a type: demo/title (${named})`,
+          `1 rule did not run in 2 files because rules that run in JavaScript cannot read this from a type: demo/title (${named})`,
         );
         expect(exitCode).toBe(2);
+      },
+      timeout,
+    );
+
+    test.concurrent(
+      "a rule that reads anything else in some files is skipped in those files only, whichever file is linted first",
+      async () => {
+        const base = typed("undefined", `"demo/rename": "error", "demo/symbols": "error", "no-var": "error"`);
+        const plugin = base["plugin.mjs"].replace(
+          "rules: {",
+          `rules: {
+            rename: {
+              meta: { fixable: "code" },
+              create: context => ({
+                Identifier(node) {
+                  if (node.parent.type !== "VariableDeclarator" || node.name.endsWith("_")) return;
+                  const type = services(context).getTypeAtLocation(node);
+                  if (node.name.startsWith("odd")) type[node.name];
+                  context.report({ node, message: "rename " + node.name, fix: fixer => fixer.insertTextAfter(node, "_") });
+                },
+              }),
+            },
+            symbols: { create: context => ({ ClassDeclaration: node => services(context).getSymbolAtLocation(node.id) }) },`,
+        );
+        const names = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}.ts`);
+        const odd: Record<string, string> = { "03.ts": "oddB", "11.ts": "oddA", "20.ts": "oddB", "21.ts": "oddA" };
+        const text = (name: string, keyword: string, suffix: string) =>
+          `${keyword} first${suffix} = 1;\n` +
+          (name in odd ? `const ${odd[name]} = first${suffix};\n` : "") +
+          (name === "21.ts" || name === "22.ts" ? "class A {}\n" : "") +
+          `export {};\n`;
+        const files = {
+          ...base,
+          "plugin.mjs": plugin,
+          ...Object.fromEntries(names.map(name => [name, text(name, "var", "")])),
+        };
+        const refusal =
+          "2 rules did not run in 5 files because rules that run in JavaScript cannot read this from a type: " +
+          "demo/rename (Type.oddA, Type.oddB), demo/symbols (getSymbolAtLocation(Identifier))";
+        const found = names.flatMap(name => [
+          `<dir>/${name}:1:1: Unexpected var, use let or const instead. [Error/no-var]`,
+          ...(name in odd ? [] : [`<dir>/${name}:1:5: rename first [Error/demo/rename]`]),
+        ]);
+        const threads = ["--threads", "8"];
+        const runs = await Promise.all(
+          [1, 2, 3].flatMap(() => [
+            lint(files, [...threads, "-f", "unix", "."]),
+            lint(files, [...threads, "-f", "unix", "--fix", "."], names),
+          ]),
+        );
+        for (const [at, { stdout, stderr, files: written, exitCode }] of runs.entries()) {
+          const fixes = at % 2 === 1;
+          expect(stdout).toBe(fixes ? "" : [...found, "", `${found.length} problems`].join("\n"));
+          expect(stderr).toContain(refusal);
+          if (fixes) {
+            const fixed = names.map(name => [name, text(name, "let", name in odd ? "" : "_")]);
+            expect(written).toEqual(Object.fromEntries(fixed));
+          }
+          expect(exitCode).toBe(2);
+        }
       },
       timeout,
     );

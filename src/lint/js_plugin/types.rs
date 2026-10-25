@@ -5,7 +5,7 @@
 //! node takes far longer than anything else here, so that's done for the [kinds](NodeKind) of node that rules have wanted the
 //! type of so far.
 //! `typedServices` in `worker/main.js` makes objects that look like TypeScript's from them. Whatever else a rule reads
-//! from these objects is refused by name: see [`Host::asks_for_types`](super::Host::asks_for_types).
+//! from these objects is refused by name, for the file: see [`Host::refuse`](super::Host::refuse).
 
 use super::ast;
 use crate::ast::File;

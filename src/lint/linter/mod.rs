@@ -780,20 +780,22 @@ impl<S: RuleSet> Linter<S> {
                 needs_types: true,
                 ..LintResult::default()
             };
-            if waits_for_types
-                && (running_js.iter()).any(|it| host.can_use_types(&it.configured.rule))
-            {
-                return needs_types();
-            }
+            let path = file.path();
+            let physical_path = &path[..options
+                .physical_path_len
+                .map_or(path.len(), |it| it.min(path.len()))];
             // There's no telling what a rule that doesn't run would have reported.
-            let mut skip = |rule: &Arc<js_plugin::Rule>| {
-                host.skip_for_types(rule);
+            let mut skip = |rule: &Arc<js_plugin::Rule>, unknown: Option<&[u8]>| {
+                match unknown {
+                    Some(unknown) => host.refuse(rule, unknown, physical_path),
+                    None => host.skip_for_types(rule),
+                }
                 rules_to_ignore.push(RuleId::Js(Arc::clone(rule)));
             };
             running_js.retain(|it| {
-                let can_run = host.can_run(&it.configured.rule, file);
+                let can_run = can_have_types || !host.has_asked_for_types(&it.configured.rule);
                 if !can_run {
-                    skip(&it.configured.rule);
+                    skip(&it.configured.rule, None);
                 }
                 can_run
             });
@@ -832,11 +834,13 @@ impl<S: RuleSet> Linter<S> {
                             if can_have_types && !had_asked[at] {
                                 continue;
                             }
-                            let rule = &running_js[at].configured.rule;
-                            if waits_for_types && host.can_use_types(rule) {
+                            let unknown =
+                                js_plugin::Host::unknown_type_information(&failure.message);
+                            if waits_for_types && unknown.is_none() {
                                 return needs_types();
                             }
-                            skip(rule);
+                            // Only on this file, and nothing of what it has reported here counts.
+                            skip(&running_js[at].configured.rule, unknown);
                             running_js.remove(at);
                             continue;
                         }

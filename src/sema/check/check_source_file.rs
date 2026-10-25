@@ -1700,41 +1700,47 @@ impl<'s> Checker<'_, 's> {
                 }
             }
             // `resolveCall`: the type arguments of `super<T>()` are those of the `extends` clause.
-            ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
+            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
                 let serialization_level = self.serialization_level;
                 if self.task.file == Some(file)
                     && self.signatures_resolved_with_errors_discarded.contains(&e)
                 {
                     self.serialization_level = serialization_level.max(MAX_SERIALIZATION_LEVEL);
                 }
-                let callee = hir[c].callee;
-                self.check_expression(file, callee);
-                if callee.is_none() || !matches!(hir[callee].kind, ExprKind::Super) {
-                    self.check_type_nodes(file, hir.list_at(hir[c].type_args));
-                }
-                // `getCandidateForOverloadFailure` begins with `checkNodeDeferred(node)`.
-                if (self.p.call_diagnostics)
-                    .get_ref(&self.task, &(file, e))
-                    .is_some()
-                {
-                    self.check_node_deferred(file, e);
-                } else if ty == TypeId::SILENT_NEVER && self.is_silent_never_signature(file, e) {
-                    for x in hir.ids(hir[c].args) {
-                        self.leave_unvisited(file, x);
+                // `resolveCallExpression`, `resolveNewExpression` and
+                // `resolveTaggedTemplateExpression` check the callee and the arguments, behind
+                // `getResolvedSignature`. A part whose type the resolution didn't store is checked
+                // again here, and a cycle through it doesn't reach the resolutions below the call.
+                self.behind_resolved_signature(file, e, |c| {
+                    let callee = hir[call].callee;
+                    c.check_expression(file, callee);
+                    if callee.is_none() || !matches!(hir[callee].kind, ExprKind::Super) {
+                        c.check_type_nodes(file, hir.list_at(hir[call].type_args));
                     }
-                } else {
-                    for x in hir.ids(hir[c].args) {
-                        self.check_expression(file, x);
+                    // `getCandidateForOverloadFailure` begins with `checkNodeDeferred(node)`.
+                    if (c.p.call_diagnostics)
+                        .get_ref(&c.task, &(file, e))
+                        .is_some()
+                    {
+                        c.check_node_deferred(file, e);
+                    } else if ty == TypeId::SILENT_NEVER && c.is_silent_never_signature(file, e) {
+                        for x in hir.ids(hir[call].args) {
+                            c.leave_unvisited(file, x);
+                        }
+                    } else {
+                        for x in hir.ids(hir[call].args) {
+                            c.check_expression(file, x);
+                        }
                     }
-                }
-                self.serialization_level = serialization_level;
-                if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
-                    check_tagged_template(self, file, c);
-                }
-                // Otherwise `check_calls` does this after the walk.
-                if self.is_checking_in_flow_loop {
-                    self.check_call_like(file, e);
-                }
+                    c.serialization_level = serialization_level;
+                    if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
+                        check_tagged_template(c, file, call);
+                    }
+                    // Otherwise `check_calls` does this after the walk.
+                    if c.is_checking_in_flow_loop {
+                        c.check_call_like(file, e);
+                    }
+                });
             }
             ExprKind::BigInt(_) => self.check_grammar_big_int_literal(file, e),
             ExprKind::Object(props) => {

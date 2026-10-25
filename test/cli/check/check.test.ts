@@ -5761,6 +5761,90 @@ export {};
       `);
     });
 
+    // https://github.com/oven-sh/bun/issues/46904
+    // The type of `at` asks for the flow type of `text` in the loop. The loop's back edge evaluates the assignment,
+    // and `resolveCall` checks the argument `at` behind `getResolvedSignature`, where the resolution of `at` is
+    // hidden. So `at` is `number`, not a cycle: the TS2322 pins that. `swapped` and `cycle` read `at` before any
+    // call does, so they are cycles in tsc too.
+    test("doesn't report TS7022 for a constant passed to a call that reassigns a narrowed variable in a loop", async () => {
+      using dir = project({
+        "a.ts": `
+function tag(_: TemplateStringsArray, ..._values: (number | string)[]) { return 'x'; }
+class Box { constructor(public n: number) {} }
+export function plus(s: string | undefined, finds: string[]): string | null {
+  let text = s;
+  if (text === undefined) return null;
+  for (const find of finds) {
+    const at = text.indexOf(find);
+    const pinned: string = at;
+    text = text.slice(0, at) + 'x';
+  }
+  return text;
+}
+export function template(text: string | undefined, finds: string[]): string | null {
+  if (!text) return null;
+  for (let i = 0; i < finds.length; i++) {
+    const at = text.indexOf(finds[i]!);
+    text = \`\${text.slice(0, at)}x\`;
+  }
+  return text;
+}
+export function tagged(s: string | undefined, finds: string[]): string | null {
+  let text = s;
+  if (text === undefined) return null;
+  for (const find of finds) {
+    const at = text.indexOf(find);
+    text = tag\`\${text}\${at}\`;
+  }
+  return text;
+}
+export function construct(s: string | undefined, finds: string[]): string | null {
+  let text = s;
+  if (text === undefined) return null;
+  for (const find of finds) {
+    const at = text.indexOf(find);
+    text = text + new Box(text.length + at);
+  }
+  return text;
+}
+export function operand(s: string | undefined, finds: string[], sep: string): string | null {
+  let text = s;
+  if (text === undefined) return null;
+  for (const find of finds) {
+    const at = text.indexOf(find);
+    text = text.slice(0, at) + (at === 0 ? '' : sep) + text.slice(at + find.length);
+  }
+  return text;
+}
+export function swapped(s: string | undefined, finds: string[], sep: string): string | null {
+  let text = s;
+  if (text === undefined) return null;
+  for (const find of finds) {
+    const at = text.indexOf(find);
+    text = (at === 0 ? '' : sep) + text.slice(0, at);
+  }
+  return text;
+}
+export function cycle(s: string | undefined, finds: string[]): string | null {
+  let text = s;
+  if (text === undefined) return null;
+  for (const find of finds) {
+    const at = text.indexOf(find);
+    text = 'x' + at;
+  }
+  return text;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(9,11): error TS2322: Type 'number' is not assignable to type 'string'.
+        a.ts(53,11): error TS7022: 'at' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+        a.ts(62,11): error TS7022: 'at' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports comparison errors in a function whose return type is first requested from another function's loop", async () => {
       using dir = project({
         "a.ts": `declare const r: {};

@@ -1718,15 +1718,19 @@ impl<'p, 's> Checker<'p, 's> {
                 let resolved = self.resolved_signature(file, e);
                 let resolved = self.with_return_type(resolved);
                 let call = &hir[c];
+                // The resolution checked the callee behind `getResolvedSignature`. If it didn't
+                // store the type, it's checked again as it was checked there.
                 let may_short_circuit = match call.chain {
                     Chain::No => false,
-                    Chain::Start => {
-                        let callee = self.type_of_expr(file, call.callee);
-                        self.is_some_type_of_kind(callee, tf::NULLABLE | tf::VOID)
-                    }
+                    Chain::Start => self.behind_resolved_signature(file, e, |c| {
+                        let callee = c.type_of_expr(file, call.callee);
+                        c.is_some_type_of_kind(callee, tf::NULLABLE | tf::VOID)
+                    }),
                     // `getOptionalExpressionType`. Whether the callee itself may be `undefined`
                     // doesn't count.
-                    Chain::Continue => self.chain_receiver(file, call.callee, Chain::Continue).1,
+                    Chain::Continue => self.behind_resolved_signature(file, e, |c| {
+                        c.chain_receiver(file, call.callee, Chain::Continue).1
+                    }),
                 };
                 // `checkCallExpression`
                 if self.is_symbol_like(resolved.ret) && self.is_symbol_or_symbol_for_call(file, e) {

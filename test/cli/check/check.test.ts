@@ -7596,11 +7596,15 @@ export const alsoWrong = wrong.nope;
     });
 
     // Whether a generator is context sensitive depends on each of its `yield` expressions, and here each contains the
-    // rest of them. The chains are too deep to bind.
-    test("doesn't hang on 60,000 `yield` in a row in each of 32 generators", async () => {
+    // rest of them. The file is only bound. How deep the binder gets depends on the platform's stack size: it binds all
+    // of this on Windows and gives up elsewhere.
+    test("binds 60,000 `yield` in a row in each of 32 generators in a JavaScript file that isn't checked", async () => {
       const generator = (i: number) => `export function* g${i}() { ${repeat("yield ", 60_000)}1; }\n`;
       using dir = project({
-        "a.ts": Array.from({ length: 32 }, (_, i) => generator(i)).join(""),
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowJs: true, checkJs: false },
+        }),
+        "a.js": Array.from({ length: 32 }, (_, i) => generator(i)).join(""),
         "b.ts": `export const wrong: number = "";\n`,
       });
       const { stdout, exitCode } = await check(dir);

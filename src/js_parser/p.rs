@@ -2221,8 +2221,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .map(|a| (a.namespace_ref, a.alias));
             if let Some((ns_ref, alias_ptr)) = ns_alias_opt {
                 let alias: &'a [u8] = alias_ptr.slice();
-                if let Some(&js_ast::ts::Data::Namespace(ns)) =
-                    self.ref_to_ts_namespace_member.get(&ns_ref)
+                if TYPESCRIPT
+                    && let Some(&js_ast::ts::Data::Namespace(ns)) =
+                        self.ref_to_ts_namespace_member.get(&ns_ref)
                 {
                     let ns_map: &js_ast::TSNamespaceMemberMap = &ns;
                     if let Some(member) = ns_map.get(alias) {
@@ -2248,7 +2249,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let value = self.new_expr(&*str_ptr, loc);
                                 return self.wrap_inlined_enum(value, name);
                             }
-                            js_ast::ts::Data::Namespace(map) => {
+                            // Only a property access can fold. Every other read keeps
+                            // the `E::ImportIdentifier` below.
+                            js_ast::ts::Data::Namespace(map)
+                                if opts.is_property_access_target() =>
+                            {
+                                // The node names the closure argument, not the proxy.
+                                self.ignore_usage(ref_);
+                                self.record_usage(ns_ref);
                                 let target = self.new_expr(E::Identifier::init(ns_ref), loc);
                                 let expr = self.new_expr(
                                     E::Dot {
@@ -4780,6 +4788,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }));
         self.ts_namespace_scopes.push(scope);
         scope
+    }
+
+    /// The only writer of `TSNamespaceScope::arg_ref`. `handle_identifier` finds
+    /// the block's members by this ref when a reference resolves to a proxy for
+    /// an export of a sibling block.
+    pub(crate) fn set_ts_namespace_arg(
+        &mut self,
+        mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope>,
+        arg_ref: Ref,
+    ) {
+        ts_namespace.arg_ref = arg_ref;
+        self.ref_to_ts_namespace_member.insert(
+            arg_ref,
+            js_ast::ts::Data::Namespace(ts_namespace.exported_members),
+        );
     }
 
     // TODO:

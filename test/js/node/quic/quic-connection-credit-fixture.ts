@@ -1,74 +1,128 @@
-// One server and one client. The client lets the server send `window` bytes on the connection, and the server
-// answers every request in one turn with a body and trailers, which is several times that. It prints the
-// responses that did not arrive whole.
+// The server and the client of "a HEADERS frame that has no connection credit waits for it". They are two
+// processes so that the client can block its thread: it then sends no ACK and no MAX_DATA while the server writes.
 import { createPrivateKey } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readSync, writeSync } from "node:fs";
 import { connect, listen, type SessionOptions } from "node:quic";
 
-const [keyPath, certPath] = process.argv.slice(2);
-const [streams, bodySize, trailerSize, window] = process.argv.slice(4).map(Number);
-const body = Buffer.alloc(bodySize, "b");
-const trailerValue = Buffer.alloc(trailerSize, "X").toString();
+const print = (line: string) => void writeSync(1, line + "\n");
+// Sizes that no packet holds a whole number of, so that the last packet of a flight ends inside a body.
+const bodySize = (i: number) => 380 + (i % 5) * 9;
+// "X" has an 8-bit Huffman code, so QPACK sends this value as it is. The first size fits into a stream's buffer
+// in lsquic next to nothing else, and the second size does not fit into it at all.
+const trailerSizes = [1100, 1400];
+const [trailers, trailersForAPacket] = trailerSizes.map(size => ({ "x-filler": Buffer.alloc(size, "X").toString() }));
 
-const unanswered: any[] = [];
-const server = await listen(
-  async session => {
-    session.onerror = () => {};
-    session.onstream = (stream: any) => void stream.closed.catch(() => {});
-    await session.closed.catch(() => {});
-  },
-  {
-    sni: { "*": { keys: [createPrivateKey(readFileSync(keyPath))], certs: [readFileSync(certPath)] } },
-    transportParams: { maxIdleTimeout: 10, initialMaxStreamsBidi: streams },
-    onheaders(this: any) {
-      if (unanswered.push(this) < streams) return;
-      for (const stream of unanswered) {
-        stream.sendHeaders({ ":status": "200" });
-        stream.writer.writeSync(body);
-        stream.writer.endSync();
-      }
+if (process.argv[2] === "server") {
+  const [keyPath, certPath] = process.argv.slice(3);
+  const responses: [stream: any, body: Buffer][] = [];
+  const wantTrailers: any[] = [];
+  let creditIsUsedUp = false;
+  const endpoint = await listen(
+    session => {
+      session.onerror = () => {};
+      session.closed.catch(() => {});
+      session.onstream = (stream: any) => void stream.closed.catch(() => {});
     },
-    onwanttrailers(this: any) {
-      this.sendTrailers({ "x-filler": trailerValue });
+    {
+      sni: { "*": { keys: [createPrivateKey(readFileSync(keyPath))], certs: [readFileSync(certPath)] } },
+      transportParams: { maxIdleTimeout: 20, initialMaxStreamsBidi: 1000 },
+      onheaders(this: any, headers: Record<string, string>) {
+        if (headers[":path"] !== "/go") {
+          // The client counts these to know that every request arrived.
+          this.sendHeaders({ ":status": "200" });
+          responses.push([this, Buffer.alloc(bodySize(Number(headers[":path"].slice(1))), "b")]);
+          return;
+        }
+        // The client's last request. Its packet acknowledged everything that the server sent, and the client reads
+        // nothing from now on. One pass of the engine writes every body: more than the congestion window holds, so
+        // the window fills and stays full.
+        const { stats } = this.session;
+        const sentBefore = stats.bytesSent;
+        const lostBefore = stats.pktLost;
+        for (const [stream, body] of responses) {
+          stream.writer.writeSync(body);
+          stream.writer.endSync();
+        }
+        const useUpTheCredit = () => {
+          // lsquic probes twice for a lost packet and then takes every packet for lost. After that it holds the rest
+          // of the flight back, so the window does not fill on a machine that is this slow.
+          const flightIsOver = stats.bytesSent - sentBefore + 4096n >= stats.cwnd || stats.pktLost - lostBefore > 2n;
+          if (!flightIsOver) return void setImmediate(useUpTheCredit);
+          const flight = wantTrailers.splice(0);
+          // The last response of the flight has the end of its body in lsquic's buffer.
+          const last = flight.pop();
+          // lsquic keeps up to 10 packets for a connection that may not send. These trailers fill them.
+          for (const stream of flight.splice(0, 16)) stream.sendTrailers(trailers);
+          // Now there is no packet, and these trailers need one: they wait outside of the stream's buffer, while the
+          // connection still has credit. The priority puts this stream first when the client's ACK gives packets.
+          last?.setPriority({ level: "high" });
+          last?.sendTrailers(trailersForAPacket);
+          // The trailers of the other responses go to their streams' buffers and take all the credit that is left.
+          for (const stream of flight) stream.sendTrailers(trailers);
+          creditIsUsedUp = true;
+          print("ready");
+        };
+        useUpTheCredit();
+      },
+      onwanttrailers(this: any) {
+        if (creditIsUsedUp) this.sendTrailers(trailers);
+        else wantTrailers.push(this);
+      },
     },
-  },
-);
-
-const client = await connect(server.address!, {
-  servername: "localhost",
-  verifyPeer: "manual",
-  transportParams: { maxIdleTimeout: 10, initialMaxData: window },
-  onerror() {},
-} as SessionOptions);
-await client.opened;
-const closed = client.closed.then(
-  () => undefined,
-  error => String(error?.message ?? error),
-);
-const wrong: string[] = [];
-await Promise.all(
-  Array.from({ length: streams }, async (_, i) => {
-    let bytes = 0;
-    let trailers: number | undefined;
-    let failed: string | undefined;
+  );
+  print(String(endpoint.address!.port));
+} else {
+  const [port, streams, window] = process.argv.slice(3).map(Number);
+  const session = await connect(
+    { address: "127.0.0.1", port } as any,
+    {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 20, initialMaxData: window },
+      onerror() {},
+    } as SessionOptions,
+  );
+  let sessionError: string | undefined;
+  session.closed.catch(error => void (sessionError = String(error?.message ?? error)));
+  await session.opened;
+  const request = (path: string) => ({
+    ":method": "GET",
+    ":path": path,
+    ":scheme": "https",
+    ":authority": "localhost",
+  });
+  let started = 0;
+  const everyResponseStarted = Promise.withResolvers<void>();
+  const responses = Array.from({ length: streams }, async (_, i) => {
+    const response: { bytes: number; trailers?: number; failed?: string } = { bytes: 0 };
     try {
-      const stream: any = await client.createBidirectionalStream({
-        headers: { ":method": "GET", ":path": `/${i}`, ":scheme": "https", ":authority": "localhost" },
-        onheaders() {},
-        ontrailers(received: Record<string, string>) {
-          trailers = received["x-filler"]?.length;
-        },
+      const stream: any = await session.createBidirectionalStream({
+        headers: request(`/${i}`),
+        onheaders: () => void (++started === streams && everyResponseStarted.resolve()),
+        ontrailers: (received: Record<string, string>) => void (response.trailers = received["x-filler"]?.length),
       } as any);
-      for await (const batch of stream) for (const chunk of batch) bytes += chunk.byteLength;
+      for await (const batch of stream) for (const chunk of batch) response.bytes += chunk.byteLength;
       await stream.closed;
     } catch (error: any) {
-      failed = String(error?.code ?? error);
+      response.failed = String(error?.code ?? error);
+      everyResponseStarted.resolve();
     }
-    if (failed || bytes !== bodySize || trailers !== trailerSize) {
-      wrong.push(`stream ${i}: ${failed ?? `${bytes} body bytes, a ${trailers}-byte trailer`}`);
-    }
-  }),
-);
-client.close();
-console.log(JSON.stringify({ wrong, closed: await closed }));
-process.exit(0);
+    return response;
+  });
+  await everyResponseStarted.promise;
+  const go: any = await session.createBidirectionalStream({ headers: request("/go") } as any);
+  go.closed.catch(() => {});
+  // The request leaves when the node:quic callback that resumed this code returns.
+  await new Promise(resolve => setImmediate(resolve));
+  // Nothing that arrives is read, and nothing is acknowledged, until the test writes a byte.
+  if (readSync(0, new Uint8Array(1)) === 0) throw new Error("the test closed stdin");
+  const wrong = (await Promise.all(responses))
+    .map((response, i) => ({ stream: i, ...response }))
+    .filter(
+      ({ stream, failed, bytes, trailers }) =>
+        failed || bytes !== bodySize(stream) || !trailerSizes.includes(trailers!),
+    );
+  // The server never answers the last request, so there is no graceful close to wait for.
+  print(JSON.stringify({ wrong, sessionError }));
+  process.exit(0);
+}

@@ -405,32 +405,44 @@ describe("HTTP/3 header blocks that follow another header block", () => {
   });
 });
 
-// lsquic takes the connection credit for the header of an HTTP/3 frame when it writes the header. Here the server
-// runs out of credit between a body and its trailers: the end of the body is still in lsquic's buffer, and the
-// trailers wait behind it with a HEADERS frame that has no credit. The flush of the body must stop in front of
-// that frame. lsquic's assertions stop a debug build that writes it, so the two endpoints get their own process.
-test("HTTP/3 trailers that wait for connection credit are not sent without it", async () => {
-  const streams = 100;
-  const bodySize = 1000;
-  const trailerSize = 1000;
-  // Less than a third of the bodies.
-  const window = 30_000;
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "--no-warnings",
-      join(import.meta.dir, "quic-connection-credit-fixture.ts"),
-      join(keysDir, "agent1-key.pem"),
-      join(keysDir, "agent1-cert.pem"),
-      ...[streams, bodySize, trailerSize, window].map(String),
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: '{"wrong":[]}', signalCode: null });
-  expect(exitCode).toBe(0);
+// lsquic takes the connection credit for the header of an HTTP/3 frame when it writes the header. The fixture brings
+// one response to the point where that write has no credit: the end of its body is in lsquic's buffer, its trailers
+// wait behind it for a packet, and the trailers of the other responses took the rest of the connection's credit.
+// When the client's ACK gives packets again, the flush of that body must stop in front of the HEADERS frame of the
+// trailers, and the trailers must go out once MAX_DATA arrives. lsquic's assertions stop a debug build that writes
+// the frame header without credit.
+test("a HEADERS frame that has no connection credit waits for it", async () => {
+  const spawn = (...args: (string | number)[]) =>
+    Bun.spawn({
+      cmd: [bunExe(), "--no-warnings", join(import.meta.dir, "quic-connection-credit-fixture.ts"), ...args.map(String)],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+  async function* lines(stream: ReadableStream<Uint8Array>) {
+    const decoder = new TextDecoder();
+    let text = "";
+    for await (const chunk of stream) {
+      const complete = (text += decoder.decode(chunk, { stream: true })).split("\n");
+      text = complete.pop()!;
+      yield* complete;
+    }
+  }
+
+  await using server = spawn("server", join(keysDir, "agent1-key.pem"), join(keysDir, "agent1-cert.pem"));
+  const serverLines = lines(server.stdout);
+  const port = Number((await serverLines.next()).value);
+  const serverExited = server.exited.then(() => ({
+    value: `the server exited: ${server.signalCode ?? server.exitCode}`,
+  }));
+  // More responses than the server's first flight holds. The connection window is more than twice that flight, so
+  // the client's first ACK comes with no MAX_DATA.
+  await using client = spawn("client", port, 170, 130_000);
+  expect((await Promise.race([serverLines.next(), serverExited])).value).toBe("ready");
+  client.stdin.write("x");
+  client.stdin.flush();
+  expect((await Promise.race([lines(client.stdout).next(), serverExited])).value).toBe('{"wrong":[]}');
 }, 30_000);
 
 describe("verifyClient", () => {

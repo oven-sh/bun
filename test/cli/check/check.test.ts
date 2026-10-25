@@ -8876,6 +8876,45 @@ export function g() { return f(); }
       }
     });
 
+    // m3.ts is checked first. Its errors are deferred to the end of its check because their messages print a type, and
+    // printing is the first to check what the functions in m0.ts return. The errors found there are deferred too.
+    test("an error that's deferred while the deferred messages of another file are printed isn't lost", async () => {
+      using dir = project({
+        "m0.ts": `import "./m3";
+declare const o: { p: string };
+declare function define<N extends string, A>(d: { name: N; setup(): A }): { name: N; setup(): A };
+export const body = () => o.a;
+export function returned() { return o.b; }
+export function* yielded() { yield o.c; }
+export function spread() { return [...o]; }
+export const call = define({ name: "x", setup() { return o.d; } });
+`,
+        "m3.ts": `import { body, call, returned, spread, yielded } from "./m0";
+body.x;
+returned.x;
+yielded.x;
+spread.x;
+call.x;
+`,
+      });
+      for (const threads of ["1", "8"]) {
+        const { stdout, exitCode } = await check(dir, ["--threads", threads]);
+        expect(stdout.split("\n")).toEqual([
+          "m0.ts(4,29): error TS2339: Property 'a' does not exist on type '{ p: string; }'.",
+          "m0.ts(5,39): error TS2339: Property 'b' does not exist on type '{ p: string; }'.",
+          "m0.ts(6,38): error TS2339: Property 'c' does not exist on type '{ p: string; }'.",
+          "m0.ts(7,39): error TS2488: Type '{ p: string; }' must have a '[Symbol.iterator]()' method that returns an iterator.",
+          "m0.ts(8,60): error TS2339: Property 'd' does not exist on type '{ p: string; }'.",
+          "m3.ts(2,6): error TS2339: Property 'x' does not exist on type '() => any'.",
+          "m3.ts(3,10): error TS2339: Property 'x' does not exist on type '() => any'.",
+          "m3.ts(4,9): error TS2339: Property 'x' does not exist on type '() => Generator<any, void, unknown>'.",
+          "m3.ts(5,8): error TS2339: Property 'x' does not exist on type '() => any[]'.",
+          `m3.ts(6,6): error TS2339: Property 'x' does not exist on type '{ name: "x"; setup(): any; }'.`,
+        ]);
+        expect(exitCode).toBe(1);
+      }
+    });
+
     // `f3<Ast>(x)` fails, so its signature comes from `createSignatureInstantiation` and no other call has it. `f3(ast)`
     // infers the same type argument and gets the signature that `getSignatureInstantiation` remembers. In the cycle the
     // second one resolves to `any` first. If the first one took that, `f1` would return `Ast` and `+` would be an error.

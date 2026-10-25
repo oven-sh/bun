@@ -5941,21 +5941,29 @@ impl<'p, 's> Checker<'p, 's> {
     /// progress, so the task's callbacks are in `reported` and those of queries are in
     /// `task.diagnostics`. `logged` is the length of `task.diagnostics` when
     /// `save_deferred_diagnostics` was set.
+    ///
+    /// Printing a type can be the first to check an expression in another file, which can add a callback. The entry of
+    /// that expression is stored, so the check of its file doesn't add the callback again. It's called here too.
     pub(super) fn call_deferred_diagnostics(&mut self, logged: usize) {
+        let (mut of_task, mut of_queries) = (0, logged);
+        loop {
+            if let Some(callback) = self.reported.get(of_task) {
+                if callback.deferred.is_some() {
+                    self.reported[of_task] = self.call_deferred_diagnostic(callback.clone());
+                }
+                of_task += 1;
+            } else if let Some((_, callback)) = self.task.diagnostics.get(of_queries) {
+                if callback.deferred.is_some() {
+                    self.task.diagnostics[of_queries].1 =
+                        self.call_deferred_diagnostic(callback.clone());
+                }
+                of_queries += 1;
+            } else {
+                break;
+            }
+        }
         self.save_deferred_diagnostics = false;
-        for i in 0..self.reported.len() {
-            if self.reported[i].deferred.is_some() {
-                let diagnostic = self.call_deferred_diagnostic(self.reported[i].clone());
-                self.reported[i] = diagnostic;
-            }
-        }
         self.reported.retain(|it| !it.is_placeholder());
-        for i in logged..self.task.diagnostics.len() {
-            if self.task.diagnostics[i].1.deferred.is_some() {
-                let diagnostic = self.call_deferred_diagnostic(self.task.diagnostics[i].1.clone());
-                self.task.diagnostics[i].1 = diagnostic;
-            }
-        }
         self.non_existent_properties.clear();
     }
 

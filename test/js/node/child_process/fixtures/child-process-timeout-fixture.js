@@ -18,9 +18,10 @@ const restoreTimers = mode === "timers replaced while the module loads, then res
 const { spawn, fork, exec, execFile } = require("node:child_process");
 if (restoreTimers) restoreTimers();
 
-// A deadline the parent must reach, and one it must clear long before.
+// A deadline the parent must reach, and one it must clear long before. The second is longer than the
+// test timeout of every CI lane (scripts/runner.node.ts), so a parent that waits for it fails its test.
 const soon = 200;
-const never = 60_000;
+const never = 600_000;
 
 if (mode === "idle") {
   // Long enough for every case to end it, and not for ever when a run fails to.
@@ -78,8 +79,10 @@ if (mode === "idle") {
       break;
     case "exec": {
       // `exec` makes the shell become the child, so the pid reported is the one the signal has to reach.
-      const command = `"${process.execPath}" "${__filename}" idle`;
-      forget(watch(exec(process.platform === "win32" ? command : `exec ${command}`, { timeout: soon }, done)));
+      // cmd.exe has no `exec`. There the signal ends the shell only, so its child is one that ends by itself.
+      const posix = process.platform !== "win32";
+      const command = `"${process.execPath}" "${__filename}" ${posix ? "idle" : "brief"}`;
+      forget(watch(exec(posix ? `exec ${command}` : command, { timeout: soon }, done)));
       break;
     }
     case "execFile, pipes open at the deadline":
@@ -120,6 +123,10 @@ if (mode === "idle") {
     case "execFile, timers replaced after the module loaded":
       replaceTimers();
       forget(watch(execFile(process.execPath, exits, { timeout: never }, done)));
+      break;
+    case "execFile of a missing file, timers replaced after the module loaded":
+      replaceTimers();
+      watch(execFile(__filename + ".does-not-exist", { timeout: never }, done));
       break;
     case "no timeout":
       forget(watch(spawn(process.execPath, idle, { stdio: "ignore", detached: true })));

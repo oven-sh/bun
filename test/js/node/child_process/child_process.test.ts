@@ -1733,9 +1733,17 @@ describe("options.timeout", () => {
     "spawn, 'exit' listener pauses stdout": { killed: false, kills: 0 },
     "execFile, 'exit' listener pauses the pipes": { killed: false, kills: 0 },
     "spawn of a missing file": { kills: 0, events: ["error", "close"] },
-    // The timers are not the globals, which a fake-timers library replaces.
+    // The timers are not the globals, which a fake-timers library replaces. A fake setTimeout would
+    // arm nothing, and the parent would be gone before the 'exit'. A fake clearTimeout would clear
+    // nothing, and the parent would wait for the deadline.
     "spawn, timers replaced after the module loaded": { kills: 0, events: ["exit", "close"] },
     "execFile, timers replaced after the module loaded": { kills: 0, events: ["exit", "close"], callback: "no error" },
+    // execFile()'s timer stops holding the parent at 'exit'. No 'exit' comes here, so only the clear releases it.
+    "execFile of a missing file, timers replaced after the module loaded": {
+      kills: 0,
+      events: ["error", "close"],
+      callback: { killed: false },
+    },
     "timers replaced while the module loads, then restored": {
       killed: true,
       kills: 1,

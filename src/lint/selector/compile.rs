@@ -1,22 +1,22 @@
-//! What is found out about a selector once, after it is parsed.
+//! Analysis done once on a selector, after it's parsed.
 
 use super::program::{Bound, Id, Op, Program, Run, TypeSet};
 use crate::estree::NodeType;
 
-/// What ESLint's `analyzeParsedSelector` finds.
+/// The results of ESLint's `analyzeParsedSelector`.
 #[derive(Default)]
 pub(super) struct Analysis {
     /// The number of attributes, fields and `:nth-child()`s.
     pub(super) attribute_count: u32,
-    /// The number of names of types.
+    /// The number of type names.
     pub(super) identifier_count: u32,
-    /// So many combinators follow each other that the stack does not hold them: `esquery` throws when it matches.
+    /// True if so many combinators are chained that they don't fit on the stack. `esquery` throws
+    /// when it matches.
     pub(super) is_too_deep: bool,
 }
 
 impl Analysis {
-    /// ESLint's `analyzeSelector`: the types of the nodes that the selector `id` can match. `None`:
-    /// any.
+    /// ESLint's `analyzeSelector`: the node types that selector `id` can match. `None` means any.
     pub(super) fn analyze(&mut self, program: &Program, id: Id) -> Option<TypeSet> {
         if !bun_core::StackCheck::init().is_safe_to_recurse() {
             self.is_too_deep = true;
@@ -72,7 +72,7 @@ impl Analysis {
             }
             Op::Class {
                 types,
-                is_written_function: true,
+                is_function_class: true,
                 ..
             } => Some(types),
             Op::Class { .. }
@@ -84,9 +84,9 @@ impl Analysis {
     }
 }
 
-/// The types of the nodes that `esquery` can find to match the selector `id`. `None`: any.
+/// The node types that `esquery` can match against selector `id`. `None` means any.
 ///
-/// ESLint's analysis is not a substitute: it is about how names are written, and knows one class.
+/// ESLint's analysis can't replace this: it goes by how names are spelled, and it only knows one class.
 pub(super) fn possible_types(program: &Program, id: Id) -> Option<TypeSet> {
     let either = |a: Option<TypeSet>, b: Option<TypeSet>| a.zip(b).map(|(a, b)| a.union(b));
     match *program.ops.get(id as usize)? {
@@ -130,7 +130,7 @@ pub(super) fn possible_types(program: &Program, id: Id) -> Option<TypeSet> {
     }
 }
 
-/// ESLint's `isAlwaysMatchingSelector`: a node of one of the types that the selector `id` can match
+/// ESLint's `isAlwaysMatchingSelector`: true if every node of a type that selector `id` can match
 /// does match.
 pub(super) fn always_matches(program: &Program, id: Id) -> bool {
     match program.ops.get(id as usize) {
@@ -143,7 +143,7 @@ pub(super) fn always_matches(program: &Program, id: Id) -> bool {
     }
 }
 
-/// How much it takes to find out whether a node matches `op`, roughly.
+/// A rough cost of testing a node against `op`.
 fn cost(op: Op) -> u8 {
     match op {
         Op::Wildcard => 0,
@@ -159,7 +159,7 @@ fn cost_of_op(ops: &[Op], id: Id) -> u8 {
     ops.get(id as usize).map_or(0, |it| cost(*it))
 }
 
-/// Changes `program` so that it finds the same with less work.
+/// Rewrites `program` to get the same matches with less work.
 pub(super) fn optimize(program: &mut Program) {
     for id in 0..program.ops.len() {
         match program.ops[id] {
@@ -168,7 +168,7 @@ pub(super) fn optimize(program: &mut Program) {
                 let cost_of = |id: &Id| cost_of_op(ops, *id);
                 crate::utils::sort::sort_by_key(list.of_mut(&mut program.lists), cost_of);
                 bind(program, list);
-                // `*` adds nothing, except on its own.
+                // `*` adds nothing, unless it's the only selector.
                 let wildcards = list
                     .of(&program.lists)
                     .iter()
@@ -196,7 +196,7 @@ pub(super) fn optimize(program: &mut Program) {
                 if let Some(key) = path
                     .of(&program.keys)
                     .first()
-                    .filter(|it| !it.property.is_of_nodes())
+                    .filter(|it| !it.property.is_node_property())
                 {
                     let first = key.field.map_or(Bound::Missing, Bound::Field);
                     program.ops[id] = Op::Attribute { path, test, first };
@@ -217,8 +217,8 @@ pub(super) fn optimize(program: &mut Program) {
     }
 }
 
-/// Of the selectors in `all`, which a node has to match all of: if one is the name of a type, the first key of each attribute is
-/// a field of that type.
+/// `all` is a list of selectors that a node has to match all of. If one of them is a type name, the
+/// first key of each attribute is resolved as a field of that type.
 fn bind(program: &mut Program, all: Run) {
     let Program {
         ops, lists, keys, ..
@@ -234,7 +234,7 @@ fn bind(program: &mut Program, all: Run) {
     for &id in all {
         if let Some(Op::Attribute { path, first, .. }) = ops.get_mut(id as usize)
             && let Some(key) = path.of(keys).first()
-            && !key.property.is_of_nodes()
+            && !key.property.is_node_property()
         {
             *first = match key.field.and_then(|it| node_type.field(it)) {
                 Some(entry) => Bound::Entry(entry),

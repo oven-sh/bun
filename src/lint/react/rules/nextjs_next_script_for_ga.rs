@@ -44,7 +44,7 @@ impl Rule for NextScriptForGa {
     }
 }
 
-/// The `a` of `dangerouslySetInnerHTML={{ __html: a }}`.
+/// Returns the `a` in `dangerouslySetInnerHTML={{ __html: a }}`.
 fn get_dangerously_set_inner_html_prop_value(jsx: Jsx<'_>) -> Option<Expr<'_>> {
     let object = get_prop_value(has_jsx_prop_ignore_case(jsx, "dangerouslysetinnerhtml")?)?.as_expression()?;
     let ExprKind::Object(properties) = object.kind() else {

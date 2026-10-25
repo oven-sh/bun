@@ -81,7 +81,7 @@ fn parse_bundle(pkg: &E::ObjectJSON) -> Result<Bundle, Error> {
     }
 }
 
-/// npm copies `os` / `cpu` / `libc` from package.json as-is: it may be a single string.
+/// npm copies `os`, `cpu` and `libc` from package.json as they are, so each can be a single string.
 fn parse_platform_list<T: Npm::NegatableEnum>(
     value: Option<&E::JsonValue>,
     absent: T,
@@ -131,11 +131,12 @@ fn path_inside<'k>(dir: &[u8], path: &'k [u8]) -> Option<&'k [u8]> {
         .filter(|rest| !rest.is_empty() && !bin::bin_target_escapes_package_dir(rest))
 }
 
-/// Folder inside a cache-installed dependent; the installer reads its row relative to the package.
+/// A folder inside a dependent that's installed from the cache. The installer reads its path
+/// relative to the package.
 #[derive(Clone, Copy)]
 struct FolderInDependent<'k> {
     path: &'k [u8],
-    /// Fallback name, as in a fresh resolve; npm writes these entries without one.
+    /// The fallback name, like in a fresh resolve. npm writes these entries without a name.
     alias: &'k [u8],
 }
 
@@ -1053,7 +1054,8 @@ impl<'a> Migrator<'a> {
         self.shadow(t);
     }
 
-    /// `npm install --install-links`: an ordinary entry whose `resolved` is `file:<dir>`.
+    /// Returns true for an entry from `npm install --install-links`: an ordinary entry whose
+    /// `resolved` is `file:<dir>`.
     fn is_copied_folder(&self, t: u32) -> bool {
         entry_object(&self.entries[t as usize])
             .get(b"resolved")
@@ -1061,7 +1063,8 @@ impl<'a> Migrator<'a> {
             .is_some_and(|r| r.starts_with(b"file:") && DepTag::infer(r) == DepTag::Folder)
     }
 
-    /// The edge is dropped: the install resolves it from its declarer's `file:` spec.
+    /// Drops the dependency, so that the install resolves it from the `file:` specifier of the
+    /// package that declares it.
     fn skip_copied_folder(&mut self, t: u32, name: &[u8]) {
         if self.verbose && !self.shadowed.is_set(t as usize) {
             bun_core::warn!(

@@ -552,10 +552,10 @@ describe.concurrent("bun info with control characters in the packument", () => {
   // (overwrites the line), CRLF, tab, DEL, and the C1 controls NEL (U+0085)
   // and CSI (U+009B).
   const hostile = "\x1b[2J\x1b]0;PWNED\x07\rX\r\nY\tZ\x7f\u0085\u009b[31m";
-  // How the summary view renders it: every control becomes a visible escape.
+  // The summary view renders every control character as a visible escape.
   const escaped = String.raw`\x1b[2J\x1b]0;PWNED\x07\rX\r\nY\tZ\x7f\u0085\u009b[31m`;
-  // How `bun pm view <pkg> <field>` renders it: CRLF and tab are kept since
-  // the field itself may be multi-line (readme), everything else is escaped.
+  // `bun pm view <pkg> <field>` keeps CRLF and tab, because the field itself may have several lines (readme), and
+  // escapes everything else.
   const escapedMultiline = String.raw`\x1b[2J\x1b]0;PWNED\x07\rX` + "\r\nY\tZ" + String.raw`\x7f\u0085\u009b[31m`;
 
   const packument = {
@@ -857,7 +857,7 @@ describe.concurrent("bun pm view (local registry)", () => {
       err: "",
       code: 0,
     });
-    // Nothing to expand, one field left: printed bare.
+    // There's nothing to expand and only one field left, so it's printed bare.
     expect(await view(["zz-conflict", "maintainers.name", "keywords"])).toEqual({
       out: `["verkw"]\n`,
       err: "",
@@ -882,7 +882,7 @@ describe.concurrent("bun pm view (local registry)", () => {
     });
   });
 
-  test("the selected version comes with what the registry says about the whole package", async () => {
+  test("the selected version also has the registry's package-level fields", async () => {
     // Root-only keys are visible, version keys win, `readme` only when asked for.
     expect(await view(["zz-basic@1.0.0", "description", "readmeFilename", "customRoot", "dist-tags.latest"])).toEqual({
       out: `description = "basic v1"\nreadmeFilename = "README.md"\ncustomRoot = "root-only"\ndist-tags.latest = "2.0.0"\n`,
@@ -1080,7 +1080,7 @@ describe.concurrent("bun info version spec", () => {
     "zz-dangling": packument("zz-dangling", { latest: "9.9.9", "v0-legacy": "0.5.0" }, ["1.0.0"]),
     "zz-onlypre": packument("zz-onlypre", { latest: "1.0.0-beta.2" }, ["1.0.0-beta.1", "1.0.0-beta.2"]),
     "zz-rc": packument("zz-rc", { latest: "2.0.0-rc.1" }, ["1.0.0", "1.1.0", "2.0.0-rc.1"]),
-    // As some mirrors and private registries send it.
+    // Some mirrors and private registries send it like this.
     "zz-untagged": packument("zz-untagged", {}, ["1.0.0", "1.1.0"]),
   };
   let server: ReturnType<typeof Bun.serve>;

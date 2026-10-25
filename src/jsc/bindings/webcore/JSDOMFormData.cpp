@@ -53,11 +53,13 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
-#include "ZigGeneratedClasses.h"
+#include "GeneratedBlob.h"
+#include "GeneratedFormData.h"
 #include "GCDefferalContext.h"
 
 namespace WebCore {
 using namespace JSC;
+using Bun::Bindgen::Generated::JSBlob;
 
 struct JSBlobWrapperConverter {
     static RefPtr<Blob> toWrapped(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
@@ -183,12 +185,10 @@ template<> JSValue JSDOMFormDataDOMConstructor::prototypeForStructure(JSC::VM& v
     return globalObject.functionPrototype();
 }
 
-BUN_DECLARE_HOST_FUNCTION(FormData__jsFunctionFromMultipartData);
-
 template<> void JSDOMFormDataDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     initializeBaseProperties(vm, 0, "FormData"_s, JSDOMFormData::prototype(vm, globalObject));
-    putDirectNativeFunction(vm, &globalObject, vm.propertyNames->from, 1, FormData__jsFunctionFromMultipartData, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+    putDirectNativeFunction(vm, &globalObject, vm.propertyNames->from, 1, Bun::Bindgen::Generated::FormData::jsFrom, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 }
 
 /* Hash table for prototype */

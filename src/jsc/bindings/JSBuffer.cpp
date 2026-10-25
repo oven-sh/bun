@@ -414,6 +414,19 @@ bool Bun::rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject* globalObje
     return true;
 }
 
+WTF::MallocSpan<uint8_t> Bun::copySharedBytes(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes)
+{
+    if (bytes.empty())
+        return {};
+    auto copy = WTF::MallocSpan<uint8_t>::tryMalloc(bytes.size());
+    if (!copy) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    memcpySpan(copy.mutableSpan(), bytes);
+    return copy;
+}
+
 JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator)
 {
     JSC::JSUint8Array* uint8Array = nullptr;
@@ -2143,7 +2156,13 @@ JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, T
         length = byteLength - offset;
     }
 
-    return jsBufferToStringFromBytes(lexicalGlobalObject, scope, castedThis->span().subspan(offset, length), encoding);
+    auto bytes = castedThis->span().subspan(offset, length);
+    if (castedThis->isShared() && encoding == BufferEncodingType::utf8) [[unlikely]] {
+        auto copy = Bun::copySharedBytes(lexicalGlobalObject, scope, bytes);
+        RETURN_IF_EXCEPTION(scope, {});
+        return jsBufferToStringFromBytes(lexicalGlobalObject, scope, copy.span(), encoding);
+    }
+    return jsBufferToStringFromBytes(lexicalGlobalObject, scope, bytes, encoding);
 }
 
 // Mirrors v8::Value::IntegerValue(): NaN becomes 0 and anything outside the
@@ -2937,7 +2956,8 @@ static JSC::JSArrayBufferView* bufferAccessReceiver(JSC::JSGlobalObject* lexical
 {
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(thisValue);
     if (!view) [[unlikely]] {
-        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "buf"_s, "Buffer"_s, thisValue);
+        // In a bare call `this` is the caller's scope object. toThis() converts it to undefined, which is what a strict JS callee sees.
+        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "buf"_s, "Buffer"_s, thisValue.toThis(lexicalGlobalObject, JSC::ECMAMode::strict()));
         return nullptr;
     }
     return view;
@@ -3058,7 +3078,7 @@ fastPath:
         return JSValue::encode(jsNumber(JSC::purifyNaN(static_cast<double>(std::bit_cast<T>(raw)))));
     } else if constexpr (byteSize == 8) {
         // readBigInt64* / readBigUInt64*
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(lexicalGlobalObject, std::bit_cast<T>(raw))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(lexicalGlobalObject, std::bit_cast<T>(raw))));
     } else
         return JSValue::encode(jsNumber(std::bit_cast<T>(raw)));
 }

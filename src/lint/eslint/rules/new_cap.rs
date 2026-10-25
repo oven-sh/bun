@@ -1,6 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::oxlint::goes_by_the_name;
+use bun_lint::utils::oxlint::checks_name_only;
 use bun_lint_oxlint::ast_util::get_inner_expression;
 use std::borrow::Cow;
 
@@ -32,8 +32,8 @@ const CAPS_ALLOWED: [&str; 11] = [
     "Symbol", "BigInt",
 ];
 const GLOBAL_OBJECT_NAMES: [&str; 4] = ["global", "globalThis", "self", "window"];
-/// Before ESLint 10 the exceptions are the keys of an object, which has these too: `new constructor()`. The others do
-/// not start with a letter.
+/// Before ESLint 10 the exceptions are the keys of an object, which also has these inherited keys: `new constructor()`.
+/// The other inherited keys don't start with a letter.
 const KEYS_OF_EVERY_OBJECT: [&str; 7] = [
     "constructor",
     "hasOwnProperty",
@@ -51,7 +51,7 @@ enum Cap {
     Upper,
 }
 
-/// ESLint's `getCap`, of the first character of `name`.
+/// ESLint's `getCap`, applied to the first character of `name`.
 fn get_cap(name: &[u8]) -> Cap {
     match name.first() {
         Some(b'a'..=b'z') => return Cap::Lower,
@@ -73,7 +73,7 @@ fn get_cap(name: &[u8]) -> Cap {
     }
 }
 
-/// ESLint's `extractNameFromExpression`. `None` where that is empty.
+/// ESLint's `extractNameFromExpression`. `None` where that returns an empty string.
 fn extract_name(callee: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     let name = match callee.kind() {
         ExprKind::Ident(name) => Cow::Borrowed(name.bytes()),
@@ -137,11 +137,11 @@ impl NewCap {
         }
         match callee.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                let is_date = || match goes_by_the_name(callee.file().language()) {
+                let is_date = || match checks_name_only(callee.file().language()) {
                     true => obj.is_ident("Date"),
                     false => is_global_built_in(obj, b"Date"),
                 };
-                // Before ESLint 10 `properties` has no say about `a.UTC()`.
+                // Before ESLint 10, `properties` doesn't affect `a.UTC()`.
                 match name == b"UTC" {
                     true => is_date() || (self.skips_properties && !is_before_10),
                     false => self.skips_properties,
@@ -171,14 +171,14 @@ impl NewCap {
             && get_cap(&name) == Cap::Upper
             && !self.is_cap_allowed(&self.cap_is_new_exceptions, callee, &name)
             && !(CAPS_ALLOWED.iter().any(|it| it.as_bytes() == &*name)
-                && (goes_by_the_name(cx.language()) || is_global_built_in(callee, &name)))
+                && (checks_name_only(cx.language()) || is_global_built_in(callee, &name)))
         {
             report(e, callee, UPPER, cx);
         }
     }
 }
 
-/// The callee. oxlint finds a name in what only concerns types: `(A as any)()`, `A!()`.
+/// Returns the callee. oxlint also finds a name inside type-only wrappers: `(A as any)()`, `A!()`.
 fn callee_of(call: Call<'_>) -> Expr<'_> {
     let callee = call.callee();
     match callee.file().language().is_oxlint {
@@ -189,7 +189,7 @@ fn callee_of(call: Call<'_>) -> Expr<'_> {
     }
 }
 
-/// At the property, or at the callee, of the call `e`.
+/// Reports the call `e` at the property, or otherwise at the callee.
 fn report<'a>(e: Expr<'a>, callee: Expr<'a>, message: Message, cx: &Cx<'a, NewCap>) {
     let at = match callee.kind() {
         ExprKind::Dot { name, .. } => name.span(),
@@ -236,7 +236,7 @@ impl Rule for NewCap {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let tag = e.tag();
-        // The first byte of a name as it is written is nearly always that of the name.
+        // The first byte of a name's source text is nearly always the first byte of the name.
         if let Some(callee) = e.callee()
             && let Some(start) = callee
                 .member_name_start()

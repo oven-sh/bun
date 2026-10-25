@@ -37,7 +37,7 @@ const root = path.resolve(import.meta.dir, "..", "..", "..");
 // Same grammar as `markerRe` in src/codegen/generate-host-exports.ts: the
 // marker is the whole line. Prose such as "from the `// HOST_EXPORT(Sym, c)`
 // markers" in a doc comment does not match. Group 1 is the symbol, group 2
-// the abi (`jsc` when absent).
+// the abi (`c` when absent).
 const MARKER = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(jsc|c|rust))?\s*\)\s*$/;
 
 const GENERATED_PREFIXES = ["js2native_"];

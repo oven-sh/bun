@@ -41,7 +41,7 @@ fn run<'a>(jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
     ctx.report(jest_node.node, PREFER_CALLED_TIMES).fix(|fixer| {
         let file = fixer.file();
         let expect_argument = parsed_expect_call.expect_arguments.and_then(List::first);
-        let (expect, rest) = parsed_expect_call.around_first_argument(ctx.runner);
+        let (expect, rest) = parsed_expect_call.expect_prefix_and_suffix(ctx.runner);
         let mut code = [expect, b"(".as_slice(), expect_argument.map_or(b"".as_slice(), |it| file.slice(it.outer_span())), rest].concat();
         for modifier in parsed_expect_call.modifiers() {
             code.push(b'.');

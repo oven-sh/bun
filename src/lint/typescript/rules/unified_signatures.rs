@@ -41,7 +41,7 @@ enum Unify<'a> {
     },
 }
 
-/// What upstream's `getOverloadKey` is made of. Signatures with the same key are overloads.
+/// The parts of upstream's `getOverloadKey`. Signatures with the same key are overloads.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 struct OverloadKey<'a> {
     is_computed: bool,
@@ -57,7 +57,7 @@ enum OverloadInfo<'a> {
     Call,
     PrivateIdentifier(Name<'a>),
     Identifier(Name<'a>),
-    /// A literal, as it is written.
+    /// A literal's source text.
     Raw(&'a [u8]),
     /// Any other expression in brackets. Upstream has the same key for all of them.
     Expression,
@@ -72,7 +72,7 @@ struct Overload<'a> {
     signature: Func<'a>,
 }
 
-/// A signature, with what is asked about it for each of the other overloads.
+/// A signature, with the facts that are needed each time it's compared with another overload.
 struct Signature<'a> {
     func: Func<'a>,
     parameters: SmallVec<[Param<'a>; 8]>,
@@ -82,7 +82,7 @@ struct Signature<'a> {
     block_comment: Option<&'a [u8]>,
 }
 
-/// The names of the type parameters of the class or the interface that the overloads are in.
+/// The type parameter names of the class or interface that contains the overloads.
 struct OuterTypeParameters<'a>(FxHashSet<Name<'a>>);
 
 impl<'a> OuterTypeParameters<'a> {
@@ -110,7 +110,7 @@ fn get_overload_info<'a>(key: Key<'a>, file: &File<'a>) -> OverloadInfo<'a> {
         | KeyKind::ComputedNumber(_)
         | KeyKind::ComputedString(_) => {
             match file.slice(key.inner_span(file)) {
-                // A template is not a literal.
+                // A template isn't a literal.
                 [b'`', ..] => OverloadInfo::Expression,
                 raw => OverloadInfo::Raw(raw),
             }
@@ -129,7 +129,7 @@ fn get_overload_info<'a>(key: Key<'a>, file: &File<'a>) -> OverloadInfo<'a> {
     }
 }
 
-/// A method without a body, or a signature, that is not an accessor.
+/// A method without a body, or a signature. Accessors are excluded.
 fn overload_of_member(member: Member<'_>) -> Option<Overload<'_>> {
     let signature = member.func().filter(|it| !it.has_body())?;
     let file = member.file();
@@ -214,8 +214,8 @@ fn parameter_span(parameter: Param<'_>) -> Span {
     }
 }
 
-/// typescript-eslint's `getParameterTypeAnnotation`. The annotation of `a: T = 1` belongs to the
-/// `a`, not to the `AssignmentPattern` that the parameter is.
+/// typescript-eslint's `getParameterTypeAnnotation`. The annotation of `a: T = 1` belongs to the `a`, not to the
+/// parameter's `AssignmentPattern`.
 fn get_parameter_type_annotation(parameter: Param<'_>) -> Option<TypeNode<'_>> {
     match parameter.default() {
         Some(_) => None,
@@ -223,7 +223,7 @@ fn get_parameter_type_annotation(parameter: Param<'_>) -> Option<TypeNode<'_>> {
     }
 }
 
-/// `parameter.optional`, which is likewise that of the `AssignmentPattern`.
+/// `parameter.optional`, which is likewise read from the `AssignmentPattern`.
 fn is_optional(parameter: Param<'_>) -> bool {
     parameter.is_optional() && parameter.default().is_none()
 }
@@ -279,7 +279,7 @@ fn type_parameters_are_equal<'a>(a: TypeParam<'a>, b: TypeParam<'a>) -> bool {
     a.name().name() == b.name().name() && types_are_equal(a.constraint(), b.constraint())
 }
 
-/// Whether `ty` is one of `outer`, or an array of it, or `keyof` or `readonly` of it, and so on.
+/// True if `ty` is one of `outer`, or an array, `keyof` or `readonly` of it, and so on.
 fn type_contains_type_parameter<'a>(mut ty: TypeNode<'a>, outer: &OuterTypeParameters<'a>) -> bool {
     loop {
         ty = match ty.kind() {
@@ -311,7 +311,7 @@ fn signature_uses_type_parameter<'a>(
             .any(|ty| type_contains_type_parameter(ty, outer))
 }
 
-/// The last block comment before the declaration of `signature`.
+/// The last block comment before `signature`'s declaration.
 fn get_block_comment_for_node(signature: Func<'_>) -> Option<&[u8]> {
     let mut comments = signature.file().comments_before(signature.owner());
     comments
@@ -401,7 +401,7 @@ struct UnionMembers<'a> {
 }
 
 impl<'a> UnionMembers<'a> {
-    /// Adds the members of `ty` that are not written in it already.
+    /// Adds the members of `ty` whose text isn't in the list yet.
     fn add(&mut self, ty: TypeNode<'a>) {
         let mut stack: SmallVec<[TypeNode<'a>; 8]> = smallvec::smallvec![ty];
         while let Some(ty) = stack.pop() {
@@ -450,11 +450,11 @@ fn get_unified_type_text<'a>(type0: Option<TypeNode<'a>>, type1: Option<TypeNode
     text
 }
 
-/// `other`: where the other overload is. With only 2 overloads there is no need to say which it is.
+/// `other` is the other overload's location. With only 2 overloads there's no need to say which one it is.
 fn failure_string_start(file: &File<'_>, other: Option<Span>) -> String {
     match other {
         None => "These overloads can be combined into one signature".to_owned(),
-        // oxlint does not say which it is.
+        // oxlint doesn't say which one it is.
         Some(_) if file.language().is_oxlint => {
             "This overload can be combined with another overload into one signature".to_owned()
         }
@@ -594,8 +594,8 @@ impl UnifiedSignatures {
         }
     }
 
-    /// `overloads`: what is directly in a file, a namespace, a class declaration, an interface or
-    /// a type literal. `outer`: the type parameters of the class or the interface.
+    /// `overloads` are the overloads directly in a file, a namespace, a class declaration, an interface or a type
+    /// literal. `outer` is the type parameters of the class or interface.
     fn check_scope<'a>(
         &self,
         overloads: impl Iterator<Item = Overload<'a>>,
@@ -619,7 +619,7 @@ impl UnifiedSignatures {
         let outer = OuterTypeParameters::new(outer);
         let several = by_key.values().filter(|it| it.len() > 1);
         for signatures in
-            utils::sort::in_order_of(several, |it| it.first().map(|it| it.span().start))
+            utils::sort::collect_sorted_by_key(several, |it| it.first().map(|it| it.span().start))
         {
             self.check_overloads(signatures, &outer, cx);
         }

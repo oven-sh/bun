@@ -1,6 +1,6 @@
 import { TOML } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, withoutAggressiveGC } from "harness";
 import { join } from "node:path";
 
 // Hand-written coverage beyond the official conformance suite
@@ -747,7 +747,7 @@ describe("robustness", () => {
         exitCode: 0,
         signalCode: null,
       });
-    }, 30_000);
+    });
 
     // Each key of a table used to be compared with every key before it, and
     // so was each header and dotted key that went through the table. For
@@ -786,16 +786,18 @@ describe("robustness", () => {
         expect(syntaxError(large).message).toBe(`TOML Parse error: ${message}`);
         let smallBest = Infinity;
         let largeBest = Infinity;
-        const began = Bun.nanoseconds();
-        // At least 2 rounds, and more while they fit in 100 ms.
-        for (let round = 0; round < 10 && (round < 2 || Bun.nanoseconds() - began < 100e6); round++) {
-          let start = Bun.nanoseconds();
-          for (let i = 0; i < factor; i++) parse(small);
-          smallBest = Math.min(smallBest, Bun.nanoseconds() - start);
-          start = Bun.nanoseconds();
-          parse(large);
-          largeBest = Math.min(largeBest, Bun.nanoseconds() - start);
-        }
+        withoutAggressiveGC(() => {
+          const began = Bun.nanoseconds();
+          // At least 2 rounds, and more while they fit in 100 ms.
+          for (let round = 0; round < 10 && (round < 2 || Bun.nanoseconds() - began < 100e6); round++) {
+            let start = Bun.nanoseconds();
+            for (let i = 0; i < factor; i++) parse(small);
+            smallBest = Math.min(smallBest, Bun.nanoseconds() - start);
+            start = Bun.nanoseconds();
+            parse(large);
+            largeBest = Math.min(largeBest, Bun.nanoseconds() - start);
+          }
+        });
         const slowdown = largeBest / smallBest;
         expect(
           slowdown,

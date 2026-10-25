@@ -19,6 +19,7 @@ use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use core::ops::Range;
+use std::collections::VecDeque;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleRef {
@@ -522,40 +523,37 @@ impl ModuleGraph {
         self.plan.is_finished = true;
     }
 
-    // The CommonJS files, or their faces, that imports between ES modules reach from `root`, depth first, in the order of the imports.
+    // The CommonJS files, or their faces, that imports between ES modules reach from `root`, in the order in which `bun run` loads them: what a module imports comes behind everything that was asked for before.
     fn collect_prefix(&self, root: FileId, below: &ReachedTargets) -> Vec<ModuleRef> {
         let mut prefix = Vec::new();
         let mut remaining = below.start_walk(root);
         let mut seen = FxHashSet::default();
         seen.insert(root);
-        let mut path = vec![(root, 0)];
-        while let Some((file, next)) = path.last_mut() {
-            if remaining.is_empty() {
-                break;
-            }
-            let Some(&request) = self.requests(*file).get(*next) else {
-                path.pop();
-                continue;
-            };
-            *next += 1;
-            let Some(target) = self.find_linked_file(&request) else {
-                continue;
-            };
-            match self.kind(target) {
-                ModuleKind::SourceText => {
-                    if remaining.has_some_below(below, target) && seen.insert(target) {
-                        path.push((target, 0));
-                    }
+        let mut importers = VecDeque::from([root]);
+        while let Some(file) = importers.pop_front() {
+            for request in self.requests(file) {
+                if remaining.is_empty() {
+                    return prefix;
                 }
-                ModuleKind::CommonJs => {
-                    if remaining.take(below, target) {
-                        prefix.push(self.face(request.target).unwrap_or(request.target));
+                let Some(target) = self.find_linked_file(request) else {
+                    continue;
+                };
+                match self.kind(target) {
+                    ModuleKind::SourceText => {
+                        if remaining.has_some_below(below, target) && seen.insert(target) {
+                            importers.push_back(target);
+                        }
                     }
+                    ModuleKind::CommonJs => {
+                        if remaining.take(below, target) {
+                            prefix.push(self.face(request.target).unwrap_or(request.target));
+                        }
+                    }
+                    ModuleKind::Data
+                    | ModuleKind::RuntimeSource
+                    | ModuleKind::Runtime
+                    | ModuleKind::External => {}
                 }
-                ModuleKind::Data
-                | ModuleKind::RuntimeSource
-                | ModuleKind::Runtime
-                | ModuleKind::External => {}
             }
         }
         prefix

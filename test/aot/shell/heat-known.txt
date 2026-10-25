@@ -28,6 +28,9 @@ collector/eval-constants-at-heap-limit    both    fills a small heap to the brim
 collector/large-constants-at-heap-limit    both    fills a small heap to the brim, and its counts are tuned for the default build
 collector/bigint-literal-at-heap-limit    both    fills a small heap to the brim, and its counts are tuned for the default build
 calls/deep-tail-recursion-through-call-and-apply    cold    cold code calls `call` and `apply` as it finds them: Bun's are compiled with the program and pass the call on as a tail call, the shell's are native and keep a frame
+calls/long-tail-call-chains/call-then-call-then-by-value    cold    cold code calls `call` as it finds it: Bun's is compiled with the program and passes the call on as a tail call, the shell's is native and keeps a frame
+calls/long-tail-call-chains/call-then-call-then-table    cold    cold code calls `call` as it finds it: Bun's is compiled with the program and passes the call on as a tail call, the shell's is native and keeps a frame
+calls/long-tail-call-chains/table-then-call    cold    cold code calls `call` as it finds it: Bun's is compiled with the program and passes the call on as a tail call, the shell's is native and keeps a frame
 untyped-code/for-of-untyped-values    cold    cold code walks a generator by its `next`: Bun's is compiled with the program, the shell's knows no compiled generator
 untyped-code/what-a-field-holds-is-asked-for-many-names-by-many-functions    both    keeps `console` beside objects of its own; the shell's console is a plain object, which compiled code takes for the program's object
 structural-types/built-in-objects-with-members-of-their-own-are-used-through-interfaces-that-extend-their-types    cold    cold code walks a generator by its `next`: Bun's is compiled with the program, the shell's knows no compiled generator

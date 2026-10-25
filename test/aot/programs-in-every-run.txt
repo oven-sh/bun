@@ -48,6 +48,7 @@ arrays/objects-with-elements-find-what-is-hung-above-their-prototype-later
 arrays/one-operator-takes-what-a-typed-array-or-iterator-hands-out-and-it-is-undefined
 arrays/prototype-changed-in-callback
 arrays/push-grows-long-arrays
+arrays/rest-of-an-array-pattern-with-little-escape-analysis-work
 arrays/set-of-a-typed-array-given-every-kind-of-view
 arrays/sort-write-back-after-mutation
 arrays/sort-writes-back-into-an-array-whose-lock-is-held
@@ -181,9 +182,13 @@ calls/calls-with-lists-of-arguments-in-tail-position-keep-the-stack-level
 calls/closures-made-in-a-callback-that-call-hands-to-a-built-in
 calls/construct
 calls/construct-trace-forwarding-function
+calls/deep-tail-recursion-between-a-spread-call-and-a-call-with-a-short-list
+calls/deep-tail-recursion-through-rest-parameters-in-a-validating-build
 calls/deep-tail-recursion-where-one-function-answers-any-and-the-next-declares-a-type
 calls/define-properties-returns-its-target-near-the-end-of-the-stack
 calls/destructured-parameters
+calls/errors-of-json-cast-to-a-type-list-the-callers-of-json
+calls/errors-of-native-functions-list-the-function-in-their-stack
 calls/errors-of-native-methods-list-the-method-in-their-stack
 calls/function-call-reached-as-a-value
 calls/function-value-results-typed
@@ -191,6 +196,11 @@ calls/functions-bound-in-code-that-runs-once
 calls/guard-held-across-a-call-that-is-taken-in
 calls/host-builtins-by-value
 calls/host-getters-and-string-builtins-by-value
+calls/long-tail-call-chains/apply-then-table-from-a-function
+calls/long-tail-call-chains/by-name-then-by-value
+calls/long-tail-call-chains/call-then-call-then-by-value
+calls/long-tail-call-chains/table-then-by-name
+calls/long-tail-call-chains/table-then-call-one-element
 calls/native-built-ins-called-in-tail-position-on-lists-that-may-have-been-changed
 calls/non-function-in-typed-field
 calls/not-a-function-by-name
@@ -265,6 +275,7 @@ classes-below-functions/a-setter-of-new-target-in-the-form-that-a-class-compiled
 classes-below-functions/a-setter-of-new-target-takes-the-store-of-a-string-in-the-constructor
 classes-below-functions/a-setter-of-new-target-takes-the-store-of-an-object-in-the-constructor
 classes-below-functions/a-setter-of-new-target-takes-the-store-when-reflect-construct-is-called-through-call
+classes-below-functions/reflect-construct-after-the-class-was-wrapped-in-a-proxy
 classes/a-definition-that-throws-leaves-the-fields-defined-before-it
 classes/a-field-declared-by-a-base-class-holds-integers-in-the-class-below
 classes/a-method-is-called-on-a-parameter-without-a-type
@@ -485,6 +496,7 @@ escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet
 escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet-made-in-a-very-large-program
 escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet-made-in-hot-code
 escape-analysis/a-callback-over-the-scope-of-a-function-calls-what-the-function-was-given-validated
+escape-analysis/a-closure-made-in-one-turn-of-a-loop-captures-a-value-made-ahead-of-the-loop
 escape-analysis/a-default-array-or-an-iterator-is-made-into-json-in-hot-code-and-every-pass-is-verified
 escape-analysis/a-literal-is-kept-in-a-local-in-one-turn
 escape-analysis/a-literal-is-kept-in-a-local-in-one-turn-that-not-every-call-reaches
@@ -500,6 +512,7 @@ escape-analysis/fields-are-deleted-from-objects-that-stay-in-one-function
 escape-analysis/find-over-an-array-literal-that-a-function-answers-and-every-pass-is-verified
 escape-analysis/find-over-one-of-two-array-literals-and-every-pass-is-verified
 escape-analysis/five-objects-that-leave-on-one-way-are-candidates-for-one-variable
+escape-analysis/loop-over-an-arguments-object-or-undefined
 escape-analysis/objects-that-refer-to-each-other-built-on-one-path
 escape-analysis/pairs-of-numbers-that-are-only-read-and-pairs-that-somebody-looks-at
 escape-analysis/pairs-of-numbers-that-are-only-read-and-pairs-that-somebody-looks-at-untyped
@@ -550,6 +563,7 @@ host-classes/byte-order-marks-in-bodies-parsed-into-declared-types
 host-classes/bytes-are-read-on-both-sides-of-a-call-that-encodes-into-a-part-validated
 host-classes/bytes-are-set-and-ranges-taken-with-every-kind-of-receiver-source-and-position
 host-classes/constructors-on-the-global-object-keep-the-ordinary-has-instance-and-their-parent
+host-classes/copy-node-modules-returned-by-a-json-reviver
 host-classes/empty-bodies-parsed-into-declared-types
 host-classes/encode-into-a-part-of-a-part-after-the-view-becomes-a-buffer
 host-classes/encode-into-a-part-of-a-part-of-a-view-or-a-buffer
@@ -559,7 +573,13 @@ host-classes/function-subclasses-of-locked-classes
 host-classes/functions-made-for-one-call-of-a-native-function-that-only-looks-at-them
 host-classes/inspectors-of-host-objects-called-by-hand
 host-classes/iterators-of-headers-and-search-parameters
+host-classes/keys-of-process-after-a-spread
+host-classes/keys-of-process-after-object-assign
+host-classes/list-members-of-node-fs-returned-by-a-json-reviver
+host-classes/list-members-of-node-module
 host-classes/members-of-a-server
+host-classes/members-of-bun-hash-by-a-spread
+host-classes/members-of-bun-hash-by-assign-onto-an-instance
 host-classes/methods-of-host-classes-are-entered-with-every-number-of-arguments
 host-classes/native-functions-that-count-their-arguments
 host-classes/new-of-a-native-function-that-is-no-constructor-throws
@@ -568,6 +588,7 @@ host-classes/process-env-read-written-deleted-and-listed
 host-classes/process-members-computed-once
 host-classes/ranges-of-bytes-of-every-kind-go-into-encoders-of-every-kind
 host-classes/ranges-of-bytes-that-lost-their-memory-are-kept-across-collections
+host-classes/read-every-key-of-node-fs-returned-by-a-proxy
 host-classes/replaced-prototype-getters
 host-classes/search-params-asked-for-their-size-by-a-closure-that-is-called-twice
 host-classes/search-params-without-the-object-and-the-global-stays
@@ -750,6 +771,9 @@ literal-strings/texts-from-elsewhere-are-compared-with-the-listed-ones
 literal-strings/texts-from-outside-equal-members-that-no-code-spells
 memory-of-many-objects/records-made-by-a-callback-for-each-element
 modules/a-bundle-in-the-commonjs-format-of-bun-build-is-imported-by-name
+modules/a-commonjs-entry-point-throws-after-a-module-it-required-imported-it
+modules/a-commonjs-file-requires-a-module-that-awaits-and-imports-the-entry-point
+modules/a-commonjs-file-throws-after-a-module-it-required-imported-it
 modules/a-computed-path-is-required-again-and-again
 modules/a-cycle-of-modules-one-of-which-throws-is-asked-for-in-a-worker
 modules/a-file-without-an-extension-lies-beside-a-computed-path
@@ -762,12 +786,14 @@ modules/a-strict-bundle-in-the-commonjs-format-of-bun-build-returns-early-and-na
 modules/an-asset-lies-at-the-path-of-a-compiled-module
 modules/an-embedded-asset-is-loaded-by-the-loader-of-its-extension
 modules/an-import-equals-names-a-module-that-only-a-declaration-knows
+modules/an-imported-commonjs-file-requires-a-module-that-awaits
 modules/cycles-in-which-a-module-throws-are-asked-for-by-require
 modules/cycles-in-which-a-module-throws-beside-commonjs-files
 modules/cycles-with-top-level-await-in-which-a-module-throws
 modules/esbuild-require-shim-loads-files-and-packages
 modules/graphs-with-a-cycle-in-which-a-module-throws
 modules/import-meta-require-held-by-a-binding
+modules/imported-commonjs-files-run-in-the-order-they-are-loaded
 modules/imported-require-helper-called-before-its-file-ran
 modules/imported-require-helper-loads-files-and-packages
 modules/imported-require-helper-passed-on-by-export-star
@@ -791,6 +817,7 @@ modules/uncompiled-importer
 modules/what-a-working-directory-in-the-executable-cannot-do
 modules/what-lies-above-a-namespace-object
 names-that-come-above-objects/stores-under-computed-keys-that-spell-the-prototype-link
+narrowing/a-loop-that-awaits-reads-a-captured-variable-that-holds-a-built-in-object-or-an-instance
 narrowing/a-number-out-of-a-tuple-with-a-function-is-captured-under-a-case-of-a-switch-in-a-validating-build
 narrowing/a-string-is-captured-where-it-equals-a-constant-of-the-module-in-a-validating-build
 narrowing/a-string-is-captured-where-it-equals-an-imported-constant-in-a-validating-build
@@ -926,6 +953,7 @@ private-class-members/a-private-name-is-asked-for-in-objects-that-gain-it-later
 private-class-members/a-private-name-is-stamped-onto-an-instance-of-a-class-that-a-function-made
 private-class-members/private-fields-declared-without-a-value-are-read-before-and-behind-their-first-store
 private-class-members/private-members-on-unknown-objects
+private-class-members/runtime-text-adds-private-members-to-frozen-arrays
 relational-summaries/a-constructor-function-fills-an-object-below-a-prototype-anybody-reaches
 relational-summaries/a-store-on-every-path-but-the-thrown-one
 relational-summaries/accessors-arrive-on-the-chain-in-every-way

@@ -795,8 +795,7 @@ try {
   exports.seen = "threw " + error.constructor.name;
 }
 //// cycles/an-entry-point-that-awaits-is-required-by-the-commonjs-it-imports/main.mjs
-// The entry point awaits at top level and imports k.cjs, and k.cjs requires the entry point. Under `bun run` that require() runs the entry point and waits for it: "the entry point runs undefined".
-// An executable refuses the require() of a module that awaits and is being evaluated. The expected output is written down: it is that of an executable before and behind static modules.
+// The entry point awaits at top level and imports k.cjs, and k.cjs requires the entry point. It has not begun by then, so that require() runs it and waits for it: "the entry point runs undefined".
 import k from "./k.cjs";
 export const value = await Promise.resolve("main");
 console.log("the entry point runs", k.seen);

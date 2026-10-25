@@ -4,6 +4,8 @@ const members = [];
 for (const key of Object.keys(Bun)) members.push(Bun[key]);
 globalThis.members = members;
 console.log(new Function("return members.length > 10")());
-const child = Bun.spawn((process.platform === "win32" ? ["cmd", "/c", "echo hello from the child"] : ["/bin/echo", "hello from the child"]), { stdio: ["ignore", "pipe", "pipe"], onExit(_child, exitCode) { console.log("exit", exitCode); } });
+// The child may exit before or after its output has been read, so the exit code is printed behind the output.
+const exited = Promise.withResolvers();
+const child = Bun.spawn((process.platform === "win32" ? ["cmd", "/c", "echo hello from the child"] : ["/bin/echo", "hello from the child"]), { stdio: ["ignore", "pipe", "pipe"], onExit(_child, exitCode) { exited.resolve(exitCode); } });
 console.log((await new Response(child.stdout).text()).trim());
-await child.exited;
+console.log("exit", await exited.promise);

@@ -10,6 +10,7 @@
 //   $TESTAOT run <aot/tests>/passes/sink-allocations --jobs=1     one folder, serially, each path printed before it runs
 //   $TESTAOT native <filter> --part=2/4                           every fourth of the native tests whose name holds the filter, from the second on
 import { expect, test } from "bun:test";
+import { existsSync } from "fs";
 import { isCI, isWindows, tempDir } from "harness";
 import { join } from "path";
 import {
@@ -38,7 +39,8 @@ test.skipIf(isWindows || (!isCI && process.env.AOT_TOOLS !== "required"))("no to
 test.skipIf(!!whyEngineTestsSkipped || !isWindows).each(unexplainedOnWindows)(
   "what %s prints on Windows",
   async file => {
-    const { lines, stderr } = await run("run", join(engineTests!, file), "--show-output");
+    const folder = existsSync(join(engineTests!, file)) ? engineTests! : join(import.meta.dir, "engine-tests");
+    const { lines, stderr } = await run("run", join(folder, file), "--show-output");
     console.error(`UNEXPLAINED ON WINDOWS ${file}:\n${[...lines, stderr].join("\n")}`);
   },
 );

@@ -111,7 +111,8 @@ describe.skipIf(isASAN)("the link of a crash report", () => {
     using second = tempDir("aot-build-id", { "main.js": crashes("look") });
     const [one, two] = await Promise.all([crash(String(first)), crash(String(second))]);
     expect(one.link.split("aot" + one.id.slice(0, 16))).toHaveLength(2);
-    expect(one.link).not.toContain(one.id.slice(0, 17));
+    // The field after it can begin with the id's next character, so a few more are compared.
+    expect(one.link).not.toContain(one.id.slice(0, 20));
 
     const own = await decoded(one.app, String(first), one.link);
     expect(own.stdout).toMatch(/^ +at \S*main\.js:\d+:\d+$/m);

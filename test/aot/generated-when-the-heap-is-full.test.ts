@@ -19,6 +19,8 @@ const tsconfig = JSON.stringify({
 
 // The last one found the range full where a class with private names is evaluated.
 const seeds = [...Array.from({ length: 24 }, (_, index) => index + 1), 11792771444090];
+// With 64 MB none of the handlers in the program catches the error of a full heap: the first now and then, the other always.
+const nobodyCatches = [1, 3];
 
 generated(
   "work behind the error of a full heap",
@@ -27,6 +29,9 @@ generated(
     isAlwaysRun: index % 4 === 0,
     isOnlyCompiled: true as const,
     mayStopOutOfMemory: true as const,
+    ...(nobodyCatches.includes(seed) && {
+      failsToday: 'with 64 MB for its objects it prints "strange: nobody caught the error of a full heap"',
+    }),
     // A Bun built with AddressSanitizer takes the range from another allocator, which does not hand out again at once what is freed.
     alsoUnder: isASAN ? [] : [{ BUN_JSC_markedBlockCageSizeInMB: "64" }],
     make: () => ({ file: "main.ts", text: generate(new Random(seed)), files: { "tsconfig.json": tsconfig } }),

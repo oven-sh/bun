@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN } from "harness";
 import { join } from "path";
-import { inPrograms, inShare, inTenthOfAll, inThirdOfAll, listWrittenPrograms, mayHoldWhatIsWanted, slot, spawned, taken, told, unsupported, wanted } from "./run-programs";
+import { inPrograms, inShare, inTenthOfAll, inThirdOfAll, isJudgedByClock, listWrittenPrograms, mayHoldWhatIsWanted, slot, spawned, taken, told, unsupported, wanted } from "./run-programs";
 
 const root = join(import.meta.dir, "programs");
 
@@ -48,6 +48,8 @@ export function eagerTierUpSweep(part: number, parts: number) {
     [...all, ...listWrittenPrograms(/\.(ts|tsx|js)$/)]
       .filter(path => /[\\/]/.test(inPrograms(path)))
       .filter(mayHoldWhatIsWanted)
+      // A program that compares two times prints what its clock says, and eager tier-up compiles on the thread that is measured.
+      .filter(path => !isJudgedByClock(path))
       .filter(path => inShare("eager tier-up " + inPrograms(path), 10, true))
       .filter(path => Number((hash(path) >> 16n) % BigInt(parts)) === part - 1)
       .filter(path => !isASAN || inThirdOfAll("eager tier-up", path)),

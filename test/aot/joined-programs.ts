@@ -106,10 +106,32 @@ function byProgram(output: string): Map<string, string> {
   return printed;
 }
 
-async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>, seconds: number) {
+async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>, seconds: number, everyTenSeconds?: (stdoutSoFar: string) => void) {
   await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: seconds * 1000, killSignal: "SIGKILL" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  let stdout = "";
+  const decoder = new TextDecoder();
+  const readStdout = async () => {
+    for await (const chunk of proc.stdout) stdout += decoder.decode(chunk, { stream: true });
+  };
+  const timer = everyTenSeconds && setInterval(() => everyTenSeconds(stdout), 10_000);
+  const [, stderr, exitCode] = await Promise.all([readStdout(), proc.stderr.text(), proc.exited]);
+  clearInterval(timer);
   return { stdout, stderr, exitCode, signal: proc.signalCode };
+}
+
+const findLastStarted = (stdout: string) => [...stdout.matchAll(/^== (\d+) (\S+)$/gm)].at(-1) ?? [];
+
+/** CI's runner ends a test file that takes too long and does not say what was running, so a program that runs for a minute is named while it runs. */
+function nameSlowPrograms() {
+  let [current, since, isNamed] = ["", performance.now(), false];
+  return (stdoutSoFar: string) => {
+    const name = findLastStarted(stdoutSoFar)[2] ?? "before the first program";
+    if (name !== current) [current, since, isNamed] = [name, performance.now(), false];
+    else if (!isNamed && performance.now() - since >= 50_000) {
+      isNamed = true;
+      console.error(`SLOW: ${name} has been running for a minute`);
+    }
+  };
 }
 
 type Ran = { printed: Map<string, string>; stopped: string[] };
@@ -118,10 +140,10 @@ async function run(executable: string | string[], cwd: string, env: Record<strin
   let output = "";
   const stopped: string[] = [];
   for (let from = 0, starts = 0; starts < 12; starts++) {
-    const ran = await spawned(withoutCoreDump([executable].flat()), cwd, { ...bunEnv, ...env, FROM: String(from) }, seconds);
+    const ran = await spawned(withoutCoreDump([executable].flat()), cwd, { ...bunEnv, ...env, FROM: String(from) }, seconds, nameSlowPrograms());
     output += ran.stdout;
     if (/^== end$/m.test(ran.stdout)) break;
-    const [, index, name] = [...ran.stdout.matchAll(/^== (\d+) (\S+)$/gm)].at(-1) ?? [];
+    const [, index, name] = findLastStarted(ran.stdout);
     stopped.push(`${name ?? "before the first program"}: ${ran.signal ?? `exit code ${ran.exitCode}`}`);
     // No machine that runs one of these lanes can be asked afterwards.
     if (ran.signal) console.error(`DIED: ${name ?? "before the first program"}: ${ran.signal}\n${ran.stderr.slice(0, 4000)}`);

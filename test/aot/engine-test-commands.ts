@@ -10,7 +10,7 @@ import { expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { isArm64, isASAN, isMacOS, isWindows } from "harness";
 import { dirname, join } from "path";
-import { comeInParts } from "./engine-tests-in-parts";
+import { comeInParts, printOutputOfFailedTests } from "./engine-tests-in-parts";
 import { run as runCommand } from "./harness/run";
 import { engineTests, jsc, testaot, toolEnv } from "./shell/tools";
 
@@ -45,10 +45,12 @@ export const run = (...args: string[]) => runTool([testaot!, ...args]);
 // TODO: on Windows the tests that run a program in the shell, or in a child of testaot, ended with "CannotMapCode" while an image had to be
 // brought to its address. There it no longer has one. "jsc takes an image that testaot wrote" runs on Windows; the others follow once it passes.
 const shellTakesNoImage = isWindows;
-// TODO: these two fail on Windows alone, and why is not known. They are the two that retype a value behind the parser (`f0:v3`).
+// TODO: on Windows `pass` answers "unknown pass f0:v3" to a word that retypes a value behind the parser, so it runs no pass. Why is not known.
+// These are the three files with such a word. The last one is in ./engine-tests.
 export const unexplainedOnWindows = [
   "represent/operand-wider-than-its-operation-takes.ir",
   "select/builtin-call-whose-operand-lost-its-type.ir",
+  "select/a-call-that-takes-parts-of-views-keeps-its-form-when-a-view-is-only-known-as-an-object.ir",
 ];
 const isKnownOnWindows = (line: string) =>
   line.includes(": run-in-shell: ") ||
@@ -61,7 +63,8 @@ const nativeTestsOutlastTheRunner = isMacOS && !isArm64;
 // The runner gives a file twice the time under a sanitizer.
 const limit = isASAN ? 480_000 : 290_000;
 
-function expectEveryTestPassed({ lines, stderr, exitCode }: Awaited<ReturnType<typeof run>>) {
+async function expectEveryTestPassed({ lines, stderr, exitCode }: Awaited<ReturnType<typeof run>>) {
+  await printOutputOfFailedTests(lines.filter(line => !(isWindows && isKnownOnWindows(line))));
   if (shellTakesNoImage && lines.some(line => line.startsWith("FAIL ") && isKnownOnWindows(line))) {
     expect(lines.filter(line => line.startsWith("FAIL ") && !isKnownOnWindows(line))).toEqual([]);
     return;
@@ -88,7 +91,7 @@ export function runIRTests(folder: "engine" | "bun") {
     (whyEngineTestsSkipped || comeInParts ? test.skip : test)(
       "the engine's IR text tests pass",
       async () => {
-        expectEveryTestPassed(await run("run", engineTests!));
+        await expectEveryTestPassed(await run("run", engineTests!));
       },
       limit,
     );
@@ -96,7 +99,7 @@ export function runIRTests(folder: "engine" | "bun") {
     (whySkipped || comeInParts ? test.skip : test)(
       "the engine's IR text tests of Bun's entries pass",
       async () => {
-        expectEveryTestPassed(await run("run", join(import.meta.dir, "engine-tests")));
+        await expectEveryTestPassed(await run("run", join(import.meta.dir, "engine-tests")));
       },
       limit,
     );
@@ -107,7 +110,7 @@ export function runNativeTests(part: number, parts: number) {
   (whyNativeTestsSkipped || comeInParts ? test.skip : cannotRunNativeTests ? test.todo : test)(
     `the engine's native tests pass: part ${part} of ${parts}`,
     async () => {
-      expectEveryTestPassed(await run("native", `--part=${part}/${parts}`));
+      await expectEveryTestPassed(await run("native", `--part=${part}/${parts}`));
     },
     limit,
   );

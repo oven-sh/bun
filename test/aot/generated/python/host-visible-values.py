@@ -29,6 +29,7 @@ function shape(k: number): Shape { return k % 3 === 0 ? { kind: "circle", r: k +
 function named(k: number): Named { const n = new Named(); const p = new Point(k, 1); n.items.push(p, new Point3(1, 2, k)); n.byName.set("p", p); n.seen.add(p); if (k % 2) n.self = n; return n; }
 function noStack(s: string): string { return s.replace(/\n\s+at .*/g, "").replace(/\(?(file:\/\/)?\/[^\s)]*\)?/g, "<path>"); }
 function tell(f: () => unknown): string { try { const r = f(); return typeof r === "string" ? r : String(r); } catch (e) { return "threw " + (e as Error).constructor.name + ": " + noStack(String((e as Error).message)).slice(0, 120); } }
+function withoutSource(v: unknown): unknown { return typeof v === "function" ? "function " + v.name + " of " + v.length : Array.isArray(v) ? v.map(withoutSource) : v; }
 const out: string[] = [];
 '''
 
@@ -59,7 +60,9 @@ class Gen:
         if c < 0.20 and "Problem" not in v: return [f"console.log(\"row {i}\", {v});"]
         if c < 0.34: return [f"out.push(\"row {i} \" + tell(() => noStack(Bun.inspect({v}{r.choice(['', ', { depth: 0 }', ', { depth: 1 }', ', { depth: 5 }', ', { sorted: true }', ', { compact: true }', ', { colors: false }'])}))));"]
         if c < 0.50: return [f"out.push(\"row {i} \" + tell(() => noStack(inspect({v}{r.choice(['', ', { depth: 0 }', ', { depth: 1 }', ', { depth: null }', ', { sorted: true }', ', { showHidden: true }', ', { compact: false }', ', { compact: 1 }', ', { breakLength: 40 }', ', { getters: true }', ', { maxArrayLength: 2 }', ', { numericSeparator: true }'])}))));"]
-        if c < 0.58: return [f"out.push(\"row {i} \" + tell(() => noStack(format({r.choice([chr(34) + '%o' + chr(34), chr(34) + '%O' + chr(34), chr(34) + '%j' + chr(34), chr(34) + '%s' + chr(34), chr(34) + '%d %i %f' + chr(34), chr(34) + 'x' + chr(34)])}, {v}, {w}))));"]
+        if c < 0.58:
+            f = r.choice(['%o', '%O', '%j', '%s', '%d %i %f', 'x'])
+            return [f"out.push(\"row {i} \" + tell(() => noStack(format(\"{f}\", {f'withoutSource({v})' if f == '%s' else v}, {w}))));"]
         if c < 0.68: return [f"out.push(\"row {i} \" + tell(() => noStack(inspect(structuredClone({v}), {{ depth: 4 }}))));"]
         if c < 0.74: return [f"out.push(\"row {i} \" + tell(() => noStack(inspect(deserialize(serialize({v})), {{ depth: 4 }}))));"]
         if c < 0.84: return [f"out.push(\"row {i} \" + tell(() => {{ const a = {v}, b = {w}; return [Bun.deepEquals(a, b), Bun.deepEquals(a, b, true), isDeepStrictEqual(a, b), Bun.deepEquals(a, a), Bun.deepEquals(a, structuredClone(a)), Bun.deepEquals(a, JSON.parse(JSON.stringify(a))), Bun.deepEquals(a, JSON.parse(JSON.stringify(a)), true)].join(); }}));"]
@@ -67,7 +70,7 @@ class Gen:
         if c < 0.94: return [('out.push("row ' + str(i) + ' " + tell(() => JSON.stringify(' + str(v) + str(r.choice(['', ', null, 2', ', ["id", "v", "x", "inner"]'])) + ')));')]
         if c < 0.97: return [f"out.push(\"row {i} \" + await new Promise<string>(done => {{ const ch = new MessageChannel(); ch.port2.onmessage = (e: {{ data: unknown }}) => {{ ch.port1.close(); ch.port2.close(); done(noStack(inspect(e.data, {{ depth: 4 }}))); }}; try {{ ch.port1.postMessage({v}); }} catch (e) {{ ch.port1.close(); ch.port2.close(); done(\"threw \" + (e as Error).constructor.name); }} }}));"]
         if "Problem" in v or "Problem" in w: return []
-        return [f"console.log(\"row {i} %o | %s\", {v}, {w});"]
+        return [f"try {{ console.log(\"row {i} %o | %s\", {v}, withoutSource({w})); }} catch (e) {{ console.log(\"threw \" + (e as Error).constructor.name); }}"]
 
     def program(self):
         r = self.r

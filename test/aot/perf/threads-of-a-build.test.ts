@@ -3,6 +3,7 @@
 // A thread that joins a build touches megabytes of its own first. So the compiler's pool starts a thread only when a task waits
 // for one, and no more than four for what is part of every build (the libraries' declarations, Bun's own modules) plus one for
 // every 32 KB of the program's own source text, as that text is read. The bundler's pool has nothing to parse and starts none.
+// With --aot-threads=<n> the compiler's pool starts no more than n.
 //
 // The threads of a pool live until the process ends, so the names under /proc/<pid>/task, read again and again while the
 // build runs, are all the threads it started.
@@ -92,5 +93,11 @@ test.skipIf(!isLinux || availableParallelism() < 16)("a program of a megabyte is
 test.skipIf(!isLinux)("a chosen number of threads is kept", async () => {
   const threads = await threadsOfBuild({ "main.ts": tenLines }, ["--aot-threads=1"]);
   console.log(threads);
-  expect(threads["Bun Compile"]).toBeLessThanOrEqual(3);
+  expect(threads["Bun Compile"]).toBeLessThanOrEqual(1);
+});
+
+test.skipIf(!isLinux)("a program of a megabyte is built by no more threads than were chosen", async () => {
+  const threads = await threadsOfBuild(largeProgram(), ["--aot-threads=4"]);
+  console.log(threads);
+  expect(threads["Bun Compile"]).toBeLessThanOrEqual(4);
 });

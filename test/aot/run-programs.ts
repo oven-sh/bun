@@ -20,6 +20,7 @@
 //                                         "erased": "as plain Bun": there is an .expected.txt, and the build with erased types prints what plain Bun prints all the same
 //                                         "compiled": compare with `bun build --compile` without --aot, for features that
 //                                         only the bundler provides (--define, --feature, files imported as text)
+//                                         "seconds": the executable is killed, and the test fails, once it has run for that long. Default: the limit of spawned()
 //                                         "skipInShell": why shell/quick.py skips the program; not read here
 //                                         "skipWithASAN": why a Bun built with AddressSanitizer skips the program
 //                                         "runWithASAN": why a Bun built with AddressSanitizer runs the program even where the quick subset leaves it out
@@ -102,7 +103,7 @@ const updates = !!process.env.AOT_PROGRAMS_UPDATE;
 // CI has four cores for five minutes a file, and every program in every way would take it a day for each commit. So a run that is told nothing takes a share of the programs, and which
 // share follows from the revision of the Bun under test: each commit takes others, and in time all are taken. A test is named after its program, so AOT_PROGRAMS=<name> runs a red again.
 const seedOfShare = process.env.AOT_SHARE ?? Bun.revision;
-const isToldWhatToTake = seedOfShare === "all" || process.env.AOT_PROGRAMS !== undefined || updates;
+export const isToldWhatToTake = seedOfShare === "all" || process.env.AOT_PROGRAMS !== undefined || updates;
 // Most helpers have a rule of their own for the quick subset. One that has none passes `alsoOfQuickSubset`, or a debug or ASAN build would take everything.
 const takesEverything = (alsoOfQuickSubset: boolean) => isToldWhatToTake || (wanted === "quick" && !alsoOfQuickSubset);
 let hasSaidShare = false;
@@ -308,13 +309,13 @@ export async function slot<T>(work: () => Promise<T>): Promise<T> {
 // AOT_BUILD_FLAGS="--aot-validate": every build with --aot or by `bun compile` that a test file starts through spawned() takes these flags too: a whole file, such as servers/servers.test.ts, in a checking build.
 const moreBuildFlags = (process.env.AOT_BUILD_FLAGS ?? "").split(" ").filter(Boolean);
 
-export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
+export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>, limit?: number) {
   const behindTheFlag = cmd.indexOf("--aot") + 1 || (cmd[1] === "compile" && !cmd.includes("--library") ? 2 : 0);
   if (moreBuildFlags.length && behindTheFlag) cmd = cmd.toSpliced(behindTheFlag, 0, ...moreBuildFlags);
   // A child that hangs is killed here, and the signal fails the test. A test that merely timed out would leave it running.
   // A build that verifies the IR after every pass takes sixteen times as long as one that does not. --aot-validate checks each built-in module that a program holds: one that starts a Worker holds most of them, one that may load code from disk all.
   const isLong = cmd.includes("--aot-check=verify-each-pass") || cmd.includes("--aot-validate");
-  const timeout = isLong || moreBuildFlags.length || isASAN ? 240_000 : collectsAtEveryAllocation(env) ? 120_000 : 90_000;
+  const timeout = limit ?? (isLong || moreBuildFlags.length || isASAN ? 240_000 : collectsAtEveryAllocation(env) ? 120_000 : 90_000);
   const start = performance.now();
   await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout, killSignal: "SIGKILL" });
   // A build that is asked to end says what each of its threads is still compiling. One that is killed says nothing.
@@ -382,7 +383,7 @@ export function withoutDebugInformation(_folder?: string): string[] {
     return ["--compile-executable-path", copy];
   }
   for (const name of readdirSync(tmpdir())) {
-    if (name.startsWith(prefix) && Date.now() - statSync(join(tmpdir(), name)).mtimeMs > 24 * 60 * 60 * 1000) rmSync(join(tmpdir(), name), { force: true });
+    if (name.startsWith(prefix) && Date.now() - (statSync(join(tmpdir(), name), { throwIfNoEntry: false })?.mtimeMs ?? Infinity) > 24 * 60 * 60 * 1000) rmSync(join(tmpdir(), name), { force: true });
   }
   const unfinished = `${copy}.${process.pid}`;
   // LeakSanitizer's suppressions (test/leaksan.supp) name functions, so under it the copy keeps its table of symbols.
@@ -397,7 +398,7 @@ export function withoutDebugInformation(_folder?: string): string[] {
 
 let executables = 0;
 
-type ProgramOptions = { build?: string[]; entryPoints?: string[]; buildEnv?: Record<string, string>; env?: Record<string, string>; reference?: "compiled"; erased?: "as plain Bun" };
+type ProgramOptions = { build?: string[]; entryPoints?: string[]; buildEnv?: Record<string, string>; env?: Record<string, string>; reference?: "compiled"; erased?: "as plain Bun"; seconds?: number };
 // How the programs of one describe() are built and run.
 type Setup = { folder: string; carrier: string[]; buildFlags: string[]; runEnv: Record<string, string> | Record<string, string>[]; erasesTypes: boolean; stubCopies?: number };
 export type RunResult = ReturnType<typeof told>;
@@ -413,6 +414,8 @@ export type CompiledProgram = {
   buildEnvironment?: Record<string, string>;
   /** Where the executable is written. Default: `cwd`. */
   outputFolder?: string;
+  /** How long the executable may run. Default: the limit of spawned(). */
+  secondsToRun?: number;
   /** What the build must have counted. */
   statistics?: StatisticBound[];
   /** The build must have laid out more than one copy of the shared stubs. */
@@ -479,7 +482,7 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
       // A list of environments goes from mild to harsh. A program that has taken a minute in the mild ones is not run in the harsh ones.
       if (collectsAtEveryAllocation(environment) && spentCollecting > 60_000) continue;
       const start = performance.now();
-      const ran = await spawned(withoutCoreDump([build.executable]), program.cwd, { ...bunEnv, ...environment, BUN_AOT_VERBOSE: "1" });
+      const ran = await spawned(withoutCoreDump([build.executable]), program.cwd, { ...bunEnv, ...environment, BUN_AOT_VERBOSE: "1" }, program.secondsToRun && program.secondsToRun * 1000);
       if (collectsAtEveryAllocation(environment)) spentCollecting += performance.now() - start;
       // How long a program takes where every allocation collects says nothing about it, nor where a collection is asked for every millisecond, nor where the executable checks
       // while it runs what the compiler took for proven. One that is still at work when its time is up has shown no fault, and has no output to compare.
@@ -551,7 +554,7 @@ const readMap = (mapFile: string) => readFileSync(mapFile, "utf8").split("\n").m
 /**
  * Lays the code of the program out as if calls reached only far enough to need about `copies` copies of the shared stubs, as in a very large program.
  * How far that is hangs on the program: which stubs it has and how much code. So it is built once as it is, for its map, and the flag is computed from that.
- * A program of one function never has two copies.
+ * A small program may do with one copy: see `oneCopyMayDo`.
  */
 async function withStubCopies(program: CompiledProgram, copies: number): Promise<CompiledProgram> {
   const mapFile = nextExecutablePath(program.outputFolder ?? program.cwd, "map");
@@ -560,7 +563,8 @@ async function withStubCopies(program: CompiledProgram, copies: number): Promise
     built(build);
     const lines = readMap(mapFile);
     const functionsEnd = Number(lines.find(fields => fields[0] === "R")?.[1]);
-    const functionOffsets = lines.filter(fields => fields[0] === "F").map(fields => Number(fields[2]));
+    const functions = lines.filter(fields => fields[0] === "F").map(fields => ({ offset: Number(fields[2]), size: Number(fields[3]) })).sort((a, b) => a.offset - b.offset);
+    const functionOffsets = functions.map(({ offset }) => offset);
     // The stubs come first, then the functions.
     const functionsStart = functionOffsets.reduce((least, offset) => Math.min(least, offset), Infinity);
     const stubsSize = Number(/^SharedCodeBytesEmitted (\d+)$/m.exec(build.stderr)?.[1]);
@@ -568,7 +572,10 @@ async function withStubCopies(program: CompiledProgram, copies: number): Promise
     expect(functionsEnd).toBeGreaterThan(functionsStart);
     // A copy serves the functions on both of its sides from which its far end is within reach.
     const reach = stubsSize + Math.ceil((functionsEnd - functionsStart) / (2 * copies));
-    return { ...program, buildFlags: [...program.buildFlags, `--aot-limit=direct-call-reach:${reach}`], stubCopiesExpected: functionOffsets.length >= 2 };
+    // So one copy does where the functions can be cut in two stretches, one for each side, and each is short enough or is a single function, which cannot be cut however long it is.
+    const isServedFromOneSide = (stretch: typeof functions) => stretch.length <= 1 || stretch.at(-1)!.offset + stretch.at(-1)!.size - stretch[0].offset <= reach - stubsSize;
+    const oneCopyMayDo = functions.some((_, index) => isServedFromOneSide(functions.slice(0, index)) && isServedFromOneSide(functions.slice(index)));
+    return { ...program, buildFlags: [...program.buildFlags, `--aot-limit=direct-call-reach:${reach}`], stubCopiesExpected: !oneCopyMayDo };
   } finally {
     rmSync(build.executable, { force: true });
     rmSync(mapFile, { force: true });
@@ -588,6 +595,7 @@ async function run(path: string, beside: string, setup: Setup) {
     runEnvironments: [setup.runEnv].flat().map(environment => ({ ...options.env, ...environment })),
     buildEnvironment: options.buildEnv,
     outputFolder: setup.folder,
+    secondsToRun: options.seconds,
     statistics,
   });
 
@@ -665,7 +673,7 @@ export function programs(topic: string, part = 1, parts = 1) {
 }
 
 /** What compares times says so where it leaves the sanitizer out: "skipWithASAN": "a clock". */
-const isJudgedByClock = (path: string) => existsSync(keptBeside(path) + ".json") && /\bclock\b|\bcompares two times\b/.test(JSON.parse(readFileSync(keptBeside(path) + ".json", "utf8")).skipWithASAN ?? "");
+export const isJudgedByClock = (path: string) => existsSync(keptBeside(path) + ".json") && /\bclock\b|\bcompares two times\b/.test(JSON.parse(readFileSync(keptBeside(path) + ".json", "utf8")).skipWithASAN ?? "");
 
 /**
  * The programs that every run takes, whatever its share and whatever the build of Bun: all of ./programs/counterexamples, and those that ./programs-in-every-run.txt lists, one a line,

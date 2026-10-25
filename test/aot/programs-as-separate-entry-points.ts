@@ -27,6 +27,7 @@ import {
   hasTypes,
   inPrograms,
   inShare,
+  isJudgedByClock,
   mayHoldWhatIsWanted,
   slot,
   spawned,
@@ -256,6 +257,14 @@ export function programsAsSeparateEntryPoints(part = 1, parts = 1) {
       return async (path: string) => (await startOf.get(path)!(), results.get(path)!);
     }
     const plainIn = inBatches(chosen, (batch, results) => runInWorkers([bunExe(), "run", join(import.meta.dir, "programs", runner)], batch, path => path, results));
+    // What compares two times runs in a process of its own: the programs beside it in a batch would take its processor.
+    const alone = async (cmd: string[], path: string, nameFor: (path: string) => string) => {
+      const results = new Map<string, Ran>();
+      await runInWorkers(cmd, [path], nameFor, results);
+      return results.get(path)!;
+    };
+    const plainAlone = (path: string) => alone([bunExe(), "run", join(import.meta.dir, "programs", runner)], path, path => path);
+    const compiledAlone = (way: (typeof ways)[number], path: string) => alone([way.executableOf.get(path)!], path, program => fromRunner(rootInBuild(program), program));
     const compiledIn = ways.map((way, index) => {
       let ask: ((path: string) => Promise<Ran>) | undefined;
       return async (path: string) => {
@@ -316,12 +325,13 @@ export function programsAsSeparateEntryPoints(part = 1, parts = 1) {
         nameOf(path),
         async () => {
           const options = optionsOf(path);
+          const comparesTimes = isJudgedByClock(path);
           let reference: RunResult | undefined;
           for (const [index, way] of ways.entries()) {
             if (index === 1 && !typed.has(path)) continue;
             const stored = index === 1 && options.erased ? "" : besideOf(path) + ".expected.txt";
             if (!existsSync(stored) && !reference) {
-              const plain = await plainIn(path);
+              const plain = await (comparesTimes ? plainAlone(path) : plainIn(path));
               const hasFailed = plain.signal !== null || plain.exitCode !== 0;
               expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: hasFailed ? plain.stderr : "" }).toEqual({ signal: null, exitCode: 0, stderr: "" });
               reference = told(plain);
@@ -331,13 +341,23 @@ export function programsAsSeparateEntryPoints(part = 1, parts = 1) {
             let happened = "it did not start";
             try {
               expect({ way: way.name, refused: way.refused.get(path) }).toEqual({ way: way.name, refused: undefined });
-              const ran = await compiledIn[index](path);
-              const result = told({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\r?\n/gm, "") });
-              happened = ran.signal ?? firstDifference(result, existsSync(stored) ? readFileSync(stored, "utf8") : reference!);
-              expect({ way: way.name, signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ way: way.name, signal: null, stderr: "" });
-              // The executable really ran compiled code and did not fall back to the embedded source.
-              expect(ran.stderr).toContain("[aot] module: ");
-              judge(result);
+              // Other work on the machine moves a ratio of two times for a while, so what compares times is asked up to four times. Code that is slower is slower each time.
+              for (let attemptsLeft = comparesTimes ? 3 : 0; ; attemptsLeft--) {
+                const ran = await (comparesTimes ? compiledAlone(way, path) : compiledIn[index](path));
+                const result = told({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\r?\n/gm, "") });
+                happened = ran.signal ?? firstDifference(result, existsSync(stored) ? readFileSync(stored, "utf8") : reference!);
+                expect({ way: way.name, signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ way: way.name, signal: null, stderr: "" });
+                // The executable really ran compiled code and did not fall back to the embedded source.
+                expect(ran.stderr).toContain("[aot] module: ");
+                try {
+                  judge(result);
+                  break;
+                } catch (error) {
+                  if (attemptsLeft === 0) throw error;
+                  console.error(`ASKED AGAIN: ${nameOf(path)}, ${way.name}: ${happened}`);
+                  if (!existsSync(stored)) reference = told(await plainAlone(path));
+                }
+              }
             } catch (error) {
               says(path, way, way.refused.get(path) ?? happened);
               await slot(() => explain(path, way, judge));

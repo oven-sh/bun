@@ -13,9 +13,24 @@ import { engineTests, testaot, toolEnv } from "./shell/tools";
 /** Whether the engine's tests come in parts with this Bun. */
 export const comeInParts = isASAN || isDebug;
 
+/** Prints the first 20 lines of what each RUN line of a failed IR text test printed. A FAIL line names only the pattern that matched nothing. */
+export async function printOutputOfFailedTests(lines: string[]) {
+  const files = new Set(lines.flatMap(line => line.match(/^FAIL (.+?\.ir):\d+: /)?.[1] ?? []));
+  for (const file of [...files].slice(0, 8)) {
+    const { stdout, stderr } = await run([testaot!, "run", file, "--show-output"], undefined, toolEnv);
+    let linesLeft = 0;
+    const shown = stdout.split(/\r?\n/).filter(line => {
+      if (line.startsWith("OUTPUT ")) linesLeft = 21;
+      return linesLeft-- > 0;
+    });
+    console.error([...shown, stderr].join("\n"));
+  }
+}
+
 async function expectEveryTestPasses(...args: string[]) {
   const { stdout, stderr, exitCode } = await run([testaot!, ...args], undefined, toolEnv);
   const lines = stdout.split(/\r?\n/).filter(line => line !== "");
+  await printOutputOfFailedTests(lines);
   // In front of its FAIL line a native test that crashed has said which check failed, and where.
   const hasFailed = lines.some(line => line.startsWith("FAIL "));
   expect(hasFailed ? lines.filter(line => !/^(PASS|TODO|SKIP|  still fails:) /.test(line)).slice(-60) : []).toEqual([]);

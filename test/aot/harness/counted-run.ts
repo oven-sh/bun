@@ -326,7 +326,11 @@ async function serveRounds(executable: string, cwd: string, exchanges: Exchange[
   if (!origin) throw new Error(`${executable} exited with code ${await proc.exited} before listening:\n${await errors}`);
   for (let round = 0; round < rounds; round++) {
     for (const { method, path, body, expected } of exchanges) {
-      const response = await fetch(origin + path, { redirect: "manual", method, body, headers: body === undefined ? {} : { "Content-Type": "application/json" } });
+      const response = await fetch(origin + path, { redirect: "manual", method, body, headers: body === undefined ? {} : { "Content-Type": "application/json" } }).catch(async error => {
+        const ended = await Promise.race([proc.exited, Bun.sleep(5000)]);
+        proc.kill("SIGKILL");
+        throw new Error(`${method} ${path} in round ${round}: ${error.code ?? error.message}; the server ${ended === undefined ? "still ran" : `exited with code ${ended}, signal ${proc.signalCode}`} and printed:\n${await errors}`);
+      });
       const answer = { status: response.status, type: response.headers.get("Content-Type")?.split(";")[0]!.trim().toLowerCase(), body: await response.text() };
       if (!Bun.deepEquals(answer, expected)) expect({ round, method, path, ...answer }).toEqual({ round, method, path, ...expected });
     }

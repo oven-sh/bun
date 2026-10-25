@@ -27,6 +27,8 @@ const plainBunVaries: Record<string, string> = {
     "each line has a bound of 10 s: plain Bun is under it on a fast machine, and a debug or sanitizer build on a busy one may not be",
   "modules/commonjs-requires-es-modules-of-the-graph-being-linked":
     "plain Bun prints the lines of the stored output in one of several orders from run to run: which CommonJS file begins first is not one answer there; the stored order is what the executable always prints",
+  "modules/imported-commonjs-files-run-in-the-order-they-are-loaded":
+    "plain Bun begins the four CommonJS files in the order in which their texts arrive, which is not one order from run to run; the stored output is the usual one, and what the executable always prints",
   "static-modules/cycles/the-second-of-two-commonjs-imports-requires-the-importer":
     "plain Bun begins the second file before the first in about one run of ten on a busy machine; the stored output is what it prints in the other nine, and what the executable always prints",
   "static-modules/earlier-cases/names-imported-by-es-modules-against-later-stores":

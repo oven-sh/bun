@@ -33,8 +33,9 @@ if (Bun.isMainThread) {
   const client = await start("client:" + bun.port);
   console.log("a Worker as the client:", client.port);
 
+  const allWait = new Promise<void>(resolve => (bun.worker.onmessage = () => resolve()));
   const slow = Array.from({ length: 10 }, () => fetch(`http://127.0.0.1:${bun.port}/slow`).then(() => "answered", () => "failed"));
-  await new Promise(resolve => setTimeout(resolve, 30));
+  await allWait;
   const closed = new Promise<void>(resolve => bun.worker.addEventListener("close", () => resolve()));
   bun.worker.terminate();
   await closed;
@@ -45,12 +46,17 @@ if (Bun.isMainThread) {
   const kind = process.env.KIND!;
   const counter = new Counter();
   if (kind === "bun") {
+    let slowRequests = 0;
     const server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
       async fetch(request) {
         const path = new URL(request.url).pathname;
-        if (path === "/slow") await new Promise(() => {});
+        if (path === "/slow") {
+          // The message leaves once no handler is running.
+          if (++slowRequests === 10) setTimeout(() => postMessage("all wait"), 0);
+          await new Promise(() => {});
+        }
         return Response.json({ ...counter.hit(path), body: await request.text() });
       },
     });

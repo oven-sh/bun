@@ -125,8 +125,10 @@ console.log(run(250000));
 function listOf(different) { const names = []; for (let i = 0; i < different; i++) names.push("w" + i.toString(36)); const list = []; for (let i = 0; i < 4096; i++) list.push(names[(i * 7 + (i >> 3)) % different]); return list; }
 const few = listOf(4), many = listOf(64);
 function count(words, turns) { const counts = {}; for (let t = 0; t < turns; t++) { const word = words[t & 4095]; counts[word] = (counts[word] ?? 0) + 1; } return counts; }
-function fastestOf(words) { let fastest = Infinity; for (let turn = 0; turn < 7; turn++) { const began = performance.now(); count(words, 2000000); fastest = Math.min(fastest, performance.now() - began); } return fastest; }
-const withFew = fastestOf(few), withMany = fastestOf(many);
+function timeOf(words) { const began = performance.now(); count(words, 2000000); return performance.now() - began; }
+// Other work on the machine only adds time. The two lists take turns, seven at least, until the bound holds. Code that is slower never gets there.
+let withFew = Infinity, withMany = Infinity;
+for (let turn = 0; turn < 100 && (turn < 7 || withFew >= withMany * 5 / 4); turn++) { withFew = Math.min(withFew, timeOf(few)); withMany = Math.min(withMany, timeOf(many)); }
 console.log(Object.keys(count(few, 4096)).length, Object.keys(count(many, 4096)).length, withFew < withMany * 5 / 4 ? "not slower" : "slower");
 //// words-kept-from-one-split-are-counted-not-twice-as-slowly-as-the-same-words-written-out.js
 // A text of 4,096 words, four different ones, is split once and the pieces are kept. They are counted by key again and again. The same loop runs over a list that holds the four words as written.
@@ -134,6 +136,8 @@ const written = ["alpha", "beta", "gamma", "delta"];
 const list = []; for (let i = 0; i < 4096; i++) list.push(written[(i * 7 + (i >> 3)) & 3]);
 const pieces = list.join(" ").split(" ");
 function count(words, turns) { const counts = {}; for (let t = 0; t < turns; t++) { const word = words[t & 4095]; counts[word] = (counts[word] ?? 0) + 1; } return counts; }
-function fastestOf(words) { let fastest = Infinity; for (let turn = 0; turn < 7; turn++) { const began = performance.now(); count(words, 2000000); fastest = Math.min(fastest, performance.now() - began); } return fastest; }
-const byWritten = fastestOf(list), byPieces = fastestOf(pieces);
+function timeOf(words) { const began = performance.now(); count(words, 2000000); return performance.now() - began; }
+// Other work on the machine only adds time. The two lists take turns, seven at least, until the bound holds. Code that is slower never gets there.
+let byWritten = Infinity, byPieces = Infinity;
+for (let turn = 0; turn < 100 && (turn < 7 || byPieces >= byWritten * 2); turn++) { byWritten = Math.min(byWritten, timeOf(list)); byPieces = Math.min(byPieces, timeOf(pieces)); }
 console.log(JSON.stringify(count(list, 4096)) === JSON.stringify(count(pieces, 4096)), byPieces < byWritten * 2 ? "under twice" : "over twice");

@@ -13,7 +13,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { built, inShare, inShareOfList, inShareOfTheRest, wanted as programsWanted, slot, takesWhatIsFixed, spawned, unsupported, withoutCoreDump, withoutCrashReport } from "../run-programs";
+import { built, inShare, inShareOfList, inShareOfTheRest, isToldWhatToTake, wanted as programsWanted, slot, takesWhatIsFixed, spawned, unsupported, withoutCoreDump, withoutCrashReport } from "../run-programs";
 
 export type Generated = {
   name: string;
@@ -82,6 +82,13 @@ export function generated(title: string, programs: Generated[]) {
     // A debug or ASAN build of Bun is many times slower.
     .filter((program, index) => wanted || programsWanted !== "quick" || !isMeantForEveryRun(program) || inShareOfList(`${title} ${program.name}`, index))
     .filter(program => wanted || (program.wasOnceWrong && takesWhatIsFixed) || !isMeantForEveryRun(program) || inShare(`${title} ${program.name}`, 4));
+  // The runner of CI ends a file after five minutes, and a machine that runs several jobs at once builds these programs at a quarter of its usual rate. What a run draws is a share
+  // that goes by the commit, so a file that has run for 200 seconds starts no more of it and says so. What a run is told to take is run whole, and so is what once went wrong.
+  const mayBeLeftOut = (program: Generated) => !wanted && !isToldWhatToTake && !(program.wasOnceWrong && takesWhatIsFixed);
+  let leftOut = 0;
+  afterAll(() => {
+    if (leftOut) console.error(`SHARE: ${leftOut} of the ${chosen.length} programs that this run drew were not run: the file had run for 200 seconds`);
+  });
 
   describe.concurrent(`compile/aot/generated/${title}`, () => {
     if (unsupported) return void test.skip(unsupported, () => {});
@@ -93,6 +100,7 @@ export function generated(title: string, programs: Generated[]) {
         program.name,
         () =>
           slot(async () => {
+            if (mayBeLeftOut(program) && performance.now() > 200_000) return void leftOut++;
             const folder = join(root, title.replaceAll(" ", "-"), String(index));
             const { file, text, files } = program.make();
             for (const [name, content] of Object.entries({ ...files, [file]: text })) {

@@ -4793,10 +4793,22 @@ impl<'p, 's> Checker<'p, 's> {
             Some(param) if param.ty == TypeId::UNRESOLVED && !param.rest => {
                 cold_path();
                 self.get_type_of_parameter(param);
+                if let Some((file, p)) = param.declaration
+                    && Self::is_typed_by_default(&self.hir(file)[p])
+                {
+                    self.type_of_param(file, p);
+                }
                 Some(self.type_of_parameter_asked_for(sig, index))
             }
             _ => self.param_type_at(params, index),
         }
+    }
+
+    /// True if the type of `parameter` comes from checking its default.
+    fn is_typed_by_default(parameter: &Param) -> bool {
+        parameter.ty.is_none()
+            && parameter.default.is_some()
+            && !parameter.flags.contains(Flags::REST)
     }
 
     /// `getTypeOfSymbol(sig.parameters[index])`
@@ -5093,7 +5105,9 @@ impl<'p, 's> Checker<'p, 's> {
             let parameter = match cached {
                 Some(cached) => cached[i],
                 None => {
-                    let it = self.declared_parameter(file, func, i, actual, is_untyped_in_js);
+                    let is_asked = read.asks_for(i);
+                    let it =
+                        self.declared_parameter(file, func, i, actual, is_untyped_in_js, is_asked);
                     can_cache = can_cache && self.is_declared_parameter_settled(&it);
                     declared.push(it);
                     it
@@ -5140,7 +5154,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns the parameter of `func` at `i` with its declared type. For `actual` and `is_untyped_in_js`, see
-    /// `sig_params_of_declaration`.
+    /// `sig_params_of_declaration`. Unless `is_asked`, the type that a default gives is `UNRESOLVED` if it isn't known.
     fn declared_parameter(
         &mut self,
         file: FileId,
@@ -5148,6 +5162,7 @@ impl<'p, 's> Checker<'p, 's> {
         i: usize,
         actual: Option<usize>,
         is_untyped_in_js: bool,
+        is_asked: bool,
     ) -> SigParam {
         let hir = self.hir(file);
         let node = hir[func].params.at(i);
@@ -5162,10 +5177,18 @@ impl<'p, 's> Checker<'p, 's> {
         // TypeScript resolves a parameter's type when there's an argument to check against it. The
         // one caller of an immediately invoked function expression has `actual` arguments.
         let has_argument = actual.is_some_and(|actual| i < actual);
+        let name_of_declaration = (file, value_declaration.pat);
+        let is_left_out = !is_asked
+            && actual.is_none()
+            && Self::is_typed_by_default(value_declaration)
+            && (self.p.pat_types.get(&self.task, &name_of_declaration)).is_none();
         if !has_argument {
             self.eager.push(self.stack.len());
         }
-        let declared = self.type_of_param(file, p);
+        let declared = match is_left_out {
+            true => TypeId::UNRESOLVED,
+            false => self.type_of_param(file, p),
+        };
         if !has_argument {
             self.eager.pop();
         }
@@ -5177,7 +5200,9 @@ impl<'p, 's> Checker<'p, 's> {
         let optional =
             param.flags.contains(Flags::OPTIONAL) || param.default.is_some() || is_omitted;
         // `getTypeOfParameter`: for callers, an optional parameter also accepts `undefined`.
-        let declared = if value_declaration.flags.contains(Flags::OPTIONAL)
+        let declared = if is_left_out {
+            declared
+        } else if value_declaration.flags.contains(Flags::OPTIONAL)
             || value_declaration.default.is_some()
             || is_omitted
         {

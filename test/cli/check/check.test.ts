@@ -9009,6 +9009,42 @@ function f() { return merge(merge(f(), [1]), f()); }
       expect(exitCode).toBe(1);
     });
 
+    // tsc asks for the type of a parameter when there's an argument to compare with it. `use()` has none, so the default
+    // of `f` isn't checked there, and `createStore(..)` isn't resolved a second time inside its own resolution.
+    test("a call without an argument for a parameter doesn't check the default of that parameter", async () => {
+      using dir = project({
+        "a.ts": `declare function createStore<S, A extends Record<string, (s: S) => Partial<S>>>(init: S, actions: A): { get: () => S; actions: A };
+function use(f = st.get()) {}
+const st = createStore({ n: 0 }, { login: s => ({ user: 1 }), more: s => ({ x: use() }) });
+let l = st.actions; l = 1;
+`,
+        "b.ts": `declare function arr<T>(...x: T[]): T[];
+declare function str<T extends string>(x: T): T[];
+declare function over<T>(x: T[]): T;
+const c2 = () => str(str(c1()));
+function c1(a = arr(over(c2()), 1)) {}
+`,
+        "c.ts": `declare function tap<T>(x: T, f?: (x: T) => void): T;
+function c0(a = tap(c0(), x => { const p: never = x; })) { return a; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(3,48): error TS2559: Type '{ user: number; }' has no properties in common with type 'Partial<{ n: number; }>'.",
+          "a.ts(3,74): error TS2559: Type '{ x: void; }' has no properties in common with type 'Partial<{ n: number; }>'.",
+          "a.ts(4,21): error TS2322: Type 'number' is not assignable to type 'Record<string, (s: { n: number; }) => Partial<{ n: number; }>>'.",
+          "b.ts(4,22): error TS2345: Argument of type 'string[]' is not assignable to parameter of type 'string'.",
+          "b.ts(4,26): error TS2345: Argument of type 'void' is not assignable to parameter of type 'string'.",
+          "b.ts(5,33): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.",
+          "c.ts(2,10): error TS7023: 'c0' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "c.ts(2,13): error TS7022: 'a' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "c.ts(2,40): error TS2322: Type 'any' is not assignable to type 'never'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // m3.ts is checked first. The declaration of `g` prints the constraint of `T`, which is the first to ask for the
     // type of `b`. The errors of a missing property and of a type that isn't iterable are deferred to the end of a
     // file's check, and that of m3.ts is over by then.

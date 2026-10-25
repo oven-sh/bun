@@ -3621,7 +3621,10 @@ impl<'f, 's> Binder<'f, 's> {
                 self.conditional_default(param.default, Parent::ParamDefault(p));
             }
             let flags = SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::PARAMETER;
-            self.pat(param.pat, PatParent::Param(p), flags);
+            // A parameter of a Flow function type needs no name: `(A) => B`.
+            if param.pat.is_some() {
+                self.pat(param.pat, PatParent::Param(p), flags);
+            }
             // `bindParameter`: "If this is a property-parameter, then also declare the property symbol into the containing class."
             if param.flags.contains(Flags::PARAMETER_PROPERTY)
                 && f.kind == FnKind::Constructor

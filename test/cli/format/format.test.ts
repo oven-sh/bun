@@ -8619,6 +8619,21 @@ try {
       });
     });
 
+    test("prettier-plugin-organize-imports: a Flow function type whose parameter has no name", async () => {
+      const { files, exitCode } = await format(
+        {
+          ".prettierrc": `{ "plugins": ["prettier-plugin-organize-imports"] }`,
+          "a.js": `// @flow\nimport b from "b";\nimport a from "a";\nexport type T = (A) => B;\nexport default [a, b];\n`,
+        },
+        [],
+        { reads: ["a.js"] },
+      );
+      expect(files).toEqual({
+        "a.js": `// @flow\nimport a from "a";\nimport b from "b";\nexport type T = (A) => B;\nexport default [a, b];\n`,
+      });
+      expect(exitCode).toBe(0);
+    });
+
     // TypeScript 6.0.3 follows them all. For two that extend each other, it reports the cycle and uses the options of
     // both.
     test("prettier-plugin-organize-imports: follows a chain of tsconfig.json `extends` of any length", async () => {

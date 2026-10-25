@@ -1492,3 +1492,91 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
 });
+
+// A native getter that throws for a receiver of the wrong class must not put the receiver into its message. Rendering
+// the receiver reads the getters of the receiver again, and a class with two such getters never returns from one
+// read. `vm.Script` did that for any receiver, and `util.MIMEType` for a receiver with no `constructor`.
+// The sweep visits the prototype of each constructor that a global, `Bun` or a builtin module exports.
+it("Bun.inspect() and a read of each key return for the prototype of every exported constructor", async () => {
+  const code = /*js*/ `
+    const { writeSync } = require("node:fs");
+    // A getter of a stream reader returns a rejected promise for a receiver that is not a reader.
+    process.on("unhandledRejection", () => {});
+
+    const seen = new Set();
+    let visited = 0;
+    function visit(label, constructor) {
+      if (typeof constructor !== "function") return;
+      let prototype;
+      try {
+        prototype = constructor.prototype;
+      } catch {
+        return;
+      }
+      if (prototype === null || typeof prototype !== "object" || seen.has(prototype)) return;
+      seen.add(prototype);
+      const keys = Reflect.ownKeys(prototype);
+      if (!keys.some(key => Object.getOwnPropertyDescriptor(prototype, key).get)) return;
+      // Written first and synchronously, so that the last line names a receiver that never returns.
+      writeSync(1, label + "\\n");
+      for (const receiver of [prototype, Object.create(prototype, { constructor: { value: null } })]) {
+        try {
+          Bun.inspect(receiver);
+        } catch {}
+        for (const key of keys) {
+          try {
+            receiver[key];
+          } catch {}
+        }
+      }
+      visited++;
+    }
+    function visitEach(owner, object) {
+      for (const key of Reflect.ownKeys(object)) {
+        let value;
+        try {
+          value = object[key];
+        } catch {
+          continue;
+        }
+        visit(owner + "." + String(key), value);
+      }
+    }
+
+    visitEach("globalThis", globalThis);
+    visitEach("Bun", Bun);
+    for (const name of require("node:module").builtinModules) {
+      let exports;
+      try {
+        exports = require(name);
+      } catch {
+        continue;
+      }
+      visit(name, exports);
+      if (typeof exports === "function" || (typeof exports === "object" && exports !== null)) visitEach(name, exports);
+    }
+    writeSync(1, "visited " + visited + "\\n");
+  `;
+  // The child is killed before the test times out, so that a child that never returns is not left running.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    // Some of the keys are deprecated, and a read of one prints a warning.
+    env: { ...bunEnv, NODE_NO_WARNINGS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = stdout.trim().split(/\r?\n/);
+  const prototypes = lines.slice(0, -1);
+  expect({ last: lines.at(-1), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+    last: `visited ${prototypes.length}`,
+    stderr: "",
+    signalCode: null,
+    exitCode: 0,
+  });
+  // The sweep is not empty, and it reaches the classes of the node modules.
+  expect(prototypes.length).toBeGreaterThan(100);
+  expect(prototypes.filter(label => label.endsWith(".MIMEType"))).toHaveLength(1);
+}, 70_000);

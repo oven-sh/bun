@@ -85,6 +85,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 route_queue: Default::default(),
                 reload_event: None,
                 requests: deferred_request::List::default(),
+                follow_up: EntryPointList::empty(),
+                follow_up_had_hmr_event: false,
             }
         );
         w!(inspector_server_id, DebuggerId::init(0)); // TODO paper clover:

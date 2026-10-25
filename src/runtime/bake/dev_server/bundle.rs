@@ -92,10 +92,12 @@ impl DevServer {
 
         let _g = self.graph_safety_lock.guard();
 
+        // Each server-side graph has its own record of the file.
+        let key = incremental_graph::ServerSideKey::new(path, side == bake::Graph::Ssr);
         macro_rules! check {
             ($g:expr, |$file:ident| $bundled_for_side:expr) => {{
                 let g = $g;
-                let index = g.bundled_files.get_index(path)?;
+                let index = g.bundled_files.get_index(key.get())?;
                 if g.stale_files.is_set(index) {
                     return None;
                 }
@@ -112,15 +114,7 @@ impl DevServer {
         }
         match side {
             bake::Graph::Client => check!(&self.client_graph, |_file| true),
-            // The server and SSR graphs share one record per file. Only a JS record tracks which graph bundled it.
-            bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph, |file| {
-                file.file_kind() != FileKind::Js
-                    || if side == bake::Graph::Ssr {
-                        file.is_ssr
-                    } else {
-                        file.is_rsc
-                    }
-            }),
+            bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph, |_file| true),
         }
     }
 
@@ -503,8 +497,11 @@ impl DevServer {
         self.emit_visualizer_message_if_needed();
 
         // If there were pending requests, begin another bundle.
-        if self.next_bundle.reload_event.is_some() || !self.next_bundle.requests.first.is_null() {
-            let mut entry_points = EntryPointList::empty();
+        if self.next_bundle.reload_event.is_some()
+            || !self.next_bundle.requests.first.is_null()
+            || !self.next_bundle.follow_up.set.is_empty()
+        {
+            let mut entry_points = ::core::mem::take(&mut self.next_bundle.follow_up);
 
             let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {
                 'brk: {

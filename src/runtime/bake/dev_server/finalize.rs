@@ -14,8 +14,6 @@ pub(crate) struct HotUpdateContext<'a> {
     /// Used to reduce calls to the IncrementalGraph hash table.
     /// First half is for client graph, second half for server.
     pub resolved_index_cache: &'a mut [CachedFileIndex],
-    /// Used to tell if the server should replace or append import records.
-    pub server_seen_bit_set: DynamicBitSet,
     pub gts: &'a mut GraphTraceState,
 }
 
@@ -101,7 +99,12 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
             &[MessageId::TestingWatchSynchronization.char(), 0],
             Opcode::BINARY,
         );
+    } else if !dev.next_bundle.follow_up.set.is_empty() {
+        // The follow-up bundle finishes this build. Its cleanup sends the signal.
+        dev.next_bundle.follow_up_had_hmr_event |= had_sent_hmr_event;
     } else {
+        let had_sent_hmr_event =
+            had_sent_hmr_event || ::core::mem::take(&mut dev.next_bundle.follow_up_had_hmr_event);
         dev.publish(
             HmrTopic::TestingWatchSynchronization,
             &[
@@ -245,26 +248,22 @@ pub(super) fn finalize_bundle(
     let targets = bv2.graph.ast.items_target();
     let scbs = bv2.graph.server_component_boundaries.slice();
 
+    // The SSR copy of a boundary has no bit: the SSR graph holds it as a plain module.
     let mut scb_bitset = DynamicBitSet::init_empty(input_file_sources.len())?;
-    for ((source_index, ssr_index), ref_index) in scbs
+    for (source_index, ref_index) in scbs
         .list
         .items_source_index()
         .iter()
-        .zip(scbs.list.items_ssr_source_index())
         .zip(scbs.list.items_reference_source_index())
     {
         scb_bitset.set(*source_index as usize);
         scb_bitset.set(*ref_index as usize);
-        if (*ssr_index as usize) < scb_bitset.capacity() {
-            scb_bitset.set(*ssr_index as usize);
-        }
     }
 
     let mut resolved_index_cache = vec![CachedFileIndex::NONE; input_file_sources.len() * 2];
 
-    // Note: ctx fields `server_seen_bit_set`/`gts` are seeded with
-    // placeholders and assigned AFTER Pass 1 (receive_chunk grows `bundled_files`, so the trace bitsets
-    // must be sized post-Pass-1). Seed with empty placeholders; real init below.
+    // Note: `gts` is seeded with a placeholder and assigned AFTER Pass 1 (receive_chunk grows
+    // `bundled_files`, so the trace bitsets must be sized post-Pass-1).
     let mut gts_storage = GraphTraceState {
         server_bits: DynamicBitSet::default(),
         client_bits: DynamicBitSet::default(),
@@ -276,7 +275,6 @@ pub(super) fn finalize_bundle(
         loaders: input_file_loaders,
         server_to_client_bitset: scb_bitset,
         resolved_index_cache: &mut resolved_index_cache,
-        server_seen_bit_set: DynamicBitSet::default(), // assigned below
         gts: &mut gts_storage,
     };
 
@@ -587,7 +585,6 @@ pub(super) fn finalize_bundle(
     } else {
         0
     })?;
-    ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.len())?;
 
     dev.incremental_result.had_adjusted_edges = false;
 
@@ -642,6 +639,11 @@ pub(super) fn finalize_bundle(
             incremental_graph::ProcessMode::Css,
             entry_index,
         )?;
+    }
+
+    for i in 0..dev.incremental_result.client_components_removed.len() {
+        let server_index = dev.incremental_result.client_components_removed[i];
+        dev.retire_boundary_copies(server_index)?;
     }
 
     // Index all failed files now that the incremental graph has been updated.
@@ -1303,6 +1305,44 @@ pub(super) fn finalize_bundle(
 }
 
 impl DevServer {
+    /// The file of `server_index` lost its "use client" directive: the server graph's chunk
+    /// for it is a plain module. The client graph and the SSR graph hold copies that this
+    /// bundle did not build again. A copy that nothing imports goes away. A copy that has
+    /// importers is bundled again, as a plain module, by a follow-up bundle.
+    fn retire_boundary_copies(
+        &mut self,
+        server_index: incremental_graph::ServerFileIndex,
+    ) -> crate::Result<()> {
+        let path = bun_ptr::RawSlice::new(
+            &*self.server_graph.bundled_files.keys()[server_index.get() as usize],
+        );
+        let path = path.slice();
+
+        if let Some(client_index) = self.client_graph.get_file_index(path) {
+            let i = client_index.get() as usize;
+            self.client_graph.bundled_files.values_mut()[i].is_hmr_root = false;
+            if self.client_graph.edge_lists[i].first_dep.is_none() {
+                self.client_graph
+                    .disconnect_and_delete_file(&mut self.directory_watchers, client_index);
+            } else if self.client_graph.is_stale(i) {
+                self.next_bundle
+                    .follow_up
+                    .append_js(path, bake::Graph::Client)?;
+            }
+        }
+
+        let ssr_key = incremental_graph::ServerSideKey::new(path, true);
+        if let Some(i) = self.server_graph.bundled_files.get_index(ssr_key.get()) {
+            if self.server_graph.is_stale(i) && self.server_graph.edge_lists[i].first_dep.is_some()
+            {
+                self.next_bundle
+                    .follow_up
+                    .append_js(path, bake::Graph::Ssr)?;
+            }
+        }
+        Ok(())
+    }
+
     fn make_array_for_server_components_patch(
         &mut self,
         global: &JSGlobalObject,

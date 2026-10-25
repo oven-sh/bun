@@ -461,6 +461,11 @@ pub(crate) struct NextBundle {
     pub(crate) reload_event: Option<*mut HotReloadEvent>, // BORROW_FIELD: ptr into dev.watcher_atomics.events[]
     /// The list of requests that are blocked on this bundle.
     pub(crate) requests: deferred_request::List,
+
+    /// Files that the last bundle left stale with importers. See `retire_boundary_copies`.
+    pub(crate) follow_up: EntryPointList,
+    /// The bundle that left `follow_up` sent a hot update. For `TestingWatchSynchronization`.
+    pub(crate) follow_up_had_hmr_event: bool,
 }
 
 // The `Transpiler<'static>` / `BundleV2<'static>` lifetime is the DevServer-self

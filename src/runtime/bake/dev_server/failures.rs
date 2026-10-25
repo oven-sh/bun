@@ -334,10 +334,10 @@ impl DevServer {
             // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
-                    self.server_graph.on_file_deleted(abs_path, bv2)?
+                    self.server_graph.on_file_deleted(abs_path, graph, bv2)?
                 }
                 bake::Graph::Client => {
-                    self.client_graph.on_file_deleted(abs_path, bv2)?;
+                    self.client_graph.on_file_deleted(abs_path, graph, bv2)?;
                     // The html file of a route has no importer.
                     if let Some(file) = self
                         .client_graph

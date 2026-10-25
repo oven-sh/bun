@@ -3243,13 +3243,23 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `resolvedX == nil && findResolutionCycleStartIndex(target, property) >= 0`, from this checker's own state.
+    ///
+    /// The caller goes on without the result of `q` and reports nothing. If the checker had entered the ring at one of
+    /// the resolutions since, it would ask for `q` here, come back around to that resolution and report it as circular.
     fn is_resolving(&self, q: Query) -> bool {
+        if !self.may_be_in_flight(q) {
+            return false;
+        }
         let from = self.resolution_start.min(self.stack.len());
-        self.may_be_in_flight(q)
-            && self.stack[from..]
-                .iter()
-                .rposition(|x| *x == q)
-                .is_some_and(|i| !self.is_resolved_since(from + i))
+        let at = self.stack[from..].iter().rposition(|x| *x == q);
+        let at = at.map(|i| from + i).filter(|&i| !self.is_resolved_since(i));
+        if let Some(i) = at {
+            self.task.hold_back();
+            if self.stack[i + 1..].iter().any(|&q| self.is_resolution(q)) {
+                self.close_cycle(i);
+            }
+        }
+        at.is_some()
     }
 
     /// Call when this checker has cached a result for `q`. Marks the frames of `q` that are still on the stack.

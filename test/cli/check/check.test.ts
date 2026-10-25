@@ -1001,6 +1001,40 @@ export interface Loop extends Pick<Big & Pick<Loop, "own">, "b"> { own: 1 }
     }
   });
 
+  // The array literal compares the types of `first` and `other`. `all.ts` and `first.ts` get there without the return type
+  // of `first` and ask for it, which leads back to `all`. `user.ts` gets there from the return type of `first`. tsc
+  // compares with `any` while that's in progress, so from there nothing is circular.
+  test("reports a cycle on every thread count if it's silent from the return type that an importer asks for", async () => {
+    using dir = project({
+      "all.ts": `import { first } from "./first";
+declare const other: () => number;
+export function all() { const out = []; for (const it of [first, other]) { out.push(it.id); } return out; }
+`,
+      "first.ts": `import { all } from "./all";
+export function first() { return all()[0]; }
+`,
+      "table.ts": `import { all } from "./all";
+export const table = { a: [all] };
+`,
+      "user.ts": `import { first } from "./first";
+const u: { zz: 1 } = first();
+`,
+    });
+    const returns =
+      "because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.";
+    const threads = [1, 2, 2, 2, 2, 8, 8, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(
+        [
+          `all.ts(3,17): error TS7023: 'all' implicitly has return type 'any' ${returns}`,
+          "all.ts(3,52): error TS7022: 'it' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          `first.ts(2,17): error TS7023: 'first' implicitly has return type 'any' ${returns}`,
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
   // An error message prints a type, which infers a return type, which reports an error whose message prints a type, and so
   // on. TypeScript discards an error that is created two messages deep. A missing property is reported at the end of the
   // file's check, when nothing is being printed.

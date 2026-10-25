@@ -231,10 +231,9 @@ pub(super) struct Relater {
     /// there are none. Otherwise it's empty, because most comparisons are only a few levels deep,
     /// and searching the list is cheaper than adding a key here and removing it.
     maybe_keys_set: FxHashSet<Key>,
-    /// Each type with its push number. See `has_newer_instantiations`.
+    /// Each type with its push number. See `is_at_least_as_new`.
     pub(super) source_stack: Vec<(TypeId, u32)>,
     pub(super) target_stack: Vec<(TypeId, u32)>,
-    pub(super) first_levels: FirstLevels,
     /// An `OnStack` for each entry in a prefix of each stack, filled in by `is_last_deeply_nested`.
     source_identities: Vec<OnStack>,
     target_identities: Vec<OnStack>,
@@ -282,7 +281,6 @@ impl Relater {
             maybe_keys_set: FxHashSet::default(),
             source_stack: Vec::new(),
             target_stack: Vec::new(),
-            first_levels: FirstLevels::default(),
             source_identities: Vec::new(),
             target_identities: Vec::new(),
             expanding: 0,
@@ -358,67 +356,6 @@ pub(super) type RecursionId = (u8, u32, u32);
 /// Sentinel `RecursionId`: deciding whether the type has a given identity takes more than an
 /// equality test.
 const NOT_PLAIN: RecursionId = (u8::MAX, 0, 0);
-
-/// The indexes of the entries of a stack with one recursion identity.
-type Matching = SmallVec<[usize; 8]>;
-
-/// The first level of a source stack and a target stack at which each type exists, as an entry or mentioned by the key
-/// of one. See `has_newer_instantiations`.
-#[derive(Default)]
-pub(super) struct FirstLevels {
-    /// In push order.
-    followed: Vec<Followed>,
-    /// The keys of `level_of`, in the order they were added.
-    reached: Vec<TypeId>,
-    level_of: FxHashMap<TypeId, u32>,
-}
-
-/// An entry of a stack whose key was followed.
-struct Followed {
-    push: u32,
-    entry: TypeId,
-    /// The length of `FirstLevels::reached` before it.
-    reached: usize,
-}
-
-/// `follow` compares it with the stacks, so a copy can start empty.
-impl Clone for FirstLevels {
-    fn clone(&self) -> FirstLevels {
-        FirstLevels::default()
-    }
-}
-
-impl FirstLevels {
-    /// `entries` has the entries of both stacks in push order. What was followed for the same entries stays.
-    fn follow(&mut self, types: Types<'_, '_>, entries: &[(u32, TypeId)]) {
-        let same = (self.followed.iter().zip(entries))
-            .take_while(|(known, entry)| (known.push, known.entry) == **entry)
-            .count();
-        if let Some(popped) = self.followed.get(same) {
-            for mentioned in self.reached.drain(popped.reached..) {
-                self.level_of.remove(&mentioned);
-            }
-            self.followed.truncate(same);
-        }
-        for &(push, entry) in &entries[same..] {
-            let reached = self.reached.len();
-            self.followed.push(Followed {
-                push,
-                entry,
-                reached,
-            });
-            types.for_each_mentioned(entry, |mentioned| {
-                let known = self.level_of.len();
-                self.level_of.entry(mentioned).or_insert(push >> 1);
-                let is_new = self.level_of.len() != known;
-                if is_new {
-                    self.reached.push(mentioned);
-                }
-                is_new
-            });
-        }
-    }
-}
 
 /// The facts that `is_last_deeply_nested` caches about a type on a stack.
 #[derive(Copy, Clone)]
@@ -4244,7 +4181,6 @@ impl<'p, 's> Checker<'p, 's> {
                 && r.source_stack.len() >= 3
                 && self.is_last_deeply_nested(
                     [&r.source_stack, &r.target_stack],
-                    &mut r.first_levels,
                     true,
                     &mut r.source_identities,
                 )
@@ -4258,7 +4194,6 @@ impl<'p, 's> Checker<'p, 's> {
                 && r.target_stack.len() >= 3
                 && self.is_last_deeply_nested(
                     [&r.source_stack, &r.target_stack],
-                    &mut r.first_levels,
                     false,
                     &mut r.target_identities,
                 )
@@ -4472,11 +4407,10 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         t: TypeId,
         stacks: [&[(TypeId, u32)]; 2],
-        first_levels: &mut FirstLevels,
         is_source: bool,
         max_depth: usize,
     ) -> bool {
-        self.is_deeply_nested_among(t, stacks, first_levels, is_source, &[], max_depth)
+        self.is_deeply_nested_among(t, stacks, is_source, &[], max_depth)
     }
 
     /// `known` has an `OnStack` for each entry of the stack, or is empty.
@@ -4484,7 +4418,6 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         t: TypeId,
         stacks: [&[(TypeId, u32)]; 2],
-        first_levels: &mut FirstLevels,
         is_source: bool,
         known: &[OnStack],
         max_depth: usize,
@@ -4496,80 +4429,47 @@ impl<'p, 's> Checker<'p, 's> {
         let (t, data) = self.recursion_identity_target(t);
         if let TypeData::Intersection(parts) = data {
             cold_path();
-            return parts.iter().any(|&p| {
-                self.is_deeply_nested_among(p, stacks, first_levels, is_source, known, max_depth)
-            });
+            return parts
+                .iter()
+                .any(|&p| self.is_deeply_nested_among(p, stacks, is_source, known, max_depth));
         }
         let identity = self.recursion_identity_from_target(t, data);
         let bit = identity_bit(identity);
-        let mut matching = Matching::new();
+        let mut count = 0;
+        let mut last = None;
         for (i, &(on_stack, _)) in stack.iter().enumerate() {
             if known.get(i).is_some_and(|known| known.may_match & bit == 0) {
                 continue;
             }
             if self.has_matching_recursion_identity(on_stack, identity) {
-                matching.push(i);
+                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
+                    count += 1;
+                    if count >= max_depth {
+                        return true;
+                    }
+                }
+                last = Some(on_stack);
             }
         }
-        self.has_newer_instantiations(&matching, stacks, first_levels, is_source, max_depth)
+        false
     }
 
-    /// `matching` has the entries of the stack with the identity in question, from the bottom up. True if `max_depth` of
-    /// them have `t.id >= last.id` in tsgo, where `last` is the entry before `t`.
-    ///
-    /// tsgo creates the types a type's key mentions before the type itself, and the types of its members when a
-    /// comparison first reaches them. So a type is as old as the first level of the stacks that has it, as an entry or
-    /// mentioned by one. A level's source and target count as equally old. Of two types from the same level, the one
-    /// the other can mention is older: the lower one. Height doesn't order two instantiations with the same height,
-    /// and counting each as newer than the other would cut off a comparison that only swaps the same two types between
-    /// the stacks. tsgo creates the target's instantiation before the source's, and a level's target has a lower push
-    /// number than its source. No two entries share one, so this is a total order.
-    fn has_newer_instantiations(
-        &self,
-        matching: &[usize],
-        stacks: [&[(TypeId, u32)]; 2],
-        first_levels: &mut FirstLevels,
-        is_source: bool,
-        max_depth: usize,
-    ) -> bool {
-        if matching.len() < max_depth {
-            return false;
-        }
-        cold_path();
-        let stack = stacks[usize::from(!is_source)];
-        let mut entries: SmallVec<[(u32, TypeId); 32]> = (stacks.into_iter().flatten())
-            .map(|it| (it.1, it.0))
-            .collect();
-        entries.sort_unstable_by_key(|it| it.0);
-        // Nothing asks what the last level mentions.
-        let last_level = entries.last().map_or(0, |it| it.0 >> 1);
-        let below = entries.partition_point(|it| it.0 >> 1 < last_level);
-        first_levels.follow(self.types(), &entries[..below]);
-        let age = |t: TypeId| {
-            let pushed = entries.iter().find(|it| it.1 == t).map_or(0, |it| it.0);
-            let exists_from = first_levels.level_of.get(&t).copied();
-            (
-                exists_from.unwrap_or(pushed >> 1),
-                self.types().height(t),
-                pushed,
-            )
+    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`. Height doesn't order two instantiations with the
+    /// same height. Counting each as newer than the other would cut off a comparison that only swaps the same two
+    /// types between the source stack and the target stack. tsgo creates an instantiation when a comparison first
+    /// reaches it, and the target's before the source's, so the type that was pushed first is the older one. Push
+    /// numbers grow with every level, and a level's target has a lower one than its source. No two entries share one,
+    /// so this is a total order: of two different types, exactly one is newer.
+    fn is_at_least_as_new(&self, t: TypeId, last: TypeId, stacks: [&[(TypeId, u32)]; 2]) -> bool {
+        let pushed = |t: TypeId| {
+            let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
+            stacks.into_iter().filter_map(first).min()
         };
-        let mut count = 1;
-        let mut last = stack[matching[0]].0;
-        for (i, &at) in matching.iter().enumerate().skip(1) {
-            if count + matching.len() - i < max_depth {
-                return false;
-            }
-            let t = stack[at].0;
-            if t == last
-                || age(t) >= age(last)
-                    && !self.is_reached_through_checked_type_node(t, last, stacks)
-            {
-                count += 1;
-            }
-            last = t;
-        }
-        count >= max_depth
+        t == last
+            || !self.is_reached_through_checked_type_node(t, last, stacks)
+                && (self.types().nesting_order(t, last))
+                    .then_with(|| pushed(t).cmp(&pushed(last)))
+                    .is_ge()
     }
 
     /// True if a type argument of `last` is on a stack between `last` and `t`, and it's a function type or a type literal
@@ -4619,7 +4519,6 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_last_deeply_nested(
         &mut self,
         stacks: [&[(TypeId, u32)]; 2],
-        first_levels: &mut FirstLevels,
         is_source: bool,
         identities: &mut Vec<OnStack>,
     ) -> bool {
@@ -4645,19 +4544,13 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         };
         if cached_value == NOT_PLAIN {
-            return self.is_deeply_nested_among(
-                t,
-                stacks,
-                first_levels,
-                is_source,
-                identities,
-                max_depth,
-            );
+            return self.is_deeply_nested_among(t, stacks, is_source, identities, max_depth);
         }
         let identity = self.current_recursion_identity(t, cached_value);
         let bit = identity_bit(identity);
-        let mut matching = Matching::new();
-        for (i, (&(on_stack, _), known)) in stack.iter().zip(identities.iter()).enumerate() {
+        let mut count = 0;
+        let mut last = None;
+        for (&(on_stack, _), known) in stack.iter().zip(identities.iter()) {
             if known.may_match & bit == 0 {
                 continue;
             }
@@ -4669,10 +4562,16 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.current_recursion_identity(on_stack, cached_value) == identity
             };
             if matches {
-                matching.push(i);
+                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
+                    count += 1;
+                    if count >= max_depth {
+                        return true;
+                    }
+                }
+                last = Some(on_stack);
             }
         }
-        self.has_newer_instantiations(&matching, stacks, first_levels, is_source, max_depth)
+        false
     }
 
     /// See `OnStack::may_match`.
@@ -5506,13 +5405,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             TypeData::Cond { file, node, .. } => {
-                if self.is_deeply_nested_type(
-                    target,
-                    [&r.source_stack, &r.target_stack],
-                    &mut r.first_levels,
-                    false,
-                    10,
-                ) {
+                if self.is_deeply_nested_type(target, [&r.source_stack, &r.target_stack], false, 10)
+                {
                     return Ternary::MAYBE;
                 }
                 // Only without `infer`, when the result doesn't depend on distribution, and when
@@ -5730,13 +5624,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             TypeData::Cond { .. } => {
-                if self.is_deeply_nested_type(
-                    source,
-                    [&r.source_stack, &r.target_stack],
-                    &mut r.first_levels,
-                    true,
-                    10,
-                ) {
+                if self.is_deeply_nested_type(source, [&r.source_stack, &r.target_stack], true, 10)
+                {
                     return Ternary::MAYBE;
                 }
                 if matches!(self.data(target), TypeData::Cond { .. }) {

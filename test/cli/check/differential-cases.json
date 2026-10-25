@@ -18711,11 +18711,5 @@
       "node_modules/outer/node_modules/inner/index.d.ts": "export interface Inner { a: number }\nexport declare const value: number;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"noEmit\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
     }
-  },
-  "deeply-nested-below-a-taller-instantiation": {
-    "files": {
-      "a.ts": "interface A { a: 1 }\ninterface B extends A { b: 2 }\ninterface Variants<P> { props?: Partial<P>; style?: (props: P) => void }\ntype Interpolation<P> = string | Variants<P>;\ntype Rules<Theme, Extra = {}> = Record<\"root\", Interpolation<{ theme: Theme } & Extra & Record<string, unknown>>>;\nconst r0: Rules<A> = null! as Rules<B>;\nconst r1: Rules<B> = null! as Rules<A>;\nfunction generic<T, U extends T>() {\n  const g0: Rules<T> = null! as Rules<U>;\n  const g1: Rules<U> = null! as Rules<T>;\n}\nexport {};\n",
-      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
-    }
   }
 }

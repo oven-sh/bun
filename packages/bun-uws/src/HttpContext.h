@@ -883,7 +883,7 @@ private:
             if constexpr (!IsNodeHttp) {
                 if (!httpResponseData->parkedRequestBytes.isEmpty()) [[unlikely]] {
                     /* Keep reading until a read's worth is parked, so the peer's FIN still reaches onEnd and aborts the pending response. */
-                    if (httpResponseData->parkedRequestBytes.size() >= LIBUS_RECV_BUFFER_LENGTH) {
+                    if (httpResponseData->parkedRequestBytes.size() - httpResponseData->parkedRequestBytesStart >= LIBUS_RECV_BUFFER_LENGTH) {
                         /* Nothing would end a pause behind a response that may never come. */
                         if (isResponseUndetermined(httpResponseData->state)) {
                             return closeOverUnfinishedResponse(s);

@@ -751,6 +751,8 @@ struct HttpResponseData;
                     return;
                 }
             }
+            /* Drops what a replay has consumed, or the vector would grow for as long as a client keeps the queue from emptying. */
+            parkedRequestBytes.removeAt(0, std::exchange(parkedRequestBytesStart, 0));
             parkedRequestBytes.append(std::span<const char>(data, length));
         }
 

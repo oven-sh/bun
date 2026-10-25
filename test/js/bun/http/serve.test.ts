@@ -7191,6 +7191,48 @@ it("keeps serving after a handler throws a deeply nested request body", async ()
   expect(exitCode).toBe(1);
 });
 
+it("answers a client that always has a few requests waiting behind a response, however much it sends", async () => {
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      await new Promise(resolve => setImmediate(resolve));
+      return new Response(new URL(req.url).pathname.slice(1));
+    },
+  });
+  // Together they are more than Bun.serve lets wait at a time.
+  const requests = 100;
+  const padding = Buffer.alloc(8 * 1024, "p").toString();
+  const client = net.connect({ port: server.port!, host: "127.0.0.1" });
+  try {
+    const answers: string[] = [];
+    let sent = 0;
+    let received = "";
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const sendMore = () => {
+      while (sent < requests && sent - answers.length < 4) {
+        client.write(`GET /${sent++} HTTP/1.1\r\nHost: localhost\r\nX-Padding: ${padding}\r\n\r\n`);
+      }
+    };
+    client.on("connect", sendMore);
+    client.on("error", reject);
+    client.on("close", resolve);
+    client.on("data", chunk => {
+      received += chunk;
+      for (let match; (match = /^HTTP\/1\.1 200 OK\r\n[^]*?\r\n\r\n(\d+)(?=HTTP|$)/.exec(received));) {
+        answers.push(match[1]);
+        received = received.slice(match[0].length);
+      }
+      if (answers.length === requests) resolve();
+      else sendMore();
+    });
+    await promise;
+    expect(answers).toEqual(Array.from({ length: requests }, (_, index) => String(index)));
+  } finally {
+    client.destroy();
+  }
+});
+
 // Requests that arrive behind a response wait for it. A client that goes away meanwhile must not leave anything behind.
 describe.each([
   ["http", false],

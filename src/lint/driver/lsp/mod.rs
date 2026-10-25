@@ -1125,7 +1125,7 @@ impl<'d> Desk<'d, '_, '_> {
         let target = self.target(params);
         let job = target
             .as_ref()
-            .and_then(|(document, _)| job(id.clone(), document.clone()));
+            .and_then(|(document, _)| job(id.clone(), Arc::clone(document)));
         match (target, job) {
             (Some((_, root)), Some(job)) => self.enqueue(id, &root, job),
             _ => (self.server.out).fail(

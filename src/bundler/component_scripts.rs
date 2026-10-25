@@ -22,9 +22,10 @@ pub(crate) fn for_each<'a>(path: &[u8], contents: &'a [u8], mut each: impl FnMut
     }
 }
 
-/// Each `<script` counts, also in a string, in a comment or in prose. One more can add an import, and never hides one.
+/// Each `<script` counts, also in a string, in a comment or in prose: a stray one can add an import.
 fn scripts_before_end_tag<'a>(part: &'a [u8], each: &mut impl FnMut(&'a [u8])) {
-    let mut is_first = true;
+    // A script runs to the end of the part, and so does a stray `<script` before it: the part gives twice its text in full.
+    let mut in_full = part.len() * 2;
     let mut next = strings::index_of(part, b"<script");
     let mut rest = part;
     while let Some(at) = next {
@@ -32,30 +33,28 @@ fn scripts_before_end_tag<'a>(part: &'a [u8], each: &mut impl FnMut(&'a [u8])) {
         next = strings::index_of(rest, b"<script");
         let until_next = &rest[..next.unwrap_or(rest.len())];
         if let Some(tag_end) = end_of_open_tag(until_next) {
-            // The first script gets all of the part. A later one ends at the next `<script`, so the parser gets each byte twice at most for each language.
-            each(if is_first {
-                &rest[tag_end + 1..]
+            let to_end = &rest[tag_end + 1..];
+            // After that, a script ends at the next `<script`, so the parser gets each byte three times at most for each language.
+            if to_end.len() <= in_full {
+                in_full -= to_end.len();
+                each(to_end);
             } else {
-                &until_next[tag_end + 1..]
-            });
-            is_first = false;
+                each(&until_next[tag_end + 1..]);
+            }
         }
     }
 }
 
 /// The index of the `>` that ends an open tag. An attribute value can have a `>` between quotes.
 fn end_of_open_tag(tag: &[u8]) -> Option<usize> {
-    let mut quote = None;
-    for (at, &byte) in tag.iter().enumerate() {
-        match quote {
-            Some(open) if open == byte => quote = None,
-            Some(_) => {}
-            None if byte == b'>' => return Some(at),
-            None if byte == b'"' || byte == b'\'' => quote = Some(byte),
-            None => {}
+    let mut at = 0;
+    loop {
+        at += strings::index_of_any(&tag[at..], b">\"'")?;
+        if tag[at] == b'>' {
+            return Some(at);
         }
+        at += 2 + strings::index_of_char_usize(&tag[at + 1..], tag[at])?;
     }
-    None
 }
 
 /// The code between the `---` lines at the top of an Astro component.

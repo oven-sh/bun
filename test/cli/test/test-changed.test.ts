@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
-import { appendFileSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -81,16 +81,14 @@ function committedRepo(files: Fixture): string {
   let repo = committed.get(files);
   if (repo === undefined) {
     repo = tempDirWithFiles("test-changed-fixture", files);
-    for (const args of [
-      ["init", "-q"],
-      ["add", "-A"],
-      ["commit", "-q", "-m", "initial"],
-    ])
-      git(repo, ...args);
+    initRepo(repo);
     committed.set(files, repo);
   }
   return repo;
 }
+afterAll(() => {
+  for (const repo of committed.values()) rmSync(repo, { recursive: true, force: true });
+});
 
 /**
  * Runs `bun test --changed` after an edit of each of `edits`. With `breaks`, the edit makes the file
@@ -670,6 +668,11 @@ describe.concurrent("bun test --changed, a component", () => {
       ],
       // The import is below a string that has a `<script`.
       string: ["String.svelte", `<script>\n  const tag = "<script>";\n  import("./string.ts");\n</script>\n`],
+      // The first `<script` is in a comment, and the import of the script is below a string that has one.
+      stray: [
+        "Stray.svelte",
+        `<!-- the <script> block below -->\n<script>\n  const tag = "<script>";\n  import "./stray.ts";\n</script>\n`,
+      ],
       second: [
         "Second.svelte",
         `<script module>\n  export const one = 1;\n</script>\n\n<script>\n  const tag = "<script>";\n  import("./second.ts");\n</script>\n`,
@@ -704,7 +707,7 @@ describe.concurrent("bun test --changed, a component", () => {
         { breaks: false, probe: ["macro-ran"] },
       ),
     ).toEqual({
-      status: "12 changed files, running 11/12 test files",
+      status: "13 changed files, running 12/13 test files",
       ran: names
         .filter(row => row !== "upper")
         .map(row => `${row}.test.ts`)
@@ -718,7 +721,7 @@ describe.concurrent("bun test --changed, a component", () => {
   test("a script that imports a code file as text", async () => {
     const files = {
       "package.json": JSON.stringify({ name: "as-text", type: "module" }),
-      "Source.svelte": `<script>\n  import text from "./shown.ts" with { type: "text" };\n\n  export const size = text.length;\n</script>\n`,
+      "Source.svelte": `<script>\n  import text from "./shown" with { type: "text" };\n\n  export const size = text.length;\n</script>\n`,
       "shown.ts": `export { two } from "./two.ts";\n`,
       "two.ts": `export const two = 2;\n`,
       "a.ts": `export * from "./b.ts";\n`,
@@ -781,8 +784,28 @@ describe.concurrent("bun test --changed, a component", () => {
     });
   });
 
-  // The bundler of `Bun.serve` loads what a page imports, and there a component is an asset.
-  // A second copy of m.ts under the page would hide the copy that m.test.ts imports.
+  // The scan holds m.ts twice: for m.test.ts, and for the page that the script reaches. An edit of it starts at both.
+  test("a script that reaches a page does not hide a test of a file of that page", async () => {
+    const files = {
+      "package.json": JSON.stringify({ name: "reaches-page", type: "module" }),
+      "page.html": `<!doctype html>\n<html>\n  <body>\n    <script type="module" src="./client.ts"></script>\n  </body>\n</html>\n`,
+      "client.ts": `import { m } from "./m.ts";\nconsole.log(m);\n`,
+      "server.ts": `import page from "./page.html";\n\nexport const routes = { "/": page };\n`,
+      "App.svelte": `<script>\n  import { routes } from "./server.ts";\n\n  export const all = routes;\n</script>\n`,
+      "m.ts": `export const m = 1;\n`,
+      "m.test.ts": testFile("m", `import { m } from "./m.ts";`, "expect(m).toBe(1);"),
+      "app.test.ts": testFile("app", `import app from "./App.svelte";`, "expect(app).toBeString();"),
+    };
+    expect(await changed(files, ["m.ts"])).toEqual({
+      status: "1 changed file, running 1/2 test files",
+      ran: ["m.test.ts"],
+      failed: ["m.test.ts"],
+      exitCode: 1,
+    });
+  });
+
+  // The bundler of `Bun.serve` loads what a page imports. The plugin of a preload file is not part of it, so
+  // there a component is an asset, and the scan does not read it.
   test("a component that a page imports stays an asset", async () => {
     const files = {
       "package.json": JSON.stringify({ name: "component-page", type: "module" }),

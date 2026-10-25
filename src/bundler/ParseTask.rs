@@ -1507,9 +1507,11 @@ pub mod parse_worker {
                 // The markup uses the imports that the script does not.
                 record.flags.remove(bun_ast::ImportRecordFlags::IS_UNUSED);
                 // The scan has one row for each path: `with { type: "text" }` must not make a code file an asset for its other importers.
-                if let Some(Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Css) =
-                    record.path.loader(loaders)
-                {
+                let names_no_imports = record
+                    .path
+                    .loader(loaders)
+                    .is_some_and(|by_name| !by_name.is_javascript_like() && by_name != Loader::Css);
+                if !names_no_imports {
                     record.loader = None;
                 }
                 import_records.push(record);

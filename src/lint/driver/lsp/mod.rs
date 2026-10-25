@@ -541,7 +541,9 @@ impl<'s> Server<'s> {
     }
 
     /// Does `first` and what follows it, as long as the configurations are those of `generation`. Returns the first job that
-    /// is for later ones. `no_engine`: `engine`, if it is one that refuses.
+    /// is for later ones. `no_engine`: `engine`, if it is one that refuses. A session is made and the flags of `bun fmt`
+    /// are read while that half is on in the settings of the editor: when they change, both are made again, with the
+    /// same engine.
     fn work_with(
         &self,
         root: &Root,
@@ -574,36 +576,55 @@ impl<'s> Server<'s> {
             known: FxHashMap::default(),
             told: Vec::new(),
         };
-        let Settings { lints, formats, .. } = *self.settings.lock();
-        let options = lints.then(|| self.lint_options_of(root));
-        if let Some(Err(why)) = &options {
-            worker.show_error_once(Half::Lint, why);
-        }
-        match formats.then(|| self.format_options_of(root)) {
-            Some(Ok(options)) => worker.format_options = Some(options),
-            Some(Err(why)) => worker.show_error_once(Half::Format, &why),
-            None => {}
-        }
-        let all = |session: Option<&Session>| {
-            let mut job = first;
-            loop {
-                worker.handle(session, job);
-                match root.take() {
-                    Some((taken, now)) if now == generation => job = taken,
-                    other => return other,
-                }
+        let halves = |settings: Settings| (settings.lints, settings.formats);
+        let mut next = Some(first);
+        while let Some(first) = next.take() {
+            let (lints, formats) = halves(*self.settings.lock());
+            let options = lints.then(|| self.lint_options_of(root));
+            if let Some(Err(why)) = &options {
+                worker.show_error_once(Half::Lint, why);
             }
-        };
-        match options {
-            Some(Ok(options)) => session::with_session(&options, environment, |session| {
-                let refusal = session.refusal();
-                if let Some(refusal) = &refusal {
-                    self.show_error(Half::Lint, refusal);
+            worker.format_options = match formats.then(|| self.format_options_of(root)) {
+                Some(Ok(options)) => Some(options),
+                Some(Err(why)) => {
+                    worker.show_error_once(Half::Format, &why);
+                    None
                 }
-                all(refusal.is_none().then_some(session))
-            }),
-            _ => all(None),
+                None => None,
+            };
+            // `Ok`: the first job of a later generation, if any. `Err`: one of this generation, taken after the
+            // settings changed.
+            let all = |session: Option<&Session>| {
+                let mut job = first;
+                loop {
+                    worker.handle(session, job);
+                    match root.take() {
+                        Some((taken, now)) if now == generation => {
+                            if halves(*self.settings.lock()) != (lints, formats) {
+                                return Err(taken);
+                            }
+                            job = taken;
+                        }
+                        other => return Ok(other),
+                    }
+                }
+            };
+            let done = match options {
+                Some(Ok(options)) => session::with_session(&options, environment, |session| {
+                    let refusal = session.refusal();
+                    if let Some(refusal) = &refusal {
+                        self.show_error(Half::Lint, refusal);
+                    }
+                    all(refusal.is_none().then_some(session))
+                }),
+                _ => all(None),
+            };
+            match done {
+                Ok(later) => return later,
+                Err(job) => next = Some(job),
+            }
         }
+        None
     }
 }
 
@@ -614,8 +635,8 @@ struct Worker<'w, 's> {
     environment: &'w Environment<'w>,
     /// The engine, if it is one that refuses.
     no_engine: Option<&'w NoEngine>,
-    /// The flags of `bun fmt` in the root, read once per generation. `None`: formatting is off, or they could not be
-    /// read, which the user was told.
+    /// The flags of `bun fmt` in the root, read when formatting is turned on. `None`: formatting is off, or they could
+    /// not be read, which the user was told.
     format_options: Option<crate::fmt::cli::Options>,
     /// By URI.
     known: FxHashMap<Vec<u8>, Known>,
@@ -1285,13 +1306,9 @@ impl<'d> Desk<'d, '_, '_> {
                     return;
                 }
                 *server.settings.lock() = after;
-                // The configurations of the folders are as they were: their engines go on. A session is made and
-                // the format options are read only while that half is on, so a folder's thread starts over when
-                // either changes.
-                match after.lints == before.lints && after.formats == before.formats {
-                    true => self.lint_all(),
-                    false => self.look_again(),
-                }
+                // The configurations of the folders are as they were: their engines go on, and each thread follows
+                // the settings with its next job.
+                self.lint_all();
             }
             b"workspace/didChangeWorkspaceFolders" => {
                 let list = |key: &str| {

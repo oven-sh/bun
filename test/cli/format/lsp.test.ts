@@ -115,6 +115,74 @@ describe.concurrent("bun fmt --lsp", () => {
     timeout,
   );
 
+  // Turning linting on is a setting of the editor, not a configuration of the folder: the folder's VMs keep their
+  // threads, whose ids are those of the tasks in /proc.
+  test(
+    "turns linting on with workspace/didChangeConfiguration after starting with it off, with the same VMs",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", {
+        "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
+        "node_modules/prettier/index.cjs": `exports.resolveConfig = async () => null;
+exports.format = async (text, options) => text.replace(/ +/g, " ");
+`,
+        "node_modules/prettier-plugin-astro/package.json": '{ "name": "prettier-plugin-astro", "version": "4.0.0" }',
+        ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n',
+        "a.astro": "",
+        "a.js": "a;\n",
+      });
+      await using client = new Client(command, String(dir));
+      const { result } = await initialize(client, [String(dir)], {
+        initializationOptions: { lint: { enable: false } },
+      });
+      expect(result.capabilities.codeActionProvider).toBe(false);
+      client.notify("initialized");
+      const path = join(String(dir), "a.js");
+      open(client, path, "debugger;\n");
+      const astro = join(String(dir), "a.astro");
+      const text = "<p   >a</p>\n";
+      const vmThreadIds = () => {
+        const tasks = `/proc/${client.proc.pid}/task`;
+        return readdirSync(tasks)
+          .filter(task => {
+            try {
+              return readFileSync(join(tasks, task, "comm"), "utf8").startsWith("Bun Lint JS");
+            } catch {
+              return false;
+            }
+          })
+          .sort();
+      };
+      let ids: string[] = [];
+      if (isLinux) {
+        open(client, astro, text, "astro");
+        const first = await format(client, astro);
+        expect(first.error).toBeUndefined();
+        expect(applyEdits(text, first.result)).toBe("<p >a</p>\n");
+        ids = vmThreadIds();
+        expect(ids.length).toBeGreaterThan(0);
+      }
+      client.notify("workspace/didChangeConfiguration", { settings: { bun: { lint: { enable: true } } } });
+      if (lints) {
+        const published = await client.diagnostics(path);
+        expect(published.params.diagnostics.map((it: any) => it.code)).toEqual(["no-debugger"]);
+      }
+      if (isLinux) {
+        const again = await format(client, astro);
+        expect(again.error).toBeUndefined();
+        expect(applyEdits(text, again.result)).toBe("<p >a</p>\n");
+        expect(vmThreadIds()).toEqual(ids);
+      }
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      const diagnostics = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
+      expect(diagnostics.filter(it => it.params.diagnostics.length > 0)).toHaveLength(lints ? 1 : 0);
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test(
     "turns linting off with the initialization options, whatever the build has",
     async () => {

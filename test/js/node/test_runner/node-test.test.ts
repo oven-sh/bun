@@ -716,3 +716,172 @@ test("passes after the test whose subtest had that mock", async () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// A test file can replace Promise.resolve, Promise.prototype.then and the
+// other public Promise methods. The runner must not call them.
+describe("node:test and the public Promise methods", () => {
+  test("should not call a Promise method that the test file can replace", async () => {
+    const { exitCode, stderr } = await runTests(["32-replaced-promise-methods.js"]);
+    expect(stderr).toContain("30 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should not call a replaceable Promise method in a child of run() either", async () => {
+    // A child of run() registers the skipped and the todo tests in another way.
+    const { exitCode, stderr } = await runTests(["32-replaced-promise-methods.js"], {
+      NODE_TEST_CONTEXT: "child-v8",
+    });
+    expect(stderr).toContain("30 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should not keep a Promise method that the file replaced before node:test loaded", async () => {
+    const { exitCode, stderr } = await runTests(["34-promise-methods-replaced-before-load.js"]);
+    expect(stderr).toContain("7 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should run the first node:test call of a file while Promise.resolve throws", async () => {
+    // Each of these calls creates the root node of its file when it is the first call.
+    const firstCalls = {
+      "test": `test("first", () => {});`,
+      "it": `it("first", () => {});`,
+      "describe": `describe("first", () => {});`,
+      "suite": `suite("first", () => {});`,
+      "before": `before(() => {});`,
+      "after": `after(() => {});`,
+      "beforeEach": `beforeEach(() => {});`,
+      "afterEach": `afterEach(() => {});`,
+      "mock.fn": `mock.fn();`,
+      "mock.method": `mock.method({ method() {} }, "method");`,
+      "mock.timers": `mock.timers.enable({ apis: ["setTimeout"] });\n  mock.timers.reset();`,
+      "assert.register": `assert.register("first", () => {});`,
+    };
+    const files: Record<string, string> = {};
+    for (const [name, call] of Object.entries(firstCalls)) {
+      files[`${name}.test.js`] = `
+const { test, it, describe, suite, before, after, beforeEach, afterEach, mock, assert } = require("node:test");
+const { resolve } = Promise;
+Promise.resolve = () => {
+  throw new Error("replaced Promise.resolve");
+};
+try {
+  ${call}
+} finally {
+  Promise.resolve = resolve;
+}
+test("the file loads", () => {});
+`;
+    }
+    using dir = tempDir("node-test-first-call", files);
+    await using proc = spawn({
+      cmd: [bunExe(), "test"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // One test in each of the 12 files, and the test that test() and it() declare.
+    expect(stderr).toContain("14 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should not call a replaceable Promise method in run()", async () => {
+    using dir = tempDir("node-test-run", {
+      "child.test.js": `require("node:test").test("passes", () => {});`,
+      "driver.js": `
+const { run } = require("node:test");
+const calls = [];
+for (const [object, name] of [
+  [Promise, "resolve"],
+  [Promise, "reject"],
+  [Promise, "race"],
+  [Promise, "all"],
+  [Promise, "withResolvers"],
+  [Promise.prototype, "then"],
+  [Promise.prototype, "catch"],
+  [Promise.prototype, "finally"],
+]) {
+  const original = object[name];
+  object[name] = function (...args) {
+    calls.push(name);
+    return Reflect.apply(original, this, args);
+  };
+}
+const stream = run({ files: [require("node:path").join(__dirname, "child.test.js")] });
+stream.on("test:summary", ({ file, success, counts }) => {
+  if (file === undefined) console.log(JSON.stringify({ success, passed: counts.passed, calls }));
+});
+stream.resume();
+`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "driver.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ success: true, passed: 1, calls: [] }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("should give the error of a test:stderr listener of run() to the stream only", async () => {
+    using dir = tempDir("node-test-run-stderr", {
+      "child.test.js": `
+console.error("a line on stderr");
+require("node:test").test("passes", () => {});
+`,
+      "driver.js": `
+const { run } = require("node:test");
+const stream = run({ files: [require("node:path").join(__dirname, "child.test.js")] });
+stream.on("test:stderr", () => {
+  throw new Error("the error of the listener");
+});
+stream.on("error", error => {
+  console.log("stream error: " + error.message);
+});
+stream.resume();
+`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "driver.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "stream error: the error of the listener",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("should keep the order of subtests, inline suites and late before hooks", async () => {
+    const { exitCode, stderr } = await runTests(["33-subtest-chain.js"]);
+    expect(stderr).toContain("14 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+});

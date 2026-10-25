@@ -1097,7 +1097,7 @@ impl Engine for Engines {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cgroup_line, parse_limit, Engines, START};
+    use super::{Engines, START, parse_cgroup_line, parse_limit};
     use core::sync::atomic::Ordering;
 
     #[test]

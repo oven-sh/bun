@@ -635,7 +635,9 @@ impl Worker<'_, '_> {
     /// [`Server::show_error`], once per text and half.
     fn show_error_once(&mut self, half: Half, message: &[u8]) {
         let server = self.server;
-        self.tell_once([half.prefix(), message].concat(), |line| server.tell("window/showMessage", 1, line));
+        self.tell_once([half.prefix(), message].concat(), |line| {
+            server.tell("window/showMessage", 1, line)
+        });
     }
 
     /// Said when a plugin would have run, which is when the user looks for it.

@@ -259,7 +259,7 @@ const output = await result.outputs[0].text();
 console.log(output);
 ```
 
-When every entrypoint is written exactly like a key of `files`, Bun uses the current working directory as the root.
+When every entrypoint is written exactly like a key of `files`, or is the absolute path of a file in `files`, Bun uses the current working directory as the root.
 
 #### Override files on disk
 

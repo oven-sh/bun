@@ -3591,10 +3591,13 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       this._header = " ";
     }
     if (callback) queueEndCallback(this, callback);
-    // Node's end() compares the lengths next, whatever has become of the socket. Only the native handle counts them.
+    // Node compares the lengths whatever has become of the socket, and counts a chunk that it then drops. Only the native handle counts.
     const expected = strictContentLength(this, headerState, true);
-    const written = expected !== undefined ? handle.getBytesWritten?.() : undefined;
-    if (written !== undefined && written !== expected) throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(written, expected);
+    let written = expected !== undefined ? handle.getBytesWritten?.() : undefined;
+    if (written !== undefined) {
+      if (chunk) written += typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
+      if (written !== expected) throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(written, expected);
+    }
     // With the head out and no chunk or terminating chunk to send, Node's end() writes nothing, so its onFinish() still runs.
     if (
       !chunk &&

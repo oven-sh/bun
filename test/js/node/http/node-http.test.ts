@@ -7075,6 +7075,32 @@ describe("res.strictContentLength", () => {
     expect(result).toEqual([undefined, "callback: null", "finish", true]);
   });
 
+  // There the connection has closed and the response is not destroyed yet: Node's write_() still counts the chunk that it drops.
+  test.each([
+    ["the rest of the body", true, "llo", undefined],
+    ["too little", true, "l", MISMATCH],
+    ["too much", true, "llooo", MISMATCH],
+    ["the head and the whole body", false, "hello", undefined],
+    ["the head and too little", false, "he", MISMATCH],
+  ])("end(chunk) in the request's 'aborted' listener, with %s", async (_, started, chunk, expected) => {
+    const ended = Promise.withResolvers<unknown[]>();
+    const handled = Promise.withResolvers<void>();
+    await using server = http.createServer((req, res) => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 5);
+      if (started) res.write("he");
+      req.on("aborted", () => ended.resolve([res.destroyed, code(() => res.end(chunk))]));
+      handled.resolve();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    socket.on("error", () => {});
+    socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await handled.promise;
+    socket.destroy();
+    expect(await ended.promise).toEqual([false, expected]);
+  });
+
   test("end() after a socket from emit('connection') closed with the whole length out finishes", async () => {
     const socket = new Duplex({ read() {}, write: (_chunk, _encoding, callback) => callback() });
     const { promise, resolve } = Promise.withResolvers<unknown[]>();

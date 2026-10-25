@@ -4100,9 +4100,11 @@ impl<'p, 's> Checker<'p, 's> {
         if entry.event_bits & 16 != 0 && !self.is_behind_barrier(entry.from as usize) {
             return None;
         }
-        // The same test as in `enter`.
+        // The same test as in `enter`. A member of an object literal is also read through the type of the literal, after
+        // the context is popped, and that type has what the check that made it computed.
         if entry.from == u32::MAX
-            && (self.inference_contexts.is_empty() || !self.is_innermost_tainted())
+            && (!self.is_innermost_tainted()
+                || self.inference_contexts.is_empty() && !matches!(q, Query::LiteralProp(..)))
         {
             return None;
         }

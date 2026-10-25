@@ -9130,6 +9130,21 @@ export const x91 = () => new App().use(x80);
       expect(exitCode).toBe(1);
     });
 
+    // The comparison of the argument with the parameter reads `select` through the type of the object literal. It has
+    // the type that the check with the `const` type parameter as context gave it, also inside the cycle.
+    test("a member of an object literal that's an argument keeps its contextual type inside a cycle", async () => {
+      using dir = project({
+        "a.ts": `declare function inc<const I extends { select?: string[] }>(i: I): I;
+const x01 = inc({ select: ["id"] }) satisfies typeof x01;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        "a.ts(2,7): error TS7022: 'x01' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // tsc asks for the type of a parameter when there's an argument to compare with it. `use()` has none, so the default
     // of `f` isn't checked there, and `createStore(..)` isn't resolved a second time inside its own resolution.
     test("a call without an argument for a parameter doesn't check the default of that parameter", async () => {

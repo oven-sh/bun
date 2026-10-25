@@ -4795,19 +4795,16 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Runs `check`, a part of `checkExpression` that here belongs to the walk or to a pass over
     /// the file, at the point where tsgo reaches it, because what `check` resolves may be in
-    /// resolution. Errors it reports directly are dropped. The walk or the pass runs it again and
+    /// resolution, or the statement around the expression asks for it next: the message of an error
+    /// prints types. Errors it reports directly are dropped. The walk or the pass runs it again and
     /// reports them.
     fn precheck_with(&mut self, check: impl FnOnce(&mut Self)) {
-        // FOR SPEED: with nothing in resolution, running it later resolves the same things.
-        if self.stack.iter().any(|&q| self.is_resolution(q)) {
-            let (reported, requests) =
-                (self.reported.len(), self.reported_iteration_requests.len());
-            let outer = std::mem::replace(&mut self.is_prechecking, true);
-            check(self);
-            self.is_prechecking = outer;
-            self.reported.truncate(reported);
-            self.settle_iteration_requests(requests, true);
-        }
+        let (reported, requests) = (self.reported.len(), self.reported_iteration_requests.len());
+        let outer = std::mem::replace(&mut self.is_prechecking, true);
+        check(self);
+        self.is_prechecking = outer;
+        self.reported.truncate(reported);
+        self.settle_iteration_requests(requests, true);
     }
 
     /// `checkBinaryLikeExpression` for `e`, which is `target = ..`. Runs

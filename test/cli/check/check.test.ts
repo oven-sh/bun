@@ -8966,6 +8966,53 @@ export async function v20() { return null! as Partial<T10<{}>>; }
       expect(exitCode).toBe(1);
     });
 
+    // So can the message of a failed assignment, or of a condition that's always true.
+    test("the message of an error in an assignment or a condition can be the first to ask for the function's return type", async () => {
+      using dir = project({
+        "assignment.ts": `declare let t: typeof f;
+export async function f() { return t = {}; }
+`,
+        "condition.ts": `declare const p: Promise<typeof f>;
+export function f() { return p ? 1 : 2; }
+`,
+        "initializer.ts": `declare let t: typeof f;
+export function f() { return { t = {} } = {} as { t?: undefined }; }
+`,
+        "operand.ts": `declare const p: Promise<typeof f>;
+export function f() { return p && 1; }
+`,
+        "pattern.ts": `declare let t: typeof f;
+export function f() { return [t] = [{}]; }
+`,
+        "property.ts": `declare let t: { p: C["m"] };
+export class C { m() { return t.p = {}; } }
+`,
+        "yielded.ts": `declare let t: typeof f;
+export function* f() { yield t = {}; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      const circular = (name: string) =>
+        `error TS7023: '${name}' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.`;
+      expect(stdout.split("\n").filter(line => line.includes("error TS"))).toEqual([
+        `assignment.ts(2,23): ${circular("f")}`,
+        "assignment.ts(2,36): error TS2322: Type '{}' is not assignable to type '() => any'.",
+        `condition.ts(2,17): ${circular("f")}`,
+        "condition.ts(2,30): error TS2801: This condition will always return true since this 'Promise<() => any>' is always defined.",
+        `initializer.ts(2,17): ${circular("f")}`,
+        "initializer.ts(2,32): error TS2322: Type '{}' is not assignable to type '() => any'.",
+        `operand.ts(2,17): ${circular("f")}`,
+        "operand.ts(2,30): error TS2801: This condition will always return true since this 'Promise<() => any>' is always defined.",
+        `pattern.ts(2,17): ${circular("f")}`,
+        "pattern.ts(2,31): error TS2322: Type '{}' is not assignable to type '() => any'.",
+        `property.ts(2,18): ${circular("m")}`,
+        "property.ts(2,31): error TS2322: Type '{}' is not assignable to type '() => any'.",
+        `yielded.ts(2,18): ${circular("f")}`,
+        "yielded.ts(2,30): error TS2322: Type '{}' is not assignable to type '() => any'.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("TS7053 prints an aliased intersection with a class by its members", async () => {
       using dir = project({
         "a.ts": `class User { id = 1 }

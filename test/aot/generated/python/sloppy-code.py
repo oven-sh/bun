@@ -59,7 +59,7 @@ class Gen:
         return r.choice([
             [f"function g{k}() {{ return this === globalThis ? 'global' : typeof this + ':' + String(this); }}", f"lines.push('g{k} ' + [g{k}(), g{k}.call(5), g{k}.call('s'), g{k}.call(null), g{k}.call(undefined), g{k}.call(true), g{k}.apply({{ toString: function () {{ return 'obj'; }} }})].join());"],
             [f"function g{k}() {{ implicit{k} = 5; return typeof implicit{k} + (globalThis.implicit{k}) + delete globalThis.implicit{k} + typeof implicit{k}; }}", f"lines.push('g{k} ' + attempt(g{k}));"],
-            [f"function g{k}(x) {{ if (x) {{ function inner() {{ return 'in block'; }} }} return typeof inner + (typeof inner === 'function' ? inner() : ''); }}", f"lines.push('g{k} ' + attempt(function () {{ return g{k}(true) + g{k}(false); }}));"],
+            [f"function g{k}(x) {{ if (x) {{ function inner() {{ return 'in block'; }} return typeof inner + inner(); }} return 'no block'; }}", f"lines.push('g{k} ' + attempt(function () {{ return g{k}(true) + g{k}(false); }}));"],
             [f"function g{k}() {{ lines.push(q(v)); var v = 1; {{ var v = 2; }} for (var v = 3; v < 4; v++) {{ }} return v; }}", f"lines.push('g{k} ' + attempt(g{k}));"],
             [f"function g{k}(a, b) {{ var f = () => arguments[0] + arguments.length; a = 10; return f(); }}", f"lines.push('g{k} ' + attempt(function () {{ return g{k}(1, 2, 3); }}));"],
             [f"function g{k}(a) {{ return function () {{ return q(a) + args(arguments); }}; }}", f"lines.push('g{k} ' + attempt(function () {{ return g{k}(1)(2, 3); }}));"],

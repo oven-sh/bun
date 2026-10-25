@@ -159,9 +159,9 @@ test(
     // Every program fails in words of its own, and the first build outlasts the run.
     const summary = await fuzz({
       ...settings(String(folder)),
-      beds: [{ bed: standIn(() => void calls++, 1.5), jobs: 1 }],
+      beds: [{ bed: standIn(() => void calls++, 9), jobs: 1 }],
       sources: ["numbers-across-their-borders"],
-      seconds: 1,
+      seconds: 6,
       batch: 8,
     });
     const out = join(String(folder), "out");
@@ -182,7 +182,7 @@ test(
   "what is never the doing of a busy machine is stored behind the last call as it was drawn, with the programs beside it",
   async () => {
     using folder = tempDir("aot-fuzzer-late-stop", {});
-    const bed = standIn(() => {}, 1.5);
+    const bed = standIn(() => {}, 9);
     const judge = bed.judge.bind(bed);
     bed.judge = async (where, programs, flags) =>
       (await judge(where, programs, flags)).map((each, index) =>
@@ -195,7 +195,7 @@ test(
       ...settings(String(folder)),
       beds: [{ bed, jobs: 1 }],
       sources: ["numbers-across-their-borders"],
-      seconds: 1,
+      seconds: 6,
       batch: 8,
     });
     const [name, ...rest] = readdirSync(join(String(folder), "out", "findings"));

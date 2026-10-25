@@ -379,6 +379,17 @@ EvalError: Code generation from strings disallowed for this context
 
 With the flag, a call to `eval` or `new Function` can only throw, so the compiler treats your program as if the call ran nothing. It knows every caller of your functions again, which means less code to compile and more that it can optimize, and [`--trim`](/bundler/aot-size#turn-off-code-from-strings) can remove the interpreter. A library that tries `new Function` inside a `try`, such as zod 4, falls back to plain code. A library that can't work without generated code, such as Elysia, throws the `EvalError` when it starts.
 
+That fallback is faster here. zod 4 generates a parser for each object schema, and an executable has to interpret it. The plain code it falls back to is compiled. A `POST` route that checks an order with ten items (600 bytes of JSON) with zod, in requests per second on one core:
+
+| Server      | Without the flag | With the flag |       |
+| ----------- | ---------------: | ------------: | ----: |
+| `Bun.serve` |           47,081 |        50,364 | +7.0% |
+| Hono        |           42,906 |        45,375 | +5.8% |
+| `node:http` |           37,501 |        38,649 | +3.1% |
+| Express     |           23,639 |        25,278 | +6.9% |
+
+`z.config({ jitless: true })` does the same for zod alone, without the flag.
+
 **With `=strict`, code from the disk fails with the flag's error too.** `require()` and `import()` of a file that isn't in the executable throw `EvalError: Code generation from strings disallowed for this context`. `--preload`, `-r`, `--require`, `--import` and `BUN_INSPECT_PRELOAD` end the process with that error and exit code `1`. An executable built without `--aot` does the same. Without the flag, you get [the messages that say what to do](#code-that-isnt-in-the-executable).
 
 **Pass the flag when you build.** `BUN_OPTIONS` can turn it on too, but that's too late for a string that's a constant. The compiler has compiled `(0, eval)("1 + 1")` and `new Function("return 2")` like the rest of your program, so they still run. A string that's put together at run time throws.

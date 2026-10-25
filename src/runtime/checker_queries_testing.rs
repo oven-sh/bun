@@ -93,8 +93,10 @@ pub(crate) fn describe_checker_queries(
     let session = Session::new();
     let requested_threads = usize::try_from(threads.unwrap_or(0)).unwrap_or(0);
 
-    let entry_points = [from_native(entry_point)];
-    let directory = strings::without_trailing_slash(dirname::<Posix>(&entry_points[0]));
+    // Bun's resolver reads an entry point as it is written, so it stays a native path.
+    let entry_points = [entry_point.to_vec()];
+    let entry_path = from_native(entry_point);
+    let directory = strings::without_trailing_slash(dirname::<Posix>(&entry_path));
     let conditions = [AOT_CONDITION.to_vec()];
     let host =
         DiskWithBuiltinModules::new(global.bun_vm(), requested_threads, directory, &conditions);

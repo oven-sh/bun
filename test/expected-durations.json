@@ -3166,7 +3166,22 @@
   "aot/generated-births-and-uses-of-typed-one-use-of-two-kinds-of-value-4.test.ts": {
     "default": 300
   },
-  "aot/generated-births-and-uses-of-typed-parameters-and-results-that-nobody-reads.test.ts": {
+  "aot/generated-births-and-uses-of-typed-parameters-and-results-that-nobody-reads-1.test.ts": {
+    "default": 300
+  },
+  "aot/generated-births-and-uses-of-typed-parameters-and-results-that-nobody-reads-2.test.ts": {
+    "default": 300
+  },
+  "aot/generated-births-and-uses-of-typed-parameters-and-results-that-nobody-reads-3.test.ts": {
+    "default": 300
+  },
+  "aot/generated-births-and-uses-of-typed-parameters-and-results-that-nobody-reads-4.test.ts": {
+    "default": 300
+  },
+  "aot/generated-births-and-uses-of-typed-parameters-and-results-that-nobody-reads-5.test.ts": {
+    "default": 300
+  },
+  "aot/generated-births-and-uses-of-typed-parameters-and-results-that-nobody-reads-6.test.ts": {
     "default": 300
   },
   "aot/generated-births-and-uses-of-typed-pattern-literals-met-again.test.ts": {
@@ -3220,7 +3235,22 @@
   "aot/generated-births-and-uses-of-typed-two-kinds-of-value-at-one-operator.test.ts": {
     "default": 300
   },
-  "aot/generated-births-and-uses-of-typed-variables-of-enclosing-code-in-loops.test.ts": {
+  "aot/generated-births-and-uses-of-typed-variables-of-enclosing-code-in-loops-1.test.ts": {
+    "default": 300
+  },
+  "aot/generated-births-and-uses-of-typed-variables-of-enclosing-code-in-loops-2.test.ts": {
+    "default": 300
+  },
+  "aot/generated-births-and-uses-of-typed-variables-of-enclosing-code-in-loops-3.test.ts": {
+    "default": 300
+  },
+  "aot/generated-births-and-uses-of-typed-variables-of-enclosing-code-in-loops-4.test.ts": {
+    "default": 300
+  },
+  "aot/generated-births-and-uses-of-typed-variables-of-enclosing-code-in-loops-5.test.ts": {
+    "default": 300
+  },
+  "aot/generated-births-and-uses-of-typed-variables-of-enclosing-code-in-loops-6.test.ts": {
     "default": 300
   },
   "aot/generated-births-and-uses-of-typed-variables-that-closures-hold.test.ts": {
@@ -7088,26 +7118,52 @@
     "windows": 31003
   },
   "aot/variant-verify-each-pass-1.test.ts": {
-    "default": 189130
+    "default": 64000,
+    "windows": 75000
+  },
+  "aot/variant-verify-each-pass-10.test.ts": {
+    "default": 64000,
+    "windows": 75000
+  },
+  "aot/variant-verify-each-pass-11.test.ts": {
+    "default": 64000,
+    "windows": 75000
+  },
+  "aot/variant-verify-each-pass-12.test.ts": {
+    "default": 64000,
+    "windows": 75000
   },
   "aot/variant-verify-each-pass-2.test.ts": {
-    "default": 154004,
-    "windows": 174773
+    "default": 64000,
+    "windows": 75000
   },
   "aot/variant-verify-each-pass-3.test.ts": {
-    "default": 204640
+    "default": 64000,
+    "windows": 75000
   },
   "aot/variant-verify-each-pass-4.test.ts": {
-    "default": 54966,
-    "windows": 61742
+    "default": 64000,
+    "windows": 75000
   },
   "aot/variant-verify-each-pass-5.test.ts": {
-    "default": 48259,
-    "windows": 49931
+    "default": 64000,
+    "windows": 75000
   },
   "aot/variant-verify-each-pass-6.test.ts": {
-    "default": 115742,
-    "windows": 150353
+    "default": 64000,
+    "windows": 75000
+  },
+  "aot/variant-verify-each-pass-7.test.ts": {
+    "default": 64000,
+    "windows": 75000
+  },
+  "aot/variant-verify-each-pass-8.test.ts": {
+    "default": 64000,
+    "windows": 75000
+  },
+  "aot/variant-verify-each-pass-9.test.ts": {
+    "default": 64000,
+    "windows": 75000
   },
   "aot/variant-wide-references-1.test.ts": {
     "default": 23345,

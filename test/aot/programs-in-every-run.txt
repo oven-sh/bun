@@ -407,6 +407,8 @@ conditions-of-passes/string-methods-with-many-kinds-of-arguments
 conditions-of-passes/values-arrive-where-their-types-say-they-cannot-be
 const-and-dead-zones/a-large-var-read-only-where-a-parameter-has-another-type-than-the-written-one
 const-and-dead-zones/texts-joined-from-constants-that-are-read-in-their-dead-zones
+constructor-functions/a-factory-makes-a-constructor-below-another-and-the-chain-changes
+constructor-functions/a-factory-makes-two-constructors-of-one-text
 constructor-functions/this-is-a-mapped-type-over-an-interface
 copied-properties/a-copy-born-in-the-cell-of-its-holder
 copied-properties/a-copy-born-in-the-cell-of-its-holder-is-kept-by-closures-over-one-variable
@@ -774,6 +776,7 @@ modules/names-imported-from-node-process-hold-what-they-held-at-the-load
 modules/namespace-object-protocol
 modules/paths-of-files-in-nested-directories
 modules/require-and-resolve
+modules/require-of-a-module-with-top-level-await
 modules/require-of-es-modules
 modules/required-before-its-turn
 modules/rings-of-modules-one-of-which-throws-and-a-later-importer-of-each
@@ -857,6 +860,7 @@ objects/a-typed-literal-stands-above-what-object-create-makes-while-it-changes
 objects/accessors-of-every-make-are-read-and-stored-once-and-often
 objects/accessors-of-every-make-are-read-and-stored-once-and-often-untyped
 objects/copies-of-an-object-with-very-many-names-take-time-in-proportion
+objects/defineProperty-creates-hidden-and-read-only-properties-on-instances
 objects/dictionaries-are-built-anew-from-the-same-names-between-collections
 objects/every-way-an-allocation-site-meets-its-record
 objects/extra-property-reads-avoid-runtime
@@ -877,6 +881,14 @@ objects/optional-number-fields-box-every-value
 objects/own-accessors-whose-getters-nobody-can-list
 objects/own-property-that-holds-undefined-hides-a-method
 objects/property-descriptors-only-taken-apart
+objects/stack-trace-captured-on-a-frozen-empty-object
+objects/stack-trace-captured-on-a-frozen-instance
+objects/stack-trace-captured-on-a-frozen-object-that-has-a-stack
+objects/stack-trace-captured-on-a-frozen-object-with-a-field-named-stack
+objects/stack-trace-captured-on-a-frozen-object-with-a-getter-named-stack
+objects/stack-trace-captured-on-a-sealed-instance-with-a-field-named-stack
+objects/stack-trace-captured-on-a-sealed-object-that-has-a-stack
+objects/stores-by-index-into-objects-that-cannot-be-extended
 objects/the-list-of-own-keys-is-the-same-however-it-is-used
 objects/unread-own-property-hides-a-read-only-property-on-the-prototype
 objects/unread-own-property-hides-a-setter-on-the-prototype
@@ -1168,7 +1180,6 @@ untyped-code/named-literal-as-any-given-fewer-properties
 untyped-code/names-and-symbols-are-found-above-objects-met-for-the-first-time
 untyped-code/names-born-undefined-are-filled-under-computed-keys
 untyped-code/object-filled-from-other-keys-keeps-structure
-untyped-code/thenable-check-among-records-with-a-then-field
 untyped-code/two-reads-one-call
 untyped-code/what-an-object-gets-after-it-was-first-read
 untyped-code/what-inherits-from-another-realm-follows-its-index-accessors
@@ -1210,6 +1221,7 @@ workers/embedded-worker-starts-another-embedded-worker
 workers/features-of-the-host-inside-workers
 workers/how-a-web-worker-ends
 workers/options-of-a-worker
+workers/reading-a-property-of-null-throws-in-every-thread
 workers/sixty-four-at-once
 workers/spinning-workers-are-terminated-at-once
 workers/stacks-of-errors-in-many-workers

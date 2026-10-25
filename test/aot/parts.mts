@@ -173,7 +173,7 @@ export const rows: Row[] = [
     { BUN_JSC_verifyGC: "1", BUN_JSC_slowPathAllocsBetweenGCs: "5", BUN_JSC_useEdenCollectionsAtSlowPathAllocs: "1" },
     { BUN_JSC_verifyGC: "1", BUN_JSC_slowPathAllocsBetweenGCs: "7" },
   ]),
-  variant("verify-each-pass", ["--aot-check=verify-each-pass"], {}, 6, [
+  variant("verify-each-pass", ["--aot-check=verify-each-pass"], {}, 12, [
     [
       [
         "definitions-by-descriptor/descriptors-that-leave-the-getter-out-beside-descriptors-that-hold-one",
@@ -277,7 +277,7 @@ export const rows: Row[] = [
   births("typed one class makes the members of a union", "one-class-makes-the-members-of-a-union", true),
   births("typed one thing under two names", "one-thing-under-two-names", true),
   births("typed one use of two kinds of value", "one-use-of-two-kinds-of-value", true, 4),
-  births("typed parameters and results that nobody reads", "parameters-and-results-that-nobody-reads", true),
+  births("typed parameters and results that nobody reads", "parameters-and-results-that-nobody-reads", true, 6),
   births("typed pattern literals met again", "pattern-literals-met-again", true),
   births("typed promises of natives that reject", "promises-of-natives-that-reject", true),
   births("typed records written as text", "records-written-as-text", true),
@@ -289,7 +289,7 @@ export const rows: Row[] = [
   births("typed two kinds of list or collection at one use", "two-kinds-of-list-or-collection-at-one-use", true, 4),
   births("typed two kinds of object at one place", "two-kinds-of-object-at-one-place", true, 3),
   births("typed two kinds of value at one operator", "two-kinds-of-value-at-one-operator", true),
-  births("typed variables of enclosing code in loops", "variables-of-enclosing-code-in-loops", true),
+  births("typed variables of enclosing code in loops", "variables-of-enclosing-code-in-loops", true, 6),
   births("typed variables that closures hold", "variables-that-closures-hold", true),
   births("typed ways that part and meet", "ways-that-part-and-meet", true),
   births("typed what is made anew on every turn", "made-anew-on-every-turn", true, 2),

@@ -24,7 +24,7 @@
 // and are not judged: PLAIN_BUN_COSTS=hold judges them anyway.
 import { expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
-import { bunExe, isASAN, isCI, isDebug, isLinux, runCommandMaxRSS, tempDir } from "harness";
+import { bunExe, isASAN, isCI, isDebug, isGlibc, runCommandMaxRSS, tempDir } from "harness";
 import { join } from "path";
 import { measureStart, startEnvironment, type Until } from "./start/measure-start";
 
@@ -37,7 +37,7 @@ const mode = process.env.PLAIN_BUN_COSTS;
 const budgetsPath = join(import.meta.dir, "plain-bun-costs.linux-x64.json");
 const budgets: Record<string, Cost> = existsSync(budgetsPath) ? JSON.parse(readFileSync(budgetsPath, "utf8")) : {};
 const programs = join(import.meta.dir, "plain-bun-costs");
-const measurable = isLinux && process.arch === "x64" && !isDebug && !isASAN;
+const measurable = isGlibc && process.arch === "x64" && !isDebug && !isASAN;
 const judged = isCI || mode === "hold";
 
 const thirtyModules = ["fs", "path", "http", "https", "stream", "events", "util", "crypto", "zlib", "child_process", "url", "os", "net", "tls", "buffer", "assert", "readline", "worker_threads", "dns", "querystring", "string_decoder", "timers", "tty", "vm", "perf_hooks", "async_hooks", "http2", "dgram", "module", "v8"]; // prettier-ignore

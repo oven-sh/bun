@@ -1255,19 +1255,19 @@ for (const [written, target, run] of kinds) {
 }
 
 // The property of another object does not count: an heir, a bound function, the prototype object.
-function alone() { return new Error("x").stack; }
-const heir = Object.create(alone);
+function unshared() { return new Error("x").stack; }
+const heir = Object.create(unshared);
 heir.displayName = "OfTheHeir";
-const bound = alone.bind(null);
+const bound = unshared.bind(null);
 bound.displayName = "OfTheBound";
-alone.prototype.displayName = "OfThePrototype";
+unshared.prototype.displayName = "OfThePrototype";
 collect();
-lines.push("alone: " + shown(alone(), "alone", "OfTheHeir", "OfTheBound", "OfThePrototype") + " | " + shown(bound(), "alone", "OfTheBound"));
+lines.push("unshared: " + shown(unshared(), "unshared", "OfTheHeir", "OfTheBound", "OfThePrototype") + " | " + shown(bound(), "unshared", "OfTheBound"));
 delete heir.displayName;
 delete bound.displayName;
-alone.displayName = "ItsOwn";
+unshared.displayName = "ItsOwn";
 collect();
-lines.push("alone: " + shown(alone(), "alone", "ItsOwn") + " | " + shown(bound(), "alone", "ItsOwn", "OfTheBound"));
+lines.push("unshared: " + shown(unshared(), "unshared", "ItsOwn") + " | " + shown(bound(), "unshared", "ItsOwn", "OfTheBound"));
 
 // Nothing holds these function objects behind the statement that names them.
 (function () { function local() { return new Error("x").stack; } local.displayName = "ShownForLocal"; collect(); lines.push("local: " + shown(local(), "local", "ShownForLocal")); })();

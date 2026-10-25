@@ -348,19 +348,24 @@ export function entryThatExitsWhenTold(folder: string, entry: string) {
  * and every answer is compared.
  */
 export async function countServer(build: CountedBuild, cwd: string, exchanges: Exchange[], { warmUp = 40, rounds = 100, attempts = 5 } = {}) {
-  // Some guards of node:http's and node:events' classes fail in the first requests of a start until they are set, and how often is
-  // drawn at the start: 14 times in three starts of four, once or twice in the others. Two starts that drew alike cancel it, so every
-  // start with less work is held against every start with more until two fit.
+  // Some guards of node:http's and node:events' classes hold or fail only in the first requests of a start, and for how many is drawn
+  // at the start. Two starts that drew alike cancel it, so every start with less work is held against every start with more.
+  // A pair need not come out even: a step of an async generator goes through the run time when the free list has no room for its frame,
+  // which happens once in some hundred rounds. So the pair with the fewest uneven counts is the answer, and an even one ends the search.
+  const unevenCounts = (work: CountedWork) => work.uneven.length + (Number.isInteger(work.accessesByName) ? 0 : 1);
   const less: Counts[] = [];
   const more: Counts[] = [];
+  let best: CountedWork | undefined;
   for (let attempt = 1; ; attempt++) {
     less.push(await serveRounds(build.executable, cwd, exchanges, warmUp, build.executable + ".less.counts"));
     more.push(await serveRounds(build.executable, cwd, exchanges, warmUp + rounds, build.executable + ".more.counts"));
     const pairs = [...more.map(other => [less.at(-1)!, other] as const), ...less.slice(0, -1).map(other => [other, more.at(-1)!] as const)];
-    const works = pairs.map(([a, b]) => tabulate(build, a, b, rounds, warmUp));
-    const even = works.find(work => !work.uneven.length && Number.isInteger(work.accessesByName));
-    if (even || attempt === attempts) return even ?? works[0];
-    console.error(`${build.executable}: measured again: ${works[0].uneven.map(test => `${test.path}:${test.position} ${test.kind} ${test.executed}`).join(", ")}`);
+    for (const [a, b] of pairs) {
+      const work = tabulate(build, a, b, rounds, warmUp);
+      if (!best || unevenCounts(work) < unevenCounts(best)) best = work;
+    }
+    if (!unevenCounts(best!) || attempt === attempts) return best!;
+    console.error(`${build.executable}: measured again: ${best!.uneven.map(test => `${test.path}:${test.position} ${test.kind} ${test.executed}, failed ${test.failed}`).join("; ")}`);
   }
 }
 

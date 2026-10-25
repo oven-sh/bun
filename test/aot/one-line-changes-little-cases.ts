@@ -46,7 +46,8 @@ const mostUnknownCallsGained = 2;
 // own code, and what the constructors do more once the order of the keys can be seen. A line that takes a class from the program
 // adds 4,000 and more. The mark stands between the two.
 const mostGrowthOfProgramCode = 0.25;
-const mostCodeBytesOfLine = 1024;
+// An ASAN build emits four times the bytes for the same functions.
+const mostCodeBytesOfLine = isASAN ? 4096 : 1024;
 const mostAccessesByNameOfTypedOverUntyped = 1;
 const mostCodeOfTypedOverUntyped = 0.08;
 

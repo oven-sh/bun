@@ -24,3 +24,4 @@ classes/what-a-loop-reads-is-changed-inside-the-loop-without-naming-it    hot   
 objects/own-accessors-whose-getters-nobody-can-list    hot    TODO: in the shell it ends with "TypeError: undefined is not a function"; an executable built at that heat answers as plain Bun does
 objects/own-accessors-whose-getters-nobody-can-list    cold    TODO: in the shell it ends with "TypeError: undefined is not a function"; an executable built at that heat answers as plain Bun does
 untyped-stress/builtin-method-results-in-conditions    hot    hot code takes an object for true and does not ask whether it masquerades as undefined: only the shell's makeMasquerader() makes such an object
+collector/eval-constants-at-heap-limit    both    fills a small heap to the brim, and its counts are tuned for the default build

@@ -7918,10 +7918,10 @@ declare module "bun" {
        * - This callback indicates that the pipe is closed; it is not an error
        *   by itself. Use {@link onExit} or {@link Subprocess.exited} to
        *   determine why the process ended.
-       * - It fires before {@link onExit}: when the process exits, the channel
-       *   is closed (should something else still hold the child's end open)
-       *   and reported first, the order in which `node:child_process` emits
-       *   `'disconnect'` and `'exit'` when the channel closes with the child.
+       * - When the process exits, this fires before {@link onExit}, the order
+       *   in which `node:child_process` emits `'disconnect'` and `'exit'`.
+       *   The exception is a channel with input that is still unread at that
+       *   moment: it is closed, and reported, after {@link onExit}.
        * - Only runs when {@link ipc} is enabled and runs at most once per
        *   subprocess.
        * - If the child becomes a zombie (exited but not yet reaped), the IPC is

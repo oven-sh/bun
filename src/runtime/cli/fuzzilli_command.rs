@@ -88,8 +88,6 @@ impl FuzzilliCommand {
 
             bun_core::pretty_errorln!("<r><d>[FUZZILLI] Temp file written, booting JS runtime<r>");
 
-            // Fuzzed scripts run in this process: process.abort, process.execve and
-            // process._kill must not end it or signal another process.
             unsafe extern "C" {
                 // safe: no args; sets a process-wide flag.
                 safe fn Bun__Process__enterFuzzilliREPRL();

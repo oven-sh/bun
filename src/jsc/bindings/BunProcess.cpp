@@ -1899,8 +1899,7 @@ static void restoreDefaultSignalDisposition(int signalNumber)
 }
 #endif
 
-// `bun fuzzilli` runs fuzzed scripts in-process, so the calls that end a process by design
-// (abort, execve, _kill) do nothing there, in every global.
+// Set by `bun fuzzilli`: a fuzzed script must not end the REPRL child or signal another process.
 static std::atomic<bool> isFuzzilliREPRL { false };
 
 extern "C" void Bun__Process__enterFuzzilliREPRL()

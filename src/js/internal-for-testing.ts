@@ -804,8 +804,7 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
-// What `bun fuzzilli` does before it runs a fuzzed script: from then on process.abort, process.execve and
-// process._kill do nothing, in every global of the process.
+// Sets the flag that `bun fuzzilli` sets: process.abort, process.execve and process._kill then do nothing.
 export const enterFuzzilliREPRL: () => void = $newCppFunction(
   "BunProcess.cpp",
   "jsFunctionEnterFuzzilliREPRLForTesting",

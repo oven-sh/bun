@@ -64,6 +64,31 @@ describe("bundler", () => {
     drop: ["ASSERT", "logger.debug"],
     backend: "api",
   });
+  itBundled("drop/IndexAccessValue", {
+    // `.bind` makes a function from the method, so the line stays
+    files: {
+      "/a.js": `
+        var level = "log";
+        var computed = console[level].bind(console);
+        computed("hello");
+        var quoted = console["log"].bind(console);
+        quoted("world");
+      `,
+    },
+    run: { stdout: "hello\nworld" },
+    drop: ["console"],
+    backend: "api",
+  });
+  itBundled("drop/DottedNameIndexAccess", {
+    files: {
+      "/a.js": `
+        console.log(Bun.inspect["table"]());
+        console.log(Bun?.inspect?.table());
+      `,
+    },
+    run: { stdout: "undefined\nundefined" },
+    drop: ["Bun.inspect.table"],
+  });
   itBundled("drop/RemovesSideEffects", {
     files: {
       "/a.js": `console.log(alert());`,

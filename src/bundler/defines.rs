@@ -22,7 +22,8 @@ use crate::defines_table::{
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
     Define, DefineData, DefineKeyError, DotDefine, Flags, IdentifierDefine, Options, RawDefines,
-    UserDefines, UserDefinesArray, are_parts_equal, canonical_define_key, validate_define_key,
+    UserDefines, UserDefinesArray, are_parts_equal, canonical_define_key, push_define_key_index,
+    validate_define_key,
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.
@@ -103,8 +104,14 @@ pub(crate) fn copy_env_for_define(
             continue;
         }
         key_buf.clear();
-        key_buf.extend_from_slice(PROCESS_ENV);
-        key_buf.extend_from_slice(k);
+        // A name that is not an identifier (`MY-VAR`, `MY.VAR`) is one quoted part of the key
+        if js_lexer::is_identifier(k) {
+            key_buf.extend_from_slice(PROCESS_ENV);
+            key_buf.extend_from_slice(k);
+        } else {
+            key_buf.extend_from_slice(&PROCESS_ENV[..PROCESS_ENV.len() - 1]);
+            push_define_key_index(&mut key_buf, k);
+        }
         env_string_store_put(to_string, bump, &key_buf, &v.value)?;
     }
 
@@ -417,6 +424,16 @@ impl DefineDataExt for DefineData {
                     bun_ast::Loc::default(),
                     format_args!(
                         "define key \"{}\" must use a quoted string inside \"[]\", for example process.env[\"MY-VAR\"]",
+                        bstr::BStr::new(key)
+                    ),
+                );
+            }
+            Err(DefineKeyError::UnsupportedEscape) => {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::default(),
+                    format_args!(
+                        "define key \"{}\" has an escape that is not supported inside \"[]\", only \\\\, \\\" and \\' are",
                         bstr::BStr::new(key)
                     ),
                 );

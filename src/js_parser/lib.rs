@@ -506,15 +506,18 @@ pub mod defines {
     #[derive(Clone)]
     pub struct DotFilter {
         bits: [u64; 64],
-        /// A name with non-ASCII text is in the filter. The visitor holds such an index literal as UTF-16.
-        has_non_ascii: bool,
+        /// The bits of the names from `Define::insert`: user, environment and `--drop` names. Only these can change `a["b"]`.
+        user_bits: [u64; 64],
+        /// The names of `user_bits` with non-ASCII text. The visitor holds such an index literal as UTF-16.
+        non_ascii_names: Vec<Box<[u8]>>,
     }
 
     impl Default for DotFilter {
         fn default() -> Self {
             DotFilter {
                 bits: [0; 64],
-                has_non_ascii: false,
+                user_bits: [0; 64],
+                non_ascii_names: Vec::new(),
             }
         }
     }
@@ -535,10 +538,16 @@ pub mod defines {
             self.bits[bit / 64] |= 1 << (bit % 64);
         }
 
-        /// `insert` for a name from the user, which can hold non-ASCII text. The global table cannot.
+        /// `insert` for a name from `Define::insert`. The global table does not pass through here.
         pub fn insert_user_name(&mut self, name: &[u8]) {
             self.insert(name);
-            self.has_non_ascii |= strings::first_non_ascii(name).is_some();
+            let bit = Self::bit(name);
+            self.user_bits[bit / 64] |= 1 << (bit % 64);
+            if strings::first_non_ascii(name).is_some()
+                && !self.non_ascii_names.iter().any(|known| **known == *name)
+            {
+                self.non_ascii_names.push(Box::from(name));
+            }
         }
 
         #[inline(always)]
@@ -548,8 +557,14 @@ pub mod defines {
         }
 
         #[inline(always)]
-        pub fn has_non_ascii(&self) -> bool {
-            self.has_non_ascii
+        pub fn may_contain_user_name(&self, name: &[u8]) -> bool {
+            let bit = Self::bit(name);
+            self.user_bits[bit / 64] & (1 << (bit % 64)) != 0
+        }
+
+        #[inline(always)]
+        pub fn non_ascii_names(&self) -> &[Box<[u8]>] {
+            &self.non_ascii_names
         }
     }
 
@@ -633,10 +648,15 @@ pub mod defines {
                 return Ok(());
             }
 
-            // An environment key such as `process.env.MY-VAR` fails the grammar, split it on `.` as before
-            let parts: Vec<Box<[u8]>> = match parse_define_key(key) {
-                Ok(parts) => parts,
-                Err(_) => {
+            // Only a key with `[` needs the grammar. Without one the grammar gives the `.` split, or fails into it.
+            let parsed = if strings::contains_char(key, b'[') {
+                parse_define_key(key).ok()
+            } else {
+                None
+            };
+            let parts: Vec<Box<[u8]>> = match parsed {
+                Some(parts) => parts,
+                None => {
                     let mut parts = Vec::with_capacity(strings::count_char(key, b'.') + 1);
                     for split in strings::split(key, b".") {
                         parts.push(Box::from(split));
@@ -671,9 +691,11 @@ pub mod defines {
         InvalidIdentifier(&'a [u8]),
         /// A `[` without a quoted string and `]`, or a `]` not followed by `.`, `[`, or the end of the key.
         InvalidIndex,
+        /// A `\` in a quoted part that is not before `\`, `"` or `'`.
+        UnsupportedEscape,
     }
 
-    /// Calls `part` with each part of a define key such as `process.env["NODE-ENV"]`, with esbuild's `ParseGlobalName` grammar.
+    /// Calls `part` with each part of a define key such as `process.env["NODE-ENV"]`. A subset of esbuild's `ParseGlobalName`: no blanks, three escapes.
     fn for_each_define_key_part<'k>(
         key: &'k [u8],
         mut part: impl FnMut(&[u8]),
@@ -742,7 +764,8 @@ pub mod defines {
                                         .push(escaped);
                                     j += 2;
                                 }
-                                _ => return Err(DefineKeyError::InvalidIndex),
+                                Some(_) => return Err(DefineKeyError::UnsupportedEscape),
+                                None => return Err(DefineKeyError::InvalidIndex),
                             },
                             Some(&c) => {
                                 if let Some(unescaped) = unescaped.as_mut() {
@@ -800,17 +823,22 @@ pub mod defines {
                 canonical.push(b'.');
                 canonical.extend_from_slice(part);
             } else {
-                canonical.extend_from_slice(b"[\"");
-                for &byte in part.iter() {
-                    if byte == b'"' || byte == b'\\' {
-                        canonical.push(b'\\');
-                    }
-                    canonical.push(byte);
-                }
-                canonical.extend_from_slice(b"\"]");
+                push_define_key_index(&mut canonical, part);
             }
         }
         Cow::Owned(canonical)
+    }
+
+    /// Appends `["part"]` to a define key, in the spelling the key grammar reads back as `part`.
+    pub fn push_define_key_index(key: &mut Vec<u8>, part: &[u8]) {
+        key.extend_from_slice(b"[\"");
+        for &byte in part.iter() {
+            if byte == b'"' || byte == b'\\' {
+                key.push(b'\\');
+            }
+            key.push(byte);
+        }
+        key.extend_from_slice(b"\"]");
     }
 
     pub fn are_parts_equal(a: &[Box<[u8]>], b: &[Box<[u8]>]) -> bool {

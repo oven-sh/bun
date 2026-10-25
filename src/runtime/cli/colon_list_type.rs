@@ -23,6 +23,17 @@ pub(crate) struct ColonListType<T: ColonListValue> {
 
 /// The first `:` or `=` of `arg` outside a `["quoted"]` part, which a define key can hold.
 fn separator_index(arg: &[u8]) -> Option<usize> {
+    let first = strings::index_of_char(arg, b':')
+        .unwrap_or(u32::MAX)
+        .min(strings::index_of_char(arg, b'=').unwrap_or(u32::MAX));
+    if first == u32::MAX {
+        return None;
+    }
+    // Only a `[` before that separator can start a quoted part
+    if !strings::contains_char(&arg[..first as usize], b'[') {
+        return Some(first as usize);
+    }
+
     let mut start = 0;
     loop {
         let at = start + strings::index_of_any(&arg[start..], b":=[")?;

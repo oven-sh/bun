@@ -118,7 +118,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_this(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         p.this_expr_count = p.this_expr_count.wrapping_add(1);
-        if !p.fn_only_data_visit.is_this_nested {
+        if !p.fn_only_data_visit.is_this_nested && !p.is_revisit_for_substitution {
             let defines = p.define;
             if let Some(define) = &defines.this
                 && !define.valueless()
@@ -147,7 +147,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return false;
         };
         let defines = p.define;
-        match defines.dots_for(name.slice(p.arena)) {
+        match defines.dots.get(name.slice(p.arena)) {
             Some(candidates) => {
                 Self::apply_dot_define(p, e, in_, is_delete_target, candidates).is_break()
             }
@@ -220,6 +220,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // e_* accessors on `expr::Data` return Option<StoreRef<T>> / Option<T>.
 
     fn e_import_meta(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        if p.is_revisit_for_substitution {
+            return;
+        }
         let expr = *e;
         // TODO: delete import.meta might not work
         let is_delete_target = matches!(p.delete_target, Data::EImportMeta(..));
@@ -993,14 +996,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // `--drop`: `x[i]()`, `x[i].call()` and `x[i].apply()` call the method. `x[i].bind(y)` makes a value.
+        let call_may_be_dropped = in_
+            .property_access_for_method_call_maybe_should_replace_with_undefined
+            && (is_call_target
+                || matches!(p.call_target, Data::EDot(dot)
+                    if (dot.name == b"call" || dot.name == b"apply")
+                        && matches!(dot.target.data, Data::EIndex(t) if core::ptr::eq(&raw const *e_, &raw const *t))));
+
         // `a["b"]` matches the same define as `a.b`. The filter takes UTF-8, and a non-ASCII literal is UTF-16.
         if let Data::EString(s) = e_.index.data
             && (if s.is_utf8() {
-                s.next.is_some() || p.define.dots_filter.may_contain(s.data.slice())
+                s.next.is_some() || p.define.dots_filter.may_contain_user_name(s.data.slice())
             } else {
-                p.define.dots_filter.has_non_ascii()
+                p.define
+                    .dots_filter
+                    .non_ascii_names()
+                    .iter()
+                    .any(|name| s.eql_bytes(name))
             })
-            && Self::apply_index_define(p, e, in_, is_delete_target)
+            && Self::apply_index_define(
+                p,
+                e,
+                ExprIn {
+                    property_access_for_method_call_maybe_should_replace_with_undefined:
+                        call_may_be_dropped,
+                    ..in_
+                },
+                is_delete_target,
+            )
         {
             return;
         }
@@ -1008,8 +1032,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                property_access_for_method_call_maybe_should_replace_with_undefined: in_
-                    .property_access_for_method_call_maybe_should_replace_with_undefined,
+                property_access_for_method_call_maybe_should_replace_with_undefined:
+                    call_may_be_dropped,
                 is_property_access_target: !is_delete_target,
                 ..Default::default()
             },
@@ -1096,9 +1120,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 // Hide the `--drop` flag from the target visit so a call in the index (`console[foo()]()`) does not consume it
-                let target_is_dropped_method_call = in_
-                    .property_access_for_method_call_maybe_should_replace_with_undefined
-                    && p.method_call_must_be_replaced_with_undefined;
+                let target_is_dropped_method_call =
+                    call_may_be_dropped && p.method_call_must_be_replaced_with_undefined;
                 if target_is_dropped_method_call {
                     p.method_call_must_be_replaced_with_undefined = false;
                 }

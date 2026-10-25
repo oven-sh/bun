@@ -5,11 +5,23 @@ import { join } from "path";
 
 // `define` key matching and value parsing, on every surface that takes a
 // define map: `bun build` (bundling and `--no-bundle`), `Bun.build`, and
-// `Bun.Transpiler`. The expected output follows esbuild, with one difference:
-// Bun rewrites a top-level `this` (to `exports` in CommonJS), so a define value
-// that starts with `this` gets the same rewrite at a top-level use site.
+// `Bun.Transpiler`. The expected output follows esbuild 0.28.2, with these
+// differences:
+// - Bun rewrites a top-level `this` (to `exports` in CommonJS), so a define
+//   value that starts with `this` gets the same rewrite at a top-level use site.
+// - A call through a key keeps the member chain as its callee, as before:
+//   `F()` with `F=a.if` is `a.if()`. esbuild prints `(0, a.if)()`.
+// - An assignment through a member chain is the assignment that the chain
+//   spells: `FLAG = 1` with `FLAG=settings.flag` writes a property. esbuild
+//   reports an assignment to the import `settings`.
+// - The later of two spellings of one key wins. esbuild takes the spelling that
+//   sorts last.
+// - A BigInt value can be hexadecimal (`0xffn`). esbuild takes decimal only.
 
 type Defines = Record<string, string>;
+
+/** The text of a bundle without its `// path` comments, which hold the name of the temporary directory. */
+const withoutPathComments = (code: string) => code.replace(/^(?:\/\/ .*|\/\* .* \*\/)\n/gm, "");
 
 interface Surface {
   name: string;
@@ -51,8 +63,7 @@ const surfaces: Surface[] = [
         define: defines,
       });
       expect(result.logs).toEqual([]);
-      expect(result.success).toBe(true);
-      return await result.outputs[0].text();
+      return withoutPathComments(await result.outputs[0].text());
     },
   },
   {
@@ -118,6 +129,8 @@ const repros: Repro[] = [
       // Inside a function `this` stays `this`
       ["function () { return C; }", "function() { return this.foo; }"],
       ["F", "a.if"],
+      // A call keeps the chain as its callee
+      ["F()", "a.if()"],
       ["window.env", "import.meta.env"],
       ["N", "null"],
       ["U", "undefined"],
@@ -196,10 +209,18 @@ const repros: Repro[] = [
       BAR: "a.b",
       "obj.key": "c.d",
       "obj.num": "7",
+      NAN: "NaN",
+      "obj.limit": "Infinity",
     },
     cases: [
       ["FOO = 1", "FOO = 1"],
       ["FOO", "123"],
+      // `NaN` and `Infinity` are numbers, not the names of globals
+      ["NAN = 1", "NAN = 1"],
+      ["NAN", "NaN"],
+      ["obj.limit = 10", "obj.limit = 10"],
+      ['obj["limit"]++', 'obj["limit"]++'],
+      ["typeof obj.limit", '"number"'],
       // An identifier or a member chain is a valid target
       ["BAR = 2", "a.b = 2"],
       ["obj.key = 3", "c.d = 3"],
@@ -246,8 +267,7 @@ describe.concurrent("define values are symbols, not text", () => {
       minify: { identifiers: true },
     });
     expect(result.logs).toEqual([]);
-    expect(result.success).toBe(true);
-    const output = await result.outputs[0].text();
+    const output = withoutPathComments(await result.outputs[0].text());
     // Both names were renamed, so the define values must not print verbatim
     expect(output).not.toContain("localObject");
     expect(output).not.toContain("importedObject");
@@ -285,8 +305,7 @@ describe.concurrent("define values are symbols, not text", () => {
       ...options,
     });
     expect(result.logs).toEqual([]);
-    expect(result.success).toBe(true);
-    const code = await result.outputs[0].text();
+    const code = withoutPathComments(await result.outputs[0].text());
     return { code, run: await runWithGlobals(String(dir), result.outputs[0].path) };
   }
 
@@ -480,12 +499,51 @@ describe.concurrent("define values are symbols, not text", () => {
       using dir = tempDir("bundler-define-literal", files(expression));
       const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], define });
       expect(result.logs).toEqual([]);
-      expect(result.success).toBe(true);
-      // The `// path` comments hold the name of the temporary directory
-      return (await result.outputs[0].text()).replace(/^\/\/ .*\n/gm, "");
+      return withoutPathComments(await result.outputs[0].text());
     }
     expect(await bundle(key, { [key]: value })).toBe(await bundle(value, {}));
   });
+
+  test("the minifier does not read a value a second time as a key when it inlines a local", async () => {
+    // `b.c` is the value of `FIRST` and the key of another define. The import that the other value names stays unread.
+    const { run } = await bundleAndRun(
+      {
+        "entry.js": `
+          import { imported } from "./imported.js";
+          function add(x) { let local = FIRST; return local + x; }
+          console.log(add(1));
+        `,
+        "imported.js": `export const imported = { e: 10 };`,
+        "globals.js": `globalThis.b = { c: 1 };`,
+      },
+      { define: { FIRST: "b.c", "b.c": "imported.e" }, minify: { syntax: true } },
+    );
+    expect(run).toEqual({ stdout: "2\n", stderr: "", exitCode: 0 });
+  });
+
+  test.each(["COUNTER", "state.COUNTER", 'state["COUNTER"]'])(
+    "an assignment through %s to a module binding is an assignment to the binding",
+    async key => {
+      const { run } = await bundleAndRun(
+        {
+          "entry.js": `
+            import { set } from "./counter.js";
+            const { counter: before } = await import("./counter.js");
+            set(50);
+            console.log(before);
+          `,
+          "counter.js": `
+            export let counter = 0;
+            export function set(value) { ${key} = value; }
+          `,
+          "globals.js": ``,
+        },
+        { define: { [key]: "counter" } },
+      );
+      // `before` is a copy of the value. It is not the binding `counter`.
+      expect(run).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+    },
+  );
 
   test("assigning through a member chain does not assign to the import at its head", async () => {
     using dir = tempDir("bundler-define-assign-import", {
@@ -503,7 +561,6 @@ describe.concurrent("define values are symbols, not text", () => {
     });
     // `settings.flag = 1` writes a property. The bundler must not report an assignment to `settings`.
     expect(result.logs).toEqual([]);
-    expect(result.success).toBe(true);
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), result.outputs[0].path],
@@ -553,7 +610,6 @@ describe.concurrent("define values are symbols, not text", () => {
     });
     // Only the last link `flag` is the target. `ns.settings` is read, so the import is not reported.
     expect(result.logs).toEqual([]);
-    expect(result.success).toBe(true);
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), result.outputs[0].path],
@@ -584,8 +640,7 @@ describe.concurrent("define values are symbols, not text", () => {
       define: { FOO: "exports.foo" },
     });
     expect(result.logs).toEqual([]);
-    expect(result.success).toBe(true);
-    const output = await result.outputs[0].text();
+    const output = withoutPathComments(await result.outputs[0].text());
     // `$foo = 2` is a named export like the literal `exports.foo = 2`, so the module needs no wrapper
     expect(output).not.toContain("__commonJS");
     expect(output).not.toContain("FOO");
@@ -599,6 +654,68 @@ describe.concurrent("define values are symbols, not text", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("2 1\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// `minify.syntax` inlines a local that is used one time and then visits the statement a second time.
+// The runtime transpiler does the same. The second visit must not read a define value as a define key.
+describe.concurrent("a define value is not matched against the defines again", () => {
+  const defines = {
+    "a.b": "b.c",
+    "b.c": "c.a",
+    "c.a": "a.b",
+    "k.m": "k.m.n",
+    "import.meta.env": "process.env",
+    'q["x-y"]': "q.z",
+    "q.z": "1",
+  };
+
+  test.each([
+    ["a.b", "b.c"],
+    ["k.m", "k.m.n"],
+    ['q["x-y"]', "q.z"],
+    // `process.env.NODE_ENV` has a default define
+    ["import.meta.env.NODE_ENV", "process.env.NODE_ENV"],
+    ["import.meta.env", "process.env"],
+  ])("%s => %s with minify.syntax", (input, expected) => {
+    const transpiler = new Bun.Transpiler({ define: defines, minify: { syntax: true } });
+    const source = `
+      export function viaLocal() { const local = g(); return local + ${input}; }
+      export function direct() { return g() + ${input}; }
+    `;
+    expect(transpiler.transformSync(source, "js").replace(/\s+/g, " ").trim()).toBe(
+      `export function viaLocal() { return g() + ${expected}; } export function direct() { return g() + ${expected}; }`,
+    );
+  });
+
+  test('a key is replaced when minify.syntax rewrites a["b"] to a.b', () => {
+    const transpiler = new Bun.Transpiler({
+      define: { "a.b": "7", 'process.env["SOME-VAR"]': "3" },
+      minify: { syntax: true },
+    });
+    expect(transpiler.transformSync(`x(a["b"], process.env["SOME-VAR"]);`, "js").trim()).toBe("x(7, 3);");
+  });
+
+  test("the runtime transpiler", async () => {
+    using dir = tempDir("bundler-define-once", {
+      "run.js": `
+        globalThis.k = { m: { n: { label: "k.m.n", n: { label: "k.m.n.n" } } } };
+        function viaLocal() { let local = k.m; return local.label + "!"; }
+        function direct() { return k.m.label + "!"; }
+        console.log(viaLocal(), direct());
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--define", "k.m=k.m.n", "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("k.m.n! k.m.n!\n");
     expect(exitCode).toBe(0);
   });
 });
@@ -628,14 +745,18 @@ describe.concurrent("a define key has one spelling", () => {
       "app.jsx": `export const element = <div>{process.env.NODE_ENV}</div>;`,
     });
     const bundle = async (key: string) => {
-      const result = await Bun.build({
-        entrypoints: [join(String(dir), "app.jsx")],
-        define: { [key]: '"production"' },
-        packages: "external",
+      // A child process: `bun test` sets NODE_ENV in this one, and then the define key does not decide the runtime
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--packages=external", "--define", `${key}="production"`, "app.jsx"],
+        env: { ...bunEnv, BUN_ENV: undefined },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      expect(result.logs).toEqual([]);
-      expect(result.success).toBe(true);
-      return await result.outputs[0].text();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return stdout;
     };
     const dotted = await bundle("process.env.NODE_ENV");
     expect(dotted).toContain("react/jsx-runtime");
@@ -653,6 +774,7 @@ describe.concurrent("define key errors", () => {
     ["a[b]", 'define key "a[b]" must use a quoted string inside "[]"'],
     ['a["b"', 'define key "a["b"" must use a quoted string inside "[]"'],
     ['a["b"]c', 'define key "a["b"]c" must use a quoted string inside "[]"'],
+    ['a["\\n"]', 'define key "a["\\n"]" has an escape that is not supported inside "[]"'],
   ])("%s is rejected", async (key, message) => {
     using dir = tempDir("bundler-define-key-error", { "entry.js": "console.log(1);\n" });
     await using proc = Bun.spawn({

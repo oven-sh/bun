@@ -575,6 +575,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// A revisited node can be part of a `define` value, which is shared with other parses.
     pub(crate) is_revisit_for_substitution: bool,
 
+    /// The addresses of the `E::Dot` nodes that a define value built. The revisit does not read them as define keys.
+    pub(crate) define_value_dots: HashMap<usize, ()>,
+
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
 
     // Inside a TypeScript namespace, an "export declare" statement can be used
@@ -5380,7 +5383,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_is_property_access_target(parts.len() > 1),
         );
         if parts.len() > 1 {
-            return Ok(self.member_expression(loc, value, &parts[1..], IdentifierOpts::default()));
+            return Ok(self.member_expression(
+                loc,
+                value,
+                &parts[1..],
+                IdentifierOpts::default(),
+                false,
+            ));
         }
 
         Ok(value)
@@ -5413,6 +5422,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         initial_value: Expr,
         parts: &[&'a [u8]],
         last_link_opts: IdentifierOpts,
+        is_define_value: bool,
     ) -> Expr {
         let mut value = initial_value;
 
@@ -5440,6 +5450,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 );
+                if is_define_value && let js_ast::ExprData::EDot(dot) = value.data {
+                    self.define_value_dots.insert(dot.as_ptr() as usize, ());
+                }
             }
         }
 
@@ -7164,6 +7177,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc,
                 data: js_ast::ExprData::EUndefined(E::Undefined),
             },
+            b"NaN" => Expr {
+                loc,
+                data: js_ast::ExprData::ENumber(E::Number::new(f64::NAN)),
+            },
+            b"Infinity" => Expr {
+                loc,
+                data: js_ast::ExprData::ENumber(E::Number::new(f64::INFINITY)),
+            },
             b"this" => {
                 self.this_expr_count = self.this_expr_count.wrapping_add(1);
                 let defines = self.define;
@@ -7196,6 +7217,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 let result = self.find_symbol(loc, first).expect("unreachable");
+                // A value that is one identifier is assigned like the written name
+                if head_opts.assign_target() != js_ast::AssignTarget::None {
+                    if self.exports_ref.eql(result.r#ref) {
+                        self.commonjs_module_exports_assigned_deoptimized = true;
+                    }
+                    self.record_assignment(result.r#ref);
+                }
                 self.handle_identifier(
                     loc,
                     E::Identifier::init(result.r#ref)
@@ -7221,6 +7249,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_is_call_target(opts.is_call_target())
                 .with_is_template_tag(opts.is_template_tag())
                 .with_is_property_access_target(opts.is_property_access_target()),
+            true,
         )
     }
 
@@ -7232,7 +7261,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         while parts.len() > 1 {
             let last = parts.len() - 1;
             if let js_ast::ExprData::EDot(ex) = expr.data {
-                if !strings::eql(&parts[last], &ex.name) {
+                // The revisit after single-use inlining sees a define value again. It is not the key of a define.
+                if (self.is_revisit_for_substitution
+                    && self.define_value_dots.contains_key(&(ex.as_ptr() as usize)))
+                    || !strings::eql(&parts[last], &ex.name)
+                {
                     return false;
                 }
                 expr = ex.target;
@@ -9938,6 +9971,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             span_uses: Vec::new(),
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
+            define_value_dots: Default::default(),
             method_call_must_be_replaced_with_undefined: false,
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,

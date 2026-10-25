@@ -367,7 +367,7 @@ public:
         if (!debugger) {
             for (auto message : messages) {
                 resolveWaitIfInitialized(message);
-                dispatcher.dispatchMessageFromRemote(WTF::move(message));
+                dispatcher.dispatchMessageFromRemote(WTF::move(message), *this);
 
                 if (!debugger) {
                     debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
@@ -381,7 +381,7 @@ public:
         } else {
             for (auto message : messages) {
                 resolveWaitIfInitialized(message);
-                dispatcher.dispatchMessageFromRemote(WTF::move(message));
+                dispatcher.dispatchMessageFromRemote(WTF::move(message), *this);
             }
         }
 

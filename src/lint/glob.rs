@@ -235,6 +235,33 @@ impl Minimatch {
     }
 }
 
+/// A pattern for the paths below a directory, with the directory kept out of the pattern. Joined into one pattern, a
+/// directory named `[app]` or `{a,b}` is a class or a group, and matches no path in it. `directory` is compared byte
+/// by byte, and `below` matches the rest of the path.
+pub struct Under<M> {
+    directory: Box<[u8]>,
+    below: M,
+}
+
+impl<M> Under<M> {
+    /// `directory` and the text of `below` are the two parts of [`paths::split_joined`].
+    pub fn new(directory: &[u8], below: M) -> Under<M> {
+        Under {
+            directory: directory.into(),
+            below,
+        }
+    }
+
+    /// The pattern and the part of `path` that it is for, if `path` starts with the directory.
+    pub fn below<'p>(&self, path: &'p [u8]) -> Option<(&M, &'p [u8])> {
+        // Without a directory, `strip_prefix` is a call that compares no bytes.
+        match self.directory.is_empty() {
+            true => Some((&self.below, path)),
+            false => Some((&self.below, path.strip_prefix(&self.directory[..])?)),
+        }
+    }
+}
+
 /// Converts `1..3` from inside braces the way picomatch does. It builds the regex class `[1-3]` from the sorted parts.
 /// If that class is invalid, the text matches literally, without the braces.
 /// Returns `None` unless the parts are letters, digits and `-`.

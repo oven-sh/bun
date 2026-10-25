@@ -11,8 +11,9 @@ const CONFIGURE_ESLINT = 21;
 const NEEDS_ESLINT_CONFIGURATION = "4";
 const NOT_INSTALLED = "5";
 
-// By the directory that it is looked for from: `{ Linter, FlatConfigArray }`, or `null` if it is not installed. `FlatConfigArray`,
-// which the package does not export, is `null` if it is not where it has been since ESLint 8.21.
+// By the directory that it is looked for from: `{ Linter, FlatConfigArray, knowsBasePath }`, or `null` if it is not installed.
+// `FlatConfigArray`, which the package does not export, is `null` if it is not where it has been since ESLint 8.21.
+// `knowsBasePath`: a config object can say what its patterns are relative to, since ESLint 9.30. An older one rejects the key.
 const eslintPackages = new Map();
 
 function eslintFrom(directory) {
@@ -26,7 +27,9 @@ function eslintFrom(directory) {
   } catch {}
   found = null;
   if (root !== null) {
-    found = { Linter: from("eslint").Linter, FlatConfigArray: null };
+    found = { Linter: from("eslint").Linter, FlatConfigArray: null, knowsBasePath: false };
+    const [major, minor] = String(found.Linter.version).split(".").map(Number);
+    found.knowsBasePath = major > 9 || (major === 9 && minor >= 30);
     try {
       found.FlatConfigArray =
         require(nodePath.join(root, "lib", "config", "flat-config-array.js")).FlatConfigArray ?? null;
@@ -112,17 +115,18 @@ function movedPattern(pattern, from, to) {
 }
 
 // Prepares a config object that the command line or bunfig.toml adds. Its plugins and parser arrive as names. Its `basePath` says
-// what its patterns are relative to, if that isn't `arrayBase`, the base path of the config array. ESLint only knows `basePath`
-// in config objects since 9.30 and rejects unknown keys, so the key is never passed on.
-async function reviveOverride(object, arrayBase) {
+// what its patterns are relative to, if that isn't `arrayBase`, the base path of the config array. ESLint passes the directory
+// of `--ignore-pattern` that way since 9.30. An older one rejects the key, and wrote the directory in front of each pattern.
+async function reviveOverride(object, arrayBase, knowsBasePath) {
   const resolve = createRequire(nodePath.join(cwd, "noop.js")).resolve;
   const importFrom = async name => load(pathToFileURL(resolve(name)).href);
   const { $globsOfBun: isOfBunfig, $jsPlugins: located = {}, basePath = arrayBase, ...revived } = object;
   if (isOfBunfig) {
     revived.files = [bunfigMatcher(object.files, basePath)];
     if (object.ignores !== undefined) revived.ignores = [bunfigMatcher(object.ignores, basePath)];
-  } else if (object.ignores !== undefined) {
-    revived.ignores = object.ignores.map(it => movedPattern(it, basePath, arrayBase));
+  } else if (object.ignores !== undefined && nodePath.relative(arrayBase, basePath) !== "") {
+    if (knowsBasePath) revived.basePath = basePath;
+    else revived.ignores = object.ignores.map(it => movedPattern(it, basePath, arrayBase));
   }
   if (object.plugins !== undefined) {
     revived.plugins = {};
@@ -157,7 +161,7 @@ async function reviveOverride(object, arrayBase) {
 
 // ESLint's `calculateConfigArray`: all of the configuration file, for a file whose configuration has what only JavaScript can say.
 // `file`: `null` under `--no-config-lookup`.
-async function wholeConfiguration({ FlatConfigArray }, { file, basePath, ignores, added }) {
+async function wholeConfiguration({ FlatConfigArray, knowsBasePath }, { file, basePath, ignores, added }) {
   // Of an array that is only an array the `Linter` makes one for each file.
   const configs = FlatConfigArray === null ? [] : new FlatConfigArray([], { basePath, shouldIgnore: ignores });
   if (file !== null) {
@@ -168,7 +172,7 @@ async function wholeConfiguration({ FlatConfigArray }, { file, basePath, ignores
   }
   // The `Linter` turns a plain array into a config array whose base path is its `cwd`.
   const arrayBase = FlatConfigArray === null ? cwd : basePath;
-  for (const object of added) configs.push(await reviveOverride(object, arrayBase));
+  for (const object of added) configs.push(await reviveOverride(object, arrayBase, knowsBasePath));
   await configs.normalize?.();
   if (configs.getConfig === undefined) return configs;
   return Object.assign([], { getConfig: name => withoutProcessor(configs.getConfig(name)) });

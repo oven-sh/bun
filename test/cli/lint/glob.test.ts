@@ -1,6 +1,7 @@
-import { afterAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { join, relative } from "node:path";
+import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
@@ -543,3 +544,459 @@ test.concurrent.each(["{a,", "a{,", "*{a,", "[*", "{*", "a\\"])(
     expect(exitCode).toBe(0);
   },
 );
+
+// Where `bun lint` joins a directory in front of a pattern, the directory is a path, whatever bytes its name has:
+// `[proj]` is no class, `{a,b}` no group and `+(old)` no extglob.
+
+// A debug build takes seconds to lint a project, and more with an ESLint 8 config, with a config file that is a
+// program, or with the installed ESLint.
+const debugTimeout = isDebug || isASAN ? 60_000 : undefined;
+
+type Files = Record<string, string>;
+
+/**
+ * Lints `files` from the directory `cwd`. Returns each report as `file:line rule`, with the file relative to the
+ * directory `root`. `files` can be a function of the directory that they are written to.
+ */
+async function reportedFrom(
+  cwd: string,
+  files: Files | ((directory: string) => Files),
+  args: string[] = [],
+  root = ".",
+) {
+  using dir = tempDir("bun-lint-glob", typeof files === "function" ? {} : files);
+  if (typeof files === "function") {
+    for (const [path, text] of Object.entries(files(String(dir)))) {
+      mkdirSync(dirname(join(String(dir), path)), { recursive: true });
+      writeFileSync(join(String(dir), path), text);
+    }
+  }
+  await using proc = spawn({
+    cmd: [bunExe(), "lint", "-f", "unix", ...args],
+    env,
+    cwd: join(String(dir), cwd),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0 && exitCode !== 1) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+  // With an oxlint config the paths are relative to the working directory and a rule is `import(no-cycle)`.
+  return [...stdout.matchAll(/^(.+?):(\d+):\d+: .* \[\w+\/(.+)\]\r?$/gm)]
+    .map(([, path, line, rule]) => {
+      const absolute = isAbsolute(path) ? path : join(String(dir), cwd, path);
+      const file = relative(join(String(dir), root), absolute).replaceAll("\\", "/");
+      return `${file}:${line} ${rule.replace(/^(\w+)\((.+)\)$/, "$1/$2")}`;
+    })
+    .sort();
+}
+
+/** The same for a project that is in a directory named `name`, from its subdirectory `cwd`. */
+function reportedIn(name: string, files: Files, args: string[] = [], cwd = ".") {
+  const inside = Object.fromEntries(Object.entries(files).map(([path, text]) => [`${name}/${path}`, text]));
+  return reportedFrom(join(name, cwd), inside, args, name);
+}
+
+// `bun lint --run-path-tests` is compiled into debug and canary builds only.
+const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
+
+test.skipIf(!hasRunner)("what is joined to a directory is split where the directory ends in it", async () => {
+  // The directory, what is joined to it, and the two parts of the result: what is left of the directory, which is no
+  // pattern, and the rest.
+  const rows = [
+    ["/t/[p]", "src/**", "/t/[p]", "/src/**"],
+    ["/t/[p]", "./src/../lib/*.js", "/t/[p]", "/lib/*.js"],
+    ["/t/[p]", ".", "/t/[p]", ""],
+    // A `..` leaves the directory.
+    ["/t/[p]/app", "../lib/*.js", "/t/[p]", "/lib/*.js"],
+    ["/t/[p]/app", "src/../../lib/*.js", "/t/[p]", "/lib/*.js"],
+    ["/t/[p]", "../../../x/*.js", "", "/x/*.js"],
+    // What comes back into the directory by its name is written, so it is a pattern.
+    ["/t/[p]/app", "../../[p]/app/*.js", "/t", "/[p]/app/*.js"],
+    // A root has no name.
+    ["/", "src/*.js", "", "/src/*.js"],
+    ["/t", "../src/*.js", "", "/src/*.js"],
+  ];
+  // `path.resolve`, `path.join`, and the join of a tsconfig.json entry. Only the last takes a `\` for a separator in a
+  // POSIX path, and the checker writes a drive as `/C:`.
+  const joins = {
+    split_resolved: [...rows, ["/t/[p]", "..\\lib/*.js", "/t/[p]", "/..\\lib/*.js"]],
+    split_joined: [...rows, ["/t/[p]", "/t/[p]/src/**", "/t/[p]", "/t/[p]/src/**"]],
+    split_included: [
+      ...rows,
+      ["/t/[p]/app", "..\\lib/*.js", "/t/[p]", "/lib/*.js"],
+      ["/C:/r/[p]/app", "..\\lib/*.js", "/C:/r/[p]", "/lib/*.js"],
+      // An absolute entry is a pattern, unless it goes through the directory.
+      ["/t/[p]/app", "/t/[p]/lib/*.js", "", "/t/[p]/lib/*.js"],
+      ["/t/[p]", "/t/[p]/src/**", "/t/[p]", "/src/**"],
+    ],
+  };
+  const windows = {
+    split_resolved: [
+      ["C:/r/[p]", "src\\**", "C:/r/[p]", "/src/**"],
+      ["C:/r/[p]/app", "..\\lib/*.js", "C:/r/[p]", "/lib/*.js"],
+      ["C:/r", "../src/*.js", "", "C:/src/*.js"],
+      ["//server/share/[p]", "src/**", "//server/share/[p]", "/src/**"],
+      ["//server/share/[p]", "../x/**", "", "//server/share/x/**"],
+    ],
+  };
+  // Not in a directory whose `package.json` has a `lint` script.
+  using dir = tempDir("bun-lint-glob", {});
+  const run = async (style: string, table: Record<string, string[][]>) => {
+    const calls = Object.entries(table).flatMap(([join, rows]) => rows.flatMap(row => [join, row[0], row[1]]));
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "--run-path-tests", style, ...calls],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { lines: stdout.split(/\r?\n/).slice(0, -1), stderr, exitCode };
+  };
+  const expected = (table: Record<string, string[][]>) => ({
+    lines: Object.values(table).flatMap(rows => rows.map(([, , directory, rest]) => `${directory} + ${rest}`)),
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(await run("posix", joins)).toEqual(expected(joins));
+  expect(await run("windows", windows)).toEqual(expected(windows));
+});
+
+const oxlintrc = {
+  ".oxlintrc.json": JSON.stringify({
+    plugins: ["import"],
+    categories: { correctness: "off" },
+    rules: { "import/no-cycle": "error" },
+  }),
+};
+const paths = { compilerOptions: { paths: { "@/*": ["./src/*"] } } };
+// `a` imports `other` and `c`, and both import `a`. A cycle is only found where the tsconfig.json applies to both of
+// its files, because only then `@/` means `src/`.
+const cycles = (other: string) => ({
+  ...oxlintrc,
+  "src/a.ts": `import { b } from "@/${other}";\nimport { c } from "@/c";\nexport const a = [b, c];\n`,
+  [`src/${other}.ts`]: `import { a } from "@/a";\nexport const b = a;\n`,
+  "src/c.ts": `import { a } from "@/a";\nexport const c = a;\n`,
+});
+const cycleOfOther = (other: string) => [`src/${other}.ts:1`, "src/a.ts:1"];
+const cycleOfC = ["src/a.ts:2", "src/c.ts:1"];
+
+// The expected reports are those of oxlint 1.89. Its resolver compares the directory of a tsconfig.json as a path
+// where no `include` pattern is joined to it, and it compares an entry with the file before it reads the entry as a
+// pattern. So an entry that names a file applies to it, also if the name or a directory above has a `[` or a `{`.
+// With `include: ["src"]` oxlint applies nothing in a directory named `[proj]`, and neither does `bun lint`.
+test.concurrent.each([
+  ["[proj]", "b", {}, [...cycleOfC, ...cycleOfOther("b")]],
+  ["{a,b}", "b", { include: ["src/a.ts", "src/b.ts", "src/c.ts"] }, [...cycleOfC, ...cycleOfOther("b")]],
+  ["[proj]", "b", { exclude: ["src/b.ts"] }, cycleOfC],
+  ["[proj]", "b", { include: ["src"] }, []],
+  ["proj", "[id]", { include: ["src/a.ts", "src/[id].ts", "src/c.ts"] }, [...cycleOfC, ...cycleOfOther("[id]")]],
+  ["proj", "[id]", { exclude: ["src/[id].ts"] }, cycleOfC],
+])(
+  "with an .oxlintrc.json in a directory named %s and a file %s.ts, a tsconfig.json with %j",
+  async (name, other, scope, expected) => {
+    const files = { ...cycles(other), "tsconfig.json": JSON.stringify({ ...paths, ...scope }) };
+    expect(await reportedIn(name, files)).toEqual(expected.map(it => `${it} import/no-cycle`).sort());
+  },
+  debugTimeout,
+);
+
+// A config that `--tsconfig` names, with a project that it references and that has no `include`.
+test.concurrent.each(["[proj]", "{a,b}"])(
+  "with an .oxlintrc.json, a referenced project without `include` applies in a directory named %s",
+  async name => {
+    const { "src/c.ts": _, ...files } = cycles("b");
+    const configs = {
+      "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./tsconfig.app.json" }] }),
+      "tsconfig.app.json": JSON.stringify(paths),
+      "src/a.ts": `import { b } from "@/b";\nexport const a = b;\n`,
+    };
+    expect(await reportedIn(name, { ...files, ...configs }, ["--tsconfig", "tsconfig.json"])).toEqual(
+      cycleOfOther("b")
+        .map(it => `${it} import/no-cycle`)
+        .sort(),
+    );
+  },
+  debugTimeout,
+);
+
+/** The reports with `settings["import/resolver"].typescript.project` set to `projects`. */
+function reportedWithProjects(name: string, projects: string[], rule: string, files: Files) {
+  const settings = `"import/resolver" = { typescript = { project = ${JSON.stringify(projects)} } }`;
+  return reportedIn(name, {
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "bunfig.toml": `[lint.rules]\n"${rule}" = "error"\n[lint.settings]\n${settings}\n`,
+    ...files,
+  });
+}
+const aliasedTo = (directory: string) => ({ compilerOptions: { paths: { "@/*": [`./${directory}/*`] } } });
+const exporting = (name: string) => `export const only${name} = 1;\n`;
+const importing = (name: string) => `import { only${name} } from "@/y";\nexport default only${name};\n`;
+
+// `bun lint` uses the closest `project` whose `include` has the file, alone. eslint-import-resolver-typescript 4.4.5
+// does that once the project has resolved an import, and these are its reports. It reads the directory of a
+// tsconfig.json as a path. Like TypeScript, it takes a last name with a `.` for a file, so in `my.app` the entry `.`
+// includes nothing, and the paths of the other project apply.
+test.concurrent.each([
+  ["[proj]", ["b"], "b/u.ts"],
+  ["{a,b}", ["b"], "b/u.ts"],
+  ["[proj]", ["."], "b/u.ts"],
+  ["proj", ["."], "b/u.ts"],
+  ["my.app", ["b"], "b/u.ts"],
+  ["my.app", ["."], "b/t.ts"],
+])(
+  "settings[import/resolver].typescript in a directory named %s, with `include` %j in the second project",
+  async (name, include, reported) => {
+    const files = {
+      "tsconfig.a.json": JSON.stringify({ ...aliasedTo("a"), include: ["a"] }),
+      "tsconfig.b.json": JSON.stringify({ ...aliasedTo("b"), include }),
+      "a/y.ts": exporting("A"),
+      "b/y.ts": exporting("B"),
+      "b/t.ts": importing("B"),
+      "b/u.ts": importing("A"),
+    };
+    const projects = ["tsconfig.a.json", "tsconfig.b.json"];
+    expect(await reportedWithProjects(name, projects, "import/named", files)).toEqual([`${reported}:1 import/named`]);
+  },
+  debugTimeout,
+);
+
+// An entry of the second project leaves its directory, or is excluded there. These are the reports of ESLint 9.39.5
+// with the resolver in every directory.
+const shared = {
+  "tsconfig.a.json": JSON.stringify({ ...aliasedTo("a"), include: ["a"] }),
+  "a/y.ts": exporting("A"),
+  "app/src/y.ts": exporting("App"),
+  "shared/t.ts": importing("App"),
+  "shared/u.ts": importing("A"),
+};
+test.concurrent.each([
+  ["[ws]", ["src", "../shared"]],
+  ["{a,b}", ["${configDir}/src", "${configDir}/../shared"]],
+  ["[ws]", ["src", "..\\shared"]],
+])(
+  "settings[import/resolver].typescript in a directory named %s, with `include` %j in a project below it",
+  async (name, include) => {
+    const files = { ...shared, "app/tsconfig.json": JSON.stringify({ ...aliasedTo("src"), include }) };
+    const projects = ["tsconfig.a.json", "app/tsconfig.json"];
+    expect(await reportedWithProjects(name, projects, "import/named", files)).toEqual(["shared/u.ts:1 import/named"]);
+  },
+  debugTimeout,
+);
+
+test.concurrent(
+  "settings[import/resolver].typescript in a directory named {a,b}, with an `exclude` in the first project",
+  async () => {
+    const files = {
+      "tsconfig.b.json": JSON.stringify({ ...aliasedTo("b"), include: ["b"], exclude: ["b/gen"] }),
+      "tsconfig.a.json": JSON.stringify({ ...aliasedTo("a"), include: ["a", "b/gen"] }),
+      "a/y.ts": exporting("A"),
+      "b/y.ts": exporting("B"),
+      "b/gen/t.ts": importing("A"),
+      "b/gen/u.ts": importing("B"),
+    };
+    const projects = ["tsconfig.b.json", "tsconfig.a.json"];
+    expect(await reportedWithProjects("{a,b}", projects, "import/named", files)).toEqual(["b/gen/u.ts:1 import/named"]);
+  },
+  debugTimeout,
+);
+
+// Both projects include b/t.ts. `bun lint` uses the first one alone, in a directory of any name. The resolver goes on
+// to the second one until the first one has resolved an import. So it reports the same if `./y` comes first, and
+// nothing if `@b/y` does.
+test.concurrent.each([
+  [`import "./y";\nimport "@b/y";\n`, "b/t.ts:2 import/no-unresolved"],
+  [`import "@b/y";\n`, "b/t.ts:1 import/no-unresolved"],
+])(
+  "settings[import/resolver].typescript in a directory named [ws], with two projects for a file that has %j",
+  async (code, reported) => {
+    const files = {
+      "tsconfig.a.json": JSON.stringify({ compilerOptions: { paths: { "@a/*": ["./a/*"] } }, include: ["a", "b"] }),
+      "tsconfig.b.json": JSON.stringify({ compilerOptions: { paths: { "@b/*": ["./b/*"] } }, include: ["b"] }),
+      "b/y.ts": exporting("B"),
+      "b/t.ts": code,
+    };
+    const projects = ["tsconfig.a.json", "tsconfig.b.json"];
+    expect(await reportedWithProjects("[ws]", projects, "import/no-unresolved", files)).toEqual([reported]);
+  },
+  debugTimeout,
+);
+
+// No project includes b/. `bun lint` then tries each one, in a directory of any name. The resolver does that in a
+// directory named `ws`. In one named `[ws]` it takes the path of each project for a pattern, and resolves nothing.
+test.concurrent(
+  "settings[import/resolver].typescript in a directory named [ws], for a file that no project includes",
+  async () => {
+    const files = {
+      "tsconfig.a.json": JSON.stringify({ ...aliasedTo("a"), include: ["a"] }),
+      "tsconfig.b.json": JSON.stringify({ ...aliasedTo("b"), include: ["c"] }),
+      "a/y.ts": exporting("A"),
+      "b/t.ts": importing("A"),
+      "b/u.ts": importing("B"),
+    };
+    const projects = ["tsconfig.a.json", "tsconfig.b.json"];
+    expect(await reportedWithProjects("[ws]", projects, "import/named", files)).toEqual(["b/u.ts:1 import/named"]);
+  },
+  debugTimeout,
+);
+
+// `--ignore-pattern` is relative to the working directory and `ignorePatterns` to bunfig.toml. ESLint passes the
+// directory of its own patterns as their `basePath` since 9.30, and `bun lint` does the same for it. An older ESLint
+// refuses the key. It writes the directory in front of each pattern, and so does `bun lint` for it.
+describe("ignore patterns for the installed ESLint, from another directory than the config file's", () => {
+  // A stand-in for the `eslint` package that ignores like ESLint's config array. The last pattern that matches decides.
+  // An object with a `basePath` is for what is below that directory. Nothing below an ignored directory is linted.
+  const eslintAt = (version: string) => ({
+    "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version, main: "index.js" }),
+    "node_modules/eslint/lib/config/flat-config-array.js": `
+      const path = require("node:path");
+      const [major, minor] = ${JSON.stringify(version)}.split(".").map(Number);
+      exports.FlatConfigArray = class {
+        #configs = [];
+        constructor(configs, { basePath }) {
+          this.basePath = basePath;
+          this.push(...configs);
+        }
+        push(...configs) {
+          this.#configs.push(...configs);
+        }
+        normalize() {
+          const knowsBasePath = major > 9 || (major === 9 && minor >= 30);
+          if (!knowsBasePath && this.#configs.some(it => "basePath" in it)) throw new Error('Unexpected key "basePath" found.');
+        }
+        #isIgnored(target, slash) {
+          let isIgnored = false;
+          for (const { basePath = this.basePath, ignores = [], ...rest } of this.#configs) {
+            if (Object.keys(rest).length > 0) continue;
+            const relative = path.relative(basePath, target).replaceAll("\\\\", "/");
+            if (relative === "" || relative === ".." || relative.startsWith("../")) continue;
+            for (const it of ignores) {
+              const isNegated = it.startsWith("!");
+              if (new Bun.Glob(isNegated ? it.slice(1) : it).match(relative + slash)) isIgnored = !isNegated;
+            }
+          }
+          return isIgnored;
+        }
+        getConfig(file) {
+          for (let directory = path.dirname(file); directory !== this.basePath; directory = path.dirname(directory)) {
+            if (this.#isIgnored(directory, "/")) return undefined;
+          }
+          return this.#isIgnored(file, "") ? undefined : { hasBasePath: this.#configs.some(it => "basePath" in it) };
+        }
+      };`,
+    "node_modules/eslint/index.js": `
+      exports.Linter = class {
+        static version = ${JSON.stringify(version)};
+        verify(text, configs, { filename }) {
+          const config = configs.getConfig(filename);
+          const message = config === undefined ? "ignored" : config.hasBasePath ? "linted, with a basePath" : "linted";
+          return [{ ruleId: null, severity: 1, message, line: 1, column: 1 }];
+        }
+        getSuppressedMessages() {
+          return [];
+        }
+      };`,
+  });
+  // The parser is an inline object, so the .vue files go to the installed ESLint with the whole config file.
+  const config = `
+    const parser = { meta: { name: "vue-eslint-parser" }, parseForESLint() {} };
+    export default [{ ignores: ["**/dist/**/*"] }, { files: ["**/*.vue"], languageOptions: { parser } }];`;
+
+  /**
+   * Lints the directory `pkg` or `name` from `cwd`, with the config file in the directory `config`. Returns what the
+   * installed ESLint says about each file that `bun lint` sends to it.
+   */
+  async function sent(version: string, args: string[], { name = "pkg", config: at = ".", cwd = name, more = {} } = {}) {
+    using dir = tempDir("bun-lint-glob", {
+      ...eslintAt(version),
+      [join(at, "eslint.config.mjs")]: config,
+      ...Object.fromEntries(
+        ["keep", "dist/keep", "dist/x", "src/y"].map(it => [`${name}/${it}.vue`, "<template />\n"]),
+      ),
+      ...more,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "-f", "json", ...args, relative(cwd, name) || "."],
+      env,
+      cwd: join(String(dir), cwd),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (!stdout.startsWith("[")) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+    const results: { filePath: string; messages: { message: string }[] }[] = JSON.parse(stdout);
+    // The stand-in has a message for each file. `bun lint` has none for the config file, which it lints itself.
+    return Object.fromEntries(
+      results
+        .filter(it => it.messages.length > 0)
+        .map(it => [
+          relative(join(String(dir), name), it.filePath).replaceAll("\\", "/"),
+          it.messages.map(message => message.message).join(),
+        ]),
+    );
+  }
+  const all = (message: string) => ({ "keep.vue": message, "dist/keep.vue": message, "src/y.vue": message });
+  const ignorePatterns = (patterns: string[]) => `[lint]\nignorePatterns = ${JSON.stringify(patterns)}\n`;
+
+  test.concurrent.each([
+    ["9.30.0", "pkg"],
+    ["9.30.0", "[pkg]"],
+    ["10.0.0", "c++(old)"],
+  ])(
+    "with ESLint %s, --ignore-pattern lets a file in from a directory named %s",
+    async (version, name) => {
+      expect(await sent(version, ["--ignore-pattern", "!dist/keep.vue"], { name })).toEqual(
+        all("linted, with a basePath"),
+      );
+    },
+    debugTimeout,
+  );
+
+  // Written in front of `**`, the directory itself is ignored, and then no pattern lets a file in it in.
+  test.concurrent.each([
+    ["--ignore-pattern", () => sent("9.30.0", ["--ignore-pattern", "**", "--ignore-pattern", "!keep.vue"])],
+    ["bunfig.toml", () => sent("10.0.0", [], { more: { "pkg/bunfig.toml": ignorePatterns(["**", "!keep.vue"]) } })],
+  ])(
+    "with ESLint 9.30 or later, %s lets a file in after `**`",
+    async (_, run) => {
+      expect(await run()).toEqual({ "keep.vue": "linted, with a basePath" });
+    },
+    debugTimeout,
+  );
+
+  // The patterns belong to a directory above the config file.
+  test.concurrent.each([
+    ["--ignore-pattern", () => sent("9.30.0", ["--ignore-pattern", "!*/dist/keep.vue"], { config: "pkg", cwd: "." })],
+    [
+      "bunfig.toml",
+      () =>
+        sent("9.30.0", [], { config: "pkg", cwd: ".", more: { "bunfig.toml": ignorePatterns(["!*/dist/keep.vue"]) } }),
+    ],
+  ])(
+    "with ESLint 9.30 or later, %s lets a file in from above the config file",
+    async (_, run) => {
+      expect(await run()).toEqual(all("linted, with a basePath"));
+    },
+    debugTimeout,
+  );
+
+  test.concurrent(
+    "from the directory of the config file, ESLint gets the patterns without a `basePath`",
+    async () => {
+      expect(await sent("10.0.0", ["--ignore-pattern", "!pkg/dist/keep.vue"], { cwd: "." })).toEqual(all("linted"));
+    },
+    debugTimeout,
+  );
+
+  test.concurrent.each(["9.29.0", "8.57.1"])(
+    "ESLint %s gets no `basePath`",
+    async version => {
+      expect(await sent(version, ["--ignore-pattern", "!dist/keep.vue"])).toEqual(all("linted"));
+      // There `[pkg]` is a class in each pattern, so what ESLint gets does not let dist/keep.vue in.
+      expect(await sent(version, ["--ignore-pattern", "!dist/keep.vue"], { name: "[pkg]" })).toMatchObject({
+        "src/y.vue": "linted",
+      });
+    },
+    debugTimeout,
+  );
+});

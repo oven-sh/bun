@@ -6095,7 +6095,18 @@
   "h17-include-null/a/use.ts:1:8+3 import(no-named-as-default)",
   "h17-include-null/b/use.ts:1:8+3 import(no-named-as-default)",
   "h18-dotdot-in-pattern/a/use.ts:1:8+3 import(no-named-as-default)",
-  "h19-double-slash/a/use.ts:1:8+3 import(no-named-as-default)"
+  "h19-double-slash/a/use.ts:1:8+3 import(no-named-as-default)",
+  "h21-[x]-no-include/a/use.ts:1:8+3 import(no-named-as-default)",
+  "h22-{y}-no-include/a/use.ts:1:8+3 import(no-named-as-default)",
+  "h23-[x]-file/a/use.ts:1:8+3 import(no-named-as-default)",
+  "h24-[x]-exclude-file/a/use.ts:1:8+3 import(no-named-as-default)",
+  "h25-file-in-brackets/a/[id].ts:1:8+3 import(no-named-as-default)",
+  "h25-file-in-brackets/a/i.ts:1:8+3 import(no-named-as-default)",
+  "h27-[x]-exclude-dir/a/use.ts:1:8+3 import(no-named-as-default)",
+  "h27-[x]-exclude-dir/b/use.ts:1:8+3 import(no-named-as-default)",
+  "h28-[x]-exclude-glob/a/use.ts:1:8+3 import(no-named-as-default)",
+  "h28-[x]-exclude-glob/b/d/use.ts:1:8+3 import(no-named-as-default)",
+  "h28-[x]-exclude-glob/b/use.ts:1:8+3 import(no-named-as-default)"
  ],
  "tsconfig/which-one": [
   "h08/a/use.ts:1:8+3 import(no-named-as-default)",
@@ -6115,6 +6126,11 @@
   "r07/a/use.ts:1:8+3 import(no-named-as-default)",
   "r08/in/a/use.ts:1:8+3 import(no-named-as-default)",
   "r10/a/use.ts:1:8+3 import(no-named-as-default)",
+  "r11-[x]/a/use.ts:1:8+3 import(no-named-as-default)",
+  "r11-[x]/b/use.ts:1:8+3 import(no-named-as-default)",
+  "r12-{y}/a/use.ts:1:8+3 import(no-named-as-default)",
+  "r12-{y}/b/use.ts:1:8+3 import(no-named-as-default)",
+  "r14/[pk]/a/use.ts:1:8+3 import(no-named-as-default)",
   "u01/a/use.ts:1:8+3 import(no-named-as-default)"
  ],
  "tsconfig/extends": [

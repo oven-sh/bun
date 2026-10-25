@@ -23,12 +23,13 @@
 use bun_core::strings;
 use bun_glob::{BunGlobWalker, Pattern};
 use bun_lint::ast::File;
+use bun_lint::glob::Under;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
     Declaration, Flavor, Import, ListFiles, Listed, Lookup, MakeRecord, ModuleId, Modules, Reader,
     Record, Request, RequestKind, ResolveBy, Resolved, requests_of,
 };
-use bun_lint::paths::{is_absolute, relative};
+use bun_lint::paths::{is_absolute, relative, split_joined};
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::config::{
@@ -146,7 +147,8 @@ struct Caches<'h> {
     resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
     /// Maps a directory to the `tsconfig.json` path for its files. With [`Store::tsconfig`], the key is a file.
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
-    /// Caches [`Graph::scopes_in`] and [`Graph::scopes_of`].
+    /// Caches [`Graph::scopes_in`] and [`Graph::scopes_of`], and [`Graph::scopes_of_typescript_resolver`] with a NUL
+    /// before the key.
     scopes: ShardedMap<Vec<u8>, Vec<Scope>>,
     /// Caches [`Graph::configs_of_typescript_resolver`], keyed by the directory and the projects, and
     /// [`Graph::listed_projects`], keyed by the projects.
@@ -226,6 +228,34 @@ fn with_file<R>(
 /// Calls the function with every index below the count, on any number of threads.
 pub type Parallel<'p> = &'p dyn Fn(usize, &(dyn Fn(usize) + Sync));
 
+/// How the directory of a `tsconfig.json` is read in an `include` or `exclude` entry that is joined to it.
+#[derive(Copy, Clone)]
+enum Directory {
+    /// As a part of the pattern, like oxc-resolver does. A directory named `[x]` or `{y}` is a class or a group, so
+    /// oxlint applies no `include` pattern in it.
+    Pattern,
+    /// As a path, whatever its name is. For eslint-import-resolver-typescript a `[` or a `{` is no syntax anywhere in
+    /// an entry. Here the rest of the entry is still a pattern as oxc-resolver reads it.
+    Path,
+}
+
+/// An `include` or `exclude` entry of a `tsconfig.json`.
+struct Entry {
+    pattern: Under<Pattern>,
+    /// The entry's path, if the pattern doesn't match it. oxc-resolver compares the two before it matches.
+    path: Option<Box<[u8]>>,
+    /// The pattern ends in a `*`, in which case it only matches JavaScript and TypeScript files.
+    is_for_scripts: bool,
+}
+
+impl Entry {
+    fn has(&self, path: &[u8]) -> bool {
+        let below = self.pattern.below(path);
+        below.is_some_and(|(pattern, rest)| pattern.matches(rest))
+            || self.path.as_deref() == Some(path)
+    }
+}
+
 /// The set of files a `tsconfig.json` applies to, as decided by oxc-resolver, which oxlint uses. TypeScript decides
 /// this differently.
 struct Scope {
@@ -234,10 +264,8 @@ struct Scope {
     /// `baseUrl`, or else the config's directory.
     base: Vec<u8>,
     files: Vec<Vec<u8>>,
-    /// Absolute patterns. The flag is true if the pattern ends in a `*`, in which case it only matches JavaScript and
-    /// TypeScript files.
-    include: Vec<(Pattern, bool)>,
-    exclude: Vec<Pattern>,
+    include: Vec<Entry>,
+    exclude: Vec<Entry>,
     allows_js: bool,
 }
 
@@ -251,32 +279,49 @@ impl Scope {
         allows_js: false,
     };
 
-    fn new(project: &Project) -> Scope {
+    fn new(project: &Project, reads: Directory) -> Scope {
         let directory = directory_of(&project.config_path);
         let absolute = |relative_path: &[u8]| match relative_path.strip_prefix(b"${configDir}") {
             Some(rest) => join(directory, rest.strip_prefix(b"/").unwrap_or(rest)),
             None => join(directory, relative_path),
         };
-        let pattern = |config_glob: &Vec<u8>| {
-            let mut path = absolute(config_glob);
+        let entry = |config_glob: &[u8], reads: Directory| {
+            let path = absolute(config_glob);
+            let written = config_glob
+                .strip_prefix(b"${configDir}")
+                .unwrap_or(config_glob);
+            let (directory, below) = match reads {
+                Directory::Pattern => (&b""[..], &path[..]),
+                // `join` takes both for separators on every system.
+                Directory::Path => split_joined(directory, &[written], b"/\\", &path),
+            };
+            // Only these make a pattern that doesn't match its own text.
+            let is_own_match = !strings::contains_any(below, b"[{\\");
             // A last segment without a `.` or a wildcard is treated as a directory.
             let last = &path[directory_of(&path).len()..];
-            if !strings::contains_any(last, b".*?") {
-                path.extend_from_slice(b"/**/*");
+            let below = match strings::contains_any(last, b".*?") {
+                true => Cow::Borrowed(below),
+                false => Cow::Owned([below, b"/**/*"].concat()),
+            };
+            Entry {
+                pattern: Under::new(
+                    directory,
+                    Pattern::new(&bun_glob::pattern::of_fast_glob(&below)),
+                ),
+                is_for_scripts: below.ends_with(b"*"),
+                path: (!is_own_match).then(|| path[..].into()),
             }
-            (
-                Pattern::new(&bun_glob::pattern::of_fast_glob(&path)),
-                path.ends_with(b"*"),
-            )
         };
-        let patterns =
-            |config_globs: &[Vec<u8>]| config_globs.iter().map(pattern).collect::<Vec<_>>();
+        let entries = |config_globs: &[Vec<u8>]| {
+            let entries = config_globs.iter().map(|it| entry(it, reads));
+            entries.collect::<Vec<_>>()
+        };
         let raw_config = &project.written;
-        let everything = [b"**/*".to_vec()];
         let include = match (&raw_config.include, &raw_config.files) {
-            (Some(include), _) => &include[..],
-            (None, Some(_)) => &[],
-            (None, None) => &everything[..],
+            (Some(include), _) => entries(include),
+            (None, Some(_)) => Vec::new(),
+            // Everything in the directory, which oxc-resolver compares as a path too.
+            (None, None) => vec![entry(b"**/*", Directory::Path)],
         };
         let allow_js = (project.raw_compiler_options.iter()).find(|it| it.0 == b"allowJs");
         let base_url = (project.raw_compiler_options.iter()).find(|it| it.0 == b"baseUrl");
@@ -288,10 +333,8 @@ impl Scope {
             files: (raw_config.files.iter().flatten())
                 .map(|it| absolute(it))
                 .collect(),
-            include: patterns(include),
-            exclude: (patterns(raw_config.exclude.as_deref().unwrap_or_default()).into_iter())
-                .map(|it| it.0)
-                .collect(),
+            include,
+            exclude: entries(raw_config.exclude.as_deref().unwrap_or_default()),
             allows_js: allow_js.is_some_and(|it| it.1 == Json::Bool(true)),
         }
     }
@@ -307,8 +350,8 @@ impl Scope {
             return false;
         }
         let is_script = is_js || matches!(extension, b"ts" | b"tsx" | b"mts" | b"cts");
-        let mut include = self.include.iter().filter(|it| is_script || !it.1);
-        include.any(|it| it.0.matches(path)) && !self.exclude.iter().any(|it| it.matches(path))
+        let mut include = (self.include.iter()).filter(|it| is_script || !it.is_for_scripts);
+        include.any(|it| it.has(path)) && !self.exclude.iter().any(|it| it.has(path))
     }
 }
 
@@ -409,7 +452,10 @@ impl<'h> Graph<'h> {
     fn scopes_in(&self, directory: &[u8]) -> &[Scope] {
         match self.caches().scopes.get_ref(directory) {
             Some(scopes) => scopes,
-            None => self.load_scopes(directory, &join(directory, b"tsconfig.json")),
+            None => {
+                let config = join(directory, b"tsconfig.json");
+                self.load_scopes(directory, &config, Directory::Pattern)
+            }
         }
     }
 
@@ -417,11 +463,21 @@ impl<'h> Graph<'h> {
     fn scopes_of(&self, config: &[u8]) -> &[Scope] {
         match self.caches().scopes.get_ref(config) {
             Some(scopes) => scopes,
-            None => self.load_scopes(config, config),
+            None => self.load_scopes(config, config, Directory::Pattern),
         }
     }
 
-    fn load_scopes(&self, key: &[u8], config: &[u8]) -> &[Scope] {
+    /// The same for eslint-import-resolver-typescript, which applies `include` and `exclude` in a directory of any
+    /// name.
+    fn scopes_of_typescript_resolver(&self, config: &[u8]) -> &[Scope] {
+        let key = [b"\0", config].concat();
+        match self.caches().scopes.get_ref(&key[..]) {
+            Some(scopes) => scopes,
+            None => self.load_scopes(&key, config, Directory::Path),
+        }
+    }
+
+    fn load_scopes(&self, key: &[u8], config: &[u8], reads: Directory) -> &[Scope] {
         let caches = self.caches();
         let _loading = self.loading.lock();
         if let Some(scopes) = caches.scopes.get_ref(key) {
@@ -430,7 +486,7 @@ impl<'h> Graph<'h> {
         let disk = WithoutListings(self.store.disk());
         let load = |config: &[u8]| {
             let project = load_overriding(&disk, &self.store.session, config, &|_| Vec::new());
-            project.ok().map(|it| Scope::new(&it))
+            project.ok().map(|it| Scope::new(&it, reads))
         };
         let project = (disk.is_file(config))
             .then(|| load_overriding(&disk, &self.store.session, config, &|_| Vec::new()).ok());
@@ -438,7 +494,7 @@ impl<'h> Graph<'h> {
             let referenced = project.references.iter();
             let referenced =
                 referenced.map(|it| load(&resolve_config_file_name_of_project_reference(&it.path)));
-            let own = Some(Scope::new(&project));
+            let own = Some(Scope::new(&project, reads));
             let all: Option<Vec<Scope>> = referenced.chain([own]).collect();
             all.unwrap_or_else(|| vec![Scope::BROKEN])
         });
@@ -513,8 +569,8 @@ impl<'h> Graph<'h> {
         };
         bun_lint::utils::sort::sort_by_key(&mut listed, distance);
         listed.dedup();
-        let applies_to_file =
-            |it: &Vec<u8>| self.scopes_of(it).last().is_some_and(|own| own.has(from));
+        let scopes_of = |config: &Vec<u8>| self.scopes_of_typescript_resolver(config);
+        let applies_to_file = |it: &Vec<u8>| scopes_of(it).last().is_some_and(|own| own.has(from));
         let chosen = match listed.len() {
             0 if self.store.uses_nearest_tsconfig => {
                 let mut above = bun_lint::paths::ancestors(directory);
@@ -525,6 +581,9 @@ impl<'h> Graph<'h> {
             }
             0 => self.config_in(&self.store.cwd).into_iter().collect(),
             1 => listed,
+            // The closest project that includes the file, alone. The resolver does that once the project has resolved
+            // an import. Before, it also tries the next projects that include the file, so what it reports depends on
+            // the order of the files and of their imports.
             _ => match listed.iter().position(applies_to_file) {
                 Some(at) => vec![listed.swap_remove(at)],
                 None => listed,
@@ -533,10 +592,7 @@ impl<'h> Graph<'h> {
         let mut configs = Vec::new();
         for config in chosen {
             // `references: "auto"`
-            let referenced = self
-                .scopes_of(&config)
-                .split_last()
-                .map_or(&[][..], |it| it.1);
+            let referenced = scopes_of(&config).split_last().map_or(&[][..], |it| it.1);
             let contains_directory = |it: &&Scope| {
                 let rest = directory.strip_prefix(&it.base[..]);
                 !it.config.is_empty() && rest.is_some_and(|it| matches!(it, [] | [b'/', ..]))

@@ -30,6 +30,14 @@ impl Style {
             _ => Style::Posix,
         }
     }
+
+    /// What separates the names of a path in this style.
+    pub fn separators(self) -> &'static [u8] {
+        match self {
+            Style::Posix => b"/",
+            Style::Windows => b"/\\",
+        }
+    }
 }
 
 /// Converts a native path or a command-line argument. Replaces `\` with `/` on platforms where `\` is a separator.
@@ -214,6 +222,36 @@ pub fn inside_as<'p>(style: Style, directory: &[u8], path: &'p [u8]) -> Option<&
         (false, _) => None,
         (true, true) => Some(rest),
         (true, false) => rest.strip_prefix(b"/"),
+    }
+}
+
+/// Splits `joined`, which is `texts` joined to `directory` one after the other, into what is left of the directory and
+/// what the texts say. The first part is a path, whatever bytes it has. A `..` that leads out of the texts takes a
+/// name off it. The second part is a pattern if a text is one. Unless the first part is empty, the second is empty or
+/// starts with a `/`, so it matches what it matched as a part of `joined`. `separators` are the bytes that the join
+/// took for separators in the texts.
+pub fn split_joined<'j>(
+    directory: &[u8],
+    texts: &[&[u8]],
+    separators: &[u8],
+    joined: &'j [u8],
+) -> (&'j [u8], &'j [u8]) {
+    let names = texts
+        .iter()
+        .flat_map(|text| strings::split_any(text, separators));
+    let (mut depth, mut left) = (0usize, directory);
+    for name in names {
+        match name {
+            b"" | b"." => {}
+            b".." if depth == 0 => left = dirname(left),
+            b".." => depth -= 1,
+            _ => depth += 1,
+        }
+    }
+    // A root has no name, and only a root ends with a `/`.
+    match joined.strip_prefix(left) {
+        Some([] | [b'/', ..]) if !left.ends_with(b"/") => joined.split_at(left.len()),
+        _ => (b"", joined),
     }
 }
 

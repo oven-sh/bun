@@ -253,6 +253,90 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  // An eslint.config.mjs is read in the plugins' VM, which the server has only on Unix.
+  test.skipIf(isWindows)(
+    "writes the disable comment in the language of the document, and none where the language has no comments",
+    async () => {
+      const standIn = (name: string, languages: string[], rules: string[]) => `
+        const language = { parse: ({ body }) => ({ ok: true, ast: { lines: body.split("\\n") } }) };
+        const rule = { create: context => ({ Line: () => context.report({ line: 1, message: "the package" }) }) };
+        module.exports = {
+          meta: { name: ${JSON.stringify(name)}, version: "1.0.0" },
+          languages: Object.fromEntries(${JSON.stringify(languages)}.map(name => [name, language])),
+          rules: Object.fromEntries(${JSON.stringify(rules)}.map(name => [name, rule])),
+        };`;
+      using dir = tempDir("bun-lint-lsp", {
+        "node_modules/@eslint/markdown/package.json": JSON.stringify({ name: "@eslint/markdown", version: "8.0.3" }),
+        "node_modules/@eslint/markdown/index.js": standIn("@eslint/markdown", ["commonmark", "gfm"], ["no-html"]),
+        "node_modules/@eslint/json/package.json": JSON.stringify({ name: "@eslint/json", version: "2.1.1" }),
+        "node_modules/@eslint/json/index.js": standIn("@eslint/json", ["json", "jsonc"], ["no-duplicate-keys"]),
+        "eslint.config.mjs": `
+          import markdown from "@eslint/markdown";
+          import json from "@eslint/json";
+          export default [
+            { files: ["**/*.md"], plugins: { markdown }, language: "markdown/gfm", rules: { "markdown/no-html": "error" } },
+            { files: ["**/*.json"], plugins: { json }, language: "json/json", rules: { "json/no-duplicate-keys": "error" } },
+            { files: ["**/*.jsonc"], plugins: { json }, language: "json/jsonc", rules: { "json/no-duplicate-keys": "error" } },
+          ];`,
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const disables = async (name: string, languageId: string, text: string) => {
+        const path = join(String(dir), name);
+        open(client, path, text, languageId);
+        const published = await client.diagnostics(path);
+        expect(published.params.diagnostics).toHaveLength(1);
+        const [diagnostic] = published.params.diagnostics;
+        const actions = await client.request("textDocument/codeAction", {
+          textDocument: { uri: uriOf(path) },
+          range: diagnostic.range,
+          context: { diagnostics: [diagnostic] },
+        });
+        expect(actions.error).toBeUndefined();
+        const edited = (title: string) => {
+          const action = actions.result.find((it: any) => it.title === title);
+          return action === undefined ? undefined : applyEdits(text, action.edit.changes[uriOf(path)]);
+        };
+        return {
+          code: diagnostic.code,
+          line: edited(`Disable ${diagnostic.code} for this line`),
+          file: edited(`Disable ${diagnostic.code} for this file`),
+        };
+      };
+      expect(await disables("a.md", "markdown", "# Title\n\n<b>a</b>\n")).toEqual({
+        code: "markdown/no-html",
+        line: "# Title\n\n<!-- eslint-disable-next-line markdown/no-html -->\n<b>a</b>\n",
+        file: "<!-- eslint-disable markdown/no-html -->\n# Title\n\n<b>a</b>\n",
+      });
+      const twice = '{ "a": 1, "a": 2 }\n';
+      expect(await disables("a.jsonc", "jsonc", twice)).toEqual({
+        code: "json/no-duplicate-keys",
+        line: `// eslint-disable-next-line json/no-duplicate-keys\n${twice}`,
+        file: `/* eslint-disable json/no-duplicate-keys */\n${twice}`,
+      });
+      expect(await disables("a.json", "json", twice)).toEqual({
+        code: "json/no-duplicate-keys",
+        line: undefined,
+        file: undefined,
+      });
+      // The comment it wrote is one the linter reads.
+      const commented = "# Title\n\n<!-- eslint-disable-next-line markdown/no-html -->\n<b>a</b>\n";
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(join(String(dir), "a.md")), version: 2 },
+        contentChanges: [{ text: commented }],
+      });
+      const again = await client.diagnostics(join(String(dir), "a.md"));
+      expect(again.params.diagnostics).toHaveLength(0);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   // Plugins run in a VM, which the server has only on Unix; there what else is printed is kept off the client's pipe.
   test.skipIf(isWindows)(
     "runs the plugins of the folder, keeps what they print off standard output, and ends their VM on exit",

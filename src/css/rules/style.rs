@@ -1,6 +1,6 @@
 use crate as css;
 use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext};
-use crate::declaration::{DeclarationBlock, DeclarationList};
+use crate::declaration::DeclarationBlock;
 use crate::error::MinifyErr;
 use crate::selectors::selector;
 use crate::{PrintErr, Printer, VendorPrefix};
@@ -456,23 +456,17 @@ impl<R> StyleRule<R> {
         result
     }
 
-    /// Returns whether this rule is a duplicate of another rule.
-    /// This means it has the same selectors, properties, and importance.
-    #[inline]
-    pub(crate) fn is_duplicate(&self, other: &Self) -> bool {
-        let same_property_ids = |a: &DeclarationList<'_>, b: &DeclarationList<'_>| {
-            a.iter()
-                .zip(b.iter())
-                .all(|(a, b)| a.property_id() == b.property_id())
-        };
-        let (a, b) = (&self.declarations, &other.declarations);
-        // Cheap checks first: the selector comparison is the costly part.
-        a.declarations.len() == b.declarations.len()
-            && a.important_declarations.len() == b.important_declarations.len()
-            && self.selectors.v.len() == other.selectors.v.len()
-            && same_property_ids(&a.declarations, &b.declarations)
-            && same_property_ids(&a.important_declarations, &b.important_declarations)
-            && self.selectors.eql(&other.selectors)
+    /// Returns whether `later` prints every rule that this rule prints: the
+    /// same selectors and equal declarations (names, values and importance),
+    /// for each vendor prefix of this rule. Neither rule has nested rules.
+    pub(crate) fn is_repeated_by(&self, later: &Self) -> bool {
+        debug_assert!(self.rules.v.is_empty() && later.rules.v.is_empty());
+        // A rule prints once for each of its vendor prefixes, or once as
+        // written when it has none.
+        (self.vendor_prefix == later.vendor_prefix
+            || (!self.vendor_prefix.is_empty() && later.vendor_prefix.contains(self.vendor_prefix)))
+            && self.selectors.eql(&later.selectors)
+            && self.declarations.eql(&later.declarations)
     }
 }
 

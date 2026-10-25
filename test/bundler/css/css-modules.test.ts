@@ -24,6 +24,38 @@ describe("css", () => {
     },
   });
 
+  // A class of a CSS module is a symbol reference, not a name. A later rule
+  // still erases an earlier rule only when the two are equal: the first `.a`
+  // rule goes, the first `.c` rule holds the value for browsers without `dvh`.
+  itBundled("css-module/LaterRuleErasesOnlyAnEqualEarlierRule", {
+    files: {
+      "index.module.css": /* css */ `
+      .a { color: red }
+      .z { top: 0 }
+      .b { color: red }
+      .y { top: 1px }
+      .a { color: red }
+      .c { height: 100vh }
+      .x { left: 0 }
+      .c { height: 100dvh }
+      `,
+    },
+    outdir: "/out",
+    entryPoints: ["/index.module.css"],
+    onAfterBundle(api) {
+      api.expectFile("/out/index.module.css").toEqualIgnoringWhitespace(`
+      /* index.module.css */
+      .z_kUQfNQ { top: 0; }
+      .b_kUQfNQ { color: red; }
+      .y_kUQfNQ { top: 1px; }
+      .a_kUQfNQ { color: red; }
+      .c_kUQfNQ { height: 100vh; }
+      .x_kUQfNQ { left: 0; }
+      .c_kUQfNQ { height: 100dvh; }
+      `);
+    },
+  });
+
   itBundled("css-module/BundleTwoFilesWithoutCodeSplitting", {
     files: {
       "/foo-entry.js": `

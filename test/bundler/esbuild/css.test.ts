@@ -2466,4 +2466,38 @@ c {
         );
     },
   });
+
+  // The earlier `.a` and `.b` rules hold the values for browsers that reject
+  // the later ones. A later rule erases an earlier rule only when the two are
+  // equal, as the two `.c` rules are.
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`css/SameSelectorRulesKeepTheEarlierRule/${target}`, {
+      target,
+      files: {
+        "/entry.css": /* css */ `
+          .a { height: 100vh }
+          .c { color: red }
+          .z { top: 0 }
+          .a { height: 100dvh }
+          .b { display: -webkit-box }
+          .z { left: 0 }
+          .b { display: flex }
+          .c { color: red }
+        `,
+      },
+      outfile: "/out.css",
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+          /* entry.css */
+          .a { height: 100vh; }
+          .z { top: 0; }
+          .a { height: 100dvh; }
+          .b { display: -webkit-box; }
+          .z { left: 0; }
+          .b { display: flex; }
+          .c { color: red; }
+        `);
+      },
+    });
+  }
 });

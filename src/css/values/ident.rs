@@ -363,14 +363,10 @@ impl IdentOrRef {
     pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         if let Some(ident) = self.as_ident() {
             hasher.update(ident.v());
-        } else {
-            // SAFETY: self is #[repr(transparent)] u128 (16 bytes), so reading the first 2
-            // bytes is in-bounds. Hashing only 2 of the 16 bytes (sic) is preserved for
-            // behavioral compatibility; PR #30784 hashes the full identity.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
-            };
-            hasher.update(bytes);
+        } else if let Some(r) = self.as_ref() {
+            // Hash what `eql` compares. The pointer bits are zero in a release
+            // build and a debug-only address in a debug build.
+            core::hash::Hash::hash(&r, hasher);
         }
     }
 

@@ -564,7 +564,6 @@ impl<R> CssRuleList<R> {
                         minify_style_arm(
                             rule,
                             &mut rules,
-                            &mut style_rules,
                             &mut merge_state,
                             context,
                             parent_is_unused,
@@ -606,17 +605,16 @@ impl<R> CssRuleList<R> {
 
                 // Appending a non-style rule ends the current style-rule merge
                 // run, so settle any pending declaration merge first.
-                flush_pending_style_merge(&mut rules, &mut style_rules, &mut merge_state, context);
+                flush_pending_style_merge(&mut rules, &mut merge_state, context);
                 merge_state.last_compat = None;
-                rules.push(core::mem::replace(rule, CssRule::Ignored));
-                moved_rule = true;
 
                 // Non-style rules act as a barrier for style-rule dedup —
                 // an intervening at-rule may change how declarations are
                 // interpreted, so identical selectors on either side aren't
                 // safely mergeable.
-
-                style_rules.clear();
+                style_rules.end_run(&mut rules, context.css_modules);
+                rules.push(core::mem::replace(rule, CssRule::Ignored));
+                moved_rule = true;
             }
 
             if moved_rule {
@@ -627,7 +625,8 @@ impl<R> CssRuleList<R> {
         }
 
         // The last merge run may still have a pending declaration merge.
-        flush_pending_style_merge(&mut rules, &mut style_rules, &mut merge_state, context);
+        flush_pending_style_merge(&mut rules, &mut merge_state, context);
+        style_rules.end_run(&mut rules, context.css_modules);
 
         // The old Vec is dropped on assignment.
         self.v = rules;
@@ -647,7 +646,6 @@ impl<R> CssRuleList<R> {
 fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     rule: &mut CssRule<R>,
     rules: &mut Vec<CssRule<R>>,
-    style_rules: &mut StyleRuleKeyMap,
     merge_state: &mut StyleRuleMergeState,
     context: &mut MinifyContext<'_, '_>,
     parent_is_unused: bool,
@@ -736,7 +734,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         // A declaration merge defers both the re-minify and this cascade to
         // the end of the merge run (see `flush_pending_style_merge`).
         if !merge_state.pending_minify {
-            cascade_merge_with_previous(rules, style_rules, merge_state, context);
+            cascade_merge_with_previous(rules, merge_state, context);
         }
         merged = true;
     }
@@ -747,12 +745,12 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         // run the merge-with-previous cascade that settling enables, which the
         // per-merge re-minify used to drive at the end of that run.
         debug_assert!(!merge_state.pending_minify);
-        cascade_merge_with_previous(rules, style_rules, merge_state, context);
+        cascade_merge_with_previous(rules, merge_state, context);
         // A selector merge in the cascade can make the next pair's selectors
         // equal and start a new declaration merge, which the cascade returns
         // on. Settle it now: `sty` is pushed below, which would bury the
         // pending rule one slot down where no later flush can find it.
-        flush_pending_style_merge(rules, style_rules, merge_state, context);
+        flush_pending_style_merge(rules, merge_state, context);
     }
 
     // If this iteration staged handler-context rules (e.g. the merged-in rule
@@ -767,7 +765,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             && context.handler_context.rtl.is_empty()
             && context.handler_context.dark.is_empty())
     {
-        flush_pending_style_merge(rules, style_rules, merge_state, context);
+        flush_pending_style_merge(rules, merge_state, context);
     }
 
     // Create additional rules for logical properties, @supports overrides, and incompatible selectors.
@@ -832,33 +830,12 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     };
 
     if !merged && !sty.is_empty() {
-        let source_index = sty.loc.source_index;
-        let has_no_rules = sty.rules.v.is_empty();
-        let idx = rules.len();
-
         // A failed merge settles any pending declaration merge on the previous
         // last rule (and an unattempted one means it was never pending), so
-        // every rule already in the list is fully minified here, which the
-        // duplicate check below relies on.
+        // no rule is covered here while its declarations are still pending.
         debug_assert!(!merge_state.pending_minify);
         rules.push(core::mem::replace(rule, CssRule::Ignored));
         merge_state.last_compat = sty_compat;
-
-        // Check if this rule is a duplicate of an earlier rule, meaning it has
-        // the same selectors and defines the same properties. If so, remove the
-        // earlier rule because this one completely overrides it.
-        if has_no_rules {
-            let key = StyleRuleKey::new(rules, idx);
-            if idx > 0
-                && let Some(i) = style_rules.remove_duplicate(rules, &key)
-                && i < rules.len()
-                && let CssRule::Style(other) = &rules[i]
-                && (!context.css_modules || source_index == other.loc.source_index)
-            {
-                rules[i] = CssRule::Ignored;
-            }
-            style_rules.insert(key);
-        }
     }
 
     // Appending anything below ends the current merge run, so settle any
@@ -868,7 +845,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         || incompatible_rules.len() > 0
         || nested_rule.is_some()
     {
-        flush_pending_style_merge(rules, style_rules, merge_state, context);
+        flush_pending_style_merge(rules, merge_state, context);
         merge_state.last_compat = None;
     }
 
@@ -897,87 +874,48 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     Ok(())
 }
 
-// ─── StyleRuleKey ──────────────────────────────────────────────────────────
-/// A key to a `StyleRule` meant for use in a hash map for quickly detecting
-/// duplicates. It stores an index into the live `rules` Vec plus a
-/// pre-computed hash for fast lookups.
+// ─── StyleRuleKeyMap ───────────────────────────────────────────────────────
+/// Erases each style rule that a later rule of the same run repeats in full.
+/// A run is the rules between two non-style rules of the source list.
 ///
-/// NOTE: storing a `*const Vec<CssRule<R>>` in the key and dereferencing it
-/// during equality would be unsound under Stacked/Tree Borrows — keys persist
-/// in the dedup map across iterations of `minify_style_arm`, and between
-/// iterations the same `Vec` is written through fresh `&mut` reborrows
-/// (`rules.push`, `rules[i] = Ignored`), invalidating any previously-derived
-/// `*const Vec` provenance. Instead we keep only `(index, hash)` here and do
-/// the equality check in `StyleRuleKeyMap::remove_duplicate`, which receives
-/// the live `&[CssRule<R>]` slice explicitly at the call site.
-#[derive(Clone, Copy)]
-pub(crate) struct StyleRuleKey {
-    index: usize,
-    hash: u64,
-}
-
-impl StyleRuleKey {
-    fn new<R>(list: &[CssRule<R>], index: usize) -> Self {
-        let hash = match &list[index] {
-            CssRule::Style(rule) => rule.hash_key(),
-            _ => 0,
-        };
-        Self { index, hash }
-    }
-}
-
-/// Dedup table for [`StyleRuleKey`]s.
-///
-/// Buckets keyed by the pre-computed `StyleRule::hash_key()` hold indices into
-/// the caller's `rules` Vec; equality (`StyleRule::is_duplicate`) is evaluated
-/// against an explicitly-passed `&[CssRule<R>]` so we never smuggle a stale
-/// raw pointer across `&mut rules` writes (see the note on `StyleRuleKey`).
+/// Exact duplicates only, unlike lightningcss: an earlier rule with other
+/// values can be the fallback for browsers that reject the later values
+/// (parcel-bundler/lightningcss#456).
 #[derive(Default)]
 pub(crate) struct StyleRuleKeyMap {
-    buckets: bun_collections::HashMap<u64, Vec<usize>>,
-    /// Inserted keys in index order. A popped rule may no longer hash to the bucket that holds it.
-    keys: Vec<StyleRuleKey>,
+    /// The index of the latest rule for each `StyleRule::hash_key()`. An index
+    /// before `run_start` is from an earlier run.
+    latest: bun_collections::HashMap<u64, u32, bun_collections::IdentityContext<u64>>,
+    run_start: usize,
 }
 
 impl StyleRuleKeyMap {
-    /// Find and remove an earlier index whose rule `is_duplicate` of
-    /// `rules[key.index]`.
-    fn remove_duplicate<R>(&mut self, rules: &[CssRule<R>], key: &StyleRuleKey) -> Option<usize> {
-        let bucket = self.buckets.get_mut(&key.hash)?;
-        let CssRule::Style(rule) = &rules[key.index] else {
-            return None;
-        };
-        let pos = bucket.iter().position(|&other_idx| {
-            // Bounds-check + Style tag-check + `is_duplicate`.
-            match rules.get(other_idx) {
-                Some(CssRule::Style(other_rule)) => rule.is_duplicate(other_rule),
-                _ => false,
+    /// Call when the run ends. No merge changes a rule of the run after that,
+    /// so each rule is compared in the form that is printed.
+    fn end_run<R>(&mut self, rules: &mut [CssRule<R>], css_modules: bool) {
+        for index in self.run_start..rules.len() {
+            let (earlier, later) = rules.split_at_mut(index);
+            let CssRule::Style(rule) = &later[0] else {
+                continue;
+            };
+            // Nested rules are not compared, so a rule that has them is not keyed.
+            if !rule.rules.v.is_empty() {
+                continue;
             }
-        })?;
-        Some(bucket.swap_remove(pos))
-    }
-
-    /// Record the rule's index under its style-rule key for later dedup lookups.
-    fn insert(&mut self, key: StyleRuleKey) {
-        debug_assert!(self.keys.last().is_none_or(|last| last.index < key.index));
-        self.buckets.entry(key.hash).or_default().push(key.index);
-        self.keys.push(key);
-    }
-
-    /// Forget the rules at `len..`: the caller popped them, and other rules can take their slots.
-    fn truncate(&mut self, len: usize) {
-        while let Some(key) = self.keys.pop_if(|key| key.index >= len) {
-            if let Some(bucket) = self.buckets.get_mut(&key.hash)
-                && let Some(pos) = bucket.iter().rposition(|&index| index == key.index)
+            let Ok(slot) = u32::try_from(index) else {
+                break;
+            };
+            if let Some(previous) = self.latest.insert(rule.hash_key(), slot)
+                && previous as usize >= self.run_start
+                && let Some(candidate) = earlier.get_mut(previous as usize)
+                && let CssRule::Style(earlier_rule) = &*candidate
+                && (!css_modules || earlier_rule.loc.source_index == rule.loc.source_index)
+                && earlier_rule.is_repeated_by(rule)
             {
-                bucket.swap_remove(pos);
+                *candidate = CssRule::Ignored;
             }
         }
-    }
-
-    fn clear(&mut self) {
-        self.buckets.clear();
-        self.keys.clear();
+        self.run_start = rules.len();
     }
 }
 
@@ -1016,7 +954,6 @@ pub(crate) struct StyleRuleMergeState {
 /// previous rule's, allowing a selector merge, and so on).
 fn flush_pending_style_merge<R>(
     rules: &mut Vec<CssRule<R>>,
-    style_rules: &mut StyleRuleKeyMap,
     state: &mut StyleRuleMergeState,
     context: &mut MinifyContext<'_, '_>,
 ) {
@@ -1040,7 +977,7 @@ fn flush_pending_style_merge<R>(
             dc::decl_handler_static(&mut *context.important_handler),
             &mut context.handler_context,
         );
-        cascade_merge_with_previous(rules, style_rules, state, context);
+        cascade_merge_with_previous(rules, state, context);
     }
 }
 
@@ -1050,7 +987,6 @@ fn flush_pending_style_merge<R>(
 /// before cascading further.
 fn cascade_merge_with_previous<R>(
     rules: &mut Vec<CssRule<R>>,
-    style_rules: &mut StyleRuleKeyMap,
     state: &mut StyleRuleMergeState,
     context: &mut MinifyContext<'_, '_>,
 ) {
@@ -1071,7 +1007,6 @@ fn cascade_merge_with_previous<R>(
                 &mut prev_compat,
             ) {
                 rules.pop();
-                style_rules.truncate(rules.len());
                 // `prev` is the last rule now.
                 state.last_compat = prev_compat;
                 if state.pending_minify {

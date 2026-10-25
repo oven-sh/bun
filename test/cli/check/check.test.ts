@@ -11567,6 +11567,31 @@ try {
       expect(exitCode).toBe(1);
     });
 
+    // The same with an import cycle, which puts x.ts in front of b.ts in program order.
+    test("the task of a file makes the walks that ended with an incomplete type in the task of an earlier file", async () => {
+      const line = `[1, "1"].map(v => typeof v === "string" ? v.length : v + 1);\n`;
+      using dir = project({
+        "b.ts": `import "./x";
+declare const c: boolean;
+declare let root: { v: number } | undefined;
+export function f() {
+  for (const key in root) {
+    while (root) { }
+    while (c) {
+      while (c) { if (c) break; }
+      try { return (() => root.v)(); } finally { }
+    }
+  }
+}
+`,
+        "long.ts": `export {};\n${repeat(line, 1000)}`,
+        "x.ts": `import { f } from "./b";\nexport const x = f();\n${repeat(line, 40)}`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--threads", "2"]);
+      expect(stdout).toBe("b.ts(9,32): error TS2339: Property 'v' does not exist on type 'never'.");
+      expect(exitCode).toBe(1);
+    });
+
     // The return type asks whether the end is reachable, which resolves `defined(val)`. The walk for `val` asks for the
     // type of the assigned literal, and the walk for the `val` in there resolves `defined(pend)` while the loop has only
     // `never[]` for `pend`. The statement's check of the literal finds the loop complete.

@@ -444,6 +444,10 @@ process.on("message", async message => {
   if (message.type === "set-allow-websocket-messages") {
     allowWebSocketMessages = message.args[0];
   }
+  if (message.type === "close-websockets") {
+    // The HMR runtime sees `close`, as for a dropped connection, and reconnects.
+    for (const ws of webSockets) ws.close();
+  }
   if (message.type === "ping") {
     const [messageId] = message.args;
     // Reply from the check phase: a frame received before this ping has then

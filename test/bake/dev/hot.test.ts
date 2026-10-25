@@ -600,8 +600,38 @@ devTest("a server module update applies when an import.meta.hot event listener t
   async test(dev) {
     await dev.fetch("/").equals({ save: 0, calls: [] });
     await dev.patch("routes/index.ts", { find: "save: 0", replace: "save: 1" });
-    // The later listener still runs, and the response is the new one.
-    await dev.fetch("/").equals({ save: 1, calls: ["reads the payload", "later listener"] });
+    // The server reports the error. The later listener still runs, and the response is the new one.
+    await Promise.all([
+      dev.output.waitForLine(/TypeError/),
+      dev.fetch("/").equals({ save: 1, calls: ["reads the payload", "later listener"] }),
+    ]);
+  },
+});
+devTest("the HMR socket reconnects when an import.meta.hot ws:disconnect listener throws", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      let disconnects = 0;
+      // A listener written for Vite reads a payload. Bun passes none, so the listener throws.
+      import.meta.hot.on("vite:ws:disconnect", payload => {
+        disconnects++;
+        payload.webSocket.close();
+      });
+      import.meta.hot.on("vite:ws:connect", () => {
+        if (disconnects > 0) console.log("connected again after " + disconnects + " disconnect");
+      });
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    // The page reports the error of the listener with console.error. The "errors" option allows that call.
+    await using c = await dev.client("/", { errors: [] });
+    // The runtime reloads the page when its socket connects again.
+    await c.expectReload(async () => c.closeWebSockets());
+    await c.expectMessage("connected again after 1 disconnect");
+    await c.output.waitForLine(/TypeError/);
   },
 });
 devTest("hmr forwards every merged inotify sub-path from a directory batch", {

@@ -83,8 +83,7 @@ struct KeySeg<'a> {
     pos: usize,
 }
 
-/// Up to this many keys in one table, a key is found by scanning the table's
-/// properties; beyond it, through the table's index in `Parser::spilled`.
+/// A table with more keys than this is searched through its index in `Parser::spilled`.
 const LINEAR_KEY_LIMIT: usize = 64;
 
 /// The keys of a table that holds more than `LINEAR_KEY_LIMIT` keys.
@@ -111,9 +110,7 @@ struct SpilledKey {
 }
 
 impl SpilledKey {
-    /// The low 32 bits of wyhash, seeded with the table's address so that a
-    /// document cannot be prepared to make its keys collide. A match is
-    /// always confirmed on the key text.
+    /// Seeded with the table's address, which a document cannot know.
     #[inline]
     fn hash(table: usize, key: &[u8]) -> u32 {
         bun_wyhash::hash_with_seed(table as u64, key) as u32
@@ -1752,9 +1749,7 @@ struct Parser<'a, 'log> {
     stack_check: StackCheck,
     /// Keyed by `E::Object::as_ptr()` / `E::Array::as_ptr()` addresses.
     meta: HashMap<usize, Meta>,
-    /// An index of the keys of each table that holds more than
-    /// `LINEAR_KEY_LIMIT` keys. `push_key` is the only append to a table, and
-    /// both of its callers index the key, so no key is missing.
+    /// Complete for each table past `LINEAR_KEY_LIMIT`: both callers of `push_key` index the key.
     spilled: HashTable<SpilledTable>,
     /// Current definition block: bumped per table header and per inline table.
     block: u32,
@@ -2157,8 +2152,6 @@ impl<'a, 'log> Parser<'a, 'log> {
         // earlier in this parse; the store lives in `self.bump`.
         let obj: &E::Object = unsafe { &*table };
         if obj.properties.len() <= LINEAR_KEY_LIMIT {
-            // `as_property` compares UTF-8 bytes correctly against both 8-bit
-            // and UTF-16 stored keys.
             return obj.as_property(key).map(|q| q.expr);
         }
         self.find_spilled_key(table, &obj.properties, key)
@@ -2185,8 +2178,7 @@ impl<'a, 'log> Parser<'a, 'log> {
         properties[found.index as usize].value
     }
 
-    // Out of line: inlined into `parse_keyval`, it makes a small table about
-    // 5% slower to parse.
+    // Inlined into `parse_keyval`, this makes a small table about 5% slower to parse.
     #[inline(never)]
     fn insert_key(&mut self, table: *mut E::Object, seg: KeySeg<'a>, value: Expr) -> PResult<()> {
         // SAFETY: `table` points at a live E::Object in the AST store.
@@ -2205,8 +2197,7 @@ impl<'a, 'log> Parser<'a, 'log> {
         Ok(())
     }
 
-    /// `insert_key` for a table that has an index. One probe of the index
-    /// finds that the key is new and takes the place for it.
+    /// `insert_key` for a table with an index: one probe finds the key or takes its place.
     #[inline(never)]
     fn insert_spilled_key(
         &mut self,
@@ -2261,8 +2252,7 @@ impl<'a, 'log> Parser<'a, 'log> {
         }
     }
 
-    /// Appends to the properties of `table`, and returns the position of the
-    /// new key. The caller adds the key to the table's index, if it has one.
+    /// Returns the position of the new key, which the caller adds to the table's index.
     #[inline(always)]
     fn push_key(&mut self, table: *mut E::Object, seg: KeySeg<'a>, value: Expr) -> usize {
         let key_loc = loc_of(seg.pos);
@@ -2277,9 +2267,7 @@ impl<'a, 'log> Parser<'a, 'log> {
         obj.properties.len() - 1
     }
 
-    /// Indexes the key that `append_key` has just stored at `index`. When that
-    /// key is the one that takes `table` past `LINEAR_KEY_LIMIT`, the table
-    /// gets its index, with the keys before it.
+    /// Indexes the key at `index`, after the keys before it when it is the first past the limit.
     #[inline(never)]
     fn spill_key(&mut self, table: *mut E::Object, key: &[u8], index: usize) {
         if index == LINEAR_KEY_LIMIT {
@@ -2308,8 +2296,7 @@ impl<'a, 'log> Parser<'a, 'log> {
         let obj: &E::Object = unsafe { &*table };
         let table = table as usize;
         let mut keys = HashTable::with_capacity(LINEAR_KEY_LIMIT + 1);
-        // A non-ASCII key is stored as UTF-16, and `find_key` hashes the
-        // UTF-8 spelling.
+        // A non-ASCII key is stored as UTF-16, and lookups hash its UTF-8 spelling.
         let mut utf8 = Vec::new();
         for (index, property) in obj.properties[..LINEAR_KEY_LIMIT].iter().enumerate() {
             let key = stored_key(property);

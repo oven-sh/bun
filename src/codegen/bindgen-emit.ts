@@ -93,17 +93,53 @@ const signaturesOf = (file: SchemaFile): Signature[] => [
   ...file.functions.flatMap(fn => fn.signatures),
 ];
 
-/** The conversions the file's Rust calls, one of each symbol. */
+const conversionsOfArguments = (file: SchemaFile): Conversion[] =>
+  signaturesOf(file).flatMap(({ args }) =>
+    args.flatMap(({ type }) => (type instanceof ConvertedByBodyType && type.conversion ? [type.conversion] : [])),
+  );
+
+/** The conversions the file's Rust calls. That of an argument which several functions have is there once. */
 function conversionsOf(file: SchemaFile): Conversion[] {
-  const bySymbol = new Map<string, Conversion>();
-  for (const { args } of signaturesOf(file))
-    for (const { type } of args)
-      if (type instanceof ConvertedByBodyType && type.conversion && !bySymbol.has(type.conversion.symbol!))
-        bySymbol.set(type.conversion.symbol!, type.conversion);
+  const ofArguments = new Map<string, Conversion>();
+  for (const conversion of conversionsOfArguments(file)) {
+    const key = `${conversion.symbol} ${conversion.which}`;
+    if (!ofArguments.has(key)) ofArguments.set(key, conversion);
+  }
   const ofMembers = file.types.flatMap(type =>
     (type instanceof DeferredDictionaryType || type instanceof UnionType) && type.accepted ? type.conversions : [],
   );
-  return [...file.conversions, ...ofMembers, ...bySymbol.values()];
+  return [...file.conversions, ...ofMembers, ...ofArguments.values()];
+}
+
+/** One for each pair of functions. */
+const firstOfAlikeConversions = (file: SchemaFile) =>
+  conversionsOf(file).filter(conversion => !conversion.alike || conversion.which === 0);
+
+/** Gives the conversions of the file that are alike the functions of the first. */
+function shareConversions(file: SchemaFile): void {
+  const byShape = new Map<string, Conversion[]>();
+  for (const conversion of conversionsOf(file)) {
+    if (conversion.exported) continue;
+    const { type, expected, member } = conversion;
+    const shape = [
+      type.rustType(file.origin),
+      type.rustFromExtern("result", file.origin),
+      String(type.rustOfUndefined(file.origin)),
+      cppHeldValue(type, "argument").holder,
+      typeof expected === "string" ? "message" : JSON.stringify(expected),
+      ...cppDeclareConverted(type, "converted", "value", "ctx", "", "false"),
+      ...(member ? cppReadMember(member.of.members[member.index], "read", 0, "ctx") : ["argument"]),
+    ].join("\n");
+    byShape.set(shape, [...(byShape.get(shape) ?? []), conversion]);
+  }
+  const bySymbol = new Map<string, Pick<Conversion, "symbol" | "rustName" | "alike" | "which">>();
+  for (const alike of byShape.values()) {
+    if (alike.length === 1) continue;
+    const [{ symbol, rustName }] = alike;
+    alike.forEach((conversion, which) => bySymbol.set(conversion.symbol!, { symbol, rustName, alike, which }));
+  }
+  for (const conversion of [...conversionsOf(file), ...conversionsOfArguments(file)])
+    if (!conversion.alike) Object.assign(conversion, bySymbol.get(conversion.symbol!));
 }
 
 /** Those of one name are numbered from the second on. */
@@ -207,6 +243,7 @@ export function analyze(files: readonly SchemaFile[]): Tables {
   ]);
   const repeated = symbols.filter((symbol, i) => symbols.indexOf(symbol) !== i);
   assert(repeated.length === 0, `two bindings make the same symbol: ${repeated.join(", ")}`);
+  files.forEach(shareConversions);
   return tables;
 }
 
@@ -586,31 +623,46 @@ template<> std::optional<${type.cpp}> WebCore::parseEnumeration<${type.cpp}>(JSC
 `;
 }
 
-/** Made of literals, so it is static and a call stores nothing for it. */
-const cppStaticContext = (variable: string, context: string) =>
-  `[[maybe_unused]] static constexpr auto ${variable} = Bun::Bindgen::${context};`;
+/** Made of literals, so it is static and a call stores nothing for it. Of several, it is the one at `which`. */
+const cppStaticContext = (variable: string, ...contexts: string[]) =>
+  contexts.length === 1
+    ? `[[maybe_unused]] static constexpr auto ${variable} = Bun::Bindgen::${contexts[0]};`
+    : `static constexpr auto ${variable}s = std::to_array({ ${contexts.map(context => `Bun::Bindgen::${context}`).join(", ")} });
+[[maybe_unused]] const auto& ${variable} = ${variable}s[which];`;
 
-/** Declares in `lines` what reports the `i`th argument or member, `value`, and returns the C++ expression for it. */
-function cppContext(
-  lines: string[],
-  i: number,
-  name: string,
-  expected: readonly string[] | string | undefined,
-  value: string,
-): string {
+/** What an error calls a value, and what it says the value should have been. */
+type Reported = Pick<Conversion, "name" | "expected">;
+
+/**
+ * Declares in `lines` what reports the `i`th argument or member, `value`, and returns the C++ expression for it.
+ * Conversions that are alike pass what each of them reports.
+ */
+function cppContext(lines: string[], i: number, reported: readonly Reported[], value: string): string {
+  const [{ expected }] = reported;
   if (typeof expected === "string") {
     lines.push(
-      cppStaticContext(`ctx${i}`, `ArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected)} }`),
+      cppStaticContext(
+        `ctx${i}`,
+        ...reported.map(
+          ({ name, expected }) =>
+            `ArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected as string)} }`,
+        ),
+      ),
     );
   } else if (expected) {
     lines.push(
       `static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`,
-      cppStaticContext(`nodeArgument${i}`, `NodeArgument { ${asciiLiteral(name)}, expected${i} }`),
+      cppStaticContext(
+        `nodeArgument${i}`,
+        ...reported.map(({ name }) => `NodeArgument { ${asciiLiteral(name)}, expected${i} }`),
+      ),
     );
     // It holds the value, so it is made where a conversion takes it.
     return `Bun::Bindgen::asLvalue(Bun::Bindgen::NodeArgumentContext { nodeArgument${i}, ${value} })`;
   } else {
-    lines.push(cppStaticContext(`ctx${i}`, `LiteralConversionContext { ${asciiLiteral(name)} }`));
+    lines.push(
+      cppStaticContext(`ctx${i}`, ...reported.map(({ name }) => `LiteralConversionContext { ${asciiLiteral(name)} }`)),
+    );
   }
   return `ctx${i}`;
 }
@@ -649,7 +701,7 @@ function cppSourceForDictionary(type: DictionaryType): string {
   const members = type.members.map((member, i) => {
     const qualified = qualifiedName(type, member);
     const lines: string[] = [];
-    const ctx = cppContext(lines, i, qualified, member.expected, `value${i}`);
+    const ctx = cppContext(lines, i, [{ name: qualified, expected: member.expected }], `value${i}`);
     lines.push(...cppReadMember(member, `value${i}`, nameIndex, ctx));
     nameIndex += member.names.length;
     lines.push(member.type.cppConvertInto(`result.${member.fieldName}`, `value${i}`, ctx, qualified, "false"));
@@ -746,8 +798,8 @@ const cppHeldValue = (type: Type, variable: string) =>
     : { holder: "JSC::EnsureStillAliveScope", value: `${variable}.value()` };
 
 /**
- * Whether each argument goes by pointer. The C ABI copies one that does not fit two registers. It also copies one that
- * takes two once the six of x86-64 have run out, with one load as wide as the two stores before it, which stalls.
+ * Whether each argument goes by pointer: one that the C ABI would copy to the stack, because it does not fit two
+ * registers or because the six of x86-64 have run out.
  * `leading`: how many parameters sit between the global object and the arguments.
  */
 function passedByPointer(args: readonly { type: Type }[], leading: number): boolean[] {
@@ -787,7 +839,7 @@ function cppCallBody(
           ? `${holder} argument${i} = callFrame->argumentCount() > ${i} ? callFrame->uncheckedArgument(${i}) : JSC::JSValue();`
           : `${holder} argument${i} = callFrame->argument(${i});`,
     );
-    const ctx = cppContext(lines, i, name, expected, value);
+    const ctx = cppContext(lines, i, [{ name, expected }], value);
     readLast.push(...type.cppReadLast(`converted${i}`, value));
     lines.push(...cppDeclareConverted(type, `converted${i}`, value, ctx, name, fromParameters?.failure ?? "{}"));
   });
@@ -819,33 +871,38 @@ function cppSourceForFromJS(type: UnionType): string {
 }
 
 function cppSourceForConversion(conversion: Conversion): string {
-  const { symbol, type, expected, member } = conversion;
+  const { symbol, type, member, alike = [conversion] } = conversion;
   const { holder, value } = cppHeldValue(type, "argument");
-  const name = member ? qualifiedName(member.of, member.of.members[member.index]) : conversion.name;
+  const reported = alike.map(({ name, expected, member }) => ({
+    name: member ? qualifiedName(member.of, member.of.members[member.index]) : name,
+    expected,
+  }));
   const lines: string[] = [];
-  const ctx = cppContext(lines, 0, name, expected, value);
+  const ctx = cppContext(lines, 0, reported, value);
   if (member) {
-    const earlier = member.of.members.slice(0, member.index).flatMap(earlier => earlier.names);
+    const firstNameIndices = alike.map(
+      ({ member }) =>
+        member!.of.firstMemberNameIndex +
+        member!.of.members.slice(0, member!.index).flatMap(({ names }) => names).length,
+    );
     lines.push(
-      `Bun::Bindgen::DictionaryMemberReader members(vm, globalObject, JSC::asObject(JSC::JSValue::decode(encodedValue)), ${member.of.firstMemberNameIndex}, ${member.of.names.length});`,
-      ...cppReadMember(
-        member.of.members[member.index],
-        "read",
-        earlier.length,
-        cppContext([], 0, name, expected, "read"),
-      ),
+      ...(conversion.alike
+        ? [`static constexpr unsigned firstNameIndices[] = { ${firstNameIndices.join(", ")} };`]
+        : []),
+      `Bun::Bindgen::DictionaryMemberReader members(vm, globalObject, JSC::asObject(JSC::JSValue::decode(encodedValue)), ${conversion.alike ? "firstNameIndices[which]" : firstNameIndices[0]}, ${member.of.members[member.index].names.length});`,
+      ...cppReadMember(member.of.members[member.index], "read", 0, cppContext([], 0, reported, "read")),
       `${holder} argument = read;`,
     );
   } else {
     lines.push(`${holder} argument = JSC::JSValue::decode(encodedValue);`);
   }
   lines.push(
-    ...cppDeclareConverted(type, "converted", value, ctx, name, "false"),
+    ...cppDeclareConverted(type, "converted", value, ctx, conversion.alike ? "" : reported[0].name, "false"),
     `*result = ${toExtern("converted")};`,
     "return true;",
   );
   return `
-extern "C" bool ${symbol}(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, ${externType(type)}* result)
+extern "C" bool ${symbol}(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, ${conversion.alike ? "uint32_t which, " : ""}${externType(type)}* result)
 {
 ${cppPrologue}
 ${indent(lines.join("\n"), 4)}
@@ -1666,7 +1723,7 @@ ${[...headers].map(header => `#include "${header}"\n`).join("")}${systemHeaders.
     )
     .join(
       "",
-    )}${conversionsOf(file).map(cppSourceForConversion).join("")}${file.functions.map(cppSourceForFunction).join("")}${file.namespaces
+    )}${firstOfAlikeConversions(file).map(cppSourceForConversion).join("")}${file.functions.map(cppSourceForFunction).join("")}${file.namespaces
     .map(namespace => cppSourceForNamespace(namespace, file.origin))
     .join("")}`;
 }
@@ -1791,11 +1848,11 @@ ${indent(body, 12)}
 }
 `;
 
-function rustForConversion({ symbol, rustName, type, exported, member }: Conversion, scope: RustScope): string {
+function rustForConversion({ symbol, rustName, type, exported, member, alike }: Conversion, scope: RustScope): string {
   const converted = type.rustFromExtern("result.assume_init()", scope);
   const ofUndefined = member ? null : type.rustOfUndefined(scope);
-  // Every function that has the argument shares its conversion, as they share the C++ half. One body reads a member.
-  const declaration = `${member ? "" : "#[inline(never)]\n"}fn ${exported ? "convert_" : ""}${rustName}<'a>(cx: &mut bindgen::JsScope<'a>, value: JSValue)`;
+  // Those that call it share it, as they share the C++ half. One body reads a member that is like no other.
+  const declaration = `${member && !alike ? "" : "#[inline(never)]\n"}fn ${exported ? "convert_" : ""}${rustName}<'a>(cx: &mut bindgen::JsScope<'a>, value: JSValue${alike ? ", which: u32" : ""})`;
   return `${
     exported
       ? `
@@ -1806,13 +1863,13 @@ pub fn ${rustName}<'a, T>(global: &JSGlobalObject, value: bindgen::JsLocal<'a, T
       : ""
   }
 unsafe extern "C" {
-    fn ${symbol}(global: *mut JSGlobalObject, value: JSValue, result: *mut ${type.rustExternType(scope)}) -> bool;
+    fn ${symbol}(global: *mut JSGlobalObject, value: JSValue, ${alike ? "which: u32, " : ""}result: *mut ${type.rustExternType(scope)}) -> bool;
 }
 ${declaration} -> bindgen::Result<'a, ${type.rustType(scope)}> {
     let mut result = core::mem::MaybeUninit::<${type.rustExternType(scope)}>::uninit();
     // SAFETY: C++ fills \`result\` exactly when it returns true, and the call \`cx\` belongs to holds \`value\`.
     unsafe {
-${ofUndefined ? `        if value.is_undefined() {\n            return Ok(${ofUndefined});\n        }\n` : ""}        bindgen::call_conversion(cx, |global| ${symbol}(global, value, result.as_mut_ptr()))?;
+${ofUndefined ? `        if value.is_undefined() {\n            return Ok(${ofUndefined});\n        }\n` : ""}        bindgen::call_conversion(cx, |global| ${symbol}(global, value, ${alike ? "which, " : ""}result.as_mut_ptr()))?;
 ${/\bheap\b/.test(converted) ? "        let heap = &cx.heap;\n" : ""}        ${type.rustFromExternThrows ? converted : `Ok(${converted})`}
     }
 }
@@ -1988,7 +2045,7 @@ ${type.members
     (member, i) => `    /// Reads \`${member.name}\` and converts it.
     #[inline]
     pub fn ${member.rustName}(self, global: &JSGlobalObject) -> bun_jsc::JsResult<${member.type.rustType(scope)}> {
-        bindgen::convert_with(global, self.0, ${type.conversions[i].rustName})
+        bindgen::convert_with(global, self.0, ${type.conversions[i].rustFunction})
     }`,
   )
   .join("\n")}
@@ -2454,7 +2511,7 @@ const rustForFile = (file: SchemaFile) =>
               : rustForDictionary(type as DictionaryType, file.origin),
     )
     .join("") +
-  conversionsOf(file)
+  firstOfAlikeConversions(file)
     .map(conversion => rustForConversion(conversion, file.origin))
     .join("") +
   file.functions.map(fn => rustForFunction(fn, file)).join("");

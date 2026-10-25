@@ -805,8 +805,8 @@ export class UnitType extends Type {
     return "()";
   }
   rustToJS(value: string): string {
-    assert(this.unit !== "ignored", "b.ignored is only an alternative of a union");
-    return `bindgen::to_js::${this.unit}(heap, ${value})`;
+    assert(this.unit === "undefined", "leave `returns` out, or return a nullable type");
+    return `bindgen::to_js::undefined(heap, ${value})`;
   }
 }
 
@@ -1465,10 +1465,17 @@ export class Conversion {
   readonly type: Type;
   readonly name: string;
   readonly expected: readonly string[] | string | undefined;
-  /** Of the C++ function. Conversions of a file whose C++ source is the same share one. Set by the generator. */
+  /** Of the C++ function. Set by the generator. */
   symbol?: string;
   /** Of the Rust function that calls it, in the file's module. Set by the generator. */
   rustName?: string;
+  /**
+   * The conversions of the file that differ from it only in what an error says and in the member read, itself among
+   * them, if there are others. They share the two functions, which take the index of one in this list: `which`.
+   * Set by the generator.
+   */
+  alike?: readonly Conversion[];
+  which?: number;
   /** Hand-written Rust calls it: `b.conversion`. */
   exported = false;
   /** It is given the object, and reads the value from this member of it. */
@@ -1479,6 +1486,10 @@ export class Conversion {
     this.type = type;
     this.name = name;
     this.expected = expected;
+  }
+  /** A `ConvertFn`. */
+  get rustFunction(): string {
+    return this.alike ? `|cx, value| ${this.rustName}(cx, value, ${this.which})` : this.rustName!;
   }
 }
 
@@ -1509,7 +1520,7 @@ export abstract class ConvertedByBodyType extends Type {
   }
   protected get rustConversion(): string {
     assert(this.conversion?.rustName, `${this.tsType}: only for an argument`);
-    return this.conversion.rustName;
+    return this.conversion.rustFunction;
   }
 }
 
@@ -2604,7 +2615,6 @@ export class DeferredDictionaryType extends NamedType {
   }
 }
 
-/** A value goes to the first alternative, in written order, that takes its kind. */
 export interface Alternative {
   name: string;
   variant: string;
@@ -2613,6 +2623,7 @@ export interface Alternative {
   nested?: { union: UnionType; alternative: Alternative };
 }
 
+/** A value goes to the first alternative, in written order, that takes its kind. */
 export class UnionType extends NamedType {
   /** Those of a union that is an alternative take its place: C++ chooses among them all at once, and only the Rust enum nests. */
   readonly alternatives: readonly Alternative[];

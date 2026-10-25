@@ -9208,6 +9208,25 @@ class X72 { constructor(public dep = x50) {} held = obj({ email: X72.shared.dep 
       expect(exitCode).toBe(1);
     });
 
+    test("a call without an argument for a binding pattern doesn't check the default of that pattern", async () => {
+      using dir = project({
+        "a.ts": `declare function createStore<S, A extends Record<string, (s: S) => Partial<S>>>(init: S, actions: A): { get: () => S; actions: A };
+function use({ get } = st) {}
+const st = createStore({ n: 0 }, { login: s => ({ user: 1 }), more: s => ({ x: use() }) });
+let l = st.actions; l = 1;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(3,48): error TS2559: Type '{ user: number; }' has no properties in common with type 'Partial<{ n: number; }>'.",
+          "a.ts(3,74): error TS2559: Type '{ x: void; }' has no properties in common with type 'Partial<{ n: number; }>'.",
+          "a.ts(4,21): error TS2322: Type 'number' is not assignable to type 'Record<string, (s: { n: number; }) => Partial<{ n: number; }>>'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // tsc asks for the type of a parameter when there's an argument to compare with it. `use()` has none, so the default
     // of `f` isn't checked there, and `createStore(..)` isn't resolved a second time inside its own resolution.
     test("a call without an argument for a parameter doesn't check the default of that parameter", async () => {

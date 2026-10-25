@@ -483,9 +483,7 @@ pub struct Resolver<'a> {
     /// For Bun's runtime, we don't.
     pub(crate) care_about_browser_field: bool,
 
-    /// When a lookup went through a link, take the tsconfig.json settings and the package.json
-    /// "type" of the file from the directory of its real path. The bundler sets this: it keys a
-    /// module by the path that `finalize_result` returns.
+    /// Set by the bundler: a linked file takes tsconfig.json settings and "type" at its real path.
     pub settings_from_real_path: bool,
 
     pub debug_logs: Option<DebugLogs>,
@@ -1775,10 +1773,7 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    /// The directory that gives its settings to a file that a lookup found through a link, and
-    /// whose real path is `real`: the directory of `real`. `None` for a real path inside
-    /// node_modules: the installer chose that place, and the file keeps the settings of the path
-    /// as spelled.
+    /// `None` inside node_modules: such a file keeps the settings of the path as spelled.
     #[cold]
     #[inline(never)]
     fn settings_dir_of_real_path(&mut self, real: &[u8]) -> Option<DirInfoRef> {
@@ -1786,8 +1781,7 @@ impl<'a> Resolver<'a> {
             return None;
         }
         let dir = Fs::PathName::init(real).dir;
-        // The first lookup of a directory fails when the "extends" chain of its tsconfig.json
-        // does not end. The directory stays in the cache without that file.
+        // An endless "extends" chain fails only the first lookup of its directory.
         self.dir_info_cached(dir)
             .or_else(|_| self.dir_info_cached(dir))
             .ok()

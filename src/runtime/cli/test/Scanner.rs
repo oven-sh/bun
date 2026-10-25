@@ -411,9 +411,7 @@ impl<'a> Scanner<'a> {
                     return;
                 }
 
-                // The scanner keeps the path it matched the filters against. The `Entry` keeps
-                // its own path, which also marks it as seen, and lends its bytes when the two
-                // are the same.
+                // Marks `entry` as seen. The file is kept as `path`, the one the filters saw.
                 let found = match bun_resolver::Resolver::entry_abs_path(entry) {
                     Some(entry_path) if entry_path == path => entry_path,
                     _ => match self.filename_store().append_slice(path) {

@@ -848,9 +848,7 @@ impl Route {
                 (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
             };
 
-            // Where the file is. That is asked for on every load and not kept on the `Entry`:
-            // an `Entry` stays in its listing across `reload()`, and by then a link can lead
-            // somewhere else or be a file.
+            // Asked on every load: `Entry.abs_path` is the entry's path, not where a link leads.
             let abs_path_str: &'static [u8] = {
                 let mut abs_path_str: &[u8] = b"";
                 // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
@@ -922,8 +920,7 @@ impl Route {
                     }
                 };
 
-                // The path of the `Entry` is interned once. A route that no link leads to is
-                // that path, so loading it again adds no string.
+                // No new string per load when the file is where its `Entry` says.
                 match bun_resolver::Resolver::entry_abs_path(entry_r) {
                     Some(entry_path) if entry_path == _abs => entry_path,
                     _ => FileSystem::instance()

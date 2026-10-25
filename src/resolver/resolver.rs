@@ -6080,13 +6080,7 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    /// The path of a directory entry: `entry.dir` joined with the name the
-    /// directory has for it, interned on first use. `None` when the two do not
-    /// fit a path buffer.
-    ///
-    /// This is the only writer of the path memo on `Entry`. A lookup reaches an
-    /// entry by any path to its directory and any case of its name, and each
-    /// of them gets this one spelling.
+    /// The one writer of `Entry.abs_path`: `entry.dir` joined with the name. `None` if too long.
     pub fn entry_abs_path(entry: &Fs::file_system::Entry) -> Option<&'static [u8]> {
         entry
             .abs_path_or_try_fill(|| {

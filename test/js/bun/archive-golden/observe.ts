@@ -363,6 +363,443 @@ function madeArchives() {
 }
 
 /**
+ * Archives written for lines and branches of libarchive's own tar reader that no other archive here made it run,
+ * found by measuring its coverage.
+ */
+function archivesForLibarchiveBranches() {
+  const end = Buffer.alloc(1024);
+  const long = (n: number, c = "v") => Buffer.alloc(n, c);
+  const file = (name: string, body = "x") =>
+    Buffer.concat([tarHeader(name, body.length), tarPadded(Buffer.from(body))]);
+  const rest = Buffer.concat([file("first", "hello"), file("second"), end]);
+  const pax = (...records: [string, string | Uint8Array][]) =>
+    Buffer.concat([paxHeader(...records.map(([k, v]) => paxRecord(k, v))), rest]);
+  const gnu = (h: Buffer) => void h.write("ustar  \0", 257);
+  const octal = (h: Buffer, at: number, n: number) => void h.write(n.toString(8).padStart(11, "0") + "\0", at);
+  const special = (type: string, body: Buffer | string, announced = Buffer.from(body).length) =>
+    Buffer.concat([
+      tarHeader(type === "A" ? "first" : "././@LongLink", announced, type, "", type === "A" ? undefined : gnu),
+      tarPadded(Buffer.from(body)),
+    ]);
+  /** Where the value of `key` starts in an archive that begins with one pax header. */
+  const valueAt = (archive: Buffer, key: string) => archive.indexOf(` ${key}=`) + key.length + 2;
+  /** The parser looks at 512 bytes from the start of a record before it reads the value, so only a cut behind those is the value's own. */
+  const cutInValue = (key: string, value: string | Uint8Array) => {
+    const a = pax([key, value], ["path", "renamed"]);
+    return a.subarray(0, valueAt(a, key) + 600);
+  };
+  const oldSparse = (map: [number, number][], extended: boolean, more: Buffer[], body: string) =>
+    Buffer.concat([
+      tarHeader("sparse", body.length, "S", "", h => {
+        gnu(h);
+        map.forEach(([o, n], i) => {
+          octal(h, 386 + 24 * i, o);
+          octal(h, 398 + 24 * i, n);
+        });
+        h[482] = extended ? 1 : 0;
+        octal(h, 483, 40);
+      }),
+      ...more,
+      tarPadded(Buffer.from(body)),
+      rest,
+    ]);
+  const sparse10 = (map: string) =>
+    Buffer.concat([
+      paxHeader(
+        paxRecord("GNU.sparse.major", "1"),
+        paxRecord("GNU.sparse.minor", "0"),
+        paxRecord("GNU.sparse.name", "sparse"),
+        paxRecord("GNU.sparse.realsize", "5"),
+      ),
+      tarHeader("GNUSparseFile.0/sparse", 512 + 5),
+      tarPadded(Buffer.from(map)),
+      tarPadded(Buffer.from("hello")),
+      rest,
+    ]);
+
+  const shapes: Record<string, Buffer> = {
+    // pax keys whose first letter belongs to a known key (the `break` of every case in pax_attribute)
+    "pax keys that only start like known ones": pax(
+      ...[
+        "GNU.x",
+        "GNU.sparse.x",
+        "LIBARCHIVE.x",
+        "Rx",
+        "RHT.security.selinuy",
+        "SCHILY.x",
+        "SUN.x",
+        "ax",
+        "cx",
+        "gx",
+        "hx",
+        "lx",
+        "mx",
+        "px",
+        "rx",
+        "sx",
+        "ux",
+      ].map(k => [k, "1"] as [string, string]),
+      ["path", "renamed"],
+    ),
+    // pax_time: what is behind the ninth digit of the fraction
+    "pax mtime with ten digits of fraction": pax(["mtime", "5.1234567891"]),
+    "pax mtime with a letter behind nine digits of fraction": pax(["mtime", "5.123456789x"]),
+    // header_gnutar: atime and ctime
+    "GNU header with atime and ctime": Buffer.concat([
+      tarHeader("first", 1, "0", "", h => {
+        gnu(h);
+        octal(h, 345, 7);
+        octal(h, 357, 8);
+      }),
+      tarPadded(Buffer.from("x")),
+      end,
+    ]),
+    // old GNU sparse: a bad pair in a block of more map
+    "old GNU sparse, a pair in the second block overflows": oldSparse(
+      [[0, 5]],
+      true,
+      [
+        (() => {
+          const b = Buffer.alloc(512);
+          b.fill(0xff, 0, 12);
+          b[0] = 0x80;
+          b.fill(0x7f, 4, 5);
+          octal(b, 12, 5);
+          return b;
+        })(),
+      ],
+      "hello",
+    ),
+    "old GNU sparse that says there is more map, with none at all": oldSparse([], true, [Buffer.alloc(512)], ""),
+    // sparse 1.0: numbers that overflow, in the multiplication and in the addition
+    "sparse 1.0 offset of 2^63": sparse10("1\n9223372036854775808\n5\n"),
+    "sparse 1.0 size of 2^63": sparse10("1\n0\n9223372036854775808\n"),
+    "sparse 1.0 count of 2^63": sparse10("9223372036854775808\n0\n5\n"),
+    "sparse 1.0 offset of twenty digits": sparse10("1\n99999999999999999999\n5\n"),
+    // ACL records: skipped, but they have a limit of their own and can be cut
+    "pax ACL records": pax(
+      ["SCHILY.acl.access", "user::rwx,group::r-x,other::r--"],
+      ["SCHILY.acl.default", "user::rwx,group::r-x,other::r--"],
+      ["path", "renamed"],
+    ),
+    "pax NFSv4 ACL record": pax(["SCHILY.acl.ace", "owner@:rwx::allow,everyone@:r::allow"], ["path", "renamed"]),
+    "pax ACL record that does not parse": pax(["SCHILY.acl.access", "nonsense"], ["path", "renamed"]),
+    "pax ACL record of 131072 bytes": pax(["SCHILY.acl.access", long(131072)], ["path", "renamed"]),
+    "pax ACL record of 131073 bytes": pax(["SCHILY.acl.access", long(131073)], ["path", "renamed"]),
+    "pax ACL record cut in its value": cutInValue("SCHILY.acl.access", long(3000, "user::rwx,")),
+    "Solaris ACL header with a digit that is not octal": Buffer.concat([special("A", "1000009\0user::rwx\0"), rest]),
+    "Solaris ACL header, NFSv4": Buffer.concat([special("A", "3000003\0owner@:rwx::allow\0"), rest]),
+    "Solaris ACL header with too large a count": Buffer.concat([special("A", "1000000000\0user::rwx\0"), rest]),
+    "Solaris ACL header with nothing behind the count": Buffer.concat([special("A", "1000003\0"), rest]),
+    "Solaris ACL header that does not parse": Buffer.concat([special("A", "1000003\0nonsense\0"), rest]),
+    "Solaris ACL header cut in its body": Buffer.concat([special("A", "1000003\0user::rwx\0", 2000)]).subarray(
+      0,
+      512 + 100,
+    ),
+    // values that are cut behind the 512 bytes the parser looks at first
+    "pax GNU.sparse.map cut in its value": cutInValue("GNU.sparse.map", long(1603, "0,1,")),
+    "pax LIBARCHIVE.xattr cut in its value": cutInValue("LIBARCHIVE.xattr.user.x", long(3200, "QUJD")),
+    "pax RHT.security.selinux cut in its value": cutInValue("RHT.security.selinux", long(3000)),
+    "pax SCHILY.xattr cut in its value": cutInValue("SCHILY.xattr.user.x", long(3000)),
+    "pax SUN.holesdata cut in its value": cutInValue(
+      "SUN.holesdata",
+      " " + Array.from({ length: 900 }, (_, i) => i).join(" "),
+    ),
+    "pax SCHILY.fflags cut in its value": (() => {
+      const a = pax(["SCHILY.fflags", long(511, "nodump,")], ["path", "renamed"]);
+      return a.subarray(0, valueAt(a, "SCHILY.fflags") + 505);
+    })(),
+    "pax record of an unknown key cut in its value": cutInValue("comment", long(3000)),
+    "pax record cut before its newline": (() => {
+      const a = pax(["comment", long(3000)], ["path", "renamed"]);
+      return a.subarray(0, valueAt(a, "comment") + 3000);
+    })(),
+    // limits
+    "pax RHT.security.selinux of 16777216 bytes": pax(["RHT.security.selinux", long(16 << 20)], ["path", "renamed"]),
+    "pax RHT.security.selinux of 16777217 bytes": pax(
+      ["RHT.security.selinux", long((16 << 20) + 1)],
+      ["path", "renamed"],
+    ),
+    "L header of 1048577 bytes, cut": special("L", long(5000), (1 << 20) + 1),
+    // a header that failed stays failed behind a second L, K or V header
+    ...Object.fromEntries(
+      ["L", "K", "V"].map(t => [
+        `sparse map over the limit, then two ${t} headers`,
+        Buffer.concat([
+          paxHeader(paxRecord("GNU.sparse.map", long((8 << 20) + 1, "0"))),
+          special(t, "one\0"),
+          special(t, "two\0"),
+          rest,
+        ]),
+      ]),
+    ),
+    // %XX in the name of a LIBARCHIVE.xattr record
+    "LIBARCHIVE.xattr names with % in them": pax(
+      ...["%41", "a%4Ab", "%4a%6A", "%", "a%", "a%4", "%zz", "%4z", "%z4", "%FF%ff", "%25"].map(
+        n => [`LIBARCHIVE.xattr.${n}`, "QUJD"] as [string, string],
+      ),
+      ["path", "renamed"],
+    ),
+    // bidding: a type that is neither a letter nor a digit
+    "first header of type '-'": Buffer.concat([tarHeader("first", 1, "-"), tarPadded(Buffer.from("x")), rest]),
+    // gzip that goes bad inside the body of a pax header (the streaming reader asks for header and body at once)
+    // libarchive inflates 64 KiB at a time and drops a block that ends in an error, so the header block has to end one block and the damage has to be two further on.
+    "gzip damaged inside the body of a pax header": (() => {
+      const tar = Buffer.concat([
+        tarHeader("filler", 64512),
+        long(64512),
+        paxHeader(paxRecord("comment", long(140000)), paxRecord("path", "renamed")),
+        rest,
+      ]);
+      const g = Buffer.from(gzipStored(tar));
+      g.writeUInt16LE(1, 10 + 2 * (5 + 65535) + 1);
+      return g;
+    })(),
+    // a value over its limit is skipped without a look, so a cut in it shows up only afterwards
+    "pax path of 1048577 bytes, cut": pax(["path", long((1 << 20) + 1)]).subarray(0, 9000),
+    "pax uname of 65537 bytes, cut": pax(["uname", long(65537)]).subarray(0, 9000),
+    // ---- branches: the other answer of a test that the fixture only ever answers one way
+    // every known key with its last letter changed: right length, wrong text
+    "pax keys of the length of known ones": pax(
+      ...[
+        "GNU.sparsf",
+        "GNU.sparse.numblockt",
+        "GNU.sparse.offseu",
+        "GNU.sparse.numbytet",
+        "GNU.sparse.sizf",
+        "GNU.sparse.maq",
+        "GNU.sparse.majos",
+        "GNU.sparse.minos",
+        "GNU.sparse.namf",
+        "GNU.sparse.realsizf",
+        "GNUx.sparse",
+        "LIBARCHIVEx.xattr",
+        "LIBARCHIVE.creationtimf",
+        "LIBARCHIVE.symlinktypf",
+        "LIBARCHIVE.xattrx.a",
+        "RHT.security.selinuy",
+        "SCHILY.acl.accest",
+        "SCHILY.acl.defaulu",
+        "SCHILY.acl.acf",
+        "SCHILY.devmajos",
+        "SCHILY.devminos",
+        "SCHILY.fflagt",
+        "SCHILY.dew",
+        "SCHILY.inp",
+        "SCHILY.nlinl",
+        "SCHILY.realsizf",
+        "SCHILY.xattrx.a",
+        "SCHILYx.ino",
+        "SUN.holesdatb",
+        "SUNx.holesdata",
+        "atimf",
+        "ctimf",
+        "charseu",
+        "commenu",
+        "gie",
+        "gnamf",
+        "hdrcharseu",
+        "linkpati",
+        "mtimf",
+        "pati",
+        "sizf",
+        "uie",
+        "unamf",
+      ].map(k => [k, "1"] as [string, string]),
+      ["path", "renamed"],
+    ),
+    "pax sparse versions 0.2, 1.1 and 2.0": Buffer.concat(
+      [
+        ["0", "2"],
+        ["1", "1"],
+        ["2", "0"],
+      ]
+        .map(([a, b]) =>
+          Buffer.concat([
+            paxHeader(paxRecord("GNU.sparse.major", a), paxRecord("GNU.sparse.minor", b)),
+            file("v" + a + b, "hello"),
+          ]),
+        )
+        .concat(end),
+    ),
+    "pax sparse version that is not a number": pax(["GNU.sparse.major", "x"], ["GNU.sparse.minor", "-1"]),
+    "pax symlinktype of the right length": Buffer.concat([
+      paxHeader(paxRecord("LIBARCHIVE.symlinktype", "filf")),
+      file("a"),
+      paxHeader(paxRecord("LIBARCHIVE.symlinktype", "dis")),
+      rest,
+    ]),
+    "pax hdrcharset of the length of the UTF-8 one": pax(
+      ["hdrcharset", "ISO-IR 10646 2000 UTF-9"],
+      ["path", "caf\u00e9"],
+    ),
+    "pax record whose length ends inside its key": Buffer.concat([
+      tarHeader("PaxHeader/x", 12, "x"),
+      tarPadded(Buffer.from("5 path=abc\n\n")),
+      rest,
+    ]),
+    "pax record whose length ends at its first letter": Buffer.concat([
+      tarHeader("PaxHeader/x", 10, "x"),
+      tarPadded(Buffer.from("2 path=ab\n")),
+      rest,
+    ]),
+    "pax header that ends inside a key": Buffer.concat([
+      tarHeader("PaxHeader/x", 6, "x"),
+      tarPadded(Buffer.from("20 pat")),
+      rest,
+    ]),
+    "pax header that ends behind a length": Buffer.concat([
+      tarHeader("PaxHeader/x", 3, "x"),
+      tarPadded(Buffer.from("20 ")),
+      rest,
+    ]),
+    "pax key of more than 512 bytes": pax([long(600, "k").toString(), "1"], ["path", "renamed"]),
+    "pax mtime of 2^63": pax(["mtime", "9223372036854775808"]),
+    "pax mtime of -2^63 - 1": pax(["mtime", "-9223372036854775809"]),
+    "pax mtime with a slash in its fraction": pax(["mtime", "5.12/"]),
+    "pax mtime with a slash behind nine digits of fraction": pax(["mtime", "5.123456789/"]),
+    "pax size of 2^63 and of -2^63 - 1": Buffer.concat([
+      paxHeader(paxRecord("size", "9223372036854775808")),
+      file("a"),
+      paxHeader(paxRecord("uid", "-9223372036854775809")),
+      rest,
+    ]),
+    "pax empty linkpath, uname and gname in front of a header that has them": Buffer.concat([
+      paxHeader(paxRecord("linkpath", ""), paxRecord("uname", ""), paxRecord("gname", "")),
+      tarHeader("link", 0, "2", "target", h => {
+        h.write("user", 265);
+        h.write("group", 297);
+      }),
+      paxHeader(paxRecord("linkpath", ""), paxRecord("uname", ""), paxRecord("gname", "")),
+      tarHeader("hard", 0, "1", "target", h => {
+        gnu(h);
+        h.write("user", 265);
+        h.write("group", 297);
+      }),
+      rest,
+    ]),
+    "pax device numbers in front of a GNU device header": Buffer.concat([
+      paxHeader(paxRecord("SCHILY.devmajor", "3"), paxRecord("SCHILY.devminor", "4")),
+      tarHeader("dev", 0, "3", "", h => {
+        gnu(h);
+        h.write("0000001\0", 329);
+        h.write("0000002\0", 337);
+      }),
+      rest,
+    ]),
+    "sparse 0.1 map with a character below 0": pax(["GNU.sparse.map", "0,1,-2,3"]),
+    "SUN.holesdata with a character below 0": pax(["SUN.holesdata", " 0 1 -2 3"]),
+    "sparse 1.0 number with a character above 9": sparse10("1\n0:\n5\n"),
+    "Solaris ACL count with a character below 0": Buffer.concat([special("A", "10000-3\0user::rwx\0"), rest]),
+    "two entries with a Solaris ACL header": Buffer.concat([
+      special("A", "1000003\0user::rwx\0"),
+      file("a"),
+      special("A", "1000003\0user::r--\0"),
+      rest,
+    ]),
+    "LIBARCHIVE.xattr values that end early or hold other bytes": pax(
+      ["LIBARCHIVE.xattr.a", "QUJD_QUJD"],
+      ["LIBARCHIVE.xattr.b", "QUJD=QUJD"],
+      ["LIBARCHIVE.xattr.c", Buffer.from([0x51, 0xff, 0x55, 0x1f, 0x4a])],
+      ["LIBARCHIVE.xattr.d", "Q"],
+      ["LIBARCHIVE.xattr.e", "QU"],
+      ["LIBARCHIVE.xattr.f", "QUJ"],
+      ["LIBARCHIVE.xattr.g", "="],
+      ["path", "renamed"],
+    ),
+    "LIBARCHIVE.xattr names with % and what is next to the hex digits": pax(
+      ...["%/0", "%:0", "%@0", "%G0", "%`0", "%g0", "%0/", "%0:", "%0@", "%0G", "%0`", "%0g"].map(
+        n => [`LIBARCHIVE.xattr.${n}`, "QUJD"] as [string, string],
+      ),
+      ["path", "renamed"],
+    ),
+    // bidding looks at the number fields of the first header
+    "first header with number fields of nothing but blanks": Buffer.concat([
+      tarHeader("first", 0, "0", "", h => {
+        for (const [at, n] of [
+          [100, 8],
+          [108, 8],
+          [116, 8],
+          [136, 12],
+          [329, 8],
+          [337, 8],
+        ])
+          h.fill(" ", at, at + n);
+      }),
+      rest,
+    ]),
+    "first header with number fields of nothing but digits": Buffer.concat([
+      tarHeader("first", 0, "0", "", h => {
+        for (const [at, n] of [
+          [100, 8],
+          [108, 8],
+          [116, 8],
+          [329, 8],
+          [337, 8],
+        ])
+          h.fill("0", at, at + n);
+      }),
+      rest,
+    ]),
+    "first header with a letter in rdevmajor": Buffer.concat([
+      tarHeader("first", 0, "0", "", h => void h.write("x", 329)),
+      rest,
+    ]),
+    "first header with a letter in rdevminor": Buffer.concat([
+      tarHeader("first", 0, "0", "", h => void h.write("x", 337)),
+      rest,
+    ]),
+    "first header of type '{'": Buffer.concat([tarHeader("first", 1, "{"), tarPadded(Buffer.from("x")), rest]),
+    // octal fields at the edge of 64 bits (only a 12-byte field is long enough, and only with a sign)
+    "mtime of twelve sevens and of a minus and eleven sevens": Buffer.concat([
+      tarHeader("a", 0, "0", "", h => void h.write("777777777777", 136)),
+      tarHeader("b", 0, "0", "", h => void h.write("-77777777777", 136)),
+      rest,
+    ]),
+    "K header with an empty name in front of a symlink and of a hardlink": Buffer.concat([
+      special("K", "\0"),
+      tarHeader("link", 0, "2", "target"),
+      special("K", "\0"),
+      tarHeader("hard", 0, "1", "target"),
+      rest,
+    ]),
+    "pax uname and gname that start with NUL": Buffer.concat([
+      paxHeader(paxRecord("uname", "\0x"), paxRecord("gname", "\0x")),
+      tarHeader("a", 0, "0", "", h => {
+        h.write("user", 265);
+        h.write("group", 297);
+      }),
+      paxHeader(paxRecord("uname", "\0x"), paxRecord("gname", "\0x")),
+      tarHeader("b", 0, "0", "", h => {
+        gnu(h);
+        h.write("user", 265);
+        h.write("group", 297);
+      }),
+      rest,
+    ]),
+    "pax keys that are only the start of a vendor's": pax(
+      ["G", "1"],
+      ["GNU.", "1"],
+      ["GNU.sparsex.a", "1"],
+      ["L", "1"],
+      ["LIBARCHIVE.", "1"],
+      ["S", "1"],
+      ["SCHILY.", "1"],
+      ["SUN.", "1"],
+      ["path", "renamed"],
+    ),
+    "pax sparse major below zero": pax(["GNU.sparse.major", "-1"], ["GNU.sparse.minor", "0"]),
+    "pax uid of -2^63 - 1": pax(["uid", "-9223372036854775809"], ["gid", "-9223372036854775808"]),
+    "pax header that is a length and a blank": Buffer.concat([
+      tarHeader("PaxHeader/x", 2, "x"),
+      tarPadded(Buffer.from("2 ")),
+      rest,
+    ]),
+  };
+  return Object.entries(shapes).map(([name, archive]) => ({ name, archive }));
+}
+
+/**
  * Long names of short clusters with a "_" after each. Between them they hold every pair that Windows
  * composes, beside many more that it does not, and tell the combining classes apart.
  */
@@ -515,6 +952,7 @@ export async function readerArchives() {
     ...(await stored("cases.json.gz", "case")),
     ...(await stored("reader-cases.json.gz", "reader case")),
     ...madeArchives(),
+    ...archivesForLibarchiveBranches(),
   ];
 }
 

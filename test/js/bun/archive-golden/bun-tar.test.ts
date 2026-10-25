@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   contents,
   differences,
+  gzipStored,
   loadCases,
   namesToCompose,
   paxHeader,
@@ -141,6 +142,19 @@ describe("the tar reader", () => {
     );
     expect(readTar(Buffer.concat([pax({ "SCHILY.acl.default": "not an ACL" }, entry), end]))).toBe(script);
     expect(readTar(Buffer.concat([solaris, solaris, entry, end]))).toStartWith("error: Redundant 'A' header");
+  });
+
+  // libarchive looked for the "=" in what was left of its 64 KiB block of unpacked bytes, or in 512 bytes if that
+  // was more, and passed over the rest of the header when it was not there. Only a header over 1 MiB got that far.
+  test.each([1, 300, 604, 605])("reads a long pax key that starts %i bytes before the end of a block of gzip", left => {
+    const filler = paxRecord("comment", Buffer.alloc(17 * 65536 - 512 - left - 17, "c"));
+    const records = [filler, paxRecord(Buffer.alloc(600, "k").toString(), "1"), paxRecord("path", "renamed")];
+    expect(512 + filler.length).toBe(17 * 65536 - left);
+    const archive = Buffer.concat([paxHeader(...records), file("short"), end]);
+    const renamed = `file perm=644 size=1 mtime=0 path="renamed"\n${x}end\n`;
+    expect([archive, gzipStored(archive)].flatMap(bytes => [readTar(bytes), readTar(bytes, { stream: true })])).toEqual(
+      Array(4).fill(renamed),
+    );
   });
 
   test("refuses what is not an archive, unless it is told that it is one", () => {

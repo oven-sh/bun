@@ -3123,22 +3123,11 @@ pub(crate) fn parse_type_selector<Impl: BunSelectorImpl>(
     state: SelectorParsingState,
     sink: &mut SelectorBuilder<Impl>,
 ) -> CResult<bool> {
-    let result = match parse_qualified_name::<Impl>(parser, input, false) {
-        Ok(v) => v,
-        Err(e) => {
-            if matches!(
-                e.kind,
-                css::ParseErrorKind::basic(css::BasicParseErrorKind::end_of_input)
-            ) {
-                return Ok(false);
-            }
-            return Err(e);
-        }
-    };
-
-    let (namespace, local_name) = match result {
-        OptionalQName::None(_) => return Ok(false),
-        OptionalQName::Some(ns, ln) => (ns, ln),
+    // One match, not `?`: with `?` every field of the result is loaded before the `None` exit.
+    let (namespace, local_name) = match parse_qualified_name::<Impl>(parser, input, false) {
+        Ok(OptionalQName::Some(ns, ln)) => (ns, ln),
+        Ok(OptionalQName::None(_)) => return Ok(false),
+        Err(e) => return Err(e),
     };
 
     if state.after_any_pseudo() {
@@ -3396,7 +3385,10 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
 
         let qname = parse_qualified_name::<Impl>(parser, input, true)?;
         match qname {
-            OptionalQName::None(t) => {
+            OptionalQName::None(None) => {
+                return Err(input.new_error(css::BasicParseErrorKind::end_of_input));
+            }
+            OptionalQName::None(Some(t)) => {
                 return Err(input.new_custom_error(
                     SelectorParseErrorKind::NoQualifiedNameInAttributeSelector(t)
                         .into_default_parser_error(),
@@ -3846,7 +3838,7 @@ pub(crate) fn parse_negation<Impl: BunSelectorImpl>(
 
 pub(crate) enum OptionalQName<Impl: SelectorImpl> {
     Some(QNamePrefix<Impl>, Option<Str>),
-    None(Token),
+    None(Option<Token>),
 }
 
 pub(crate) enum QNamePrefix<Impl: SelectorImpl> {
@@ -3860,7 +3852,7 @@ pub(crate) enum QNamePrefix<Impl: SelectorImpl> {
 
 /// * `Err(())`: Invalid selector, abort
 /// * `Ok(None(token))`: Not a simple selector, could be something else. `input` was not consumed,
-///                      but the token is still returned.
+///                      but the token is still returned (`None` when the input ended before any token).
 /// * `Ok(Some(namespace, local_name))`: `None` for the local name means a `*` universal selector
 pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
@@ -3871,9 +3863,9 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
 
     let tok = match input.next_including_whitespace() {
         Ok(v) => *v,
-        Err(e) => {
+        Err(_) => {
             input.reset(&start);
-            return Err(e);
+            return Ok(OptionalQName::None(None));
         }
     };
     match &tok {
@@ -3956,7 +3948,7 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
         _ => {}
     }
     input.reset(&start);
-    Ok(OptionalQName::None(tok))
+    Ok(OptionalQName::None(Some(tok)))
 }
 
 fn parse_qualified_name_default_namespace_helper<Impl: BunSelectorImpl>(

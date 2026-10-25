@@ -183,3 +183,51 @@ test.each([
 ])("a parse error prints the token as CSS: %s", (css, message) => {
   expect(parseErrorMessage(css)).toBe(`parsing failed: ${message}`);
 });
+
+// --- a namespace prefix with no name after it ---
+
+// `*|`, `ns|` and `|` need a name after the bar. A selector that ended there was
+// read as "no type selector here". After `&` that left a valid selector, so
+// `.x { &*|{} }` built as `.x { &{} }` and the rule applied to the parent.
+test.each([
+  ".x { &*|{ color: red } }",
+  ".x { &ns|{ color: red } }",
+  ".x { &|{ color: red } }",
+  ".x { &*|/* c */{ color: red } }",
+  ".x { @nest &*|{ color: red } }",
+  "*|{ color: red }",
+  "ns|{ color: red }",
+  "|{ color: red }",
+  "a *|{ color: red }",
+  "a > *|{ color: red }",
+  "a, *|{ color: red }",
+  "*|, a { color: red }",
+  "a:not(*|) { color: red }",
+  "a:has(*|) { color: red }",
+  "a:nth-child(2n of *|) { color: red }",
+])("a selector that ends after a namespace prefix invalidates the rule: %s", css => {
+  expect(parseErrorMessage(css)).toBe("parsing failed: Unexpected end of input");
+});
+
+test("a selector with nothing after `&` is still the parent", () => {
+  expect(minifyTest(".x { &{ color: red } }", "")).toBe(".x{&{color:red}}");
+  expect(minifyTest(".x { &/* c */{ color: red } }", "")).toBe(".x{&{color:red}}");
+  expect(minifyTest(".x { &div{ color: red } }", "")).toBe(".x{&div{color:red}}");
+});
+
+test("a forgiving list drops a selector that ends after a namespace prefix", () => {
+  // After `&` the list kept the `&`: these printed `a:is(&,.x)` and `a:where(&)`.
+  expect(minifyTest(".p { a:is(&*|, .x) { color: red } }", "")).toBe(".p{a.x{color:red}}");
+  expect(minifyTest(".p { a:where(&ns|) { color: red } }", "")).toBe(".p{a:where(){color:red}}");
+  // With no `&` the list dropped the selector before too.
+  expect(minifyTest("a:is(*|, .x) { color: red }", "")).toBe("a.x{color:red}");
+  expect(minifyTest("a:where(*|) { color: red }", "")).toBe("a:where(){color:red}");
+});
+
+// The attribute selector reads its name through the same function.
+test.each(["[] { color: red }", "[ /* c */ ] { color: red }", "[*|] { color: red }", "[ns|] { color: red }"])(
+  "an attribute selector that ends early reports the end of the input: %s",
+  css => {
+    expect(parseErrorMessage(css)).toBe("parsing failed: Unexpected end of input");
+  },
+);

@@ -4,9 +4,9 @@
 //
 // A forked child's 'disconnect' is emitted before its 'exit' even when the parent gets to look at
 // both only after the channel is gone and the child is dead. The parent below stays off its event
-// loop from the moment it makes the channel go away until the child has been killed, so both are
-// pending at once. Bun used to report the channel's close through a later event-loop task, so 'exit'
-// (reported straight from the exit notification) came first.
+// loop until the child is dead, so both are pending at once. Bun used to report the channel's close
+// through a later event-loop task, so 'exit' (reported straight from the exit notification) came
+// first.
 
 if (process.argv[2] === "child") {
   const fs = require("node:fs");
@@ -17,6 +17,14 @@ if (process.argv[2] === "child") {
   setInterval(() => {}, 1000); // Stay alive until the parent kills us.
   console.log("ready");
   return;
+}
+
+if (process.argv[2] === "child-that-exits") {
+  const fs = require("node:fs");
+  process.send("bye");
+  // Exit on our own, but only once the parent is inside its 'message' handler.
+  blockUntil("the parent to get the message", () => fs.existsSync(process.argv[3]));
+  process.exit(3);
 }
 
 const assert = require("node:assert");
@@ -42,9 +50,9 @@ function blockUntil(what, condition) {
   }
 }
 
-// On Linux the killed child is dead once /proc shows it as a zombie with no other threads left (the
-// last thread to go is the one that closes its descriptors and signals the exit) or no longer shows
-// it at all; elsewhere a SIGKILL'd child is gone within a few milliseconds.
+// On Linux the child is dead once /proc shows it as a zombie with no other threads left (the last
+// thread to go is the one that closes its descriptors and signals the exit) or no longer shows it
+// at all; elsewhere a child that was killed, or is already exiting, is gone within milliseconds.
 function blockUntilDead(pid) {
   if (process.platform !== "linux") return sleepSync(100);
   blockUntil("the child to die", () => {
@@ -85,4 +93,21 @@ test("the child is killed with a message from the parent possibly still unread",
   blockUntilDead(child.pid);
   await once(child, "close");
   assert.deepStrictEqual(events, ["disconnect", "exit"]);
+});
+
+test("the child sends a message and exits on its own", async () => {
+  const parentIsBusy = path.join(tmpdir, "parent-is-busy");
+  const child = fork(__filename, ["child-that-exits", parentIsBusy]);
+  const events = [];
+  child.on("message", message => {
+    events.push(`message:${message}`);
+    // The child exits once it sees this file. Staying in the handler until it is dead leaves the
+    // channel's end and the exit both pending.
+    fs.writeFileSync(parentIsBusy, "");
+    blockUntilDead(child.pid);
+  });
+  child.on("disconnect", () => events.push("disconnect"));
+  child.on("exit", code => events.push(`exit:${code}`));
+  await once(child, "close");
+  assert.deepStrictEqual(events, ["message:bye", "disconnect", "exit:3"]);
 });

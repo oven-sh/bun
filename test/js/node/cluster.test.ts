@@ -557,6 +557,72 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("a worker's 'disconnect' is emitted before its 'exit'", async () => {
+  // The worker exits on its own while the primary is inside a 'message' handler, and the primary
+  // stays there until the worker is dead, so the channel's end and the exit are both pending when
+  // its loop resumes. The channel's close used to be reported through a later event-loop task,
+  // after the exit.
+  using dir = tempDir("cluster-disconnect-before-exit", {
+    "main.js": `
+const cluster = require("node:cluster");
+const { existsSync, readdirSync, readFileSync, writeFileSync } = require("node:fs");
+
+const deadline = Date.now() + 30_000;
+function blockUntil(what, condition) {
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for " + what);
+    Bun.sleepSync(1);
+  }
+}
+
+// On Linux the worker is dead once /proc shows it as a zombie with no other threads left (the last
+// thread to go is the one that closes its descriptors and signals the exit) or no longer shows it
+// at all; elsewhere a process that is already exiting is gone within milliseconds.
+function blockUntilDead(pid) {
+  if (process.platform !== "linux") return Bun.sleepSync(100);
+  blockUntil("the worker to exit", () => {
+    try {
+      const stat = readFileSync("/proc/" + pid + "/stat", "latin1");
+      return stat[stat.lastIndexOf(")") + 2] === "Z" && readdirSync("/proc/" + pid + "/task").length === 1;
+    } catch (error) {
+      if (error.code !== "ENOENT" && error.code !== "ESRCH") throw error;
+      return true;
+    }
+  });
+}
+
+if (cluster.isPrimary) {
+  const events = [];
+  const worker = cluster.fork();
+  worker.on("message", () => {
+    writeFileSync("primary-is-busy", "");
+    blockUntilDead(worker.process.pid);
+  });
+  cluster.on("disconnect", () => events.push("disconnect"));
+  cluster.on("exit", (_worker, code) => events.push("exit:" + code));
+  process.on("exit", () => console.log(JSON.stringify(events)));
+} else {
+  process.send("bye");
+  blockUntil("the primary to get the message", () => existsSync("primary-is-busy"));
+  process.exit(3);
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ events: stdout.trim(), stderr, exitCode }).toEqual({
+    events: JSON.stringify(["disconnect", "exit:3"]),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
   // `cluster.Worker({ process })` built around a plain object (how Node's own

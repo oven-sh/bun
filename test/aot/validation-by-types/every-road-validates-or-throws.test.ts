@@ -422,7 +422,7 @@ show(() => JSON.parse<User[]>("[" + right + ",1]"));
 show(() => JSON.parse<Record<string, number>>('{"a":1,"b":"2"}'));
 show(() => JSON.parse<[number, string]>('[1,2]'));
 show(() => JSON.parse<{ n: number & Schema.Default<3> }>('{}'));
-show(() => JSON.parse<{ n: number & Schema.Default<3> }>('{}', (key, value) => value));
+show(() => validate<{ n: number & Schema.Default<3> }>(globalThis.JSON.parse('{}', (key, value) => value)));
 const given = { id: 7, name: "Ada", role: "guest", at: null };
 show(() => validate<User>(given));
 show(() => validate<User>(given) === (given as unknown));

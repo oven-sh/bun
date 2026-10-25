@@ -26,7 +26,7 @@ an array for an object type TypeError  invalid_type object array
 an object for an array type TypeError  invalid_type array object
 under unknown, any, object true true true true true true
 a function under object true
-a key that is a symbol {x:1,y:2,Symbol(mark):"kept"}
+a key that is a symbol {x:1,y:2}
 getters x,more,y,inner,inner.x {x:1,more:3,y:3,inner:{x:4,y:5}} true true
 a getter that throws RangeError from a getter
 a getter that fits once {a:1}

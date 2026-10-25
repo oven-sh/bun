@@ -1042,7 +1042,7 @@ check("the first has 300", text => JSON.parse<F18>(text), 18, 300);
 check("the first has 1000", text => JSON.parse<F19>(text), 19, 1000);
 check("the first has 1100", text => JSON.parse<F20>(text), 20, 1100);
 //// json-parse-type-argument-goes-by-binding.ts
-// Only a type argument written on the global JSON validates. Written on globalThis.JSON.parse it is a type error: that function takes none.
+// A type argument validates where the function that is called is the global's JSON.parse, under whatever name and type the program holds it. Written on globalThis.JSON.parse it is a type error: that function takes none.
 // On any other function a type argument is a type somebody wrote for the result: a claim, which nothing tests.
 interface User { id: number }
 const misfit = '{"id":"one"}';
@@ -1087,7 +1087,7 @@ for (const [name, result] of [
   ["parameter", nameOfError(() => shadowedByParameter({ parse: <T,>(text: string) => ("theirs " + text) as T }))],
   ["variable", nameOfError(shadowedByVariable)],
   ["parameter, an object", shadowedAndGivesObject({ parse: <T,>(text: string) => ({ theirs: text }) as T })],
-  ["value", heldAsValue()],
+  ["value", nameOfError(heldAsValue)],
   ["globalThis", throughGlobalThis()],
   ["own object", own.parse<User>(misfit)],
 ]) console.log(name, JSON.stringify(result));

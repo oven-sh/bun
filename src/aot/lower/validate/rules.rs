@@ -100,6 +100,12 @@ fn rule_kind(rule: &ValidationRule) -> RuleKind {
     }
 }
 
+pub(super) fn has_default(node: &ValidationNode) -> bool {
+    node.rules
+        .iter()
+        .any(|rule| rule_kind(rule) == RuleKind::Default)
+}
+
 fn replace_rule(node: &mut ValidationNode, rule: ValidationRule) {
     let kind = rule_kind(&rule);
     debug_assert!(kind != RuleKind::Test, "every test of a node applies");

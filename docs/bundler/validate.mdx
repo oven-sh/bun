@@ -65,7 +65,7 @@ TypeError: id must be number, received string (and 2 more)
 - **Only a call with a type argument checks.** With `JSON` from `"bun"`, `JSON.parse(text)` is an error, whatever type you write around it: `JSON.parse(text) as User`, `const user: User = JSON.parse(text)`. `.then(JSON.parse)` throws. To parse without a check, say so: `JSON.parse<any>(text)`.
 - **Only the words `any` and `unknown` skip the check.** A `T` that merely turns out to be `any` is an error: `type User = any`, or a type that isn't declared in a file under `// @ts-nocheck`.
 - **Bun goes by what the name refers to, not by how the call is spelled.** `const { parse } = JSON; parse<User>(text)` checks too.
-- **The reviver runs first.** `JSON.parse<T>(text, reviver)` checks what the reviver returns and hands it to you as it is: an object that the reviver returned is that same object in the result. So `Schema.Default` fills nothing in when you pass a reviver.
+- **The reviver runs first.** `JSON.parse<T>(text, reviver)` checks what the reviver returns and hands it to you as it is: an object that the reviver returned is that same object in the result. Nothing is filled in, so the build stops if `T` uses `Schema.Default`. Write `validate<T>(JSON.parse(text, reviver))` there.
 - **`T` can come from anywhere.** Bun's type checker resolves it, so you can import it from another file or from a package, and it can be `Partial<User>`, `Omit<User, "id">` or `Page<User>`.
 
 ### Types in your editor
@@ -127,7 +127,7 @@ bun run login.ts
 TypeError: password must have >=8 characters
 ```
 
-`validate` throws the same `TypeError` as `JSON.parse<T>`. If the value matches, it returns a copy. Bun copies the objects and arrays that `T` describes, with all of their keys in the same order, and never changes the value you passed in.
+`validate` throws the same `TypeError` as `JSON.parse<T>`. If the value matches, it returns a copy. Bun copies the objects and arrays that `T` describes, with all of their keys in the same order, and never changes the value you passed in. Keys that are symbols aren't copied, and a type with `Schema.Strict` rejects an object that has one.
 
 What `T` says nothing about isn't copied: the value of a property that `T` doesn't declare, or of one whose type is `unknown`, `any` or `object`, is the same object in the result. For a union, what counts is the member that accepts the value. `validate<{ at: { day: number } } | { at: unknown }>({ at: new Date() })` returns a new object whose `at` is that `Date`.
 

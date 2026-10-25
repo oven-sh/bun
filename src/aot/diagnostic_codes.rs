@@ -109,6 +109,8 @@ diagnostic_codes! {
         TypedParseCalleeIsNotResolved = 100514, Warning, "This call has the type of JSON.parse<T>(), but the compiler can't see what it calls. If that's parse of the JSON from \"bun\", the call throws at run time. Name that JSON in this file and call JSON.parse<T>(text) on it";
         InvalidRegExpFlags = 100515, Error, "Invalid flags \"{0}\" in regular expression";
         ValidationTypeIsAny = 100518, Error, "'{0}' is any here, so there is no type to validate against. To skip validation, write any itself";
+        TypedParseReviverWithDefault = 100520, Error, "JSON.parse<{0}>() can't take a second argument, because {0} uses Schema.Default. What a reviver returns is returned as it is, so nothing would be filled in. Write validate<{0}>(JSON.parse(text, reviver))";
+        TypedParseIsNotCalled = 100521, Error, "JSON.parse<{0}> only validates where it is called: JSON.parse<{0}>(text). Kept in a variable or passed on, it would parse without validating";
     }
     Builtins 100700..=100749 {}
 }

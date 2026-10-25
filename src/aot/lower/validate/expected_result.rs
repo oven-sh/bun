@@ -5,6 +5,7 @@ use bun_sema::hir::{Call, Chain, ExprId, ExprKind, FnBody, MemberKey, NodeData};
 use bun_sema::util::SharedSort;
 
 use super::nodes::validation_nodes;
+use super::rules::has_default;
 use super::{ValidatedFile, ValidationError};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, BuiltinName, MemberLookup};
@@ -294,6 +295,16 @@ pub(super) trait FindsValidatedResults<'c, 'p: 'c, 's: 'p>:
         let position = self.hir()[call].pos;
         let written = self.hir().ids(self.hir().list_at(site.type_args)).next()?;
         let expected = match validation_nodes(self, ty, written, position) {
+            // What a reviver returns is handed on as it is, and a member that is left out would stay left out.
+            Ok(nodes)
+                if function == ValidatingFunction::Parse
+                    && site.args.len() > 1
+                    && nodes.iter().any(has_default) =>
+            {
+                let written = self.find_type_text(call, None);
+                self.report_at(call, Code::TypedParseReviverWithDefault, &[written.as_slice()]);
+                return None;
+            }
             Ok(nodes) => self.add_expected_result(call, ty, nodes.to_vec()),
             Err(error) => Err(error),
         };

@@ -40,8 +40,8 @@
 0 StrictPoint one more key between -> TypeError :unrecognized_keys
 0 Point an index -> {0:"zero",x:1,y:2} | in:0,x,y | json:{"0":"zero","x":1,"y":2}
 0 StrictPoint an index -> TypeError :unrecognized_keys
-0 Point a symbol -> {x:1,y:2,Symbol(s):1} | in:x,y | json:{"x":1,"y":2}
-0 StrictPoint a symbol -> {x:1,y:2,Symbol(s):1} | in:x,y | json:{"x":1,"y":2}
+0 Point a symbol -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint a symbol -> TypeError :unrecognized_keys
 0 Point __proto__ as a key -> {x:1,y:2,__proto__:{label:"from above"}} | in:x,y,__proto__ | json:{"x":1,"y":2,"__proto__":{"label":"from above"}}
 0 StrictPoint __proto__ as a key -> TypeError :unrecognized_keys
 0 Point a getter -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
@@ -142,8 +142,8 @@
 1 StrictPoint one more key between -> TypeError :unrecognized_keys
 1 Point an index -> {0:"zero",x:1,y:2} | in:0,x,y | json:{"0":"zero","x":1,"y":2}
 1 StrictPoint an index -> TypeError :unrecognized_keys
-1 Point a symbol -> {x:1,y:2,Symbol(s):1} | in:x,y | json:{"x":1,"y":2}
-1 StrictPoint a symbol -> {x:1,y:2,Symbol(s):1} | in:x,y | json:{"x":1,"y":2}
+1 Point a symbol -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint a symbol -> TypeError :unrecognized_keys
 1 Point __proto__ as a key -> {x:1,y:2,__proto__:{label:"from above"}} | in:x,y,__proto__ | json:{"x":1,"y":2,"__proto__":{"label":"from above"}}
 1 StrictPoint __proto__ as a key -> TypeError :unrecognized_keys
 1 Point a getter -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
@@ -244,8 +244,8 @@
 2 StrictPoint one more key between -> TypeError :unrecognized_keys
 2 Point an index -> {0:"zero",x:1,y:2} | in:0,x,y | json:{"0":"zero","x":1,"y":2}
 2 StrictPoint an index -> TypeError :unrecognized_keys
-2 Point a symbol -> {x:1,y:2,Symbol(s):1} | in:x,y | json:{"x":1,"y":2}
-2 StrictPoint a symbol -> {x:1,y:2,Symbol(s):1} | in:x,y | json:{"x":1,"y":2}
+2 Point a symbol -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint a symbol -> TypeError :unrecognized_keys
 2 Point __proto__ as a key -> {x:1,y:2,__proto__:{label:"from above"}} | in:x,y,__proto__ | json:{"x":1,"y":2,"__proto__":{"label":"from above"}}
 2 StrictPoint __proto__ as a key -> TypeError :unrecognized_keys
 2 Point a getter -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}

@@ -21,6 +21,32 @@ impl FileLowering<'_, '_, '_, '_> {
         if mentions_validate || mentions(BuiltinId::BunJSON) {
             self.report_exported_compiler_functions();
         }
+        if mentions(BuiltinId::JSONParse) || mentions(BuiltinId::BunJSONParse) {
+            self.report_parsers_that_are_not_called();
+        }
+    }
+
+    // `const parse = JSON.parse<User>`, `(JSON.parse<User>)(text)`: the type argument stands on no call.
+    fn report_parsers_that_are_not_called(&mut self) {
+        let hir = self.hir;
+        for expression in (0..hir.exprs.len() as u32).map(ExprId) {
+            let ExprKind::Instantiation { expr: operand, .. } = hir[expression].kind else {
+                continue;
+            };
+            if self.decisions().is_dead_expr(expression) {
+                continue;
+            }
+            let operand = self.skip_type_syntax(operand);
+            let builtin = self.builtins.builtin_of_expression(operand);
+            if builtin.and_then(find_validating_function) != Some(ValidatingFunction::Parse) {
+                continue;
+            }
+            let range = hir[operand].end as usize..hir[expression].end as usize;
+            let written = hir.text.get(range).unwrap_or_default().trim_ascii();
+            let written = written.strip_prefix(b"<").unwrap_or(written);
+            let written = written.strip_suffix(b">").unwrap_or(written);
+            self.report_at(expression, Code::TypedParseIsNotCalled, &[written]);
+        }
     }
 
     fn report_validate_values(&mut self) {

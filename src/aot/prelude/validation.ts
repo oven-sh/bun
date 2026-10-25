@@ -1,4 +1,5 @@
 declare function $call<R>(f: unknown, thisArg: unknown, ...args: unknown[]): R;
+declare function $getOwnPropertySymbols(object: object): symbol[];
 declare function $hasOwn(object: object, key: PropertyKey): boolean;
 declare function $isArray(value: any): value is any[];
 declare function $jsonParse(text: string): any;
@@ -106,6 +107,8 @@ interface Run {
   copies: Map<object, object> | undefined;
   // Something has looked at a part of the value and has not taken it: a private copy may hold private copies of parts that the next to look at it does not describe.
   isLookedAtAgain: boolean;
+  // For each private copy of an object that has enumerable symbols among its own keys: those symbols.
+  symbolKeys: Map<object, symbol[]> | undefined;
   remainingHoles: number;
 }
 
@@ -251,6 +254,7 @@ function createRun(plan: string, preparedByText: Map<string, any>, isCopy: boole
     matchesPattern: preparedUnder("matchesPattern", preparedByText),
     copies: isCopy ? undefined : new $Map(),
     isLookedAtAgain: false,
+    symbolKeys: undefined,
     remainingHoles: maxHoleCount(),
   };
 }
@@ -515,6 +519,22 @@ function heldElement(run: Run, input: any[], unread: HeldArray | undefined, inde
   return heldAt(run, input, index, at);
 }
 
+// No type that can be validated declares a key that is a symbol, and JSON has none: the private copy holds what is under the names.
+function holdObject(run: Run, value: any): any {
+  const all = { ...value };
+  const symbols = $getOwnPropertySymbols(all);
+  if (symbols.length === 0) return all;
+  const copy: any = {};
+  const keys = $objectKeys(all);
+  for (let i = 0; i < keys.length; i++) define(copy, keys[i], all[keys[i]]);
+  (run.symbolKeys ??= new $Map()).set(copy, symbols);
+  return copy;
+}
+
+function symbolKeysOf(run: Run, input: any): symbol[] | undefined {
+  return run.symbolKeys === undefined ? undefined : run.symbolKeys.get(input);
+}
+
 // Reading an object may run code of the program: getters, the traps of a proxy. So it is read once, into a private copy that all arms of a union look at.
 // No result holds a private copy: sourceOf() and putSourcesBack() are the two ways by which a part that is not described goes into a result.
 function heldAt(run: Run, holder: any, key: any, at: number): any {
@@ -527,7 +547,7 @@ function heldAt(run: Run, holder: any, key: any, at: number): any {
   if (!describes(run, at, isArray)) return value;
   let copy: any;
   if (isArray) copy = holdArray(run, value);
-  else copies.set((copy = { ...value }), value);
+  else copies.set((copy = holdObject(run, value)), value);
   define(holder, key, copy);
   return copy;
 }
@@ -649,6 +669,7 @@ function buildObject(run: Run, node: PlanNode, input: any): any {
     } else if (item !== memberValue) define(result, member.key, item);
   }
   if (node.undeclared !== "Rejected" && node.undeclared !== "Validated") return result;
+  if (node.undeclared === "Rejected" && symbolKeysOf(run, input) !== undefined) return run.refused;
   const keys = $objectKeys(result);
   for (let i = 0; i < keys.length; i++) {
     if (isDeclared(members, keys[i])) continue;
@@ -932,6 +953,10 @@ function reportMembers(run: Run, node: PlanNode, input: any, path: any[], issues
       add(run, issues, createIssue(path, "unrecognized_keys", $jsonStringify(key), input, node.message));
     else report(run, undeclaredValue, heldAt(run, input, key, undeclaredValue), withKey(path, key), issues);
   }
+  const symbols = undeclaredValue === undefined ? symbolKeysOf(run, input) : undefined;
+  if (symbols === undefined) return;
+  for (let i = 0; i < symbols.length && run.remainingIssues !== 0; i++)
+    add(run, issues, createIssue(path, "unrecognized_keys", String(symbols[i]), input, node.message));
 }
 
 function report(run: Run, at: number, input: any, path: any[], issues: any[]): void {

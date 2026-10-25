@@ -55,7 +55,23 @@ test.each([
   ['import { JSON } from "bun";\nconsole.log((JSON as any).parse<{ id: number }>("{}"));', "TS100518"],
   ['import { JSON } from "bun";\nconsole.log((JSON.parse as any)<{ id: number }>("{}"));', "TS100518"],
   ['console.log((JSON as any).parse<{ id: number }>("{}"));', "TS100518"],
+  ['const parse = JSON.parse<{ id: number }>;\nconsole.log(parse("{}"));', "TS100521"],
+  ['console.log((JSON.parse<{ id: number }>)("{}"));', "TS100521"],
+  ['console.log(["{}"].map(JSON.parse<{ id: number }>));', "TS100521"],
+  ['import { JSON } from "bun";\nconsole.log((JSON.parse<{ id: number }>)("{}"));', "TS100521"],
   ['import { JSON } from "bun";\n// @ts-ignore\nconsole.log(JSON.parse<any, { id: number }>("{}"));', "TS100518"],
+  [
+    'import type { Schema } from "bun";\ntype Options = { port: number & Schema.Default<80> };\nconsole.log(JSON.parse<Options>("{}", (key, value) => value));',
+    "JSON.parse<Options>() can't take a second argument, because Options uses Schema.Default.",
+  ],
+  [
+    'import type { Schema } from "bun";\nconsole.log(JSON.parse<{ rows: { size: number & Schema.Default<1> }[] } | null>("null", undefined));',
+    "TS100520",
+  ],
+  [
+    'import { JSON, type Schema } from "bun";\nconsole.log(JSON.parse<{ on: boolean & Schema.Default<false> }>("{}", (key, value) => value));',
+    "TS100520",
+  ],
   [
     'import type { Schema } from "bun";\ntype Writable<T> = { -readonly [K in keyof T]: T[K] };\nconsole.log(JSON.parse<Writable<{ readonly id: number } & Schema.Strict>>("{}"));',
     "cannot validate",

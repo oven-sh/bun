@@ -342,6 +342,7 @@ data-from-outside/json-parse-type-argument-more-orders-of-keys-than-a-table-hold
 data-from-outside/json-parse-type-argument-recursive-unions-take-linear-time
 data-from-outside/json-parse-type-argument-refuses-a-large-text-in-workers-that-are-ended
 data-from-outside/json-parse-type-argument-three-types-of-one-shape-with-an-optional-member
+data-from-outside/keys-that-are-symbols-are-not-copied-and-a-closed-type-refuses-them
 data-from-outside/objects-in-many-orders-of-names-come-and-go-between-collections
 data-from-outside/parsed-via-untyped-literal
 data-from-outside/sql-typed-rows
@@ -1035,6 +1036,7 @@ workers/terminated-while-it-loads
 workers/terminated-while-its-entry-runs-or-behind-it
 workers/terminated-while-the-validator-looks-a-method-up-validated
 workers/the-entry-is-another-module
+workers/what-a-worker-printed-before-it-exits-is-printed
 workers/workers-that-nobody-holds
 writes-to-host-objects/members-of-bun-named-on-a-parameter-that-holds-bun
 writes-to-host-objects/members-of-bun-named-on-an-awaited-import

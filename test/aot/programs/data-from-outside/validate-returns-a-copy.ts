@@ -95,7 +95,7 @@ try {
 
 // JSON.parse<T> checks what a reviver returns and hands it on as it is: the program holds that object, and a copy would be another one.
 const kept: any = { x: 4, more: [1] };
-const revived = JSON.parse<Order>(before, (key, value) => (key === "inner" ? kept : value));
+const revived = JSON.parse<Omit<Order, "level">>(before, (key, value) => (key === "inner" ? kept : value));
 revived.inner.x = 5;
 console.log("what a reviver returns", (revived.inner as unknown) !== kept, kept.x, (revived.inner as any).more === kept.more, Object.keys(revived).join());
 

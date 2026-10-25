@@ -394,6 +394,8 @@ function lengthOf(from: any): number {
 }
 class Judge {
   copies = new Set<object>();
+  // A copy holds what is under the names. A type that takes no undeclared key refuses an object that has a symbol among its enumerable keys.
+  hadSymbols = new Set<object>();
   // An array is read by its length, once, and then element by element as far as somebody looks.
   unread = new Map<object, { from: any; length: number }>();
   holes = 0;
@@ -414,6 +416,7 @@ class Judge {
     const isArray = Array.isArray(value);
     if (!describesClass(d, isArray)) return value;
     const copy = isArray ? [] : spread(value);
+    for (const symbol of Object.getOwnPropertySymbols(copy)) { delete copy[symbol]; this.hadSymbols.add(copy); }
     if (isArray) { const length = lengthOf(value); if (length > 0) this.unread.set(copy, { from: value, length }); }
     this.copies.add(copy);
     Object.defineProperty(holder, key, { value: copy, writable: true, enumerable: true, configurable: true });
@@ -464,6 +467,7 @@ class Judge {
           if (optional && (!has || value[name] === undefined)) continue;
           if (!this.accepts(held, value, name)) return false;
         }
+        if (d.strict && this.hadSymbols.has(value)) return false;
         if (d.strict) for (const name of Object.keys(value)) if (!d.ms.some((m: any) => m.key === name)) return false;
         return true;
       }

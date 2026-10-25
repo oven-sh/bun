@@ -34,6 +34,7 @@ const AFTER_LIBRARY: &str = r#"
     __proto__: null,
     $arrayFrom: Array.from,
     $call: (f, thisArg, ...args) => apply(f, thisArg, args),
+    $getOwnPropertySymbols: Object.getOwnPropertySymbols,
     $hasOwn: Object.hasOwn,
     $isArray: isArray,
     $jsonParse: text => parseText(text, withoutPrototype),

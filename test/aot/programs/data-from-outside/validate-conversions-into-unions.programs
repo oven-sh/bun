@@ -178,7 +178,7 @@ show("a dictionary value", () => validate<Record<string, Level>>(withUndefined('
   }
 }
 //// validate-dictionary-symbol-keys.ts
-// validate<T>(value) keeps the symbol keys of a dictionary, also when T holds a Schema.Default.
+// validate<T>(value) leaves the symbol keys of a dictionary out of the copy, also when T holds a Schema.Default.
 import { validate } from "bun:bundle";
 import type { Schema } from "bun";
 type Counts = Record<string, number>;

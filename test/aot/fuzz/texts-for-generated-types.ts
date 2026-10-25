@@ -695,16 +695,17 @@ export function program(seed: number, count: number): string {
       continue;
     }
     if (!fills) shareable.push(self);
+    // A type that fills something in takes no reviver: the build stops.
+    const revived = fills
+      ? ""
+      : ` revived: [${Object.keys(revivers)
+          .map(
+            name =>
+              `[${JSON.stringify(name)}, text => Checked.parse<T${self}>(text, revivers[${JSON.stringify(name)}])]`,
+          )
+          .join(", ")}],`;
     cases.push(
-      `  { name: "T${self}", type: ${JSON.stringify(type)}, description: descriptions[${self}],${marks} parseLater: async text => { await null; return Checked.parse<T${self}>(text); }, revived: [${Object.keys(
-        revivers,
-      )
-        .map(
-          name => `[${JSON.stringify(name)}, text => Checked.parse<T${self}>(text, revivers[${JSON.stringify(name)}])]`,
-        )
-        .join(
-          ", ",
-        )}], parsers: [["JSON.parse<T>", text => Checked.parse<T${self}>(text)], ["JSON.parse<T> in a generator", text => { for (const held of (function* () { yield none; yield Checked.parse<T${self}>(text); })()) if (held !== none) return held; }], ["JSON.parse<T> with a reviver", text => Checked.parse<T${self}>(text, (_, held) => held)]], validate: value => validate<T${self}>(value), readTyped: text => read${self}(Checked.parse<T${self}>(text)), serveCast: async request => read${self}((await request.json()) as T${self}), serveChecked: async request => read${self}(Checked.parse<T${self}>(await request.text())), readChanged: (text, change) => { const value = Checked.parse<T${self}>(text); change(value); return read${self}(value); }, readCast: text => read${self}(JSON.parse(text) as T${self}), readBody: async bytes => read${self}((await new Response(bytes).json()) as T${self}), readRequest: async bytes => read${self}((await new Request("http://localhost/", { method: "POST", body: bytes }).json()) as T${self}), readUntyped: read${self}u },`,
+      `  { name: "T${self}", type: ${JSON.stringify(type)}, description: descriptions[${self}],${marks} parseLater: async text => { await null; return Checked.parse<T${self}>(text); },${revived} parsers: [["JSON.parse<T>", text => Checked.parse<T${self}>(text)], ["JSON.parse<T> in a generator", text => { for (const held of (function* () { yield none; yield Checked.parse<T${self}>(text); })()) if (held !== none) return held; }]${fills ? "" : `, ["JSON.parse<T> with a reviver", text => Checked.parse<T${self}>(text, (_, held) => held)]`}], validate: value => validate<T${self}>(value), readTyped: text => read${self}(Checked.parse<T${self}>(text)), serveCast: async request => read${self}((await request.json()) as T${self}), serveChecked: async request => read${self}(Checked.parse<T${self}>(await request.text())), readChanged: (text, change) => { const value = Checked.parse<T${self}>(text); change(value); return read${self}(value); }, readCast: text => read${self}(JSON.parse(text) as T${self}), readBody: async bytes => read${self}((await new Response(bytes).json()) as T${self}), readRequest: async bytes => read${self}((await new Request("http://localhost/", { method: "POST", body: bytes }).json()) as T${self}), readUntyped: read${self}u },`,
     );
   }
 

@@ -1204,39 +1204,43 @@ class Worker extends EventEmitter {
       messaging.destroyMainThreadPort(this.#messagingThreadId);
       this.#messagingThreadId = undefined;
     }
-    // End captured stdio readables when the worker exits, even if it was
-    // terminated before its own streams finished.
-    if (this.#stdout) {
-      this.#stdout.endFromOwner!();
-    }
-    if (this.#stderr) {
-      this.#stderr.endFromOwner!();
-    }
-    // Close the captured stdout/stderr control ports so worker.ref() can't pin the
-    // parent loop after exit (mirrors #stdinPort below).
-    this.#stdoutPort?.close();
-    this.#stderrPort?.close();
-    // Tear down the parent-side stdin Writable + port so post-exit writes fail
-    // (ERR_STREAM_DESTROYED) instead of silently no-oping into a closed peer.
-    if (this.#stdin) {
-      this.#stdin.destroy();
-    }
-    this.#stdinPort?.close();
-    // node delivers everything the worker posted before it exited ahead of
-    // 'exit' (kOnExit drains the public port), then closes the port. 'exit' follows
-    // and the promise of terminate() resolves whatever the listeners do.
+    // The listeners of 'data' and 'message' are called from here. Whatever they do, the
+    // rest follows, 'exit' is emitted and the promise of terminate() resolves.
     try {
-      let entry;
-      while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
-        this.emit("message", entry.message);
+      // End captured stdio readables when the worker exits, even if it was
+      // terminated before its own streams finished.
+      if (this.#stdout) {
+        this.#stdout.endFromOwner!(_receiveMessageOnPort);
+      }
+      if (this.#stderr) {
+        this.#stderr.endFromOwner!(_receiveMessageOnPort);
       }
     } finally {
-      this.#publicPort.close();
-      this.#onExitPromise = e.code;
+      // Close the captured stdout/stderr control ports so worker.ref() can't pin the
+      // parent loop after exit (mirrors #stdinPort below).
+      this.#stdoutPort?.close();
+      this.#stderrPort?.close();
+      // Tear down the parent-side stdin Writable + port so post-exit writes fail
+      // (ERR_STREAM_DESTROYED) instead of silently no-oping into a closed peer.
+      if (this.#stdin) {
+        this.#stdin.destroy();
+      }
+      this.#stdinPort?.close();
+      // node delivers everything the worker posted before it exited ahead of
+      // 'exit' (kOnExit drains the public port), then closes the port.
       try {
-        this.emit("exit", e.code);
+        let entry;
+        while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
+          this.emit("message", entry.message);
+        }
       } finally {
-        this.#resolveOnExit?.(e.code);
+        this.#publicPort.close();
+        this.#onExitPromise = e.code;
+        try {
+          this.emit("exit", e.code);
+        } finally {
+          this.#resolveOnExit?.(e.code);
+        }
       }
     }
   }

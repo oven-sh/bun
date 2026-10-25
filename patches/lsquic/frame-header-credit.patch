@@ -1,0 +1,26 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -3053,6 +3053,23 @@
+                     stream_hq_frame_put(stream, shf);
+                 break;
+             }
++            /* bun: a frame whose bytes were never buffered (a header block that
++             * waits for a packet or for credit) has not taken the connection
++             * credit for its header.  Do not write that header when the credit
++             * is gone: the connection would pass the peer's MAX_DATA.  None of
++             * this frame's bytes are in the buffer, so a flush is complete here.
++             */
++            if (!(shf->shf_flags & SHF_CC_PAID)
++                    && (stream->sm_bflags & SMBF_CONN_LIMITED)
++                    && lsquic_conn_cap_avail(&stream->conn_pub->conn_cap)
++                                                                < frame_sz)
++            {
++                if (new)
++                    stream_hq_frame_put(stream, shf);
++                else
++                    maybe_remove_from_write_q(stream, SMQF_WANT_FLUSH);
++                break;
++            }
+             LSQ_DEBUG("insert %zu-byte HQ frame of type 0x%X at payload "
+                 "offset %"PRIu64" (actual offset %"PRIu64")", frame_sz,
+                 shf->shf_frame_type, stream->sm_payload, stream->tosend_off);

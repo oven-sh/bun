@@ -153,11 +153,12 @@ export const lsquic: Dependency = {
     // and failed for a larger one. Such a block gets a heap buffer, sized from
     // the header list.
     "patches/lsquic/large-header-block.patch",
-    // A header block sent while the end of the body was still in the stream's
-    // buffer (trailers) went out inside the body's last DATA frame, with no
-    // HEADERS frame of its own. The peer read the trailers as body bytes, or
-    // closed the connection when the frame's length did not match.
-    "patches/lsquic/headers-after-buffered-body.patch",
+    // frame_hq_gen_read() took the connection credit for the header of an
+    // HTTP/3 frame when it wrote the header, with no check. A header block
+    // that could not be written (no packet, or no credit) left its HEADERS
+    // frame unpaid, and a flush of the bytes in front of it wrote that frame
+    // header. The connection then sent more than the peer's MAX_DATA allows.
+    "patches/lsquic/frame-header-credit.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

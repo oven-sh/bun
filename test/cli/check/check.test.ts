@@ -1836,7 +1836,9 @@ export function lastInAnObject() { ({ ...x6 } = o); }
       "a.ts": `const map = new Map<string, number>();\n${calls}export const probe: never = map;\n`,
     });
     const { stdout, exitCode } = await check(dir);
-    expect(stdout).toBe(`a.ts(${n + 2},14): error TS2322: Type 'Map<string, number>' is not assignable to type 'never'.`);
+    expect(stdout).toBe(
+      `a.ts(${n + 2},14): error TS2322: Type 'Map<string, number>' is not assignable to type 'never'.`,
+    );
     expect(exitCode).toBe(1);
   });
 

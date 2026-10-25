@@ -1086,7 +1086,12 @@ function sendWithDispatch(dispatcher, url, options, signal, redirect) {
   const { method } = options;
   let abort = noop;
   let body;
-  const onAbort = () => abort(signal.reason);
+  // A dispatcher doesn't have to report an abort back, so each abort settles the promise first.
+  const stop = err => {
+    fail(err);
+    abort(err);
+  };
+  const onAbort = () => stop(signal.reason);
   signal.addEventListener("abort", onAbort, { once: true });
   const fail = err => {
     signal.removeEventListener("abort", onAbort);
@@ -1105,10 +1110,7 @@ function sendWithDispatch(dispatcher, url, options, signal, redirect) {
         onHeaders(status, rawHeaders, resume, statusText) {
           if (status < 200) return true;
           if (redirect === "error" && redirectStatus.includes(status)) {
-            const err = new TypeError("unexpected redirect");
-            // A dispatcher doesn't have to report an abort back.
-            fail(err);
-            abort(err);
+            stop(new TypeError("unexpected redirect"));
             return true;
           }
           const headers = new Headers();

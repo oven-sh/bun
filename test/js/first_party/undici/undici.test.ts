@@ -1713,6 +1713,27 @@ describe("undici dispatchers", () => {
       }
       const failure = await undiciFetch(`${origin}/`, { dispatcher: new Canned(), redirect: "error" }).catch(e => e);
       expect(failure).toBeInstanceOf(TypeError);
+      expect(failure.message).toBe("unexpected redirect");
+    });
+
+    it.each([
+      ["ignores the abort", true],
+      ["never calls onConnect()", false],
+    ])("rejects with the signal's reason through a dispatcher that %s", async (_, connects) => {
+      const dispatched = Promise.withResolvers<void>();
+      class Silent extends Dispatcher {
+        dispatch(_options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandlers) {
+          if (connects) handler.onConnect!(() => {});
+          dispatched.resolve();
+          return true;
+        }
+      }
+      const controller = new AbortController();
+      const reason = new Error("stop");
+      const pending = undiciFetch(`${origin}/`, { dispatcher: new Silent(), signal: controller.signal }).catch(e => e);
+      await dispatched.promise;
+      controller.abort(reason);
+      expect(await pending).toBe(reason);
     });
 
     it("rejects with the signal's reason, before and during the request", async () => {

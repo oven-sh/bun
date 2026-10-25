@@ -1009,7 +1009,9 @@ impl QuicStream {
                             }
                         });
                         self.drain_outbound();
-                        if self.outbound.get().data.is_empty() {
+                        if self.outbound.get().data.is_empty()
+                            && self.pending_headers.get().is_empty()
+                        {
                             s.close();
                         } else {
                             s.reset(code);
@@ -1173,8 +1175,10 @@ impl QuicStream {
             self.pending_headers.get().is_empty() && !self.must_wait_for_credit(s, frameless)
         });
         let Some(s) = ready else {
-            // Nothing would send or drop a block that's queued after the write side ended.
-            if open.is_some() && self.with_state(|s| s.write_ended != 0) {
+            // Nothing can follow the end of the write side, whether it's sent or still queued.
+            let ended = open.is_some() && self.with_state(|s| s.write_ended != 0);
+            let queued = self.pending_headers.get();
+            if ended || queued.last().is_some_and(|&(_, _, eos, _)| eos) {
                 return Ok(JSValue::js_boolean(false));
             }
             self.pending_headers

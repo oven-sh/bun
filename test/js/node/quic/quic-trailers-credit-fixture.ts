@@ -9,6 +9,7 @@ const transportParams = { maxIdleTimeout: 10 };
 
 if (process.argv[2] === "server") {
   const [keyPath, certPath, bodySize] = process.argv.slice(3);
+  let sentLater = "";
   const endpoint = await listen(
     session => {
       session.onerror = () => {};
@@ -19,7 +20,9 @@ if (process.argv[2] === "server") {
       sni: { "*": { keys: [createPrivateKey(readFileSync(keyPath))], certs: [readFileSync(certPath)] } },
       transportParams,
       async onheaders(this: any, headers: Record<string, string>) {
-        if (headers[":path"] === "/again") return void this.sendHeaders({ ":status": "204" }, { terminal: true });
+        if (headers[":path"] === "/again") {
+          return void this.sendHeaders({ ":status": "204", "x-sent-later": sentLater }, { terminal: true });
+        }
         this.sendHeaders({ ":status": "200" });
         const close = () => void this.session.close({ code: 5n, type: "application" });
         // Tells the test what the response ran into first, once the packets written so far have been sent.
@@ -34,6 +37,14 @@ if (process.argv[2] === "server") {
             if (headers[":path"] === "/reset") {
               this.resetStream(7n);
               close();
+            } else if (headers[":path"] === "/destroy") {
+              this.destroy();
+            } else if (headers[":path"] === "/more") {
+              sentLater = String([
+                this.sendTrailers({ "x-more": "1" }),
+                this.sendHeaders({ ":status": "200" }),
+                this.sendInformationalHeaders({ ":status": "103" }),
+              ]);
             }
             reportOnce("trailers");
           };
@@ -53,7 +64,9 @@ if (process.argv[2] === "server") {
   const [action, port, ...windows] = process.argv.slice(3);
   const request = { ":method": "POST", ":path": "/" + action, ":scheme": "https", ":authority": "localhost" };
   for (const window of windows) {
-    const row: { bytes?: number; trailers?: string; again?: string; closed?: string; error?: string } = {};
+    const row: Record<"trailers" | "failed" | "again" | "sentLater" | "closed" | "error", string | undefined> & {
+      bytes?: number;
+    } = {} as any;
     // Transport parameters belong to the endpoint, so each window needs its own.
     const endpoint = new QuicEndpoint();
     try {
@@ -76,28 +89,37 @@ if (process.argv[2] === "server") {
         onheaders: gotHeaders.resolve,
         ontrailers: (trailers: Record<string, string>) => void (row.trailers = trailers["x-checksum"]),
       } as any);
+      stream.closed.catch(() => {});
       stream.sendHeaders(request);
       await gotHeaders.promise;
       // Outside of a callback, a write or the end of the request is sent before the call returns.
       await new Promise(resolve => setImmediate(resolve));
-      if (action === "finish") stream.writer.endSync();
-      else stream.writer.writeSync(new Uint8Array(1));
+      const closes = action === "stop" || action === "reset";
+      if (closes) stream.writer.writeSync(new Uint8Array(1));
+      else stream.writer.endSync();
       // Nothing that arrives is read until the test writes a byte.
       if (readSync(0, new Uint8Array(1)) === 0) throw new Error("the server exited");
-      if (action === "finish") {
-        row.bytes = 0;
-        for await (const batch of stream) for (const chunk of batch) row.bytes += chunk.byteLength;
-        await stream.closed;
+      if (closes) {
+        if (action === "stop") stream.stopSending(9n);
+        row.closed = await closed;
+      } else {
+        try {
+          let bytes = 0;
+          for await (const batch of stream) for (const chunk of batch) bytes += chunk.byteLength;
+          await stream.closed;
+          row.bytes = bytes;
+        } catch (error: any) {
+          row.failed = error.code;
+        }
         const again: any = await session.createBidirectionalStream({
           headers: { ...request, ":method": "GET", ":path": "/again" },
-          onheaders: (headers: Record<string, string>) => void (row.again = headers[":status"]),
+          onheaders(headers: Record<string, string>) {
+            row.again = headers[":status"];
+            row.sentLater = headers["x-sent-later"] || undefined;
+          },
         } as any);
         await again.closed;
         session.close();
-      } else {
-        stream.closed.catch(() => {});
-        if (action === "stop") stream.stopSending(9n);
-        row.closed = await closed;
       }
     } catch (error: any) {
       row.error = String(error?.code ?? error);

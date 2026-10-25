@@ -546,6 +546,58 @@ describe("HTTP/3 header blocks that follow another header block", () => {
     });
   });
 
+  test("a stream that isn't open yet refuses a header block after its trailers", async () => {
+    let requestTrailers: Record<string, string> | undefined;
+    const first = Promise.withResolvers<() => void>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 10, initialMaxStreamsBidi: 1 },
+        onheaders(this: any, headers: Record<string, any>) {
+          const respond = () => void this.sendHeaders({ ":status": "200" }, { terminal: true });
+          if (headers[":path"] === "/first") first.resolve(respond);
+          else respond();
+        },
+        ontrailers(this: any, trailers: Record<string, any>) {
+          requestTrailers = trailers;
+        },
+      },
+    );
+    const client = await connectTo(server, 10);
+    // The server allows one stream at a time, so the second one opens when the first is done.
+    const firstResponse = responseEvents(client, "/first");
+    const respondToFirst = await first.promise;
+    let status: string | undefined;
+    const stream: any = await client.createBidirectionalStream({
+      onheaders: (headers: Record<string, string>) => void (status = headers[":status"]),
+    } as any);
+    const sent = [
+      stream.sendHeaders(request("/second")),
+      stream.sendTrailers({ "x-checksum": "abc123" }),
+      stream.sendTrailers({ "x-more": "1" }),
+      stream.sendHeaders(request("/third")),
+    ];
+    respondToFirst();
+    const closed = await stream.closed.then(
+      () => "without an error",
+      (error: any) => error.code,
+    );
+    await firstResponse;
+    client.close();
+    expect({ sent, closed, status, requestTrailers: { ...requestTrailers } }).toEqual({
+      sent: [true, true, false, false],
+      closed: "without an error",
+      status: "200",
+      requestTrailers: { "x-checksum": "abc123" },
+    });
+  });
+
   // This many bodies fill the congestion window, so lsquic is still buffering the end of some of them when their trailers are sent.
   test.each<[string, number]>([
     ["request", 6],
@@ -1353,7 +1405,7 @@ describe("stream flow control", () => {
       });
 
     // The client prints one row per window and stops at its first error.
-    async function expectEveryRow(action: "finish" | "stop" | "reset", expected: object) {
+    async function expectEveryRow(action: string, expected: object, expectedIfTheyWaited = expected) {
       await using server = spawn("server", join(keysDir, "agent1-key.pem"), join(keysDir, "agent1-cert.pem"), bodySize);
       const serverLines = lines(server.stdout);
       await using client = spawn("client", action, (await serverLines.next()).value!, ...windows);
@@ -1371,13 +1423,23 @@ describe("stream flow control", () => {
       for await (const line of lines(client.stdout)) rows.push(JSON.parse(line));
       server.kill();
       await relayed;
-      expect(rows).toEqual(windows.map(() => expected));
-      // The windows have to include the one that the body uses up exactly, and the two after it.
-      expect(ranInto.indexOf("trailers")).toBeWithin(1, windows.length - 2);
+      // The trailers wait in the window that the body uses up exactly, and in the two after it.
+      const first = ranInto.indexOf("trailers");
+      expect(rows).toEqual(windows.map((_, i) => (i >= first && i < first + 3 ? expectedIfTheyWaited : expected)));
+      expect(first).toBeWithin(1, windows.length - 2);
     }
+    const whole = { bytes: bodySize, trailers: "abc123", again: "204" };
 
     test("are sent when the credit arrives", async () => {
-      await expectEveryRow("finish", { bytes: bodySize, trailers: "abc123", again: "204" });
+      await expectEveryRow("finish", whole);
+    }, 30_000);
+
+    test("end the response, so sending another header block returns false", async () => {
+      await expectEveryRow("more", { ...whole, sentLater: "false,false,false" });
+    }, 30_000);
+
+    test("make destroy() reset the stream", async () => {
+      await expectEveryRow("destroy", whole, { failed: "ERR_QUIC_STREAM_RESET", again: "204" });
     }, 30_000);
 
     // The request is still open, so only the server's close ends the connection before it idles out.

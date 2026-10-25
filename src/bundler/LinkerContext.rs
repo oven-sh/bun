@@ -527,8 +527,8 @@ impl<'a> LinkerContext<'a> {
     /// `(*bundle).linker`, so a `&mut BundleV2` here would alias the receiver
     /// under Stacked Borrows. This body only reaches into fields of `*bundle`
     /// that are disjoint from `linker` (`graph`, `transpiler`,
-    /// `dynamic_import_entry_points`, `file_map`) via `addr_of_mut!`, never
-    /// materializing a full `&mut BundleV2`.
+    /// `dynamic_import_entry_points`, `file_map`) via `addr_of_mut!`, never materializing a
+    /// full `&mut BundleV2`.
     ///
     /// # Safety
     /// `bundle` must be valid for the call and `self` must be `(*bundle).linker`

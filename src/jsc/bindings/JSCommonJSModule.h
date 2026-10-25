@@ -167,8 +167,7 @@ JSC::Structure* createCommonJSModuleStructure(
 JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireMap, JSCommonJSModule* owner = nullptr);
 
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
-// its require cache), or null for the global object's loader. For a disposed graph no
-// module is made, and evaluating the source returned throws ERR_INVALID_STATE.
+// its require cache), or null for the global object's loader.
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSModuleGraph* graph,

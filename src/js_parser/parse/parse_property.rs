@@ -16,7 +16,7 @@ use bun_ast::op::Level;
 use bun_ast::scope::Kind as ScopeKind;
 use bun_ast::ts::Metadata as TsMetadata;
 use js_ast::{
-    E, Expr, ExprNodeList,
+    E, Expr, ExprNodeList, S,
     G::{self, PropertyKind},
     Stmt, symbol,
 };
@@ -87,6 +87,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // `super()` calls are tracked per constructor (a nested class has its own).
+        let old_saw_super_call = core::mem::replace(&mut p.saw_super_call, false);
         let func = p.parse_fn(
             None,
             FnOrArrowDataParse {
@@ -112,7 +114,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_missing_body_for_type_script: Self::IS_TYPESCRIPT_ENABLED && opts.is_class,
                 ..Default::default()
             },
-        )?;
+        );
+        let saw_super_call = core::mem::replace(&mut p.saw_super_call, old_saw_super_call);
+        let mut func = func?;
+
+        // A struct constructor may omit `super()`. The proposal then skips the parent
+        // constructor, which a class lowering cannot do, so the implicit call runs it
+        // with no arguments (a known deviation, see the PR description).
+        if opts.is_struct && is_constructor && !saw_super_call {
+            let body_loc = func.body.loc;
+            let target = p.new_expr(E::Super {}, body_loc);
+            let call = p.new_expr(
+                E::Call {
+                    target,
+                    ..Default::default()
+                },
+                body_loc,
+            );
+            let super_stmt = p.s(
+                S::SExpr {
+                    value: call,
+                    ..Default::default()
+                },
+                body_loc,
+            );
+            let mut stmts = bun_alloc::ArenaVec::<Stmt>::with_capacity_in(
+                func.body.stmts.len() + 1,
+                p.arena,
+            );
+            stmts.push(super_stmt);
+            stmts.extend_from_slice(func.body.stmts.slice());
+            func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
+        }
 
         opts.has_argument_decorators =
             opts.has_argument_decorators || p.fn_or_arrow_data_parse.has_argument_decorators;
@@ -127,7 +160,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.pop_scope();
         // G::Fn is not Copy (FnBody/TS-metadata aren't), so mutate `func` in place.
-        let mut func = func;
         func.flags.insert(flags::Function::IsUniqueFormalParameters);
         let args = func.args.slice();
         let value = p.new_expr(E::Function { func }, loc);

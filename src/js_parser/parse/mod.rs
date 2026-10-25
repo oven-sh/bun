@@ -206,6 +206,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_ts_decorators: class_opts.allow_ts_decorators,
                 class_has_extends: extends.is_some()
                     || class_opts.struct_kind != StructKind::None,
+                is_struct: class_opts.struct_kind != StructKind::None,
                 has_argument_decorators: false,
                 ..Default::default()
             };
@@ -306,8 +307,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Lowers the body of a `struct` / `shared struct` declaration: declared fields are
     /// removed from the class body and handed to `__structBase(parent, fields, shared)`,
-    /// which becomes the class's `extends` clause. A constructor that does not call
-    /// `super()` gets one prepended, since struct constructors may omit it.
+    /// which becomes the class's `extends` clause. Constructor handling (implicit
+    /// `super()`, discarded return overrides) happens while parsing the constructor.
     fn lower_struct_class(
         &mut self,
         loc: bun_ast::Loc,
@@ -353,48 +354,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         *properties = kept;
-
-        for prop in properties.iter_mut() {
-            let is_ctor = prop.flags.contains(Flags::Property::IsMethod)
-                && !prop.flags.contains(Flags::Property::IsStatic)
-                && matches!(&prop.key, Some(k) if matches!(&k.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"constructor")));
-            if !is_ctor {
-                continue;
-            }
-            let Some(value) = prop.value else { continue };
-            let js_ast::ExprData::EFunction(func) = &value.data else {
-                continue;
-            };
-            let mut func = *func;
-            let has_super_call = func.func.body.stmts.slice().iter().any(|stmt| {
-                matches!(&stmt.data, js_ast::StmtData::SExpr(e) if matches!(&e.value.data,
-                    js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
-            });
-            if has_super_call {
-                continue;
-            }
-            let stmt_loc = func.func.body.loc;
-            let target = p.new_expr(E::Super {}, stmt_loc);
-            let call = p.new_expr(
-                E::Call {
-                    target,
-                    ..Default::default()
-                },
-                stmt_loc,
-            );
-            let super_stmt = p.s(
-                S::SExpr {
-                    value: call,
-                    ..Default::default()
-                },
-                stmt_loc,
-            );
-            let mut stmts =
-                BumpVec::<Stmt>::with_capacity_in(func.func.body.stmts.len() + 1, p.arena);
-            stmts.push(super_stmt);
-            stmts.extend_from_slice(func.func.body.stmts.slice());
-            func.func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
-        }
 
         let parent = match extends {
             Some(e) => e,

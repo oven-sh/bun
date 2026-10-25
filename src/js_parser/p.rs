@@ -261,6 +261,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) has_top_level_return: bool,
     pub(crate) latest_return_had_semicolon: bool,
+    /// Set when `super(...)` is parsed; a struct constructor uses it to decide
+    /// whether to inject an implicit `super()`.
+    pub(crate) saw_super_call: bool,
     pub(crate) has_import_meta: bool,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
@@ -9706,6 +9709,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_private_identifiers: false,
             has_top_level_return: false,
             latest_return_had_semicolon: false,
+            saw_super_call: false,
             has_import_meta: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,

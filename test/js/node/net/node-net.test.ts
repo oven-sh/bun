@@ -5056,6 +5056,33 @@ describe.each(["tcp", "unix"] as const)("a half-open socket over %s whose peer c
       }
     },
   );
+
+  it.skipIf(isWindows || transport !== "unix").each(["accepted", "client"] as const)(
+    "fails with EPIPE too while what the peer sent is still unread (%s)",
+    async side => {
+      const accepted = Promise.withResolvers<Socket>();
+      const server = createServer({ allowHalfOpen: true }, accepted.resolve);
+      try {
+        await once(server.listen(join(tmpdirSync(), "half-open.sock")), "listening");
+        const client = connect({ path: server.address() as string, allowHalfOpen: true });
+        const [theAccepted] = await Promise.all([accepted.promise, once(client, "connect")]);
+        const [socket, peer] = side === "accepted" ? [theAccepted, client] : [client, theAccepted];
+        const events: string[] = [];
+        for (const event of ["end", "finish", "close"]) socket.on(event, () => events.push(event));
+        socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.syscall} ${err.code}`));
+        const closed = new Promise(resolve => socket.on("close", resolve));
+        peer.write("unread", () => peer.destroy());
+        await once(peer, "close");
+        // By then the loop has closed the descriptor of a socket whose peer hung up.
+        for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+        socket.write("x", err => events.push(`write ${(err as NodeJS.ErrnoException | undefined)?.code ?? "ok"}`));
+        await closed;
+        expect(events).toEqual(["write EPIPE", "error write EPIPE", "close"]);
+      } finally {
+        server.close();
+      }
+    },
+  );
 });
 
 describe("destroy()", () => {

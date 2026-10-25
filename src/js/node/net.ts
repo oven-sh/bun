@@ -330,6 +330,8 @@ const khandlers = Symbol("khandlers");
 const kConnectReq = Symbol("kConnectReq");
 const kclosed = Symbol("closed");
 const kended = Symbol("ended");
+// The handle closed behind the peer's EOF: the peer hung up, and the loop closed the descriptor.
+const kHungUp = Symbol("kHungUp");
 const kpendingSession = Symbol("pendingSession");
 const kALPNError = Symbol("kALPNError");
 const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
@@ -848,6 +850,7 @@ function onReadEnd(self, err?) {
 function onHandleClose(self, handle, err) {
   if (self[kclosed]) return;
   self[kclosed] = true;
+  self[kHungUp] = self[kended];
   if (closeWithTLSSocket(self, handle)) return;
   // A connection attempt that lost the race and a handle that a TLS upgrade replaced end quietly.
   if (handle !== self._handle) err = undefined;
@@ -1607,6 +1610,7 @@ function Socket(options?): void {
   this[kLastBytesSent] = 0;
   this[kclosed] = false;
   this[kended] = false;
+  this[kHungUp] = false;
   this.connecting = false;
   this._host = undefined;
   this._port = undefined;
@@ -2610,9 +2614,8 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();
   } else if (status !== true) {
     // https://github.com/nodejs/node/blob/v26.5.0/lib/internal/stream_base_commons.js#L158-L159
-    // After 'end' the loop has closed the handle of a peer that hung up. Node still holds that descriptor, so its write fails with EPIPE.
-    const hungUp = this[kclosed] && this.readableEnded && status === uv().UV_EBADF;
-    const err = new ErrnoException(hungUp ? uv().UV_EPIPE : status, "write");
+    // Node still holds the descriptor of a peer that hung up, so its write fails with EPIPE.
+    const err = new ErrnoException(this[kHungUp] && status === uv().UV_EBADF ? uv().UV_EPIPE : status, "write");
     if (endsWithoutError(this)) process.nextTick(callback, err);
     else callback(err);
   } else if (this.encrypted) {
@@ -3926,6 +3929,7 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
+  self[kHungUp] = false;
   // Bytes the onread callback declined belong to the previous connection.
   if (self[kOnreadTail] !== undefined) {
     self[kOnreadTail] = undefined;

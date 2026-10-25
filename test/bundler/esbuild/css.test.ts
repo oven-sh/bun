@@ -2660,6 +2660,38 @@ c {
       },
       out: "@layer theme,theme;@layer base,theme;@layer theme;@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer theme{.t{color:red}}@layer base{.t{color:#00f}}",
     },
+    // The same two defects with no statement ahead of an "@import" in any file.
+    NameDeclaredOnlyUnderMediaAndNoStatement: {
+      todo: 'no file has a statement ahead of an "@import", so g.css stands for the list of x.css, as on main and in esbuild',
+      files: {
+        "/entry.css": /* css */ `
+          @import "./g.css";
+          @import "./x.css";
+          @import "./y.css";
+          @import "./x.css";
+        `,
+        "/g.css": `@media print { @layer a { .g { color: green } } }`,
+        "/x.css": `@layer a { .t { color: red } }`,
+        "/y.css": `@layer u { .t { color: blue } }`,
+      },
+      out: "@media print{@layer a{.g{color:green}}}@layer a;@layer u{.t{color:#00f}}@layer a{.t{color:red}}",
+    },
+    NameDeclaredOnlyUnderMediaInAFileImportedTwiceAndNoStatement: {
+      todo: 'no file has a statement ahead of an "@import", so the first copy of tokens.css is a list of its layers, as on main and in esbuild',
+      files: {
+        "/entry.css": /* css */ `
+          @import "./tokens.css";
+          @import "./other.css";
+          @import "./tokens.css";
+        `,
+        "/tokens.css": `@media (prefers-color-scheme: dark) { @layer theme { :root { --bg: black } } }`,
+        "/other.css": /* css */ `
+          @layer base { .t { color: blue } }
+          @layer theme { .t { color: red } }
+        `,
+      },
+      out: "@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}@layer base{.t{color:#00f}}@layer theme{.t{color:red}}@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}",
+    },
     // A copy under "layer(w)" is kept when a later copy has no layer: its rules are in another layer.
     LayeredCopyBehindABareCopy: {
       files: {
@@ -2789,6 +2821,144 @@ c {
   for (const [name, { files, out, todo }] of Object.entries(layerOrderCases)) {
     itBundled(`css/CSSAtLayerOrder${name}`, {
       todo: !!todo,
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(out + "\n");
+      },
+    });
+  }
+
+  // Which file keeps its earlier copy. g.css is imported twice with other.css between the two, and entry.css has a
+  // statement ahead of its imports. A file that first declares a layer inside "@media", "@supports" or "@-moz-document"
+  // keeps its first copy. A file that declares the layer in every case first gets a list of its layers, as on main.
+  const otherLayers = "@layer base{.t{color:#00f}}@layer theme{.t{color:red}}";
+  const importedTwiceBehindAStatement = (g: string, first: string, last: string, extra?: Record<string, string>) => ({
+    files: {
+      "/entry.css": /* css */ `
+        @layer first;
+        @import "./g.css";
+        @import "./other.css";
+        @import "./g.css";
+      `,
+      "/g.css": g,
+      "/other.css": /* css */ `
+        @layer base { .t { color: blue } }
+        @layer theme { .t { color: red } }
+      `,
+      ...extra,
+    },
+    out: "@layer first;" + first + otherLayers + last,
+  });
+  const keptBehindAStatement = (g: string, printed: string) => importedTwiceBehindAStatement(g, printed, printed);
+  const firstDeclarationCases: Record<string, { files: Record<string, string>; out: string }> = {
+    UnderMedia: keptBehindAStatement(
+      `@media print { @layer theme { .g { color: green } } }`,
+      "@media print{@layer theme{.g{color:green}}}",
+    ),
+    // "@media all" is no condition, but a condition inside it or around it is one.
+    UnderMediaAll: importedTwiceBehindAStatement(
+      `@media all { @layer theme { .g { color: green } } }`,
+      "@layer theme;",
+      "@layer theme{.g{color:green}}",
+    ),
+    UnderMediaInsideMediaAll: keptBehindAStatement(
+      `@media all { @media print { @layer theme { .g { color: green } } } }`,
+      "@media print{@layer theme{.g{color:green}}}",
+    ),
+    UnderSupportsInsideMediaAll: keptBehindAStatement(
+      `@media all { @supports (display: no-such-value) { @layer theme { .g { color: green } } } }`,
+      "@supports (display: no-such-value){@layer theme{.g{color:green}}}",
+    ),
+    UnderMediaAllInsideMedia: keptBehindAStatement(
+      `@media print { @media all { @layer theme { .g { color: green } } } }`,
+      "@media print{@layer theme{.g{color:green}}}",
+    ),
+    // The minifier removes "@media not all". A list would declare "theme", and the copy declares nothing, as the file.
+    UnderMediaThatNeverMatches: keptBehindAStatement(
+      /* css */ `
+        @media not all { @layer theme { .g { color: green } } }
+        .g { color: black }
+      `,
+      ".g{color:#000}",
+    ),
+    OutsideFirst: importedTwiceBehindAStatement(
+      /* css */ `
+        @layer theme { .g { color: green } }
+        @media print { @layer theme { .g { color: black } } }
+      `,
+      "@layer theme,theme;",
+      "@layer theme{.g{color:green}}@media print{@layer theme{.g{color:#000}}}",
+    ),
+    // "theme.dark" declares "theme" too.
+    OutsideFirstAsASublayerName: importedTwiceBehindAStatement(
+      /* css */ `
+        @layer theme.dark { .g { color: green } }
+        @media print { @layer theme { .g { color: black } } }
+      `,
+      "@layer theme.dark,theme;",
+      "@layer theme.dark{.g{color:green}}@media print{@layer theme{.g{color:#000}}}",
+    ),
+    // "other.theme" declares "other" and "other.theme", and not "theme".
+    OutsideFirstAsASublayerOfAnotherLayer: keptBehindAStatement(
+      /* css */ `
+        @layer other.theme { .g { color: green } }
+        @media print { @layer theme { .g { color: black } } }
+      `,
+      "@layer other.theme{.g{color:green}}@media print{@layer theme{.g{color:#000}}}",
+    ),
+    // The block declares "theme", and the rule inside it declares "theme.theme" only in print.
+    SublayerNamedAsItsParent: keptBehindAStatement(
+      /* css */ `
+        @layer theme {
+          .g { color: green }
+          @media print { @layer theme { .g { color: black } } }
+        }
+      `,
+      "@layer theme{.g{color:green}@media print{@layer theme{.g{color:#000}}}}",
+    ),
+    // An "@import" of g.css with "layer(theme)" and no condition declares "theme" in every case.
+    ByAnImportOfTheFile: importedTwiceBehindAStatement(
+      /* css */ `
+        @import "./a.css" layer(theme);
+        @media print { @layer theme { .g { color: green } } }
+      `,
+      "@layer theme;@layer theme;",
+      "@layer theme{.a{color:gray}}@media print{@layer theme{.g{color:green}}}",
+      { "/a.css": `.a { color: gray }` },
+    ),
+    ByAnImportOfTheFileUnderMediaAll: importedTwiceBehindAStatement(
+      /* css */ `
+        @import "./a.css" layer(theme) all;
+        @media print { @layer theme { .g { color: green } } }
+      `,
+      "@layer theme;@layer theme;",
+      "@layer theme{.a{color:gray}}@media print{@layer theme{.g{color:green}}}",
+      { "/a.css": `.a { color: gray }` },
+    ),
+    ByAnImportOfTheFileUnderSupports: importedTwiceBehindAStatement(
+      /* css */ `
+        @import "./a.css" layer(theme) supports(display: no-such-value);
+        @media print { @layer theme { .g { color: green } } }
+      `,
+      "@supports (display:no-such-value){@layer theme;}@media print{@layer theme{.g{color:green}}}",
+      "@supports (display:no-such-value){@layer theme{.a{color:gray}}}@media print{@layer theme{.g{color:green}}}",
+      { "/a.css": `.a { color: gray }` },
+    ),
+    // A bare "layer" on the "@import" declares no name.
+    ByAnImportOfTheFileUnderABareLayer: importedTwiceBehindAStatement(
+      /* css */ `
+        @import "./a.css" layer;
+        @media print { @layer theme { .g { color: green } } }
+      `,
+      "@media print{@layer theme{.g{color:green}}}",
+      "@layer{@layer theme{.a{color:gray}}}@media print{@layer theme{.g{color:green}}}",
+      { "/a.css": `@layer theme { .a { color: gray } }` },
+    ),
+  };
+  for (const [name, { files, out }] of Object.entries(firstDeclarationCases)) {
+    itBundled(`css/CSSAtLayerOrderFirstDeclaration${name}`, {
       files,
       outfile: "/out.css",
       minifyWhitespace: true,

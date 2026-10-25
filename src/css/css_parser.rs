@@ -676,10 +676,21 @@ pub trait CustomAtRuleParser {
         Vec::new()
     }
 
-    /// Called with 1 ahead of the block of `@media`, `@supports` or `@-moz-document`, and with -1 after it.
-    fn bump_conditional_depth(_this: &mut Self, _amount: i32) {}
+    /// How many `@layer` names `on_layer_rule` has registered so far.
+    fn layer_name_count(_this: &mut Self) -> u32 {
+        0
+    }
 
-    fn has_conditional_layer_names(_this: &mut Self) -> bool {
+    /// Called after the block of `@media` (with its query), `@supports` or `@-moz-document`. `first_layer_name` is `layer_name_count` from before the block.
+    fn on_conditional_block_end(
+        _this: &mut Self,
+        _first_layer_name: u32,
+        _media: Option<&MediaList>,
+    ) {
+    }
+
+    /// Whether the file first declares one of its layers inside `@media`, `@supports` or `@-moz-document`. Call it before `take_layer_names`.
+    fn has_conditional_layer_names(_this: &mut Self, _rules: &CssRuleList<Self::AtRule>) -> bool {
         false
     }
 }
@@ -720,9 +731,8 @@ pub struct BundlerAtRuleParser<'a> {
     pub(crate) layer_names: Vec<LayerName>,
     /// `layer_names` as it was when the first `@import` was parsed.
     pub(crate) layers_pre_import: Option<Vec<LayerName>>,
-    pub(crate) conditional_depth: u32,
-    /// Whether a name in `layer_names` has its first mention inside a conditional group rule.
-    pub(crate) has_conditional_layer_names: bool,
+    /// For the first names of `layer_names`: whether `on_layer_rule` registered the name inside `@media`, `@supports` or `@-moz-document`. A name behind the end has `false`.
+    pub(crate) is_conditional_layer_name: Vec<bool>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
     pub(crate) anon_layer_count: u32,
@@ -818,7 +828,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         this.layer_names
             .ensure_unused_capacity(layers.len() as usize);
         for layer in layers.slice() {
-            let name = if this.enclosing_layer.v.len() > 0 {
+            if this.enclosing_layer.v.len() > 0 {
                 let mut cloned = LayerName {
                     v: SmallList::default(),
                 };
@@ -826,19 +836,11 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
                 // calls each grow once.
                 cloned.v.append_slice(this.enclosing_layer.v.slice());
                 cloned.v.append_slice(layer.v.slice());
-                cloned
+                this.layer_names.append_assume_capacity(cloned);
             } else {
-                layer.deep_clone(this.arena)
-            };
-            // A name that the file also declares earlier, outside a condition, is in the order either way.
-            if this.conditional_depth > 0 && !this.has_conditional_layer_names {
-                this.has_conditional_layer_names = !this
-                    .layer_names
-                    .slice()
-                    .iter()
-                    .any(|known| known.eql(&name));
+                this.layer_names
+                    .append_assume_capacity(layer.deep_clone(this.arena));
             }
-            this.layer_names.append_assume_capacity(name);
         }
     }
 
@@ -861,12 +863,23 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         this.layers_pre_import.take().unwrap_or_default()
     }
 
-    fn bump_conditional_depth(this: &mut Self, amount: i32) {
-        this.conditional_depth = this.conditional_depth.wrapping_add_signed(amount);
+    fn layer_name_count(this: &mut Self) -> u32 {
+        this.layer_names.len() as u32
     }
 
-    fn has_conditional_layer_names(this: &mut Self) -> bool {
-        this.has_conditional_layer_names
+    fn on_conditional_block_end(this: &mut Self, first_layer_name: u32, media: Option<&MediaList>) {
+        if this.layer_names.len() as u32 != first_layer_name {
+            this.mark_conditional_layer_names(first_layer_name, media);
+        }
+    }
+
+    fn has_conditional_layer_names(this: &mut Self, rules: &BundlerCssRuleList) -> bool {
+        !this.is_conditional_layer_name.is_empty()
+            && first_declares_a_layer_under_a_condition(
+                this.layer_names.slice(),
+                &this.is_conditional_layer_name,
+                rules,
+            )
     }
 
     fn reset_enclosing_layer(this: &mut Self, len: u32) {
@@ -883,6 +896,72 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             this.anon_layer_count -= amount.unsigned_abs();
         }
     }
+}
+
+impl BundlerAtRuleParser<'_> {
+    /// `layer_names[start..]` were registered inside `@media` (with its query), `@supports` or `@-moz-document`.
+    #[cold]
+    fn mark_conditional_layer_names(&mut self, start: u32, media: Option<&MediaList>) {
+        // `@media all` is no condition.
+        if media.is_some_and(MediaList::always_matches) {
+            return;
+        }
+        self.is_conditional_layer_name
+            .resize(self.layer_names.len(), false);
+        self.is_conditional_layer_name[start as usize..].fill(true);
+    }
+}
+
+/// Whether a conditional name is the first one for its layer: no earlier name that is not conditional declares that layer, and no `@import` of `rules` with `layer(...)` and no condition does.
+#[cold]
+fn first_declares_a_layer_under_a_condition(
+    names: &[LayerName],
+    is_conditional: &[bool],
+    rules: &BundlerCssRuleList,
+) -> bool {
+    // A trie of the layers that the file declares in every case. `children[&(node, segment)]` is the node of the layer `segment` inside the layer of `node`. Node 0 is no layer.
+    type Children = bun_collections::HashMap<(u32, &'static [u8]), u32>;
+    fn declare(children: &mut Children, name: &LayerName) {
+        let mut node = 0;
+        for segment in name.v.slice() {
+            let new_node = children.len() as u32 + 1;
+            let child = bun_core::handle_oom(children.get_or_put((node, *segment)));
+            if !child.found_existing {
+                *child.value_ptr = new_node;
+            }
+            node = *child.value_ptr;
+        }
+    }
+    fn is_declared(children: &Children, name: &LayerName) -> bool {
+        let mut node = 0;
+        for segment in name.v.slice() {
+            match children.get(&(node, *segment)) {
+                Some(&child) => node = child,
+                None => return false,
+            }
+        }
+        true
+    }
+
+    let mut children = Children::new();
+    for rule in rules.v.iter() {
+        if let CssRule::Import(import) = rule
+            && import.supports.is_none()
+            && import.media.always_matches()
+            && let Some(name) = import.layer.as_ref().and_then(|layer| layer.v.as_ref())
+        {
+            declare(&mut children, name);
+        }
+    }
+    let is_conditional = is_conditional.iter().chain(core::iter::repeat(&false));
+    for (name, &is_conditional) in names.iter().zip(is_conditional) {
+        if !is_conditional {
+            declare(&mut children, name);
+        } else if !is_declared(&children, name) {
+            return true;
+        }
+    }
+    false
 }
 
 // ───────────────────────────── AtRulePrelude ─────────────────────────────
@@ -1523,14 +1602,15 @@ mod rule_parsers {
             ))
         }
 
-        /// The block of `@media`, `@supports` or `@-moz-document`: a layer in it is declared only when the condition holds.
+        /// The block of `@media` (with its query), `@supports` or `@-moz-document`: a layer in it is declared only when the condition holds.
         fn parse_conditional_block(
             &mut self,
             input: &mut Parser,
+            media: Option<&MediaList>,
         ) -> CssResult<CssRuleList<T::AtRule>> {
-            T::bump_conditional_depth(self.at_rule_parser, 1);
+            let first_layer_name = T::layer_name_count(self.at_rule_parser);
             let rules = self.parse_style_block(input);
-            T::bump_conditional_depth(self.at_rule_parser, -1);
+            T::on_conditional_block_end(self.at_rule_parser, first_layer_name, media);
             rules
         }
 
@@ -1759,7 +1839,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Media(query) => {
-                    let rules = this.parse_conditional_block(input)?;
+                    let rules = this.parse_conditional_block(input, Some(&query))?;
                     this.rules
                         .v
                         .push(CssRule::Media(css_rules::media::MediaRule {
@@ -1770,7 +1850,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Supports(condition) => {
-                    let rules = this.parse_conditional_block(input)?;
+                    let rules = this.parse_conditional_block(input, None)?;
                     this.rules
                         .v
                         .push(CssRule::Supports(css_rules::supports::SupportsRule {
@@ -1844,7 +1924,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::MozDocument => {
-                    let rules = this.parse_conditional_block(input)?;
+                    let rules = this.parse_conditional_block(input, None)?;
                     this.rules
                         .v
                         .push(CssRule::MozDocument(css_rules::document::MozDocumentRule {
@@ -2614,8 +2694,7 @@ mod stylesheet_impl {
                 import_records: core::ptr::null_mut(),
                 layer_names: Vec::new(),
                 layers_pre_import: None,
-                conditional_depth: 0,
-                has_conditional_layer_names: false,
+                is_conditional_layer_name: Vec::new(),
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };
@@ -2711,12 +2790,13 @@ mod stylesheet_impl {
             let source_map_urls: Vec<Option<Box<[u8]>>> =
                 vec![parser.current_source_map_url().map(Box::<[u8]>::from)];
 
+            let has_conditional_layer_names =
+                P::has_conditional_layer_names(at_rule_parser, &rules);
             // Dispatch through the `CustomAtRuleParser::take_layer_names` hook
             // (default = empty; `BundlerAtRuleParser` overrides to move its list
             // out) so the accumulated layer ordering isn't silently dropped.
             let layer_names = P::take_layer_names(at_rule_parser);
             let layers_pre_import = P::take_layers_pre_import(at_rule_parser);
-            let has_conditional_layer_names = P::has_conditional_layer_names(at_rule_parser);
 
             Ok((
                 Self {
@@ -2833,8 +2913,7 @@ mod stylesheet_impl {
                 import_records: import_records_ptr.as_ptr(),
                 layer_names: Vec::new(),
                 layers_pre_import: None,
-                conditional_depth: 0,
-                has_conditional_layer_names: false,
+                is_conditional_layer_name: Vec::new(),
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };

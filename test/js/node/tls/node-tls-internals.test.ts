@@ -442,6 +442,9 @@ describe("certificates the system distrusts", () => {
       rejectUnauthorized: true,
     });
     const { promise, resolve } = Promise.withResolvers<object>();
+    listening.once("secureConnection", socket =>
+      resolve({ authorized: socket.authorized, authorizationError: socket.authorizationError }),
+    );
     listening.once("tlsClientError", (err, socket) =>
       resolve({ error: (err as NodeJS.ErrnoException).code, authorizationError: socket.authorizationError }),
     );

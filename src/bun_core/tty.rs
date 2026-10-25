@@ -91,48 +91,53 @@ impl Drop for RawModeGuard {
     }
 }
 
-/// RAII guard for a blocking read of one typed line from stdin. While it
-/// lives, a terminal that its owner left in raw mode (`setRawMode`,
-/// `node:readline`, `bun repl`, raw since startup) ends the read at Enter,
-/// echoes what is typed and makes Ctrl+C a signal. `Drop` puts the owner's
-/// mode back. It does nothing when stdin is not a terminal, or when Enter
-/// already ends a read of it.
-///
-/// Create it before the question is written: a terminal applies its mode to
-/// a key when the key arrives, so an Enter typed before the switch stays a CR.
+/// RAII guard for a blocking read of one typed line from stdin. Create it before the question is written (#5267).
+#[must_use]
 pub struct LineModeGuard {
-    holds: bool,
+    #[cfg(unix)]
+    saved: Option<libc::termios>,
+    #[cfg(windows)]
+    saved: Option<crate::windows_sys::DWORD>,
 }
 
 impl LineModeGuard {
     pub fn stdin() -> Self {
         Self {
-            holds: crate::output::is_stdin_tty() && stdin_line_mode::enter(),
+            saved: if crate::output::is_stdin_tty() {
+                stdin_line_mode::enter()
+            } else {
+                None
+            },
         }
     }
 }
 
 impl Drop for LineModeGuard {
     fn drop(&mut self) {
-        if self.holds {
-            stdin_line_mode::leave();
+        if let Some(saved) = &self.saved {
+            stdin_line_mode::leave(saved);
         }
     }
 }
 
 #[cfg(unix)]
 mod stdin_line_mode {
-    pub(super) fn enter() -> bool {
-        Bun__ttyEnterStdinLineMode() != 0
+    pub(super) fn enter() -> Option<libc::termios> {
+        let mut saved = core::mem::MaybeUninit::<libc::termios>::zeroed();
+        // SAFETY: `saved` is valid for one `termios`, and all-zero is a valid one.
+        unsafe {
+            (Bun__ttyEnterStdinLineMode(saved.as_mut_ptr()) != 0).then(|| saved.assume_init())
+        }
     }
 
-    pub(super) fn leave() {
-        Bun__ttyLeaveStdinLineMode();
+    pub(super) fn leave(saved: &libc::termios) {
+        // SAFETY: `saved` is valid for one `termios`.
+        unsafe { Bun__ttyLeaveStdinLineMode(saved) }
     }
 
     unsafe extern "C" {
-        safe fn Bun__ttyEnterStdinLineMode() -> core::ffi::c_int;
-        safe fn Bun__ttyLeaveStdinLineMode();
+        fn Bun__ttyEnterStdinLineMode(saved: *mut libc::termios) -> core::ffi::c_int;
+        fn Bun__ttyLeaveStdinLineMode(saved: *const libc::termios);
     }
 }
 
@@ -140,48 +145,22 @@ mod stdin_line_mode {
 mod stdin_line_mode {
     use crate::windows_sys as w;
 
-    /// The mode belongs to the console, not to a thread: the first holder
-    /// saves the mode it found and the last one writes it back.
-    struct Held {
-        holders: u32,
-        saved: w::DWORD,
-    }
-
-    static HELD: crate::Mutex<Held> = crate::Mutex::new(Held {
-        holders: 0,
-        saved: 0,
-    });
-
-    pub(super) fn enter() -> bool {
-        let mut held = HELD.lock();
-        if held.holders > 0 {
-            held.holders += 1;
-            return true;
-        }
+    pub(super) fn enter() -> Option<w::DWORD> {
         let stdin = crate::Fd::stdin().native();
         let mut found: w::DWORD = 0;
         if w::GetConsoleMode(stdin, &mut found) == 0 {
-            return false;
+            return None;
         }
         // With `ENABLE_VIRTUAL_TERMINAL_INPUT`, backspace deletes the entire line.
         let mut line = found & !w::ENABLE_VIRTUAL_TERMINAL_INPUT;
         if found & w::ENABLE_LINE_INPUT == 0 {
             line |= w::ENABLE_LINE_INPUT | w::ENABLE_ECHO_INPUT | w::ENABLE_PROCESSED_INPUT;
         }
-        if line == found || w::SetConsoleMode(stdin, line) == 0 {
-            return false;
-        }
-        held.saved = found;
-        held.holders = 1;
-        true
+        (line != found && w::SetConsoleMode(stdin, line) != 0).then_some(found)
     }
 
-    pub(super) fn leave() {
-        let mut held = HELD.lock();
-        held.holders -= 1;
-        if held.holders == 0 {
-            let _ = w::SetConsoleMode(crate::Fd::stdin().native(), held.saved);
-        }
+    pub(super) fn leave(saved: &w::DWORD) {
+        let _ = w::SetConsoleMode(crate::Fd::stdin().native(), *saved);
     }
 }
 

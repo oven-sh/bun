@@ -716,6 +716,55 @@ describe.concurrent("otp", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // A process that holds the terminal in raw mode can run `bun publish` with
+  // inherited stdio. Enter is a lone CR there.
+  test.skipIf(isWindows)("the OTP question ends at Enter on a terminal left in raw mode", async () => {
+    const otp = "424242";
+    using mock = mockRegistry((req, recorded) => {
+      if (req.method === "PUT") {
+        if (recorded.otp === otp) {
+          return new Response("OK", { status: 200 });
+        }
+        return new Response("{}", { status: 401, headers: { "www-authenticate": "OTP" } });
+      }
+      return new Response("unexpected url", { status: 500 });
+    });
+    using dir = tempDir("publish-otp-raw-terminal", {
+      "package.json": JSON.stringify({ name: "otp-pkg-10", version: "10.10.10" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    let output = "";
+    const decoder = new TextDecoder();
+    const question = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 200,
+      rows: 50,
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("Enter OTP: ")) question.resolve();
+      },
+    });
+    terminal.setRawMode(true);
+
+    await using proc = spawn({ cmd: [bunExe(), "publish"], cwd: String(dir), env, terminal });
+    // Fail with the child's output if it exits before the question.
+    const exitedEarly = proc.exited.then(code => {
+      throw new Error(`bun publish exited before the question (code ${code}):\n${output}`);
+    });
+    exitedEarly.catch(() => {});
+
+    await Promise.race([question.promise, exitedEarly]);
+    terminal.write(otp + "\r");
+
+    const exitCode = await proc.exited;
+    expect(mock.requests).toEqual([
+      request("PUT", "/otp-pkg-10"),
+      request("PUT", "/otp-pkg-10", { authType: "legacy", otp }),
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // npm prints the header of every response that has no `x-local-cache`.

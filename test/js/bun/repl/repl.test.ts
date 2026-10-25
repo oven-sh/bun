@@ -1831,7 +1831,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/5267
-  // The REPL keeps the terminal in raw mode while it evaluates, where Enter is a lone CR.
+  // The REPL keeps the terminal in raw mode while it evaluates synchronous input, where Enter is a lone CR.
   test("prompt(), confirm() and alert() take a typed line", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send("'got ' + prompt('name?')\n");
@@ -1848,6 +1848,12 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       await waitFor("hi [Enter] ");
       send("\r");
       await waitFor("undefined");
+
+      // This dialog runs after the evaluation of its line returned, when the line editor has the terminal again.
+      send("(async () => { await 0; console.log('later ' + prompt('later?')); })()\n");
+      await waitFor("later? ");
+      send("on\r");
+      await waitFor("later on");
 
       // The line editor has the terminal in raw mode again.
       send("6 * 7\n");

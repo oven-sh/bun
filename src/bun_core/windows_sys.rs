@@ -27,8 +27,8 @@ pub(crate) const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
 pub(crate) const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
 pub(crate) const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 
-// `HANDLE` is an opaque kernel handle (kernel32 validates and returns 0 on
-// a non-console handle); `&mut DWORD` is ABI-identical to `LPDWORD` (thin
+// SAFETY: `HANDLE` is an opaque kernel handle (kernel32 validates and returns 0
+// on a non-console handle); `&mut DWORD` is ABI-identical to `LPDWORD` (thin
 // non-null pointer). The reference type encodes the only pointer-validity
 // precondition, so `safe fn` discharges the link-time proof. (`kernel32::Get/Set
 // ConsoleMode` from `bun_windows_sys` still take `*mut DWORD`; redeclared

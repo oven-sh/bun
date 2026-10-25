@@ -226,8 +226,7 @@ pub(crate) fn prompt<'a>(
     // 4. Set default to the result of optionally truncating default.
     // *  We don't really need to do this.
     let default = default_value.map(JsLocal::to_js);
-    // `toString` of the default runs script, so it runs before the question
-    // is written and before the terminal changes mode.
+    // `toString` of the default runs script: before the question, and before the terminal changes mode.
     let default_string = default.map(|default| default.to_utf8(global)).transpose()?;
     let _line_mode = bun_core::tty::LineModeGuard::stdin();
 

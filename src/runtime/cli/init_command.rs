@@ -44,6 +44,11 @@ impl InitCommand {
         let mut input: Vec<u8> = Vec::new();
         Output::buffered_stdin_read_until_delimiter(&mut input, b'\n', 1024)?;
 
+        // Ctrl+C is a key, as in the menu, when the raw mode of the terminal belongs to a parent process.
+        if strings::contains_char(&input, 0x03) {
+            return Err(crate::Error::Core(bun_core::Error::EndOfStream));
+        }
+
         if strings::ends_with_char(&input, b'\r') {
             let _ = input.pop();
         }

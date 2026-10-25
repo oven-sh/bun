@@ -720,6 +720,53 @@ extern "C" void bun_restore_stdio()
 }
 
 #if !OS(WINDOWS)
+// Gives a blocking read of one typed line the ICANON and ICRNL it needs. Returns 1 when `saved` is to be written back.
+extern "C" int Bun__ttyEnterStdinLineMode(struct termios* saved)
+{
+    int err;
+    do
+        err = tcgetattr(STDIN_FILENO, saved);
+    while (err == -1 && errno == EINTR);
+    if (err == -1)
+        return 0;
+
+    const bool canonical = saved->c_lflag & ICANON;
+    const bool enterIsLF = saved->c_iflag & ICRNL;
+    if (canonical && enterIsLF)
+        return 0;
+
+    // As in bun_restore_stdio(): the terminal of a pipeline producer that did not change it belongs to the consumer.
+    if (bun_stdio_tty[STDOUT_FILENO] == 0 && !bun_stdio_modified[STDIN_FILENO])
+        return 0;
+
+    // A background job stops at its read, and its shell sets the mode before it continues the job.
+    const pid_t foreground = tcgetpgrp(STDIN_FILENO);
+    if (foreground != -1 && foreground != getpgrp())
+        return 0;
+
+    struct termios line = *saved;
+    line.c_iflag |= ICRNL;
+    line.c_lflag |= ICANON;
+    if (!canonical && !enterIsLF) {
+        line.c_lflag |= ECHO | IEXTEN;
+        // Ctrl+C signals the whole foreground process group, so it stays a key on a terminal that was raw at startup.
+        line.c_lflag |= termios_to_restore_later[STDIN_FILENO].c_lflag & ISIG;
+    }
+
+    do
+        err = tcsetattr(STDIN_FILENO, TCSANOW, &line);
+    while (err == -1 && errno == EINTR);
+    return err == 0;
+}
+
+extern "C" void Bun__ttyLeaveStdinLineMode(const struct termios* saved)
+{
+    int err;
+    do
+        err = tcsetattr(STDIN_FILENO, TCSANOW, saved);
+    while (err == -1 && errno == EINTR);
+}
+
 // Implemented by bun_core::Global::raise_default_action.
 extern "C" [[noreturn]] void Bun__raiseDefaultAction(int sig);
 

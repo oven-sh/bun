@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -658,6 +658,32 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(fs.existsSync(path.join(String(dir), "dist", "app.js"))).toBe(false);
   });
 
+  test("lists each shared output path in the order of its first entry point", async () => {
+    using dir = tempDir("no-bundle-outdir-collisions", {
+      "src/app.ts": `export const a = 1;\n`,
+      "src/lib.ts": `export const b = 2;\n`,
+      "src/lib.js": `export const c = 3;\n`,
+      "src/app.js": `export const d = 4;\n`,
+    });
+    const entryPoints = ["./src/app.ts", "./src/lib.ts", "./src/lib.js", "./src/app.js"];
+
+    expect(await build(String(dir), "--no-bundle", ...entryPoints)).toEqual({
+      stdout: "",
+      stderr: `error: Multiple files share the same output path
+  ./app.js:
+    from input src/app.ts
+    from input src/app.js
+  ./lib.js:
+    from input src/lib.ts
+    from input src/lib.js
+
+
+note: entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique`,
+      exitCode: 1,
+      dist: null,
+    });
+  });
+
   test.each([
     ["browser", []],
     ["bun", ["--target=bun"]],
@@ -883,26 +909,26 @@ test.concurrent("bun build names every input that maps to a shared output path",
   expect(exitCode).toBe(1);
 });
 
-describe.concurrent("bun build refuses two copied assets at one output path", () => {
-  /** Runs `bun build <args> --outdir=dist` in `dir`. `dist` lists what the build wrote, or is `null` if it wrote nothing. */
-  async function build(dir: string, ...args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", ...args, "--outdir=dist"],
-      env: bunEnv,
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const dist = path.join(dir, "dist");
-    return {
-      stdout,
-      stderr: normalizeBunSnapshot(stderr, dir),
-      exitCode,
-      dist: fs.existsSync(dist) ? (fs.readdirSync(dist, { recursive: true }) as string[]).sort() : null,
-    };
-  }
+/** Runs `bun build <args> --outdir=dist` in `dir`. `dist` lists what the output directory holds, or is `null` if there is none. */
+async function build(dir: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", ...args, "--outdir=dist"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const dist = path.join(dir, "dist");
+  return {
+    stdout,
+    stderr: normalizeBunSnapshot(stderr, dir),
+    exitCode,
+    dist: fs.existsSync(dist) ? (fs.readdirSync(dist, { recursive: true }) as string[]).sort() : null,
+  };
+}
 
+describe.concurrent("bun build refuses two copied assets at one output path", () => {
   test("two assets with different bytes", async () => {
     using dir = tempDir("bundle-asset-collision", {
       "entry.js": `import a from "./a/logo.png"; import b from "./b/logo.png"; console.log(a, b);\n`,
@@ -974,6 +1000,297 @@ describe.concurrent("bun build refuses two copied assets at one output path", ()
       note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique"
     `);
     expect(rest).toEqual({ stdout: "", exitCode: 1, dist: null });
+  });
+});
+
+// True if the temp directory stores two names that differ only in letter case as one file. That is the default on
+// the macOS and Windows lanes. The other lanes get such a file from a link.
+const tempFoldsCase = (() => {
+  using dir = tempDir("bundle-case-probe", { "probe": "" });
+  return fs.existsSync(path.join(String(dir), "PROBE"));
+})();
+
+describe.concurrent("bun build refuses two outputs that the output directory stores as one file", () => {
+  const logos = {
+    "entry.js": `import a from "./a/Logo.png"; import b from "./b/logo.png"; console.log(a, b);\n`,
+    "a/Logo.png": "the first logo",
+    "b/logo.png": "the second logo",
+  };
+  const logoArgs = ["entry.js", "--asset-naming=[name].[ext]"];
+  const refusedLogos = `error: Multiple files share the same output path
+  ./Logo.png:
+    from input a/Logo.png
+    from input b/logo.png
+
+
+note: the output directory stores './Logo.png' and './logo.png' as one file
+
+note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique`;
+
+  const pages = {
+    "a/Index.ts": `console.log("the first page");\n`,
+    "b/index.ts": `console.log("the second page");\n`,
+  };
+  const pageArgs = ["a/Index.ts", "b/index.ts", "--entry-naming=[name].[ext]"];
+  // `--no-bundle` prints its notes without a line between them.
+  const refusedPages = (betweenNotes: string) => `error: Multiple files share the same output path
+  ./Index.js:
+    from input a/Index.ts
+    from input b/index.ts
+
+
+note: the output directory stores './Index.js' and './index.js' as one file${betweenNotes}note: entry naming is './[name].[ext]', consider adding '[hash]' to make filenames unique`;
+
+  const themes = {
+    "src/Theme.tsx": `export const Theme = { color: "red" };\n`,
+    "src/theme.ts": `export const theme = "dark";\n`,
+  };
+  const refusedThemes = `error: Multiple files share the same output path
+  ./Theme.js:
+    from input src/Theme.tsx
+    from input src/theme.ts
+
+
+note: the output directory stores './Theme.js' and './theme.js' as one file
+
+note: entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique`;
+
+  // The entry point is a chunk and the file it imports is a copied asset.
+  const apps = {
+    "src/App.ts": `import worker from "./lib/app.js" with { type: "file" }; console.log(worker);\n`,
+    "src/lib/app.js": `console.log("the copied file");\n`,
+  };
+  const appArgs = ["src/App.ts", "--entry-naming=[name].[ext]", "--asset-naming=[name].[ext]"];
+  const refusedApps = `error: Multiple files share the same output path
+  ./App.js:
+    from input src/App.ts
+    from input src/lib/app.js
+
+
+note: the output directory stores './App.js' and './app.js' as one file
+
+note: entry naming is './[name].[ext]', consider adding '[hash]' to make filenames unique
+
+note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique`;
+
+  const cases = [
+    ["copied assets", logos, logoArgs, "Logo.png", "logo.png", refusedLogos],
+    ["entry points", pages, pageArgs, "Index.js", "index.js", refusedPages("\n\n")],
+    ["entry points without bundling", pages, ["--no-bundle", ...pageArgs], "Index.js", "index.js", refusedPages("\n")],
+    ["entry points under the default naming", themes, Object.keys(themes), "Theme.js", "theme.js", refusedThemes],
+    ["outputs, an entry point and a copied asset", apps, appArgs, "App.js", "app.js", refusedApps],
+  ] as const;
+
+  test("the macOS and Windows lanes have a temp directory that stores such names as one file", () => {
+    expect(tempFoldsCase).toBe(isMacOS || isWindows);
+  });
+
+  // The output directory does not exist yet, so the directory above it answers.
+  test.each(cases)("two %s, into a new output directory", async (_, files, args, first, second, refused) => {
+    using dir = tempDir("bundle-case-new", files);
+    const { stdout, ...rest } = await build(String(dir), ...args);
+    if (tempFoldsCase) {
+      expect({ stdout, ...rest }).toEqual({ stdout: "", stderr: refused, exitCode: 1, dist: null });
+    } else {
+      expect(rest).toEqual({
+        stderr: "",
+        exitCode: 0,
+        dist: [...Object.keys(files).filter(name => name === "entry.js"), first, second].sort(),
+      });
+    }
+  });
+
+  // No name in the directory has a letter, so the directory answers for a file with a random name.
+  test("into an empty output directory", async () => {
+    using dir = tempDir("bundle-case-empty", logos);
+    fs.mkdirSync(path.join(String(dir), "dist"));
+    const { stdout, ...rest } = await build(String(dir), ...logoArgs);
+    if (tempFoldsCase) {
+      expect({ stdout, ...rest }).toEqual({ stdout: "", stderr: refusedLogos, exitCode: 1, dist: [] });
+    } else {
+      expect(rest).toEqual({ stderr: "", exitCode: 0, dist: ["Logo.png", "entry.js", "logo.png"] });
+    }
+  });
+
+  // An earlier build left the first name. Where the directory stores the two names as one file, the second name
+  // finds that file.
+  test("into an output directory that has the first name", async () => {
+    using dir = tempDir("bundle-case-rebuild", { ...logos, "dist/Logo.png": "from an earlier build" });
+    const { stdout, ...rest } = await build(String(dir), ...logoArgs);
+    if (tempFoldsCase) {
+      expect({ stdout, ...rest }).toEqual({ stdout: "", stderr: refusedLogos, exitCode: 1, dist: ["Logo.png"] });
+      expect(await Bun.file(path.join(String(dir), "dist", "Logo.png")).text()).toBe("from an earlier build");
+    } else {
+      expect(rest).toEqual({ stderr: "", exitCode: 0, dist: ["Logo.png", "entry.js", "logo.png"] });
+    }
+  });
+
+  test.skipIf(tempFoldsCase)("a directory that keeps the two names apart gets both files", async () => {
+    using dir = tempDir("bundle-case-sensitive", logos);
+    // The second build finds both names in the directory.
+    for (let i = 0; i < 2; i++) {
+      const { stdout, ...rest } = await build(String(dir), ...logoArgs);
+      expect(rest).toEqual({ stderr: "", exitCode: 0, dist: ["Logo.png", "entry.js", "logo.png"] });
+    }
+    expect(await Bun.file(path.join(String(dir), "dist", "Logo.png")).text()).toBe("the first logo");
+    expect(await Bun.file(path.join(String(dir), "dist", "logo.png")).text()).toBe("the second logo");
+  });
+
+  // A link makes two names one file in a directory that keeps the names apart.
+  test.skipIf(tempFoldsCase).each(cases)(
+    "two %s, at the two names of a hard link",
+    async (_, files, args, first, second, refused) => {
+      using dir = tempDir("bundle-case-hard-link", { ...files, [`dist/${first}`]: "from an earlier build" });
+      const dist = path.join(String(dir), "dist");
+      fs.linkSync(path.join(dist, first), path.join(dist, second));
+
+      expect(await build(String(dir), ...args)).toEqual({
+        stdout: "",
+        stderr: refused,
+        exitCode: 1,
+        dist: [first, second],
+      });
+      expect(fs.readFileSync(path.join(dist, first), "utf8")).toBe("from an earlier build");
+    },
+  );
+
+  test.skipIf(tempFoldsCase)("the second name is a symlink to the first name", async () => {
+    using dir = tempDir("bundle-case-symlink", { ...logos, "dist/Logo.png": "from an earlier build" });
+    const dist = path.join(String(dir), "dist");
+    fs.symlinkSync("Logo.png", path.join(dist, "logo.png"));
+
+    expect(await build(String(dir), ...logoArgs)).toEqual({
+      stdout: "",
+      stderr: refusedLogos,
+      exitCode: 1,
+      dist: ["Logo.png", "logo.png"],
+    });
+    expect(fs.readFileSync(path.join(dist, "Logo.png"), "utf8")).toBe("from an earlier build");
+  });
+
+  // Each pair asks the directory: the pair without a link is two files.
+  test.skipIf(tempFoldsCase).each([
+    ["first", "Icon.png", "icon.png", "a/Icon.png", "b/icon.png"],
+    ["second", "Logo.png", "logo.png", "a/Logo.png", "b/logo.png"],
+  ])("two pairs, the %s of them at the two names of a hard link", async (_, first, second, firstInput, secondInput) => {
+    using dir = tempDir("bundle-case-two-pairs", {
+      "entry.js": `
+        import a from "./a/Icon.png"; import b from "./b/icon.png";
+        import c from "./a/Logo.png"; import d from "./b/logo.png";
+        console.log(a, b, c, d);
+      `,
+      "a/Icon.png": "the first icon",
+      "b/icon.png": "the second icon",
+      "a/Logo.png": "the first logo",
+      "b/logo.png": "the second logo",
+      [`dist/${first}`]: "from an earlier build",
+    });
+    const dist = path.join(String(dir), "dist");
+    fs.linkSync(path.join(dist, first), path.join(dist, second));
+
+    expect(await build(String(dir), ...logoArgs)).toEqual({
+      stdout: "",
+      stderr: `error: Multiple files share the same output path
+  ./${first}:
+    from input ${firstInput}
+    from input ${secondInput}
+
+
+note: the output directory stores './${first}' and './${second}' as one file
+
+note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique`,
+      exitCode: 1,
+      dist: [first, second],
+    });
+  });
+
+  // Nothing is lost when the two outputs have the same bytes.
+  test.each([
+    ["copied assets", { ...logos, "b/logo.png": logos["a/Logo.png"] }, logoArgs, "Logo.png", "logo.png"],
+    ["chunks", { ...pages, "b/index.ts": pages["a/Index.ts"] }, [...pageArgs, "--minify"], "Index.js", "index.js"],
+    [
+      "chunks that import one asset",
+      {
+        "a/Index.ts": `import logo from "../logo.png"; console.log(logo);\n`,
+        "b/index.ts": `import logo from "../logo.png"; console.log(logo);\n`,
+        "logo.png": "the logo",
+      },
+      [...pageArgs, "--minify"],
+      "Index.js",
+      "index.js",
+    ],
+    [
+      "stylesheets",
+      { "src/Button.tsx": `import "./button.css";\n`, "src/button.css": `.button { color: red; }\n` },
+      ["src/Button.tsx", "src/button.css"],
+      "Button.css",
+      "button.css",
+    ],
+  ] as const)("two %s with the same bytes", async (_, files, args, first, second) => {
+    using dir = tempDir("bundle-case-same-bytes", files);
+    const dist = path.join(String(dir), "dist");
+    const read = (name: string) => fs.readFileSync(path.join(dist, name), "utf8");
+
+    let { stderr, exitCode } = await build(String(dir), ...args);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const text = read(first);
+    expect(text).not.toBe("");
+    // In a directory that keeps the names apart, this reads the file of the second output.
+    expect(read(second)).toBe(text);
+
+    if (!tempFoldsCase) {
+      fs.rmSync(path.join(dist, second));
+      fs.linkSync(path.join(dist, first), path.join(dist, second));
+      ({ stderr, exitCode } = await build(String(dir), ...args));
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect([read(first), read(second)]).toEqual([text, text]);
+    }
+  });
+
+  // A `.map` or a `.jsc` is a second file of its chunk alone, so a chunk that has one is not compared.
+  test.skipIf(tempFoldsCase).each([
+    ["a source map", ["--sourcemap=linked"]],
+    ["bytecode", ["--target=bun", "--bytecode"]],
+  ])("two chunks with the same code and %s", async (_, args) => {
+    using dir = tempDir("bundle-case-second-file", {
+      ...pages,
+      "b/index.ts": pages["a/Index.ts"],
+      "dist/Index.js": "from an earlier build",
+    });
+    const dist = path.join(String(dir), "dist");
+    fs.linkSync(path.join(dist, "Index.js"), path.join(dist, "index.js"));
+
+    expect(await build(String(dir), ...pageArgs, "--minify", ...args)).toEqual({
+      stdout: "",
+      stderr: refusedPages("\n\n"),
+      exitCode: 1,
+      dist: ["Index.js", "index.js"],
+    });
+  });
+
+  // Standalone HTML gives a page its bytes after the check, so two pages are not compared and not refused.
+  test("two pages of standalone HTML with the same bytes", async () => {
+    const page = `<!doctype html><html><body><p>the page</p></body></html>\n`;
+    using dir = tempDir("bundle-case-standalone", { "a/Index.html": page, "b/index.html": page });
+    const dist = path.join(String(dir), "dist");
+    if (!tempFoldsCase) {
+      fs.mkdirSync(dist);
+      fs.writeFileSync(path.join(dist, "Index.html"), "from an earlier build");
+      fs.linkSync(path.join(dist, "Index.html"), path.join(dist, "index.html"));
+    }
+
+    const { stderr, exitCode } = await build(
+      String(dir),
+      "--compile",
+      "--target=browser",
+      "a/Index.html",
+      "b/index.html",
+      "--entry-naming=[name].[ext]",
+    );
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const text = fs.readFileSync(path.join(dist, "Index.html"), "utf8");
+    expect(text).toContain("the page");
+    expect(fs.readFileSync(path.join(dist, "index.html"), "utf8")).toBe(text);
   });
 });
 

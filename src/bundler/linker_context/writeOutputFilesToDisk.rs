@@ -10,7 +10,7 @@ use bun_paths as paths;
 use bun_wyhash::hash;
 
 use crate::LinkerContext;
-use crate::chunk::{Content, Flags as ChunkFlags, ReferencePathStyle, SourceMapShiftTracking};
+use crate::chunk::{Content, Flags as ChunkFlags};
 use crate::linker_context::output_file_list_builder::OutputFileList;
 use crate::linker_context_mod::debug;
 use crate::options::{self, Loader, OutputFile, SourceMapOption};
@@ -230,55 +230,22 @@ pub(crate) fn write_output_files_to_disk(
             &resolver_opts.public_path
         };
 
-        // Take `intermediate_output` by value so its `&mut self` is
-        // disjoint from the `&chunks[i]` / `&[Chunk]` reads below.
-        let mut intermediate_output =
-            core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
-        let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
         let parse_graph = c.parse_graph();
-
-        let mut code_result = if let Some(scc) = standalone_chunk_contents {
-            match intermediate_output.code_standalone(
-                None,
-                parse_graph,
-                &c.graph,
-                public_path,
-                chunk,
-                chunks,
-                Some(&mut display_size),
-                ReferencePathStyle::ImporterRelative,
-                SourceMapShiftTracking::Disabled,
-                scc,
-            ) {
-                Ok(r) => r,
-                Err(_e) => bun_core::Output::panic(format_args!(
-                    "Failed to create output chunk: OutOfMemory"
-                )),
-            }
-        } else {
-            match intermediate_output.code(
-                None,
-                parse_graph,
-                &c.graph,
-                public_path,
-                chunk,
-                chunks,
-                Some(&mut display_size),
-                ReferencePathStyle::for_chunk(chunk, resolver_opts.compile),
-                SourceMapShiftTracking::for_source_map(
-                    chunk.content.sourcemap(c.options.source_maps),
-                ),
-            ) {
-                Ok(r) => r,
-                Err(_e) => bun_core::Output::panic(format_args!(
-                    "Failed to create output chunk: OutOfMemory"
-                )),
+        let mut code_result = match c.chunk_code(
+            chunks,
+            chunk_index_in_chunks_list,
+            public_path,
+            Some(&mut display_size),
+            standalone_chunk_contents,
+        ) {
+            Ok(r) => r,
+            Err(_e) => {
+                bun_core::Output::panic(format_args!("Failed to create output chunk: OutOfMemory"))
             }
         };
         // Tail of the loop body needs `&mut chunk` (`output_source_map.finalize()`);
         // no `&[Chunk]` is needed past this point so an exclusive reborrow is fine.
         let chunk: &mut Chunk = &mut chunks[chunk_index_in_chunks_list];
-        chunk.intermediate_output = intermediate_output;
 
         let mut source_map_output_file: Option<OutputFile> = None;
 

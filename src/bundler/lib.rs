@@ -126,6 +126,7 @@ pub mod cache;
 pub mod entry_points;
 #[path = "OutputFile.rs"]
 pub mod output_file;
+pub(crate) mod output_paths;
 #[path = "ThreadPool.rs"]
 pub mod thread_pool;
 

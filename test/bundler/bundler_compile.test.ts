@@ -1323,6 +1323,23 @@ describe("bundler", () => {
     run: { stdout: "from a from b" },
   });
 
+  // An executable looks an embedded file up byte for byte on every platform: "Logo.file" and
+  // "logo.file" are two files.
+  itBundled("compile/AssetSameNameInAnotherCase", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import a from "./a/Logo.file" with { type: "file" };
+        import b from "./b/logo.file" with { type: "file" };
+        console.log(await Bun.file(a).text(), await Bun.file(b).text());
+      `,
+      "/a/Logo.file": "from a",
+      "/b/logo.file": "from b",
+    },
+    run: { stdout: "from a from b" },
+  });
+
   // A browser chunk of a full-stack executable cannot reach the embedded
   // module graph, so its text imports stay inline string literals.
   itBundled("compile/TextImportClientChunkStaysInline", {

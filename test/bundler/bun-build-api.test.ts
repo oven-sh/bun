@@ -1162,6 +1162,65 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
+  // "Logo.png" and "logo.png" are one file only in an output directory that stores them as one. Nothing stores the
+  // outputs of a build without `outdir`.
+  test.concurrent("two outputs at paths that differ only in letter case", async () => {
+    using dir = tempDir("build-api-output-path-case", {
+      "entry.js": `import a from "./a/Logo.png"; import b from "./b/logo.png"; console.log(a, b);`,
+      "a/Logo.png": "the first logo",
+      "b/logo.png": "the second logo",
+      "build.ts": `
+        import { existsSync, linkSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+        // True on the macOS and Windows lanes. There a new directory already stores the two names as one file.
+        const foldsCase = existsSync("ENTRY.JS");
+        if (!foldsCase) {
+          mkdirSync("linked");
+          writeFileSync("linked/Logo.png", "from an earlier build");
+          linkSync("linked/Logo.png", "linked/logo.png");
+        }
+        const results = { foldsCase };
+        for (const [name, options] of Object.entries({ inMemory: {}, fresh: { outdir: "fresh" }, linked: { outdir: "linked" } })) {
+          const build = await Bun.build({ entrypoints: ["./entry.js"], naming: { asset: "[name].[ext]" }, throw: false, ...options });
+          const assets = build.outputs.filter(output => output.kind === "asset");
+          results[name] = {
+            success: build.success,
+            logs: build.logs.map(log => log.message),
+            assets: await Promise.all(assets.map(asset => asset.text())),
+            wrote: options.outdir && existsSync(options.outdir) ? readdirSync(options.outdir).sort() : null,
+          };
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { foldsCase, ...results } = JSON.parse(stdout);
+    const both = { success: true, logs: [], assets: ["the first logo", "the second logo"] };
+    const refused = {
+      success: false,
+      logs: [
+        "Multiple files share the same output path\n  ./Logo.png:\n    from input a/Logo.png\n    from input b/logo.png\n",
+        "the output directory stores './Logo.png' and './logo.png' as one file",
+        "asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique",
+      ],
+      assets: [],
+    };
+    expect(results).toEqual({
+      inMemory: { ...both, wrote: null },
+      fresh: foldsCase ? { ...refused, wrote: null } : { ...both, wrote: ["Logo.png", "entry.js", "logo.png"] },
+      linked: { ...refused, wrote: foldsCase ? null : ["Logo.png", "logo.png"] },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("fails instead of truncating when a module is too deeply nested to print", async () => {
     // A TOML dotted header builds an object nested arbitrarily deep without
     // recursing in the parser, so the printer's recursion guard is the first

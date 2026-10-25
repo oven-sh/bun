@@ -2719,34 +2719,61 @@ impl<'a> Transpiler<'a> {
 
     /// Mirrors the duplicate-path error in `generateChunksInParallel`.
     fn reject_duplicate_output_paths(&mut self) -> crate::Result<()> {
+        use crate::output_paths::{self, FirstAtPath};
         use std::io::Write as _;
 
-        let mut by_dest_path: bun_collections::StringArrayHashMap<Vec<usize>> = Default::default();
-        let mut has_duplicates = false;
-        for (index, file) in self.output_files.iter().enumerate() {
+        let files = &self.output_files;
+        let output_dir = &self.options.output_dir;
+        let mut first_at_path = FirstAtPath::with_capacity(!output_dir.is_empty(), files.len());
+        type ByDestPath = bun_collections::StringArrayHashMap<Vec<usize>>;
+        let mut by_dest_path = ByDestPath::default();
+        let share =
+            |by_dest_path: &mut ByDestPath, first_path: &[u8], first: usize, index: usize| {
+                let indices = by_dest_path.get_or_put(first_path)?.value_ptr;
+                if indices.is_empty() {
+                    indices.push(first);
+                }
+                indices.push(index);
+                Ok::<(), bun_alloc::AllocError>(())
+            };
+        for (index, file) in files.iter().enumerate() {
             if file.dest_path.is_empty() {
                 continue;
             }
-            let entry = by_dest_path.get_or_put(&file.dest_path)?;
-            has_duplicates |= entry.found_existing;
-            entry.value_ptr.push(index);
+            let key = std::borrow::Cow::Borrowed(&*file.dest_path);
+            if let Some((first, first_path)) = first_at_path.claim(key, index, &file.dest_path) {
+                share(&mut by_dest_path, first_path, first, index)?;
+            }
         }
-        if !has_duplicates {
+        // Two paths that differ only in letter case are one file in an output directory that ignores case. Only
+        // a build that is about to write asks the directory.
+        let mut case_note: Option<Vec<u8>> = None;
+        if by_dest_path.count() == 0 && self.log().errors == 0 {
+            case_note = output_paths::lost_case_pairs(
+                &first_at_path.into_case_pairs(),
+                output_dir,
+                |first, second| Ok(files[first].value.as_slice() != files[second].value.as_slice()),
+                |pair| share(&mut by_dest_path, &pair.first_path, pair.first, pair.second),
+            )?;
+        }
+        if by_dest_path.count() == 0 {
             return Ok(());
         }
 
         let mut msg: Vec<u8> = Vec::new();
         writeln!(&mut msg, "Multiple files share the same output path")?;
-        for (dest_path, indices) in by_dest_path.keys().iter().zip(by_dest_path.values()) {
-            if indices.len() < 2 {
-                continue;
-            }
+        let mut groups: Vec<_> = (by_dest_path.keys().iter())
+            .zip(by_dest_path.values())
+            .collect();
+        // The path of the earliest file comes first.
+        groups.sort_by_key(|(_, indices)| indices[0]);
+        for (dest_path, indices) in groups {
             writeln!(&mut msg, "  {}:", bstr::BStr::new(dest_path))?;
             for &index in indices {
                 writeln!(
                     &mut msg,
                     "    from input {}",
-                    bstr::BStr::new(self.output_files[index].src_path.pretty)
+                    bstr::BStr::new(files[index].src_path.pretty)
                 )?;
             }
         }
@@ -2757,15 +2784,13 @@ impl<'a> Transpiler<'a> {
             "entry naming is '{}', consider adding '[hash]' to make filenames unique",
             bstr::BStr::new(&self.entry_naming_template().data),
         )?;
-        self.log_mut().add_range_error_with_notes(
-            None,
-            Default::default(),
-            msg,
-            Box::new([bun_ast::Data {
-                text: note.into(),
-                ..Default::default()
-            }]),
-        );
+        let notes = (case_note.into_iter().chain([note])).map(|text| bun_ast::Data {
+            text: text.into(),
+            ..Default::default()
+        });
+        let notes: Box<[bun_ast::Data]> = notes.collect();
+        self.log_mut()
+            .add_range_error_with_notes(None, Default::default(), msg, notes);
         Ok(())
     }
 

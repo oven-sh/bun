@@ -846,6 +846,52 @@ impl<'a> LinkerContext<'a> {
         chunk.content.is_javascript() && loader.is_javascript_like()
     }
 
+    /// The code of `chunks[index]`, with a path for each chunk and asset it refers to. Standalone HTML puts
+    /// `standalone_chunk_contents` into a page in place of those paths.
+    pub(crate) fn chunk_code(
+        &self,
+        chunks: &mut [Chunk],
+        index: usize,
+        public_path: &[u8],
+        display_size: Option<&mut usize>,
+        standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
+    ) -> Result<crate::chunk::CodeResult, AllocError> {
+        use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
+        // Take `intermediate_output` by value so its `&mut self` is disjoint
+        // from the `&chunks[i]` / `&[Chunk]` reads below.
+        let mut intermediate_output = core::mem::take(&mut chunks[index].intermediate_output);
+        let chunk = &chunks[index];
+        let code = match standalone_chunk_contents {
+            Some(contents) => intermediate_output.code_standalone(
+                None,
+                self.parse_graph(),
+                &self.graph,
+                public_path,
+                chunk,
+                chunks,
+                display_size,
+                ReferencePathStyle::ImporterRelative,
+                SourceMapShiftTracking::Disabled,
+                contents,
+            ),
+            None => intermediate_output.code(
+                None,
+                self.parse_graph(),
+                &self.graph,
+                public_path,
+                chunk,
+                chunks,
+                display_size,
+                ReferencePathStyle::for_chunk(chunk, self.resolver().opts.compile),
+                SourceMapShiftTracking::for_source_map(
+                    chunk.content.sourcemap(self.options.source_maps),
+                ),
+            ),
+        };
+        chunks[index].intermediate_output = intermediate_output;
+        code
+    }
+
     /// See [`Self::load`] for why `bundle` is a raw `*mut` (caller passes
     /// `self` while the receiver is `self.linker`; field-disjoint access only).
     ///

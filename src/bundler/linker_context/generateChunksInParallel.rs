@@ -5,7 +5,6 @@ use std::io::Write as _;
 use bun_collections::AutoBitSet;
 use bun_collections::StringArrayHashMap;
 use bun_collections::StringHashMap;
-use bun_collections::hashbrown::hash_map::{Entry, HashMap};
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_paths as path;
@@ -19,6 +18,7 @@ use crate::cheap_prefix_normalizer;
 use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
 use crate::options;
 use crate::options::Loader;
+use crate::output_paths::{self, FirstAtPath};
 
 use crate::LinkerContext;
 use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
@@ -387,6 +387,16 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         return Ok(Vec::new());
     }
 
+    // Copy the `ParentRef` out (not `c.resolver()`) so `root_path` borrows the
+    // local, not `c`, avoiding the split-borrow with `&mut *c` passed to
+    // `write_output_files_to_disk` below — `output_dir` lives in the resolver,
+    // disjoint from anything `c` mutates.
+    let resolver = c.resolver.expect("resolver set in load()");
+    // Don't write to disk if compile mode is enabled - we need buffer values for compilation
+    let root_path: Option<&[u8]> = (!resolver.opts.output_dir.is_empty()
+        && !c.options.compile_mode.is_executable())
+    .then_some(&*resolver.opts.output_dir);
+
     // TODO: enforceNoCyclicChunkImports()
     {
         let mut has_unusable_output_path = false;
@@ -438,12 +448,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
         // Every chunk and every copied asset needs its own output path. An asset that no live code uses is copied
         // too, so it also takes its path. Standalone HTML inlines the assets into the page instead.
-        #[derive(Clone, Copy)]
-        enum Output {
-            Chunk(u32),
-            /// An index into `Graph::additional_output_files`.
-            Asset(u32),
-        }
         let mode = c.options.compile_mode;
         let assets: &[options::OutputFile] = if mode.is_standalone_html() {
             &[]
@@ -462,17 +466,17 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     .enumerate()
                     .map(|(i, asset)| (Output::Asset(i as u32), &*asset.dest_path)),
             );
+        // Only a build that writes its outputs to an output directory can lose one to a path in another letter
+        // case. The pages of standalone HTML are left out: a page gets its bytes after this check.
+        let pairs_case = root_path.is_some() && !mode.is_standalone_html();
         // The first output at each path, with the path as that output spells it.
-        let mut path_names_map: HashMap<Cow<'_, [u8]>, (Output, &[u8]), bun_wyhash::BuildHasher> =
-            HashMap::with_capacity_and_hasher(chunks.len() + assets.len(), Default::default());
+        let mut path_names_map =
+            FirstAtPath::with_capacity(pairs_case, chunks.len() + assets.len());
         let mut duplicates_map: StringArrayHashMap<Vec<Output>> = StringArrayHashMap::default();
         for (output, path) in outputs {
-            let (first, first_path) = match path_names_map.entry(output_path_key(mode, path)) {
-                Entry::Vacant(entry) => {
-                    entry.insert((output, path));
-                    continue;
-                }
-                Entry::Occupied(entry) => *entry.get(),
+            let key = output_path_key(mode, path);
+            let Some((first, first_path)) = path_names_map.claim(key, output, path) else {
+                continue;
             };
             // The same bytes under the same name, for example an image that a page and its server both import.
             if let (Output::Asset(a), Output::Asset(b)) = (first, output)
@@ -486,6 +490,28 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 dup.push(first);
             }
             dup.push(output);
+        }
+
+        // Two paths that differ only in letter case are one file in an output directory that ignores case. Only
+        // a build that is about to write asks the directory.
+        let mut case_note: Option<Vec<u8>> = None;
+        if let Some(root_path) = root_path
+            && duplicates_map.count() == 0
+            && !has_unusable_output_path
+        {
+            case_note = output_paths::lost_case_pairs(
+                &path_names_map.into_case_pairs(),
+                root_path,
+                |first, second| output_bytes_differ(c, chunks, [first, second]),
+                |pair| {
+                    let dup = duplicates_map.get_or_put(&pair.first_path)?.value_ptr;
+                    if dup.is_empty() {
+                        dup.push(pair.first);
+                    }
+                    dup.push(pair.second);
+                    Ok(())
+                },
+            )?;
         }
 
         if duplicates_map.count() > 0 {
@@ -544,6 +570,21 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             c.log_disjoint().add_error(None, bun_ast::Loc::EMPTY, msg);
 
+            let add_note = |text: Vec<u8>| {
+                c.log_disjoint().add_msg(bun_ast::Msg {
+                    kind: bun_ast::Kind::Note,
+                    data: bun_ast::Data {
+                        text: Cow::Owned(text),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+            };
+            // The two outputs of a pair that differs only in letter case have different content.
+            let same_content = only_chunks && case_note.is_none();
+            if let Some(note) = case_note {
+                add_note(note);
+            }
             for (name, template) in [
                 ("entry", entry_naming),
                 ("chunk", chunk_naming),
@@ -554,7 +595,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let mut text: Vec<u8> = Vec::new();
                 if crate::options::path_template_hash_len(template).is_some() {
                     // Only chunks that share a path under a `[hash]` template are known to have the same content.
-                    if !only_chunks {
+                    if !same_content {
                         continue;
                     }
                     write!(
@@ -571,14 +612,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         bstr::BStr::new(template),
                     )?;
                 }
-                c.log_disjoint().add_msg(bun_ast::Msg {
-                    kind: bun_ast::Kind::Note,
-                    data: bun_ast::Data {
-                        text: Cow::Owned(text),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                });
+                add_note(text);
             }
 
             return Err(crate::Error::DuplicateOutputPath);
@@ -747,12 +781,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let mut output_files =
         OutputFileListBuilder::init(c, chunks, c.parse_graph().additional_output_files.len())?;
 
-    // Copy the `ParentRef` out (not `c.resolver()`) so `root_path` borrows the
-    // local, not `c`, avoiding the split-borrow with `&mut *c` passed to
-    // `write_output_files_to_disk` below — `output_dir` lives in the resolver,
-    // disjoint from anything `c` mutates.
-    let resolver = c.resolver.expect("resolver set in load()");
-    let root_path: &[u8] = &resolver.opts.output_dir;
     let is_standalone = c.options.compile_mode.is_standalone_html();
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0
@@ -928,9 +956,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         standalone_chunk_contents = Some(scc);
     }
 
-    // Don't write to disk if compile mode is enabled - we need buffer values for compilation
     let is_compile = bundler.transpiler.options.compile_mode.is_executable();
-    if root_path.len() > 0 && !is_compile {
+    if let Some(root_path) = root_path {
         write_output_files_to_disk(
             c,
             root_path,
@@ -1034,48 +1061,16 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 c.options.public_path
             };
 
-            // Take `intermediate_output` by value so the `&mut self` it provides
-            // to `code()` is disjoint from the `&chunks[i]` / `&[Chunk]` reads.
-            let mut intermediate_output =
-                core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
-            let _code_result = if is_standalone
-                && matches!(
-                    chunks[chunk_index_in_chunks_list].content,
-                    crate::chunk::Content::Html
-                ) {
-                intermediate_output.code_standalone(
-                    None,
-                    c.parse_graph(),
-                    &c.graph,
-                    public_path,
-                    &chunks[chunk_index_in_chunks_list],
-                    chunks,
-                    &mut display_size,
-                    ReferencePathStyle::ImporterRelative,
-                    SourceMapShiftTracking::Disabled,
-                    standalone_chunk_contents.as_deref().unwrap(),
-                )?
-            } else {
-                let chunk = &chunks[chunk_index_in_chunks_list];
-                intermediate_output.code(
-                    None,
-                    c.parse_graph(),
-                    &c.graph,
-                    public_path,
-                    chunk,
-                    chunks,
-                    &mut display_size,
-                    ReferencePathStyle::for_chunk(chunk, c.resolver().opts.compile),
-                    SourceMapShiftTracking::for_source_map(
-                        chunk.content.sourcemap(c.options.source_maps),
-                    ),
-                )?
-            };
+            let mut code_result = c.chunk_code(
+                chunks,
+                chunk_index_in_chunks_list,
+                public_path,
+                Some(&mut display_size),
+                standalone_chunk_contents.as_deref(),
+            )?;
             // Tail of the loop body needs `&mut chunk` (`output_source_map.finalize()`);
             // no `&[Chunk]` is needed past this point so an exclusive reborrow is fine.
             let chunk: &mut Chunk = &mut chunks[chunk_index_in_chunks_list];
-            chunk.intermediate_output = intermediate_output;
-            let mut code_result = _code_result;
 
             let mut sourcemap_output_file: Option<options::OutputFile> = None;
             let input_path: Box<[u8]> = Box::from(if chunk.entry_point.is_entry_point() {
@@ -2038,6 +2033,67 @@ fn chunk_load_order(
         position[chunk_index as usize] = i as u32;
     }
     (position, startup_count.unwrap_or(0))
+}
+
+#[derive(Clone, Copy)]
+enum Output {
+    Chunk(u32),
+    /// An index into `Graph::additional_output_files`.
+    Asset(u32),
+}
+
+/// False only if `write_output_files_to_disk` writes the same bytes for the two outputs, and no other file.
+fn output_bytes_differ(
+    c: &LinkerContext,
+    chunks: &mut [Chunk],
+    outputs: [Output; 2],
+) -> Result<bool, bun_alloc::AllocError> {
+    let mut rendered: [Option<Vec<u8>>; 2] = [None, None];
+    for (rendered, output) in rendered.iter_mut().zip(outputs) {
+        if let Output::Chunk(i) = output {
+            *rendered = chunk_bytes(c, chunks, i as usize)?;
+            if rendered.is_none() {
+                return Ok(true);
+            }
+        }
+    }
+    let assets = &c.parse_graph().additional_output_files;
+    let [first, second] = [0, 1].map(|i| match outputs[i] {
+        Output::Chunk(_) => rendered[i].as_deref(),
+        Output::Asset(asset) => Some(assets[asset as usize].value.as_slice()),
+    });
+    Ok(first != second)
+}
+
+/// The bytes that `write_output_files_to_disk` writes for `chunks[index]`. `None` for a chunk that counts as
+/// different from every other output: one with a `.map` or a `.jsc`, which is a second file of the chunk alone, and
+/// a browser chunk of a server build, which gets the public path of the browser build.
+fn chunk_bytes(
+    c: &LinkerContext,
+    chunks: &mut [Chunk],
+    index: usize,
+) -> Result<Option<Vec<u8>>, bun_alloc::AllocError> {
+    let chunk = &chunks[index];
+    if chunk.content.sourcemap(c.options.source_maps) != SourceMapOption::None
+        || (c.options.generate_bytecode_cache && c.chunk_gets_bytecode(chunk))
+        || chunk
+            .flags
+            .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+    {
+        return Ok(None);
+    }
+    // `chunk_code` empties a joiner, and the writer has yet to call it. Without a source map the code of a
+    // joiner is its slices.
+    if let crate::chunk::IntermediateOutput::Joiner(joiner) = &chunk.intermediate_output {
+        let mut bytes = Vec::with_capacity(joiner.len);
+        for slice in joiner.node_slices() {
+            bytes.extend_from_slice(slice);
+        }
+        return Ok(Some(bytes));
+    }
+    let public_path = &c.resolver().opts.public_path;
+    let code = c.chunk_code(chunks, index, public_path, None, None)?;
+    Ok(Some(code.buffer.into_vec()))
 }
 
 /// Two spellings of one output file have one key. An executable stores a file under its path less one leading `./`

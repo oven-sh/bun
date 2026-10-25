@@ -455,6 +455,53 @@ impl FdDirExt for Fd {
     }
 }
 
+/// Whether the directory at `path` has one entry for two names that differ only in the case of ASCII letters, like
+/// a directory on a case-insensitive volume. The directory is asked for the other spelling of a name that it has.
+/// If no name there has a letter, a file with a random name is made for the question and removed again.
+pub fn directory_folds_ascii_case(path: &[u8]) -> Maybe<bool> {
+    /// The name of the first entry of `dir` that `wanted` accepts.
+    fn find_entry(dir: &Dir, wanted: impl Fn(&[u8]) -> bool) -> Maybe<Option<Vec<u8>>> {
+        let mut entries = dir_iterator::iterate(dir.fd);
+        while let Some(entry) = entries.next()? {
+            if wanted(entry.name.slice_u8()) {
+                return Ok(Some(entry.name.slice_u8().to_vec()));
+            }
+        }
+        Ok(None)
+    }
+    fn other_spelling(name: &[u8]) -> bun_core::ZBox {
+        let swap_case = |byte: &u8| byte ^ (u8::from(byte.is_ascii_alphabetic()) << 5);
+        bun_core::ZBox::from_vec(name.iter().map(swap_case).collect())
+    }
+    fn has_entry(dir: &Dir, name: &ZStr) -> Maybe<bool> {
+        match lstatat(dir.fd, name) {
+            Ok(_) => Ok(true),
+            Err(e) if e.get_errno() == E::ENOENT => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    let dir = Dir::open(path)?;
+    if let Some(name) = find_entry(&dir, |name| name.iter().any(u8::is_ascii_alphabetic))? {
+        let other = other_spelling(&name);
+        // A directory that tells the two spellings apart can have both of them.
+        return Ok(has_entry(&dir, other.as_zstr())?
+            && find_entry(&Dir::open(path)?, |name| name == other.as_bytes())?.is_none());
+    }
+    let mut name_buf = [0u8; 64];
+    let name = bun_paths::fs::FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
+        .expect("the name is 30 bytes");
+    drop(File::openat(
+        dir.fd,
+        name.as_bytes(),
+        O::WRONLY | O::CREAT | O::EXCL,
+        0o600,
+    )?);
+    let folds = has_entry(&dir, other_spelling(name.as_bytes()).as_zstr());
+    let _ = unlinkat(dir.fd, name);
+    folds
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

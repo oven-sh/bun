@@ -3,9 +3,10 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::JSGlobalObject;
+use crate::bindgen::JsHeap;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
 use bun_core::strings;
@@ -1077,43 +1078,27 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
 // TLS default ciphers JS bindings
 // ──────────────────────────────────────────────────────────────────────────
 
-#[crate::host_fn(export = "Bun__setTLSDefaultCiphers")]
-fn set_tls_default_ciphers_from_js(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    let ciphers = if !args.is_empty() {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    if !ciphers.is_string() {
-        return Err(global_this.throw_invalid_argument_type_value(b"ciphers", b"string", ciphers));
-    }
-    let utf8 = ciphers.to_utf8(global_this)?;
+pub(crate) fn set_tls_default_ciphers(heap: &JsHeap<'_>, ciphers: &[u8]) {
+    // SAFETY: only the VM is taken from it.
+    let global_this = unsafe { heap.global() };
     // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
     // is the audited single-JS-thread `&mut` escape hatch.
     global_this
         .bun_vm()
         .as_mut()
         .rare_data()
-        .set_tls_default_ciphers(utf8.slice());
-    Ok(JSValue::UNDEFINED)
+        .set_tls_default_ciphers(ciphers);
 }
 
-#[crate::host_fn(export = "Bun__getTLSDefaultCiphers")]
-fn get_tls_default_ciphers_from_js(
-    global_this: &JSGlobalObject,
-    _callframe: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn get_tls_default_ciphers<'a>(heap: &JsHeap<'a>) -> &'a [u8] {
+    // SAFETY: only the VM is taken from it.
+    let global_this = unsafe { heap.global() };
     // `bun_vm()` is the safe BACKREF accessor; see above.
     let rare = global_this.bun_vm().as_mut().rare_data();
-    let bytes = match rare.tls_default_ciphers() {
+    match rare.tls_default_ciphers() {
         Some(c) => c,
         None => uws::get_default_ciphers().as_bytes(),
-    };
-    crate::bun_string_jsc::create_utf8_for_js(global_this, bytes)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

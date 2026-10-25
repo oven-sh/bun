@@ -447,6 +447,16 @@ pub(crate) mod help_command {
     /// The spacing between commands is intentional.
     macro_rules! print_cli_helptext {
         ($printer:ident, $prefix:literal, $args:expr $(, $extra:expr)*) => {
+            if lint_command::IS_ENABLED {
+                print_cli_helptext!(
+                    @lint "  <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint\n",
+                    $printer, $prefix, $args $(, $extra)*
+                )
+            } else {
+                print_cli_helptext!(@lint "", $printer, $prefix, $args $(, $extra)*)
+            }
+        };
+        (@lint $lint:literal, $printer:ident, $prefix:literal, $args:expr $(, $extra:expr)*) => {
             $printer!(
                 concat!($prefix, "\
 <b>Usage:<r> <b>bun \\<command\\> <cyan>[...flags]<r> <b>[...args]<r>
@@ -456,8 +466,7 @@ pub(crate) mod help_command {
             <d>dev<r>                  Run a package.json script
   <b><magenta>test<r>                           Run unit tests with Bun
   <b><magenta>check<r>                          Type check a TypeScript project
-  <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint
-  <b><magenta>fmt<r>                            Format JavaScript and TypeScript, like Prettier
+", $lint, "  <b><magenta>fmt<r>                            Format JavaScript and TypeScript, like Prettier
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -874,7 +883,8 @@ pub(crate) mod command {
             };
         }
         if x == RootCommandMatcher::case(b"lint") {
-            return match super::script_or_command::is_of_the_project(b"lint") {
+            let is_enabled = super::lint_command::IS_ENABLED;
+            return match !is_enabled || super::script_or_command::is_of_the_project(b"lint") {
                 true => Tag::AutoCommand,
                 false => Tag::LintCommand,
             };
@@ -1789,11 +1799,12 @@ To create a project with the official Next.js scaffolding tool, run
 
         if use_bunx {
             let mut bunx_args: Vec<&ZStr> =
-                Vec::with_capacity(2 + args.len() - template_name_start + (dash_dash_bun as usize));
+                Vec::with_capacity(3 + args.len() - template_name_start + (dash_dash_bun as usize));
             bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
                 bunx_args.push(bun_core::zstr!("--bun"));
             }
+            bunx_args.extend(Global::ca_store_flag());
             // `add_create_prefix` returns an owned NUL-terminated buffer.
             // `bun create` is a one-shot CLI subcommand (ends in exec/exit), so
             // the prefixed package name is a process singleton — park the owning
@@ -1927,6 +1938,7 @@ Flags:
   <cyan>--minimum-release-age <blue>\\<seconds\\><r>  Only install packages published at least N seconds ago (security feature)
   <cyan>--registry <blue>\\<url\\><r>        Install from a specific registry
   <cyan>--ca <blue>\\<cert\\><r>, <cyan>--cafile <blue>\\<path\\><r>  Trust a Certificate Authority signing certificate during installation
+  <cyan>--use-system-ca<r>, <cyan>--use-openssl-ca<r>, <cyan>--use-bundled-ca<r>  Choose the CA store to trust during installation
   <cyan>--trust<r>                Run the lifecycle scripts of the package and of ALL of its dependencies during installation
   <cyan>--ignore-scripts<r>       Run no lifecycle scripts during installation
   <cyan>--verbose<r>              Enable verbose output during installation
@@ -2230,6 +2242,9 @@ Full documentation is available at <magenta>https://bun.com/docs/lint<r>
   <cyan>-r, --react<r>            Initialize a React project
       <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS
       <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
+      <cyan>--use-system-ca<r>    Use the system's trusted certificate authorities during installation
+      <cyan>--use-openssl-ca<r>   Use OpenSSL's default CA store instead of the bundled one during installation
+      <cyan>--use-bundled-ca<r>   Use bundled CA store during installation
 
 <b>Examples:<r>
   <b><green>bun init<r>

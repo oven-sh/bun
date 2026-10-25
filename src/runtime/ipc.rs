@@ -12,10 +12,13 @@ use bun_core::{String as BunString, strings};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc as jsc;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task};
+use bun_jsc::{
+    JSGlobalObject, JSObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task,
+};
 use bun_sys::Fd;
 use bun_sys::FdExt;
 #[cfg(windows)]
@@ -109,10 +112,10 @@ impl InternalMsgHolder {
 
     pub(crate) fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(self.is_ready());
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // `&mut self` carries LLVM `noalias`, but
         // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
         // listener which can re-enter via a fresh `&mut Self` from the
-        // owner's `m_ctx` and write `self.cb` / `self.worker` /
+        // owner's JS wrapper and write `self.cb` / `self.worker` /
         // `self.callbacks`. With the loop body inlined, LLVM was hoisting the
         // `self.cb`/`self.worker` reads (at the top of `dispatch_unsafe`) out
         // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
@@ -828,24 +831,27 @@ impl SendHandle {
     }
 }
 
-#[bun_jsc::host_fn]
-fn close_sent_handle(global: &JSGlobalObject, callframe: &jsc::CallFrame) -> JsResult<JSValue> {
-    let [js] = callframe.arguments_as_array::<1>();
-    if js.is_object() {
+pub(crate) fn close_sent_handle<'a>(
+    cx: &mut JsScope<'a>,
+    handle: Option<JsLocal<'a, JSObject>>,
+) -> JsResult<()> {
+    let global = cx.global();
+    if let Some(handle) = handle {
+        let js = handle.to_js();
         if let Some(f) = js.get(global, "close")? {
             if f.is_callable() {
                 f.call(global, js, &[])?;
             }
         }
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
     jsc::JSFunction::create(
         global,
         "",
-        __jsc_host_close_sent_handle,
+        crate::generated_bindgen::ipc::Bun__IPC__closeSentHandle,
         1,
         Default::default(),
     )

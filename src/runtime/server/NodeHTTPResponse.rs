@@ -17,7 +17,7 @@ use bun_uws_sys as uws_sys;
 use crate::generated_bindgen::node_http_response::js_NodeHTTPResponse as js;
 use crate::node::{Encoding, StringOrBuffer};
 use crate::server::jsc::{
-    self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
+    self, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
 use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
 use crate::webcore::AutoFlusher;
@@ -503,7 +503,7 @@ impl NodeHTTPResponse {
     /* Pipelined flood prevention pauses READS on the connection, legal after the in-flight
      * response has ended — so this intentionally skips doPause's ENDED/REQUEST_HAS_COMPLETED
      * guards (those exist for request-body flow control). */
-    pub(crate) fn pause_socket_reads(&self) {
+    pub(crate) fn pause_reads(&self) {
         let flags = self.flags.get();
         let Some(raw) = self.reader() else {
             return;
@@ -571,7 +571,7 @@ impl NodeHTTPResponse {
         if !self.can_upgrade() {
             return Ok(None);
         }
-        let mut server = self.server;
+        let server = self.server;
         server.init_ws_package_handlers(global, handlers)?;
         self.resume_socket();
         if !self.can_upgrade() {
@@ -590,7 +590,7 @@ impl NodeHTTPResponse {
         };
 
         let ws = ServerWebSocket::init_for_ws_package(handler.get(), websocket);
-        // SAFETY: `init` just allocated `ws`, and its JS wrapper owns it.
+        // SAFETY: `init` just stored `ws` inline in its JS wrapper, which `ws` keeps alive.
         let ws_ref = unsafe { &*ws };
 
         let armed_reader = self.armed_this_value.get();
@@ -744,7 +744,7 @@ impl NodeHTTPResponse {
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
 
-        let mut server = self.server;
+        let server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
         self.unregister_auto_flush();
 
@@ -1360,7 +1360,7 @@ impl NodeHTTPResponse {
         self.handle_abort_or_timeout::<{ AbortEvent::Timeout }>(JSValue::ZERO);
     }
 
-    pub(crate) fn do_pause(&self) -> bool {
+    pub(crate) fn pause(&self) -> bool {
         scoped_log!(NodeHTTPResponse, "doPause");
         let flags = self.flags.get();
         let ended = flags.contains(Flags::REQUEST_HAS_COMPLETED) || flags.contains(Flags::ENDED);
@@ -1375,7 +1375,7 @@ impl NodeHTTPResponse {
         true
     }
 
-    pub(crate) fn do_resume(&self) -> bool {
+    pub(crate) fn resume(&self) -> bool {
         scoped_log!(NodeHTTPResponse, "doResume");
         // Unconditional: a paused socket defers the peer's FIN until it is resumed.
         self.resume_socket();
@@ -1399,13 +1399,13 @@ impl NodeHTTPResponse {
     }
 }
 
-#[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onResolve")]
-fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
+pub(crate) fn on_resolve(
+    cx: &mut JsScope<'_>,
+    _: JsLocal<'_>,
+    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_>),
+) {
     scoped_log!(NodeHTTPResponse, "onResolve");
-    let arguments = callframe.arguments_as_array::<2>();
-    // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
-    // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+    let global_object = cx.global();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1413,7 +1413,7 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(arguments[1]);
+    this.maybe_stop_reading_body(wrapper.to_js());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !this.is_socket_closed_or_closing() {
@@ -1438,16 +1438,14 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
     if had_promise {
         this.deref();
     }
-    JSValue::UNDEFINED
 }
 
-#[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onReject")]
-fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
-    let arguments = callframe.arguments_as_array::<2>();
-    let err = arguments[0];
-    // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
-    // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+pub(crate) fn on_reject(
+    cx: &mut JsScope<'_>,
+    err: JsLocal<'_>,
+    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_>),
+) {
+    let global_object = cx.global();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1455,7 +1453,7 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(arguments[1]);
+    this.maybe_stop_reading_body(wrapper.to_js());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -1482,11 +1480,10 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
         this.on_request_complete();
     }
 
-    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, true);
+    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err.to_js(), true);
     if had_promise {
         this.deref();
     }
-    JSValue::UNDEFINED
 }
 
 impl NodeHTTPResponse {
@@ -2045,7 +2042,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub(crate) fn set_on_writable(
+    pub(crate) fn set_onwritable(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -2073,7 +2070,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub(crate) fn get_on_writable(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+    pub(crate) fn get_onwritable(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         // Only the armed drain callback of a live response: end() and a close leave the slot as it was.
         if self.is_done() {
             return JSValue::UNDEFINED;
@@ -2083,7 +2080,7 @@ impl NodeHTTPResponse {
             .unwrap_or(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn get_on_abort(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+    pub(crate) fn get_onabort(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         let flags = self.flags.get();
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::UNDEFINED;
@@ -2091,7 +2088,7 @@ impl NodeHTTPResponse {
         js::on_aborted_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn set_on_abort(
+    pub(crate) fn set_onabort(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -2114,7 +2111,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub(crate) fn get_on_data(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+    pub(crate) fn get_ondata(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         js::on_data_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
     }
 
@@ -2143,7 +2140,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub(crate) fn set_on_data(
+    pub(crate) fn set_ondata(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -2363,9 +2360,9 @@ impl NodeHTTPResponse {
     pub(crate) fn cork(
         &self,
         cx: &mut JsScope<'_>,
-        corked_fn: JsLocal<'_, Callable>,
+        callback: JsLocal<'_, Callable>,
     ) -> JsResult<JSValue> {
-        let (global_object, corked_fn) = (cx.global(), corked_fn.to_js());
+        let (global_object, callback) = (cx.global(), callback.to_js());
 
         let flags = self.flags.get();
         if flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -2399,10 +2396,10 @@ impl NodeHTTPResponse {
                 // Capture `this` so a `self`-derived pointer reaches the FFI
                 // closure-data slot (see the R-2 note above).
                 let _escape = this;
-                result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
+                result = callback.call(global_object, JSValue::UNDEFINED, &[]);
             });
         } else {
-            result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
+            result = callback.call(global_object, JSValue::UNDEFINED, &[]);
         }
 
         result

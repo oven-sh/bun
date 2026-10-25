@@ -1043,7 +1043,7 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 
     // `Atomics.Mutex`, `Atomics.Condition`, `Reflect.canBeShared` and `SharedArray` are lazy here too, as in the default
     // realm. The sandbox is not set yet, so the context's own builtins are the ones that get them.
-    defineStructsSurfaceLazily(this);
+    Zig::defineStructsSurfaceLazily(this);
     RETURN_IF_EXCEPTION(scope, );
 
     // microtaskMode: "afterEvaluate" — give this context its own microtask

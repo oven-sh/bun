@@ -1337,7 +1337,13 @@ export class LocalType extends Type {
   }
 }
 export const objectType = new LocalType("Bun::Bindgen::IDLRawObject", "object", "bun_jsc::JSObject", "any", nonObjects);
-export const jsArrayType = new LocalType("Bun::Bindgen::IDLRawArray", "any[]", "bun_jsc::JSArray", ["array"], null);
+export const jsArrayType = new LocalType(
+  "Bun::Bindgen::IDLRawArray",
+  "readonly any[]",
+  "bun_jsc::JSArray",
+  ["array"],
+  null,
+);
 export const stringLikeType = new LocalType(
   "Bun::Bindgen::IDLRawStringLike",
   "string | String",
@@ -2410,6 +2416,9 @@ export class DictionaryType extends NamedType {
   }
   get nonObjectAsEmpty(): boolean | "typeof" {
     return this.options.nonObjectAsEmpty ?? false;
+  }
+  get tsType(): string {
+    return this.nonObjectAsEmpty ? `${this.name} | null | undefined` : this.name;
   }
   get refuses(): string | null {
     return this.nonObjectAsEmpty ? null : nonObjects;

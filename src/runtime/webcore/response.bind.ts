@@ -37,6 +37,7 @@ const Blob = b.wrapped("Bun::Bindgen::Generated::JSBlob", "GeneratedBlob.h", {
 });
 const BuildArtifact = b.wrapped("Bun::Bindgen::Generated::JSBuildArtifact", "GeneratedJSBundler.h", {
   rustPath: "crate::api::js_bundler::BuildArtifact",
+  tsType: "Bun.BuildArtifact",
 });
 /**
  * It is also a member of a dictionary, where what keeps an instance alive is its `.withValue`.

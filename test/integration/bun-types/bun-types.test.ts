@@ -311,6 +311,7 @@ function checkForEmptyInterfaces(program: ts.Program) {
 const PUBLISHED_AS: Record<string, string | null> = {
   "Archive.bind.ts": "typeof Bun",
   "Blob.bind.ts": "typeof Bun & { Blob: Class<Bun.BunFile> }",
+  "BlobArguments.bind.ts": null,
   "BlockList.bind.ts": null,
   "BunObject.bind.ts":
     "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape; table: typeof Bun.inspect.table }",
@@ -524,9 +525,15 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
     if (never.length > 0) broken.push(`${path} has no ${never.join(", ")}`);
     const calls = schema.getCallSignatures();
     const constructs = schema.getConstructSignatures();
+    const absent = parts(schema).filter(part => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
+    const present = checker.getNonNullableType(schema);
+    if (absent.length > 0 && isGenerated(present)) {
+      if (absent.some(part => !checker.isTypeAssignableTo(part, published)))
+        broken.push(`${path} is ${show(schema)}, not ${show(published)}`);
+      return compare(path, checker.getNonNullableType(published), present);
+    }
     if (calls.length === 0 && constructs.length === 0 && !isGenerated(schema)) {
       const promisesNothing = published.flags & ts.TypeFlags.Void;
-      const absent = parts(schema).filter(part => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
       if (
         !promisesNothing &&
         (!checker.isTypeAssignableTo(published, schema) ||
@@ -595,7 +602,9 @@ describe("@types/bun integration test", () => {
       pairs,
       `export type Published = {\n${Object.entries(PUBLISHED_AS)
         .map(([file, type]) => `  ${JSON.stringify(file)}: ${type};\n`)
-        .join("")}};\nexport type Schemas = $Bindgen.Exports;\ntype Class<T> = { new (): T; prototype: T };\n`,
+        .join(
+          "",
+        )}};\nexport type Schemas = $Bindgen.Exports;\ntype Class<T> = { new (...args: any): T; prototype: T };\n`,
     );
     const program = ts.createProgram({
       rootNames: [join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "index.d.ts"), join(dir, "Bindgen.d.ts"), pairs],
@@ -621,6 +630,13 @@ describe("@types/bun integration test", () => {
           ).map(promise => `${file}: ${promise}`),
         ),
     ).toEqual([
+      // Published as the type of its argument.
+      "Crypto.bind.ts: new Crypto().getRandomValues() is ArrayBuffer | ArrayBufferView<ArrayBufferLike>, not T",
+      // `JSX.Element`, which is `unknown` without the types of React.
+      "MarkdownObject.bind.ts: react() is object, not unknown",
+      // An `S3File` is a `Blob` to which C++ adds `bucket` and `presign`. Nothing has ever had `readable`.
+      "S3Client.bind.ts: new S3Client().file() has no readable, bucket, presign",
+      "S3Client.bind.ts: new S3Client().file().lastModified is not published",
       // bun.d.ts and s3.d.ts do not declare these.
       "Sink.bind.ts: ArrayBufferSink is not published as a function",
       "Sink.bind.ts: new ArrayBufferSink().close is not published",
@@ -638,10 +654,22 @@ describe("@types/bun integration test", () => {
       "Sink.bind.ts: new NetworkSink().close is not published",
       "Sink.bind.ts: new NetworkSink()._getFd is not published",
       "Sink.bind.ts: new NetworkSink().sinkId is not published",
+      // Published by the type of its argument.
+      "TOMLObject.bind.ts: stringify() is string | undefined, not T extends symbol | Function | undefined ? undefined : T extends object ? string : string | undefined",
       // Published, and nothing has ever read it.
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
+      // `undefined` for `undefined`, a function or a symbol, as from `JSON.stringify`.
+      "XMLObject.bind.ts: stringify() is string | undefined, not string",
+      "YAMLObject.bind.ts: stringify() is string | undefined, not string",
       // `keepalive` and `duplex` are declared on Request but not implemented.
       "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no keepalive, duplex",
+      // bun.d.ts does not declare `connected` and `writable`, in either overload.
+      "js_bun_spawn_bindings.bind.ts: spawn().connected is not published",
+      "js_bun_spawn_bindings.bind.ts: spawn().writable is not published",
+      // `undefined` once the process has exited.
+      "js_bun_spawn_bindings.bind.ts: spawn().[Symbol.asyncDispose]() is Promise<any> | undefined, not PromiseLike<void>",
+      "js_bun_spawn_bindings.bind.ts: spawn().connected is not published",
+      "js_bun_spawn_bindings.bind.ts: spawn().writable is not published",
       // globals.d.ts does not declare these.
       "resolve_message.bind.ts: new BuildMessage().toJSON is not published",
       "resolve_message.bind.ts: new BuildMessage().column is not published",
@@ -649,11 +677,16 @@ describe("@types/bun integration test", () => {
       "resolve_message.bind.ts: new BuildMessage().notes is not published",
       "resolve_message.bind.ts: new BuildMessage().[Symbol.toPrimitive] is not published",
       "resolve_message.bind.ts: new ResolveMessage().toJSON is not published",
+      // `undefined` for a message that is not about resolving.
+      'resolve_message.bind.ts: new ResolveMessage().code is "ERR_UNKNOWN_BUILTIN_MODULE" | "MODULE_NOT_FOUND" | "ERR_MODULE_NOT_FOUND" | "RESOLVE_ERROR" | undefined, not string',
       "resolve_message.bind.ts: new ResolveMessage().column is not published",
       "resolve_message.bind.ts: new ResolveMessage().line is not published",
       "resolve_message.bind.ts: new ResolveMessage().requireStack is not published",
       "resolve_message.bind.ts: new ResolveMessage().stack is not published",
       "resolve_message.bind.ts: new ResolveMessage().[Symbol.toPrimitive] is not published",
+      "response.bind.ts: new Request().clone() has no keepalive, duplex",
+      // `undefined` once it has closed.
+      "server.bind.ts: new ServerWebSocket().remoteAddress is string | undefined, not string",
       // `pendingDeclarations` in test/internal/source-lints/redis-client-types.test.ts.
       "valkey.bind.ts: new RedisClient().psubscribe is not published",
       "valkey.bind.ts: new RedisClient().pubsub is not published",

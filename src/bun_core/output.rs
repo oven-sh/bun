@@ -1332,6 +1332,11 @@ pub fn print_bytes(bytes: &[u8]) {
     write_bytes(Destination::Stdout, bytes);
 }
 
+/// Bytes to stderr exactly as given (no UTF-8 replacement), through the same writer `print_error` uses.
+pub fn print_error_bytes(bytes: &[u8]) {
+    write_bytes(Destination::Stderr, bytes);
+}
+
 /// `bun.Output.println(fmt, args)` — `print()` with a trailing newline.
 #[inline]
 pub fn println(args: fmt::Arguments<'_>) {

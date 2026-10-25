@@ -2,7 +2,7 @@ use bun_core::pretty_errorln;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var};
 #[cfg(not(windows))]
-use bun_core::{note, print_errorln};
+use bun_core::{note, pretty_error, print_errorln};
 #[cfg(not(windows))]
 use bun_paths::{platform, resolve_path};
 use bun_sys::{self, E, File};
@@ -45,7 +45,7 @@ impl InstallCompletionsCommand {
             (env_var::HOME.get(), b"/.local/bin/".as_slice()),
         ] {
             let Some(dir) = dir else { continue };
-            // Raw bytes: a formatted path has U+FFFD in place of each byte that is not UTF-8.
+            // Formatting the path would replace invalid UTF-8 and name a different directory.
             let Ok(link_path) = strings::concat_buf_t::<u8>(
                 &mut link_buf[..],
                 &[dir, bin_dir, Self::BUNX_NAME.as_bytes(), b"\0"],
@@ -535,11 +535,17 @@ impl InstallCompletionsCommand {
                 };
 
                 if needs_to_tell_them_to_add_completions_file {
-                    pretty_errorln!(
-                        "<r>To enable completions, add this to your .zshrc:\n      <b>[ -s \"{}\" ] && source \"{}\"",
-                        bstr::BStr::new(completions_path),
-                        bstr::BStr::new(completions_path),
-                    );
+                    pretty_error!("<r>To enable completions, add this to your .zshrc:\n      <b>");
+                    // Same bytes as the .zshrc line above: a pasted copy is found again.
+                    for part in [
+                        b"[ -s \"".as_slice(),
+                        completions_path,
+                        b"\" ] && source \"",
+                        completions_path,
+                        b"\"\n",
+                    ] {
+                        Output::print_error_bytes(part);
+                    }
                 }
             }
 

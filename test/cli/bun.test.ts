@@ -526,9 +526,10 @@ describe("bun", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.bytes(), proc.exited]);
       expect(stdout).toBe("");
-      return { stderr, exitCode };
+      // latin1 keeps every byte of a path that is not UTF-8.
+      return { stderr: Buffer.from(stderr).toString(), stderrLatin1: Buffer.from(stderr).toString("latin1"), exitCode };
     }
 
     // A fresh fish setup has `fish/` and no `fish/completions/`. The search then ended at /etc/fish/completions.
@@ -674,6 +675,26 @@ describe("bun", () => {
         // latin1 keeps every byte, and a failure prints a diff that a person can read.
         expect(written.subarray(zshrc.length).toString("latin1")).toBe(line(`${home.toString("latin1")}/.bun/_bun`));
         expect(written.subarray(0, zshrc.length).equals(zshrc)).toBe(true);
+        expect(exitCode).toBe(0);
+      });
+
+      // Without a .zshrc to edit, the user gets the line to add. The next run looks for a copy of it.
+      test.concurrent.skipIf(!isLinux)("prints a path that is not valid UTF-8 in the hint as it is", async () => {
+        using dir = tempDir("completions-hint-raw", {});
+        const home = Buffer.concat([Buffer.from(join(fs.realpathSync(String(dir)), "jos")), Buffer.from([0xe9])]);
+        const dotZshrc = Buffer.concat([home, Buffer.from("/.zshrc")]);
+        fs.mkdirSync(Buffer.concat([home, Buffer.from("/.oh-my-zsh/completions")]), { recursive: true });
+        const run = () =>
+          installCompletions([], { ZDOTDIR: undefined, SHELL: "/bin/zsh" }, withRawHome(String(dir), home, bunExe()));
+        const path = `${home.toString("latin1")}/.oh-my-zsh/completions/_bun`;
+        const hint = `[ -s "${path}" ] && source "${path}"\n`;
+
+        expect((await run()).stderrLatin1).toContain(`add this to your .zshrc:\n      ${hint}`);
+
+        fs.writeFileSync(dotZshrc, hint, "latin1");
+        const { stderrLatin1, exitCode } = await run();
+        expect(stderrLatin1).not.toContain("To enable completions");
+        expect(fs.readFileSync(dotZshrc, "latin1")).toBe(hint);
         expect(exitCode).toBe(0);
       });
     });

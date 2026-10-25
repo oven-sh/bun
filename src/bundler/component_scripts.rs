@@ -26,6 +26,8 @@ pub(crate) fn for_each<'a>(path: &[u8], contents: &'a [u8], mut each: impl FnMut
 fn scripts_before_end_tag<'a>(part: &'a [u8], each: &mut impl FnMut(&'a [u8])) {
     // A script runs to the end of the part, and so does a stray `<script` before it: the part gives twice its text in full.
     let mut in_full = part.len() * 2;
+    // An attribute value can have a `<script`. The open tag then ends after the next one, and the part gives its text once to find that end.
+    let mut past_next = part.len();
     let mut next = strings::index_of(part, b"<script");
     let mut rest = part;
     while let Some(at) = next {
@@ -34,12 +36,17 @@ fn scripts_before_end_tag<'a>(part: &'a [u8], each: &mut impl FnMut(&'a [u8])) {
         let until_next = &rest[..next.unwrap_or(rest.len())];
         if let Some(tag_end) = end_of_open_tag(until_next) {
             let to_end = &rest[tag_end + 1..];
-            // After that, a script ends at the next `<script`, so the parser gets each byte three times at most for each language.
+            // After that, a script ends at the next `<script`, so the parser gets each byte four times at most for each language.
             if to_end.len() <= in_full {
                 in_full -= to_end.len();
                 each(to_end);
             } else {
                 each(&until_next[tag_end + 1..]);
+            }
+        } else if next.is_some() && rest.len() <= past_next {
+            past_next -= rest.len();
+            if let Some(tag_end) = end_of_open_tag(rest) {
+                each(&rest[tag_end + 1..]);
             }
         }
     }

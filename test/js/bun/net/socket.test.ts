@@ -2048,8 +2048,16 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     if (!socketFaultInjection.available()) return undefined;
     socketFaultInjection.set({ syscall: "send", action: "zero" });
     const wrote = socket.write(probeStep);
-    socketFaultInjection.clear();
+    refuseSilent();
     return wrote;
+  };
+  // Whether the kernel takes the rest after a while is the kernel's call, unless it's made to refuse. There is one rule at a time.
+  let silentFd = -1;
+  const refuseSilent = () => {
+    if (!socketFaultInjection.available()) return;
+    socketFaultInjection.clear();
+    if (silentFd >= 0)
+      socketFaultInjection.set({ syscall: "send", action: "errno", errno: "EAGAIN", fd: silentFd, repeat: -1 });
   };
   const fdIsOpen = (fd: number) => {
     try {
@@ -2103,22 +2111,25 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     socket.timeout(1);
     socket.end();
   };
-  // A write that ends short leaves ciphertext unsent, and end() in the same tick finds it there.
-  const fillAndEnd = (socket: Socket) => {
-    fill(socket);
-    end(socket);
-  };
-
   const probeReady = Promise.withResolvers<Socket>();
   await connected(probeReady.resolve);
   const probe = await probeReady.promise;
   // The next sweep that isn't run from here is 4 s away now, and every wait below starts early in those 4 s.
   sweepSocketTimers(1);
   const closed: Promise<number>[] = [];
-  for (const _peer of [SILENT, DRIPPING, UNANSWERING]) {
+  for (const peer of [SILENT, DRIPPING, UNANSWERING]) {
     const { promise, resolve } = Promise.withResolvers<number>();
     closed.push(promise);
-    await connected(fillAndEnd, () => resolve(sweeps));
+    await connected(
+      socket => {
+        fill(socket);
+        if (peer === SILENT && socketFaultInjection.available()) silentFd = (socket as any).fd;
+        refuseSilent();
+        // A write that ends short leaves ciphertext unsent, and end() in the same tick finds it there.
+        end(socket);
+      },
+      () => resolve(sweeps),
+    );
   }
   const lateClosed = Promise.withResolvers<number>();
   closed.push(lateClosed.promise);
@@ -2140,7 +2151,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
   if (refuses) socketFaultInjection.set({ syscall: "send", action: "zero", fd: destroyedFd, repeat: -1 });
   destroyed.destroy();
   const openAfterDestroy = fdIsOpen(destroyedFd);
-  if (refuses) socketFaultInjection.clear();
+  if (refuses) refuseSilent();
   await once(destroyed, "close");
   // The kernel takes the unsent rest after a while, and the next write with it. The close_notify then goes out too, and
   // all that this close waits for is the reply of a peer that reads none of it.
@@ -2182,7 +2193,8 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
         timeouts,
         cutShort: [missing(SILENT) > 0, missing(DRIPPING) > 0],
         atTheDeadline: [
-          closedAtSweep[SILENT - 1] === 3,
+          // Once the kernel has taken the rest, the wait for the peer's close_notify is a second one.
+          closedAtSweep[SILENT - 1] >= 3 && closedAtSweep[SILENT - 1] <= (silentFd >= 0 ? 3 : 5),
           closedAtSweep[DRIPPING - 1] >= 3 && closedAtSweep[DRIPPING - 1] <= 6,
           closedAtSweep[LATE - 1] === 3,
         ],
@@ -2200,6 +2212,8 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
       missing: 0,
     });
   } finally {
+    silentFd = -1;
+    refuseSilent();
     probe.terminate();
     for (const peer of peers) peer.terminate();
   }
@@ -2242,10 +2256,14 @@ it.each([
     },
   });
   const [peer, client] = await Promise.all([accepted.promise, ready.promise]);
+  const refuses = unsent && socketFaultInjection.available();
+  const fd: number = (client as any).fd;
   try {
     // A write that ends short leaves ciphertext unsent.
     const step = Buffer.alloc(1024 * 1024, "a");
     while (unsent && client.write(step) === step.length);
+    // Whether the kernel takes the rest after a while is the kernel's call, unless it's made to refuse.
+    if (refuses) socketFaultInjection.set({ syscall: "send", action: "errno", errno: "EAGAIN", fd, repeat: -1 });
     // The next sweep that isn't run from here is 4 s away now.
     sweepSocketTimers(1);
     client.end();
@@ -2257,8 +2275,18 @@ it.each([
       sweeps++;
       sweepSocketTimers(1);
     }
-    expect({ sweeps, read, heard }).toEqual({ sweeps: 3, read: 3, heard: ["close"] });
+    // Once the kernel has taken the rest, the wait for the peer's close_notify is a second one, with a deadline of its own.
+    const latest = unsent && !refuses ? 5 : 3;
+    expect(
+      { atTheDeadline: sweeps >= 3 && sweeps <= latest, endedAgain: read === sweeps, heard },
+      `${sweeps} sweeps`,
+    ).toEqual({
+      atTheDeadline: true,
+      endedAgain: true,
+      heard: ["close"],
+    });
   } finally {
+    if (refuses) socketFaultInjection.clear();
     peer.terminate();
     client.terminate();
   }
@@ -2625,6 +2653,37 @@ describe.skipIf(!socketFaultInjection.available())("a TLS close whose close_noti
         wrote: reply.length,
         received: reply.length,
         events: { accepted: ["close"], client: ["end"] },
+      });
+    },
+  );
+
+  // Part of what was written can't be delivered any more, so the stream must not look whole.
+  it.each(["end", "shutdown"] as const)(
+    "%s() behind data that still waits for the kernel gives the peer no end of the stream when the listener's stop(true) follows",
+    async how => {
+      using pair = await connectedPair();
+      const over = Promise.withResolvers<void>();
+      let received = 0;
+      const heard = (event: string) => {
+        pair.events.client.push(event);
+        over.resolve();
+      };
+      pair.client.reload({
+        socket: {
+          data: (_socket, chunk) => void (received += chunk.length),
+          end: () => heard("end"),
+          close: (_socket, error) => heard(error ? `close: ${(error as any).code}` : "close"),
+        },
+      });
+      putOff((pair.accepted as any).fd, -1);
+      const wrote = pair.accepted.write(Buffer.alloc(64 * 1024, "r"));
+      pair.accepted[how]();
+      pair.server.stop(true);
+      await over.promise;
+      expect({ wrote, received, events: pair.events }).toEqual({
+        wrote: 64 * 1024,
+        received: 0,
+        events: { accepted: ["close"], client: ["close: ECONNRESET"] },
       });
     },
   );

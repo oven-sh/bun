@@ -74,7 +74,7 @@ const {
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
 
-const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
+const { IncomingMessage, kReqShouldKeepAlive, readStart } = require("node:_http_incoming");
 const {
   OutgoingMessage,
   kErrored,
@@ -1756,6 +1756,12 @@ function connectionListenerInternal(server, socket) {
   parser._consumed = socket._handle?.fd >= 0;
   // Node's parser reads from the handle, so a pause() by the socket's previous owner doesn't stop it.
   socket.resume();
+  process.nextTick(readStartAfterAttach, socket);
+}
+
+// Nor does a pause() by a 'connection' listener behind ours: in Node the 'resume' event of that call starts the handle's reads. Bytes that were put back may have handed the socket to 'upgrade' or 'connect' by now.
+function readStartAfterAttach(socket) {
+  if (socket.parser) readStart(socket);
 }
 
 function socketSetEncoding(): never {

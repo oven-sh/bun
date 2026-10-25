@@ -996,7 +996,10 @@ describe.each(["http", "https", "emit('connection')", "http2 with allowHTTP1"] a
   const secure = kind === "https" || kind === "http2 with allowHTTP1";
   const get = (url: string) => `GET ${url} HTTP/1.1\r\nHost: a\r\n\r\n`;
 
-  async function start(listener: (req: IncomingMessage, res: ServerResponse) => void) {
+  async function start(
+    listener: (req: IncomingMessage, res: ServerResponse) => void,
+    onConnection?: (socket: Socket) => void,
+  ) {
     const urls: string[] = [];
     let onRequest: (() => void) | undefined;
     const counting = (req: IncomingMessage, res: ServerResponse) => {
@@ -1011,6 +1014,7 @@ describe.each(["http", "https", "emit('connection')", "http2 with allowHTTP1"] a
         : kind === "http2 with allowHTTP1"
           ? createHttp2SecureServer({ ...tlsOptions, allowHTTP1: true }, counting as any)
           : createServer(counting);
+    if (onConnection) server.on(secure ? "secureConnection" : "connection", onConnection);
     const listening =
       kind === "emit('connection')" ? createNetServer(socket => server.emit("connection", socket)) : server;
     await once(listening.listen(0, "127.0.0.1"), "listening");
@@ -1072,6 +1076,16 @@ describe.each(["http", "https", "emit('connection')", "http2 with allowHTTP1"] a
     await closed.promise;
   });
 
+  it("in a 'connection' listener doesn't hold back the first request", async () => {
+    using connection = await start(
+      (req, res) => void res.end("ok"),
+      socket => void socket.pause(),
+    );
+    connection.client.write(get("/first"));
+    await connection.dispatched(1);
+    expect(connection.urls).toEqual(["/first"]);
+  });
+
   it("a tick after the request listener stays", async () => {
     using connection = await start((req, res) => {
       if (req.url === "/held") process.nextTick(() => req.socket.pause());
@@ -1105,3 +1119,43 @@ describe.each(["http", "https", "emit('connection')", "http2 with allowHTTP1"] a
     });
   });
 });
+
+it.each(["upgrade", "connect"] as const)(
+  "a pause by the '%s' listener stays when a front server put the request back and emitted 'connection'",
+  async event => {
+    const server = createServer();
+    const handedOff = Promise.withResolvers<Duplex>();
+    server.on(event, (req, socket) => {
+      socket.pause();
+      handedOff.resolve(socket);
+    });
+    const front = createNetServer(socket => {
+      socket.once("data", chunk => {
+        socket.pause();
+        socket.unshift(chunk);
+        server.emit("connection", socket);
+      });
+    });
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const client = connect((front.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.write(
+        event === "upgrade"
+          ? "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n"
+          : "CONNECT a:1 HTTP/1.1\r\nHost: a:1\r\n\r\n",
+      );
+      const tunnel = await handedOff.promise;
+      tunnel.on("error", () => {});
+      await new Promise(resolve => setImmediate(resolve));
+      expect(tunnel.isPaused()).toBe(true);
+      client.write("tunnel");
+      const [chunk] = await once(tunnel.resume(), "data");
+      expect(String(chunk)).toBe("tunnel");
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      front.close();
+    }
+  },
+);

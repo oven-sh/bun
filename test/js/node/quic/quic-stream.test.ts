@@ -1745,19 +1745,20 @@ describe("a closed stream", () => {
       this.sendHeaders({ ":status": "200", "x-served-by": "bun" }, { terminal: true });
     });
     const client = await connectTo(server);
-
-    const stream = await client.createBidirectionalStream({ headers: request, onheaders: received.resolve });
-    const [serverStream, response] = await Promise.all([served.promise, received.promise]);
-    await Promise.all([stream.closed, serverStream.closed]);
-    const closed = {
-      client: { destroyed: stream.destroyed, headers: stream.headers },
-      server: { destroyed: serverStream.destroyed, headers: serverStream.headers },
-    };
-    client.close();
-    expect(closed).toEqual({
-      client: { destroyed: true, headers: response },
-      server: { destroyed: true, headers: request },
-    });
+    try {
+      const stream = await client.createBidirectionalStream({ headers: request, onheaders: received.resolve });
+      const [serverStream, response] = await Promise.all([served.promise, received.promise]);
+      await Promise.all([stream.closed, serverStream.closed]);
+      expect({
+        client: { destroyed: stream.destroyed, headers: stream.headers },
+        server: { destroyed: serverStream.destroyed, headers: serverStream.headers },
+      }).toEqual({
+        client: { destroyed: true, headers: response },
+        server: { destroyed: true, headers: request },
+      });
+    } finally {
+      client.close();
+    }
   });
 
   test("keeps the pendingTrailers it did not send", async () => {
@@ -1776,38 +1777,40 @@ describe("a closed stream", () => {
       }
     });
     const client = await connectTo(server);
+    try {
+      // The trailers that the client got, and what the server's stream has left once both ends are closed.
+      const respond = async (path: string) => {
+        let peer: Record<string, any> | undefined;
+        const stream = await client.createBidirectionalStream({
+          headers: { ...request, ":path": path },
+          onheaders() {},
+          ontrailers(block: Record<string, any>) {
+            peer = block;
+          },
+        });
+        for await (const _ of stream);
+        await Promise.all([stream.closed, served[path].closed]);
+        return { peer, pendingTrailers: served[path].pendingTrailers };
+      };
+      const sent = await respond("/body");
+      const noBody = await respond("/no-body");
 
-    // The trailers that the client got, and what the server's stream has left once both ends are closed.
-    const respond = async (path: string) => {
-      let peer: Record<string, any> | undefined;
-      const stream = await client.createBidirectionalStream({
-        headers: { ...request, ":path": path },
-        onheaders() {},
-        ontrailers(block: Record<string, any>) {
-          peer = block;
-        },
+      const stream = await client.createBidirectionalStream({});
+      stream.closed.catch(() => {});
+      // The request body is still open when the stream is destroyed.
+      stream.sendHeaders(request);
+      stream.pendingTrailers = trailers;
+      stream.destroy();
+      const destroyed = { pendingTrailers: stream.pendingTrailers };
+
+      expect({ sent, noBody, destroyed }).toEqual({
+        sent: { peer: trailers, pendingTrailers: undefined },
+        noBody: { peer: undefined, pendingTrailers: trailers },
+        destroyed: { pendingTrailers: trailers },
       });
-      for await (const _ of stream);
-      await Promise.all([stream.closed, served[path].closed]);
-      return { peer, pendingTrailers: served[path].pendingTrailers };
-    };
-    const sent = await respond("/body");
-    const noBody = await respond("/no-body");
-
-    const stream = await client.createBidirectionalStream({});
-    stream.closed.catch(() => {});
-    // The request body is still open when the stream is destroyed.
-    stream.sendHeaders(request);
-    stream.pendingTrailers = trailers;
-    stream.destroy();
-    const destroyed = { pendingTrailers: stream.pendingTrailers };
-    client.close();
-
-    expect({ sent, noBody, destroyed }).toEqual({
-      sent: { peer: trailers, pendingTrailers: undefined },
-      noBody: { peer: undefined, pendingTrailers: trailers },
-      destroyed: { pendingTrailers: trailers },
-    });
+    } finally {
+      client.close();
+    }
   });
 });
 

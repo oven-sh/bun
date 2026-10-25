@@ -1520,7 +1520,7 @@ impl JSTranspiler {
         let global = cx.global();
         let (code_holder, loader) = code_and_loader_from_js(global, code_arg, loader_arg.to_js())?;
         let code = code_holder.slice();
-        let loader: Loader = loader.unwrap_or(self.config.get().default_loader);
+        let loader: Loader = loader.unwrap_or_else(|| self.config.get().default_loader);
 
         if !loader.is_java_script_like() {
             return Err(global.throw_invalid_arguments(format_args!(

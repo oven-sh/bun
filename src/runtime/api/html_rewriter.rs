@@ -1364,7 +1364,8 @@ impl RewriterPipe {
             return held(len);
         }
         let fed = if copy_before_handlers {
-            self.feed(&bytes.to_vec())
+            let copy = bytes.to_vec();
+            self.feed(&copy)
         } else {
             self.feed(bytes)
         };

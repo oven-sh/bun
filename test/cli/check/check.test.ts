@@ -13954,6 +13954,59 @@ export const b = define({
       expect(exitCode).toBe(1);
     });
 
+    // The comparison of `double` with `() => any` that finds the circularity is stored, so the argument of the call in
+    // `text` doesn't compare them again. A call starts a new resolution stack. There `double` gets its return type, and
+    // the resolution that's circular keeps it.
+    test("a circular return type keeps the type that a call's argument resolved in the meantime", async () => {
+      using dir = project({
+        "a.ts": `type Computed = { [k: string]: (() => any) | string };
+type Values<C> = { [K in keyof C]: C[K] extends () => infer R ? R : never };
+declare function define<D = {}, C extends Computed = {}>(o: {
+  data?(): D;
+  computed?: C & ThisType<D & Values<C>>;
+  watch?: { [K in keyof D]?: (now: D[K]) => void };
+}): D & Values<C>;
+declare function show(value: never): string;
+export const a = define({
+  data() { return { n: 0 }; },
+  computed: { double() { return this.n * 2; }, text() { return String(this.double); } },
+  watch: { n(now) {} },
+});
+export const double: never = a.double;
+export const b = define({
+  data() { return { n: 0 }; },
+  computed: { double() { return this.n * 2; }, text() { return show(this); } },
+  watch: { n(now) {} },
+});
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(11,15): error TS7023: 'double' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(11,48): error TS7023: 'text' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(14,14): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(17,15): error TS7023: 'double' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(17,48): error TS7023: 'text' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(17,69): error TS2345: Argument of type '{ n: number; } & Values<{ double(): number; text(): any; }>' is not assignable to parameter of type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // A query that's rejected because the native stack is nearly used up is made again from further down. The
+    // comparison of the callback with the first overload's parameter that was cut short isn't stored.
+    test.skipIf(isDebug || isASAN)("compares again what was compared when the stack was nearly used up", async () => {
+      using dir = project({
+        "a.ts": `export const last: never = f3000();
+declare function pick(cb: () => number): number;
+declare function pick(cb: () => string): string;
+function f0() { return "s"; }
+${Array.from({ length: 3000 }, (_, i) => `function f${i + 1}() { return pick(f${i}); }\n`).join("")}`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe("a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'never'.");
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS7022 and TS7023 when `return f()` checks the callee while another resolution is in progress", async () => {
       using dir = project({
         "a.ts": `export function p1() { const a = (x = (b() as any)) => x; function b() { return a(); } }

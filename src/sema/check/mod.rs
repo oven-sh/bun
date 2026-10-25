@@ -872,6 +872,7 @@ impl<'s> Program<'s> {
             taints_before_patterns: 0,
             cycles: 0,
             lowest_taint: usize::MAX,
+            taints_not_by_circular_returns: 0,
             context_checked_under: Vec::new(),
             initializers_resolved_by_nested_visit: Vec::new(),
             resolved_parameter_types: Default::default(),
@@ -1590,6 +1591,9 @@ pub struct Checker<'p, 's> {
     cycles: u64,
     /// The lowest index given to `mark_tainted_from` since the innermost `begin_scope`.
     lowest_taint: usize,
+    /// How many times `lowest_taint` was lowered, except where `getReturnTypeOfSignature` returned the error type
+    /// because `pushTypeResolution` found a cycle.
+    taints_not_by_circular_returns: u64,
     /// `contextualInfos`
     contextual: Vec<ContextualInfo>,
     /// The height of `stack` at which `getContextualType` finds nothing pushed. There, the contextual
@@ -1664,7 +1668,8 @@ pub struct Checker<'p, 's> {
     /// Only in a task that commits. The comparisons that succeed because a nested comparison was `TernaryMaybe`, for
     /// two deeply nested types or at 100 levels. Another task may get a different result, and in `Program::relations`
     /// the first result would win for every task. See `known_relation`. It lives as long as the task, like
-    /// everything the task has derived from it. Also the comparisons that replace a failure that's published already.
+    /// everything the task has derived from it. Also the comparisons that replace a failure that's published already,
+    /// and in every task those that got the error type from a circular type resolution.
     relations_of_this_task: FxHashMap<relate::Key, u8>,
     /// True if `insert_relation` stores in `relations_of_this_task`.
     stores_relations_per_task: bool,
@@ -3176,6 +3181,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `anonymous_members_in_place` entry that was read. A comparison that began since then isn't
     /// stored either, because in tsgo the entry of one that began earlier replaces it.
     fn note_members_in_place_read_above(&mut self, height: usize) {
+        self.taints_not_by_circular_returns += 1;
         self.lowest_taint = self.lowest_taint.min(height);
         for at in height..self.stack.len() {
             let q = self.stack[at];
@@ -3743,6 +3749,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn note_taint_event(&mut self, from: usize) {
+        self.taints_not_by_circular_returns += 1;
         let is_covered = |event: &(u64, u32)| event.1 as usize >= from;
         while self.taint_events.last().is_some_and(is_covered) {
             self.taint_events.pop();

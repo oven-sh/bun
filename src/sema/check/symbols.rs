@@ -4424,9 +4424,11 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(raw) = self.provisional(Query::Return(file, func)) {
             return TypeId(raw as u32);
         }
+        let other_taints = self.taints_not_by_circular_returns;
         if !self.enter(Query::Return(file, func)) {
             // `getReturnTypeOfSignature`
             return if self.found_cycle {
+                self.taints_not_by_circular_returns = other_taints;
                 TypeId::ERROR
             } else {
                 TypeId::UNRESOLVED
@@ -4434,20 +4436,19 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let ty = self.return_type_of_fn_uncached(file, func, CheckMode::empty());
         let left = self.leave(Query::Return(file, func));
-        if self.left_a_cycle {
-            let stored = self.cycle_result();
-            // Overwrites the value of an inner evaluation above a `resolution_start` barrier, if
-            // one was stored.
-            let any = (TypeId::ANY, true);
-            self.p
-                .fn_return_types
-                .rewrite(&self.task, (file, func), any, stored);
-            self.report_circular_return_type(Some(Query::Return(file, func)), file, func);
-            return TypeId::ANY;
-        }
         // `getReturnTypeOfSignature`: `sig.resolvedReturnType` is assigned only if it's nil, and
         // the caller gets that value.
-        if let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func)) {
+        let known = self.p.fn_return_types.get(&self.task, &(file, func));
+        if self.left_a_cycle {
+            let stored = self.cycle_result();
+            if known.is_none() {
+                let any = (TypeId::ANY, true);
+                (self.p.fn_return_types).insert(&self.task, (file, func), any, stored);
+            }
+            self.report_circular_return_type(Some(Query::Return(file, func)), file, func);
+            return known.map_or(TypeId::ANY, |(known, _)| known);
+        }
+        if let Some((known, _)) = known {
             return known;
         }
         match left {
@@ -4455,6 +4456,19 @@ impl<'p, 's> Checker<'p, 's> {
                 self.p
                     .fn_return_types
                     .insert(&self.task, (file, func), (ty, false), stored);
+            }
+            // The resolution below the `resolution_start` barrier finds this result when it ends. Nothing happened
+            // during this one that makes a result non-cacheable. Its frame only inherited that from the frame below.
+            Err(_)
+                if self.stack[..self.resolution_start.min(self.stack.len())]
+                    .contains(&Query::Return(file, func))
+                    && self.left_frame.is_some_and(|frame| {
+                        self.lowest_taint_since(frame.serial) == usize::MAX
+                            && self.rejected_at < frame.serial
+                    }) =>
+            {
+                let stored = Stored::new();
+                (self.p.fn_return_types).insert(&self.task, (file, func), (ty, false), stored);
             }
             Err(open) => self.cache_provisionally(Query::Return(file, func), u64::from(ty.0), open),
         }

@@ -1,5 +1,6 @@
-// What `--check` checks does not depend on the kind of project that the entry point is in, on how Bun gets to the entry
-// point, or on the command: every kind of project, with every kind of entry point, with and without a type error.
+// What `--check` checks doesn't depend on the kind of project the entry point is in, on how Bun gets to the entry
+// point, or on the command. This runs every kind of project with every kind of entry point, with and without a type
+// error.
 import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { availableParallelism } from "node:os";
@@ -20,13 +21,13 @@ const env = {
 };
 
 const options = { strict: true, types: [], lib: ["esnext"], module: "preserve", moduleResolution: "bundler" };
-// `paths`: an option that the defaults lack, so that it shows whose options a file is checked with.
+// `paths` isn't in the default options, so it shows whose options a file is checked with.
 const config = (more: object = {}, others: object = {}) =>
   JSON.stringify({ compilerOptions: { ...options, paths: { "@/*": ["./*"] }, ...more }, ...others });
 
-// `app`: where the entry point is, and where `bun` is started. `tsconfig`: `--tsconfig-override`. `isSolution`: the
-// nearest tsconfig.json has no files and no options of its own, so what `include` of the projects that it references does
-// not find is checked with the defaults.
+// `app`: the directory with the entry point, where `bun` is started. `tsconfig`: `--tsconfig-override`. `isSolution`:
+// the nearest tsconfig.json has no files or options of its own, so a file that no referenced project's `include`
+// matches is checked with the default options.
 type Kind = { name: string; app: string; tsconfig?: string; isSolution?: boolean; files: Record<string, string> };
 const kinds: Kind[] = [
   { name: "a tsconfig.json", app: ".", files: { "tsconfig.json": config({ noEmit: true }) } },
@@ -49,7 +50,7 @@ const kinds: Kind[] = [
     },
   },
   {
-    // As `bun create vite` lays it out.
+    // The layout `bun create vite` generates.
     name: "beside a solution",
     app: ".",
     isSolution: true,
@@ -67,13 +68,14 @@ const kinds: Kind[] = [
   },
 ];
 
-// In a module, so it is not the one of a library. The text that is printed is not in the source.
+// Declared in a module, so it doesn't clash with a lib file's `console`. The printed text doesn't appear verbatim in
+// the source.
 const run = `declare var console: { log(...args: unknown[]): void };\nconsole.log("it " + "ran");\n`;
 const value = (isCorrect: boolean) => (isCorrect ? "1" : `"1"`);
 const html = `declare module "*.html" {\n  const page: unknown;\n  export default page;\n}\n`;
 const page = (src: string) => `<!doctype html><script type="module" src="${src}"></script>\n`;
-const server = (seen: string) =>
-  `/// <reference path="./html.d.ts" />\n${seen}import page from "./index.html";\n${run}export { page };\n`;
+const server = (pathsImport: string) =>
+  `/// <reference path="./html.d.ts" />\n${pathsImport}import page from "./index.html";\n${run}export { page };\n`;
 
 type Command = "bun --check" | "bun check" | "bun build --check" | "bun build --no-bundle --check" | "Bun.build";
 const everyCommand: Command[] = [
@@ -86,8 +88,8 @@ const everyCommand: Command[] = [
 // `bun check` has no `--loader`.
 const withLoader = everyCommand.filter(command => command !== "bun check");
 
-// `wrong`: the file with the type error. `seen`: only resolves with `paths`, and is not there when the program runs.
-// `isIncluded`: `include` finds the entry point, by its name or by `--loader`.
+// `wrong`: the file with the type error. `pathsImport`: an import that only resolves with `paths`, and that's erased
+// before the program runs. `isIncluded`: `include` matches the entry point, by its name or through `--loader`.
 type Entry = {
   name: string;
   wrong: string;
@@ -95,9 +97,9 @@ type Entry = {
   loader?: [extension: string, loader: string];
   target?: "bun";
   commands: Command[];
-  main: (isCorrect: boolean, seen: string) => string[];
-  stdin?: (isCorrect: boolean, seen: string) => string;
-  files: (isCorrect: boolean, seen: string) => Record<string, string>;
+  main: (isCorrect: boolean, pathsImport: string) => string[];
+  stdin?: (isCorrect: boolean, pathsImport: string) => string;
+  files: (isCorrect: boolean, pathsImport: string) => Record<string, string>;
 };
 const entries: Entry[] = [
   {
@@ -106,8 +108,8 @@ const entries: Entry[] = [
     isIncluded: true,
     commands: everyCommand,
     main: () => ["main.ts"],
-    files: (isCorrect, seen) => ({
-      "main.ts": `${seen}import { n } from "./imported";\nexport const m: number = n;\n${run}`,
+    files: (isCorrect, pathsImport) => ({
+      "main.ts": `${pathsImport}import { n } from "./imported";\nexport const m: number = n;\n${run}`,
       "imported.ts": `export const n: number = ${value(isCorrect)};\n`,
     }),
   },
@@ -117,8 +119,8 @@ const entries: Entry[] = [
     isIncluded: false,
     commands: ["bun --check"],
     main: () => ["cli"],
-    files: (isCorrect, seen) => ({
-      "cli": `#!/usr/bin/env bun\n${seen}export const n: number = ${value(isCorrect)};\n${run}`,
+    files: (isCorrect, pathsImport) => ({
+      "cli": `#!/usr/bin/env bun\n${pathsImport}export const n: number = ${value(isCorrect)};\n${run}`,
     }),
   },
   {
@@ -126,7 +128,7 @@ const entries: Entry[] = [
     wrong: "[eval]",
     isIncluded: false,
     commands: ["bun --check"],
-    main: (isCorrect, seen) => ["-e", `${seen}export const n: number = ${value(isCorrect)};\n${run}`],
+    main: (isCorrect, pathsImport) => ["-e", `${pathsImport}export const n: number = ${value(isCorrect)};\n${run}`],
     files: () => ({}),
   },
   {
@@ -135,43 +137,43 @@ const entries: Entry[] = [
     isIncluded: false,
     commands: ["bun --check"],
     main: () => ["-"],
-    stdin: (isCorrect, seen) => `${seen}export const n: number = ${value(isCorrect)};\n${run}`,
+    stdin: (isCorrect, pathsImport) => `${pathsImport}export const n: number = ${value(isCorrect)};\n${run}`,
     files: () => ({}),
   },
   {
-    name: "--loader for an extension that says nothing",
+    name: "--loader for an unknown extension",
     wrong: "imported.script",
     isIncluded: true,
     loader: [".script", "ts"],
     commands: withLoader,
     main: () => ["main.script"],
-    files: (isCorrect, seen) => ({
-      "main.script": `${seen}import { n } from "./imported.script";\nexport const m: number = n;\n${run}`,
+    files: (isCorrect, pathsImport) => ({
+      "main.script": `${pathsImport}import { n } from "./imported.script";\nexport const m: number = n;\n${run}`,
       "imported.script": `export const n: number = ${value(isCorrect)};\n`,
     }),
   },
   {
-    name: "--loader for an extension that says something else",
+    name: "--loader that overrides a known extension",
     wrong: "imported.js",
     isIncluded: true,
     loader: [".js", "ts"],
     commands: withLoader,
     main: () => ["main.js"],
-    files: (isCorrect, seen) => ({
-      "main.js": `${seen}import { n } from "./imported.js";\nexport const m: number = n;\n${run}`,
+    files: (isCorrect, pathsImport) => ({
+      "main.js": `${pathsImport}import { n } from "./imported.js";\nexport const m: number = n;\n${run}`,
       "imported.js": `export const n: number = ${value(isCorrect)};\n`,
     }),
   },
-  // What is only imported for its types is not in a bundle.
+  // A file imported only for its types isn't in the bundle.
   ...[".script", ".js"].map((extension): Entry => ({
-    name: `--loader ${extension}:ts, a file that is only imported for its types`,
+    name: `--loader ${extension}:ts, a file imported only for its types`,
     wrong: `types${extension}`,
     isIncluded: true,
     loader: [extension, "ts"],
     commands: withLoader,
     main: () => [`main${extension}`],
-    files: (isCorrect, seen) => ({
-      [`main${extension}`]: `${seen}import type { N } from "./types${extension}";\nexport const m: N = 1;\n${run}`,
+    files: (isCorrect, pathsImport) => ({
+      [`main${extension}`]: `${pathsImport}import type { N } from "./types${extension}";\nexport const m: N = 1;\n${run}`,
       [`types${extension}`]: `export type N = number;\nexport const n: N = ${value(isCorrect)};\n`,
     }),
   })),
@@ -182,40 +184,40 @@ const entries: Entry[] = [
     isIncluded: true,
     commands: everyCommand,
     main: () => ["main.ts"],
-    files: (isCorrect, seen) => ({
-      "main.ts": `${seen}import { f } from "./legacy.js";\nexport const n: number = f();\n${run}`,
+    files: (isCorrect, pathsImport) => ({
+      "main.ts": `${pathsImport}import { f } from "./legacy.js";\nexport const n: number = f();\n${run}`,
       "legacy.js": `export function f() {\n  return 1;\n}\n`,
       "legacy.d.ts": `export declare function f(): ${isCorrect ? "number" : "string"};\n`,
     }),
   },
   {
-    name: "a page with a TypeScript file",
+    name: "an HTML page with a TypeScript file",
     wrong: "client.ts",
     isIncluded: true,
     target: "bun",
     commands: everyCommand,
     main: () => ["server.ts"],
-    files: (isCorrect, seen) => ({
+    files: (isCorrect, pathsImport) => ({
       "html.d.ts": html,
       "index.html": page("./client.ts"),
-      "client.ts": `${seen}export const n: number = ${value(isCorrect)};\n`,
-      "server.ts": server(seen),
+      "client.ts": `${pathsImport}export const n: number = ${value(isCorrect)};\n`,
+      "server.ts": server(pathsImport),
     }),
   },
   {
     // Without `allowJs`.
-    name: "a page with a JavaScript file",
+    name: "an HTML page with a JavaScript file",
     wrong: "typed.ts",
     isIncluded: true,
     target: "bun",
     commands: everyCommand,
     main: () => ["server.ts"],
-    files: (isCorrect, seen) => ({
+    files: (isCorrect, pathsImport) => ({
       "html.d.ts": html,
       "index.html": page("./client.js"),
       "client.js": `import "./typed";\n`,
-      "typed.ts": `${seen}export const n: number = ${value(isCorrect)};\n`,
-      "server.ts": server(seen),
+      "typed.ts": `${pathsImport}export const n: number = ${value(isCorrect)};\n`,
+      "server.ts": server(pathsImport),
     }),
   },
 ];
@@ -270,8 +272,8 @@ const cases = kinds
 
 test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => {
   const hasPaths = Object.keys(kind.files).length > 0 && (entry.isIncluded || !kind.isSolution);
-  const seen = hasPaths ? `import type { Seen } from "@/seen";\nexport type Used = Seen;\n` : "";
-  const inApp = Object.entries(entry.files(isCorrect, seen)).map(([name, text]) => [join(kind.app, name), text]);
+  const pathsImport = hasPaths ? `import type { Seen } from "@/seen";\nexport type Used = Seen;\n` : "";
+  const inApp = Object.entries(entry.files(isCorrect, pathsImport)).map(([name, text]) => [join(kind.app, name), text]);
   using dir = tempDir("bun-check", {
     ...kind.files,
     ...Object.fromEntries(inApp),
@@ -279,34 +281,35 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
   });
   await using proc = spawn({
     timeout: longLimit,
-    cmd: [bunExe(), ...argumentsOf(command, kind, entry, entry.main(isCorrect, seen))],
+    cmd: [bunExe(), ...argumentsOf(command, kind, entry, entry.main(isCorrect, pathsImport))],
     cwd: join(String(dir), kind.app),
     env,
-    stdin: entry.stdin ? new Blob([entry.stdin(isCorrect, seen)]) : "ignore",
+    stdin: entry.stdin ? new Blob([entry.stdin(isCorrect, pathsImport)]) : "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // `--no-bundle` prints the program.
+  // `--no-bundle` prints the program to stdout.
   const printed = command === "bun build --no-bundle --check" ? stderr : stdout + stderr;
   expect({
     codes: [...new Set(printed.match(/\bTS\d+/g))],
-    namesTheFile: printed.includes(entry.wrong),
+    mentionsFile: printed.includes(entry.wrong),
     ran: command === "bun --check" && stdout.includes("it ran"),
     exitCode,
-    // Says why, if the exit code is not the expected one.
+    // Shows why if the exit code isn't the expected one.
     output: exitCode === (isCorrect ? 0 : 1) ? "" : `${proc.signalCode}\n${(stdout + stderr).slice(-4000)}`,
   }).toEqual({
     output: "",
     codes: isCorrect ? [] : ["TS2322"],
-    namesTheFile: !isCorrect,
+    mentionsFile: !isCorrect,
     ran: isCorrect && command === "bun --check",
     exitCode: isCorrect ? 0 : 1,
   });
 });
 
-// Of a line of more than 1,000 bytes only the beginning is kept with an error: a bundle on one line can have thousands.
-test("an error far into a long line has its place in a build, and no line of text", async () => {
+// Only the beginning of a line longer than 1,000 bytes is stored with an error, because a one-line bundle can have
+// thousands of errors.
+test("Bun.build reports the position of an error far into a long line, without the line's text", async () => {
   const before = `export const s = "${Buffer.alloc(1100, "\u6f22").toString()}"; `;
   using dir = tempDir("bun-check", {
     "tsconfig.json": config({ noEmit: true }),
@@ -322,7 +325,25 @@ test("an error far into a long line has its place in a build, and no line of tex
   expect(exitCode).toBe(0);
 });
 
-test("a byte order mark is not a column, wherever the text comes from", async () => {
+test("one process can run several checks, sequentially and concurrently", async () => {
+  using dir = tempDir("bun-check", {
+    "tsconfig.json": config({ noEmit: true }),
+    "right.ts": `export const n: number = 1;\n`,
+    "wrong.ts": `export const n: number = "1";\n`,
+    "build.ts": `
+      const check = entry => Bun.build({ check: true, throw: false, entrypoints: [entry] }).then(it => it.logs.length);
+      const found = [await check("wrong.ts"), await check("right.ts"), await check("wrong.ts")];
+      found.push(...(await Promise.all(["wrong.ts", "right.ts", "wrong.ts"].map(check))));
+      console.log(JSON.stringify(found));
+    `,
+  });
+  await using proc = spawn({ timeout: longLimit, cmd: [bunExe(), "build.ts"], cwd: String(dir), env, stdout: "pipe" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual([1, 0, 1, 1, 0, 1]);
+  expect(exitCode).toBe(0);
+});
+
+test("doesn't count a byte order mark as a column, wherever the text comes from", async () => {
   const text = `export const n: number = "1";\n`;
   using dir = tempDir("bun-check", {
     "tsconfig.json": config({ noEmit: true }),
@@ -357,20 +378,20 @@ test("a byte order mark is not a column, wherever the text comes from", async ()
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return stdout + stderr;
   };
-  const place = (printed: string) => /[(:]1[,:](\d+)/.exec(printed)?.[1];
+  const column = (printed: string) => /[(:]1[,:](\d+)/.exec(printed)?.[1];
   const printed = await Promise.all([
     run(["check"]),
     run(["--check", "index.ts"]),
     run(["--check", "-"], "\uFEFF" + text),
     run(["build", "--check", "index.ts", "--outdir", "out"]),
   ]);
-  expect(printed.map(place)).toEqual(["14", "14", "14", "14"]);
+  expect(printed.map(column)).toEqual(["14", "14", "14", "14"]);
   expect(printed.filter(it => it.includes("\uFEFF"))).toEqual([]);
   const line = JSON.stringify([[1, 14, text.trimEnd()]]);
   expect((await run(["build.ts"])).trim().split("\n")).toEqual([line, line, line]);
 });
 
-test("Bun.build: the check has the conditions and the loaders of the build, not those of the process", async () => {
+test("Bun.build checks with the build's conditions and loaders, not the process's", async () => {
   const exports = (conditions: object) =>
     JSON.stringify({ name: "it", version: "1.0.0", exports: { ".": conditions } });
   using dir = tempDir("bun-check", {
@@ -419,9 +440,10 @@ test("Bun.build: the check has the conditions and the loaders of the build, not 
   }
 });
 
-// The check runs on the pool of threads that the bundler parses on, and reads on the pool that it reads on. With a file or
-// a build more than there are threads, one that waited on a thread for what only that pool can do would wait for ever.
-test("a check in a bundle of more files than there are threads, and more such builds at once", async () => {
+// The check runs on the thread pool the bundler parses on, and reads files on the pool the bundler reads on. With one
+// more file or build than there are threads, a task that blocked a thread while waiting for work only that pool can do
+// would deadlock.
+test("doesn't deadlock with more files in a bundle, or more concurrent builds, than there are threads", async () => {
   const count = availableParallelism() + 1;
   const buildCount = isDebug || isASAN ? 4 : count;
   const names = Array.from({ length: count }, (_, i) => `f${i}`);
@@ -443,12 +465,12 @@ test("a check in a bundle of more files than there are threads, and more such bu
       env,
       stdout: "pipe",
       stderr: "pipe",
-      // Less than the test has: one that hangs does not outlive it.
+      // Shorter than the test's timeout, so a hung process doesn't outlive it.
       timeout: 30_000,
       killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Not the "TS6" that the random name of the directory can have in it.
+    // Doesn't match a "TS6" in the directory's random name.
     return { codes: (stdout + stderr).match(/\bTS\d{4,5}\b/g) ?? [], stdout, exitCode };
   };
   const [right, wrong, builds] = await Promise.all([

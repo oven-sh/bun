@@ -22,7 +22,7 @@ impl Rule for NoConstEnum {
         if !enum_decl.flags().contains(Flags::CONST) {
             return;
         }
-        // Where `declare const enum` starts too.
+        // oxlint reports five characters from here even if the statement starts with `declare`.
         let start = statement.span_without_export().start;
         cx.report(Span::new(start, start + 5), NO_CONST_ENUM).fix(|fixer| {
             let file = fixer.file();

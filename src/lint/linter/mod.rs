@@ -1,17 +1,16 @@
-//! What ESLint's `Linter` does around the rules: the configuration of a file, the comments that
-//! change it (`eslint-disable`, `global`, `exported`, `eslint rule: ..`), and the globals.
+//! The work ESLint's `Linter` does around the rules: a file's config, the comments that change it (`eslint-disable`,
+//! `global`, `exported`, `eslint rule: ..`), and the globals.
 //!
 //! - [`Registry`]: the rules that exist.
-//! - [`Config`]: the configuration of a run.
-//! - [`ResolvedConfig`]: what is configured for one file.
-//! - [`Linter::lint`]: ESLint's `Linter.verify` for a file that is parsed already.
-//! - [`LintMessage`]: what it reports.
-//! - [`parse_error`]: whether ESLint's parser refuses the file. [`File::has_parse_errors`] is not the answer to that.
+//! - [`Config`]: a run's config.
+//! - [`ResolvedConfig`]: one file's config.
+//! - [`Linter::lint`]: ESLint's `Linter.verify` for a file that's already parsed.
+//! - [`LintMessage`]: its reports.
+//! - [`parse_error`]: whether ESLint's parser rejects the file. [`File::has_parse_errors`] doesn't answer that.
 //! - [`verify_and_fix`]: ESLint's `Linter.verifyAndFix`.
-//! - [`globals`]: the global variables that a file does not declare.
+//! - [`globals`]: the global variables that a file doesn't declare.
 //!
-//! What finds the files, reads the configuration from disk, parses, prints and writes fixes is built
-//! on top:
+//! The code that finds the files, reads the config from disk, parses, prints and writes fixes is built on top:
 //!
 //! ```ignore
 //! let linter = Linter::<Rules>::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES]));
@@ -43,17 +42,18 @@ mod schema;
 mod syntax;
 
 pub use config::{
-    Config, ConfigError, FileConfig, InJavaScript, LegacyFailure, LegacyFile, LegacyKind,
-    LegacyOptions, LoadLegacy, LoadLocatedPlugin, LoadPlugin, NamedPlugin, is_plugin_of_oxlint,
-    oxlint_category,
+    Config, ConfigError, FileConfig, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions,
+    LoadLegacy, LoadLocatedPlugin, LoadPlugin, NamedPlugin, ShadowedBuiltinPlugin,
+    is_oxlint_plugin, oxlint_category,
 };
 pub use fixer::{
-    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, is_parse_error, is_redeclaration,
-    verify_and_fix,
+    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, breaks_syntax, is_parse_error,
+    is_redeclaration, verify_and_fix,
 };
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use json_v8::parse as json_parse;
 pub use levn::parse_object as parse_levn_object;
+pub use levn::parse_rules as parse_levn_rules;
 pub(crate) use message::write_json_with;
 pub use message::{
     Data, Details, LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind,
@@ -61,9 +61,9 @@ pub use message::{
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
-    Deprecated, Missing, Modes, Names, NativePlugins, Registry, deprecated_info, deprecated_rule,
-    formatting_rule, formatting_rules, normalize_plugin_name, oxlint_category_of_key,
-    oxlint_filter_keys, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
+    Deprecated, Missing, Modes, Names, NativePlugins, Registry, canonical_oxlint_plugin,
+    deprecated_info, deprecated_rule, formatting_rule, formatting_rules, normalize_plugin_name,
+    oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id,
 };
 pub use resolved::{
     ConfiguredJsRule, ConfiguredRule, Entry, FormattingRule, LinterOptions, ResolvedConfig,
@@ -72,8 +72,8 @@ pub use resolved::{
 use resolved::{Prepared, Skipped, Slot};
 pub use schema::{OptionMistake, Step, mistake_in_options, schema_and_defaults};
 pub use syntax::{
-    Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, parse_errors,
-    refusal_of_oxfmt, refusal_of_prettier, refused_by_prettier_with,
+    Rejection, TypesInJavaScript, is_flow_file, may_be_misread, oxfmt_rejection, parse_error,
+    parse_errors, prettier_rejection, redeclarations, rejected_by_prettier_with,
 };
 
 use crate::ast::File;
@@ -92,53 +92,55 @@ use message::Locator;
 use std::borrow::Cow;
 use std::sync::Arc;
 
-/// ESLint's `VerifyOptions`: what the command line says about how to lint.
+/// ESLint's `VerifyOptions`: the command line's linting options.
 #[derive(Copy, Clone)]
 pub struct LintOptions<'o> {
-    /// `false`: `--no-inline-config`. Comments are ignored, silently.
+    /// `false` with `--no-inline-config`. Comments are then silently ignored.
     pub allow_inline_config: bool,
-    /// `--report-unused-disable-directives-severity`, which overrides the configuration.
+    /// `--report-unused-disable-directives-severity`, which overrides the config.
     pub report_unused_disable_directives: Option<Severity>,
-    /// Whether anything reads [`LintMessage::fix`] and [`LintMessage::suggestions`]. If not, the rules here make none. A rule in
-    /// JavaScript is asked all the same, as by ESLint and by oxlint: what its functions do shows, and they can throw.
+    /// True if anything reads [`LintMessage::fix`] and [`LintMessage::suggestions`]. If not, built-in rules don't
+    /// produce any. A JavaScript rule's fix functions are still called, as in ESLint and oxlint, because they can have
+    /// visible side effects and can throw.
     pub wants_fixes: bool,
     /// ESLint's `disableFixes`: no rule is asked for a fix or a suggestion.
     pub disables_fixes: bool,
-    /// Whether anything reads the texts of these. If not, they are empty: see `Sink::drops_texts_of_fixes`.
-    pub wants_texts_of_fixes: bool,
-    /// Whether anything reads [`LintMessage::help`].
+    /// True if anything reads their texts. If not, the texts are empty: see `Sink::drops_fix_texts`.
+    pub wants_fix_texts: bool,
+    /// True if anything reads [`LintMessage::help`].
     pub wants_help: bool,
-    /// Whether anything reads [`LintMessage::message`] of what the rules here report, and [`Suggestion::message`]. If not, they are
-    /// empty.
+    /// True if anything reads the [`LintMessage::message`] of built-in rules' reports, and [`Suggestion::message`]. If
+    /// not, they're empty.
     pub wants_messages: bool,
-    /// Whether anything reads where the messages are, and in which order. If not, those of the rules here have no place, unless
-    /// something else needs it: a fix, or a comment of the file that disables rules.
-    pub wants_places: bool,
-    /// Whether anything reads what is in [`LintMessage::suppressions`]. If not, a message that comments suppress has one of
-    /// them, not one for each comment that is in effect: n comments that disable and n messages make n² of them.
+    /// True if anything reads the messages' positions and order. If not, built-in rules' messages have no position,
+    /// unless something else needs it: a fix, or a comment in the file that disables rules.
+    pub wants_positions: bool,
+    /// True if anything reads the contents of [`LintMessage::suppressions`]. If not, a message that comments suppress
+    /// has one entry instead of one per comment in effect: n disabling comments and n messages would make n² entries.
     pub wants_suppressions: bool,
-    /// ESLint's `ruleFilter`: which of the enabled rules run. `--quiet` leaves out those that warn.
+    /// ESLint's `ruleFilter`: which of the enabled rules run. `--quiet` skips the ones that warn.
     pub rule_filter: Option<&'o (dyn Fn(&RuleId, Severity) -> bool + Sync)>,
-    /// Runs the rules of JavaScript plugins. `None`: they are skipped.
+    /// Runs JavaScript plugins' rules. They're skipped if it's `None`.
     pub js_plugins: Option<&'o js_plugin::Host<'o>>,
     /// For [`Host::run_on_block`](js_plugin::Host::run_on_block).
     pub parse_again: Option<&'o js_plugin::ParseAgain<'o>>,
-    /// The file is linted again, for the rules that are about several files only.
+    /// The file is being linted a second time, only for the rules that look at several files.
     pub again: Option<Again<'o>>,
-    /// How much of the path of the file is ESLint's `physicalFilename`, if not all of it: it is a block that a processor has
-    /// found in the file there.
+    /// The length of the prefix of the file's path that is ESLint's `physicalFilename`, if that isn't the whole path.
+    /// In that case this is a block that a processor extracted from that file.
     pub physical_path_len: Option<usize>,
-    /// `false`: `options.respectEslintDisableDirectives` of an `.oxlintrc.json` is. Only comments that start with `oxlint` count.
+    /// `false` if `options.respectEslintDisableDirectives` in an `.oxlintrc.json` is `false`. Then only comments that
+    /// start with `oxlint` count.
     pub respects_eslint_comments: bool,
 }
 
-/// See [`LintOptions::again`]. Only the rules with [`Meta::needs_modules`](crate::rule::Meta::needs_modules) run. What the
-/// other rules have reported is taken over, and the comments of the file are applied to all of it.
+/// See [`LintOptions::again`]. Only the rules with [`Meta::needs_modules`](crate::rule::Meta::needs_modules) run. The
+/// other rules' earlier reports are carried over, and the file's comments are applied to all of them.
 #[derive(Copy, Clone)]
 pub struct Again<'o> {
-    /// What [`Linter::lint`] returned the first time.
+    /// The result of the first [`Linter::lint`] call.
     pub previous: &'o LintResult,
-    /// The first time the file had types.
+    /// The file had types the first time.
     pub had_types: bool,
 }
 
@@ -149,10 +151,10 @@ impl Default for LintOptions<'_> {
             report_unused_disable_directives: None,
             wants_fixes: true,
             disables_fixes: false,
-            wants_texts_of_fixes: true,
+            wants_fix_texts: true,
             wants_help: true,
             wants_messages: true,
-            wants_places: true,
+            wants_positions: true,
             wants_suppressions: true,
             rule_filter: None,
             js_plugins: None,
@@ -164,52 +166,55 @@ impl Default for LintOptions<'_> {
     }
 }
 
-/// What [`Linter::lint`] returns.
+/// The result of [`Linter::lint`].
 #[derive(Default, Debug)]
 pub struct LintResult {
-    /// Sorted by position: see [`LintOptions::wants_places`].
+    /// Sorted by position: see [`LintOptions::wants_positions`].
     pub messages: Vec<LintMessage>,
-    /// ESLint's `suppressedMessages`: what `eslint-disable` comments hide.
+    /// ESLint's `suppressedMessages`: the messages that `eslint-disable` comments hide.
     pub suppressed: Vec<LintMessage>,
-    /// Rules that comments of the file name, and that belong to a plugin that is configured but
-    /// not implemented here. They are skipped.
+    /// Rules that the file's comments mention and that belong to a plugin that's configured but not built in. They're
+    /// skipped.
     pub skipped_rules: Vec<Box<[u8]>>,
-    /// Why a rule has [handed the file back](File::hand_back) to that of its package, which has run in its place.
+    /// Why a rule [handed the file back](File::hand_back) to its package's rule, which ran in its place.
     pub handed_back: Option<crate::formats::Reason>,
-    /// It [may be misread](may_be_misread), or a comment in a file that is not JavaScript turns on a rule that is not for its
-    /// language, and whoever lints has somebody else to read it. There is nothing else in the result.
-    pub is_unread: bool,
-    /// ESLint throws this while it lints the file, and that ends the run with the exit code 2: a rule refuses options that its
-    /// schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a rule of a JavaScript plugin throws. There is
-    /// nothing else in the result then.
+    /// The file [may be misread](may_be_misread), or a comment in a non-JavaScript file turns on a rule that isn't for
+    /// its language, and the caller has another tool that can lint it. The rest of the result is empty.
+    pub needs_another_linter: bool,
+    /// ESLint throws this while linting the file, which ends the run with exit code 2. Either a rule rejects options
+    /// that its schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a JavaScript plugin's rule throws.
+    /// The rest of the result is then empty.
     pub thrown: Option<Vec<u8>>,
-    /// [`File::known_line_starts`], for whoever lints to keep.
+    /// [`File::known_line_starts`], for the caller to keep.
     pub line_starts: Option<Vec<u32>>,
-    /// With a configuration of oxlint that has a rule for which the file may be linted again: where in the run of oxlint each of
-    /// the messages of the rules is, by [`LintMessage::reported`], from 1.
+    /// With an oxlint config that has a rule for which the file may be linted again: each rule message's position in
+    /// oxlint's run, indexed by [`LintMessage::reported`] minus 1.
     pub run_keys: Vec<(u64, u128)>,
+    /// Number of syntax errors in the file that didn't prevent linting. [`verify_and_fix`] reverts fixes that add one.
+    /// The code that applies fixes adds the [`redeclarations`] to it.
+    pub tolerated_errors: usize,
 }
 
-/// `S`: the rules that it has.
+/// `S` is its set of rules.
 pub struct Linter<S: RuleSet> {
     registry: Registry,
-    /// For each rule of `registry`, its number in `S`.
+    /// Each `registry` rule's number in `S`.
     numbers: Vec<u16>,
-    /// What the configurations name by numbers.
+    /// The instances that configs refer to by number.
     instances: Instances<Arc<S>>,
 }
 
-/// A rule as it runs on the file: as it is configured, or as a comment changes that.
+/// A rule as it runs on the file: as configured, or as changed by a comment.
 struct Running<'r, S> {
     entry: &'static RuleEntry,
-    /// What the configuration has for it.
+    /// Its entry in the config.
     configured: Option<&'r ConfiguredRule>,
     severity: Severity,
     /// [`Slot::in_oxlint`]
     in_oxlint: InOxlint,
     rule: RuleRef<'r, S>,
-    /// [`ConfiguredRule::refusal`]
-    refusal: Option<Cow<'r, [u8]>>,
+    /// [`ConfiguredRule::options_error`]
+    options_error: Option<Cow<'r, [u8]>>,
 }
 
 impl<'r, S> Running<'r, S> {
@@ -223,7 +228,7 @@ impl<'r, S> Running<'r, S> {
     }
 }
 
-/// What of a [`Running`] is read when the rules have run.
+/// The parts of a [`Running`] that are read after the rules have run.
 #[derive(Copy, Clone)]
 struct Ran<'r> {
     entry: &'static RuleEntry,
@@ -244,7 +249,7 @@ impl<'r> Ran<'r> {
         self.configured.and_then(ConfiguredRule::name)
     }
 
-    /// ESLint's `ruleId` of what it reports.
+    /// The ESLint `ruleId` of its reports.
     fn id(self) -> RuleId {
         match self.name() {
             Some(name) => RuleId::Named(self.entry.meta, Arc::clone(name)),
@@ -255,17 +260,17 @@ impl<'r> Ran<'r> {
 
 enum RuleRef<'r, S> {
     Shared(&'r S),
-    /// Made for this file, from the options in a comment.
+    /// Built for this file, from the options in a comment.
     Own(Box<S>),
 }
 
-/// The same for a rule of a JavaScript plugin.
+/// The same for a JavaScript plugin's rule.
 struct RunningJs<'r> {
     severity: Severity,
     configured: Cow<'r, Arc<js_plugin::Configured>>,
 }
 
-/// A rule that a configuration or a comment names.
+/// A rule that a config or a comment refers to.
 #[derive(Copy, Clone)]
 enum Named<'c> {
     Native(&'static RuleEntry),
@@ -292,11 +297,11 @@ impl Named<'_> {
         }
     }
 
-    /// [`schema::validate`]. `Ok`: what a rule of a JavaScript plugin gets as its options.
-    fn validate(self, options: &[Json], stands_alone: bool) -> Result<Vec<Json>, Vec<u8>> {
+    /// [`schema::validate`]. `Ok` holds the options that a JavaScript plugin's rule receives.
+    fn validate(self, options: &[Json], has_no_foreign_config: bool) -> Result<Vec<Json>, Vec<u8>> {
         match self {
             Named::Native(entry) | Named::Instance(&ConfiguredRule { entry, .. }, _) => {
-                schema::validate(entry.meta, options, stands_alone).map(|()| Vec::new())
+                schema::validate(entry.meta, options, has_no_foreign_config).map(|()| Vec::new())
             }
             Named::Js(rule) => schema::validate_js(rule, options),
         }
@@ -313,7 +318,7 @@ impl Named<'_> {
 }
 
 impl<'c> Named<'c> {
-    /// The rule, if it is one of a JavaScript plugin.
+    /// The rule, if it belongs to a JavaScript plugin.
     fn js(self) -> Option<&'c js_plugin::Rule> {
         match self {
             Named::Native(_) | Named::Instance(..) => None,
@@ -322,7 +327,7 @@ impl<'c> Named<'c> {
     }
 }
 
-/// What the configuration has for a rule.
+/// A rule's entry in the config.
 #[derive(Copy, Clone)]
 enum Existing<'c> {
     Native(&'c ConfiguredRule),
@@ -354,7 +359,7 @@ fn is_same_rule(a: &RuleEntry, b: &RuleEntry) -> bool {
 }
 
 impl<S: RuleSet> Linter<S> {
-    /// `registry`: rules of `S`.
+    /// `registry` holds rules of `S`.
     pub fn new(registry: Registry) -> Linter<S> {
         let mut numbers = vec![u16::MAX; registry.all().len()];
         for (number, meta) in S::METAS.iter().enumerate() {
@@ -369,12 +374,12 @@ impl<S: RuleSet> Linter<S> {
         }
     }
 
-    /// The rule at `index` of the registry, made from `options`.
+    /// Builds the rule at `index` in the registry from `options`.
     fn build(&self, index: usize, options: &[Json]) -> Option<S> {
         S::build(*self.numbers.get(index)?, &Options::new(options))
     }
 
-    /// [`Rule::validate`](crate::rule::Rule::validate) of `entry`.
+    /// [`Rule::validate`](crate::rule::Rule::validate) for `entry`.
     pub fn validate(&self, entry: &RuleEntry, options: &[Json]) -> Result<(), Vec<u8>> {
         let index = self.registry.index_of(entry);
         match index.and_then(|it| self.numbers.get(it)) {
@@ -383,16 +388,16 @@ impl<S: RuleSet> Linter<S> {
         }
     }
 
-    /// What `rule`, which is on, throws for its options.
-    fn refusal<'c>(&self, rule: &'c ConfiguredRule) -> Option<&'c [u8]> {
+    /// The error that `rule`, which is on, throws for its options.
+    fn options_error<'c>(&self, rule: &'c ConfiguredRule) -> Option<&'c [u8]> {
         let ask = || Some(Arc::from(self.validate(rule.entry, &rule.options).err()?));
-        rule.refusal.get_or_init(ask).as_deref()
+        rule.options_error.get_or_init(ask).as_deref()
     }
 
     /// [`ResolvedConfig::prepared`]
     fn prepare(&self, config: &ResolvedConfig) -> Prepared {
         let mut on = RuleBits::EMPTY;
-        let (mut order, mut typed, mut refusal) = (Vec::new(), Vec::new(), None);
+        let (mut order, mut typed, mut options_error) = (Vec::new(), Vec::new(), None);
         for (at, rule) in config.rules.iter().enumerate() {
             let Some(instance) = self.instance(rule) else {
                 continue;
@@ -415,8 +420,8 @@ impl<S: RuleSet> Linter<S> {
             if rule.entry.meta.requires_types {
                 typed.push(rule.entry.meta);
             }
-            if refusal.is_none() {
-                refusal = self.refusal(rule).map(Arc::from);
+            if options_error.is_none() {
+                options_error = self.options_error(rule).map(Arc::from);
             }
         }
         order.sort_by_key(|it| it.0);
@@ -427,13 +432,13 @@ impl<S: RuleSet> Linter<S> {
             listeners: Listeners::new::<S>(&numbers),
             order: order.into_iter().map(|it| it.1).collect(),
             rules: Arc::new(rules),
-            refusal,
+            options_error,
             typed: typed.into(),
             needs_modules: config.rules.iter().any(|it| it.entry.meta.needs_modules),
         }
     }
 
-    /// `rule` made from its options. `None` if it is off.
+    /// `rule` built from its options. `None` if it's off.
     fn instance(&self, rule: &ConfiguredRule) -> Option<&Arc<S>> {
         if rule.severity == Severity::Off {
             return None;
@@ -454,8 +459,7 @@ impl<S: RuleSet> Linter<S> {
         &self.registry
     }
 
-    /// ESLint's `Linter.verify`, from after the file is parsed. `file` was made with
-    /// `config.language`.
+    /// ESLint's `Linter.verify`, starting after the file is parsed. `file` has to be created with `config.language`.
     pub fn lint<'a>(
         &self,
         file: &'a File<'a>,
@@ -465,7 +469,7 @@ impl<S: RuleSet> Linter<S> {
         let locator = Locator::new(file);
         let mut problems: Vec<LintMessage> = Vec::new();
         let (mut fatal, is_of_parser) = match file.parsed() {
-            // Its language has parsed it.
+            // Its language already parsed it.
             Some(_) => (Vec::new(), false),
             None => syntax::parse_errors_and_stage(file),
         };
@@ -474,8 +478,9 @@ impl<S: RuleSet> Linter<S> {
             if is_oxlint && is_of_parser && syntax::is_flow(file) {
                 return LintResult::default();
             }
-            // What oxc refuses, oxlint does not lint. tsgolint reads the file on its own, and oxlint, which has not seen the comments,
-            // passes on all that it reports. Here that is so where the tree is whole: the error is an early one.
+            // oxlint doesn't lint a file that oxc rejects. tsgolint parses the file on its own, and oxlint, which
+            // hasn't seen the comments, passes on everything it reports. Bun does the same if the tree is complete,
+            // i.e. the error is an early error.
             if !is_oxlint || file.types.is_none() || file.has_parse_errors() {
                 return LintResult {
                     messages: fatal,
@@ -484,10 +489,13 @@ impl<S: RuleSet> Linter<S> {
             }
             problems.append(&mut fatal);
         }
-        let is_refused = !problems.is_empty();
-        let mut result = LintResult::default();
+        let has_fatal_error = !problems.is_empty();
+        let mut result = LintResult {
+            tolerated_errors: syntax::tolerated_errors(file),
+            ..LintResult::default()
+        };
         let enabled_js =
-            (config.js_rules.iter()).filter(|it| it.severity != Severity::Off && !is_refused);
+            (config.js_rules.iter()).filter(|it| it.severity != Severity::Off && !has_fatal_error);
         let mut running_js: Vec<RunningJs> = enabled_js
             .map(|it| RunningJs {
                 severity: it.severity,
@@ -495,39 +503,41 @@ impl<S: RuleSet> Linter<S> {
             })
             .collect();
 
-        // oxlint takes all but `eslint-disable` and the like for ordinary comments: `/* eslint eqeqeq: 0 */`, `/* global a */`,
-        // `/* eslint-env node */`.
+        // oxlint treats everything except `eslint-disable` and the like as ordinary comments: `/* eslint eqeqeq: 0 */`,
+        // `/* global a */`, `/* eslint-env node */`.
         let configures_in_comments = !config.understands_oxlint_comments;
         if !options.allow_inline_config || config.linter.no_inline_config || !configures_in_comments
         {
             file.ignore_config_comments();
         }
-        let comments = match options.allow_inline_config && !is_refused {
+        let comments = match options.allow_inline_config && !has_fatal_error {
             true => file.config_comments(),
             false => &[],
         };
-        // ESLint takes `oxlint-disable` and the like for ordinary comments. Without a configuration of either, those of both count.
+        // ESLint treats `oxlint-disable` and the like as ordinary comments. With neither tool's config, both kinds
+        // count.
         let is_understood = |it: &&ConfigComment| {
-            let is_called_oxlint = file.slice(it.label_span).starts_with(b"oxlint");
+            let has_oxlint_prefix = file.slice(it.label_span).starts_with(b"oxlint");
             match config.understands_oxlint_comments {
-                true => is_called_oxlint || options.respects_eslint_comments,
-                false => config.has_every_rule || (!is_called_oxlint && !it.is_only_of_oxlint),
+                true => has_oxlint_prefix || options.respects_eslint_comments,
+                false => config.has_every_rule || (!has_oxlint_prefix && !it.is_oxlint_only),
             }
         };
         let prepared = config.prepared.get_or_init(|| self.prepare(config));
-        // Nothing but the configuration says which rules run, and how: then a rule for which the file has nothing is left out from
-        // the start.
-        let is_plain = !is_refused
+        // True if only the config determines which rules run, and how. Then a rule that has nothing to listen for in
+        // the file is skipped from the start.
+        let is_plain = !has_fatal_error
             && options.rule_filter.is_none()
             && options.again.is_none()
             && (config.linter.no_inline_config
                 || !configures_in_comments
                 || !(comments.iter().filter(is_understood)).any(|it| it.label == Label::Rules));
         let listening = is_plain.then(|| prepared.listeners.of(file));
-        debug_assert!(listening.as_ref().is_none_or(|places| {
+        debug_assert!(listening.as_ref().is_none_or(|listening_bits| {
             let numbers = crate::runner::listening::<S>(file, &prepared.on);
-            (prepared.order.iter().enumerate()).all(|(place, slot)| {
-                numbers.has(slot.number) == (places[place / 64] & (1 << (place % 64)) != 0)
+            (prepared.order.iter().enumerate()).all(|(order_index, slot)| {
+                numbers.has(slot.number)
+                    == (listening_bits[order_index / 64] & (1 << (order_index % 64)) != 0)
             })
         }));
         let count = match &listening {
@@ -536,20 +546,20 @@ impl<S: RuleSet> Linter<S> {
         };
         let made = prepared.rules.downcast_ref::<Vec<Arc<S>>>();
         let made = made.map_or(&[][..], |it| &it[..]);
-        // The rules that run, each with its place: where `is_plain`, in `prepared.order`. Else in `running`.
+        // The rules that run, each with its index: into `prepared.order` if `is_plain`, otherwise into `running`.
         let mut running: Vec<Running<S>> = Vec::new();
         let mut enabled: Vec<Enabled<S>> = Vec::with_capacity(count);
         if let Some(listening) = &listening {
             for (word, &bits) in listening.iter().enumerate() {
                 each_bit(bits, |bit| {
-                    let place = 64 * word + bit;
+                    let order_index = 64 * word + bit;
                     if let (Some(slot), Some(instance)) =
-                        (prepared.order.get(place), made.get(place))
+                        (prepared.order.get(order_index), made.get(order_index))
                     {
                         enabled.push(Enabled {
                             rule: &**instance,
                             severity: slot.severity,
-                            place: place as u32,
+                            place: order_index as u32,
                         });
                     }
                 });
@@ -561,27 +571,27 @@ impl<S: RuleSet> Linter<S> {
             let Some(rule) = config.rules.get(slot.at as usize) else {
                 continue;
             };
-            if !is_refused || rule.entry.meta.requires_types {
+            if !has_fatal_error || rule.entry.meta.requires_types {
                 running.push(Running {
                     entry: rule.entry,
                     configured: Some(rule),
                     severity: rule.severity,
                     in_oxlint: slot.in_oxlint,
                     rule: RuleRef::Shared(instance),
-                    refusal: self.refusal(rule).map(Cow::Borrowed),
+                    options_error: self.options_error(rule).map(Cow::Borrowed),
                 });
             }
         }
         let (mut parents, mut disable_directives) = (Vec::new(), Vec::new());
         if config.linter.no_inline_config {
             for comment in comments.iter().filter(is_understood) {
-                let written = file.slice(comment.span);
+                let comment_text = file.slice(comment.span);
                 let message = match &config.language.eslint_8 {
                     Some(eslint_8) => eslint_8
-                        .has_no_effect(file.slice(comment.label_span), written.starts_with(b"/*")),
+                        .no_inline_config_message(file.slice(comment.label_span), comment_text.starts_with(b"/*")),
                     None => quoted(&[
                         b"'",
-                        written,
+                        comment_text,
                         b"' has no effect because you have 'noInlineConfig' setting in your config.",
                     ]),
                 };
@@ -605,16 +615,16 @@ impl<S: RuleSet> Linter<S> {
                 inline.disable_directives(comment, &mut parents, &mut disable_directives);
             }
         }
-        // Such a rule is one of a package, or it would see JavaScript that is not there.
-        let is_of_no_language =
+        // Such a rule belongs to a package, or expects JavaScript that isn't there.
+        let has_no_language =
             |it: &Running<S>| it.severity != Severity::Off && it.entry.meta.languages.is_empty();
         if file.parsed().is_some()
-            && (running.iter().any(is_of_no_language)
+            && (running.iter().any(has_no_language)
                 || !running_js.is_empty()
                 || !result.skipped_rules.is_empty())
         {
             return LintResult {
-                is_unread: true,
+                needs_another_linter: true,
                 ..LintResult::default()
             };
         }
@@ -671,7 +681,7 @@ impl<S: RuleSet> Linter<S> {
             true => comments.iter().any(|it| is_directive(&it)),
             false => !disable_directives.is_empty(),
         };
-        // Read where comments are applied.
+        // Used when the comments are applied.
         let mut rules_to_ignore = Vec::new();
         // A comment for a rule that was skipped isn't called unused. oxlint does call it unused.
         let ignores_skipped_rules = !config.language.is_oxlint;
@@ -693,16 +703,16 @@ impl<S: RuleSet> Linter<S> {
                 runs
             });
         }
-        // ESLint makes the rules that run, and one of them throws.
-        let mut refusals = (running.iter().filter(|it| it.severity != Severity::Off))
-            .filter_map(|it| it.refusal.as_deref());
-        let refusal = match is_plain {
-            true => prepared.refusal.as_deref(),
-            false => refusals.next(),
+        // ESLint creates the rules that run, and one of them throws.
+        let mut options_errors = (running.iter().filter(|it| it.severity != Severity::Off))
+            .filter_map(|it| it.options_error.as_deref());
+        let options_error = match is_plain {
+            true => prepared.options_error.as_deref(),
+            false => options_errors.next(),
         };
-        if let Some(refusal) = refusal {
+        if let Some(options_error) = options_error {
             return LintResult {
-                thrown: Some([refusal, b"\nOccurred while linting ", file.path()].concat()),
+                thrown: Some([options_error, b"\nOccurred while linting ", file.path()].concat()),
                 ..LintResult::default()
             };
         }
@@ -737,12 +747,14 @@ impl<S: RuleSet> Linter<S> {
         }
         let before_js = problems.len();
         let wants_fixes = options.wants_fixes && !options.disables_fixes;
-        // First, for the variables that they mark as used.
-        if let (Some(host), Some(settings), None) =
-            (options.js_plugins, &config.js_settings, options.again)
-            && !running_js.is_empty()
+        // These run first, because they can mark variables as used.
+        if let (Some(host), Some(settings), None) = (
+            options.js_plugins,
+            config.js_settings_of(file),
+            options.again,
+        ) && !running_js.is_empty()
         {
-            // What a rule that does not run would have reported cannot be told.
+            // There's no telling what a rule that doesn't run would have reported.
             running_js.retain(|it| {
                 let has_asked = host.has_asked_for_types(&it.configured.rule);
                 if has_asked {
@@ -750,7 +762,7 @@ impl<S: RuleSet> Linter<S> {
                 }
                 !has_asked
             });
-            // Once more for each rule that asks for types.
+            // Runs once more for each rule that asks for types.
             while !running_js.is_empty() {
                 let enabled: Vec<&js_plugin::Configured> =
                     running_js.iter().map(|it| &**it.configured).collect();
@@ -771,13 +783,15 @@ impl<S: RuleSet> Linter<S> {
                         }
                     }
                     Err(failure) => {
-                        let asks = |it: &RunningJs| {
+                        let needs_types = |it: &RunningJs| {
                             host.asks_for_types(&it.configured.rule, &failure.message)
                         };
                         let at = failure.rule.map(|it| it as usize);
-                        if let Some(at) = at.filter(|it| running_js.get(*it).is_some_and(asks)) {
-                            let taken = running_js.remove(at);
-                            rules_to_ignore.push(RuleId::Js(Arc::clone(&taken.configured.rule)));
+                        if let Some(at) =
+                            at.filter(|it| running_js.get(*it).is_some_and(needs_types))
+                        {
+                            let removed = running_js.remove(at);
+                            rules_to_ignore.push(RuleId::Js(Arc::clone(&removed.configured.rule)));
                             continue;
                         }
                         let rule = at.and_then(|it| running_js.get(it));
@@ -798,7 +812,7 @@ impl<S: RuleSet> Linter<S> {
         if let Some(module) = &config.package_module {
             file.set_package_module(Arc::clone(module));
         }
-        // A rule for which the file has nothing is not started.
+        // A rule that has nothing to listen for in the file isn't started.
         if !is_plain {
             enabled.extend(running.iter().zip(0..).map(|(it, place)| Enabled {
                 rule: match &it.rule {
@@ -820,8 +834,8 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
-        // See `Pairs`. Where the rule without types is the more severe, both report as they are: a report less would be a
-        // milder one.
+        // See `Pairs`. If the rule without types has the higher severity, both report as usual, because dropping its
+        // report would lower the severity.
         let pairs = S::PAIRS;
         if file.types.is_some()
             && file.language().is_oxlint
@@ -848,14 +862,14 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
-        let wants_places = options.wants_places || wants_fixes || has_directives;
-        let of_js = problems.len() - before_js;
+        let wants_positions = options.wants_positions || wants_fixes || has_directives;
+        let js_report_count = problems.len() - before_js;
         for (it, reported) in problems.iter_mut().skip(before_js).zip(1..) {
             it.reported = reported;
         }
         file.sink.wants_help.set(options.wants_help);
         file.sink.drops_messages.set(!options.wants_messages);
-        (file.sink.drops_texts_of_fixes).set(!options.wants_texts_of_fixes);
+        (file.sink.drops_fix_texts).set(!options.wants_fix_texts);
         let ran = |index: usize| -> Option<Ran> {
             if !is_plain {
                 return running.get(index).map(Running::ran);
@@ -870,14 +884,14 @@ impl<S: RuleSet> Linter<S> {
         };
         let mut diagnostics = crate::runner::run(file, &enabled, wants_fixes);
         if let Some(thrown) = file.sink.thrown.take() {
-            // "error:" stands for the plain `Error:` where the run ends.
-            let said = match (thrown.name, file.language().is_oxlint) {
+            // Where the run ends, "error:" is printed in place of a plain `Error:`.
+            let error_text = match (thrown.name, file.language().is_oxlint) {
                 ("Error", false) => thrown.message,
                 (name, _) => [name.as_bytes(), b": ", &thrown.message].concat(),
             };
             let id = ran(thrown.rule as usize).map_or_else(Vec::new, |it| it.id().to_vec());
             let error = ThrownError {
-                said: &said,
+                error_text: &error_text,
                 at: match thrown.at {
                     Some(at) => js_plugin::ThrownAt::Line(file.line_of(at)),
                     None => js_plugin::ThrownAt::Unknown,
@@ -887,10 +901,11 @@ impl<S: RuleSet> Linter<S> {
             match error.outcome(file.path(), config) {
                 Ok(problem) => {
                     diagnostics.retain(|it| it.rule != thrown.rule);
-                    // oxlint stops at the first error, so a file has one at most. It comes where the JavaScript plugins' findings do.
+                    // oxlint stops at the first error, so a file has one at most. It's placed with the JavaScript
+                    // plugins' findings.
                     if !problems.iter().any(is_thrown_error) {
                         problems.push(LintMessage {
-                            reported: of_js as u32 + 1,
+                            reported: js_report_count as u32 + 1,
                             ..problem
                         });
                     }
@@ -904,29 +919,29 @@ impl<S: RuleSet> Linter<S> {
             }
         }
         problems.reserve(diagnostics.len());
-        if wants_places {
+        if wants_positions {
             file.expect_positions(diagnostics.len());
         }
-        // oxlint sorts nothing. It prints what its rules report in the order in which it runs them.
-        let follows_run = wants_places && file.language().is_oxlint && !diagnostics.is_empty();
+        // oxlint doesn't sort. It prints its rules' reports in the order it runs them.
+        let follows_run = wants_positions && file.language().is_oxlint && !diagnostics.is_empty();
         // When oxlint runs a rule, and with which kinds of node it calls it.
         let in_oxlint = |rule: usize| match is_plain {
             true => {
-                let place = enabled.get(rule)?.place as usize;
-                Some(&prepared.order.get(place)?.in_oxlint)
+                let order_index = enabled.get(rule)?.place as usize;
+                Some(&prepared.order.get(order_index)?.in_oxlint)
             }
             false => Some(&running.get(rule)?.in_oxlint),
         };
-        // A file is linted again for a rule that has asked about the other files.
+        // A file is linted again if a rule asked about other files.
         let wants_keys =
-            follows_run && prepared.needs_modules && file.sink.asks_about_modules.get();
+            follows_run && prepared.needs_modules && file.sink.has_requested_modules.get();
         let about = |rule: u16| in_oxlint(rule as usize);
         let (by_run, run_keys) = match follows_run {
             true => crate::oxlint_order::in_run_order(file, &diagnostics, &about, wants_keys),
             false => (Vec::new(), Vec::new()),
         };
-        let of_rules = by_run.len() as u32;
-        // What was reported when the file was linted before, among which what is reported now belongs.
+        let rule_report_count = by_run.len() as u32;
+        // The reports from the first time the file was linted. The new reports have to be merged into them.
         let keys_before = options
             .again
             .map_or(&[][..], |it| &it.previous.run_keys[..]);
@@ -934,16 +949,17 @@ impl<S: RuleSet> Linter<S> {
             let key = run_keys.get(step as usize - 1);
             key.map_or(0, |key| keys_before.partition_point(|it| it <= key) as u32)
         };
-        // Only the comments want them by their places. Without any they are made in the order in which they are printed.
+        // Only the comments need them sorted by position. Without comments they're created in the order they're
+        // printed.
         let in_run_order = follows_run && !has_directives;
-        // Else, for each of them, the how manyth it is printed, from 1.
+        // Otherwise, each one's 1-based position in the printed order.
         let mut ranks: Vec<u32> = vec![0; if in_run_order { 0 } else { by_run.len() }];
         for (at, rank) in by_run.iter().zip(1..) {
             if let Some(it) = ranks.get_mut(*at as usize) {
                 *it = rank + before_in_run(rank);
             }
         }
-        let order: Vec<u32> = match wants_places {
+        let order: Vec<u32> = match wants_positions {
             _ if diagnostics.is_empty() => Vec::new(),
             _ if in_run_order => by_run,
             true => {
@@ -957,17 +973,18 @@ impl<S: RuleSet> Linter<S> {
             }
             false => (0..diagnostics.len() as u32).collect(),
         };
-        // What was reported before comes after: plugins in JavaScript run last, and what is run again runs first.
+        // Renumbers the earlier reports to make room for the new ones. A JavaScript plugin's report has no key and
+        // sorts after all of them, because those plugins run last and the rules that run again run first.
         for it in problems.iter_mut().skip(before_previous) {
             if it.reported != 0 && it.reported != u32::MAX {
                 it.reported += match keys_before.get(it.reported as usize - 1) {
                     Some(key) => run_keys.partition_point(|it| it < key) as u32,
-                    None => of_rules,
+                    None => rule_report_count,
                 };
             }
         }
-        let places = wants_places.then_some(&locator);
-        // What becomes of what the last rule and `messageId` change that change something.
+        let optional_locator = wants_positions.then_some(&locator);
+        // Caches `config::oxlint_changes` for the last rule and `messageId` that had a fix or a suggestion.
         let mut changes = (None, config::OxlintChanges::default());
         for (at, step) in order.into_iter().zip(1..) {
             let Some(diagnostic) = diagnostics.get_mut(at as usize) else {
@@ -992,7 +1009,7 @@ impl<S: RuleSet> Linter<S> {
                     false => ranks.get(at as usize).copied().unwrap_or(0),
                 },
                 claim,
-                ..to_message(diagnostic, rule.reported_as(), places)
+                ..to_message(diagnostic, rule.reported_as(), optional_locator)
             });
             let Some(message) =
                 (problems.last_mut()).filter(|_| changes_something || rule.name().is_some())
@@ -1014,10 +1031,10 @@ impl<S: RuleSet> Linter<S> {
             }
         }
         drop(diagnostics);
-        // The rule of the package looks at a file that the rule here cannot answer for as it would.
+        // If the built-in rule can't handle a file the way the package's rule would, the package's rule runs on it.
         if let Some(reason) = file.handed_back() {
             result.handed_back = Some(reason);
-            // Each with the id of the rule for which it stands in, which is what the comments name.
+            // Each with the id of the built-in rule it replaces, which is the id that comments use.
             let back: Vec<(RunningJs, RuleId)> = (0..enabled.len())
                 .filter_map(ran)
                 .filter(|it| it.entry.meta.hands_back && it.severity != Severity::Off)
@@ -1031,10 +1048,10 @@ impl<S: RuleSet> Linter<S> {
                 .collect();
             let enabled: Vec<&js_plugin::Configured> =
                 back.iter().map(|it| &**it.0.configured).collect();
-            let reports = match (options.js_plugins, &config.js_settings) {
+            let reports = match (options.js_plugins, config.js_settings_of(file)) {
                 (Some(host), Some(settings)) if !enabled.is_empty() => {
                     if file.text().len() < js_plugin::HEAVY {
-                        host.comes(file.text().len() as u64);
+                        host.needs_realm(file.text().len() as u64);
                     }
                     host.run_on_block(
                         file,
@@ -1045,19 +1062,19 @@ impl<S: RuleSet> Linter<S> {
                         options.parse_again,
                     )
                 }
-                // Nothing here runs JavaScript.
+                // There's no host to run JavaScript.
                 _ => Ok(Vec::new()),
             };
             match reports {
                 Ok(reports) => {
-                    let of_rule = |it: js_plugin::Report| {
+                    let message_for_report = |it: js_plugin::Report| {
                         let (rule, id) = back.get(it.rule as usize)?;
                         Some(LintMessage {
                             rule_id: Some(id.clone()),
                             ..js_message(it, rule, wants_fixes)
                         })
                     };
-                    problems.extend(reports.into_iter().filter_map(of_rule));
+                    problems.extend(reports.into_iter().filter_map(message_for_report));
                 }
                 Err(failure) => {
                     let rule = failure.rule.and_then(|it| Some(&back.get(it as usize)?.0));
@@ -1073,20 +1090,21 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
-        // oxlint runs its own rules first. Comments are applied to what is at one place in that order.
+        // oxlint runs its own rules first. Comments are applied to reports at the same position in that order.
         if file.language().is_oxlint {
-            problems[before_js..].rotate_left(of_js);
-            // When a rule of a JavaScript plugin throws, oxlint has nothing of any such rule for the file, and all of its own rules'
-            // findings.
+            problems[before_js..].rotate_left(js_report_count);
+            // When a JavaScript plugin's rule throws, oxlint drops all such rules' reports for the file and keeps its
+            // own rules' reports.
             if problems.iter().any(is_thrown_error) {
-                problems.retain(|it| !it.rule_id.as_ref().is_some_and(stands_for_js_rule));
+                problems.retain(|it| !it.rule_id.as_ref().is_some_and(runs_as_js_rule_in_oxlint));
             }
         }
-        // Before the comments, which are compared with a report where it's shown.
-        if file.language().stands_alone {
-            problems.iter_mut().for_each(LintMessage::stay_in_file);
+        // This has to happen before the comments are applied, because they're compared with the position where a report
+        // is shown.
+        if file.language().has_no_foreign_config {
+            problems.iter_mut().for_each(LintMessage::clamp_to_file);
         }
-        if wants_places && !in_run_order {
+        if wants_positions && !in_run_order {
             LintMessage::sort(&mut problems);
         }
 
@@ -1097,18 +1115,18 @@ impl<S: RuleSet> Linter<S> {
             Skipped::OnlyJsdoc => bun_core::strings::contains(file.text(), b"/**"),
             Skipped::Any => true,
         };
-        let can_tell = |name: &[u8]| {
+        let knows_rule = |name: &[u8]| {
             // Every rule that's on ran, so a comment that silences nothing here silences nothing in oxlint either.
             if config.find_js_rule(name).is_some() || !has_skipped_rules() {
                 return true;
             }
-            // oxlint goes by what is after the last `/`, so a rule that was skipped may be meant if it's called that.
+            // oxlint matches on the part after the last `/`, so the comment may mean a skipped rule with that name.
             let slash = bun_core::strings::last_index_of_char(name, b'/');
             let last = slash.map_or(name, |it| &name[it + 1..]);
             let is_here = || (self.registry.all().iter()).any(|it| it.meta.name.as_bytes() == last);
-            !config::is_rule_not_built_in(last) && (!config::is_rule_of_oxlint(last) || is_here())
+            !config::is_rule_not_built_in(last) && (!config::is_oxlint_rule(last) || is_here())
         };
-        // Adds to each of `messages`, which are sorted by position, what suppresses it.
+        // Adds its suppressions to each of `messages`, which are sorted by position.
         let apply_comments =
             |report_unused, wants_fixes, wants_suppressions, messages: &mut Vec<LintMessage>| {
                 if understands_oxlint_comments {
@@ -1119,7 +1137,7 @@ impl<S: RuleSet> Linter<S> {
                             wants_fixes,
                             rules_to_ignore: &rules_to_ignore,
                             has_skipped_rules: &has_skipped_rules,
-                            can_tell: &can_tell,
+                            knows_rule: &knows_rule,
                         },
                         comments.iter().filter(is_directive).filter(is_understood),
                         messages,
@@ -1168,7 +1186,7 @@ impl<S: RuleSet> Linter<S> {
     }
 }
 
-/// A fix that becomes a suggestion says what the report says.
+/// A fix that becomes a suggestion uses the report's message as its description.
 fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
     if changes.are_dropped {
         message.fix = None;
@@ -1194,7 +1212,7 @@ fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
     }
 }
 
-/// Takes out of `diagnostic` what is on the heap. `locator`: `None` if nothing reads where it is.
+/// Moves the heap-allocated parts out of `diagnostic`. `locator` is `None` if nothing reads the position.
 #[inline]
 fn to_message(
     diagnostic: &mut Diagnostic,
@@ -1217,7 +1235,7 @@ fn to_message(
         line,
         column,
         end: (!diagnostic.has_no_end).then(|| match end_position {
-            // A column of -1, which ESLint has, is `u32::MAX`.
+            // ESLint can have a column of -1, which becomes `u32::MAX`.
             Some(end) => (end.line, end.column.wrapping_add(1)),
             None => end,
         }),
@@ -1233,12 +1251,12 @@ fn to_message(
             .map(|it| (position(it.start), position(it.end))),
         not_numbers: NotNumbers::default(),
         details: details.map(|it| {
-            let place = |(span, text): (Span, Cow<'static, str>)| {
+            let locate_label = |(span, text): (Span, Cow<'static, str>)| {
                 (position(span.start), position(span.end), text)
             };
             Box::new(Details {
                 first_label: it.first_label,
-                labels: it.labels.into_iter().map(place).collect(),
+                labels: it.labels.into_iter().map(locate_label).collect(),
                 help: it.help,
                 note: it.note,
                 typescript_code: 0,
@@ -1249,7 +1267,7 @@ fn to_message(
     }
 }
 
-/// `wants_fixes`: [`LintOptions::wants_fixes`]
+/// `wants_fixes` is [`LintOptions::wants_fixes`].
 fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) -> LintMessage {
     let id = report.message_id;
     LintMessage {
@@ -1278,7 +1296,8 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) ->
     }
 }
 
-/// What becomes of a rule of a JavaScript plugin that throws. `Err`: ESLint throws it on. oxlint reports it for the file.
+/// Handles a JavaScript plugin's rule that throws. `Err` means ESLint rethrows the error. oxlint reports it for the
+/// file.
 fn js_failure(
     failure: &js_plugin::Failure,
     rule: Option<&RunningJs>,
@@ -1286,23 +1305,25 @@ fn js_failure(
     config: &ResolvedConfig,
 ) -> Result<LintMessage, Vec<u8>> {
     let error = ThrownError {
-        said: &failure.message,
+        error_text: &failure.message,
         at: failure.at,
         rule: rule.map(|it| &it.configured.rule.id[..]),
     };
     error.outcome(path, config)
 }
 
-/// Whether `problem` is what [`ThrownError::outcome`] makes for oxlint. Every other fatal problem is at a place in the file.
+/// True if `problem` is what [`ThrownError::outcome`] produces for oxlint. Every other fatal problem has a position in
+/// the file.
 fn is_thrown_error(problem: &LintMessage) -> bool {
     problem.is_fatal && problem.line == 0
 }
 
-/// Whether oxlint could only run the rule as a rule of a JavaScript plugin: it is one, or it's a native rule that oxlint doesn't have.
-fn stands_for_js_rule(id: &RuleId) -> bool {
+/// True if oxlint could only run the rule as a JavaScript plugin rule: it is one, or it's a native rule that oxlint
+/// doesn't have.
+fn runs_as_js_rule_in_oxlint(id: &RuleId) -> bool {
     match id {
         RuleId::Js(_) => true,
-        RuleId::Known(meta) | RuleId::Named(meta, _) => config::oxlint_lacks(meta),
+        RuleId::Known(meta) | RuleId::Named(meta, _) => config::is_missing_in_oxlint(meta),
         RuleId::Unknown(_) => false,
     }
 }
@@ -1310,31 +1331,31 @@ fn stands_for_js_rule(id: &RuleId) -> bool {
 /// An error that a rule has thrown, whether the rule is JavaScript or calls [`Cx::throw`](crate::context::Cx::throw).
 struct ThrownError<'e> {
     /// The error as the tool prints it, without the stack.
-    said: &'e [u8],
+    error_text: &'e [u8],
     at: js_plugin::ThrownAt,
     /// ESLint's `ruleId`
     rule: Option<&'e [u8]>,
 }
 
 impl ThrownError<'_> {
-    /// `path`: the file that was being linted. `Ok`: oxlint reports this for the file and goes on. `Err`: ESLint ends the run and
-    /// prints this.
+    /// `path` is the file that was being linted. `Ok` means oxlint reports this for the file and continues. `Err` means
+    /// ESLint ends the run and prints this.
     fn outcome(&self, path: &[u8], config: &ResolvedConfig) -> Result<LintMessage, Vec<u8>> {
         if !config.prefers_typescript_rules {
             let occurred: &[u8] = b"\nOccurred while linting ";
             let line = match self.at {
-                // ESLint's `createRuleListeners` names the rule in the message, and then there's no line for it.
+                // ESLint's `createRuleListeners` puts the rule's name in the message, and then there's no `Rule:` line.
                 js_plugin::ThrownAt::Create => {
                     let (loading, rule): (&[u8], _) = (b"Error while loading rule '", self.rule);
                     let rule = rule.unwrap_or_default();
-                    return Err([loading, rule, b"': ", self.said, occurred, path].concat());
+                    return Err([loading, rule, b"': ", self.error_text, occurred, path].concat());
                 }
                 js_plugin::ThrownAt::Line(line) => format!(":{line}"),
                 js_plugin::ThrownAt::Unknown => String::new(),
             };
             let named = (self.rule).map(|rule| [b"\nRule: \"", rule, b"\""].concat());
             let named = named.unwrap_or_default();
-            return Err([self.said, occurred, path, line.as_bytes(), &named].concat());
+            return Err([self.error_text, occurred, path, line.as_bytes(), &named].concat());
         }
         Ok(LintMessage {
             rule_id: None,
@@ -1343,7 +1364,7 @@ impl ThrownError<'_> {
                 b"Error running JS plugin.\nFile path: ",
                 path,
                 b"\n",
-                self.said,
+                self.error_text,
             ]
             .concat(),
             message_id: None,
@@ -1364,7 +1385,7 @@ impl ThrownError<'_> {
     }
 }
 
-/// Applies the comments of a file to its configuration.
+/// Applies a file's comments to its config.
 struct Inline<'i, 'c, 'a, S: RuleSet> {
     linter: &'c Linter<S>,
     file: &'a File<'a>,
@@ -1372,7 +1393,7 @@ struct Inline<'i, 'c, 'a, S: RuleSet> {
     locator: &'i Locator<'a>,
     problems: &'i mut Vec<LintMessage>,
     skipped: &'i mut Vec<Box<[u8]>>,
-    /// The rules that a comment has configured already.
+    /// The rules that a comment has already configured.
     configured: Vec<Named<'c>>,
     /// The subset of `configured` that was set [through the paired rule's name](Inline::set_by).
     by_other_name: Vec<Named<'c>>,
@@ -1394,8 +1415,8 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         self.problems.push(problem);
     }
 
-    /// The rule called `id`. If there is none, reports that, unless the plugin is one that the
-    /// configuration knows, or the rule is left to `bun fmt`. `is_turned_on`: by the comment, so that it is missed.
+    /// The rule named `id`. If there is none, reports that, unless the config knows the plugin or the rule is left to
+    /// `bun fmt`. `is_turned_on` means the comment turns the rule on, so its absence matters.
     fn find(
         &mut self,
         comment: &ConfigComment,
@@ -1409,13 +1430,20 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             return Some(Named::Instance(rule, name));
         }
         let js = config.find_js_rule(id);
-        let native = || (config.find_rule(&self.linter.registry, id)).map(Named::Native);
+        // ESLint only accepts a rule's own name. `eslint/no-var` is oxlint's name for `no-var`.
+        let is_of_eslint = !config.has_every_rule && !config.prefers_typescript_rules;
+        let prefix = registry::parse_rule_id(id).0;
+        let native = || {
+            (config.find_rule(&self.linter.registry, id))
+                .filter(|it| !is_of_eslint || it.meta.plugin.prefix().as_bytes() == prefix)
+                .map(Named::Native)
+        };
         let lacks_it = config.lacks_rule(id);
         let is_about_layout =
             !lacks_it && (config.formatting_rule(&self.linter.registry, id)).is_some();
         let found = match js {
             _ if lacks_it || is_about_layout => None,
-            // What `jsPlugins` names hides a plugin of the same name that is implemented here.
+            // A plugin in `jsPlugins` hides a built-in plugin with the same name.
             Some(js)
                 if config.skips_unknown_rules
                     && !config.prefers_native_rules_of(
@@ -1429,13 +1457,13 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             None => native(),
         };
         if found.is_none() {
-            // All rules of a plugin that is loaded are known.
+            // All rules of a loaded plugin are known.
             let is_known_to_be_missing = lacks_it || js.is_some() && !config.skips_unknown_rules;
             // With every rule built in, there's no npm package that could provide the rule a comment enables.
-            let is_of_a_package = !is_known_to_be_missing
+            let may_come_from_package = !is_known_to_be_missing
                 && self.config.is_foreign(id)
                 && !(config.has_every_rule && is_turned_on);
-            if is_about_layout || is_of_a_package {
+            if is_about_layout || may_come_from_package {
                 if is_turned_on && !self.skipped.iter().any(|it| **it == *id) {
                     self.skipped.push(id.into());
                 }
@@ -1465,9 +1493,12 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             return rule;
         };
         let can_run = !extension.meta.requires_types || self.file.types.is_some();
-        let stands_alone = self.file.language().stands_alone;
-        let takes = |it: &RuleEntry| schema::validate(it.meta, given, stands_alone).is_ok();
-        let is_for_base = self.file.is_javascript() || !can_run || !takes(extension) && takes(base);
+        let has_no_foreign_config = self.file.language().has_no_foreign_config;
+        let accepts_options =
+            |it: &RuleEntry| schema::validate(it.meta, given, has_no_foreign_config).is_ok();
+        let is_for_base = self.file.is_javascript()
+            || !can_run
+            || !accepts_options(extension) && accepts_options(base);
         Named::Native(if is_for_base { base } else { extension })
     }
 
@@ -1489,8 +1520,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         }
     }
 
-    /// The part of ESLint's `applyInlineConfig` and of what `verify` does with its result that is
-    /// about rules.
+    /// The part of ESLint's `applyInlineConfig`, and of what `verify` does with its result, that deals with rules.
     fn apply(
         &mut self,
         comment: &ConfigComment,
@@ -1500,7 +1530,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         match comment.label {
             Label::Rules => {}
             Label::Env if self.file.language().eslint_8.is_some() => return,
-            Label::Env if self.file.language().stands_alone => return,
+            Label::Env if self.file.language().has_no_foreign_config => return,
             Label::Env => {
                 return self.fatal(
                     comment,
@@ -1557,7 +1587,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 self.by_other_name.swap_remove(at);
                 self.configured.retain(|it| !it.is(rule));
             }
-            // In ESLint 8 a comment says all there is to say about a rule, and the last comment counts.
+            // In ESLint 8 a comment fully replaces a rule's setting, and the last comment wins.
             let value = match eslint_8.map(|it| it.inline_setting(&id, &value, rule.js())) {
                 Some(Ok(setting)) => Json::Array(setting),
                 Some(Err(message)) => {
@@ -1580,7 +1610,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 value => std::slice::from_ref(value),
             };
             let Some(severity) = inline.first().and_then(severity_of) else {
-                // The message of `InvalidRuleSeverityError`, from after its first colon.
+                // `InvalidRuleSeverityError`'s message, starting after its first colon.
                 let full = quoted(&[
                     b"Key \"",
                     &id,
@@ -1606,7 +1636,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 Named::Instance(rule, _) => Some(Existing::Native(rule)),
                 Named::Js(rule) => self.config.js_rule(rule).map(Existing::Js),
             };
-            // A comment that has only a severity keeps the options of the configuration.
+            // A comment that only has a severity keeps the config's options.
             let keeps_options = inline.len() == 1 && eslint_8.is_none();
             let over_defaults;
             let options: &[Json] = match existing {
@@ -1628,23 +1658,28 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                     inline.len() == 1,
                 );
             }
-            // The options of a rule that the configuration enables are validated already.
+            // The options of a rule that the config enables are already validated.
             let is_validated = eslint_8.is_some()
                 || keeps_options && existing.is_some_and(|it| it.severity() != Severity::Off);
-            // ESLint leaves out what is off only if that is written `0`.
+            // ESLint only skips a rule that's off if that's written as `0`.
             let is_zero = matches!(inline.first(), Some(Json::Number(n)) if *n == 0.0);
-            let stands_alone = self.file.language().stands_alone;
+            let has_no_foreign_config = self.file.language().has_no_foreign_config;
             let validated = match is_validated || is_zero {
                 true => None,
                 // Options are valid for a pair if either rule accepts them.
-                false => Some(rule.validate(options, stands_alone).or_else(|lines| {
-                    let pair = self.pair_of(rule).map(|it| [it.0, it.1]);
-                    let mut pair = pair.iter().flatten();
-                    match pair.any(|it| schema::validate(it.meta, options, stands_alone).is_ok()) {
-                        true => Ok(Vec::new()),
-                        false => Err(lines),
-                    }
-                })),
+                false => Some(
+                    rule.validate(options, has_no_foreign_config)
+                        .or_else(|lines| {
+                            let pair = self.pair_of(rule).map(|it| [it.0, it.1]);
+                            let mut pair = pair.iter().flatten();
+                            match pair.any(|it| {
+                                schema::validate(it.meta, options, has_no_foreign_config).is_ok()
+                            }) {
+                                true => Ok(Vec::new()),
+                                false => Err(lines),
+                            }
+                        }),
+                ),
             };
             if let Some(Err(lines)) = &validated {
                 let message = quoted(&[
@@ -1692,9 +1727,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 (Named::Native(entry), _) => (entry, None),
                 (Named::Instance(rule, _), _) => (rule.entry, Some(rule)),
                 (Named::Js(js), existing) => {
-                    let is_it = |it: &RunningJs| Arc::ptr_eq(&it.configured.rule, js);
+                    let is_this_js_rule = |it: &RunningJs| Arc::ptr_eq(&it.configured.rule, js);
                     if severity == Severity::Off {
-                        running_js.retain(|it| !is_it(it));
+                        running_js.retain(|it| !is_this_js_rule(it));
                         continue;
                     }
                     let new = RunningJs {
@@ -1712,7 +1747,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                             )),
                         },
                     };
-                    match running_js.iter_mut().find(|it| is_it(it)) {
+                    match running_js.iter_mut().find(|it| is_this_js_rule(it)) {
                         Some(running) => *running = new,
                         None => running_js.push(new),
                     }
@@ -1720,14 +1755,15 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 }
             };
             let name = existing.and_then(ConfiguredRule::name);
-            let is_it = |it: &Running<S>| is_same_rule(it.entry, entry) && it.ran().name() == name;
+            let is_this_rule =
+                |it: &Running<S>| is_same_rule(it.entry, entry) && it.ran().name() == name;
             let linter = self.linter;
             let shared = existing
                 .filter(|_| keeps_options)
                 .and_then(|it| linter.instance(it));
-            let refusal = match shared {
+            let options_error = match shared {
                 Some(_) => existing
-                    .and_then(|it| linter.refusal(it))
+                    .and_then(|it| linter.options_error(it))
                     .map(Cow::Borrowed),
                 None if severity == Severity::Off => None,
                 None => linter.validate(entry, options).err().map(Cow::Owned),
@@ -1735,7 +1771,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             let rule = match shared {
                 Some(rule) => RuleRef::Shared(&**rule),
                 None if severity == Severity::Off => {
-                    running.retain(|it| !is_it(it));
+                    running.retain(|it| !is_this_rule(it));
                     continue;
                 }
                 None => {
@@ -1752,9 +1788,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 severity,
                 in_oxlint: InOxlint::unknown(entry.meta.reports, u16::MAX),
                 rule,
-                refusal,
+                options_error,
             };
-            match running.iter_mut().find(|it| is_it(it)) {
+            match running.iter_mut().find(|it| is_this_rule(it)) {
                 Some(running) => *running = new,
                 None => running.push(new),
             }
@@ -1890,7 +1926,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
     }
 }
 
-/// All threads share these.
+/// These are shared by all threads.
 const _: fn() = || {
     fn is_shared<T: Send + Sync>() {}
     is_shared::<Config>();

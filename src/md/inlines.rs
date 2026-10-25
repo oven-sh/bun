@@ -970,16 +970,6 @@ impl Parser<'_> {
         run_end: usize,
         is_label: bool,
     ) -> Flanking {
-        if content.get(run_start) == Some(&b'*')
-            && compat::asterisks_do_not_look_around(&self.flags)
-        {
-            return Flanking {
-                left: true,
-                right: true,
-                before: Neighbor::Punctuation,
-                after: Neighbor::Punctuation,
-            };
-        }
         let edge = if is_label {
             Neighbor::Punctuation
         } else {
@@ -1004,6 +994,16 @@ impl Parser<'_> {
             true => neighbor(helpers::decode_utf8(content, run_end).codepoint),
             false => edge,
         };
+        if content.get(run_start) == Some(&b'*')
+            && compat::asterisks_only_look_for_whitespace(&self.flags)
+        {
+            return Flanking {
+                left: after != Neighbor::Whitespace,
+                right: before != Neighbor::Whitespace,
+                before: Neighbor::Punctuation,
+                after: Neighbor::Punctuation,
+            };
+        }
         Flanking::of(before, after)
     }
 

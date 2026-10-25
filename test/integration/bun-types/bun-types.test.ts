@@ -303,6 +303,252 @@ function checkForEmptyInterfaces(program: ts.Program) {
   return empties;
 }
 
+/**
+ * What the published types call the exports of each schema of the bindgen (docs/project/bindgen.mdx).
+ * `null`: nothing, since JavaScript wraps them, they are not for users, or the file has only types.
+ * `Class<T>`: the constructor of a class of which only the instances, `T`, are published.
+ */
+const PUBLISHED_AS: Record<string, string | null> = {
+  "Archive.bind.ts": "typeof Bun",
+  "Blob.bind.ts": "typeof Bun & { Blob: Class<Bun.BunFile> }",
+  "BlockList.bind.ts": null,
+  "BunObject.bind.ts":
+    "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape; table: typeof Bun.inspect.table }",
+  "BunObjectInternals.bind.ts": null,
+  "BunTest.bind.ts": null,
+  "ByteStream.bind.ts": null,
+  "BytecodeOrderRecorder.bind.ts": null,
+  "Counters.bind.ts": null,
+  "Crypto.bind.ts":
+    'typeof Bun & { Crypto: Class<Omit<Crypto, "subtle">>; timingSafeEqual: typeof import("node:crypto").timingSafeEqual }',
+  "CryptoHasher.bind.ts": "typeof Bun",
+  "DevServer.bind.ts": null,
+  "FFIObject.bind.ts": null,
+  "FakeTimers.bind.ts": 'typeof import("bun:test").jest',
+  "FetchSession.bind.ts": "typeof Bun",
+  "FetchTasklet.bind.ts": null,
+  "FileSink.bind.ts": null,
+  "FormData.bind.ts": null,
+  "FrameworkRouter.bind.ts": null,
+  "Glob.bind.ts": "typeof Bun",
+  "HTMLBundle.bind.ts": null,
+  "HashObject.bind.ts": "typeof Bun.hash & { wyhash: typeof Bun.hash }",
+  "Image.bind.ts": "typeof Bun",
+  "InternalSourceMap.bind.ts": null,
+  "JSBundler.bind.ts": null,
+  "JSMySQLConnection.bind.ts": null,
+  "JSMySQLQuery.bind.ts": null,
+  "JSON5Object.bind.ts": "typeof Bun.JSON5",
+  "JSONCObject.bind.ts": "typeof Bun.JSONC",
+  "Listener.bind.ts": null,
+  "MarkdownObject.bind.ts": "typeof Bun.markdown",
+  "MarkdownObjectInternals.bind.ts": null,
+  "NodeHTTPResponse.bind.ts": null,
+  "NodeModuleModule.bind.ts": null,
+  "ObjectURLRegistry.bind.ts": null,
+  "ParsedShellScript.bind.ts": null,
+  "PasswordObject.bind.ts": "typeof Bun.password",
+  "PostgresSQLConnection.bind.ts": null,
+  "PostgresSQLQuery.bind.ts": null,
+  "ReadableStream.bind.ts": null,
+  "RequestContext.bind.ts": null,
+  "ResourceUsage.bind.ts": null,
+  "S3Client.bind.ts": "typeof Bun",
+  "S3Stat.bind.ts": "{ S3Stat: Class<Bun.S3Stats> }",
+  "S3UploadStream.bind.ts": null,
+  "SSLConfig.bind.ts": null,
+  "ScopeFunctions.bind.ts": null,
+  "SecureContext.bind.ts": null,
+  "SemverObject.bind.ts": "typeof Bun.semver",
+  "SemverObjectInternals.bind.ts": null,
+  "Sink.bind.ts":
+    "typeof Bun & { FileSink: Class<Bun.FileSink>; NetworkSink: Class<Bun.NetworkSink>; ReadableSinkController: Class<ReadableStreamDirectController> }",
+  "SocketAddress.bind.ts": null,
+  "SocketConfig.bind.ts": null,
+  "Stat.bind.ts": null,
+  "TOMLObject.bind.ts": "typeof Bun.TOML",
+  "Terminal.bind.ts": "typeof Bun",
+  "TextDecoder.bind.ts": "{ TextDecoder: typeof TextDecoder }",
+  "Timer.bind.ts": null,
+  "Transpiler.bind.ts": "typeof Bun",
+  "UnsafeObject.bind.ts": "typeof Bun.unsafe",
+  "UpgradedDuplex.bind.ts": null,
+  "XMLObject.bind.ts": "typeof Bun.XML",
+  "YAMLObject.bind.ts": "typeof Bun.YAML",
+  "bake_plugins.bind.ts": null,
+  "bindgen_test.bind.ts": null,
+  "bun_string_jsc.bind.ts": null,
+  "cares_jsc.bind.ts": null,
+  "color_js.bind.ts": "typeof Bun",
+  "crash_handler_jsc.bind.ts": null,
+  "cron.bind.ts": null,
+  "csrf_jsc.bind.ts": "typeof Bun.CSRF",
+  "css_internals.bind.ts": null,
+  "dns.bind.ts": "typeof Bun.dns",
+  "dns_internals.bind.ts": null,
+  "error_jsc.bind.ts": null,
+  "event_loop.bind.ts": null,
+  "expect.bind.ts": null,
+  "fetch.bind.ts":
+    '{ fetch: typeof fetch; preconnect: typeof fetch.preconnect; sessionFetch: Bun.FetchSession["fetch"] }',
+  "ffi.bind.ts": null,
+  "filesystem_router.bind.ts":
+    "typeof Bun & { FrameworkFileSystemRouter: Class<{ match(path: string): any; toJSON(): any }> }",
+  "fmt_jsc.bind.ts": null,
+  "h2_frame_parser.bind.ts": null,
+  "headers_jsc.bind.ts": null,
+  "hosted_git_info_jsc.bind.ts": null,
+  "html_rewriter.bind.ts": "{ HTMLRewriter: typeof HTMLRewriter }",
+  "html_rewriter_internals.bind.ts": null,
+  "hw_exports.bind.ts": null,
+  "imported_class_test.bind.ts": null,
+  "ini_jsc.bind.ts": null,
+  "install_binding.bind.ts": null,
+  "interpreter.bind.ts": null,
+  "ipc.bind.ts": null,
+  "ipc_host.bind.ts": null,
+  "jest.bind.ts": null,
+  "js_bun_spawn_bindings.bind.ts": "typeof Bun",
+  "jsc_hooks.bind.ts": null,
+  "linear_fifo_testing.bind.ts": null,
+  "memory_pressure.bind.ts": null,
+  "mysql.bind.ts": null,
+  "napi_body.bind.ts": null,
+  "node_assert_binding.bind.ts": null,
+  "node_cluster_binding.bind.ts": null,
+  "node_crypto_binding.bind.ts": null,
+  "node_fs_binding.bind.ts": null,
+  "node_fs_stat_watcher.bind.ts": null,
+  "node_fs_watcher.bind.ts": null,
+  "node_http_binding.bind.ts": null,
+  "node_net_binding.bind.ts": null,
+  "node_os.bind.ts": null,
+  "node_quic_binding.bind.ts": null,
+  "node_tls_binding.bind.ts": null,
+  "node_util_binding.bind.ts": null,
+  "node_zlib_binding.bind.ts": null,
+  "npm_jsc.bind.ts": null,
+  "pack_command.bind.ts": null,
+  "parse_args.bind.ts": null,
+  "patch_testing.bind.ts": null,
+  "postgres.bind.ts": null,
+  "prompt.bind.ts": "{ alert: typeof alert; confirm: typeof confirm; prompt: typeof prompt }",
+  "proxy_testing.bind.ts": null,
+  "quic.bind.ts": null,
+  "rare_data.bind.ts": null,
+  "resolve_message.bind.ts": "{ ResolveMessage: Class<ResolveMessage>; BuildMessage: Class<BuildMessage> }",
+  "resolver_jsc.bind.ts": null,
+  "response.bind.ts":
+    '{ Request: Class<Omit<Request, "keepalive" | "duplex">>; Response: typeof Response & { prototype: Response } }',
+  "server.bind.ts": "{ ServerWebSocket: Class<Required<Bun.ServerWebSocket>> }",
+  "server_body.bind.ts": null,
+  "shell_body.bind.ts": null,
+  "socket_body.bind.ts": null,
+  "sourcemap.bind.ts": null,
+  "subprocess.bind.ts": null,
+  "udp_socket.bind.ts": null,
+  "upgrade_command.bind.ts": null,
+  "valkey.bind.ts": "typeof Bun",
+  "virtual_machine_exports.bind.ts": null,
+};
+
+/**
+ * Where the published types promise what the schema does not do: a call they allow has an argument
+ * the schema refuses, a result they name is not one the schema gives, or an object has a member
+ * that the schema's does not. They may be narrower than it, which says "a buffer" of a `Uint8Array`,
+ * but not by leaving out `null` or `undefined`.
+ */
+function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, schema: ts.Type) {
+  const broken: string[] = [];
+  const compared = new Map<ts.Type, Set<ts.Type>>();
+  const show = (type: ts.Type) => checker.typeToString(type, undefined, ts.TypeFormatFlags.NoTruncation);
+  const generated = schema.symbol.declarations![0].getSourceFile();
+  const isGenerated = (type: ts.Type) =>
+    !!type.symbol?.declarations?.some(declaration => declaration.getSourceFile() === generated);
+  const parts = (type: ts.Type) => (type.isUnion() ? type.types : [type]);
+  /** `getPropertyOfType` does not find a member that a well-known symbol names. */
+  const findMember = (type: ts.Type, member: ts.Symbol) =>
+    checker.getPropertyOfType(type, member.name) ??
+    checker.getPropertiesOfType(type).find(other => other.escapedName === member.escapedName);
+  /** The compiler numbers a well-known symbol: `__@dispose@123`. */
+  const nameOf = (member: ts.Symbol) => member.name.replace(/^__@(\w+)@\d+$/, "[Symbol.$1]");
+
+  /** A dictionary or a class of the schema lists all it has, so nothing reads or gives any other member. */
+  function membersTheSchemaLacks(published: ts.Type, schema: ts.Type) {
+    const [listed, others] = [true, false].map(wanted =>
+      parts(schema).filter(part => (isGenerated(part) && part.getCallSignatures().length === 0) === wanted),
+    );
+    if (listed.length === 0) return [];
+    const names = parts(published)
+      .filter(
+        part => part.flags & ts.TypeFlags.Object && !others.some(other => checker.isTypeAssignableTo(part, other)),
+      )
+      .flatMap(part => part.getProperties())
+      .filter(member => !listed.some(part => findMember(part, member)))
+      .map(nameOf);
+    return [...new Set(names)];
+  }
+
+  function refusal(allowed: ts.Signature, taken: ts.Signature) {
+    for (const [i, parameter] of taken.parameters.entries()) {
+      // `(...args: any[]) => any`, which is all that the schema says of a builtin.
+      if ((parameter.valueDeclaration as ts.ParameterDeclaration).dotDotDotToken) break;
+      const argument = allowed.parameters[i];
+      const given = argument ? checker.getTypeOfSymbol(argument) : checker.getUndefinedType();
+      const takes = checker.getTypeOfSymbol(parameter);
+      if (!checker.isTypeAssignableTo(given, takes))
+        return `${parameter.name} takes ${show(takes)}, not ${show(given)}`;
+      const unread = membersTheSchemaLacks(given, takes);
+      if (unread.length > 0) return `${parameter.name} has no ${unread.join(", ")}`;
+    }
+    return null;
+  }
+
+  function compareSignatures(path: string, allowed: readonly ts.Signature[], taken: readonly ts.Signature[]) {
+    if (taken.length === 0) return;
+    if (allowed.length === 0) broken.push(`${path} is not published as a function`);
+    for (const signature of allowed) {
+      const refusals = taken.map(candidate => refusal(signature, candidate));
+      const match = taken[refusals.indexOf(null)];
+      if (match) compare(`${path}()`, signature.getReturnType(), match.getReturnType());
+      else broken.push(`${path}${checker.signatureToString(signature)}: ${refusals.join(", or ")}`);
+    }
+  }
+
+  function compare(path: string, published: ts.Type, schema: ts.Type) {
+    if (compared.get(published)?.has(schema)) return;
+    compared.set(published, (compared.get(published) ?? new Set()).add(schema));
+    // The exports of a file are a few of the members of `typeof Bun`.
+    const never = path ? membersTheSchemaLacks(published, schema) : [];
+    if (never.length > 0) broken.push(`${path} has no ${never.join(", ")}`);
+    const calls = schema.getCallSignatures();
+    const constructs = schema.getConstructSignatures();
+    if (calls.length === 0 && constructs.length === 0 && !isGenerated(schema)) {
+      const promisesNothing = published.flags & ts.TypeFlags.Void;
+      const absent = parts(schema).filter(part => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
+      if (
+        !promisesNothing &&
+        (!checker.isTypeAssignableTo(published, schema) ||
+          absent.some(part => !checker.isTypeAssignableTo(part, published)))
+      ) {
+        broken.push(`${path} is ${show(schema)}, not ${show(published)}`);
+      }
+      return;
+    }
+    compareSignatures(path, published.getCallSignatures(), calls);
+    compareSignatures(`new ${path}`, published.getConstructSignatures(), constructs);
+    for (const member of schema.getProperties()) {
+      const promised = findMember(published, member);
+      const memberPath = path ? `${path}.${nameOf(member)}` : nameOf(member);
+      if (promised) compare(memberPath, checker.getTypeOfSymbol(promised), checker.getTypeOfSymbol(member));
+      else broken.push(`${memberPath} is not published`);
+    }
+  }
+
+  compare("", published, schema);
+  return broken;
+}
+
 afterAll(async () => {
   if (TEMP_DIR) {
     if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
@@ -333,6 +579,86 @@ describe("@types/bun integration test", () => {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
       diagnostics: [],
     });
+  });
+
+  test.skipIf(isDebug)("promises nothing that a schema of the bindgen breaks", async () => {
+    const dir = join(TEMP_DIR, "bindgen");
+    const schemas = await Array.fromAsync(
+      new Bun.Glob("src/**/*.bind.ts").scan({ cwd: BUN_REPO_ROOT, absolute: true }),
+    );
+    await $`${bunExe()} src/codegen/bindgen.ts --sources=${schemas.map(file => `bun=${file}`).join(",")} --codegen-path=${dir} --types-path=${dir}`
+      .env(bunEnv)
+      .quiet();
+    const pairs = join(dir, "published.ts");
+    await Bun.write(
+      pairs,
+      `export type Published = {\n${Object.entries(PUBLISHED_AS)
+        .map(([file, type]) => `  ${JSON.stringify(file)}: ${type};\n`)
+        .join("")}};\nexport type Schemas = $Bindgen.Exports;\ntype Class<T> = { new (): T; prototype: T };\n`,
+    );
+    const program = ts.createProgram({
+      rootNames: [join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "index.d.ts"), join(dir, "Bindgen.d.ts"), pairs],
+      options: { ...DEFAULT_COMPILER_OPTIONS, types: [], skipLibCheck: false },
+    });
+    const source = program.getSourceFile(pairs)!;
+    // A name that does not resolve is a type that everything is assignable to.
+    for (const file of [source, program.getSourceFile(join(dir, "Bindgen.d.ts"))!]) {
+      expect(ts.getPreEmitDiagnostics(program, file).map(diagnostic => diagnostic.messageText)).toEqual([]);
+    }
+
+    const checker = program.getTypeChecker();
+    const [published, generated] = source.statements.map(statement => checker.getTypeAtLocation(statement));
+    expect(schemas.map(file => basename(file)).sort()).toEqual(Object.keys(PUBLISHED_AS).sort());
+    expect(
+      Object.keys(PUBLISHED_AS)
+        .filter(file => PUBLISHED_AS[file])
+        .flatMap(file =>
+          promisesTheSchemaBreaks(
+            checker,
+            checker.getTypeOfSymbol(published.getProperty(file)!),
+            checker.getTypeOfSymbol(generated.getProperty(file)!),
+          ).map(promise => `${file}: ${promise}`),
+        ),
+    ).toEqual([
+      // bun.d.ts and s3.d.ts do not declare these.
+      "Sink.bind.ts: ArrayBufferSink is not published as a function",
+      "Sink.bind.ts: new ArrayBufferSink().close is not published",
+      "Sink.bind.ts: new ArrayBufferSink().ref is not published",
+      "Sink.bind.ts: new ArrayBufferSink().unref is not published",
+      "Sink.bind.ts: new ArrayBufferSink()._getFd is not published",
+      "Sink.bind.ts: new ArrayBufferSink().sinkId is not published",
+      "Sink.bind.ts: new FileSink().close is not published",
+      // Published, and a `FileSink` does not read it.
+      "Sink.bind.ts: new FileSink().start(options?: { highWaterMark?: number | undefined; } | undefined): void: options takes FileSinkStartOptions | null | undefined, not { highWaterMark?: number | undefined; } | undefined",
+      "Sink.bind.ts: new FileSink()._getFd is not published",
+      "Sink.bind.ts: new FileSink().sinkId is not published",
+      // Published, and no sink has ever had it.
+      "Sink.bind.ts: new NetworkSink() has no stat",
+      "Sink.bind.ts: new NetworkSink().close is not published",
+      "Sink.bind.ts: new NetworkSink()._getFd is not published",
+      "Sink.bind.ts: new NetworkSink().sinkId is not published",
+      // Published, and nothing has ever read it.
+      "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
+      // `keepalive` and `duplex` are declared on Request but not implemented.
+      "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no keepalive, duplex",
+      // globals.d.ts does not declare these.
+      "resolve_message.bind.ts: new BuildMessage().toJSON is not published",
+      "resolve_message.bind.ts: new BuildMessage().column is not published",
+      "resolve_message.bind.ts: new BuildMessage().line is not published",
+      "resolve_message.bind.ts: new BuildMessage().notes is not published",
+      "resolve_message.bind.ts: new BuildMessage().[Symbol.toPrimitive] is not published",
+      "resolve_message.bind.ts: new ResolveMessage().toJSON is not published",
+      "resolve_message.bind.ts: new ResolveMessage().column is not published",
+      "resolve_message.bind.ts: new ResolveMessage().line is not published",
+      "resolve_message.bind.ts: new ResolveMessage().requireStack is not published",
+      "resolve_message.bind.ts: new ResolveMessage().stack is not published",
+      "resolve_message.bind.ts: new ResolveMessage().[Symbol.toPrimitive] is not published",
+      // `pendingDeclarations` in test/internal/source-lints/redis-client-types.test.ts.
+      "valkey.bind.ts: new RedisClient().psubscribe is not published",
+      "valkey.bind.ts: new RedisClient().pubsub is not published",
+      "valkey.bind.ts: new RedisClient().punsubscribe is not published",
+      "valkey.bind.ts: new RedisClient().select is not published",
+    ]);
   });
 
   // The fixture depends on typescript@latest, so this is the current stable release:

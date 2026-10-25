@@ -24,7 +24,7 @@
 
 import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isCanary, isWindows, tempDir } from "harness";
 import { basename, join } from "path";
 
 describe("Glob.match", () => {
@@ -2930,6 +2930,32 @@ describe("Glob.match", () => {
       }
     });
   });
+
+  test.each([63, 64, 65, 200])("matches a group with `?` or a class in a %d-byte alternative", width => {
+    const text = Buffer.alloc(width - 2, "a").toString();
+    const [path, other] = [text + "bc", text + "bd"];
+    const cases: [pattern: string, path: string, expected: boolean][] = [
+      // `{a,aa}` makes the alternative end at two positions at the same time.
+      [`{{a,aa}${text.slice(1)}?,zz}c`, `a${path}`, true],
+    ];
+    for (const long of [text + "?c", text + "[bc]c"]) {
+      cases.push(
+        [`{${long},zz}`, path, true],
+        [`{${long},zz}`, other, false],
+        [`{${long},zz}`, "zz", true],
+        [`src/{${long},zz}.js`, `src/${path}.js`, true],
+        [`{{a,aa}${long.slice(1)},zz}`, path, true],
+        [`!{${long},zz}`, path, false],
+        [`**/{${long},zz}`, `x/y/${path}`, true],
+        [`**/{${long},zz}`, `x/y/${other}`, false],
+      );
+    }
+    const wrong = cases.filter(([pattern, path, expected]) => {
+      const glob = new Glob(pattern);
+      return Array.from({ length: 40 }, () => glob.match(path)).some(answer => answer !== expected);
+    });
+    expect(wrong).toEqual([]);
+  });
 });
 
 describe("a Glob outlives the string that it was made from", () => {
@@ -3005,8 +3031,8 @@ async function matchedLikeMinimatch(pattern: string, dot: boolean, paths: string
   return paths.filter((_, index) => indexes.includes(index));
 }
 
-// The expected paths are what minimatch 10.2.6 matches.
-test.concurrent.each([
+// The expected paths are what minimatch 10.2.6 matches. A release build has no `bun lint`.
+test.concurrent.skipIf(!isCanary).each([
   ["**/.", true, ["a/b/.", "a/.b//.", "/.//."], ["a/b/.", "a/.b//."]],
   ["**/.", false, ["a/b/.", "a/.b//.", "/.//."], ["a/b/."]],
   ["**/.ts", true, ["a/b/.ts", "a/.b/.ts", "a/./b/.ts", "a/../b/.ts"], ["a/b/.ts", "a/.b/.ts"]],

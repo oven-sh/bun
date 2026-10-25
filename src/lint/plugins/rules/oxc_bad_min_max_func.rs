@@ -28,7 +28,7 @@ impl Rule for BadMinMaxFunc {
         let Some(out_min_max) = min_max(call) else {
             return;
         };
-        // An optional chain is not a call for oxlint.
+        // In oxlint's AST an optional chain isn't a call.
         let inner_calls = call.args().iter().filter(|it| !it.is_parenthesized() && it.chain() == Chain::No).filter_map(Expr::as_call);
         for inner_min_max in inner_calls.filter_map(min_max) {
             let constant_result = match (&out_min_max, &inner_min_max) {
@@ -50,7 +50,7 @@ enum MinMax {
     Max(f64),
 }
 
-/// Whether `Math.min` or `Math.max` is called, and the result for the arguments that are numbers.
+/// Returns whether the call is `Math.min` or `Math.max`, with its result over the arguments that are numbers.
 fn min_max(call: Call) -> Option<MinMax> {
     let member = get_member_expr(call.callee())?;
     if !member.object().is_some_and(|object| object.is_ident("Math") && !object.is_parenthesized()) {

@@ -60,7 +60,7 @@ Configure this with the `--backend` flag, which all of Bun's package management 
 - **`copyfile`**: The fallback used when any of the above fail. It is the slowest option. On macOS, it uses `fcopyfile()`; on Linux it uses `copy_file_range()`.
 - **`symlink`**: Symlinks each file instead of copying it. Only hoisted installs use it: `--backend=symlink` applies it to every package (macOS and Linux; Windows ignores the flag); without the flag, Bun uses it only for a package that depends on itself (`"pkg": "file:."`).
 
-`file:` folders, inside or outside the project directory, are hardlinked (copied where that is not possible) without their `node_modules`. `bun install` installs a folder again when a file in it was added, removed or replaced. What a folder lists in `bundleDependencies` is symlinked from its `node_modules`. A folder that a published package ships inside itself (`"dep": "file:./vendor/dep"`) is a single symlink to where it is.
+`file:` folders, inside or outside the project directory, are hardlinked (copied where that is not possible) without their `node_modules`. `bun install` installs a folder again when a file in it was added, removed or replaced. The packages that a folder lists in `bundleDependencies` are symlinked from its `node_modules`. A folder that a published package ships inside itself (`"dep": "file:./vendor/dep"`) is installed as a single symlink to that folder.
 
 If you install with `--backend=symlink`, Node.js doesn't resolve node_modules of dependencies unless each dependency has its own `node_modules` folder or you pass `--preserve-symlinks` to `node`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 

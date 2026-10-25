@@ -26,7 +26,7 @@ impl Rule for NoReturnInFinally {
         };
         let callbacks = call_expr.args().iter().filter(|it| !it.is_parenthesized()).filter_map(Expr::as_fn);
         for statements in callbacks.filter_map(Func::body_statements) {
-            // The first, of those that are directly in the body.
+            // Only the first `return`, and only those directly in the body.
             if let Some(return_stmt) = statements.iter().find(|it| it.tag() == StmtTag::Return) {
                 cx.report(return_stmt, NO_RETURN_IN_FINALLY);
             }

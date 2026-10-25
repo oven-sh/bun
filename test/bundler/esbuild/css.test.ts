@@ -1688,6 +1688,80 @@ c {
     },
   });
 
+  // `zoom`, `line-clamp`, `--a` and `--b` are not in the property name table.
+  // Each `supports()` condition tests a different property, so no import makes
+  // an earlier one redundant.
+  itBundled("css/CSSAtImportConditionsSupportsUnknownProperty", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./foo.css" supports(zoom: 1);
+        @import "./foo.css" supports(line-clamp: 1);
+        @import "./foo.css" supports(--a: 1);
+        @import "./foo.css" supports(--b: 1);
+      `,
+      "/foo.css": /* css */ `body { color: red }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* foo.css */
+@supports (zoom: 1) {
+  body {
+    color: red;
+  }
+}
+
+/* foo.css */
+@supports (line-clamp: 1) {
+  body {
+    color: red;
+  }
+}
+
+/* foo.css */
+@supports (--a: 1) {
+  body {
+    color: red;
+  }
+}
+
+/* foo.css */
+@supports (--b: 1) {
+  body {
+    color: red;
+  }
+}
+
+/* entry.css */
+`);
+    },
+  });
+
+  // The same unknown property in both conditions: the later import still makes
+  // the earlier one redundant.
+  itBundled("css/CSSAtImportConditionsSupportsSameUnknownProperty", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./foo.css" supports(zoom: 1);
+        @import "./foo.css" supports(zoom: 1);
+      `,
+      "/foo.css": /* css */ `body { color: red }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* foo.css */
+@supports (zoom: 1) {
+  body {
+    color: red;
+  }
+}
+
+/* entry.css */
+`);
+    },
+  });
+
   const files = [
     "/001/default/style.css",
     "/001/relative-url/style.css",

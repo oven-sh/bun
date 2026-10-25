@@ -18,7 +18,7 @@ pub(super) mod call {
 pub(super) mod result {
     pub(crate) const DONE: u8 = b'0';
     /// Followed by text for [`LOAD`](super::call::LOAD), and by the JSON `[rule, message, line]` for
-    /// [`LINT`](super::call::LINT).
+    /// [`LINT`](super::call::LINT), with three more for each further rule: [`Failure::others`](super::Failure::others).
     pub(crate) const FAILED: u8 = b'1';
     /// JSON: the indices of the plugins that have to be loaded before the file can be linted.
     pub(crate) const NEEDS_PLUGINS: u8 = b'2';

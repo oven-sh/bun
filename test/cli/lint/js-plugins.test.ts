@@ -2885,6 +2885,39 @@ declare const either: Shape | Store;
       },
       timeout,
     );
+
+    test.concurrent(
+      "a file isn't linted once more for each rule that reads anything else",
+      async () => {
+        const ids = ["a", "b", "c", "d"];
+        const base = typed("undefined", `"demo/runs": "error", ${ids.map(id => `"demo/${id}": "error"`).join(", ")}`);
+        const plugin = base["plugin.mjs"].replace(
+          "rules: {",
+          `rules: {
+            ${ids.map(id => `${id}: { create: context => ({ Program: () => services(context).program.${id} }) },`).join("\n")}
+            runs: {
+              create(context) {
+                runs.set(context.filename, (runs.get(context.filename) ?? 0) + 1);
+                return { Program: node => context.report({ node, message: String(runs.get(context.filename)) }) };
+              },
+            },`,
+        );
+        const { raw, stderr, exitCode } = await lint(
+          { ...base, "plugin.mjs": plugin, "a.ts": "export {};\n", "b.ts": "export {};\n" },
+          ["--threads", "1", "-f", "json", "a.ts", "b.ts"],
+        );
+        const counts = JSON.parse(raw).map((it: { messages: { message: string }[] }) => Number(it.messages[0].message));
+        // In the first file, each rule asks for types in one run and is refused in the next. From then on: one run in which
+        // all of them are refused, and one without them.
+        expect(counts.sort()).toEqual([2, 9]);
+        expect(stderr).toContain(
+          "4 rules did not run in 2 files because rules that run in JavaScript cannot read this from a type: " +
+            "demo/a (Program.a), demo/b (Program.b), demo/c (Program.c), demo/d (Program.d)",
+        );
+        expect(exitCode).toBe(2);
+      },
+      timeout,
+    );
   });
 
   // This is how `eslint-plugin-import` parses the modules that a file imports.

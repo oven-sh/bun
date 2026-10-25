@@ -361,8 +361,32 @@ async function loadPlugin([location, position, firstRule]) {
 // ------------- types -------------
 
 // What a rule reads from the types and isn't known here. The other side knows this text: `UNKNOWN_TYPE_INFORMATION` in `host.rs`.
+class Refusal extends Error {}
 function refuse(what) {
-  throw new Error(`You have used a rule which requires type information that bun lint does not have: ${what}`);
+  throw new Refusal(`You have used a rule which requires type information that bun lint does not have: ${what}`);
+}
+
+// What `refuse` threw on the file and the rule didn't catch, by the position of the rule. Such a rule is not called again, and the
+// others continue only to show which of them are refused too: the file is linted again without all of these.
+let refusals = new Map();
+
+// Adds `error`, which `entry` threw, to the `refusals` if it is one. False if the run ends with it: it is none, or no rule is left
+// that can be refused.
+function continuesAfter(entry, error) {
+  if (!(error instanceof Refusal)) return false;
+  refusals.set(entry.position, fileSettings.freezes ? saidByOxlint(error) : error.message);
+  return refusals.size < (typed?.asked.size ?? 0);
+}
+
+function guarded(entry, listener) {
+  return function () {
+    if (refusals.has(entry.position)) return;
+    try {
+      Reflect.apply(listener, undefined, arguments);
+    } catch (error) {
+      if (!continuesAfter(entry, error)) throw error;
+    }
+  };
 }
 
 // `members` under the name of one of TypeScript's classes. To read any other member is refused.
@@ -1012,10 +1036,11 @@ let currentNode = null;
 // `currentRule.rule.create()` is being called.
 let isCreating = false;
 
-function addListeners(entry, listeners) {
+function addListeners(entry, listeners, canBeRefused) {
   for (const key of Object.keys(listeners)) {
-    const listener = listeners[key];
+    let listener = listeners[key];
     if (typeof listener !== "function") continue;
+    if (canBeRefused) listener = guarded(entry, listener);
     let group = groupByKey.get(key);
     if (group === undefined) {
       groupByKey.set(key, (group = []));
@@ -1257,6 +1282,7 @@ function reset() {
   groupByKey = new Map();
   groups = [];
   currentRule = currentNode = typed = null;
+  refusals = new Map();
   isCreating = false;
   // Some are left if another rule's `create` or `before` threw. They aren't for the next file.
   afterHooks = [];
@@ -1291,6 +1317,8 @@ function lint() {
   text = messageText(pathStart + pathLength);
   native.beginFile(text, flags);
   const fileContext = fileSettings.freezes ? oxlintFileContext : new FileContext();
+  // Only a rule that gets types can read too much from them.
+  const asked = (flags & 512) !== 0 ? (typed ??= readTypes()).asked : null;
   for (let position = 0; position < count; position++) {
     const entry = entries[position];
     entry.position = entry.reporter.position = position;
@@ -1300,15 +1328,21 @@ function lint() {
     // ESLint only knows `create`. A rule without it, which ESLint refuses, runs as in oxlint.
     const { create, createOnce } = entry.rule;
     isCreating = true;
-    const listeners =
-      typeof createOnce === "function" && (fileSettings.freezes || typeof create !== "function")
-        ? listenersOfOnce(entry)
-        : entry.rule.create(fileContext.extend(entry.own));
+    let listeners;
+    try {
+      listeners =
+        typeof createOnce === "function" && (fileSettings.freezes || typeof create !== "function")
+          ? listenersOfOnce(entry)
+          : entry.rule.create(fileContext.extend(entry.own));
+    } catch (error) {
+      if (!continuesAfter(entry, error)) throw error;
+      listeners = {};
+    }
     isCreating = false;
     if (listeners === undefined || listeners === null) {
       throw new Error(`The create() function for rule '${entry.ruleId}' did not return an object.`);
     }
-    addListeners(entry, listeners);
+    addListeners(entry, listeners, asked !== null && asked.has(position));
   }
   try {
     if (groups.length > 0) traverse();
@@ -1422,10 +1456,13 @@ function respond(kind) {
     if (missing === NEEDS_MODULES) return importAll(toImport.splice(0)).then(() => respond(kind));
     if (missing === NEEDS_SETTINGS) return `${NEEDS_SETTINGS}[]`;
     if (missing !== null) return NEEDS_PLUGINS + JSON.stringify(missing);
+    if (refusals.size > 0) return FAILED + JSON.stringify(Array.from(refusals, it => [it[0], it[1], null]).flat());
     const used = usedVariables();
     native.sendReports();
     return used.length === 0 ? DONE : DONE + JSON.stringify(used);
   } catch (error) {
+    // Without these rules, it's thrown again.
+    if (refusals.size > 0) return FAILED + JSON.stringify(Array.from(refusals, it => [it[0], it[1], null]).flat());
     // The node is the plugin's to change.
     let line = null;
     try {

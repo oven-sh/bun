@@ -58,6 +58,8 @@ pub struct Failure {
     pub rule: Option<u32>,
     pub at: ThrownAt,
     pub message: Vec<u8>,
+    /// The other rules that read something from the types that isn't known, if that's what this rule did.
+    pub others: Vec<Failure>,
 }
 
 /// Where a rule was when it threw.
@@ -77,6 +79,7 @@ impl From<Vec<u8>> for Failure {
             rule: None,
             at: ThrownAt::Unknown,
             message,
+            others: Vec::new(),
         }
     }
 }
@@ -130,8 +133,10 @@ struct State {
     selector_numbers: FxHashMap<Box<[u8]>, u32>,
     loading: Loading,
     asked_for_types: Vec<AskedForTypes>,
-    /// Only [`Host::refusals`] reads it, after the last file.
-    refusals: FxHashSet<Refusal>,
+    /// Only [`Host::refusals`] reads these two, after the last file.
+    refusals: Vec<Refusal>,
+    /// The paths of the files on which a rule [was refused](Host::refuse).
+    files_with_refusals: FxHashSet<Box<[u8]>>,
     /// The kinds of node that rules have wanted the type of. It's sorted.
     kinds_with_types: Vec<NodeKind>,
 }
@@ -154,11 +159,10 @@ struct AskedForTypes {
 }
 
 /// [`Host::refuse`]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Refusal {
     rule: Box<[u8]>,
     unknown: Box<[u8]>,
-    path: Box<[u8]>,
 }
 
 /// A rule that didn't run on some file because of what it read from the types.
@@ -422,11 +426,17 @@ impl<'e> Host<'e> {
     /// `rule` didn't run on the file at `path` because it read [`unknown`](Host::unknown_type_information). That says
     /// nothing about other files: the rule is tried on each.
     pub(crate) fn refuse(&self, rule: &Rule, unknown: &[u8], path: &[u8]) {
-        self.state.lock().refusals.insert(Refusal {
-            rule: rule.id.clone(),
-            unknown: unknown.into(),
-            path: path.into(),
-        });
+        let mut state = self.state.lock();
+        let mut known = state.refusals.iter();
+        if !known.any(|it| it.rule == rule.id && *it.unknown == *unknown) {
+            state.refusals.push(Refusal {
+                rule: rule.id.clone(),
+                unknown: unknown.into(),
+            });
+        }
+        if !state.files_with_refusals.contains(path) {
+            state.files_with_refusals.insert(path.into());
+        }
     }
 
     /// The names of the rules that [were skipped](Host::skip_for_types), sorted.
@@ -448,7 +458,6 @@ impl<'e> Host<'e> {
         let mut rules: Vec<Refused> = Vec::new();
         for refusal in sorted {
             match rules.last_mut().filter(|it| it.id == refusal.rule) {
-                Some(rule) if rule.unknown.last() == Some(&refusal.unknown) => {}
                 Some(rule) => rule.unknown.push(refusal.unknown.clone()),
                 None => rules.push(Refused {
                     id: refusal.rule.clone(),
@@ -456,10 +465,9 @@ impl<'e> Host<'e> {
                 }),
             }
         }
-        let files: FxHashSet<&[u8]> = state.refusals.iter().map(|it| &it.path[..]).collect();
         Refusals {
             rules,
-            files: files.len(),
+            files: state.files_with_refusals.len(),
         }
     }
 
@@ -914,7 +922,7 @@ impl<'e> Host<'e> {
                     return Ok((reported.take(), used.collect()));
                 }
                 result::FAILED => {
-                    return Err(Failure {
+                    let mut failures = parts.chunks(3).map(|parts| Failure {
                         rule: number(parts.first()),
                         at: match (parts.get(2), number(parts.get(2))) {
                             (Some(Json::String(_)), _) => ThrownAt::Create,
@@ -926,6 +934,14 @@ impl<'e> Host<'e> {
                             .and_then(Json::as_str)
                             .unwrap_or_default()
                             .to_vec(),
+                        others: Vec::new(),
+                    });
+                    let Some(first) = failures.next() else {
+                        return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
+                    };
+                    return Err(Failure {
+                        others: failures.collect(),
+                        ..first
                     });
                 }
                 result::NEEDS_PLUGINS if !parts.is_empty() => {

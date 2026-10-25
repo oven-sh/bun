@@ -839,9 +839,20 @@ impl<S: RuleSet> Linter<S> {
                             if waits_for_types && unknown.is_none() {
                                 return needs_types();
                             }
-                            // Only on this file, and nothing of what it has reported here counts.
-                            skip(&running_js[at].configured.rule, unknown);
-                            running_js.remove(at);
+                            // Only on this file, and nothing of what they have reported here counts.
+                            let mut stopped = vec![false; running_js.len()];
+                            for failure in std::iter::once(&failure).chain(&failure.others) {
+                                let at = failure.rule.map_or(usize::MAX, |it| it as usize);
+                                if let Some(it) = running_js.get(at) {
+                                    let message = &failure.message;
+                                    let unknown =
+                                        js_plugin::Host::unknown_type_information(message);
+                                    skip(&it.configured.rule, unknown);
+                                    stopped[at] = true;
+                                }
+                            }
+                            let mut stopped = stopped.into_iter();
+                            running_js.retain(|_| stopped.next() != Some(true));
                             continue;
                         }
                         let rule = at.and_then(|it| running_js.get(it));

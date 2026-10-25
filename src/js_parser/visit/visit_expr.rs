@@ -124,7 +124,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && !define.valueless()
             {
                 let is_delete_target = matches!(p.delete_target, Data::EThis(..));
-                *e = p.value_for_define(e, in_.assign_target, is_delete_target, define);
+                *e = p.value_for_define(
+                    e,
+                    in_.assign_target,
+                    is_delete_target,
+                    in_.is_property_access_target,
+                    define,
+                );
             } else if let Some(exp) = p.value_for_this(e.loc) {
                 *e = exp;
             }
@@ -165,8 +171,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             // Substitute user-specified defines
             if !define.data.valueless() {
-                let replacement =
-                    p.value_for_define(e, in_.assign_target, is_delete_target, &define.data);
+                let replacement = p.value_for_define(
+                    e,
+                    in_.assign_target,
+                    is_delete_target,
+                    in_.is_property_access_target,
+                    &define.data,
+                );
                 if in_.assign_target == js_ast::AssignTarget::None
                     || define_value_can_be_assign_target(&replacement)
                 {
@@ -224,7 +235,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // Substitute user-specified defines
                 if !define.data.valueless() {
-                    *e = p.value_for_define(e, in_.assign_target, is_delete_target, &define.data);
+                    *e = p.value_for_define(
+                        e,
+                        in_.assign_target,
+                        is_delete_target,
+                        in_.is_property_access_target,
+                        &define.data,
+                    );
                 }
                 return;
             }
@@ -349,8 +366,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let defines = p.define;
             if let Some(def) = defines.for_identifier(name) {
                 if !def.valueless() {
-                    let newvalue: Expr =
-                        p.value_for_define(e, in_.assign_target, is_delete_target, def);
+                    let newvalue: Expr = p.value_for_define(
+                        e,
+                        in_.assign_target,
+                        is_delete_target,
+                        in_.is_property_access_target,
+                        def,
+                    );
 
                     if in_.assign_target == js_ast::AssignTarget::None
                         || define_value_can_be_assign_target(&newvalue)

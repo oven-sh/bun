@@ -451,6 +451,18 @@ describe.concurrent("define values are symbols, not text", () => {
       }),
     },
     {
+      name: "the default import of a CommonJS module as a one-part value",
+      key: "LIB_OBJECT",
+      value: "lib",
+      files: (object: string) => ({
+        "entry.js": `
+          import lib from "./lib.cjs";
+          console.log(${object}.foo, ${object}["bar"]);
+        `,
+        "lib.cjs": `exports.foo = "foo"; exports.bar = "bar";`,
+      }),
+    },
+    {
       name: "`delete` of a property of the default import of a CommonJS module",
       key: "settings.gone",
       value: "lib.gone",

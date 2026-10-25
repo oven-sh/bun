@@ -7079,6 +7079,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         replaced: &Expr,
         assign_target: js_ast::AssignTarget,
         is_delete_target: bool,
+        is_property_access_target: bool,
         define_data: &DefineData,
     ) -> Expr {
         // Only a member chain reads how the use site uses it
@@ -7088,6 +7089,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_is_delete_target(is_delete_target)
                 .with_is_call_target(is_same_node(self.call_target, replaced.data))
                 .with_is_template_tag(is_same_node(self.template_tag, replaced.data))
+                .with_is_property_access_target(is_property_access_target)
                 .with_was_originally_identifier(true),
             _ => IdentifierOpts::new(),
         };
@@ -7217,7 +7219,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_assign_target(opts.assign_target())
                 .with_is_delete_target(opts.is_delete_target())
                 .with_is_call_target(opts.is_call_target())
-                .with_is_template_tag(opts.is_template_tag()),
+                .with_is_template_tag(opts.is_template_tag())
+                .with_is_property_access_target(opts.is_property_access_target()),
         )
     }
 

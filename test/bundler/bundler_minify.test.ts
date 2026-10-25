@@ -1888,6 +1888,36 @@ describe("bundler", () => {
     },
     run: { stdout: "a\nb" },
   });
+  // https://github.com/oven-sh/bun/issues/43607
+  const nonAsciiPropertyFiles = {
+    "/entry.js": /* js */ `
+      const o = { 中文属性: new Date(0), other: [1, 2, 3] };
+      if (o.中文属性 instanceof Date) console.log(o.中文属性.getTime());
+      if (o.other instanceof Array) console.log(o.other.join(" - "));
+    `,
+  };
+  itBundled("minify/SpaceBetweenNonAsciiPropertyAndKeyword", {
+    files: nonAsciiPropertyFiles,
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    target: "browser",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(".中文属性 instanceof Date");
+    },
+    run: { stdout: "0\n1 - 2 - 3" },
+  });
+  itBundled("minify/SpaceBetweenEscapedPropertyAndKeyword", {
+    files: nonAsciiPropertyFiles,
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    target: "bun",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(".\\u{4e2d}\\u{6587}\\u{5c5e}\\u{6027} instanceof Date");
+    },
+    run: { stdout: "0\n1 - 2 - 3" },
+  });
 
   // Without minifySyntax the block body must be preserved verbatim.
   itBundled("minify/ArrowReturnNotCollapsedWithoutMinifySyntax", {

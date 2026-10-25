@@ -22,7 +22,7 @@ use crate::cli::{Options, UsageError};
 use crate::fmt::Formatted;
 use crate::paths;
 use crate::results::FileResult;
-use crate::run::{Environment, Fatal, Script, Stream};
+use crate::run::{Environment, Fatal, Linted, Script, Stream};
 use answers::{Directives, FIX_ALL, Places, QUICK_FIX, wants};
 use bun_core::strings;
 use bun_lint::js_plugin::{Engine, Vm, Work};
@@ -637,13 +637,9 @@ impl Worker<'_, '_> {
         }
     }
 
-    /// Lints `document`. `None`: it cannot be, which the user is told.
-    fn lint(
-        &mut self,
-        session: &Session,
-        document: &Document,
-        how: How,
-    ) -> Option<Option<FileResult>> {
+    /// Lints `document`. `None`: it cannot be, which the user is told. `files == 0` in the result: it is not one to
+    /// lint, which the user is told if there is a reason, like ESLint being needed for it.
+    fn lint(&mut self, session: &Session, document: &Document, how: How) -> Option<Linted> {
         let server = self.server;
         let linted = session.lint(&document.path, document.text.clone(), how);
         for (weight, line) in session.notes() {
@@ -652,7 +648,7 @@ impl Worker<'_, '_> {
         }
         self.say_if_refused();
         match linted {
-            Ok(result) => Some(result),
+            Ok(linted) => Some(linted),
             Err(Fatal(why)) => {
                 self.tell_once(why, |why| server.show_error(Half::Lint, why));
                 None
@@ -667,7 +663,7 @@ impl Worker<'_, '_> {
             .get(&document.uri)
             .is_none_or(|it| it.serial != document.serial)
         {
-            let result = self.lint(session, document, How::default())?;
+            let result = self.lint(session, document, How::default())?.results.pop();
             self.note(document, result);
         }
         self.known.get(&document.uri)
@@ -693,7 +689,9 @@ impl Worker<'_, '_> {
                 with_types,
                 fixes: true,
             };
-            let fixed = self.lint(session, document, how).flatten();
+            let fixed = self
+                .lint(session, document, how)
+                .and_then(|mut it| it.results.pop());
             let text = (fixed.as_ref().filter(|it| it.is_fixed))
                 .and_then(FileResult::text_to_write)
                 .map(<[u8]>::to_vec);
@@ -723,10 +721,21 @@ impl Worker<'_, '_> {
                     with_types,
                     fixes: false,
                 };
-                let Some(result) = session.and_then(|it| self.lint(it, &document, how)) else {
+                let Some(mut linted) = session.and_then(|it| self.lint(it, &document, how)) else {
                     self.known.remove(&document.uri);
                     return server.publish(&document, Vec::new());
                 };
+                if linted.files == 0 {
+                    // Not one to lint: the problems it had as one are taken back, once.
+                    let had_problems =
+                        (self.known.get(&document.uri)).is_some_and(|it| !it.messages.is_empty());
+                    self.note(&document, None);
+                    if had_problems {
+                        server.publish(&document, Vec::new());
+                    }
+                    return;
+                }
+                let result = linted.results.pop();
                 // They take as long as it takes to check the program: when there is nothing else to do.
                 let lacks_types = !with_types
                     && (session.zip(result.as_ref())).is_some_and(|(session, result)| {

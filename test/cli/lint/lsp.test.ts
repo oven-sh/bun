@@ -345,6 +345,44 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  // An eslint.config.mjs is read in the plugins' VM, which the server has only on Unix.
+  test.skipIf(isWindows)(
+    "tells the user about a document that needs eslint, which is not installed, and publishes nothing for it",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        "eslint.config.mjs": `export default [
+          { rules: { "no-var": "error" } },
+          { files: ["**/*.one"], plugins: { p: { languages: { l: {} } } }, language: "p/l" },
+        ];`,
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const one = join(String(dir), "b.one");
+      open(client, one, "text\n", "plaintext");
+      const names = (it: Message) => it.method === "window/logMessage" && it.params.message.includes("b.one");
+      expect((await client.notification(names)).params).toEqual({
+        type: 2,
+        message:
+          "1 file was not linted because it needs eslint, which is not installed (1 *.one): b.one\n  Run bun add -d eslint",
+      });
+      // The folder's thread is past the first document once it has linted the second.
+      const js = join(String(dir), "a.js");
+      open(client, js, "var a = 1;\n");
+      const published = await client.diagnostics(js);
+      expect(published.params.diagnostics.map((it: any) => it.code)).toEqual(["no-var"]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      const about = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
+      expect(about.map(it => it.params.uri)).toEqual([uriOf(js)]);
+      expect(client.received.filter(names)).toHaveLength(1);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   // Plugins run in a VM, which the server has only on Unix; there what else is printed is kept off the client's pipe.
   test.skipIf(isWindows)(
     "runs the plugins of the folder, keeps what they print off standard output, and ends their VM on exit",

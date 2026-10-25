@@ -169,7 +169,20 @@ impl Session<'_> {
             timing: &timing,
         };
         let run = Run::new(options, environment);
-        let linted = run.lint_text(loader, &context, text, how.with_types);
+        let linted = (|| -> Result<Linted, Fatal> {
+            let mut linted = run.lint_text(loader, &context, text, how.with_types)?;
+            // Rules that look at several files now revisit the text, as `Run::execute` does with the files.
+            let again = modules.complete(&|count, work| pool.for_each(count, 1, work));
+            for result in &mut linted.results {
+                if again.contains(&paths::from_native(&result.path)) {
+                    context.lint_again(result)?;
+                }
+            }
+            match linted.results.iter_mut().find_map(|it| it.thrown.take()) {
+                Some(thrown) => Err(Fatal(thrown)),
+                None => Ok(linted),
+            }
+        })();
         // Told the way the one-shot tells them, through the loader, which `notes` reads.
         sinks.report(
             loader,
@@ -179,17 +192,6 @@ impl Session<'_> {
             &mut NotBuiltIn::default(),
             &mut |text| loader.warn(&[text]),
         );
-        let mut linted = linted?;
-        // Rules that look at several files now revisit the text, as `Run::execute` does with the files.
-        let again = modules.complete(&|count, work| pool.for_each(count, 1, work));
-        for result in &mut linted.results {
-            if again.contains(&paths::from_native(&result.path)) {
-                context.lint_again(result)?;
-            }
-        }
-        match linted.results.iter_mut().find_map(|it| it.thrown.take()) {
-            Some(thrown) => Err(Fatal(thrown)),
-            None => Ok(linted),
-        }
+        linted
     }
 }

@@ -39,6 +39,11 @@
       "SourceLocation"
     ]
   },
+  "src/jsc/VirtualMachine.rs": {
+    "unsafe impl Send": [
+      "Shared"
+    ]
+  },
   "src/jsc/hot_reloader.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
@@ -46,6 +51,11 @@
     ],
     "unsafe impl Sync": [
       "WatchChangedPaths"
+    ]
+  },
+  "src/jsc/thread_isolated.rs": {
+    "unsafe impl Send": [
+      "ThreadIsolated<T>"
     ]
   },
   "src/jsc/web_worker.rs": {
@@ -84,13 +94,17 @@
       "JSBundleCompletionTask"
     ]
   },
-  "src/runtime/bake/production.rs": {
+  "src/runtime/bake/production/mod.rs": {
     "unsafe impl Sync": [
       "DotenvSingleton"
     ]
   },
-  "src/runtime/cli/create_command.rs": {
-    "thread spawn": 1
+  "src/runtime/cli/lint_js.rs": {
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "Posted",
+      "Shared"
+    ]
   },
   "src/runtime/cli/open.rs": {
     "thread spawn": 1
@@ -173,11 +187,6 @@
     ],
     "unsafe impl Sync": [
       "PathWatcherManager"
-    ]
-  },
-  "src/runtime/node/types.rs": {
-    "unsafe impl Send": [
-      "ThreadIsolated<T>"
     ]
   },
   "src/runtime/shell/IOReader.rs": {

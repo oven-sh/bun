@@ -165,8 +165,6 @@ pub enum OptionsFromJsError {
     InvalidProtocol,
     InvalidBackend,
     InvalidFlags,
-    InvalidOptions,
-    JSError,
 }
 
 #[repr(u8)]

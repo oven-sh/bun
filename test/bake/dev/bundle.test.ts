@@ -1745,6 +1745,62 @@ devTest("recovers from importing a file in a directory that can't be opened", {
   },
 });
 
+// The dev server does not watch node_modules, so the resolver still lists c.js after the rename.
+devTest("finds a module that moved before any build read it", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { a } from 'lib/a';
+      console.log(a);
+    `,
+    "node_modules/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+    "node_modules/lib/a.js": `export const a = "EXPORT_A";`,
+    "node_modules/lib/c.js": `export const c = "EXPORT_C";`,
+  },
+  async test(dev) {
+    const exportsInBundle = async () => {
+      const code = await clientBundle(dev);
+      return ["EXPORT_A", "EXPORT_C"].filter(mark => code.includes(mark));
+    };
+    expect(await exportsInBundle()).toEqual(["EXPORT_A"]);
+    fs.renameSync(dev.join("node_modules/lib/c.js"), dev.join("node_modules/lib/c.jsx"));
+    const importsC = (label: string) => `
+      import { a } from 'lib/a';
+      import { c } from 'lib/c';
+      console.log('${label}', a, c);
+    `;
+    // This build fails to open c.js. The next one reads the directory again.
+    await dev.write("index.ts", importsC("first"));
+    await dev.write("index.ts", importsC("second"));
+    expect(await exportsInBundle()).toEqual(["EXPORT_A", "EXPORT_C"]);
+  },
+});
+
+// page1 reaches the barrel through wrapper.js. The build of page2 parses the barrel again, fails to
+// open it, and builds each importer up to page1 again.
+devTest("reports a removed package to a page that imports a file beside its barrel", {
+  files: {
+    "page1.html": emptyHtmlFile({ scripts: ["page1.ts"] }),
+    "page2.html": emptyHtmlFile({ scripts: ["page2.ts"] }),
+    "page1.ts": `
+      import { w } from 'lib/wrapper.js';
+      console.log(w);
+    `,
+    "page2.ts": `
+      import { a } from 'lib';
+      console.log(a);
+    `,
+    ...abPackage("lib", abBarrel),
+    "node_modules/lib/wrapper.js": `import { a } from './index.js'; export const w = 'W_' + a;`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/page1")).status).toBe(200);
+    fs.rmSync(dev.join("node_modules/lib"), { recursive: true });
+    await dev.fetch("/page2");
+    expect((await dev.fetch("/page1")).status).toBe(500);
+  },
+});
+
 // Nested `:fullscreen` rules copy the body once per vendor prefix at each level, which the CSS
 // printer rejects. This only fails because the dev server prints and minifies with different targets.
 // If that changes, this test needs another stylesheet that fails to print.

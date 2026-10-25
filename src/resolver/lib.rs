@@ -1286,16 +1286,38 @@ pub mod fs {
             Ok(unsafe { &mut *out })
         }
 
-        /// Evicts `file_path` from the directory-entry cache; returns whether
-        /// an entry was removed.
-        pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
+        /// Busts what is cached for the directory `file_path`, which can be any
+        /// key of its listing.
+        ///
+        /// A listing stays mapped: it is stamped [`GENERATION_STALE`], and the
+        /// next read under any of its keys refills it in place. A read error or
+        /// a not-found is unmapped. `unmap_dir_info` gets the hash of
+        /// `file_path` and of every key of the listing, whose `DirInfo` was
+        /// built from it. Returns whether a listing that was not stale or a key
+        /// without a listing was cached for `file_path`.
+        pub(crate) fn bust_entries_cache(
+            &mut self,
+            file_path: &[u8],
+            mut unmap_dir_info: impl FnMut(u64),
+        ) -> bool {
             // `entries` is the process-global
             // BSSMap singleton and `remove` mutates it; callers (transpiler /
             // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
             // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
             // invariant. No caller already holds it (no re-entry from
             // `read_directory`/`dir_info_cached_maybe_log`).
+            // A resolver fills a listing and puts the `DirInfo` built from it
+            // in one section of this lock, so it finds both busted or neither.
             let _g = self.entries_mutex.lock_guard();
+            unmap_dir_info(EntriesMap::key_hash(file_path));
+            if let Some(EntriesOption::Entries(listing)) = self.entries.get(file_path) {
+                for &owner in listing.owners() {
+                    unmap_dir_info(owner);
+                }
+                let was_fresh = listing.generation != GENERATION_STALE;
+                listing.generation = GENERATION_STALE;
+                return was_fresh;
+            }
             self.entries.remove(file_path)
         }
 

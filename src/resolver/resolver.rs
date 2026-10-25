@@ -2481,11 +2481,20 @@ impl<'a> Resolver<'a> {
     }
 
     /// Bust the directory cache for the given path, which may end in a separator.
+    ///
+    /// The directory's listing stays cached and is read again by the next
+    /// resolve that reaches it by any path, and the `DirInfo` of each of those
+    /// paths is unmapped. Returns false when nothing was cached or the listing
+    /// was not read since its last bust: callers retry a failed resolve on true.
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
-        let first_bust = self.fs_mut().fs.bust_entries_cache(path);
-        let second_bust = self.dir_cache_mut().remove(path);
+        let dir_cache = self.dir_cache();
+        let mut second_bust = false;
+        let first_bust = self.fs_mut().fs.bust_entries_cache(path, |key_hash| {
+            // SAFETY: ARENA — the `DirInfo::hash_map_instance()` singleton, never freed.
+            second_bust |= unsafe { (*dir_cache).remove_hash(key_hash) };
+        });
         bun_core::scoped_log!(
             ResolverDev,
             "Bust {} = {}, {}",

@@ -338,16 +338,14 @@ declare module "bun" {
      * Specifies what content encodings have been applied to the object,
      * for example to indicate that it has been compressed.
      *
-     * A value given to `s3.file()` or to `new S3Client()` is the default of
-     * every upload of that file or client. The upload call overrides it. An
-     * empty string sends no header. The value labels the bytes that you pass:
-     * Bun does not compress them. An upload from another S3 file takes this
-     * option from the upload call only.
+     * Pass this option to the upload call (`write()` or `writer()`). It labels
+     * the bytes of that upload: Bun does not compress them. It has no effect
+     * on `s3.file()` or on `new S3Client()`.
      *
      * @example
      * ```ts
-     * // Setting gzip encoding
-     * const file = s3.file("data.json.gz", {
+     * // Setting gzip encoding on a writer
+     * const writer = s3.file("data.json.gz").writer({
      *   contentEncoding: "gzip"
      * });
      * ```

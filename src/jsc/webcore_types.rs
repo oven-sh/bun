@@ -906,7 +906,7 @@ pub mod store {
             bun_s3_signing::PutHeaders {
                 content_type,
                 content_disposition: defaults.and_then(|d| d.content_disposition.as_deref()),
-                content_encoding: defaults.and_then(|d| d.content_encoding.as_deref()),
+                content_encoding: None,
                 acl: self.acl,
                 storage_class: self.storage_class,
                 request_payer: self.request_payer,

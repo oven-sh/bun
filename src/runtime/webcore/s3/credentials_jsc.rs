@@ -284,7 +284,9 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.content_type = Some(utf8);
             }
 
-            if let Some(utf8) = get_header_string_utf8(opts, global_object, b"contentEncoding")? {
+            if let Some(utf8) =
+                get_truthy_string_utf8(opts, global_object, b"contentEncoding", true)?
+            {
                 if contains_newline_or_cr(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(
                         "contentEncoding must not contain newline characters (CR/LF)"

@@ -747,11 +747,11 @@ impl BlobExt for Blob {
             }
         }
 
-        writer.write_int_le::<u8>(self.is_jsdom_file.get() as u8)?;
+        writer.write_int_le::<u8>(self.is_jsdom_file() as u8)?;
         write_float::<W>(self.last_modified.get(), writer)?;
 
         // Serialize File name if this is a File object
-        if self.is_jsdom_file.get() {
+        if self.is_jsdom_file() {
             if let Some(name_string) = self.get_name_string() {
                 let name_slice = name_string.to_utf8();
                 writer.write_int_le::<u32>(name_slice.slice().len() as u32)?;
@@ -932,7 +932,7 @@ impl BlobExt for Blob {
             // also has no store but is a valid zero-byte blob — render it like a
             // normal zero-sized blob instead of calling it "detached".
             if self.size.get() > 0 {
-                if self.is_jsdom_file.get() {
+                if self.is_jsdom_file() {
                     bun_core::write_pretty!(
                         writer,
                         ENABLE_ANSI_COLORS,
@@ -947,7 +947,7 @@ impl BlobExt for Blob {
                 }
                 return Ok(());
             }
-            write_format_for_size::<W, ENABLE_ANSI_COLORS>(self.is_jsdom_file.get(), 0, writer)?;
+            write_format_for_size::<W, ENABLE_ANSI_COLORS>(self.is_jsdom_file(), 0, writer)?;
         } else {
             let content_type = self.content_type_slice();
             let offset = self.offset.get();
@@ -1011,7 +1011,7 @@ impl BlobExt for Blob {
                 }
                 store::Data::Bytes(_) => {
                     write_format_for_size::<W, ENABLE_ANSI_COLORS>(
-                        self.is_jsdom_file.get(),
+                        self.is_jsdom_file(),
                         self.size.get() as usize,
                         writer,
                     )?;
@@ -1019,7 +1019,7 @@ impl BlobExt for Blob {
             }
         }
 
-        let show_name = (self.is_jsdom_file.get() && self.get_name_string().is_some())
+        let show_name = (self.is_jsdom_file() && self.get_name_string().is_some())
             || (!self.name.get().is_empty()
                 && self.store.get().is_some()
                 && matches!(
@@ -1907,7 +1907,7 @@ impl BlobExt for Blob {
             }
         }
 
-        if self.is_jsdom_file.get() {
+        if self.is_jsdom_file() {
             return self.last_modified.get();
         }
 
@@ -2995,7 +2995,7 @@ impl BlobExt for Blob {
                                         blob.content_type_was_set.get(),
                                     ),
                                     charset: Cell::new(blob.charset.get()),
-                                    is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    flags: Cell::new(blob.flags.get()),
                                     body_facts: Cell::new(blob.body_facts.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
@@ -3807,7 +3807,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
             break 'versions;
         }
 
-        blob.is_jsdom_file.set(reader.read_int_le::<u8>()? != 0);
+        blob.set_is_jsdom_file(reader.read_int_le::<u8>()? != 0);
         blob.last_modified.set(read_float(reader)?);
 
         if version == 2 {
@@ -3815,7 +3815,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
 
         // Version 3: Read File name if this is a File object
-        if blob.is_jsdom_file.get() {
+        if blob.is_jsdom_file() {
             let name_len = reader.read_int_le::<u32>()?;
             let name_bytes = read_slice(reader, name_len as usize)?;
             blob.name.set(BunString::clone_utf8(&name_bytes));
@@ -3895,7 +3895,7 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
-    this.is_jsdom_file.set(true);
+    this.set_is_jsdom_file(true);
     if !path_str.is_empty() && this.get_file_name().is_none() {
         this.name.set(path_str.clone());
     }
@@ -5277,7 +5277,7 @@ pub(crate) fn jsdom_file_construct(
     blob.calculate_estimated_byte_size();
     let blob_ = Blob::new(blob);
     // SAFETY: ptr was just produced by heap::alloc in Blob::new.
-    unsafe { (*blob_).is_jsdom_file.set(true) };
+    unsafe { (*blob_).set_is_jsdom_file(true) };
     Ok(blob_)
 }
 
@@ -6388,7 +6388,7 @@ bun_jsc::jsc_host_abi! {
     ) -> bool {
         jsc::mark_binding();
         let Some(blob) = value.as_class_ref::<Blob>() else { return false };
-        blob.is_jsdom_file.get()
+        blob.is_jsdom_file()
     }
 }
 

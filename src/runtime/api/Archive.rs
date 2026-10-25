@@ -1077,7 +1077,7 @@ impl TaskContext for FilesContext {
                         Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
                     // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
                     let blob = unsafe { &mut *blob_ptr };
-                    blob.is_jsdom_file.set(true);
+                    blob.set_is_jsdom_file(true);
                     blob.name.set(bun_core::String::clone_utf8(&entry.path));
                     blob.last_modified.set(entry.mtime as f64 * 1000.0);
 

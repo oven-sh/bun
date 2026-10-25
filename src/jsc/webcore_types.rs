@@ -113,6 +113,15 @@ bitflags::bitflags! {
     }
 }
 
+bitflags::bitflags! {
+    /// What a `Blob` view is, apart from its window. Unlike [`BodyFacts`], they have no mirror outside `Blob` and nothing masks them: `dupe()` copies the byte.
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub struct BlobFlags: u8 {
+        /// It was created via the `File` constructor.
+        const IS_JSDOM_FILE = 1 << 0;
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Blob
 // ──────────────────────────────────────────────────────────────────────────
@@ -134,8 +143,7 @@ pub struct Blob {
     pub content_type_was_set: Cell<bool>,
     /// Cached encoding probe of `shared_view()`.
     pub charset: Cell<AsciiStatus>,
-    /// Was it created via the `File` constructor?
-    pub is_jsdom_file: Cell<bool>,
+    pub flags: Cell<BlobFlags>,
     /// Set while these are, or were, the bytes of a Request or Response body.
     pub body_facts: Cell<BodyFacts>,
     /// Zero for a by-value `Blob`. On a heap one, the JS wrapper, `BlobRefPtr`s and `ExternalShared`s each hold a ref.
@@ -148,6 +156,10 @@ pub struct Blob {
     /// Only used by `<input type="file">` / `File` (issue #10178).
     pub name: bun_ptr::JsCell<bun_core::String>,
 }
+
+// One more one-byte field before `ref_count` adds 8 bytes to every holder of a by-value `Blob`. In debug builds `RawRefCount` has a thread lock.
+#[cfg(not(debug_assertions))]
+const _: () = assert!(core::mem::size_of::<Blob>() == 104);
 
 // SAFETY: `global_this` is dereferenced only on its owning JS thread; blobs
 // that cross threads (object-URL registry entries, the standalone-graph
@@ -171,7 +183,7 @@ impl Default for Blob {
             content_type: JsCell::new(BlobContentType::default()),
             content_type_was_set: Cell::new(false),
             charset: Cell::new(AsciiStatus::Unknown),
-            is_jsdom_file: Cell::new(false),
+            flags: Cell::new(BlobFlags::empty()),
             body_facts: Cell::new(BodyFacts::empty()),
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
@@ -251,6 +263,18 @@ impl Blob {
     #[inline]
     pub fn store(&self) -> Option<&RefPtr<Store>> {
         self.store.get().as_ref()
+    }
+
+    #[inline]
+    pub fn is_jsdom_file(&self) -> bool {
+        self.flags.get().contains(BlobFlags::IS_JSDOM_FILE)
+    }
+
+    #[inline]
+    pub fn set_is_jsdom_file(&self, is_jsdom_file: bool) {
+        let mut flags = self.flags.get();
+        flags.set(BlobFlags::IS_JSDOM_FILE, is_jsdom_file);
+        self.flags.set(flags);
     }
 
     /// Move the store ref out without releasing it —
@@ -349,7 +373,7 @@ impl Blob {
             content_type: JsCell::new(self.content_type.get().clone()),
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
-            is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
+            flags: Cell::new(self.flags.get()),
             body_facts: Cell::new(self.body_facts.get()),
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),

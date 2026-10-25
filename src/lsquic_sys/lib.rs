@@ -40,6 +40,15 @@ pub const LSQ_DG_ACKED: c_int = 0;
 pub const LSQ_DG_LOST: c_int = 1;
 pub const LSQ_DG_UNSENT: c_int = 2;
 
+/// What lsquic did with a header block, from [`Stream::send_headers`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SendHeaders {
+    Sent,
+    /// lsquic is still sending the stream's previous block and took nothing of this one. It goes again from the stream's next write event.
+    Retry,
+    Refused,
+}
+
 /// **Layout must match `struct us_nq_vtable` in node_quic_shim.c exactly.**
 /// The first field of every conn-ctx and stream-ctx the Rust side returns
 /// must be a `*const NqVtable` so the thunks can recover it via
@@ -604,9 +613,11 @@ impl Stream {
     }
     /// `expected` is the caller's header-pair count; the shim rejects a buffer
     /// that does not parse to exactly that many pairs.
-    pub fn send_headers(&self, nul_joined: &[u8], expected: c_int, eos: bool) -> c_int {
+    pub fn send_headers(&self, nul_joined: &[u8], expected: c_int, eos: bool) -> SendHeaders {
+        /// `US_QUIC_SEND_HEADERS_RETRY` in quic.h.
+        const RETRY: c_int = 1;
         // SAFETY: as above; lsquic copies the buffer before returning.
-        unsafe {
+        let result = unsafe {
             us_nq_stream_send_headers(
                 self.0,
                 nul_joined.as_ptr().cast(),
@@ -614,6 +625,11 @@ impl Stream {
                 expected,
                 eos as c_int,
             )
+        };
+        match result {
+            0 => SendHeaders::Sent,
+            RETRY => SendHeaders::Retry,
+            _ => SendHeaders::Refused,
         }
     }
     /// RFC 9218 Extensible HTTP Priority: urgency 0-7, incremental 0/1.

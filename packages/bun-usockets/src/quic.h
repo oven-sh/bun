@@ -37,6 +37,8 @@ struct lsquic_engine_settings;
 struct lsquic_stream_if;
 struct lsquic_hset_if;
 struct lsquic_conn;
+struct lsquic_stream;
+struct lsquic_http_headers;
 
 /* ───── Driver: what every lsquic engine in Bun runs on (the HTTP/3 contexts below, and node:quic) ───── */
 
@@ -82,6 +84,13 @@ void us_quic_udp_count_sent(us_quic_udp_t *qu, uint64_t *packets, uint64_t *byte
 /* lsquic_engine_connect from this socket. `ssl_ctx` is borrowed. */
 struct lsquic_conn *us_quic_udp_connect(us_quic_udp_t *qu, struct lsquic_engine *engine, const struct sockaddr *peer,
     struct ssl_ctx_st *ssl_ctx, void *conn_ctx, const char *sni, const unsigned char *session_resume, size_t session_resume_len);
+
+/* lsquic_stream_send_headers. lsquic holds one outgoing header block per stream
+ * and refuses the next one while an earlier block is still unsent. Nothing was
+ * queued: send the same block again from the stream's write event. 0 is sent,
+ * -1 is a hard failure. */
+#define US_QUIC_SEND_HEADERS_RETRY 1
+int us_quic_send_header_block(struct lsquic_stream *s, const struct lsquic_http_headers *headers, int end_stream);
 
 /* ───── HTTP/3 contexts ───── */
 
@@ -199,10 +208,8 @@ int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len
 void us_quic_stream_hold_window(us_quic_stream_t *s, int hold);
 /* -1 when the send half is finished (a FIN or a RESET_STREAM is out): no on_stream_writable follows. */
 int us_quic_stream_want_write(us_quic_stream_t *s);
-/* lsquic holds one outgoing header block per stream and refuses the next one
- * while an earlier block (a 1xx) is still unsent. Nothing was queued: send the
- * same block again from on_stream_writable. 0 is sent, -1 is a hard failure. */
-#define US_QUIC_SEND_HEADERS_RETRY 1
+/* Returns as us_quic_send_header_block does. The write event after
+ * US_QUIC_SEND_HEADERS_RETRY (behind a 1xx) is on_stream_writable. */
 int us_quic_stream_send_headers(us_quic_stream_t *s,
     const struct us_quic_header_t *headers, unsigned int count, int end_stream);
 /* Send a 1xx interim HEADERS frame (`:status` only); the final response

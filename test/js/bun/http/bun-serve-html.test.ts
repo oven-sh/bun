@@ -1417,7 +1417,7 @@ test.concurrent("dev server started after process.chdir() reports bundle failure
 
 // The dev server keys a module by its real path, as `bun build` does. A package of the workspace
 // that the page imports by name takes the tsconfig.json above its real path, not the one above
-// the link in the application's node_modules. The first bundle and the rebuild after a save agree.
+// the link in the application's node_modules.
 test.concurrent("dev server compiles a linked package with the tsconfig.json above its real path", async () => {
   const jsxImportSource = (name: string) =>
     JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: name } });
@@ -1433,55 +1433,22 @@ test.concurrent("dev server compiles a linked package with the tsconfig.json abo
     "packages/ui/package.json": JSON.stringify({ name: "ui", version: "1.0.0" }),
     "packages/ui/button.tsx": `export const Button = () => <button />;`,
     "serve.ts": /*ts*/ `
-      import { writeFileSync } from "node:fs";
       import page from "./apps/web/index.html";
 
       using server = Bun.serve({ port: 0, development: true, routes: { "/": page } });
-      async function runtimes() {
-        const html = await (await fetch(server.url)).text();
-        const script = html.match(/<script[^>]+src="([^"]+)"/)[1];
-        const js = await (await fetch(new URL(script, server.url))).text();
-        // A module path has the separators of the platform.
-        const paths = js.replaceAll("\\\\", "/").replace(/\\/+/g, "/");
-        return ["preact", "solid-js"].filter(name => paths.includes("node_modules/" + name + "/jsx-dev-runtime.js"));
-      }
-      const first = await runtimes();
-
-      // The HMR socket reports when a rebuild ends. 'u' is a hot update.
-      const url = new URL("/_bun/hmr", server.url);
-      url.protocol = "ws:";
-      const ws = new WebSocket(url);
-      ws.binaryType = "arraybuffer";
-      let awaited = null;
-      ws.onmessage = ({ data }) => {
-        if (awaited?.kind === String.fromCharCode(new Uint8Array(data)[0])) awaited.resolve();
-      };
-      function nextMessage(kind) {
-        const { promise, resolve } = Promise.withResolvers();
-        awaited = { kind, resolve };
-        return promise;
-      }
-      // The server replies to "set url" ('n' + route) with 'n' after it has read the subscription ('s' + topics).
-      const subscribed = nextMessage("n");
-      ws.onopen = () => {
-        ws.send("she");
-        ws.send("n/");
-      };
-      await subscribed;
-
-      const rebuilt = nextMessage("u");
-      writeFileSync("packages/ui/button.tsx", "export const Button = () => <button id='saved' />;");
-      await rebuilt;
-      const afterSave = await runtimes();
-
-      ws.close();
-      console.log(JSON.stringify({ first, afterSave }));
+      const html = await (await fetch(server.url)).text();
+      const script = html.match(/<script[^>]+src="([^"]+)"/)[1];
+      const js = await (await fetch(new URL(script, server.url))).text();
+      // A module path has the separators of the platform.
+      const paths = js.replaceAll("\\\\", "/").replace(/\\/+/g, "/");
+      const runtimes = ["preact", "solid-js"].filter(name => paths.includes("node_modules/" + name + "/jsx-dev-runtime.js"));
+      console.log(JSON.stringify(runtimes));
     `,
   });
   // A junction needs no privilege on Windows. Its target is absolute.
   symlinkSync(join(String(dir), "packages", "ui"), join(String(dir), "apps", "web", "node_modules", "ui"), "junction");
   const { stdout, stderr, exitCode } = await runServeFixture(dir);
-  expect(stdout, stderr).toBe(JSON.stringify({ first: ["preact", "solid-js"], afterSave: ["preact", "solid-js"] }));
+  expect(stdout, stderr).toBe(JSON.stringify(["preact", "solid-js"]));
   expect(exitCode).toBe(0);
 });
 

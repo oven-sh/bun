@@ -1728,7 +1728,7 @@ impl<'a> Resolver<'a> {
             if primary
                 && rewritten
                 && self.settings_from_real_path
-                && let Some(real_dir) = self.settings_dir_of_real_path(path.text())
+                && let Some(real_dir) = self.settings_dir_of_real_path(path.text(), dir)
             {
                 dir = real_dir;
                 at_real_path = true;
@@ -1773,17 +1773,25 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    /// `None` inside node_modules: such a file keeps the settings of the path as spelled.
+    /// `None` for a file or a link in node_modules: it keeps the settings of the path as spelled.
     #[cold]
     #[inline(never)]
-    fn settings_dir_of_real_path(&mut self, real: &[u8]) -> Option<DirInfoRef> {
-        if strings::path_contains_node_modules_folder(real) {
+    fn settings_dir_of_real_path(
+        &mut self,
+        real: &[u8],
+        found_in: DirInfoRef,
+    ) -> Option<DirInfoRef> {
+        let entry_dir = found_in.abs_real_path;
+        let in_node_modules = if entry_dir.is_empty() {
+            found_in.is_node_modules() || found_in.is_inside_node_modules()
+        } else {
+            strings::path_contains_node_modules_folder(entry_dir)
+                || bun_paths::basename(entry_dir) == b"node_modules"
+        };
+        if in_node_modules {
             return None;
         }
-        let dir = Fs::PathName::init(real).dir;
-        // An endless "extends" chain fails only the first lookup of its directory.
-        self.dir_info_cached(dir)
-            .or_else(|_| self.dir_info_cached(dir))
+        self.dir_info_cached(Fs::PathName::init(real).dir)
             .ok()
             .flatten()
     }
@@ -6627,7 +6635,10 @@ impl<'a> Resolver<'a> {
             }
         };
         if let Some(tsconfig_json) = parsed_tsconfig {
-            let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
+            // A chain that fills the array does not end. It stops there.
+            const MAX_CHAIN: usize = 64;
+            let mut parent_configs: BoundedArray<*mut TSConfigJSON, MAX_CHAIN> =
+                BoundedArray::default();
             parent_configs.append(tsconfig_json)?;
             // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
             // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
@@ -6636,7 +6647,7 @@ impl<'a> Resolver<'a> {
             // `Deref` instead of three open-coded raw-ptr derefs.
             let mut current =
                 bun_ptr::BackRef::from(core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"));
-            while !current.extends.is_empty() {
+            while !current.extends.is_empty() && parent_configs.len() < MAX_CHAIN {
                 let ts_dir_name = Dirname::dirname(&current.abs_path);
                 // `extends` comes from the config file and can be any length.
                 let parsed = match ResolvePath::join_abs_string_buf_checked(

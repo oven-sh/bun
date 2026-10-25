@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, readdirSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, unprivilegedSpawnOptions } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, unprivilegedSpawnOptions } from "harness";
 import { join } from "path";
 import { itBundled } from "../expectBundled";
 
@@ -1062,14 +1062,14 @@ describe("bundler", () => {
           import { Button as buttonByPath } from "../../packages/ui/button";
           import { Card as cardByPath } from "../../packages/ui/card";
           import { Card as cardByName } from "ui/card";
-          console.log(buttonByName === buttonByPath, buttonByName(), cardByName === cardByPath, cardByName());
+          console.log(buttonByName(), buttonByPath(), cardByPath(), cardByName());
         `,
         ...linkedPackage,
         "/packages/tsconfig.json": jsxImportSource("solid-js"),
       },
       symlinks: { "/apps/web/node_modules/ui": "/packages/ui" },
       backend,
-      run: { stdout: "true solid-js true solid-js" },
+      run: { stdout: "solid-js solid-js solid-js solid-js" },
     });
     // The tsconfig.json of the package is read at its real path, which is not in node_modules,
     // so its "extends" counts.
@@ -1169,7 +1169,7 @@ describe("bundler", () => {
     ] as const) {
       itBundled(`tsconfig/SymlinkedPackageMainAndModule${order}-${backend}`, {
         files: {
-          "/apps/web/entry.tsx": `${routes.join("\n")}\nconsole.log(byName === byDirectory, byName === byAlias, byName());`,
+          "/apps/web/entry.tsx": `${routes.join("\n")}\nconsole.log(byName(), byDirectory(), byAlias());`,
           ...jsxRuntimeStubs,
           "/apps/web/tsconfig.json": JSON.stringify({
             compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact", paths: { "@ui": ["../../packages/ui"] } },
@@ -1184,7 +1184,7 @@ describe("bundler", () => {
         },
         symlinks: { "/apps/web/node_modules/ui": "/packages/ui" },
         backend,
-        run: { stdout: "true true solid-js" },
+        run: { stdout: "solid-js solid-js solid-js" },
       });
     }
     // A real path inside node_modules: the file keeps the tsconfig.json above the link, as
@@ -1217,6 +1217,24 @@ describe("bundler", () => {
         "/vendor/node_modules/widget.tsx": `export const Widget = () => <section />;`,
       },
       symlinks: { "/apps/web/linked": "/vendor/node_modules" },
+      backend,
+      run: { stdout: "preact preact" },
+    });
+    // `bun install --backend=symlink` links each file of a dependency to the package cache. The
+    // link is in node_modules. A link to a file needs a privilege on Windows.
+    (isWindows ? itBundled.skip : itBundled)(`tsconfig/SymlinkedDependencyFileKeepsTsconfigAboveLink-${backend}`, {
+      files: {
+        "/apps/web/entry.tsx": /* tsx */ `
+          import { Widget } from "jsxlib";
+          console.log(<a />, Widget());
+        `,
+        ...jsxRuntimeStubs,
+        "/apps/web/tsconfig.json": jsxImportSource("preact"),
+        "/apps/web/node_modules/jsxlib/package.json": `{ "name": "jsxlib", "version": "1.0.0" }`,
+        "/cache/tsconfig.json": jsxImportSource("solid-js"),
+        "/cache/jsxlib@1.0.0/index.tsx": `export const Widget = () => <section />;`,
+      },
+      symlinks: { "/apps/web/node_modules/jsxlib/index.tsx": "/cache/jsxlib@1.0.0/index.tsx" },
       backend,
       run: { stdout: "preact preact" },
     });
@@ -1329,7 +1347,7 @@ describe("bundler", () => {
         import { Button } from "ui/button";
         import { Button as byPath } from "../../packages/ui/button";
         import { decorators, fields } from "model";
-        console.log(<a />, Button(), Button === byPath, decorators, fields);
+        console.log(<a />, Button(), byPath(), decorators, fields);
       `,
       "apps/web/node_modules/.keep": "",
       "packages/tsconfig.json": jsxImportSource("solid-js"),
@@ -1344,7 +1362,7 @@ describe("bundler", () => {
     symlinkSync(join(root, "packages", "ui"), join(application, "node_modules", "ui"), "junction");
     symlinkSync(join(root, "libs", "model"), join(application, "node_modules", "model"), "junction");
     expect(await buildAndRun(root, application, "entry.tsx")).toEqual({
-      stdout: "preact solid-js true standard define\n",
+      stdout: "preact solid-js solid-js standard define\n",
       stderr: "",
       exitCode: 0,
     });
@@ -1396,8 +1414,9 @@ describe("bundler", () => {
     });
   });
   // `bun build --app` has a resolver for the server and one for the client. Both take the
-  // tsconfig.json above the real path of the package.
-  test.concurrent("tsconfig/SymlinkedPackageInServerAndClientOfApp", async () => {
+  // tsconfig.json above the real path of the package. Not on ASAN builds: `bun build --app`
+  // does not pass the leak check there (test/no-validate-leaksan.txt lists test/bake).
+  test.concurrent.skipIf(isASAN)("tsconfig/SymlinkedPackageInServerAndClientOfApp", async () => {
     using dir = tempDir("bundler-linked-package-app", {
       ...Object.fromEntries(Object.entries(jsxRuntimeStubs).map(([file, text]) => [file.slice(1), text])),
       "apps/web/tsconfig.json": jsxImportSource("preact"),

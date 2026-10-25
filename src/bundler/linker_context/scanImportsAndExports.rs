@@ -19,8 +19,8 @@ use crate::bundled_ast::{self, NamedExports, NamedImports};
 use crate::options::{self, Format, Loader};
 use crate::perf;
 use crate::{
-    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, LinkerContext,
-    LinkerGraph, Part, RefImportData, ResolvedExports, WrapKind, js_meta,
+    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, LinkerContext, LinkerGraph,
+    Part, RefImportData, ResolvedExports, WrapKind, js_meta,
 };
 use bun_ast::symbol::{self, Kind as SymbolKind};
 use bun_ast::{Dependency, ExportsKind, G, PartList, Ref};
@@ -1464,7 +1464,10 @@ fn should_call_runtime_require(format: options::Format) -> bool {
 /// `export *` resolves statically. Each name is a property read off the
 /// `__toESM(require_x())` namespace, like a named import of a wrapped file.
 #[inline]
-pub(crate) fn export_star_target_is_wrapped_lifted(kind: ExportsKind, flags: js_meta::Flags) -> bool {
+pub(crate) fn export_star_target_is_wrapped_lifted(
+    kind: ExportsKind,
+    flags: js_meta::Flags,
+) -> bool {
     kind == ExportsKind::Cjs && flags.lifted_exports_are_static
 }
 

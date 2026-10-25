@@ -48,19 +48,21 @@ describe("bundler", () => {
     },
   });
   itBundled("drop/KeepsBareRead", {
-    // Only a call of a dropped name is removed. A bare read of it stays, and throws here.
+    // Only a call of a dropped name is removed. A bare read of it stays: the first one throws, the second one runs a getter.
     files: {
       "/a.js": `
         try {
           ASSERT;
-          logger.debug;
           console.log("no throw");
         } catch {
           console.log("threw");
         }
+        globalThis.logger = { get debug() { console.log("getter ran"); return () => {}; } };
+        logger.debug;
+        logger.debug();
       `,
     },
-    run: { stdout: "threw" },
+    run: { stdout: "threw\ngetter ran" },
     drop: ["ASSERT", "logger.debug"],
     backend: "api",
   });

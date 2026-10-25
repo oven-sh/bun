@@ -8806,6 +8806,37 @@ export const d1 = compose((x: number) => d0(1), y => { let a5 = { v: d0(1) }; co
       expect(exitCode).toBe(1);
     });
 
+    // m3.ts is checked first. The declaration of `g` prints the constraint of `T`, which is the first to ask for the
+    // type of `b`. The errors of a missing property and of a type that isn't iterable are deferred to the end of a
+    // file's check, and that of m3.ts is over by then.
+    test("with declaration, an error that's deferred to the end of a file's check isn't lost if an earlier file's declarations get there first", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "declaration": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true }, "files": ["m1.ts", "m2.ts", "m3.ts"] }
+`,
+        "m1.ts": `import { b, c } from "./m2";
+export function f<T extends () => [typeof b, typeof c]>(x?: T) { return x; }
+`,
+        "m2.ts": `import "./m3";
+export const o = { x: 1 };
+export const b = o.missing;
+export const c = [...o];
+`,
+        "m3.ts": `import { f } from "./m1";
+export function g() { return f(); }
+`,
+      });
+      for (const threads of ["1", "8"]) {
+        const { stdout, exitCode } = await check(dir, ["--threads", threads]);
+        expect(stdout).toBe(
+          [
+            "m2.ts(3,20): error TS2339: Property 'missing' does not exist on type '{ x: number; }'.",
+            "m2.ts(4,22): error TS2488: Type '{ x: number; }' must have a '[Symbol.iterator]()' method that returns an iterator.",
+          ].join("\n"),
+        );
+        expect(exitCode).toBe(1);
+      }
+    });
+
     test("TS7053 prints an aliased intersection with a class by its members", async () => {
       using dir = project({
         "a.ts": `class User { id = 1 }

@@ -774,6 +774,13 @@ impl Checker<'_, '_> {
     pub(super) fn add_deferred_diagnostic(&mut self, callback: Reported) {
         if self.save_deferred_diagnostics {
             self.reported.push(callback);
+        } else if self.is_type_checked
+            && self.task.file != Some(callback.file)
+            && self.reports_semantic_errors(callback.file)
+        {
+            // `Emit` runs after every file's check. Here it runs after that of the task's file, and the check of
+            // `callback.file` may still come. Nothing is stored, so it evaluates this itself and calls the callback.
+            self.mark_tainted_from(0);
         }
     }
 

@@ -2,15 +2,12 @@
 //! `us_load_system_certificates_posix`, called once per process from `root_certs.cpp`.
 //!
 //! Sources are the ones Node's `GetOpenSSLSystemCertificates` reads: `$SSL_CERT_FILE` else OpenSSL's default file, and
-//! every regular file directly in `$SSL_CERT_DIR` (no recursion) else OpenSSL's default directory. In BoringSSL, as in
-//! Node's own OpenSSL, those are `/etc/ssl/cert.pem` and `/etc/ssl/certs`. A variable that is set but empty turns its
-//! source off. Every distro's CA tool puts its trust output there: `update-ca-certificates` and `certctl` write it,
-//! and the ca-certificates RPM links `/etc/ssl` to what `update-ca-trust` writes under `/etc/pki`. The tools' input
-//! trees (`/usr/share/ca-certificates`, `/usr/local/share/ca-certificates`, `/usr/local/share/certs`) are not read:
-//! a certificate there can be one the administrator deselected, or one the tool has not yet activated. Distros alias
-//! the output heavily (Debian links every root two or three times under /etc/ssl/certs and repeats them in the
-//! bundle; Fedora links three names to one bundle), so each file is read once per inode, each directory walked once
-//! per inode, and each certificate kept once per DER encoding. PEM framing and X.509 parsing stay in BoringSSL.
+//! every regular file directly in `$SSL_CERT_DIR` else OpenSSL's default directory (`/etc/ssl/cert.pem` and
+//! `/etc/ssl/certs` in BoringSSL). A variable that is set but empty turns its source off. Each distro's CA tool writes
+//! its trust output there. Its input trees (`/usr/share/ca-certificates`) are not read: a certificate there can be
+//! one the administrator deselected. Distros alias the output heavily, so each file is read once per inode, each
+//! directory walked once per inode, and each certificate kept once per DER encoding. PEM framing and X.509 parsing
+//! stay in BoringSSL.
 
 use core::ffi::{c_char, c_long, c_void};
 use core::ptr;

@@ -1592,10 +1592,12 @@ describe("pipelined requests behind a response that waits for the client to read
   const get = (url: string) => `GET ${url} HTTP/1.1\r\nHost: x\r\n\r\n`;
   const kinds = ["http", "https", "emit('connection')", "http2 with allowHTTP1"] as const;
 
-  // "/first" is answered with more than the kernel takes from a client that isn't reading. Every other response stays open.
-  async function start(kind: (typeof kinds)[number]) {
+  // "/first" is answered with more than the kernel takes from a client that isn't reading, or with one chunk. Every other response stays open.
+  async function start(kind: (typeof kinds)[number], first: "more than the kernel takes" | "one chunk") {
     const requests: IncomingMessage[] = [];
     const closed: Promise<void>[] = [];
+    const queued = Promise.withResolvers<void>();
+    let unsent = () => 0;
     let onRequest: (() => void) | undefined;
     const chunk = Buffer.alloc(1 << 20, "x");
     // A plain listener: once() rejects at the 'error' of an aborted request.
@@ -1605,9 +1607,25 @@ describe("pipelined requests behind a response that waits for the client to read
       if (requests.push(req) === 1) closed.push(untilClose(req.socket));
       closed.push(untilClose(req));
       if (req.url === "/first") {
-        // In several writes: Winsock takes a first send of any size whole.
-        for (let i = 0; i < 16; i++) res.write(chunk);
-        res.end();
+        const handle = (req.socket as any)._handle;
+        unsent = () => handle.writeQueueSize;
+        // A chunk per turn of the loop until one has to wait: Winsock takes a first send of any size whole, and the writes of one tick can leave as one send.
+        const fill = () => {
+          if (first === "one chunk") {
+            res.write(chunk);
+            res.end();
+            return queued.resolve();
+          }
+          if (unsent() < 65536) {
+            res.write(chunk);
+            return void setImmediate(fill);
+          }
+          // More than the kernel's buffers grow by while the client reads nothing.
+          for (let i = 0; i < 16; i++) res.write(chunk);
+          res.end();
+          queued.resolve();
+        };
+        fill();
       }
       onRequest?.();
     };
@@ -1630,6 +1648,10 @@ describe("pipelined requests behind a response that waits for the client to read
     return {
       requests,
       closed,
+      // The whole first response has been written.
+      queued: queued.promise,
+      // Over TLS the last few records count too, and those hold nothing back.
+      waits: () => unsent() > chunk.length,
       client,
       listening,
       async dispatched(count: number) {
@@ -1661,9 +1683,11 @@ describe("pipelined requests behind a response that waits for the client to read
     test.each(["destroy()", "end()"])(
       "a connection with a held pipelined response is released when the client goes away with %s",
       async how => {
-        using connection = await start(kind);
+        using connection = await start(kind, "more than the kernel takes");
         const { client, listening } = connection;
-        client.write(get("/first") + get("/held") + get("/held"));
+        client.write(get("/first"));
+        await connection.queued;
+        client.write(get("/held") + get("/held"));
         await connection.dispatched(3);
         expect(await connection.readFirstResponse()).toBe("0\r\n\r\n");
         if (how === "end()") client.resume().end();
@@ -1674,21 +1698,27 @@ describe("pipelined requests behind a response that waits for the client to read
       },
     );
 
-    test("a request that arrives meanwhile is dispatched once the client has read, also behind a held response", async () => {
-      using connection = await start(kind);
-      const { client, requests } = connection;
-      client.write(get("/first") + get("/held"));
-      await connection.dispatched(2);
-      await promisify(client.write as (data: string, cb: (err?: Error | null) => void) => boolean).call(
-        client,
-        get("/late"),
-      );
-      // The kernel has it, so a server that still read would dispatch it in the next turn.
-      for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
-      const early = requests.length;
-      expect(await connection.readFirstResponse()).toBe("0\r\n\r\n");
-      await connection.dispatched(3);
-      expect({ early, urls: requests.map(req => req.url) }).toEqual({ early: 2, urls: ["/first", "/held", "/late"] });
-    });
+    test.each(["more than the kernel takes", "one chunk"] as const)(
+      "a request that arrives meanwhile is dispatched once the client has read, also behind a held response (%s)",
+      async first => {
+        using connection = await start(kind, first);
+        const { client, requests } = connection;
+        client.write(get("/first"));
+        await connection.queued;
+        client.write(get("/held"));
+        await connection.dispatched(2);
+        await promisify(client.write as (data: string, cb: (err?: Error | null) => void) => boolean).call(
+          client,
+          get("/late"),
+        );
+        // The kernel has it, so a server that still read would dispatch it in the next turn.
+        for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+        // How much the kernel takes is its own matter (Winsock: a send of any size). Once it has it all, nothing holds the server back.
+        if (connection.waits()) expect(requests.length).toBe(2);
+        expect(await connection.readFirstResponse()).toBe("0\r\n\r\n");
+        await connection.dispatched(3);
+        expect(requests.map(req => req.url)).toEqual(["/first", "/held", "/late"]);
+      },
+    );
   });
 });

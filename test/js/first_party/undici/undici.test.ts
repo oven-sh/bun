@@ -1736,6 +1736,30 @@ describe("undici dispatchers", () => {
       expect(await pending).toBe(reason);
     });
 
+    it("leaves no listener on the signal when dispatch() throws", async () => {
+      class Throwing extends Dispatcher {
+        dispatch(): boolean {
+          throw new Error("no");
+        }
+      }
+      const { signal } = new AbortController();
+      const added: unknown[] = [];
+      const removed: unknown[] = [];
+      const { addEventListener, removeEventListener } = signal;
+      signal.addEventListener = function (this: AbortSignal, ...args: Parameters<typeof addEventListener>) {
+        added.push(args[1]);
+        return addEventListener.apply(this, args);
+      } as typeof addEventListener;
+      signal.removeEventListener = function (this: AbortSignal, ...args: Parameters<typeof removeEventListener>) {
+        removed.push(args[1]);
+        return removeEventListener.apply(this, args);
+      } as typeof removeEventListener;
+      const failure = await undiciFetch(`${origin}/`, { dispatcher: new Throwing(), signal }).catch(e => e.message);
+      expect(failure).toBe("no");
+      expect(added.length).toBeGreaterThan(0);
+      expect(removed).toEqual(added);
+    });
+
     it.each(["an abort", "onComplete()"])("ignores body data that the dispatcher delivers after %s", async after => {
       let handler!: Dispatcher.DispatchHandlers;
       class Late extends Dispatcher {

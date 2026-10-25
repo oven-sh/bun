@@ -1,6 +1,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { once } from "node:events";
+import http from "node:http";
+import net from "node:net";
 import path from "node:path";
+import type { Duplex } from "node:stream";
+import { promisify } from "node:util";
 
 // The close of a tunnel gave the request body handler one more last chunk, also when the parser had given it one.
 // From inside the delivery of that last chunk, the second one killed the process: "Segmentation fault at address
@@ -131,5 +136,74 @@ describe("an Upgrade request with a body", () => {
         });
       });
     }
+  });
+
+  describe.each(["tcp", "unix"] as const)("over %s", door => {
+    const head = "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 8\r\n\r\n";
+
+    // The 'upgrade' listener only reads. Resolves with the connected client and the stream that the listener got.
+    async function upgrade(firstWrite: string) {
+      const events: string[] = [];
+      const dir = tempDir("upgrade-body", {});
+      const server = http.createServer();
+      const upgraded = Promise.withResolvers<Duplex>();
+      server.on("upgrade", (req, stream) => {
+        for (const event of ["end", "finish", "error", "close"]) {
+          req.socket.on(event, () => events.push(`socket ${event}`));
+          stream.on(event, () => events.push(`stream ${event}`));
+        }
+        stream.resume();
+        upgraded.resolve(stream);
+      });
+      await once(
+        door === "unix" ? server.listen(path.join(String(dir), "s")) : server.listen(0, "127.0.0.1"),
+        "listening",
+      );
+      const address = server.address();
+      const client = typeof address === "string" ? net.connect(address) : net.connect(address!.port, "127.0.0.1");
+      client.on("error", () => {});
+      client.write(firstWrite);
+      return {
+        events,
+        server,
+        client,
+        stream: await upgraded.promise,
+        [Symbol.dispose]() {
+          client.destroy();
+          server.closeAllConnections();
+          server.close();
+          dir[Symbol.dispose]();
+        },
+      };
+    }
+
+    test.skipIf(isWindows && door === "unix").each(["destroy()", "end()"])(
+      "the socket ends and closes when the client leaves with %s before the body has ended",
+      async how => {
+        using connection = await upgrade(head + "half");
+        const { client, server, stream, events } = connection;
+        const closed = once(stream, "close");
+        if (how === "end()") client.resume().end();
+        else client.destroy();
+        await closed;
+        expect(events).toEqual(["socket end", "stream end", "socket finish", "socket close", "stream close"]);
+        expect(await promisify(server.getConnections).call(server)).toBe(0);
+        await promisify(server.close).call(server);
+      },
+    );
+
+    test.skipIf(isWindows && door === "unix")(
+      "the socket stays the listener's when the client half-closes after the body has ended",
+      async () => {
+        using connection = await upgrade(head + "half");
+        const { client, stream, events } = connection;
+        const ended = once(stream, "end");
+        client.end("half");
+        await ended;
+        stream.end("still open");
+        expect((await client.toArray()).join("")).toBe("still open");
+        expect(events.slice(0, 2)).toEqual(["socket end", "stream end"]);
+      },
+    );
   });
 });

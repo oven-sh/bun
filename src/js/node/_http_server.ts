@@ -1614,6 +1614,8 @@ function emitUpgrade(socket, req, complete) {
   detachFromHttp(socket, req);
   let stream = socket;
   if (!complete) {
+    // Node's socketOnEnd stays on the socket until the body has ended.
+    socket.on("end", socket.end);
     stream = socket[kUpgradeStream] = new UpgradeStream(socket, req);
     req.once("close", onUpgradeRequestClose);
   }
@@ -1624,7 +1626,10 @@ function emitUpgrade(socket, req, complete) {
   }
 }
 function onUpgradeRequestClose(this: any) {
-  this.socket?.[kUpgradeStream]?.requestBodyCompleted();
+  const socket = this.socket;
+  if (socket == null) return;
+  socket.removeListener("end", socket.end);
+  socket[kUpgradeStream]?.requestBodyCompleted();
 }
 const { kTimeout } = require("internal/timers");
 // Scratch options object for the builtin ServerResponse (see the dispatcher).

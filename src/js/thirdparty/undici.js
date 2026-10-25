@@ -1148,7 +1148,7 @@ function sendWithDispatch(dispatcher, url, options, signal, redirect) {
       },
     );
   } catch (err) {
-    reject(err);
+    fail(err);
   }
   return promise;
 }

@@ -92,6 +92,32 @@ Each zone has these keys:
 
 If `from` is a path, each `except` is a path relative to `from` and must be inside it. If `from` is a glob, each `except` must be a glob too, and it needs to match the file's absolute path, like `**/types.js`.
 
+A folder name like `[id]` or `{a,b}` is glob syntax in `target` and `from`, from every directory you run `bun lint` in. So `./src/[id]` doesn't match the folder `src/[id]`. To name that folder, write a glob with the bracket in a set: `./src/[[]id]/**`.
+
+Reported:
+
+{/* file "src/server/db.js" */}
+```js src/server/db.js
+export function query() {}
+```
+
+{/* bad {"filename": "src/[id]/page.js", "root": true, "options": [{"zones": [{"target": "./src/[[]id]/**", "from": "./src/server"}]}]} */}
+```js src/[id]/page.js
+import { query } from "../server/db.js";
+```
+
+Not reported:
+
+{/* file "src/server/db.js" */}
+```js src/server/db.js
+export function query() {}
+```
+
+{/* good {"filename": "src/[id]/page.js", "root": true, "options": [{"zones": [{"target": "./src/[id]", "from": "./src/server"}]}]} */}
+```js src/[id]/page.js
+import { query } from "../server/db.js";
+```
+
 With this zone, `src/client/app.js` can import `../server/types.js` and nothing else from `src/server`:
 
 ```toml bunfig.toml

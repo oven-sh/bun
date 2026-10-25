@@ -1000,3 +1000,250 @@ describe("ignore patterns for the installed ESLint, from another directory than 
     debugTimeout,
   );
 });
+
+// The import rules join the working directory in front of their patterns. Without an ESLint or oxlint config, no rule
+// has to match eslint-plugin-import, and the working directory is a path. On POSIX a name can also have a `|` or a `*`.
+const oddNames = ["[proj]", "{a,b}", "c++(old)", "app@(v2)", ...(isWindows ? [] : ["a(b|c)", "s*"])];
+// A class, an extglob group, and a name that only is-glob takes for a pattern.
+const someOddNames = ["[proj]", "c++(old)", ...(isWindows ? [] : ["a(b|c)"])];
+
+const devDependency = {
+  "package.json": JSON.stringify({ name: "p", type: "module", devDependencies: { dev: "1.0.0" } }),
+  "node_modules/dev/package.json": JSON.stringify({ name: "dev", version: "1.0.0", main: "index.js" }),
+  "node_modules/dev/index.js": "module.exports = 1;\n",
+};
+// Every option that the import rules join to the working directory: a path and a glob as `target` and as `from`, and
+// the globs of the two other rules.
+const zonedOptions = {
+  "import/no-restricted-paths": {
+    zones: [
+      { target: "./src/client", from: "./src/server" },
+      { target: "./src/pages/**", from: "./src/db/**", except: ["**/types.js"] },
+    ],
+  },
+  "import/no-extraneous-dependencies": { devDependencies: ["test/**"] },
+  "import/no-unassigned-import": { allow: ["src/client/*.css"] },
+};
+const zonedFiles = {
+  ...devDependency,
+  "src/server/db.js": "export function query() {}\n",
+  "src/client/style.css": "a {}\n",
+  "src/client/other.scss": "a {}\n",
+  "src/client/app.js": `import "./style.css";\nimport "./other.scss";\nimport { query } from "../server/db.js";\nimport dev from "dev";\nquery(dev);\n`,
+  "src/db/q.js": "export const q = 1;\n",
+  "src/db/types.js": "export const T = 1;\n",
+  "src/pages/p.js": `import { q } from "../db/q.js";\nimport { T } from "../db/types.js";\nexport const p = [q, T];\n`,
+  "test/a.test.js": `import dev from "dev";\nexport default dev;\n`,
+};
+// A JSON object is an inline table.
+const toml = (value: unknown): string =>
+  Array.isArray(value)
+    ? `[${value.map(toml).join(", ")}]`
+    : typeof value === "object" && value !== null
+      ? `{ ${Object.entries(value)
+          .map(([key, it]) => `${key} = ${toml(it)}`)
+          .join(", ")} }`
+      : JSON.stringify(value);
+const zonedProject = {
+  ...zonedFiles,
+  "bunfig.toml": `[lint.rules]\n${Object.entries(zonedOptions)
+    .map(([rule, options]) => `"${rule}" = ["error", ${toml(options)}]\n`)
+    .join("")}`,
+};
+const zonedReports = [
+  "src/client/app.js:2 import/no-unassigned-import",
+  "src/client/app.js:3 import/no-restricted-paths",
+  "src/client/app.js:4 import/no-extraneous-dependencies",
+  "src/pages/p.js:1 import/no-restricted-paths",
+];
+
+test.concurrent.each(["proj", ...oddNames])(
+  "the import rules report the same in a working directory named %s",
+  async name => {
+    expect(await reportedIn(name, zonedProject)).toEqual(zonedReports);
+  },
+  debugTimeout,
+);
+
+// There the globs get a `../` in front, and so does the `basePath` of the zones. From `test` no zone is below the
+// working directory.
+test.concurrent.each([...someOddNames.map(name => [name, "src"]), ["[proj]", "test"]])(
+  "the import rules report the same in a directory named %s, from its directory %s",
+  async (name, cwd) => {
+    expect(await reportedIn(name, zonedProject, [".."], cwd)).toEqual(zonedReports);
+  },
+  debugTimeout,
+);
+
+const importingQuery = (path: string) => `import { query } from "${path}";\nquery();\n`;
+
+test.concurrent.each(someOddNames)(
+  "import/no-restricted-paths: a zone next to the working directory, below a directory named %s",
+  async name => {
+    const files = {
+      "app/src/server/db.js": "export function query() {}\n",
+      "app/bunfig.toml": `[lint.rules]\n"import/no-restricted-paths" = ["error", { zones = [{ target = "../lib/src", from = "./src/server" }] }]\n`,
+      "lib/src/x.js": importingQuery("../../app/src/server/db.js"),
+    };
+    expect(await reportedIn(name, files, [".", "../lib"], "app")).toEqual([
+      "lib/src/x.js:1 import/no-restricted-paths",
+    ]);
+  },
+  debugTimeout,
+);
+
+// The `..` is in `basePath`, and what the zones say follows it.
+test.concurrent.each(["ws", ...someOddNames])(
+  "import/no-restricted-paths: a `basePath` next to the working directory, below a directory named %s",
+  async name => {
+    const zones = [
+      `{ target = "./src/client", from = "./src/server" }`,
+      `{ target = "./src/client/**", from = "./src/server/**" }`,
+    ];
+    const files = {
+      "app/bunfig.toml": `[lint.rules]\n"import/no-restricted-paths" = ["error", { basePath = "../lib", zones = [${zones.join(", ")}] }]\n`,
+      "lib/src/server/db.js": "export function query() {}\n",
+      "lib/src/client/c.js": importingQuery("../server/db.js"),
+    };
+    const reported = "lib/src/client/c.js:1 import/no-restricted-paths";
+    expect(await reportedIn(name, files, ["../lib"], "app")).toEqual([reported, reported]);
+  },
+  debugTimeout,
+);
+
+// With an ESLint config the rules are those of the plugin, which compiles the working directory with each pattern.
+// These are the reports of ESLint 9.39.5 and 10.13.0 with eslint-plugin-import 2.32.0 for this project.
+test.concurrent(
+  "with an ESLint config, the import rules report what eslint-plugin-import reports in a directory named [proj]",
+  async () => {
+    const rule = `{ meta: { schema: false }, create() { return {}; } }`;
+    const rules = Object.entries(zonedOptions).map(([id, options]) => [id, ["error", options]]);
+    const files = {
+      ...zonedFiles,
+      "package.json": JSON.stringify({
+        name: "p",
+        type: "module",
+        dependencies: { "eslint-plugin-import": "2.32.0" },
+        devDependencies: { dev: "1.0.0" },
+      }),
+      "node_modules/eslint-plugin-import/package.json": JSON.stringify({
+        name: "eslint-plugin-import",
+        version: "2.32.0",
+        main: "index.js",
+      }),
+      "node_modules/eslint-plugin-import/index.js": `module.exports = { meta: { name: "eslint-plugin-import" }, rules: { ${Object.keys(
+        zonedOptions,
+      )
+        .map(id => `"${id.slice("import/".length)}": ${rule}`)
+        .join(", ")} } };\n`,
+      "eslint.config.mjs": `import plugin from "eslint-plugin-import";\nexport default [{ plugins: { import: plugin }, rules: ${JSON.stringify(
+        Object.fromEntries(rules),
+      )} }];\n`,
+    };
+    expect(await reportedIn("[proj]", files)).toEqual([
+      "src/client/app.js:1 import/no-unassigned-import",
+      "src/client/app.js:2 import/no-unassigned-import",
+      "src/client/app.js:4 import/no-extraneous-dependencies",
+      "test/a.test.js:1 import/no-extraneous-dependencies",
+    ]);
+  },
+  debugTimeout,
+);
+
+// One rule, with the same options, is for the files of both kinds in a run. In a directory named `[proj]`, ESLint
+// 8.57.1 with eslint-plugin-import 2.32.0 reports no zone in the package, and both globs match no file there.
+test.concurrent.each(["proj", "[proj]"])(
+  "in a directory named %s, a package with an ESLint config gets the reports of eslint-plugin-import",
+  async name => {
+    const roots = ["", "pkg/"];
+    const zones = roots.map(it => `{ target = "./${it}src/client", from = "./${it}src/server" }`);
+    const globs = (below: string) => roots.map(it => JSON.stringify(`${it}${below}`)).join(", ");
+    const files = {
+      ...devDependency,
+      "bunfig.toml": `[lint.rules]
+"import/no-restricted-paths" = ["error", { zones = [${zones.join(", ")}] }]
+"import/no-extraneous-dependencies" = ["error", { devDependencies = [${globs("test/**")}] }]
+"import/no-unassigned-import" = ["error", { allow = [${globs("src/client/*.css")}] }]
+`,
+      "pkg/.eslintrc.json": JSON.stringify({
+        root: true,
+        parserOptions: { ecmaVersion: 2022, sourceType: "module" },
+        plugins: ["import"],
+      }),
+      ...Object.fromEntries(
+        roots.flatMap(it => [
+          [`${it}src/server/db.js`, "export function query() {}\n"],
+          [`${it}src/client/style.css`, "a {}\n"],
+          [`${it}src/client/c.js`, `import "./style.css";\n${importingQuery("../server/db.js")}`],
+          [`${it}test/a.test.js`, `import dev from "dev";\nexport default dev;\n`],
+        ]),
+      ),
+    };
+    const inPackage =
+      name === "proj"
+        ? ["pkg/src/client/c.js:2 import/no-restricted-paths"]
+        : [
+            "pkg/src/client/c.js:1 import/no-unassigned-import",
+            "pkg/test/a.test.js:1 import/no-extraneous-dependencies",
+          ];
+    expect(await reportedIn(name, files)).toEqual([...inPackage, "src/client/c.js:2 import/no-restricted-paths"]);
+  },
+  debugTimeout,
+);
+
+// Only the directory that `bun lint` joins is a path. What the options say is a pattern, `basePath` too.
+test.concurrent(
+  "import/no-restricted-paths: a `basePath` with a wildcard is a pattern",
+  async () => {
+    const files = {
+      "bunfig.toml": `[lint.rules]\n"import/no-restricted-paths" = ["error", { basePath = "./packages/*", zones = [{ target = "./src/client/**", from = "./src/server/**" }] }]\n`,
+      "packages/one/src/server/db.js": "export function query() {}\n",
+      "packages/one/src/client/c.js": importingQuery("../server/db.js"),
+    };
+    expect(await reportedIn("proj", files)).toEqual(["packages/one/src/client/c.js:1 import/no-restricted-paths"]);
+  },
+  debugTimeout,
+);
+
+// An absolute path in the options is a pattern as a whole, also where it goes through the working directory.
+test.concurrent.each([
+  ["proj", ["src/client/c.js:1 import/no-restricted-paths"]],
+  ["[proj]", []],
+])(
+  "import/no-restricted-paths: an absolute `target` in a directory named %s",
+  async (name, expected) => {
+    const files = (directory: string) => ({
+      [`${name}/bunfig.toml`]: `[lint.rules]\n"import/no-restricted-paths" = ["error", { zones = [{ target = ${JSON.stringify(
+        join(directory, name, "src/client").replaceAll("\\", "/"),
+      )}, from = "./src/server" }] }]\n`,
+      [`${name}/src/server/db.js`]: "export function query() {}\n",
+      [`${name}/src/client/c.js`]: importingQuery("../server/db.js"),
+    });
+    expect(await reportedFrom(name, files, [], name)).toEqual(expected);
+  },
+  debugTimeout,
+);
+
+// So a folder that the options name reads the same from every directory, also from inside that folder.
+test.concurrent.each([".", "app", "app/[locale]", "app/[locale]/client"])(
+  "the import rules read a folder that bunfig.toml names as a pattern, from the directory %s",
+  async cwd => {
+    const files = {
+      ...devDependency,
+      "bunfig.toml": `[lint.rules]
+"import/no-restricted-paths" = ["error", { zones = [{ target = "./app/[locale]/client", from = "./app/[locale]/server" }] }]
+"import/no-extraneous-dependencies" = ["error", { devDependencies = ["app/[locale]/test/**"] }]
+"import/no-unassigned-import" = ["error", { allow = ["app/[locale]/client/*.css"] }]
+`,
+      "app/[locale]/server/db.js": "export function query() {}\n",
+      "app/[locale]/client/style.css": "a {}\n",
+      "app/[locale]/client/c.js": `import "./style.css";\nimport { query } from "../server/db.js";\nquery();\n`,
+      "app/[locale]/test/a.test.js": `import dev from "dev";\nexport default dev;\n`,
+    };
+    expect(await reportedFrom(cwd, files, [relative(cwd, "app/[locale]") || "."])).toEqual([
+      "app/[locale]/client/c.js:1 import/no-unassigned-import",
+      "app/[locale]/test/a.test.js:1 import/no-extraneous-dependencies",
+    ]);
+  },
+  debugTimeout,
+);

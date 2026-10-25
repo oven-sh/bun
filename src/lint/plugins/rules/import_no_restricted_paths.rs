@@ -1,4 +1,4 @@
-use crate::import_minimatch::Glob;
+use crate::import_minimatch::{Glob, JoinedGlob, reads_cwd_as_path};
 use crate::import_resolve::{Resolved, Resolvers};
 use crate::module_visitor::{self, Systems};
 use bun_glob::scan::is_glob;
@@ -13,8 +13,9 @@ use std::sync::OnceLock;
 pub struct NoRestrictedPaths {
     zones: Vec<ZoneOptions>,
     base_path: Option<Box<[u8]>>,
-    /// The zones with absolute paths. Every file in a run has the same working directory.
-    read: OnceLock<Vec<Zone>>,
+    /// The zones with absolute paths, for a file with [`reads_cwd_as_path`] and for one without. Every file in a run
+    /// has the same working directory.
+    read: [OnceLock<Vec<Zone>>; 2],
 }
 
 /// A zone as it appears in the options.
@@ -37,7 +38,7 @@ const EXCEPTION_IS_NO_GLOB: Message =
     Message::new("", "Restricted path exceptions must be glob patterns when `from` contains glob patterns");
 
 enum Target {
-    Glob(Glob),
+    Glob(JoinedGlob),
     /// The path itself and everything under it.
     Path(Vec<u8>),
 }
@@ -48,7 +49,7 @@ enum Validators {
     Mixed,
     /// `computeGlobPatternPathValidator` for each glob. They all share the exceptions, which are `None` if one of them
     /// isn't a glob.
-    Globs(Vec<Glob>, Option<Vec<Glob>>),
+    Globs(Vec<JoinedGlob>, Option<Vec<Glob>>),
     /// `computeAbsolutePathValidator`: each path with its exceptions, which are `None` if one of them isn't under the
     /// path.
     Paths(Vec<(Vec<u8>, Option<Vec<Vec<u8>>>)>),
@@ -83,9 +84,12 @@ impl Target {
 }
 
 impl Zone {
-    /// `makePathValidators`
-    fn new(zone_options: &ZoneOptions, base_path: &[u8]) -> Zone {
+    /// `makePathValidators`. `base_path` is `base_text` resolved on the working directory, which is `cwd` if
+    /// [`reads_cwd_as_path`].
+    fn new(zone_options: &ZoneOptions, base_text: &[u8], base_path: &[u8], cwd: Option<&[u8]>) -> Zone {
         let absolute = |it: &[u8]| paths::resolve(base_path, it);
+        // An absolute path has nothing of the working directory.
+        let cwd_in = |it: &[u8]| cwd.filter(|_| !paths::is_absolute(base_text) && !paths::is_absolute(it));
         let globs = zone_options.from.iter().filter(|it| is_glob(it)).count();
         let from = if globs == 0 {
             let with_exceptions = |from: &[u8]| {
@@ -99,14 +103,18 @@ impl Zone {
         } else if globs == zone_options.from.len() {
             let are_valid = zone_options.except.iter().all(|it| is_glob(it));
             let exceptions = || zone_options.except.iter().map(|it| Glob::new(it)).collect::<Vec<Glob>>();
-            let from = zone_options.from.iter().map(|it| Glob::new(&absolute(it))).collect();
+            let glob = |it: &[u8]| JoinedGlob::new(cwd_in(it), &[base_text, it], &absolute(it));
+            let from = zone_options.from.iter().map(|it| glob(it)).collect();
             Validators::Globs(from, are_valid.then(exceptions))
         } else {
             Validators::Mixed
         };
-        let to_target = |it: &[u8]| match absolute(it) {
-            target if is_glob(&target) => Target::Glob(Glob::new(&target)),
-            target => Target::Path(target),
+        let to_target = |it: &[u8]| {
+            let (cwd, texts, target) = (cwd_in(it), [base_text, it], absolute(it));
+            match JoinedGlob::is_glob(cwd, &texts, &target) {
+                true => Target::Glob(JoinedGlob::new(cwd, &texts, &target)),
+                false => Target::Path(target),
+            }
         };
         Zone { target: zone_options.target.iter().map(|it| to_target(it)).collect(), from, message: zone_options.message.clone() }
     }
@@ -173,16 +181,19 @@ impl Rule for NoRestrictedPaths {
         NoRestrictedPaths {
             zones: options.array("zones").iter().map(zone).collect(),
             base_path: options.str("basePath").filter(|it| !it.is_empty()).map(|it| it.as_bytes().into()),
-            read: OnceLock::new(),
+            read: Default::default(),
         }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let modules = file.modules().filter(|_| file.path() != b"<text>")?;
-        let zones = self.read.get_or_init(|| {
+        let is_path = reads_cwd_as_path(file);
+        let zones = self.read[usize::from(is_path)].get_or_init(|| {
             let cwd = modules.cwd();
+            let base_text = self.base_path.as_deref().unwrap_or_default();
             let base_path = self.base_path.as_ref().map_or_else(|| cwd.to_vec(), |it| paths::resolve(cwd, it));
-            self.zones.iter().map(|it| Zone::new(it, &base_path)).collect()
+            let zone = |it: &ZoneOptions| Zone::new(it, base_text, &base_path, is_path.then_some(cwd));
+            self.zones.iter().map(zone).collect()
         });
         let filename = paths::portable(file.path(), file.path());
         let is_target = |zone: &Zone| zone.target.iter().any(|it| it.has(&filename));
@@ -192,7 +203,7 @@ impl Rule for NoRestrictedPaths {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
-        let Some(zones) = self.read.get() else {
+        let Some(zones) = self.read[usize::from(reads_cwd_as_path(file))].get() else {
             return;
         };
         let (Some(resolvers), Some(modules)) = (Resolvers::of(file.settings()), file.modules()) else {

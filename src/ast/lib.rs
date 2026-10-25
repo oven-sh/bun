@@ -1174,7 +1174,7 @@ fn excerpt_around_column(line: &[u8], column: usize) -> (&[u8], usize) {
         }
     }
     (
-        &line[lo..hi],
+        bun_core::trim_right(&line[lo..hi], b" \r\n\t"),
         strings::wtf8_len_utf16(&line[lo..caret]) as usize,
     )
 }

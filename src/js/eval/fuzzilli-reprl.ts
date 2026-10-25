@@ -1,5 +1,5 @@
 // Comprehensive REPRL wrapper for Bun fuzzing with all runtime APIs exposed
-// test/js/bun/util/fuzzilli-reprl-execve.fixture.ts evaluates this file as it is, so it has to stay plain
+// test/js/bun/util/fuzzilli-reprl.fixture.ts evaluates this file as it is, so it has to stay plain
 // JavaScript: no type syntax.
 // Based on workerd's approach to maximize fuzzing coverage
 // https://bun.com/docs/runtime
@@ -14,10 +14,6 @@ const fs = require("node:fs");
 globalThis.require = require;
 globalThis.__dirname = "/";
 globalThis.__filename = "/fuzzilli.js";
-
-// process.execve replaces the process image on success, which kills the REPRL
-// child, so fuzzed scripts must not be able to reach the real implementation.
-Object.assign(process, { execve() {} });
 
 // ============================================================================
 // REPRL Protocol Loop
@@ -43,11 +39,6 @@ const responseBytes = fs.readSync(REPRL_CRFD, response, 0, 4, null);
 if (responseBytes !== 4) {
   throw new Error(`REPRL handshake failed: expected 4 bytes, got ${responseBytes}`);
 }
-
-// Likewise for exiting, and for signalling this process, the fuzzer, or sibling REPRL children.
-process.exit = process.reallyExit = () => {};
-process.kill = () => true;
-process._kill = () => 0;
 
 // Main REPRL loop
 while (true) {

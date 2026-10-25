@@ -88,6 +88,12 @@ impl FuzzilliCommand {
 
             bun_core::pretty_errorln!("<r><d>[FUZZILLI] Temp file written, booting JS runtime<r>");
 
+            unsafe extern "C" {
+                // safe: no args; sets a process-wide flag.
+                safe fn Bun__Process__enterFuzzilliREPRL();
+            }
+            Bun__Process__enterFuzzilliREPRL();
+
             // Run the temp file
             let temp_path: &[u8] = b"/tmp/bun-fuzzilli-reprl.js";
             // The `Run.boot` entry point is hosted on `RunCommand` to avoid the

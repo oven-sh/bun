@@ -1,9 +1,10 @@
 // Drives the fuzzilli REPRL loop with in-process mocks for the control/data
 // FDs so the real src/js/eval/fuzzilli-reprl.ts source can be exercised in a
-// normal (non-fuzzilli) build. Each argv entry is fed to the loop as one exec
-// cycle, followed by EOF. Prints `STATUSES=<exit codes> LIVE=<bool>` and exits
-// 0 only if every payload got a status back and the last one still ran.
+// normal (non-fuzzilli) build. The payload comes from argv. The fixture prints
+// the status the wrapper reports for each exec cycle: 0 when the script
+// returned, 1 << 8 when it threw.
 
+import { enterFuzzilliREPRL } from "bun:internal-for-testing";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -11,7 +12,7 @@ const REPRL_CRFD = 100;
 const REPRL_CWFD = 101;
 const REPRL_DRFD = 102;
 
-const payloads = [...process.argv.slice(2), `globalThis.stillAlive = true;`].map(p => Buffer.from(p, "utf8"));
+const payloads = [Buffer.from(process.argv[2], "utf8"), Buffer.from(`globalThis.stillAlive = true;`, "utf8")];
 
 // Script the control-read pipe (fd 100): HELO handshake, then one exec cycle
 // per payload (each followed by the 8-byte length), then EOF.
@@ -32,8 +33,6 @@ const statuses: number[] = [];
 const realFstatSync = fs.fstatSync;
 const realReadSync = fs.readSync;
 const realWriteSync = fs.writeSync;
-// process.exit goes through process.reallyExit, which the wrapper stubs.
-const realExit = process.reallyExit.bind(process);
 
 (fs as any).fstatSync = function (fd: any, ...rest: any[]) {
   if (fd === REPRL_CRFD) return {} as any;
@@ -59,7 +58,7 @@ const realExit = process.reallyExit.bind(process);
 (fs as any).writeSync = function (fd: any, buffer: any, ...rest: any[]) {
   if (fd === REPRL_CWFD) {
     if (Buffer.isBuffer(buffer) && buffer.length === 4 && buffer.toString() !== "HELO") {
-      statuses.push(buffer.readUInt32LE(0) >> 8);
+      statuses.push(buffer.readUInt32LE(0));
     }
     return Buffer.isBuffer(buffer) ? buffer.length : String(buffer).length;
   }
@@ -69,12 +68,15 @@ const realExit = process.reallyExit.bind(process);
 (globalThis as any).resetCoverage = () => {};
 (globalThis as any).require = require;
 
+// `bun fuzzilli` does this before it boots the wrapper.
+enterFuzzilliREPRL();
+
 const reprlSource = fs.readFileSync(
   path.join(import.meta.dir, "..", "..", "..", "..", "src", "js", "eval", "fuzzilli-reprl.ts"),
   "utf8",
 );
 (0, eval)(reprlSource);
 
-const live = (globalThis as any).stillAlive === true;
-realWriteSync.call(fs, 1, `STATUSES=${statuses.join(",")} LIVE=${live}\n`);
-realExit(statuses.length === payloads.length && live ? 0 : 1);
+const liveAfterPayload = (globalThis as any).stillAlive === true;
+realWriteSync.call(fs, 1, `STATUSES=${statuses.join(",")} LIVE=${liveAfterPayload}\n`);
+process.exit(statuses.length === 2 && liveAfterPayload ? 0 : 1);

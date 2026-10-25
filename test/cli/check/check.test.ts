@@ -15614,6 +15614,36 @@ const v = c();
       }
     });
 
+    // `p` refers to itself, so it's `any` while its initializer is still being checked, and `findResolutionCycleStartIndex`
+    // doesn't search below it. So `list()` visits `g` a third time. That visit checks the returned expression again, while
+    // two checks of it are in progress, gets to `p`, ends there and has the tuple that isn't a `Router`.
+    test("an expression is checked again inside its own check if the way back ends at a resolution that has its result", async () => {
+      using dir = project({
+        "a.ts": `declare class Router<D> { def: D; }
+declare function merge<A, B>(a: Router<A>, b: Router<B>): Router<A & B>;
+declare function wrap<T>(x: T): { v: T };
+declare function pair<A>(a: A): [A];
+declare const flag: boolean;
+function list() { return merge(holder.g, first); }
+class C { p = flag ? new C().p : list(); }
+var first = wrap(holder.g).v;
+var holder = { get g() { return pair(merge(first, new C().p)); } };
+`,
+      });
+      const own =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        "a.ts(6,32): error TS2741: Property 'def' is missing in type '[Router<unknown>]' but required in type 'Router<unknown>'.",
+        `a.ts(7,11): error TS7022: 'p' implicitly has type 'any' ${own}`,
+        "a.ts(7,30): error TS2729: Property 'p' is used before its initialization.",
+        `a.ts(8,5): error TS7022: 'first' implicitly has type 'any' ${own}`,
+        "a.ts(8,18): error TS2454: Variable 'holder' is used before being assigned.",
+        "a.ts(9,20): error TS7023: 'g' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS7022 and TS7023 when `return f()` checks the callee while another resolution is in progress", async () => {
       using dir = project({
         "a.ts": `export function p1() { const a = (x = (b() as any)) => x; function b() { return a(); } }

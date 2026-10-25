@@ -1168,6 +1168,71 @@ note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenam
     expect(fs.readFileSync(path.join(dist, "Logo.png"), "utf8")).toBe("from an earlier build");
   });
 
+  // The two paths differ in the name of a directory. A temp directory that stores such names as one file cannot
+  // hold the two source directories of this fixture.
+  test.skipIf(tempFoldsCase)("two entry points in directories that differ only in letter case", async () => {
+    using dir = tempDir("bundle-case-directory", {
+      "src/Sub/page.ts": `console.log("the first page");\n`,
+      "src/sub/page.ts": `console.log("the second page");\n`,
+    });
+    const args = ["src/Sub/page.ts", "src/sub/page.ts"];
+    const dist = path.join(String(dir), "dist");
+
+    const { stdout, ...rest } = await build(String(dir), ...args);
+    expect(rest).toEqual({ stderr: "", exitCode: 0, dist: ["Sub", "Sub/page.js", "sub", "sub/page.js"] });
+    const firstPage = fs.readFileSync(path.join(dist, "Sub", "page.js"), "utf8");
+    expect(firstPage).toContain("the first page");
+
+    // The link makes the two directories one.
+    fs.rmSync(path.join(dist, "sub"), { recursive: true });
+    fs.symlinkSync("Sub", path.join(dist, "sub"));
+    const { dist: _, ...refused } = await build(String(dir), ...args);
+    expect(refused).toEqual({
+      stdout: "",
+      stderr: `error: Multiple files share the same output path
+  Sub/page.js:
+    from input src/Sub/page.ts
+    from input src/sub/page.ts
+
+
+note: the output directory stores 'Sub/page.js' and 'sub/page.js' as one file
+
+note: entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique`,
+      exitCode: 1,
+    });
+    expect(fs.readFileSync(path.join(dist, "Sub", "page.js"), "utf8")).toBe(firstPage);
+  });
+
+  // The asset naming leaves the output directory, and the output directory does not exist before the first build.
+  test("an asset naming that leaves a new output directory gives the same result on the second build", async () => {
+    using dir = tempDir("bundle-case-leaves", { ...logos, "assets/Logo.png": "from an earlier build" });
+    const read = (name: string) => fs.readFileSync(path.join(String(dir), "assets", name), "utf8");
+
+    for (let i = 0; i < 2; i++) {
+      const { stdout, ...rest } = await build(String(dir), "entry.js", "--asset-naming=../assets/[name].[ext]");
+      if (tempFoldsCase) {
+        expect({ stdout, ...rest }).toEqual({
+          stdout: "",
+          stderr: `error: Multiple files share the same output path
+  ./../assets/Logo.png:
+    from input a/Logo.png
+    from input b/logo.png
+
+
+note: the output directory stores './../assets/Logo.png' and './../assets/logo.png' as one file
+
+note: asset naming is './../assets/[name].[ext]', consider adding '[hash]' to make filenames unique`,
+          exitCode: 1,
+          dist: null,
+        });
+        expect(read("Logo.png")).toBe("from an earlier build");
+      } else {
+        expect(rest).toEqual({ stderr: "", exitCode: 0, dist: ["entry.js"] });
+        expect([read("Logo.png"), read("logo.png")]).toEqual(["the first logo", "the second logo"]);
+      }
+    }
+  });
+
   // Each pair asks the directory: the pair without a link is two files.
   test.skipIf(tempFoldsCase).each([
     ["first", "Icon.png", "icon.png", "a/Icon.png", "b/icon.png"],

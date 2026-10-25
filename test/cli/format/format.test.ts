@@ -11246,8 +11246,9 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
         return [flag, /expected [\w ]+ but received array|cannot be set in bunfig\.toml/.test(stderr)];
       }),
     );
-    // Prettier and oxfmt flags that aren't project settings, or that do nothing.
+    // --lsp, and Prettier and oxfmt flags that aren't project settings, or that do nothing.
     expect(answers.filter(it => !it[1]).map(it => it[0])).toEqual([
+      "lsp",
       "parser",
       "plugin",
       "jsx-bracket-same-line",
@@ -11255,7 +11256,6 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
       "cache-location",
       "cache-strategy",
       "experimental-cli",
-      "lsp",
     ]);
   });
 });

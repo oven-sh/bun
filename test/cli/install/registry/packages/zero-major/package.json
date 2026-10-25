@@ -1,0 +1,49 @@
+{
+  "_id": "zero-major",
+  "name": "zero-major",
+  "dist-tags": {
+    "latest": "0.5.1"
+  },
+  "versions": {
+    "0.4.0": {
+      "name": "zero-major",
+      "version": "0.4.0",
+      "_id": "zero-major@0.4.0",
+      "dist": {
+        "integrity": "sha512-xY4I6VAgjzMCnNTpToxaeCeV1wtNlO92G/rB/V8hUIlhXnNSfiOwoWKr38ElkI9ro09fwPIaM34s7INVa2uCMw==",
+        "shasum": "60ec5ccba9d9ab89bebaa5a0fd117e50a3181e3f",
+        "tarball": "http://localhost:4873/zero-major/-/zero-major-0.4.0.tgz"
+      }
+    },
+    "0.4.1": {
+      "name": "zero-major",
+      "version": "0.4.1",
+      "_id": "zero-major@0.4.1",
+      "dist": {
+        "integrity": "sha512-m9SPZLJj+qAzlWZKR+s0MA8V+nTc9iJiMCM327hhW8ib2cHgj4sC33R61Mffid5uohvhs8VKmTEkLIX+wAGcdw==",
+        "shasum": "ec28d936c91a26ed55ff0ccb57229b9199214d9a",
+        "tarball": "http://localhost:4873/zero-major/-/zero-major-0.4.1.tgz"
+      }
+    },
+    "0.5.0": {
+      "name": "zero-major",
+      "version": "0.5.0",
+      "_id": "zero-major@0.5.0",
+      "dist": {
+        "integrity": "sha512-XXcn5EnWRgNs1wTxAyNamlP5WwzpwinVz29ki/ph99Utwq5NaTa4jTM2d0W8DH1+5SRK4pSD6rE03TFYypOPfQ==",
+        "shasum": "e678e28002fe6c54c5a81ea5353172890d97f07e",
+        "tarball": "http://localhost:4873/zero-major/-/zero-major-0.5.0.tgz"
+      }
+    },
+    "0.5.1": {
+      "name": "zero-major",
+      "version": "0.5.1",
+      "_id": "zero-major@0.5.1",
+      "dist": {
+        "integrity": "sha512-bNixOAGH2uJiY8pqjQq9XERxmxCwl1GsgdrUWrwZDfzn+j8rC97F/uJAPjvRJLL+jfhUZRlN3C/KjgNlWdah+A==",
+        "shasum": "5873c91085ace4ae7c3162b9467848d0db4203fe",
+        "tarball": "http://localhost:4873/zero-major/-/zero-major-0.5.1.tgz"
+      }
+    }
+  }
+}

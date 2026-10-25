@@ -1,0 +1,27 @@
+//! A TypeScript type checker: resolves types on demand and reports TypeScript's errors by code and position.
+//!
+//! It applies TypeScript's rules. Large parts of `check` and `bind` are ported from typescript-go's checker and binder
+//! (https://github.com/microsoft/typescript-go, Copyright Microsoft Corporation, Apache License 2.0). Comments cite the
+//! upstream function each piece of code corresponds to.
+
+#![feature(allocator_api)]
+
+pub mod atom;
+pub mod bind;
+pub mod check;
+pub mod components;
+pub mod config;
+pub mod config_options;
+pub mod ecmascript;
+pub mod hir;
+pub mod json;
+pub mod local;
+pub mod messages;
+pub mod node;
+pub mod program;
+pub mod resolve;
+pub mod session;
+pub mod table;
+pub mod types;
+pub mod util;
+pub mod verify;

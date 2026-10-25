@@ -51,6 +51,84 @@ macro_rules! init_p {
     }};
 }
 
+/// What `Parser::parse_only` parsed.
+pub struct ParsedOnly<'p, 'a> {
+    pub stmts: &'p [js_ast::Stmt],
+    p: &'p P<'a, false, false>,
+}
+
+impl<'a> ParsedOnly<'_, 'a> {
+    /// An unvisited identifier is its spelling.
+    #[inline]
+    pub fn name_of(&self, r#ref: js_ast::Ref) -> &'a [u8] {
+        self.p.load_name_from_ref(r#ref)
+    }
+    /// Where the parameters of the async arrow at `at` start.
+    pub fn async_arrow_parameters(&self, at: js_ast::Loc) -> Option<i32> {
+        self.starts()?
+            .async_arrow_parameters
+            .get(&at.start)
+            .copied()
+    }
+    /// Where the expression after the `=>` at `at` starts.
+    pub fn arrow_expression_body(&self, at: js_ast::Loc) -> Option<i32> {
+        self.starts()?
+            .arrow_expression_bodies
+            .get(&at.start)
+            .copied()
+    }
+    /// Where the class element whose name or static block is at `at` starts.
+    pub fn class_element(&self, at: js_ast::Loc) -> Option<i32> {
+        self.starts()?.class_elements.get(&at.start).copied()
+    }
+    fn starts(&self) -> Option<&crate::p::StartsForParseOnly> {
+        self.p.starts_for_parse_only.as_ref()
+    }
+    pub fn import_path(&self, import_record_index: u32) -> &[u8] {
+        self.p
+            .import_records
+            .items()
+            .get(import_record_index as usize)
+            .map_or(&[], |record| record.path.text)
+    }
+    pub fn module_syntax(&self) -> ModuleSyntax {
+        ModuleSyntax {
+            import_meta: self.p.has_import_meta,
+            top_level_await: self.p.top_level_await_keyword.len > 0,
+        }
+    }
+}
+
+/// Module record flags found while parsing.
+#[derive(Clone, Copy, Default)]
+pub struct ModuleSyntax {
+    pub import_meta: bool,
+    pub top_level_await: bool,
+}
+
+/// Runs `Parser::parse_only` on JavaScript text that isn't one of the build's files. Returns `None`
+/// on a parse error.
+pub fn parse_only_text<R>(
+    text: &[u8],
+    top_level_await: bool,
+    jsc_builtin_syntax: bool,
+    f: impl FnOnce(&ParsedOnly<'_, '_>) -> R,
+) -> Option<R> {
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(&b"chunk.js"[..], text);
+    let mut options = Options::init(Default::default(), bun_ast::Loader::Js);
+    options.features.no_macros = true;
+    options.features.top_level_await = top_level_await;
+    options.jsc_builtin_syntax = jsc_builtin_syntax;
+    options.suppress_warnings_about_weird_code = true;
+    let define = Define::default();
+    let mut log = bun_ast::Log::init();
+    let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+    parser.parse_only(f).ok()
+}
+
 pub struct Parser<'a> {
     pub(crate) options: Options<'a>,
     pub(crate) lexer: js_lexer::Lexer<'a>,
@@ -71,6 +149,9 @@ pub struct Options<'a> {
     pub ts: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
+    /// Keeps every directive in the AST, in its original position and with its original text.
+    /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
+    pub keep_directives: bool,
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,
     pub suppress_warnings_about_weird_code: bool,
@@ -88,6 +169,8 @@ pub struct Options<'a> {
     pub allow_unresolved: &'a options::AllowUnresolved,
 
     pub module_type: options::ModuleType,
+    /// The source is one of JavaScriptCore's builtins: `@name` is a name.
+    pub jsc_builtin_syntax: bool,
     pub output_format: options::Format,
 
     pub transform_only: bool,
@@ -126,6 +209,7 @@ impl<'a> Default for Options<'a> {
             ts: false,
             keep_names: true,
             ignore_dce_annotations: false,
+            keep_directives: false,
             preserve_unused_imports_ts: false,
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
@@ -138,6 +222,7 @@ impl<'a> Default for Options<'a> {
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
+            jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
@@ -176,6 +261,7 @@ impl<'a> Options<'a> {
             ts: self.ts,
             keep_names: self.keep_names,
             ignore_dce_annotations: self.ignore_dce_annotations,
+            keep_directives: self.keep_directives,
             preserve_unused_imports_ts: self.preserve_unused_imports_ts,
             use_define_for_class_fields: self.use_define_for_class_fields,
             suppress_warnings_about_weird_code: self.suppress_warnings_about_weird_code,
@@ -203,6 +289,7 @@ impl<'a> Options<'a> {
                 auto_polyfill_require: f.auto_polyfill_require,
                 replace_exports: Default::default(),
                 dont_bundle_twice: f.dont_bundle_twice,
+                code_coverage: f.code_coverage,
                 unwrap_commonjs_packages: f.unwrap_commonjs_packages,
                 commonjs_at_runtime: f.commonjs_at_runtime,
                 unwrap_commonjs_to_esm: f.unwrap_commonjs_to_esm,
@@ -224,6 +311,7 @@ impl<'a> Options<'a> {
             warn_about_unbundled_modules: self.warn_about_unbundled_modules,
             allow_unresolved: self.allow_unresolved,
             module_type: self.module_type,
+            jsc_builtin_syntax: self.jsc_builtin_syntax,
             output_format: self.output_format,
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
@@ -282,6 +370,7 @@ impl<'a> Options<'a> {
             jsx,
             keep_names: true,
             ignore_dce_annotations: false,
+            keep_directives: false,
             preserve_unused_imports_ts: false,
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
@@ -297,6 +386,7 @@ impl<'a> Options<'a> {
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
+            jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
@@ -329,6 +419,7 @@ impl<'a> Parser<'a> {
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
         lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
+        lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
         lexer.step();
         lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
@@ -374,6 +465,46 @@ impl<'a> Parser<'a> {
                 self._parse::<false>()
             }
         }
+    }
+
+    /// Parses, and visits nothing: `f` gets the statements as they were written (nothing folded, dropped or bound).
+    /// `Err`: the source does not parse.
+    #[cold]
+    pub fn parse_only<R>(mut self, f: impl FnOnce(&ParsedOnly<'_, 'a>) -> R) -> Result<R, Error> {
+        type Pi<'a> = P<'a, false, false>;
+        let lexer = core::mem::replace(
+            &mut self.lexer,
+            js_lexer::Lexer::init_without_reading(
+                self.bump.alloc(bun_ast::Log::default()),
+                self.source,
+                self.bump,
+            ),
+        );
+        let options = core::mem::take(&mut self.options);
+        let mut __p = init_p!(Pi<'_>;
+            self.bump, self.log, self.source, self.define, lexer, options);
+        // SAFETY: `init_p!` only yields after `init` succeeded.
+        let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
+        p.starts_for_parse_only = Some(Default::default());
+        if p.lexer.token == js_lexer::T::THashbang {
+            p.lexer.next()?;
+        }
+        if p.log().errors > self.orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+        let mut opts = ParseStatementOptions {
+            scope: StatementScope::Module,
+            ..Default::default()
+        };
+        let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
+        // What the parser only logs is still an error: the statements are its best guess.
+        if p.log().errors > self.orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+        Ok(f(&ParsedOnly {
+            stmts: stmts.as_slice(),
+            p,
+        }))
     }
 
     /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from
@@ -528,7 +659,6 @@ impl<'a> Parser<'a> {
             );
         }
 
-        scan_pass.approximate_newline_count = p.lexer.approximate_newline_count;
         Ok(())
     }
 
@@ -1070,11 +1200,11 @@ impl<'a> Parser<'a> {
                         let should_move = !p.options.bundle && class.class.can_be_moved();
 
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        let appended = p.append_part(&mut parts, sliced)?;
 
-                        if should_move {
+                        if should_move && appended {
                             // `Part` isn't `Copy`; pop+push instead of last+truncate.
-                            before.push(parts.pop().expect("unreachable"));
+                            before.push(parts.pop().expect("infallible: part was appended"));
                         }
                     }
                     js_ast::StmtData::SExportDefault(value) => {
@@ -1083,10 +1213,10 @@ impl<'a> Parser<'a> {
                         // https://github.com/oven-sh/bun/issues/1961
                         let should_move = !p.options.bundle && value.can_be_moved();
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        let appended = p.append_part(&mut parts, sliced)?;
 
-                        if should_move {
-                            before.push(parts.pop().expect("unreachable"));
+                        if should_move && appended {
+                            before.push(parts.pop().expect("infallible: part was appended"));
                         }
                     }
                     js_ast::StmtData::SEnum(_) => {
@@ -2038,6 +2168,7 @@ impl<'a> Parser<'a> {
                     B::Object {
                         properties,
                         is_single_line: false,
+                        close_brace_loc: bun_ast::Loc::EMPTY,
                     },
                     bun_ast::Loc::EMPTY,
                 );
@@ -2333,14 +2464,6 @@ impl<'a> Parser<'a> {
                     },
                 ],
             )?;
-        }
-
-        // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
-        #[allow(deprecated)]
-        if !p.response_ref.is_null()
-            && p.symbols.as_slice()[p.response_ref.inner_index() as usize].use_count_estimate > 0
-        {
-            p.generate_import_stmt_for_bake_response(&mut before)?;
         }
 
         if !before.is_empty() || !after.is_empty() {

@@ -67,4 +67,4 @@ export default {
   kSessionTicket,
   kTrailers,
   kVersionNegotiation,
-};
+} as const;

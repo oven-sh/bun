@@ -2778,12 +2778,26 @@ impl StdinLine {
             self.chunk_len = filled;
             self.chunk_pos = 0;
             if filled == 0 {
+                self.take_from_file()?;
                 return Err(crate::CrateError::EndOfStream);
             }
         }
         let byte = self.chunk[self.chunk_pos];
         self.chunk_pos += 1;
+        if byte == b'\n' {
+            self.take_from_file()?;
+        }
         Ok(byte)
+    }
+
+    /// Moves the offset of a regular file past the bytes that `next_byte` gave out. A line is taken only when this works.
+    fn take_from_file(&self) -> crate::CrateResult<()> {
+        #[cfg(unix)]
+        if self.source == LineSource::File {
+            let taken = self.chunk_offset + self.chunk_pos as i64;
+            output_sink().lseek(self.fd, taken, libc::SEEK_SET)?;
+        }
+        Ok(())
     }
 
     fn fill_chunk(&mut self) -> crate::CrateResult<usize> {
@@ -2807,17 +2821,6 @@ impl StdinLine {
                 Ok(b'\r') if cr_ends_answer => return,
                 Ok(_) => {}
             }
-        }
-    }
-}
-
-#[cfg(unix)]
-impl Drop for StdinLine {
-    fn drop(&mut self) {
-        if self.source == LineSource::File {
-            let line_end = self.chunk_offset + self.chunk_pos as i64;
-            // No caller can take an error from a destructor. On a failure the offset stays before the line.
-            let _ = output_sink().lseek(self.fd, line_end, libc::SEEK_SET);
         }
     }
 }

@@ -312,6 +312,7 @@ const char *us_nq_hset_pairs(void *hset, size_t *len) {
 void us_nq_hset_free(void *hset) { nq_hsi_discard_header_set(hset); }
 
 #define US_NQ_MAX_HEADERS 128
+/* Returns as us_quic_send_header_block does, and -1 for a buffer that isn't `expected` pairs. */
 int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
                               int expected, int eos) {
     struct lsxpack_header hdrs[US_NQ_MAX_HEADERS];
@@ -348,7 +349,7 @@ int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
     }
     if (count != expected) return -1;
     lsquic_http_headers_t list = { count, hdrs };
-    return lsquic_stream_send_headers(s, &list, eos);
+    return us_quic_send_header_block(s, &list, eos);
 }
 
 static const struct lsquic_stream_if nq_stream_if = {

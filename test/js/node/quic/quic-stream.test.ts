@@ -718,6 +718,308 @@ describe("HTTP/3 header blocks that follow another header block", () => {
       if (!client.destroyed) client.close().catch(() => {});
     }
   });
+
+  // lsquic keeps the part of a header block that the congestion window has no room for, and takes no
+  // other header block for that stream until it has sent that part. The blocks that a server sends while
+  // it answers the requests of one read share the window, so the later streams of a burst run out of it.
+  test("every stream of a burst gets the response that follows its interim response", async () => {
+    const streams = 24;
+    // About 6 KB a stream: together several times lsquic's initial window of 32 packets.
+    const link = Array.from({ length: 128 }, (_, i) => `</assets/chunk-${i}.js>; rel=preload; as=script`).join(", ");
+    // Opening the streams can block the event loop for longer than the 1-second idle timeout of the other tests.
+    const maxIdleTimeout = 30;
+    const sent: boolean[] = [];
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout, initialMaxStreamsBidi: streams },
+        onheaders(this: any) {
+          sent.push(this.sendInformationalHeaders({ ":status": "103", link }), this.sendHeaders({ ":status": "200" }));
+          this.writer.writeSync(encoder.encode("hello"));
+          this.writer.endSync();
+        },
+      },
+    );
+    const client = await connectTo(server, maxIdleTimeout);
+    // What one stream gets. A stream that the server had to reset ends with the error's code.
+    async function response() {
+      const events: string[] = [];
+      const stream: any = await client.createBidirectionalStream({
+        headers: request("/"),
+        oninfo: (headers: Record<string, string>) =>
+          void events.push(
+            `info ${headers[":status"]} ${headers.link === link ? "with its link" : "without its link"}`,
+          ),
+        onheaders: (headers: Record<string, string>) => void events.push("headers " + headers[":status"]),
+      } as any);
+      stream.closed.catch(() => {});
+      let body = "";
+      try {
+        for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+        events.push("body " + body);
+      } catch (error: any) {
+        events.push("error " + error.code);
+      }
+      return events.join(", ");
+    }
+    const responses = await Promise.all(Array.from({ length: streams }, response));
+    client.close();
+    const complete = "info 103 with its link, headers 200, body hello";
+    expect({ refused: sent.filter(taken => !taken).length, responses }).toEqual({
+      refused: 0,
+      responses: Array.from({ length: streams }, () => complete),
+    });
+  });
+
+  // One block of this size is more than the window, so lsquic still holds part of it when the calls
+  // that follow it in the same turn are made.
+  describe.concurrent("behind a block that's larger than the congestion window", () => {
+    // About 175 KB as a header block. lsquic's initial window is 32 packets.
+    const value = Buffer.alloc(2000, "v").toString();
+    const large = (headers: Record<string, string>) => {
+      for (let i = 0; i < 100; i++) headers[`x-large-${i}`] = value;
+      return headers;
+    };
+    // The receiver drops the fields that go over the default of 16 KB.
+    const application = { maxHeaderLength: 1 << 20 };
+    const transportParams = { maxIdleTimeout: 2 };
+    const tls = { sni: { "*": { keys: [key], certs: [cert] } }, transportParams, application };
+    // "info 103 +100" is an interim response that arrived with its 100 large fields intact.
+    const label = (kind: string, block: Record<string, string>) => {
+      const intact = Object.values(block).filter(field => field === value).length;
+      return [kind, block[":status"] ?? block[":path"] ?? block["x-checksum"], intact && `+${intact}`]
+        .filter(Boolean)
+        .join(" ");
+    };
+    const outcome = (closed: Promise<unknown>) =>
+      closed.then(
+        () => "closed",
+        (err: any) => `${err.code} ${err.errorCode}`,
+      );
+    // An endpoint keeps the limits it was created with, so not the shared one.
+    const connectWith = (endpoint: QuicEndpoint, server: QuicEndpoint): Promise<any> =>
+      connect(server.address!, {
+        endpoint,
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams,
+        application,
+        onerror() {},
+      } as SessionOptions);
+    // close() waits for a stream that a failed expectation left open.
+    function closeWith(client: any, stream: any) {
+      stream?.destroy();
+      client.close();
+    }
+
+    const hint = () => large({ ":status": "103" });
+    // What the server's calls returned, the header blocks that the client got in order, and the body.
+    type Row = [
+      name: string,
+      answer: (stream: any) => boolean[] | Promise<boolean[]>,
+      sent: boolean[],
+      blocks: string[],
+      body?: string,
+    ];
+    const rows: Row[] = [
+      [
+        "a response with no body",
+        stream => [
+          stream.sendInformationalHeaders(hint()),
+          stream.sendHeaders({ ":status": "204" }, { terminal: true }),
+        ],
+        [true, true],
+        ["info 103 +100", "headers 204"],
+      ],
+      [
+        // lsquic holds the rest of the block until the peer has acknowledged part of it, which takes longer than a turn of the event loop.
+        "a response that's sent a turn later",
+        async stream => {
+          const hinted = stream.sendInformationalHeaders(hint());
+          await new Promise(resolve => setImmediate(resolve));
+          return [hinted, stream.sendHeaders({ ":status": "204" }, { terminal: true })];
+        },
+        [true, true],
+        ["info 103 +100", "headers 204"],
+      ],
+      [
+        // The response is queued behind two blocks. lsquic still holds the second one when it has sent the first.
+        "a second large interim response, a response and its body",
+        stream => {
+          const sent = [
+            stream.sendInformationalHeaders(hint()),
+            stream.sendInformationalHeaders(hint()),
+            stream.sendHeaders({ ":status": "200" }),
+          ];
+          stream.writer.writeSync(encoder.encode("hello"));
+          stream.writer.endSync();
+          return sent;
+        },
+        [true, true, true],
+        ["info 103 +100", "info 103 +100", "headers 200"],
+        "hello",
+      ],
+      [
+        // lsquic takes the response when it has sent the interim one, and then holds part of the response in turn.
+        // It would put a body that's written then into the response's own frame.
+        "a large response and its body",
+        stream => {
+          const sent = [stream.sendInformationalHeaders(hint()), stream.sendHeaders(large({ ":status": "200" }))];
+          stream.writer.writeSync(encoder.encode("hello"));
+          stream.writer.endSync();
+          return sent;
+        },
+        [true, true],
+        ["info 103 +100", "headers 200 +100"],
+        "hello",
+      ],
+      [
+        "a response, its body and the trailers that onwanttrailers sends",
+        stream => {
+          const sent = [stream.sendInformationalHeaders(hint()), stream.sendHeaders({ ":status": "200" })];
+          stream.onwanttrailers = () => void stream.sendTrailers({ "x-checksum": "abc123" });
+          stream.writer.writeSync(encoder.encode("hello"));
+          stream.writer.endSync();
+          return sent;
+        },
+        [true, true],
+        ["info 103 +100", "headers 200", "trailers abc123"],
+        "hello",
+      ],
+      [
+        "trailers",
+        stream => [stream.sendHeaders(large({ ":status": "200" })), stream.sendTrailers({ "x-checksum": "abc123" })],
+        [true, true],
+        ["headers 200 +100", "trailers abc123"],
+      ],
+      [
+        // One call sends 128 fields at most. That block isn't queued, so the next call can still answer.
+        "a response after one that can't be sent",
+        stream => {
+          const tooMany: Record<string, string> = { ":status": "200" };
+          for (let i = 0; i < 128; i++) tooMany[`x-field-${i}`] = "v";
+          return [
+            stream.sendInformationalHeaders(hint()),
+            stream.sendHeaders(tooMany),
+            stream.sendHeaders({ ":status": "500" }, { terminal: true }),
+          ];
+        },
+        [true, false, true],
+        ["info 103 +100", "headers 500"],
+      ],
+      [
+        "a large response with no body, but not a block after it",
+        stream => [
+          stream.sendHeaders(large({ ":status": "200" }), { terminal: true }),
+          stream.sendTrailers({ "x-checksum": "abc123" }),
+        ],
+        [true, false],
+        ["headers 200 +100"],
+      ],
+      [
+        // Nothing can follow the block that ends the stream, whether or not lsquic has taken that block yet.
+        "a response with no body, but not a block after it",
+        stream => [
+          stream.sendInformationalHeaders(hint()),
+          stream.sendHeaders({ ":status": "204" }, { terminal: true }),
+          stream.sendTrailers({ "x-checksum": "abc123" }),
+        ],
+        [true, true, false],
+        ["info 103 +100", "headers 204"],
+      ],
+    ];
+
+    test.each(rows)("a client gets %s", async (_name, answer, expectedSent, expectedBlocks, expectedBody = "") => {
+      const answered = Promise.withResolvers<boolean[]>();
+      await using server = await listen(
+        async serverSession => {
+          serverSession.onstream = (stream: any) => {
+            stream.closed.catch(() => {});
+          };
+          await serverSession.closed.catch(() => {});
+        },
+        {
+          ...tls,
+          onheaders(this: any) {
+            answered.resolve(answer(this));
+          },
+        },
+      );
+      await using endpoint = new QuicEndpoint();
+      const client = await connectWith(endpoint, server);
+      let stream: any;
+      try {
+        await client.opened;
+        const blocks: string[] = [];
+        stream = await client.createBidirectionalStream({
+          headers: request("/"),
+          oninfo: (block: Record<string, string>) => void blocks.push(label("info", block)),
+          onheaders: (block: Record<string, string>) => void blocks.push(label("headers", block)),
+          ontrailers: (block: Record<string, string>) => void blocks.push(label("trailers", block)),
+        });
+        stream.closed.catch(() => {});
+        // The stream of a block that the server doesn't take never ends, or ends in a reset.
+        expect(await answered.promise).toEqual(expectedSent);
+        let body = "";
+        for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+        expect({ blocks, body }).toEqual({ blocks: expectedBlocks, body: expectedBody });
+      } finally {
+        closeWith(client, stream);
+      }
+    });
+
+    // A stream that waits for the handshake queues both blocks, and sends them when lsquic opens it.
+    test.each([
+      ["an open stream", true],
+      ["a stream that waits for the handshake", false],
+    ])("a server gets the trailers that follow large request headers on %s", async (_name, opened) => {
+      const seen: string[] = [];
+      const served = Promise.withResolvers<string>();
+      await using server = await listen(
+        async serverSession => {
+          serverSession.onstream = (stream: any) => {
+            outcome(stream.closed).then(served.resolve);
+          };
+          await serverSession.closed.catch(() => {});
+        },
+        {
+          ...tls,
+          onheaders(this: any, block: Record<string, string>) {
+            seen.push(label("headers", block));
+            this.sendHeaders({ ":status": "200" }, { terminal: true });
+          },
+          ontrailers(this: any, block: Record<string, string>) {
+            seen.push(label("trailers", block));
+          },
+        },
+      );
+      await using endpoint = new QuicEndpoint();
+      const client = await connectWith(endpoint, server);
+      let stream: any;
+      try {
+        if (opened) await client.opened;
+        stream = await client.createBidirectionalStream({ onheaders() {} });
+        const closed = outcome(stream.closed);
+        const sent = [stream.sendHeaders(large(request("/trailers"))), stream.sendTrailers({ "x-checksum": "abc123" })];
+        // Without the trailers the request never ends, and neither does the stream.
+        expect({ pending: stream.pending, sent }).toEqual({ pending: !opened, sent: [true, true] });
+        // The server never sees a stream that the client had to reset.
+        expect(await closed).toBe("closed");
+        expect({ server: await served.promise, seen }).toEqual({
+          server: "closed",
+          seen: ["headers /trailers +100", "trailers abc123"],
+        });
+      } finally {
+        closeWith(client, stream);
+      }
+    });
+  });
 });
 
 // RFC 9114 10.3. nghttp3, which parses fields for Node, removes such a regular field and delivers the rest.

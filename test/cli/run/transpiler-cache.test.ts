@@ -12,7 +12,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows, MAX_PATH_BYTES, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, MAX_PATH_BYTES, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "path";
 
@@ -69,6 +69,92 @@ beforeEach(() => {
 });
 
 describe("transpiler cache", () => {
+  test.concurrent.each([
+    ["vitest", "ts", 5 * 1024],
+    ["@jest/globals", "ts", 5 * 1024],
+    ["globals", "ts", 5 * 1024],
+    ["globals", "cjs", 4 * 1024],
+    ["vitest", "ts", 4 * 1024 - 1],
+  ] as const)(
+    "keeps ordinary-module cache entries separate from test transforms (%s, .%s, %i bytes)",
+    async (framework, extension, size) => {
+      const body =
+        framework === "globals"
+          ? `${extension === "cjs" ? "module.exports = {};" : "export {};"}
+             if (typeof test === "undefined") {
+               console.log("ordinary module");
+             } else {
+               test("cached test transform", () => {
+                 expect(1 + 1).toBe(2);
+                 console.log("test body executed");
+               });
+             }`
+          : `import { it, expect } from ${JSON.stringify(framework)};
+             it("cached test transform", () => {
+               expect(1 + 1).toBe(2);
+               console.log("test body executed");
+             });`;
+      const source = `${body}\n/*${Buffer.alloc(size - Buffer.byteLength(body) - 5, "x").toString()}*/`;
+      using dir = tempDir("test-transpiler-cache", {
+        "package.json": JSON.stringify({ type: "module" }),
+        [`ordinary.${extension}`]: source,
+        [`cached.test.${extension}`]: source,
+        ...(framework === "globals"
+          ? {}
+          : {
+              [`node_modules/${framework}/package.json`]: JSON.stringify({ type: "module", exports: "./index.js" }),
+              [`node_modules/${framework}/index.js`]:
+                'throw new Error("ordinary module"); export const it = null, expect = null;',
+            }),
+      });
+      const sharedCache = join(String(dir), "shared-cache");
+      const cacheEnv = {
+        ...bunEnv,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: sharedCache,
+        BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+      };
+      async function run(args: string[], cachePath = sharedCache) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: { ...cacheEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cachePath },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return {
+          stdout: stdout.replaceAll("\r\n", "\n").replace(/^bun test v[^\n]*\n/, ""),
+          stderr: stderr.replaceAll("\r\n", "\n"),
+          exitCode,
+        };
+      }
+      async function expectTestPass(cachePath: string) {
+        const result = await run(["test", `./cached.test.${extension}`], cachePath);
+        expect(result).toEqual({
+          stdout: "test body executed\n",
+          stderr: expect.stringContaining("1 pass"),
+          exitCode: 0,
+        });
+      }
+
+      expect(Buffer.byteLength(source)).toBe(size);
+      await expectTestPass(join(String(dir), "fresh-cache"));
+      const ordinaryArgs = [
+        "-e",
+        `try { await import("./ordinary.${extension}"); } catch (error) { console.log(error.message); }`,
+      ];
+      const ordinaryResult = { stdout: "ordinary module\n", stderr: "", exitCode: 0 };
+      expect(await run(ordinaryArgs)).toEqual(ordinaryResult);
+      if (size < 4 * 1024) {
+        expect(existsSync(sharedCache)).toBe(false);
+      } else {
+        expect(readdirSync(sharedCache).filter(name => name.endsWith(".pile"))).toHaveLength(1);
+      }
+      await expectTestPass("0");
+      await expectTestPass(sharedCache);
+      expect(await run(ordinaryArgs)).toEqual(ordinaryResult);
+    },
+  );
   test("works", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "a"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");

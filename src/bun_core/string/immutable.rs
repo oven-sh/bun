@@ -2797,8 +2797,9 @@ pub unsafe fn write_wtf8_as_utf16le(bytes: &[u8], first_non_ascii: usize, dst: *
 pub fn glob_length_compare(key_a: &[u8], key_b: &[u8]) -> Ordering {
     let star_a = index_of_char(key_a, b'*');
     let star_b = index_of_char(key_b, b'*');
-    let base_length_a = star_a.map_or(key_a.len(), |i| i as usize);
-    let base_length_b = star_b.map_or(key_b.len(), |i| i as usize);
+    // Node counts the `*`, so `./a/b*` ties with the folder key `./a/b/` and wins: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/resolve.js#L675-L676
+    let base_length_a = star_a.map_or(key_a.len(), |i| i as usize + 1);
+    let base_length_b = star_b.map_or(key_b.len(), |i| i as usize + 1);
     if base_length_a > base_length_b {
         return Ordering::Less;
     }

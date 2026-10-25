@@ -391,7 +391,18 @@ pub struct DirEntry {
     pub fd: Fd,
     pub(crate) generation: Generation,
     pub data: dir_entry::EntryMap,
+    /// The hash (`bun_alloc::Result::hash`) of every cache key mapped to this
+    /// listing, once a second key is: the key it was read under, then each
+    /// alias. Guarded by `entries_mutex`.
+    #[expect(
+        clippy::box_collection,
+        reason = "a listing with one key pays one pointer, not an empty `Vec`"
+    )]
+    owners: Option<Box<Vec<u64>>>,
 }
+
+// `owners` adds one pointer. `Fd` is 8 bytes on Windows and 4 elsewhere.
+const _: () = assert!(core::mem::size_of::<DirEntry>() == if cfg!(windows) { 72 } else { 64 });
 
 impl DirEntry {
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
@@ -400,7 +411,39 @@ impl DirEntry {
             data: dir_entry::EntryMap::default(),
             generation,
             fd: Fd::INVALID,
+            owners: None,
         }
+    }
+
+    /// Hashes of the cache keys mapped to this listing, the key it was read
+    /// under first. Empty while that key is the only one.
+    pub fn owners(&self) -> &[u64] {
+        Self::debug_assert_entries_mutex_held();
+        match &self.owners {
+            Some(owners) => owners,
+            None => &[],
+        }
+    }
+
+    /// Records that the key hashing to `alias_key` is mapped to this listing
+    /// too. `own_key` is the hash of the key the listing was read under.
+    pub fn add_alias(&mut self, own_key: u64, alias_key: u64) {
+        Self::debug_assert_entries_mutex_held();
+        if alias_key == own_key {
+            return;
+        }
+        let owners = self.owners.get_or_insert_with(|| Box::new(vec![own_key]));
+        if !owners.contains(&alias_key) {
+            owners.push(alias_key);
+        }
+    }
+
+    /// Puts `fresh`, a new read of the same directory, in this slot. The keys
+    /// mapped to the slot stay with it.
+    pub(crate) fn refill(&mut self, mut fresh: DirEntry) {
+        Self::debug_assert_entries_mutex_held();
+        fresh.owners = self.owners.take();
+        *self = fresh;
     }
 
     // Compatibility wrapper for callers outside the `readdir` hot loop —
@@ -582,8 +625,8 @@ impl DirEntry {
         Ok(())
     }
 
-    /// Debug-only contract check: every `.data` probe must run under
-    /// `entries_mutex`, because a stale-generation re-read
+    /// Debug-only contract check: every `.data` and `owners` probe must run
+    /// under `entries_mutex`, because a stale-generation re-read
     /// (`RealFS::entries_at_locked`) rewrites the `DirEntry` in place under
     /// that lock and frees the old map's buckets. This assert turns the next
     /// unlocked probe into a deterministic debug-build failure instead of a
@@ -595,8 +638,8 @@ impl DirEntry {
                 .fs
                 .entries_mutex
                 .is_held_by_current_thread(),
-            "DirEntry.data probed without entries_mutex; a concurrent \
-             stale-generation re-read frees the map's buckets in place"
+            "DirEntry probed without entries_mutex; a concurrent \
+             stale-generation re-read rewrites it and frees the map's buckets in place"
         );
     }
 

@@ -1193,7 +1193,7 @@ pub mod fs {
 
             // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
             // leaked Box; exclusively owned here under `entries_mutex`.
-            unsafe { *entries_ptr = entries };
+            unsafe { (*entries_ptr).refill(entries) };
             let result = EntriesOption::Entries(
                 // SAFETY: see above — re-borrow as 'static for the BSSMap slot.
                 unsafe { &mut *entries_ptr },
@@ -1506,7 +1506,7 @@ pub mod fs {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
                             // SAFETY: see above — slot is exclusively owned here.
-                            unsafe { *e_ptr = new_entry };
+                            unsafe { (*e_ptr).refill(new_entry) };
                         }
                         Err(err) => {
                             // SAFETY: see above.

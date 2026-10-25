@@ -214,6 +214,8 @@ const repros: Repro[] = [
     },
     cases: [
       ["FOO = 1", "FOO = 1"],
+      ["FOO++", "FOO++"],
+      ["FOO += 2", "FOO += 2"],
       ["FOO", "123"],
       // `NaN` and `Infinity` are numbers, not the names of globals
       ["NAN = 1", "NAN = 1"],
@@ -223,6 +225,9 @@ const repros: Repro[] = [
       ["typeof obj.limit", '"number"'],
       // An identifier or a member chain is a valid target
       ["BAR = 2", "a.b = 2"],
+      ["BAR++", "a.b++"],
+      ["obj.key += 3", "c.d += 3"],
+      ["obj.num--", "obj.num--"],
       ["obj.key = 3", "c.d = 3"],
       ['obj["key"] = 4', "c.d = 4"],
       ["obj.num = 5", "obj.num = 5"],
@@ -545,6 +550,25 @@ describe.concurrent("define values are symbols, not text", () => {
     },
   );
 
+  test("an assignment through a key to `exports` is an assignment to `exports`", async () => {
+    const { run } = await bundleAndRun(
+      {
+        "entry.js": `
+          import lib from "./lib.cjs";
+          console.log(JSON.stringify(lib));
+        `,
+        "lib.cjs": `
+          obj.key = {};
+          module.exports.a = 1;
+        `,
+        "globals.js": ``,
+      },
+      { define: { "obj.key": "exports" } },
+    );
+    // `exports = {}` does not replace `module.exports`
+    expect(run).toEqual({ stdout: '{"a":1}\n', stderr: "", exitCode: 0 });
+  });
+
   test("assigning through a member chain does not assign to the import at its head", async () => {
     using dir = tempDir("bundler-define-assign-import", {
       "entry.js": `
@@ -697,9 +721,9 @@ describe.concurrent("a define value is not matched against the defines again", (
     expect(transpiler.transformSync(`x(a["b"], process.env["SOME-VAR"]);`, "js").trim()).toBe("x(7, 3);");
   });
 
-  test("the runtime transpiler", async () => {
+  test.each(["run.js", "run.ts"])("the runtime transpiler on %s", async file => {
     using dir = tempDir("bundler-define-once", {
-      "run.js": `
+      [file]: `
         globalThis.k = { m: { n: { label: "k.m.n", n: { label: "k.m.n.n" } } } };
         function viaLocal() { let local = k.m; return local.label + "!"; }
         function direct() { return k.m.label + "!"; }
@@ -707,7 +731,7 @@ describe.concurrent("a define value is not matched against the defines again", (
       `,
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--define", "k.m=k.m.n", "run.js"],
+      cmd: [bunExe(), "--define", "k.m=k.m.n", file],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",

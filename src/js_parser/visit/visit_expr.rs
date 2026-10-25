@@ -1491,7 +1491,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match Self::apply_dot_define(p, e, in_, is_delete_target, candidates) {
                 ControlFlow::Break(()) => return,
                 ControlFlow::Continue(None) => {}
-                ControlFlow::Continue(Some(define)) => {
+                // Not onto an optional chain: an unused `Symbol?.for("a")` stays, as it checks that `Symbol` exists
+                ControlFlow::Continue(Some(define)) if e_.optional_chain.is_none() => {
                     // Copy the side effect flags over in case this expression is unused
                     if define.can_be_removed_if_unused() {
                         e_.can_be_removed_if_unused = true;
@@ -1504,6 +1505,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             define.call_can_be_unwrapped_if_unused();
                     }
                 }
+                ControlFlow::Continue(Some(_)) => {}
             }
         }
 

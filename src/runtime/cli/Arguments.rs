@@ -118,7 +118,7 @@ const TRANSPILER_PARAMS_: &[ParamType] = &[
         "--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json"
     ),
     parse_param!(
-        "-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON."
+        "-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". A value is JSON, an identifier, or a property path."
     ),
     parse_param!(
         "--drop <STR>...                   Remove function calls, e.g. --drop=console removes all console.* calls."

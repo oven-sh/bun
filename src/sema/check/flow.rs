@@ -7361,8 +7361,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// assigned `links.resolvedType`. It doesn't touch `flowLoopStack`, so the requesting
     /// resolutions don't hide any loop from the initializer.
     pub(super) fn get_type_of_initializer(&mut self, file: FileId, init: ExprId) -> TypeId {
-        // A recheck doesn't look at `links.resolvedType` by itself.
-        if self.is_rechecking()
+        // Neither a recheck nor `check_expression_again` looks at `links.resolvedType` by itself.
+        if (self.is_rechecking() || self.is_checked_with_incomplete_walk(file, init))
             && let Some(known) = self.cached_type_of_expr(file, init)
         {
             return known;

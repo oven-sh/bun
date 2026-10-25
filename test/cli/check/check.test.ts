@@ -10778,6 +10778,34 @@ export function f() {
       expect(exitCode).toBe(1);
     });
 
+    // In the `default` clause `tok` is `never`. The walk for it ends with an incomplete `never`, which has every property.
+    // `getTypeOfInitializer` returns the type that's stored for the initializer of `is`, so `if (is)` doesn't check it again.
+    test("a reference to a constant doesn't check its initializer again after a walk that ended with an incomplete type", async () => {
+      using dir = project({
+        "a.ts": `type Tok = { kind: "num" } | { kind: "str" } | { kind: "op" } | { kind: "eof" };
+declare function next(): Tok;
+declare const c: boolean;
+let tok: Tok | undefined;
+while ((tok = next()).kind !== "eof") {
+  switch (tok?.kind) {
+    case "num":
+    case "str":
+    case "op":
+      break;
+    default:
+      for (const k of [1]) { }
+      if (c) { }
+      const is = tok?.kind === "num";
+      if (is) { }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("a shared flow node in a `finally` block has the type of its first visit", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

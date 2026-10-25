@@ -71,6 +71,90 @@ fn jsv_to_u32(v: JSValue) -> u32 {
     v.as_number() as u32
 }
 
+/// A JS number as a byte count. NaN and negatives are 0, fractions truncate, and
+/// the conversion saturates at `u64::MAX`, so 2^32 stays distinct from 2^32 - 1.
+#[inline]
+fn jsv_to_u64(v: JSValue) -> u64 {
+    if v.is_int32() {
+        return u64::try_from(v.as_int32()).unwrap_or(0);
+    }
+    v.as_number() as u64
+}
+
+/// The buffer that a `write()` window addresses. It names the arguments in the range errors.
+#[derive(Clone, Copy)]
+enum WindowArg {
+    In,
+    Out,
+}
+
+/// `buffer[off..off + len]` as the JS driver passed it, with `len` narrowed to the
+/// 32-bit window that one native write gives the codec.
+///
+/// Node v26.3.0 applies ToUint32 to both numbers, so 2^32 becomes 0. Bun throws for a
+/// length of 2^32 or more: one write has one 32-bit window, and it reports what is left
+/// of that window through a `Uint32Array`. The JS drivers split a longer chunk.
+#[inline]
+fn window_from_js(
+    global: &JSGlobalObject,
+    off: JSValue,
+    len: JSValue,
+    byte_len: usize,
+    arg: WindowArg,
+) -> JsResult<(usize, u32)> {
+    let (off, len) = (jsv_to_u64(off), jsv_to_u64(len));
+    let byte_len = byte_len as u64;
+    if off > byte_len || len > byte_len - off {
+        return Err(throw_window_out_of_bounds(global, arg, off, len, byte_len));
+    }
+    match u32::try_from(len) {
+        // `off <= byte_len`, which came from a `usize`.
+        Ok(len) => Ok((off as usize, len)),
+        Err(_) => Err(throw_window_too_long(global, arg, len)),
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn throw_window_out_of_bounds(
+    global: &JSGlobalObject,
+    arg: WindowArg,
+    off: u64,
+    len: u64,
+    byte_len: u64,
+) -> jsc::JsError {
+    let (name, buffer) = match arg {
+        WindowArg::In => ("in", "input"),
+        WindowArg::Out => ("out", "output"),
+    };
+    global
+        .err(
+            ErrorCode::OUT_OF_RANGE,
+            format_args!(
+                "{name}_off + {name}_len ({}) exceeds {buffer} buffer length ({byte_len})",
+                off.saturating_add(len),
+            ),
+        )
+        .throw()
+}
+
+#[cold]
+#[inline(never)]
+fn throw_window_too_long(global: &JSGlobalObject, arg: WindowArg, len: u64) -> jsc::JsError {
+    global.throw_range_error(
+        // `len` passed the bounds check against a buffer length.
+        len as i64,
+        bun_jsc::RangeErrorOptions {
+            field_name: match arg {
+                WindowArg::In => b"in_len",
+                WindowArg::Out => b"out_len",
+            },
+            max: i64::from(u32::MAX),
+            ..Default::default()
+        },
+    )
+}
+
 impl CountedKeepAlive {
     fn ref_(&mut self, _vm: &VirtualMachine) {
         if self.ref_count == 0 {
@@ -262,7 +346,7 @@ pub(crate) trait CompressionStreamImpl:
                 .throw());
         }
 
-        let (in_off, in_len): (u32, u32) = if in_js.is_null() {
+        let (in_off, in_len): (usize, u32) = if in_js.is_null() {
             // just a flush
             (0, 0)
         } else {
@@ -289,20 +373,13 @@ pub(crate) trait CompressionStreamImpl:
                     )
                     .throw());
             }
-            let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
-            if in_buf.byte_len < in_off as usize + in_len as usize {
-                return Err(global_this
-                    .err(
-                        ErrorCode::OUT_OF_RANGE,
-                        format_args!(
-                            "in_off + in_len ({}) exceeds input buffer length ({})",
-                            in_off as usize + in_len as usize,
-                            in_buf.byte_len,
-                        ),
-                    )
-                    .throw());
-            }
-            (in_off, in_len)
+            window_from_js(
+                global_this,
+                in_off.to_js(),
+                in_len.to_js(),
+                in_buf.byte_len,
+                WindowArg::In,
+            )?
         };
 
         let Some(out_buf) = out_js.as_array_buffer(global_this) else {
@@ -313,20 +390,13 @@ pub(crate) trait CompressionStreamImpl:
                 )
                 .throw());
         };
-        let out_off: u32 = jsv_to_u32(out_off.to_js());
-        let out_len: u32 = jsv_to_u32(out_len.to_js());
-        if out_buf.byte_len < out_off as usize + out_len as usize {
-            return Err(global_this
-                .err(
-                    ErrorCode::OUT_OF_RANGE,
-                    format_args!(
-                        "out_off + out_len ({}) exceeds output buffer length ({})",
-                        out_off as usize + out_len as usize,
-                        out_buf.byte_len,
-                    ),
-                )
-                .throw());
-        }
+        let (out_off, out_len) = window_from_js(
+            global_this,
+            out_off.to_js(),
+            out_len.to_js(),
+            out_buf.byte_len,
+            WindowArg::Out,
+        )?;
         // The pool thread writes to `out` after this call returns.
         if out_buf.can_be_freed_while_pinned() {
             return Err(global_this
@@ -359,16 +429,13 @@ pub(crate) trait CompressionStreamImpl:
         };
         let mut in_: Option<&[u8]> = in_buf
             .as_ref()
-            .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
+            .map(|b| &b.byte_slice()[in_off..in_off + in_len as usize]);
         // The pool thread reads the input after this call returns, so give it
         // a copy if the pin can't keep the bytes mapped.
         if let Some(buf) = in_buf.as_ref().filter(|b| b.can_be_freed_while_pinned()) {
-            let Some(copied) = self.borrow_input_copy(
-                global_this,
-                buf.byte_slice(),
-                in_off as usize,
-                in_len as usize,
-            ) else {
+            let Some(copied) =
+                self.borrow_input_copy(global_this, buf.byte_slice(), in_off, in_len as usize)
+            else {
                 buf.unpin();
                 out_buf.unpin();
                 return Err(global_this.throw_out_of_memory());
@@ -378,9 +445,8 @@ pub(crate) trait CompressionStreamImpl:
         self.pinned_buffers().set(
             u8::from(in_buf.as_ref().is_some_and(|b| b.pinned)) | (u8::from(out_buf.pinned) << 1),
         );
-        let out: Option<&mut [u8]> = Some(
-            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
-        );
+        let out: Option<&mut [u8]> =
+            Some(&mut out_buf.byte_slice_mut()[out_off..out_off + out_len as usize]);
 
         self.write_in_progress().set(true);
         self.ref_();
@@ -510,22 +576,16 @@ pub(crate) trait CompressionStreamImpl:
                         .throw());
                 }
             };
-            let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
-            if in_buf.byte_len < in_off as usize + in_len as usize {
-                return Err(global_this
-                    .err(
-                        ErrorCode::OUT_OF_RANGE,
-                        format_args!(
-                            "in_off + in_len ({}) exceeds input buffer length ({})",
-                            in_off as usize + in_len as usize,
-                            in_buf.byte_len,
-                        ),
-                    )
-                    .throw());
-            }
+            let (in_off, in_len) = window_from_js(
+                global_this,
+                in_off.to_js(),
+                in_len.to_js(),
+                in_buf.byte_len,
+                WindowArg::In,
+            )?;
             // Bounds checked above; `byte_slice` is the safe accessor for the JS
             // ArrayBuffer's backing store (rooted via `in_js` on the call stack).
-            Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
+            Some(&in_buf.byte_slice()[in_off..in_off + in_len as usize])
         };
 
         let Some(mut out_buf) = out_js.as_array_buffer(global_this) else {
@@ -536,25 +596,17 @@ pub(crate) trait CompressionStreamImpl:
                 )
                 .throw());
         };
-        let out_off: u32 = jsv_to_u32(out_off.to_js());
-        let out_len: u32 = jsv_to_u32(out_len.to_js());
-        if out_buf.byte_len < out_off as usize + out_len as usize {
-            return Err(global_this
-                .err(
-                    ErrorCode::OUT_OF_RANGE,
-                    format_args!(
-                        "out_off + out_len ({}) exceeds output buffer length ({})",
-                        out_off as usize + out_len as usize,
-                        out_buf.byte_len,
-                    ),
-                )
-                .throw());
-        }
+        let (out_off, out_len) = window_from_js(
+            global_this,
+            out_off.to_js(),
+            out_len.to_js(),
+            out_buf.byte_len,
+            WindowArg::Out,
+        )?;
         // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
         // ArrayBuffer's backing store (rooted via `out_js` on the call stack).
-        let out: Option<&mut [u8]> = Some(
-            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
-        );
+        let out: Option<&mut [u8]> =
+            Some(&mut out_buf.byte_slice_mut()[out_off..out_off + out_len as usize]);
 
         self.throw_unless_idle(global_this)?;
         self.write_in_progress().set(true);

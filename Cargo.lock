@@ -2060,7 +2060,6 @@ name = "bun_zlib"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_collections",
  "bun_core",
  "bun_zlib_sys",
  "strum",

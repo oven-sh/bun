@@ -126,18 +126,6 @@ pub trait VecExt<T>: Sized {
     /// `Vec<u8>`) to commit. Unlike `spare_capacity_mut()` the returned slice
     /// is exactly `additional` long, not `capacity - len`.
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>];
-    /// `reserve(additional)` then [`expand_to_capacity`], returning the
-    /// freshly-exposed tail as a raw `(ptr, len)` pair — i.e.
-    /// `(next_out, avail_out)` for C streaming APIs (zlib, brotli, zstd).
-    /// Unlike [`writable_slice`] this exposes the *full* over-allocated
-    /// capacity (`cap - prev_len`), not exactly `additional`, so the FFI
-    /// callee can use the allocator's slack. Pass `additional = 0` when the
-    /// caller has already reserved.
-    ///
-    /// # Safety
-    /// Same as [`expand_to_capacity`]: every byte in `[prev_len, cap)` must be
-    /// written by the FFI callee (or `len` truncated back) before any read.
-    unsafe fn reserve_expand_tail(&mut self, additional: usize) -> (*mut T, usize);
 
     // ── ownership transfer ────────────────────────────────────────────────
     fn move_to_list(&mut self) -> Vec<T>;
@@ -375,18 +363,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>] {
         self.reserve(additional);
         &mut self.spare_capacity_mut()[..additional]
-    }
-    #[inline]
-    unsafe fn reserve_expand_tail(&mut self, additional: usize) -> (*mut T, usize) {
-        let prev = self.len();
-        if additional != 0 {
-            self.reserve(additional);
-        }
-        let cap = self.capacity();
-        // SAFETY: caller contract — `[prev, cap)` is FFI-written or truncated before any read.
-        unsafe { self.set_len(cap) };
-        // SAFETY: `prev <= cap`; ptr is within (or one-past) the allocation.
-        (unsafe { self.as_mut_ptr().add(prev) }, cap - prev)
     }
 
     #[inline]

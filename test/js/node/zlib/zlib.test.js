@@ -4,6 +4,7 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
@@ -416,6 +417,267 @@ describe("one-shot results", () => {
       expect(Buffer.concat(parts)).toEqual(data);
     });
   });
+});
+
+// A Buffer holds up to 2**32 bytes, and one zlib call takes a length of at most 2**32 - 1.
+// Each case runs in its own process, so its 4 GiB buffers go away with it. All but a few
+// bytes of a buffer are zero pages that nothing writes, so most cases never read them.
+describe.concurrent("a chunk or a chunkSize of 2**32 bytes", () => {
+  const prelude = `
+    const zlib = require("node:zlib");
+    const { promisify } = require("node:util");
+    const { fromSync, pullSync, bytesSync, from, pull, bytes } = require("node:stream/iter");
+    const iter = require("node:zlib/iter");
+    const N = 2 ** 32;
+    const text = bytes => Buffer.from(bytes).toString("latin1");
+    const attempt = async f => {
+      try { return await f(); }
+      catch (e) { return "throws " + (e.code ?? e.message); }
+    };
+  `;
+
+  async function run(script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--experimental-stream-iter", "-e", prelude + script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    try {
+      return { out: JSON.parse(stdout), exitCode };
+    } catch {
+      return { stdout, stderr, exitCode };
+    }
+  }
+
+  it("chunkSize 2**32 gives the same output as the default chunkSize", async () => {
+    const result = await run(`
+      const chunkSize = N;
+      const gz = zlib.gzipSync("hello");
+      console.log(JSON.stringify({
+        gzipSync: zlib.gzipSync("hello", { chunkSize }).equals(gz),
+        gunzipSync: text(zlib.gunzipSync(gz, { chunkSize })),
+        gunzip: text(await promisify(zlib.gunzip)(gz, { chunkSize })),
+        brotliDecompressSync: text(zlib.brotliDecompressSync(zlib.brotliCompressSync("hello"), { chunkSize })),
+        zstdDecompressSync: text(zlib.zstdDecompressSync(zlib.zstdCompressSync("hello"), { chunkSize })),
+        decompressGzipSync: text(bytesSync(pullSync(fromSync(gz), iter.decompressGzipSync({ chunkSize })))),
+        decompressGzip: text(await bytes(pull(from(gz), iter.decompressGzip({ chunkSize })))),
+      }));
+    `);
+    expect(result).toEqual({
+      out: {
+        gzipSync: true,
+        gunzipSync: "hello",
+        gunzip: "hello",
+        brotliDecompressSync: "hello",
+        zstdDecompressSync: "hello",
+        decompressGzipSync: "hello",
+        decompressGzip: "hello",
+      },
+      exitCode: 0,
+    });
+  });
+
+  it("a short stream followed by zeros up to 2**32 bytes decompresses, and the engine counts only the stream", async () => {
+    const result = await run(`
+      const big = Buffer.alloc(N);
+      const out = {};
+
+      big.set(zlib.gzipSync("hello"));
+      out.bunGunzipSync = await attempt(() => text(Bun.gunzipSync(big)));
+      const { buffer, engine } = zlib.gunzipSync(big, { info: true });
+      out.gunzipSync = { text: text(buffer), bytesWritten: engine.bytesWritten };
+
+      big.fill(0, 0, 64);
+      big.set(zlib.deflateRawSync("hello"));
+      out.bunInflateSync = await attempt(() => text(Bun.inflateSync(big)));
+
+      // An engine at the end of its stream takes nothing from the next chunk, in one native write.
+      // The sync _processChunk closes the handle when it is done. minizlib keeps it open like this.
+      const ended = new zlib.InflateRaw();
+      const handle = ended._handle;
+      handle.close = () => {};
+      ended._processChunk(zlib.deflateRawSync("hello"), zlib.constants.Z_NO_FLUSH);
+      ended._handle = handle;
+      let writes = 0;
+      const writeSync = handle.writeSync;
+      handle.writeSync = function (...args) {
+        if (++writes > 8) throw new Error("more than 8 native writes");
+        return writeSync.apply(this, args);
+      };
+      out.afterStreamEnd = await attempt(() => {
+        const output = ended._processChunk(big, zlib.constants.Z_NO_FLUSH);
+        return { text: text(output), writes, bytesWritten: ended.bytesWritten };
+      });
+
+      // With Z_BLOCK, inflate stops after the zlib header. The last byte of the input does not change that.
+      big.fill(0, 0, 64);
+      big.set(zlib.deflateSync("hello"));
+      const stopAtBlock = input => {
+        const { buffer, engine } = zlib.inflateSync(input, { finishFlush: zlib.constants.Z_BLOCK, info: true });
+        return { text: text(buffer), bytesWritten: engine.bytesWritten };
+      };
+      out.stopAtBlock = stopAtBlock(big);
+      out.stopAtBlockWithoutLastByte = stopAtBlock(big.subarray(0, N - 1));
+
+      console.log(JSON.stringify(out));
+    `);
+    expect(result).toEqual({
+      out: {
+        bunGunzipSync: "hello",
+        gunzipSync: { text: "hello", bytesWritten: zlib.gzipSync("hello").length },
+        bunInflateSync: "hello",
+        afterStreamEnd: { text: "", writes: 1, bytesWritten: 0 },
+        stopAtBlock: { text: "", bytesWritten: 2 },
+        stopAtBlockWithoutLastByte: { text: "", bytesWritten: 2 },
+      },
+      exitCode: 0,
+    });
+  });
+
+  // Runs `big`, a 2**32-byte input whose last byte belongs to the stream, through every driver:
+  // the sync function, the callback function, a stream, and both node:zlib/iter transforms.
+  // The last step destroys a stream while its first window is on the threadpool and counts
+  // the native writes once the process has nothing left to do.
+  const everyDriver = `
+    const out = {};
+    out.sync = await attempt(() => {
+      const { buffer, engine } = sync(big, { info: true });
+      return { text: text(buffer), bytesWritten: engine.bytesWritten };
+    });
+    out.callback = await attempt(async () => text(await promisify(callback)(big)));
+    out.stream = await attempt(() => {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const stream = createStream();
+      const chunks = [];
+      stream.on("data", chunk => chunks.push(chunk));
+      stream.on("error", reject);
+      stream.on("end", () => resolve({ text: text(Buffer.concat(chunks)), bytesWritten: stream.bytesWritten }));
+      stream.end(big);
+      return promise;
+    });
+    out.iterSync = await attempt(() => text(bytesSync(pullSync(fromSync(big), iterSync()))));
+    out.iter = await attempt(async () => text(await bytes(pull(from(big), iterAsync()))));
+
+    const destroyed = createStream();
+    let writes = 0;
+    const write = destroyed._handle.write;
+    destroyed._handle.write = function (...args) {
+      writes++;
+      return write.apply(this, args);
+    };
+    destroyed.on("error", () => {});
+    destroyed.write(big);
+    destroyed.destroy();
+    process.once("beforeExit", () => {
+      out.destroyed = { writes };
+      console.log(JSON.stringify(out));
+    });
+  `;
+  const everyDriverReadsTheLastByte = {
+    out: {
+      sync: { text: "hello", bytesWritten: 2 ** 32 },
+      callback: "hello",
+      stream: { text: "hello", bytesWritten: 2 ** 32 },
+      iterSync: "hello",
+      iter: "hello",
+      destroyed: { writes: 1 },
+    },
+    exitCode: 0,
+  };
+
+  it("zstd: every driver reads a frame that ends at byte 2**32", async () => {
+    const result = await run(`
+      // A skippable frame covers everything up to a "hello" frame at the end of the input.
+      const frame = zlib.zstdCompressSync("hello");
+      const big = Buffer.alloc(N);
+      big.writeUInt32LE(0x184d2a50, 0);
+      big.writeUInt32LE(N - 8 - frame.length, 4);
+      big.set(frame, N - frame.length);
+      const [sync, callback, createStream, iterSync, iterAsync] =
+        [zlib.zstdDecompressSync, zlib.zstdDecompress, zlib.createZstdDecompress, iter.decompressZstdSync, iter.decompressZstd];
+      ${everyDriver}
+    `);
+    expect(result).toEqual(everyDriverReadsTheLastByte);
+  });
+
+  it("brotli: every driver reads a stream that ends at byte 2**32", async () => {
+    const result = await run(`
+      // A flushed "hello" block, then metadata blocks (a 4-byte header and up to 2**24 skipped
+      // bytes each), then the byte that ends the stream (ISLAST and ISLASTEMPTY) as the last byte.
+      const parts = [];
+      const encoder = zlib.createBrotliCompress();
+      encoder.on("data", part => parts.push(part));
+      encoder.write("hello");
+      await new Promise(done => encoder.flush(done));
+      encoder.destroy();
+      const block = Buffer.concat(parts);
+
+      const big = Buffer.alloc(N);
+      big.set(block);
+      const end = N - 1;
+      let offset = block.length;
+      while (offset < end) {
+        let skip = Math.min(2 ** 24, end - offset - 4);
+        // The skip length takes 3 bytes and its top byte must not be 0, so no block is shorter than 0x10001 bytes.
+        const left = end - offset - 4 - skip;
+        if (left > 0 && left < 0x20000) skip -= 0x20000;
+        big.writeUInt32LE(0b110 | (3 << 4) | ((skip - 1) << 6), offset);
+        offset += 4 + skip;
+      }
+      big[end] = 0b11;
+      const [sync, callback, createStream, iterSync, iterAsync] =
+        [zlib.brotliDecompressSync, zlib.brotliDecompress, zlib.createBrotliDecompress, iter.decompressBrotliSync, iter.decompressBrotli];
+      ${everyDriver}
+    `);
+    expect(result).toEqual(everyDriverReadsTheLastByte);
+  });
+
+  // The next two read all 2**32 input bytes once. The gzip trailer holds the CRC-32 of what deflate
+  // read and its length modulo 2**32, so nothing has to decompress the output. The length is 0 for
+  // an empty stream too, and the CRC-32 is not: 0xd202ef8d is the CRC-32 of 2**32 zero bytes.
+  const readsEveryByte = it.skipIf(os.totalmem() < 10 * 1024 ** 3);
+  const READS_EVERY_BYTE_TIMEOUT_MS = isDebug || isASAN ? 120_000 : 30_000;
+
+  readsEveryByte(
+    "Bun.gzipSync compresses all 2**32 bytes of its input",
+    async () => {
+      const result = await run(`
+        const input = Buffer.alloc(N);
+        const gz = Buffer.from(Bun.gzipSync(input, { level: 1 }));
+        console.log(JSON.stringify({
+          inputCrc32: zlib.crc32(input),
+          trailerCrc32: gz.readUInt32LE(gz.length - 8),
+          trailerLength: gz.readUInt32LE(gz.length - 4),
+        }));
+      `);
+      expect(result).toEqual({
+        out: { inputCrc32: 0xd202ef8d, trailerCrc32: 0xd202ef8d, trailerLength: 0 },
+        exitCode: 0,
+      });
+    },
+    READS_EVERY_BYTE_TIMEOUT_MS,
+  );
+
+  readsEveryByte(
+    "zlib.gzipSync compresses all 2**32 bytes of its input",
+    async () => {
+      const result = await run(`
+        const input = Buffer.alloc(N);
+        const { buffer: gz, engine } = zlib.gzipSync(input, { level: 1, info: true });
+        console.log(JSON.stringify({
+          trailerCrc32: gz.readUInt32LE(gz.length - 8),
+          trailerLength: gz.readUInt32LE(gz.length - 4),
+          bytesWritten: engine.bytesWritten,
+        }));
+      `);
+      expect(result).toEqual({
+        out: { trailerCrc32: 0xd202ef8d, trailerLength: 0, bytesWritten: 2 ** 32 },
+        exitCode: 0,
+      });
+    },
+    READS_EVERY_BYTE_TIMEOUT_MS,
+  );
 });
 
 describe("zlib.brotli", () => {
@@ -835,6 +1097,18 @@ describe("zlib.zstd", () => {
   it("zstdCompressSync", () => {
     const compressed = zlib.zstdCompressSync(inputString);
     expect(compressed.toString("base64")).toEqual(compressedString);
+  });
+
+  // With workers, one ZSTD_compressStream2(ZSTD_e_continue) call returns after any progress:
+  // about one 8 MiB job of input, with room left in the output. The stream took that as its end.
+  it("zstdCompress with ZSTD_c_nbWorkers compresses an input longer than one job", async () => {
+    const input = Buffer.alloc(9 * 1024 * 1024, "abcdefghij");
+    const compressed = await util.promisify(zlib.zstdCompress)(input, {
+      params: { [zlib.constants.ZSTD_c_nbWorkers]: 1 },
+    });
+    const decompressed = zlib.zstdDecompressSync(compressed);
+    expect(decompressed.length).toBe(input.length);
+    expect(decompressed.equals(input)).toBe(true);
   });
 
   it("zstdDecompressSync", () => {

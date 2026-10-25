@@ -378,6 +378,50 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
     });
   });
 
+  // One native write gives the codec a 32-bit window. A length of 2**32 was narrowed to
+  // 2**32 - 1 and an offset of 2**32 addressed the last byte, while the caller counted
+  // with the numbers it passed. The 2**32-byte buffers below are never read or written.
+  test.concurrent("zlib: write() and writeSync() take offsets and lengths of 2**32 as they are", async () => {
+    const { stdout, exitCode } = await run(
+      `const big = new Uint8Array(2 ** 32);
+       const small = new Uint8Array(16);
+       const out = new Uint8Array(1024);
+       const attempt = call => {
+         const handle = zlib.createDeflateRaw()._handle;
+         try { call(handle); return "ok"; }
+         catch (e) { return e.code + ": " + e.message; }
+       };
+       console.log(JSON.stringify({
+         inLen: attempt(h => h.writeSync(0, big, 0, 2 ** 32, out, 0, 1024)),
+         inLenOfWrite: attempt(h => h.write(0, big, 0, 2 ** 32, out, 0, 1024)),
+         outLen: attempt(h => h.writeSync(0, small, 0, 16, big, 0, 2 ** 32)),
+         inLenPastBuffer: attempt(h => h.writeSync(0, small, 0, 2 ** 32, out, 0, 1024)),
+         inOffAtEnd: attempt(h => h.writeSync(0, big, 2 ** 32, 0, out, 0, 1024)),
+         inOffAtEndPlusOneByte: attempt(h => h.writeSync(0, big, 2 ** 32, 1, out, 0, 1024)),
+         inOffInfinity: attempt(h => h.writeSync(0, small, Infinity, 0, out, 0, 1024)),
+         nullInputHasNoWindow: attempt(h => h.writeSync(0, null, 2 ** 40, Infinity, out, 0, 1024)),
+         fractionalOutLen: attempt(h => h.writeSync(0, small, 0, 16, out, 0, 100.5)),
+       }));`,
+    );
+    expect({ out: JSON.parse(stdout), exitCode }).toEqual({
+      out: {
+        inLen: 'ERR_OUT_OF_RANGE: The value of "in_len" is out of range. It must be <= 4294967295. Received 4294967296',
+        inLenOfWrite:
+          'ERR_OUT_OF_RANGE: The value of "in_len" is out of range. It must be <= 4294967295. Received 4294967296',
+        outLen:
+          'ERR_OUT_OF_RANGE: The value of "out_len" is out of range. It must be <= 4294967295. Received 4294967296',
+        inLenPastBuffer: "ERR_OUT_OF_RANGE: in_off + in_len (4294967296) exceeds input buffer length (16)",
+        inOffAtEnd: "ok",
+        inOffAtEndPlusOneByte:
+          "ERR_OUT_OF_RANGE: in_off + in_len (4294967297) exceeds input buffer length (4294967296)",
+        inOffInfinity: "ERR_OUT_OF_RANGE: in_off + in_len (18446744073709551615) exceeds input buffer length (16)",
+        nullInputHasNoWindow: "ok",
+        fractionalOutLen: "ok",
+      },
+      exitCode: 0,
+    });
+  });
+
   test.concurrent("zlib: params() after a buffered writeSync keeps the pending input in the stream", async () => {
     expect(
       await run(

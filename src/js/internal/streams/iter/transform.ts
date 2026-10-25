@@ -77,12 +77,20 @@ const BATCH_HWM = DEFAULT_OUTPUT_SIZE;
 // Pre-allocated empty buffer for flush/finalize calls.
 const kEmpty = Buffer.alloc(0);
 
+// One native write gives the engine a 32-bit window of input and one of output, and reports
+// what is left of each in a Uint32Array. A Buffer can be one byte longer.
+const kMaxWindow = 0xffff_ffff;
+
 function validateChunkSize(options) {
   let chunkSize = options.chunkSize;
   if (!validateFiniteNumber(chunkSize, "options.chunkSize")) {
     chunkSize = DEFAULT_OUTPUT_SIZE;
   } else if (chunkSize < Z_MIN_CHUNK) {
     throw $ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
+  } else if (chunkSize > kMaxWindow) {
+    // A full output buffer is yielded as it is, so it must not be longer than one window.
+    // The upstream transform.js has no such bound: node reads out_len with ToUint32.
+    chunkSize = kMaxWindow;
   }
   return chunkSize;
 }
@@ -259,6 +267,18 @@ function createZstdHandle(mode, options, processCallback, onError) {
   return { __proto__: null, handle, writeState, chunkSize };
 }
 
+// Gives the engine a chunk that is longer than one window: the first window, then the rest if the
+// engine took all of it. Input left beside free output means that the stream ended. The upstream
+// transform.js has no such path: node reads in_len with ToUint32, so a chunk of 2**32 bytes is empty there.
+async function processLargeInputAsync(processInputAsync, writeState, input, processFlag, flushFlag) {
+  await processInputAsync(new Uint8Array(input.buffer, input.byteOffset, kMaxWindow), processFlag);
+  if (writeState[1] !== 0) return;
+  await processInputAsync(
+    new Uint8Array(input.buffer, input.byteOffset + kMaxWindow, input.byteLength - kMaxWindow),
+    flushFlag,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Core: makeZlibTransform
 //
@@ -375,6 +395,9 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
 
       // Dispatch input to the threadpool and return a promise.
       function processInputAsync(input, flushFlag) {
+        if (input.byteLength > kMaxWindow) {
+          return processLargeInputAsync(processInputAsync, writeState, input, processFlag, flushFlag);
+        }
         const { promise, resolve, reject } = Promise.withResolvers();
         resolveWrite = resolve;
         rejectWrite = reject;
@@ -514,7 +537,17 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
         let availIn = input.byteLength;
         let availOutBefore = chunkSize - outOffset;
 
-        handle.writeSync(flushFlag, input, inOff, availIn, outBuf, outOffset, availOutBefore);
+        // The upstream transform.js has no such branch: node reads in_len with ToUint32,
+        // so a chunk of 2**32 bytes is empty there.
+        let inRest = 0;
+        let writeFlush = flushFlag;
+        if (availIn > kMaxWindow) {
+          inRest = availIn - kMaxWindow;
+          availIn = kMaxWindow;
+          writeFlush = processFlag;
+        }
+
+        handle.writeSync(writeFlush, input, inOff, availIn, outBuf, outOffset, availOutBefore);
         if (error) throw error;
 
         while (true) {
@@ -550,7 +583,21 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
             availIn = availInAfter;
             availOutBefore = chunkSize - outOffset;
 
-            handle.writeSync(flushFlag, input, inOff, availIn, outBuf, outOffset, availOutBefore);
+            handle.writeSync(writeFlush, input, inOff, availIn, outBuf, outOffset, availOutBefore);
+            if (error) throw error;
+            continue;
+          }
+
+          if (inRest !== 0 && availInAfter === 0) {
+            // The engine took the whole window, so it gets the next one. Input left
+            // beside free output means that the stream ended: the rest stays unread.
+            inOff += availIn;
+            availIn = inRest > kMaxWindow ? kMaxWindow : inRest;
+            inRest -= availIn;
+            if (inRest === 0) writeFlush = flushFlag;
+            availOutBefore = chunkSize - outOffset;
+
+            handle.writeSync(writeFlush, input, inOff, availIn, outBuf, outOffset, availOutBefore);
             if (error) throw error;
             continue;
           }

@@ -21,6 +21,9 @@ const MathMax = Math.max;
 const isArrayBufferView = ArrayBuffer.isView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
+// One native write gives the engine a 32-bit window of input and one of output, and reports
+// what is left of each in `_writeState`, a Uint32Array. A Buffer can be one byte longer.
+const kMaxWindow = 0xffff_ffff;
 
 const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
@@ -231,7 +234,8 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._outBuffer = Buffer.allocUnsafe(chunkSize);
   this._outOffset = 0;
 
-  this._chunkSize = chunkSize;
+  // lib/zlib.js has no such bound: node reads out_len with ToUint32, so a chunkSize of 2**32 is a window of 0.
+  this._chunkSize = chunkSize > kMaxWindow ? kMaxWindow : chunkSize;
   this._defaultFlushFlag = flush;
   this._finishFlushFlag = finishFlush;
   this._defaultFullFlushFlag = fullFlush;
@@ -369,12 +373,35 @@ function takeOutput(buffer, offset, have) {
   return buffer.slice(offset, offset + have);
 }
 
+// The flush for a window that is not the last of its chunk. A flush that takes effect after the
+// input waits for the last window, so the others get 0: Z_NO_FLUSH, BROTLI_OPERATION_PROCESS and
+// ZSTD_e_continue. Z_BLOCK and Z_TREES make inflate stop inside a window, and
+// BROTLI_OPERATION_EMIT_METADATA makes the window itself a metadata block, so those go with every window.
+function headFlush(self, flushFlag) {
+  const flushBound = self[kFlushBound];
+  if (flushBound === FLUSH_BOUND[FLUSH_BOUND_IDX_NORMAL]) {
+    if (flushFlag >= Z_BLOCK) return flushFlag;
+  } else if (flushBound === FLUSH_BOUND[FLUSH_BOUND_IDX_BROTLI]) {
+    if (flushFlag >= BROTLI_OPERATION_EMIT_METADATA) return flushFlag;
+  }
+  return 0;
+}
+
 function processChunkSync(self, chunk, flushFlag) {
   let availInBefore = chunk.byteLength;
   let availOutBefore = self._chunkSize - self._outOffset;
   let inOff = 0;
   let availOutAfter;
   let availInAfter;
+
+  // lib/zlib.js has no such branch: node reads in_len with ToUint32, so a chunk of 2**32 bytes is empty there.
+  let inRest = 0;
+  let writeFlush = flushFlag;
+  if (availInBefore > kMaxWindow) {
+    inRest = availInBefore - kMaxWindow;
+    availInBefore = kMaxWindow;
+    writeFlush = headFlush(self, flushFlag);
+  }
 
   const buffers = [];
   let nread = 0;
@@ -392,7 +419,7 @@ function processChunkSync(self, chunk, flushFlag) {
 
   while (true) {
     handle.writeSync(
-      flushFlag,
+      writeFlush,
       chunk, // in
       inOff, // in_off
       availInBefore, // in_len
@@ -445,6 +472,14 @@ function processChunkSync(self, chunk, flushFlag) {
       // it'll have the correct byte counts.
       inOff += inDelta;
       availInBefore = availInAfter;
+    } else if (inRest !== 0 && availInAfter === 0) {
+      // The engine took the whole window, so it gets the next one. Input left
+      // beside free output means that the stream ended: the rest stays unread.
+      inOff += inDelta;
+      availInBefore = inRest > kMaxWindow ? kMaxWindow : inRest;
+      inRest -= availInBefore;
+      if (inRest === 0) writeFlush = flushFlag;
+      availOutBefore = chunkSize - offset;
     } else {
       break;
     }
@@ -458,14 +493,30 @@ function processChunkSync(self, chunk, flushFlag) {
   return buffers.length === 1 ? buffers[0] : Buffer.concat(buffers, nread);
 }
 
+// The async twin of the window loop in processChunkSync. The first window goes in now. The
+// rest goes in only if the engine took all of it: input left beside free output means that
+// the stream ended. The views and the closure exist only for a chunk longer than one window.
+function processLargeChunk(self, chunk, flushFlag, cb) {
+  const head = new Uint8Array(chunk.buffer, chunk.byteOffset, kMaxWindow);
+  const rest = new Uint8Array(chunk.buffer, chunk.byteOffset + kMaxWindow, chunk.byteLength - kMaxWindow);
+  processChunk(self, head, headFlush(self, flushFlag), function afterHeadWindow() {
+    if (self.destroyed || self._writeState[1] !== 0) return cb();
+    processChunk(self, rest, flushFlag, cb);
+  });
+}
+
 function processChunk(self, chunk, flushFlag, cb) {
   const handle = self._handle;
   if (!handle) return process.nextTick(cb);
 
+  const byteLength = chunk.byteLength;
+  // lib/zlib.js has no such branch: node reads in_len with ToUint32, so a chunk of 2**32 bytes is empty there.
+  if (byteLength > kMaxWindow) return processLargeChunk(self, chunk, flushFlag, cb);
+
   handle.buffer = chunk;
   handle.cb = cb;
   handle.availOutBefore = self._chunkSize - self._outOffset;
-  handle.availInBefore = chunk.byteLength;
+  handle.availInBefore = byteLength;
   handle.inOff = 0;
   handle.flushFlag = flushFlag;
 

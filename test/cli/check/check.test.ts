@@ -758,7 +758,7 @@ ${Array.from({ length: 300 }, (_, i) => `export const x${i} = [1, 2].map(v => ({
 });
 `,
       "use.ts": `import { cart } from "./cart";
-export const text = cart.text;
+export const text: never = cart.text;
 `,
     });
     // Without the rule, a release build loses the first two errors in 84 % of the runs.
@@ -767,7 +767,50 @@ export const text = cart.text;
       expect(stdout).toBe(
         `cart.ts(306,32): error TS2339: Property 'coupon' does not exist on type '{ total: (s: { prices: number[]; coupon: string; }) => number; discounted(): number | ((s: { prices: number[]; coupon: string; }) => number); text(): any; }'.
 cart.ts(306,41): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
-cart.ts(307,37): error TS2339: Property 'toFixed' does not exist on type '() => number | ((s: { prices: number[]; coupon: string; }) => number)'.`,
+cart.ts(307,37): error TS2339: Property 'toFixed' does not exist on type '() => number | ((s: { prices: number[]; coupon: string; }) => number)'.
+use.ts(2,14): error TS2322: Type 'any' is not assignable to type 'never'.`,
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  // The inference compares the object literal with the constraint of `G`, and that asks for the types of the getters
+  // while `this` is still the object literal. The task of `use.ts` looks at `cart.ts` at the beginning of a long
+  // statement, so it doesn't see what the task of `cart.ts` stores under that file in the meantime. If it found the
+  // comparison, it would infer the types of the getters after the call.
+  test("asks for a getter's type where one checker does, even if the file's own task has made the comparison that asks", async () => {
+    const plain = (i: number) => `[1, 2].map(v => ({ v, i: ${i} })).length`;
+    using dir = project({
+      "store.ts": `export declare function defineStore<S = {}, G extends Record<string, unknown> = {}>(o: {
+  state?: () => S;
+  view?: G & ThisType<S & G>;
+}): S & G;
+`,
+      "cart.ts": `import { defineStore } from "./store";
+${Array.from({ length: 100 }, (_, i) => `export const x${i} = ${plain(i)};\n`).join("")}export const cart = defineStore({
+  state: () => ({ prices: [1, 2], coupon: "" }),
+  view: {
+    get total() { return this.prices.length; },
+    get discounted() { return this.coupon ? this.total * 0.9 : this.total; },
+    get text() { return this.discounted.toFixed(2); },
+  },
+});
+`,
+      "use.ts": `import { cart, x0 } from "./cart";
+export const all = {
+  x0,
+${Array.from({ length: 300 }, (_, i) => `  y${i}: ${plain(i)},\n`).join("")}  text: cart.text,
+};
+export const text: never = all.text;
+`,
+    });
+    // Without the rule, a release build prints 'string' in the last error in 77 % of the runs.
+    const threads = isDebug || isASAN ? [2, 8, 16] : [1, 2, 2, 8, 8, 16, 16];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(
+        `cart.ts(105,31): error TS2339: Property 'prices' does not exist on type '{ readonly total: any; readonly discounted: any; readonly text: any; }'.
+cart.ts(106,36): error TS2339: Property 'coupon' does not exist on type '{ readonly total: any; readonly discounted: any; readonly text: any; }'.
+use.ts(306,14): error TS2322: Type 'any' is not assignable to type 'never'.`,
       );
       expect(exitCode).toBe(1);
     }

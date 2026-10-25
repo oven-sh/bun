@@ -4170,6 +4170,7 @@ impl<'p, 's> Checker<'p, 's> {
         let maybe_start = r.maybe_keys.len();
         let variance_reads = self.in_progress_variance_reads;
         let (scope, other_taints) = (self.begin_scope(), self.taints_not_by_circular_returns);
+        let returns_inferred = self.returns_inferred;
         let cuts = self.comparisons_of_deeply_nested_types;
         r.push_maybe_key(key);
         let save_expanding = r.expanding;
@@ -4231,6 +4232,10 @@ impl<'p, 's> Checker<'p, 's> {
         let is_circular = stored.is_none()
             && self.limits == limits
             && self.taints_not_by_circular_returns == other_taints;
+        // A task that found the result wouldn't ask for the type here. It would infer it later, when `this` or a
+        // parameter of the function can have another type.
+        let is_circular = is_circular
+            || stored.is_some() && self.returns_inferred != returns_inferred && self.task.commits();
         let replaces = self.in_progress_variance_reads != variance_reads;
         let propagating = self.reliability;
         self.reliability |= save_reliability;

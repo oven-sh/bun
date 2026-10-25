@@ -873,6 +873,7 @@ impl<'s> Program<'s> {
             cycles: 0,
             lowest_taint: usize::MAX,
             taints_not_by_circular_returns: 0,
+            returns_inferred: 0,
             context_checked_under: Vec::new(),
             initializers_resolved_by_nested_visit: Vec::new(),
             resolved_parameter_types: Default::default(),
@@ -1594,6 +1595,9 @@ pub struct Checker<'p, 's> {
     /// How many times `lowest_taint` was lowered, except where `getReturnTypeOfSignature` returned the error type
     /// because `pushTypeResolution` found a cycle.
     taints_not_by_circular_returns: u64,
+    /// How many times `getReturnTypeFromBody` ran for a function expression or for a method or an accessor of an object
+    /// literal.
+    returns_inferred: u64,
     /// `contextualInfos`
     contextual: Vec<ContextualInfo>,
     /// The height of `stack` at which `getContextualType` finds nothing pushed. There, the contextual
@@ -1669,7 +1673,8 @@ pub struct Checker<'p, 's> {
     /// two deeply nested types or at 100 levels. Another task may get a different result, and in `Program::relations`
     /// the first result would win for every task. See `known_relation`. It lives as long as the task, like
     /// everything the task has derived from it. Also the comparisons that replace a failure that's published already,
-    /// and in every task those that got the error type from a circular type resolution.
+    /// those during which a type was inferred from a body (`returns_inferred`), and in every task those that got the
+    /// error type from a circular type resolution.
     relations_of_this_task: FxHashMap<relate::Key, u8>,
     /// True if `insert_relation` stores in `relations_of_this_task`.
     stores_relations_per_task: bool,

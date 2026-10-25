@@ -4525,6 +4525,8 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(ty) = self.return_type_from_annotation(file, func) {
             return ty;
         }
+        let owner = self.bound(file).fns[func.idx()].owner;
+        self.returns_inferred += u64::from(matches!(owner, FnOwner::Expr(_)));
         match f.kind {
             FnKind::StaticBlock => return TypeId::VOID,
             FnKind::Constructor | FnKind::ConstructSignature | FnKind::ConstructorType => {

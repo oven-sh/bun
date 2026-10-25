@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import * as vscode from "vscode";
 import { CloseAction, ErrorAction, LanguageClient, RevealOutputChannelOn, State } from "vscode-languageclient/node";
 
@@ -7,6 +8,9 @@ export const LSP_LANGUAGE_IDS: readonly string[] = (
 ).split(" ");
 
 export const MARKER_GLOB = "**/{bunfig.toml,bun.lock,bun.lockb}";
+
+// First release that ships `bun fmt --lsp`.
+export const MIN_BUN_VERSION = "1.4.5";
 
 export interface LanguageClientLike {
   readonly state: State;
@@ -20,8 +24,12 @@ export interface ServerSpec {
   cwd?: string;
 }
 
+export interface ClientHooks {
+  onClosed(): void;
+}
+
 export interface LanguageServerOptions {
-  createClient?: (server: ServerSpec) => LanguageClientLike;
+  createClient?: (server: ServerSpec, hooks: ClientHooks) => LanguageClientLike;
 }
 
 let output: vscode.OutputChannel | undefined;
@@ -52,7 +60,7 @@ class QuietLanguageClient extends LanguageClient {
   }
 }
 
-function defaultCreateClient(server: ServerSpec): LanguageClientLike {
+function defaultCreateClient(server: ServerSpec, hooks: ClientHooks): LanguageClientLike {
   const bun = vscode.workspace.getConfiguration("bun");
   const initializationOptions = {
     lint: {
@@ -85,7 +93,10 @@ function defaultCreateClient(server: ServerSpec): LanguageClientLike {
       initializationFailedHandler: () => false,
       errorHandler: {
         error: () => ({ action: ErrorAction.Continue, handled: true }),
-        closed: () => ({ action: CloseAction.DoNotRestart, handled: true }),
+        closed: () => {
+          hooks.onClosed();
+          return { action: CloseAction.DoNotRestart, handled: true };
+        },
       },
     },
   );
@@ -99,7 +110,20 @@ async function startLanguageServer(options: LanguageServerOptions): Promise<void
     cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
   };
   try {
-    const next = (options.createClient ?? defaultCreateClient)(spec);
+    let next: LanguageClientLike | undefined;
+    const hooks: ClientHooks = {
+      // vscode-languageclient calls errorHandler.closed after a Running server exits,
+      // but not during its own stop(). A close during startup is left to the
+      // state !== Running check below; here `starting` is still set.
+      onClosed() {
+        if (starting || client !== next) return;
+        client = undefined;
+        getOutput().appendLine(
+          "The Bun language server exited; it starts again the next time a supported file is opened",
+        );
+      },
+    };
+    next = (options.createClient ?? defaultCreateClient)(spec, hooks);
     client = next;
     await next.start();
     // start() resolves instead of rejecting when the server exits before answering initialize.

@@ -1255,6 +1255,9 @@ pub struct FnOrArrowDataParse {
     pub(crate) allow_super_property: bool,
     pub(crate) is_top_level: bool,
     pub(crate) is_constructor: bool,
+    /// The constructor of a `struct`: its own `return expr` discards `expr`
+    /// (the proposal ignores constructor return overrides).
+    pub(crate) is_struct_constructor: bool,
     pub(crate) is_typescript_declare: bool,
 
     pub(crate) has_argument_decorators: bool,
@@ -1283,6 +1286,7 @@ impl Default for FnOrArrowDataParse {
             allow_super_property: false,
             is_top_level: false,
             is_constructor: false,
+            is_struct_constructor: false,
             is_typescript_declare: false,
             has_argument_decorators: false,
             has_decorators: false,

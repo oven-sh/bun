@@ -107,6 +107,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_super_property: true,
                 allow_ts_decorators: opts.allow_ts_decorators,
                 is_constructor,
+                is_struct_constructor: opts.is_struct && is_constructor,
                 has_decorators: opts.ts_decorators.len() > 0
                     || (opts.has_class_decorators && is_constructor),
 

@@ -37,6 +37,60 @@ describe("struct", () => {
     expect(new Point(1, 2).sum()).toBe(3);
   });
 
+  test("a constructor that returns an object still yields the sealed instance", () => {
+    let evaluated = 0;
+    struct S {
+      x;
+      constructor() {
+        this.x = 1;
+        return (evaluated++, { x: 2 });
+      }
+    }
+    const s = new S();
+    expect(evaluated).toBe(1);
+    expect(s instanceof S).toBe(true);
+    expect(Object.isExtensible(s)).toBe(false);
+    expect(Object.keys(s)).toEqual(["x"]);
+    expect(s.x).toBe(1);
+    // A nested function keeps its own return value.
+    struct T {
+      f;
+      constructor() {
+        this.f = function () {
+          return { y: 1 };
+        };
+      }
+    }
+    expect(new T().f()).toEqual({ y: 1 });
+  });
+
+  test("super() inside a branch is called exactly once", () => {
+    let parentRuns = 0;
+    struct A {
+      a;
+      constructor() {
+        parentRuns++;
+        this.a = 1;
+      }
+    }
+    struct B extends A {
+      b;
+      constructor(flag) {
+        if (flag) {
+          super();
+        } else {
+          super();
+        }
+        this.b = 2;
+      }
+    }
+    const b = new B(true);
+    expect(parentRuns).toBe(1);
+    expect(b.a + b.b).toBe(3);
+    new B(false);
+    expect(parentRuns).toBe(2);
+  });
+
   test("structs extend structs and inherit fields", () => {
     struct A {
       a;

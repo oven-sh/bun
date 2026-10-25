@@ -4,6 +4,7 @@ use crate::error::MinifyErr;
 use crate::properties::PropertyId;
 use crate::{PrintErr, Printer};
 use bun_alloc::ArenaPtr;
+use bun_core::strings;
 
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
@@ -55,6 +56,10 @@ impl Declaration {
 impl Declaration {
     /// The features that a browser supports if it accepts this declaration.
     fn supported_features(&self, arena: &bun_alloc::Arena) -> css::Features {
+        // Only a function adds a feature, so a value without one needs no parse.
+        if !strings::contains_char(self.value, b'(') {
+            return css::Features::empty();
+        }
         // Every browser with custom properties accepts any value for one.
         if matches!(
             self.property_id,
@@ -127,12 +132,7 @@ impl SupportsCondition {
 }
 
 impl SupportsCondition {
-    /// The features the condition tests for. The rules in the block need no fallbacks for them.
-    pub(crate) fn get_supported_features(&self, arena: &bun_alloc::Arena) -> css::Features {
-        self.supported_features(arena).unwrap_or_default()
-    }
-
-    /// `None` if the condition contains `not` or `or`. Nothing is inferred then.
+    /// The features the condition tests for. `None` with `not` or `or`: nothing is inferred then.
     fn supported_features(&self, arena: &bun_alloc::Arena) -> Option<css::Features> {
         match self {
             SupportsCondition::And(conditions) => {
@@ -147,6 +147,10 @@ impl SupportsCondition {
             }
             // `parse_in_parens` keeps a `(property: value)` group as the raw text of an `Unknown`.
             SupportsCondition::Unknown(group) => {
+                // The group's own `(` is first. A value with a function has one more.
+                if !strings::contains_char(group.get(1..).unwrap_or_default(), b'(') {
+                    return Some(css::Features::empty());
+                }
                 let declaration = css::parse_utility::parse_string(arena, group, |parser| {
                     parser.expect_parenthesis_block()?;
                     parser.parse_nested_block(SupportsCondition::parse_declaration)
@@ -380,7 +384,6 @@ impl SupportsCondition {
     }
 
     fn parse_in_parens(input: &mut css::Parser) -> css::Result<SupportsCondition> {
-        use bun_core::strings;
         input.skip_whitespace();
         let location = input.current_source_location();
         let pos = input.position();
@@ -446,9 +449,26 @@ pub struct SupportsRule<R> {
     pub rules: CssRuleList<R>,
     /// The location of the rule in the source file.
     pub loc: Location,
+    /// The features `condition` tests for. The rules in the block need no fallbacks for them.
+    supported: css::Features,
 }
 
 impl<R> SupportsRule<R> {
+    pub fn new(
+        condition: SupportsCondition,
+        rules: CssRuleList<R>,
+        loc: Location,
+        arena: &bun_alloc::Arena,
+    ) -> Self {
+        let supported = condition.supported_features(arena).unwrap_or_default();
+        Self {
+            condition,
+            rules,
+            loc,
+            supported,
+        }
+    }
+
     pub(crate) fn minify(
         &mut self,
         context: &mut MinifyContext,
@@ -466,10 +486,7 @@ impl<R> SupportsRule<R> {
         // plain nested rules — leaving them unvisited here lets the printer
         // expand them exponentially.
         let exclude = context.targets.exclude;
-        context
-            .targets
-            .exclude
-            .insert(self.condition.get_supported_features(context.arena));
+        context.targets.exclude.insert(self.supported);
         context.handler_context.targets = context.targets;
         let result = self.rules.minify(context, parent_is_unused);
         context.targets.exclude = exclude;
@@ -488,9 +505,7 @@ impl<R> SupportsRule<R> {
 
         // Don't downlevel the features the condition tests for inside the block.
         let exclude = dest.targets.exclude;
-        dest.targets
-            .exclude
-            .insert(self.condition.get_supported_features(dest.arena));
+        dest.targets.exclude.insert(self.supported);
         let result = dest.block(|d| {
             d.newline()?;
             self.rules.to_css(d)
@@ -509,6 +524,7 @@ impl<R> SupportsRule<R> {
             condition: self.condition.deep_clone(bump),
             rules: self.rules.deep_clone(bump),
             loc: self.loc,
+            supported: self.supported,
         }
     }
 }

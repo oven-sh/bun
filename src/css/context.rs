@@ -127,9 +127,9 @@ impl<'a> PropertyHandlerContext<'a> {
         let mut dest: Vec<css::CssRule<T>> = Vec::with_capacity(self.supports.len());
 
         for entry in &self.supports {
-            dest.push(css::CssRule::Supports(css::SupportsRule {
-                condition: entry.condition.deep_clone(self.arena),
-                rules: css::CssRuleList {
+            dest.push(css::CssRule::Supports(css::SupportsRule::new(
+                entry.condition.deep_clone(self.arena),
+                css::CssRuleList {
                     v: vec![css::CssRule::Style(css::StyleRule {
                         selectors: style_rule.selectors.deep_clone(),
                         vendor_prefix: css::VendorPrefix::NONE,
@@ -141,8 +141,9 @@ impl<'a> PropertyHandlerContext<'a> {
                         loc: style_rule.loc,
                     })],
                 },
-                loc: style_rule.loc,
-            }));
+                style_rule.loc,
+                self.arena,
+            )));
         }
 
         dest

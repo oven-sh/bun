@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -8357,6 +8358,39 @@ describe("css tests", () => {
       { chrome: Some(90 << 16) },
     );
 
+    // A declaration without a color tests for no color feature.
+    prefix_test(
+      `
+      @supports (display: grid) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (width: calc(1px + 1px)) {
+        .foo {
+          color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      `
+      @supports (display: grid) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+      }
+
+      @supports (width: calc(1px + 1px)) {
+        .foo {
+          color: #b32323;
+          color: lab(40% 56.6 39);
+        }
+      }
+    `,
+      { chrome: Some(90 << 16) },
+    );
+
     // A condition that is not a declaration tests for nothing.
     prefix_test(
       `
@@ -8466,6 +8500,25 @@ describe("css tests", () => {
       safari: Some(14 << 16),
     });
     unchanged(printed_fallbacks, { chrome: Some(87 << 16), safari: Some(14 << 16) });
+
+    // The same for minified output and the bundler's default targets, as when
+    // an app bundles the CSS of a library that bun built.
+    test.each([
+      [
+        ".a{box-shadow:0 0 0 1px var(--c),0 0 0 2px color(display-p3 1 0 0)}",
+        ".a{box-shadow:0 0 0 1px var(--c),0 0 0 2px #ff0f0e}@supports (color:color(display-p3 0 0 0)){.a{box-shadow:0 0 0 1px var(--c),0 0 0 2px color(display-p3 1 0 0)}}",
+      ],
+      [
+        "@layer u{.g{box-shadow:0 0 0 1px oklch(100% 0 0/var(--o,20%)) inset,0 0 0 2px oklch(0% 0 0/.05)}}",
+        "@layer u{.g{box-shadow:0 0 0 1px oklch(100% 0 0/var(--o,20%))inset,0 0 0 2px #0000000d}@supports (color:color(display-p3 0 0 0)){.g{box-shadow:0 0 0 1px oklch(100% 0 0/var(--o,20%))inset,0 0 0 2px color(display-p3 0 0 0/.05)}}@supports (color:lab(0% 0 0)){.g{box-shadow:0 0 0 1px oklch(100% 0 0/var(--o,20%))inset,0 0 0 2px lab(0% 0 0/.05)}}}",
+      ],
+    ])("minified output does not change when it is minified again: %s", (source, expected) => {
+      const targets = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+      const first = cssInternals.minifyTest(source, "", targets);
+      const second = cssInternals.minifyTest(first, "", targets);
+      const third = cssInternals.minifyTest(second, "", targets);
+      expect([first, second, third]).toEqual([expected, expected, expected]);
+    });
 
     // A merge of same-query @media rules minifies the merged list again. That
     // list holds the @supports rules that bun added for the first rule.

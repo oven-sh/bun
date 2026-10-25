@@ -1717,11 +1717,12 @@ mod rule_parsers {
                     let rules = this.parse_style_block(input)?;
                     this.rules
                         .v
-                        .push(CssRule::Supports(css_rules::supports::SupportsRule {
+                        .push(CssRule::Supports(css_rules::supports::SupportsRule::new(
                             condition,
                             rules,
                             loc,
-                        }));
+                            input.arena(),
+                        )));
                     Ok(())
                 }
                 AtRulePrelude::Container { name, condition } => {

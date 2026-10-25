@@ -519,12 +519,13 @@ fn wrap_rules_with_conditions(
             if let Some(supports) = &item.supports {
                 ast.rules = arena_rule_list_one(
                     temp_bump,
-                    BundlerCssRule::Supports(BundlerSupportsRule {
+                    BundlerCssRule::Supports(BundlerSupportsRule::new(
                         // SAFETY: as for `layer` above.
-                        condition: unsafe { core::ptr::read(supports) },
-                        rules: core::mem::take(&mut ast.rules),
-                        loc: Location::dummy(),
-                    }),
+                        unsafe { core::ptr::read(supports) },
+                        core::mem::take(&mut ast.rules),
+                        Location::dummy(),
+                        temp_bump,
+                    )),
                 );
             }
         }

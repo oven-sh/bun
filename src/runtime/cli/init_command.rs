@@ -31,6 +31,7 @@ pub(crate) struct InitCommand;
 
 impl InitCommand {
     pub(crate) fn prompt(label: &'static str, default: &[u8]) -> Result<Vec<u8>, Error> {
+        let _line_mode = bun_core::tty::LineModeGuard::stdin();
         #[allow(clippy::disallowed_methods)]
         // label is a runtime parameter that may contain <tag> markup
         Output::pretty(format_args!("{}", label));
@@ -39,15 +40,6 @@ impl InitCommand {
         }
 
         Output::flush();
-
-        // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
-        // deleting the entire line
-        #[cfg(windows)]
-        let _stdin_mode =
-            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-                unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-                ..Default::default()
-            });
 
         let mut input: Vec<u8> = Vec::new();
         Output::buffered_stdin_read_until_delimiter(&mut input, b'\n', 1024)?;

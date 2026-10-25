@@ -9,6 +9,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 pub(crate) fn alert(message: Option<&[u8]>) {
+    let _line_mode = bun_core::tty::LineModeGuard::stdin();
     let output = Output::writer();
 
     // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
@@ -58,6 +59,7 @@ pub(crate) fn alert(message: Option<&[u8]>) {
 }
 
 pub(crate) fn confirm(message: Option<&[u8]>) -> bool {
+    let _line_mode = bun_core::tty::LineModeGuard::stdin();
     let output = Output::writer();
 
     if let Some(message) = message {
@@ -224,6 +226,12 @@ pub(crate) fn prompt<'a>(
     // 4. Set default to the result of optionally truncating default.
     // *  We don't really need to do this.
     let default = default_value.map(JsLocal::to_js);
+    // `toString` of the default runs script, so it runs before the question
+    // is written and before the terminal changes mode.
+    let default_string = default
+        .map(|default| default.to_utf8(global))
+        .transpose()?;
+    let _line_mode = bun_core::tty::LineModeGuard::stdin();
 
     if let Some(message) = message {
         // 2. Set message to the result of normalizing newlines given message.
@@ -255,9 +263,7 @@ pub(crate) fn prompt<'a>(
         return Ok(JSValue::FALSE);
     }
 
-    if let Some(default) = default {
-        let default_string = default.to_utf8(global)?;
-
+    if let Some(default_string) = &default_string {
         if output
             .print(format_args!(
                 "[{}] ",
@@ -273,15 +279,6 @@ pub(crate) fn prompt<'a>(
     // 6. Invoke WebDriver BiDi user prompt opened with this, "prompt" and message.
     // *  Not relevant in a server context.
     Output::flush();
-
-    // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
-    // deleting the entire line
-    #[cfg(windows)]
-    let _restore =
-        bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-            unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-            ..Default::default()
-        });
 
     // 7. Pause while waiting for the user's response.
     // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.

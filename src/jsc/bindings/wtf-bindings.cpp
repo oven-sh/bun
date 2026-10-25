@@ -24,11 +24,22 @@ static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_T
 
 #include <cassert>
 #include <signal.h>
+#include <sys/stat.h>
 #include <termios.h>
+#include <wtf/Lock.h>
 static int orig_termios_fd = -1;
 static struct termios orig_termios;
 static std::atomic<int> orig_termios_spinlock;
 static std::once_flag reset_once_flag;
+
+// A blocking read of one typed line (alert(), confirm(), prompt(), a CLI
+// question) holds the terminal of stdin in line mode. The mode belongs to the
+// terminal and not to a thread, so the holders are counted: the first one
+// saves the termios it found and the last one writes it back.
+static WTF::Lock stdinLineModeLock;
+static unsigned stdinLineModeHolders WTF_GUARDED_BY_LOCK(stdinLineModeLock) = 0;
+static struct termios stdinLineModeSaved WTF_GUARDED_BY_LOCK(stdinLineModeLock);
+static sig_atomic_t stdinLineModeSavedModified WTF_GUARDED_BY_LOCK(stdinLineModeLock) = 0;
 
 int uv__tcsetattr(int fd, int how, const struct termios* term)
 {
@@ -115,6 +126,18 @@ extern "C" size_t Bun__ttyStateSize()
 }
 
 #if !OS(WINDOWS)
+static bool isTerminalOfStdin(int fd)
+{
+    if (fd == STDIN_FILENO)
+        return true;
+
+    struct stat other;
+    struct stat stdinStat;
+    return fstat(fd, &other) == 0 && fstat(STDIN_FILENO, &stdinStat) == 0
+        && S_ISCHR(other.st_mode) && S_ISCHR(stdinStat.st_mode)
+        && other.st_rdev == stdinStat.st_rdev;
+}
+
 // Port of libuv's uv_tty_set_mode(), with `state` standing in for the
 // per-handle fields of uv_tty_t. The file statics above are only the
 // uv_tty_reset_mode() snapshot, which is process-wide in libuv too.
@@ -128,13 +151,24 @@ static int ttySetMode(int fd, int mode, BunTTYState& state, int action)
     if (state.mode == mode)
         return 0;
 
-    if (state.mode == 0 && mode != 0) {
-        do {
-            rc = tcgetattr(fd, &state.orig_termios);
-        } while (rc == -1 && errno == EINTR);
+    // While a dialog holds this terminal in line mode, its owner reads and
+    // changes the termios that the dialog writes back, not the device. The
+    // dialog keeps its line mode, and the owner's change is not lost when the
+    // dialog ends.
+    Locker locker { stdinLineModeLock };
+    struct termios* held = stdinLineModeHolders && isTerminalOfStdin(fd) ? &stdinLineModeSaved : nullptr;
 
-        if (rc == -1)
-            return errno;
+    if (state.mode == 0 && mode != 0) {
+        if (held) {
+            state.orig_termios = *held;
+        } else {
+            do {
+                rc = tcgetattr(fd, &state.orig_termios);
+            } while (rc == -1 && errno == EINTR);
+
+            if (rc == -1)
+                return errno;
+        }
 
         /* This is used for uv_tty_reset_mode() */
         do {
@@ -194,12 +228,83 @@ static int ttySetMode(int fd, int mode, BunTTYState& state, int action)
         bun_stdio_modified[fd] = 1;
     }
 
+    if (held) {
+        *held = tmp;
+        if (fd == STDIN_FILENO)
+            stdinLineModeSavedModified = 1;
+        state.mode = mode;
+        return 0;
+    }
+
     rc = uv__tcsetattr(fd, action, &tmp);
     if (rc == 0) {
         state.mode = mode;
     }
 
     return rc;
+}
+
+// Puts the terminal of stdin in line mode when Enter cannot end a read of it:
+// Enter gives LF, typing is echoed and can be edited, Ctrl+C is SIGINT.
+// Returns 1 when the caller holds line mode and has to call
+// Bun__ttyLeaveStdinLineMode(). This is not a mode of ttySetMode(), because
+// tty_wrap passes any integer from JS as the mode.
+extern "C" int Bun__ttyEnterStdinLineMode()
+{
+    Locker locker { stdinLineModeLock };
+    if (stdinLineModeHolders) {
+        stdinLineModeHolders++;
+        return 1;
+    }
+
+    struct termios found;
+    int rc;
+    do {
+        rc = tcgetattr(STDIN_FILENO, &found);
+    } while (rc == -1 && errno == EINTR);
+
+    // With ICANON or ICRNL set, Enter ends a read. Such a terminal is not
+    // written: an ECHO that the user turned off stays off, and cbreak input
+    // stays unbuffered.
+    if (rc == -1 || (found.c_lflag & ICANON) || (found.c_iflag & ICRNL))
+        return 0;
+
+    // The termios found is the only one to start from: a terminal that was
+    // raw when the process started has no line mode saved anywhere.
+    struct termios line = found;
+    line.c_iflag |= ICRNL;
+    line.c_lflag |= ICANON | ECHO | ISIG | IEXTEN;
+
+    // Marked before the change, as in ttySetMode(): Ctrl+C is a signal from
+    // here on, and bun_restore_stdio() then has to restore the terminal.
+    sig_atomic_t modified = bun_stdio_modified[STDIN_FILENO];
+    bun_stdio_modified[STDIN_FILENO] = 1;
+
+    // TCSANOW: only input flags change, so there is no output to wait for.
+    // SIGTTOU is not blocked: a background job stops here until it is in the
+    // foreground, as it stops at the read.
+    if (uv__tcsetattr(STDIN_FILENO, TCSANOW, &line) != 0) {
+        bun_stdio_modified[STDIN_FILENO] = modified;
+        return 0;
+    }
+
+    stdinLineModeSaved = found;
+    stdinLineModeSavedModified = modified;
+    stdinLineModeHolders = 1;
+    return 1;
+}
+
+extern "C" void Bun__ttyLeaveStdinLineMode()
+{
+    Locker locker { stdinLineModeLock };
+    ASSERT(stdinLineModeHolders);
+    if (--stdinLineModeHolders)
+        return;
+
+    uv__tcsetattr(STDIN_FILENO, TCSANOW, &stdinLineModeSaved);
+    // Put back, so that a pipeline producer that did not change the terminal
+    // itself does not write its startup termios at exit. See #29592.
+    bun_stdio_modified[STDIN_FILENO] = stdinLineModeSavedModified;
 }
 #endif
 

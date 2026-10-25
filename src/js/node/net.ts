@@ -2609,7 +2609,9 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();
   } else if (status !== true) {
     // https://github.com/nodejs/node/blob/v26.5.0/lib/internal/stream_base_commons.js#L158-L159
-    const err = new ErrnoException(status, "write");
+    // After 'end' the loop has closed the handle of a peer that hung up. Node still holds that descriptor, so its write fails with EPIPE.
+    const hungUp = this[kclosed] && this.readableEnded && status === uv().UV_EBADF;
+    const err = new ErrnoException(hungUp ? uv().UV_EPIPE : status, "write");
     if (endsWithoutError(this)) process.nextTick(callback, err);
     else callback(err);
   } else if (this.encrypted) {

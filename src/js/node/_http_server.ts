@@ -295,6 +295,8 @@ function releaseServerParserShim(socket, req?) {
 }
 
 function socketOnTimeout() {
+  // A keep-alive timer that fired is dead: the next response finish arms a new one.
+  if (this[kKeepAliveTimeoutSet]) this[kTimeout] = null;
   const req = this.parser?.incoming;
   const reqTimeout = req && !req.complete && req.emit("timeout", this);
   const res = this._httpMessage;
@@ -2228,8 +2230,6 @@ function onSocketTimeoutTimerExpired(this: any) {
       return;
     }
   }
-  // A fired keep-alive timer is dead: the next response finish arms a new one.
-  if (socket[kKeepAliveTimeoutSet]) socket[kTimeout] = null;
   NetSocket.prototype._onTimeout.$call(socket);
 }
 

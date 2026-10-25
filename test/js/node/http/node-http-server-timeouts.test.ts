@@ -876,6 +876,26 @@ describe("node:http server timeout enforcement", () => {
         else expect(sizes!.handle).toBe(sizes!.response);
       });
 
+      test("the keep-alive timeout still closes a connection whose raw write the peer stops taking", async () => {
+        let periods = 0;
+        await exchange("", getKeepAlive, async (req, res, client) => {
+          res.end("END");
+          await next(res, "finish", client);
+          client.pause();
+          setSocketOptions(client, 2, 65536);
+          setSocketOptions(req.socket, 1, 65536);
+          req.socket.write(big);
+          // 5 s and the buffer of 1 s. The first look finds what the kernel took at once.
+          while (!req.socket.destroyed && periods < 4) {
+            jest.advanceTimersByTime(6_000);
+            periods++;
+          }
+          req.socket.destroy();
+          client.resume();
+        });
+        expect(periods).toBe(2);
+      });
+
       test("server.timeout cuts an idle connection 60 s after the last byte of a big response went out", async () => {
         let cut;
         await exchange("server.timeout", getKeepAlive, async (req, res, client) => {

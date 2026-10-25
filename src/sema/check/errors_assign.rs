@@ -232,8 +232,14 @@ impl Checker<'_, '_> {
         );
     }
 
-    /// `checkVariableLikeDeclaration` for a variable, starting at "validate the initializer".
-    pub(super) fn check_variable_initializer(&mut self, file: FileId, d: VarDeclId) {
+    /// `checkVariableLikeDeclaration` for a variable, starting at "validate the initializer". `type_of_name` is what
+    /// `getTypeOfSymbol` returned for a name: the type it computed, even if a resolution inside it assigned another one.
+    pub(super) fn check_variable_initializer(
+        &mut self,
+        file: FileId,
+        d: VarDeclId,
+        type_of_name: Option<TypeId>,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let strict = self.p.files.options.strict_null_checks;
         let decl = &hir[d];
@@ -270,7 +276,7 @@ impl Checker<'_, '_> {
         if self.is_binding_pattern_in_ambient_or_type_node(file, decl.pat) {
             return;
         }
-        let target = self.type_of_pat(file, decl.pat);
+        let target = type_of_name.unwrap_or_else(|| self.type_of_pat(file, decl.pat));
         let target = self.convert_auto_to_any(target);
         let source = self.type_of_expr(file, decl.init);
         // `getESSymbolLikeTypeForNode`, `isValidESSymbolDeclaration`: for a `const` with an identifier name, in its own

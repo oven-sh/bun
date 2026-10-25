@@ -8845,6 +8845,82 @@ export const d1 = compose((x: number) => d0(1), y => { let a5 = { v: d0(1) }; co
       expect(exitCode).toBe(1);
     });
 
+    // b.ts is checked first. The call of `router` is resolved a second time inside its first resolution, without
+    // constraint checks, so there it succeeds. The outer resolution fails, and `resolveCall` assigns the signature of a
+    // failed call before it reports, so `one` is a `Router<Def>` for the outer call of `merge`.
+    test("the signature of a call that fails replaces the one that a resolution inside its resolution assigned", async () => {
+      using dir = project({
+        "lib.ts": `export class Proc<In> { constructor(public run: (i: In) => void) {} }
+export type Def = { [k: string]: Proc<any> | Router<any> };
+export class Router<D extends Def> { constructor(public def: D) {} }
+export declare function router<D extends Def>(d: D): Router<D>;
+export declare function merge<A extends Def, B extends Def>(a: Router<A>, b: Router<B>): Router<A & B>;
+`,
+        "a.ts": `import { router, Proc } from "./lib";
+import { both } from "./b";
+export const one = router({ list: new Proc((i: never) => {}), sub: both });
+`,
+        "b.ts": `import { merge } from "./lib";
+import { one } from "./a";
+export const both = merge(one, one);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(3,14): error TS7022: 'one' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "a.ts(3,29): error TS2322: Type 'Proc<never>' is not assignable to type 'Proc<any> | Router<any>'.",
+          "  Type 'Proc<never>' is not assignable to type 'Proc<any>'.",
+          "    Type 'any' is not assignable to type 'never'.",
+          "b.ts(3,14): error TS7022: 'both' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("a call that fails its constraint has the constraint as its type argument with a circular reference among its arguments too", async () => {
+      using dir = project({
+        "a.ts": `declare function need<T extends { id: number }>(x: T): T;
+declare function pick<T, K extends keyof T>(o: T, k: K): T[K];
+function f() { return pick(need({ id: "x", w: f() }), "def"); }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(3,10): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "a.ts(3,35): error TS2322: Type 'string' is not assignable to type 'number'.",
+          "a.ts(3,55): error TS2345: Argument of type '\"def\"' is not assignable to parameter of type '\"id\"'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    // b.ts is checked first. The call in `run` is resolved a second time inside its first resolution, where `f.go()` is
+    // circular, so `x` is `any`. `go` ends up returning `1 | any[]`, which is what the outer resolution infers from, but
+    // `assignParameterType` only assigns if the parameter has no type yet.
+    test("a parameter keeps the contextual type that a resolution inside the call's resolution assigned", async () => {
+      using dir = project({
+        "a.ts": `import { C } from "./b";
+export declare function tap<T>(x: T, f?: (x: T) => void): T;
+declare const n: number;
+export const f = tap({ go() { if (n) return [new C().run()]; return tap(1); } });
+`,
+        "b.ts": `import { tap, f } from "./a";
+export class C { run() { return tap(f.go(), x => { const p: never = x; }); } }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(4,24): error TS7023: 'go' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "b.ts(2,18): error TS7023: 'run' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "b.ts(2,58): error TS2322: Type 'any' is not assignable to type 'never'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // m3.ts is checked first. The declaration of `g` prints the constraint of `T`, which is the first to ask for the
     // type of `b`. The errors of a missing property and of a type that isn't iterable are deferred to the end of a
     // file's check, and that of m3.ts is over by then.

@@ -136,6 +136,17 @@ struct OutsideInferenceContext {
     recheck: (usize, usize),
 }
 
+/// See `Checker::last_call_outcome`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum CallOutcome {
+    /// `chooseOverload` returned it, or `resolveCall` didn't run.
+    Chosen,
+    /// No candidate accepts the call, and `getCandidateForOverloadFailure` returned one of them.
+    Failed,
+    /// No candidate accepts the call. See `Checker::calls_with_own_instantiation`.
+    FailedWithOwnInstantiation,
+}
+
 pub(super) type Args = SmallVec<[Arg; 8]>;
 pub(super) type Sigs = SmallVec<[SigId; 8]>;
 
@@ -291,22 +302,27 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let outer_errors = self.call_resolution_errors.take();
         let is_re_resolved = std::mem::replace(&mut self.is_call_re_resolved, is_in_progress);
-        self.has_own_instantiation = false;
+        self.last_call_outcome = CallOutcome::Chosen;
         let resolved = self.resolve_signature(file, call);
-        let has_own_instantiation = std::mem::take(&mut self.has_own_instantiation);
+        let outcome = std::mem::replace(&mut self.last_call_outcome, CallOutcome::Chosen);
         self.is_call_re_resolved = is_re_resolved;
         let reported = std::mem::replace(&mut self.call_resolution_errors, outer_errors);
         self.resolution_start = resolution_start;
         self.resolved_meanwhile.push((file, call, resolved));
         let marked = self.calls_with_own_instantiation.len();
-        if has_own_instantiation {
+        if outcome == CallOutcome::FailedWithOwnInstantiation {
             self.calls_with_own_instantiation.push((file, call));
         }
         let resolved = self.with_return_type_of_call(file, call, resolved);
         self.calls_with_own_instantiation.truncate(marked);
         self.resolved_meanwhile.pop();
         // `getResolvedSignature`: `links.resolvedSignature != c.resolvingSignature`, "this inner
-        // resolution sets the resolvedSignature first", and `result = links.resolvedSignature`.
+        // resolution sets the resolvedSignature first", and `result = links.resolvedSignature`. For a call that no
+        // candidate accepts, `resolveCall` has assigned its own result since ("Preemptively cache the result").
+        if outcome != CallOutcome::Chosen {
+            self.signatures_resolved_within
+                .retain(|r| !(r.0 == file && r.1 == call));
+        }
         let assigned_within = (self.signatures_resolved_within.iter())
             .find(|r| r.0 == file && r.1 == call)
             .map(|r| r.2);
@@ -359,6 +375,9 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 self.signatures_resolved_within.push((file, call, resolved));
             }
+            if let Some(at) = in_progress_at {
+                self.keep_context_checks_for_enclosing_resolution(file, call, at);
+            }
         } else if let Some(stored) = stored
             && !self.is_in_flow_loop()
         {
@@ -373,6 +392,26 @@ impl<'p, 's> Checker<'p, 's> {
             self.keep_call_errors_in_flow_loop(file, call, reported);
         }
         resolved
+    }
+
+    /// `NodeCheckFlagsContextChecked` and the parameter types of the functions in `call` stay as a resolution of `call`
+    /// left them that ran inside the resolution at `stack[enclosing]`, so that one doesn't assign them again.
+    fn keep_context_checks_for_enclosing_resolution(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        enclosing: usize,
+    ) {
+        if self.context_checked_under.is_empty() {
+            return;
+        }
+        let range = self.start_of(file, call)..self.end_of_expr(file, call);
+        let (hir, serial) = (self.hir(file), self.frames[enclosing].serial);
+        for under in &mut self.context_checked_under {
+            if under.0 > enclosing && under.2.0 == file && range.contains(&hir[under.2.1].start) {
+                (under.0, under.1) = (enclosing, serial);
+            }
+        }
     }
 
     /// `len(c.flowLoopStack) != 0`: the signature isn't stored, and the errors that `resolveCall`
@@ -1203,7 +1242,11 @@ impl<'p, 's> Checker<'p, 's> {
                 (self.call_resolution_errors.get_or_insert_default()).extend(reported);
             }
         }
-        self.has_own_instantiation = has_own_instantiation;
+        self.last_call_outcome = match (is_chosen, has_own_instantiation) {
+            (true, _) => CallOutcome::Chosen,
+            (false, false) => CallOutcome::Failed,
+            (false, true) => CallOutcome::FailedWithOwnInstantiation,
+        };
         resolved
     }
 

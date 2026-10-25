@@ -708,18 +708,24 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// `checkVariableLikeDeclaration`, the part for `node.Name()`: a name, or the elements of a
-    /// pattern (`checkBindingElement`).
-    fn check_binding_name(&mut self, file: FileId, pat: PatId, is_bodiless: bool) {
+    /// pattern (`checkBindingElement`). For a name, returns what `getTypeOfSymbol` returned.
+    fn check_binding_name(
+        &mut self,
+        file: FileId,
+        pat: PatId,
+        is_bodiless: bool,
+    ) -> Option<TypeId> {
         if pat.is_none() || self.is_stack_low() {
-            return;
+            return None;
         }
         let hir = self.hir(file);
         match hir[pat].kind {
             PatKind::Missing => {}
             PatKind::Ident(name) => {
-                self.type_of_pat(file, pat);
+                let ty = self.type_of_pat(file, pat);
                 self.report_on_circular_pat(file, pat);
                 self.check_collisions_for_declaration_name(file, pat, name);
+                return Some(ty);
             }
             PatKind::Object(props) => {
                 self.check_empty_binding_pattern(file, pat);
@@ -806,6 +812,7 @@ impl<'s> Checker<'_, 's> {
                 self.current_source_element = saved;
             }
         }
+        None
     }
 
     /// True if the pattern element `p` has a `PropertyName` and a name: `{ a: b }`, not `{ a }`.
@@ -878,7 +885,7 @@ impl<'s> Checker<'_, 's> {
             }
             return;
         }
-        self.check_binding_name(file, decl.pat, false);
+        let type_of_name = self.check_binding_name(file, decl.pat, false);
         // "Don't validate for-in initializer as it is already an error"
         if is_in_for_in {
             self.leave_unvisited(file, decl.init);
@@ -889,7 +896,7 @@ impl<'s> Checker<'_, 's> {
         } else {
             self.check_expression(file, decl.init);
         }
-        self.check_variable_initializer(file, d);
+        self.check_variable_initializer(file, d, type_of_name);
         if matches!(decl.kind, VarKind::Using | VarKind::AwaitUsing) {
             self.check_initializer_of_using_declaration(file, d);
         }

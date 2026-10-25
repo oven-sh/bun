@@ -1076,7 +1076,7 @@ impl<'s> Program<'s> {
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
             calls_with_own_instantiation: Vec::new(),
-            has_own_instantiation: false,
+            last_call_outcome: call::CallOutcome::Chosen,
             call_resolution_stack: Vec::new(),
             signatures_resolved_within: Vec::new(),
             restrictive_instantiations: Default::default(),
@@ -2102,8 +2102,8 @@ pub struct Checker<'p, 's> {
     /// The calls in `resolved_meanwhile` that no candidate accepts and whose signature `pickLongestCandidateSignature`
     /// made with `createSignatureInstantiation`. See `with_return_type_of_call`.
     calls_with_own_instantiation: Vec<(FileId, ExprId)>,
-    /// True if the last `resolve_call` returned such a signature.
-    has_own_instantiation: bool,
+    /// How the last `resolve_call` got the signature it returned.
+    last_call_outcome: call::CallOutcome,
     /// `callResolutionStack`
     call_resolution_stack: Vec<(FileId, ExprId)>,
     /// `links.resolvedSignature` of a call that's being resolved, assigned by the first resolution

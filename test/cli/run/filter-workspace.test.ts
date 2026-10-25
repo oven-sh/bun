@@ -422,17 +422,19 @@ describe("bun", () => {
       });
     });
 
-    test("the pre and post scripts of a package that lacks the script do not get them", async () => {
+    test("the pre and post scripts of a package that lacks the script run without them", async () => {
       using dir = tempDir("filter-arguments", {
         "package.json": root,
         "packages/pkg/argv.js": argv,
-        "packages/pkg/package.json": JSON.stringify({ name: "pkg", scripts }),
-        "packages/hooks/argv.js": argv,
-        "packages/hooks/package.json": JSON.stringify({ name: "hooks", scripts: hooks }),
+        "packages/pkg/package.json": JSON.stringify({ name: "pkg", scripts: hooks }),
       });
-      const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", "script", "--"]);
-      expect({ withArguments: stdout.filter(line => line.includes("--coverage")), stderr, exitCode }).toEqual({
-        withArguments: ['pkg script: ["main","--coverage","b c"]'],
+      expect(await run(String(dir), ["run", "--filter", "pkg", "script", "--"])).toEqual({
+        stdout: [
+          'pkg prescript: ["pre"]',
+          "pkg prescript: Exited with code 0",
+          'pkg postscript: ["post"]',
+          "pkg postscript: Exited with code 0",
+        ],
         stderr: "",
         exitCode: 0,
       });

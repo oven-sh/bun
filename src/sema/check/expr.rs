@@ -540,6 +540,9 @@ impl<'p, 's> Checker<'p, 's> {
                     cold_path();
                     if !is_uncached {
                         self.cache_provisionally(Query::Expr(file, e), u64::from(ty.0), open);
+                        if !is_final {
+                            self.hide_provisional_from_call_in_progress(Query::Expr(file, e));
+                        }
                     }
                 }
                 (ty, left.ok().filter(|_| is_final))
@@ -5407,6 +5410,8 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.enter(Query::LiteralProp(file, p)) {
             // `getTypeOfAccessors`
             return if self.found_cycle {
+                // Nothing is assigned, so a later request can get another type.
+                self.note_checked_again_with_assigned_type(true);
                 TypeId::ERROR
             } else {
                 TypeId::UNRESOLVED
@@ -5453,6 +5458,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Err(open) => {
                 self.cache_provisionally(Query::LiteralProp(file, p), u64::from(ty.0), open);
+                if !is_final {
+                    self.hide_provisional_from_call_in_progress(Query::LiteralProp(file, p));
+                }
                 ty
             }
         }

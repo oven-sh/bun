@@ -170,6 +170,9 @@ struct Provisional {
     serial: u64,
     /// The serial number of the query's own frame.
     own_serial: u64,
+    /// It isn't a hit while the frame with this serial number is in progress. 0 means none. See
+    /// `hide_provisional_from_call_in_progress`.
+    hidden_under: u64,
 }
 
 /// Calls `$each!` with the names of the `Buffered` fields of `Program`. A table whose entries
@@ -3806,7 +3809,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The innermost expressions are being checked with a type of a variable or property that later requests don't get.
     /// No type is stored for them, as in `note_members_in_place_read_above`, if tsc checks them again:
     /// - They're part of an argument of the call that's being resolved, and not of another call in it. That's only for
-    ///   a variable (`is_variable`).
+    ///   a variable, or a getter that's in progress (`is_variable`).
     /// - They're part of the callee that `getQuickTypeOfExpression` checks. It doesn't resolve the call.
     fn note_checked_again_with_assigned_type(&mut self, is_variable: bool) {
         let is_part = |&q: &Query| match q {
@@ -4077,8 +4080,21 @@ impl<'p, 's> Checker<'p, 's> {
                     flow_loops: self.flow_loops.len() as u32,
                     serial: scope.serial,
                     own_serial: frame.serial,
+                    hidden_under: 0,
                 },
             );
+        }
+    }
+
+    /// Call after `cache_provisionally` for a `q` that `has_read_members_in_place`. The next pass of the `resolveCall`
+    /// in progress checks the argument again, so it doesn't find the result. A later request for the call gets
+    /// `links.resolvedSignature` and checks no argument. Here it's resolved again, and that resolution does find it.
+    fn hide_provisional_from_call_in_progress(&mut self, q: Query) {
+        let is_call = |q: &Query| matches!(q, Query::Call(..));
+        if let Some(call) = self.stack.iter().rposition(is_call)
+            && let Some(entry) = self.provisional.get_mut(&q)
+        {
+            entry.hidden_under = self.frames[call].serial;
         }
     }
 
@@ -4125,6 +4141,13 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         if entry.event_bits & 8 != 0 && self.stack.len() < entry.height as usize {
+            return None;
+        }
+        if entry.hidden_under != 0
+            && (self.frames)
+                .binary_search_by_key(&entry.hidden_under, |frame| frame.serial)
+                .is_ok()
+        {
             return None;
         }
         // `checkExpressionCached` empties `flowLoopStack`, so what follows from a loop's incomplete

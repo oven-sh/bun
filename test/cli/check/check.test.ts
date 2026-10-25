@@ -15905,6 +15905,32 @@ export class C { p = flag ? new C().p : list(); }
       }
     });
 
+    // The first pass of `pair` gets the error type for `holder.g`, which is in progress. Then `both` refers to itself and is
+    // `any`. The second pass asks for `holder.g` again. The way back to `g` ends at `both`, which has its type, so that visit
+    // isn't circular, ends first and assigns.
+    test("the next pass of a call asks again for a getter that was in progress", async () => {
+      using dir = project({
+        "a.ts": `declare function router<D>(d: D): { def: D };
+declare function pair<A, B>(a: A, b: B): [A, B];
+let first = holder.g; first = 1;
+const both = pair(holder.g, both);
+const holder = { get g() { return router({ a: both }); } };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        "a.ts(3,13): error TS2448: Block-scoped variable 'holder' used before its declaration.",
+        "a.ts(3,13): error TS2454: Variable 'holder' is used before being assigned.",
+        "a.ts(3,23): error TS2322: Type 'number' is not assignable to type '{ def: { a: any; }; }'.",
+        "a.ts(4,7): error TS7022: 'both' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "a.ts(4,19): error TS2448: Block-scoped variable 'holder' used before its declaration.",
+        "a.ts(4,19): error TS2454: Variable 'holder' is used before being assigned.",
+        "a.ts(4,29): error TS2448: Block-scoped variable 'both' used before its declaration.",
+        "a.ts(5,22): error TS7023: 'g' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // `x30` is resolved three times, one resolution inside the other. The innermost one finds `use` being resolved, so `u`
     // has no contextual type there. Its result isn't stored, and `return r` in `x20`, which is kept, doesn't report TS7006.
     test("a returned expression that is kept in a cycle does not report what a resolution inside it found that is resolved again", async () => {

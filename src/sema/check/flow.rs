@@ -8876,6 +8876,7 @@ impl<'p, 's> Checker<'p, 's> {
             flow_loops: 0,
             serial: self.frames[first].serial,
             own_serial: self.work,
+            hidden_under: 0,
         };
         self.provisional.insert(q, entry);
         ty

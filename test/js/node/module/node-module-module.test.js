@@ -1565,16 +1565,18 @@ console.log("survived", require("./late.js"));`,
     });
 
     const launcher = { "launcher.cjs": `process.argv[1] = ${target};\n${call}` };
-    test.each(Object.keys(failing))("started by a launcher, %s runs until it fails", async script => {
-      const { stdout } = await run(["launcher.cjs", `./${script}`], { ...failing, ...launcher });
-      expect(stdout).toBe(`${script} started\n`);
-    });
-
-    // Node prints the error and exits with code 1. Bun prints nothing and exits with code 0.
-    // https://github.com/oven-sh/bun/pull/45358 reports the failure.
-    test.failing.each(Object.keys(failing))("started by a launcher, %s that fails is reported", async script => {
-      const { stderr, exitCode } = await run(["launcher.cjs", `./${script}`], { ...failing, ...launcher });
-      expect({ reported: reported(stderr), exitCode }).toEqual({ reported: [`error: from ${script}`], exitCode: 1 });
+    // Node reports the failure. Bun does for neither call until https://github.com/oven-sh/bun/pull/45358.
+    test.each(Object.keys(failing))("reports %s that fails as Module.runMain(process.argv[1]) does", async script => {
+      const explicit = {
+        "explicit.cjs": `process.argv[1] = ${target};\nrequire("node:module").runMain(process.argv[1]);`,
+      };
+      const [byDefault, byArgument] = await Promise.all([
+        run(["launcher.cjs", `./${script}`], { ...failing, ...launcher }),
+        run(["explicit.cjs", `./${script}`], { ...failing, ...explicit }),
+      ]);
+      const outcome = ({ stdout, stderr, exitCode }) => ({ stdout, reported: reported(stderr), exitCode });
+      expect(outcome(byDefault)).toEqual(outcome(byArgument));
+      expect(byDefault.stdout).toBe(`${script} started\n`);
     });
 
     // Node prints "main ran true". Bun prints "main ran false": the script is not the main module.

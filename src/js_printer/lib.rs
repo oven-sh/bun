@@ -2573,15 +2573,15 @@ pub(crate) mod __gated_printer {
                 && !matches!(c, 0x2028 | 0x2029)
         }
 
-        fn print_jsx_string_expression(&mut self, mut str_: js_ast::StoreRef<E::String>) {
-            str_.resolve_rope_if_needed(self.bump);
+        fn print_jsx_string_expression(&mut self, str_: &E::String) {
+            let str_ = str_.flattened(self.bump);
             self.print(b"{");
             self.print_string_literal_e_string(&*str_, false);
             self.print(b"}");
         }
 
-        fn print_jsx_attribute_value_string(&mut self, mut str_: js_ast::StoreRef<E::String>) {
-            str_.resolve_rope_if_needed(self.bump);
+        fn print_jsx_attribute_value_string(&mut self, str_: &E::String) {
+            let str_ = str_.flattened(self.bump);
             if str_.is_utf8() {
                 if let Some(quote) = self.jsx_attribute_quote_for_utf8(str_.slice8()) {
                     self.print(quote);
@@ -2596,11 +2596,11 @@ pub(crate) mod __gated_printer {
                 return;
             }
 
-            self.print_jsx_string_expression(str_);
+            self.print_jsx_string_expression(&str_);
         }
 
-        fn print_jsx_child_text(&mut self, mut str_: js_ast::StoreRef<E::String>) {
-            str_.resolve_rope_if_needed(self.bump);
+        fn print_jsx_child_text(&mut self, str_: &E::String) {
+            let str_ = str_.flattened(self.bump);
             if str_.is_utf8() {
                 if !str_.slice8().is_empty() && self.can_print_text_as_jsx_child_utf8(str_.slice8())
                 {
@@ -2614,11 +2614,11 @@ pub(crate) mod __gated_printer {
                 return;
             }
 
-            self.print_jsx_string_expression(str_);
+            self.print_jsx_string_expression(&str_);
         }
 
-        fn print_jsx_name_string(&mut self, mut str_: js_ast::StoreRef<E::String>) {
-            str_.resolve_rope_if_needed(self.bump);
+        fn print_jsx_name_string(&mut self, str_: &E::String) {
+            let str_ = str_.flattened(self.bump);
             if str_.is_utf8() {
                 self.print(str_.slice8());
             } else {
@@ -2635,7 +2635,7 @@ pub(crate) mod __gated_printer {
                 }
                 ExprData::EString(str_) => {
                     self.add_source_mapping(tag.loc);
-                    self.print_jsx_name_string(*str_);
+                    self.print_jsx_name_string(str_);
                 }
                 ExprData::EDot(dot) => {
                     self.print_jsx_tag(dot.target);
@@ -2653,7 +2653,7 @@ pub(crate) mod __gated_printer {
             match &key.data {
                 ExprData::EString(str_) => {
                     self.add_source_mapping(key.loc);
-                    self.print_jsx_name_string(*str_);
+                    self.print_jsx_name_string(str_);
                 }
                 ExprData::EIdentifier(id) => {
                     self.add_source_mapping(key.loc);
@@ -4790,7 +4790,7 @@ pub(crate) mod __gated_printer {
                                 match &value.data {
                                     ExprData::EString(str_) => {
                                         self.add_source_mapping(value.loc);
-                                        self.print_jsx_attribute_value_string(*str_);
+                                        self.print_jsx_attribute_value_string(str_);
                                     }
                                     _ => {
                                         self.print(b"{");
@@ -4826,9 +4826,9 @@ pub(crate) mod __gated_printer {
                                 ExprData::EString(str_) => {
                                     self.add_source_mapping(child.loc);
                                     if print_string_children_as_expressions {
-                                        self.print_jsx_string_expression(*str_);
+                                        self.print_jsx_string_expression(str_);
                                     } else {
-                                        self.print_jsx_child_text(*str_);
+                                        self.print_jsx_child_text(str_);
                                     }
                                 }
                                 ExprData::EJsxElement(_) => {

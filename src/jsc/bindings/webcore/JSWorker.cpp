@@ -67,7 +67,8 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/HeapProfiler.h>
-#include <JavaScriptCore/BunV8HeapSnapshotBuilder.h>
+#include "BunHeapProfiler.h"
+#include <wtf/CrossThreadCopier.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
@@ -727,6 +728,15 @@ static void resolveCrossVMRequest(WorkerMessagingProxy& proxy, uint64_t reqId, S
     handle->resolve(parentCtx.globalObject(), parentCtx.vm(), buildValue(parentCtx.vm(), parentCtx.globalObject()));
 }
 
+template<typename BuildError>
+static void rejectCrossVMRequest(WorkerMessagingProxy& proxy, uint64_t reqId, ScriptExecutionContext& parentCtx, const BuildError& buildError)
+{
+    auto handle = proxy.takeCrossVMRequest(reqId);
+    if (!handle || parentCtx.isJSExecutionForbidden())
+        return;
+    handle->reject(parentCtx.vm(), buildError(parentCtx.vm(), parentCtx.globalObject()));
+}
+
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -770,16 +780,15 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
     bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
-        auto& vm = workerCtx.vm();
-        vm.ensureHeapProfiler();
-        auto& heapProfiler = *vm.heapProfiler();
-        heapProfiler.clearSnapshots();
-        JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
-        String snapshot = builder.json();
+        auto snapshot = Bun::takeV8HeapSnapshotJSON(workerCtx.vm());
 
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind,
-            [reqId, protectedProxy = WTF::move(protectedProxy), snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {
-                resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& vm, JSGlobalObject*) -> JSValue { return jsString(vm, snapshot); });
+            [reqId, protectedProxy = WTF::move(protectedProxy), snapshot = crossThreadCopy(WTF::move(snapshot))](ScriptExecutionContext& parentCtx) {
+                if (!snapshot) {
+                    rejectCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [](VM&, JSGlobalObject* globalObject) -> JSValue { return Bun::createHeapSnapshotTooLargeError(globalObject); });
+                    return;
+                }
+                resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& vm, JSGlobalObject*) -> JSValue { return jsString(vm, *snapshot); });
             });
     });
     if (!accepted) {

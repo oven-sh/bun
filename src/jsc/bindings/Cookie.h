@@ -59,8 +59,6 @@ public:
 
     static ExceptionOr<Ref<Cookie>> parse(StringView cookieString);
 
-    static String serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies);
-
     const String& name() const { return m_name; }
 
     const String& value() const { return m_value; }
@@ -107,8 +105,8 @@ public:
 
     bool isExpired() const;
 
-    void appendTo(JSC::VM& vm, StringBuilder& builder) const;
-    String toString(JSC::VM& vm) const;
+    // Returns OutOfMemoryError if the Set-Cookie string exceeds the max string length.
+    ExceptionOr<String> toString(JSC::VM& vm) const;
     JSC::JSValue toJSON(JSC::VM& vm, JSC::JSGlobalObject*) const;
     size_t memoryCost() const;
 
@@ -121,6 +119,9 @@ private:
         const String& domain, const String& path,
         int64_t expires, bool secure, CookieSameSite sameSite,
         bool httpOnly, double maxAge, bool partitioned);
+
+    // `builder` must use OverflowPolicy::RecordOverflow, and the caller must check hasOverflowed().
+    void appendTo(JSC::VM& vm, StringBuilder& builder) const;
 
     String m_name;
     String m_value;

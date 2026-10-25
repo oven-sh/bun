@@ -36,13 +36,7 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
     }
     #[inline]
     fn to_any(&mut self) -> AnyResponse {
-        // `From<*mut Response<{true,false}>>` exist as two concrete impls, not a
-        // const-generic one, so dispatch on `SSL` here.
-        if SSL {
-            AnyResponse::SSL(std::ptr::from_mut::<Self>(self).cast())
-        } else {
-            AnyResponse::TCP(std::ptr::from_mut::<Self>(self).cast())
-        }
+        Response::<SSL>::res_to_any(self.downcast())
     }
 }
 

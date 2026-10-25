@@ -4943,52 +4943,57 @@ describe("css tests", () => {
         opera: 67 << 16,
       };
 
-      for (const targets of [undefined, bundlerDefaults]) {
-        // Browsers reject the second value of each rule, so it must not replace the first.
-        cssTest(
-          ".foo { background: radial-gradient(circle at 30% 107%, red, blue); background: -webkit-radial-gradient(circle at 30% 107%, red, blue) }",
-          ".foo { background: radial-gradient(circle at 30% 107%, red, #00f); background: -webkit-radial-gradient(circle at 30% 107%, red, blue); }",
-          targets,
-        );
-        cssTest(
-          ".foo { background: red; background: -webkit-radial-gradient(circle at center, red, blue) }",
-          ".foo { background: red; background: -webkit-radial-gradient(circle at center, red, blue); }",
-          targets,
-        );
-        cssTest(
-          ".foo { background-image: url(a.png); background-image: -moz-radial-gradient(circle 20px, red, blue) }",
-          '.foo { background-image: url("a.png"); background-image: -moz-radial-gradient(circle 20px, red, blue); }',
-          targets,
-        );
-        cssTest(
-          ".foo { background: red; background: -webkit-radial-gradient(circle, red, 50%, blue) }",
-          ".foo { background: red; background: -webkit-radial-gradient(circle, red, 50%, blue); }",
-          targets,
-        );
-        cssTest(
-          ".foo { background: red; background: -webkit-linear-gradient(red, 50%, blue) }",
-          ".foo { background: red; background: -webkit-linear-gradient(red, 50%, blue); }",
-          targets,
-        );
-        // Such a value is not removed when the standard value comes after it.
-        cssTest(
-          ".foo { background: -webkit-radial-gradient(circle at 30% 107%, red, blue); background: radial-gradient(circle at 30% 107%, red, blue) }",
-          ".foo { background: -webkit-radial-gradient(circle at 30% 107%, red, blue); background: radial-gradient(circle at 30% 107%, red, #00f); }",
-          targets,
-        );
-        // A typed prefixed value stays before a value that is kept as tokens.
-        cssTest(
-          ".foo { background: -webkit-linear-gradient(red, blue); background: -webkit-radial-gradient(20px 30px, yellow, green) }",
-          ".foo { background: -webkit-linear-gradient(red, #00f); background: -webkit-radial-gradient(20px 30px, yellow, green); }",
-          targets,
-        );
-        // With two of them, BackgroundHandler writes the first one last, as it does on main when the third value is `-ms-linear-gradient()`.
-        // Observed: `-moz-linear-gradient(red, #00f); -webkit-radial-gradient(20px 30px, yellow, green); -webkit-linear-gradient(red, #00f)`.
-        cssTestTodo(
-          ".foo { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-radial-gradient(20px 30px, yellow, green) }",
-          ".foo { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-radial-gradient(20px 30px, yellow, green); }",
-          targets,
-        );
+      for (const [label, targets] of [
+        ["no targets", undefined],
+        ["bundler targets", bundlerDefaults],
+      ] as const) {
+        describe(label, () => {
+          // Browsers reject the second value of each rule, so it must not replace the first.
+          cssTest(
+            ".foo { background: radial-gradient(circle at 30% 107%, red, blue); background: -webkit-radial-gradient(circle at 30% 107%, red, blue) }",
+            ".foo { background: radial-gradient(circle at 30% 107%, red, #00f); background: -webkit-radial-gradient(circle at 30% 107%, red, blue); }",
+            targets,
+          );
+          cssTest(
+            ".foo { background: red; background: -webkit-radial-gradient(circle at center, red, blue) }",
+            ".foo { background: red; background: -webkit-radial-gradient(circle at center, red, blue); }",
+            targets,
+          );
+          cssTest(
+            ".foo { background-image: url(a.png); background-image: -moz-radial-gradient(circle 20px, red, blue) }",
+            '.foo { background-image: url("a.png"); background-image: -moz-radial-gradient(circle 20px, red, blue); }',
+            targets,
+          );
+          cssTest(
+            ".foo { background: red; background: -webkit-radial-gradient(circle, red, 50%, blue) }",
+            ".foo { background: red; background: -webkit-radial-gradient(circle, red, 50%, blue); }",
+            targets,
+          );
+          cssTest(
+            ".foo { background: red; background: -webkit-linear-gradient(red, 50%, blue) }",
+            ".foo { background: red; background: -webkit-linear-gradient(red, 50%, blue); }",
+            targets,
+          );
+          // Such a value is not removed when the standard value comes after it.
+          cssTest(
+            ".foo { background: -webkit-radial-gradient(circle at 30% 107%, red, blue); background: radial-gradient(circle at 30% 107%, red, blue) }",
+            ".foo { background: -webkit-radial-gradient(circle at 30% 107%, red, blue); background: radial-gradient(circle at 30% 107%, red, #00f); }",
+            targets,
+          );
+          // A typed prefixed value stays before a value that is kept as tokens.
+          cssTest(
+            ".foo { background: -webkit-linear-gradient(red, blue); background: -webkit-radial-gradient(20px 30px, yellow, green) }",
+            ".foo { background: -webkit-linear-gradient(red, #00f); background: -webkit-radial-gradient(20px 30px, yellow, green); }",
+            targets,
+          );
+          // With two of them, BackgroundHandler writes the first one last, as it does on main when the third value is `-ms-linear-gradient()`.
+          // Observed: `-moz-linear-gradient(red, #00f); -webkit-radial-gradient(20px 30px, yellow, green); -webkit-linear-gradient(red, #00f)`.
+          cssTestTodo(
+            ".foo { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-radial-gradient(20px 30px, yellow, green) }",
+            ".foo { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-radial-gradient(20px 30px, yellow, green); }",
+            targets,
+          );
+        });
       }
       // A typed value is still removed when no target needs the prefix.
       prefix_test(

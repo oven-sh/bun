@@ -24,7 +24,7 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct FileRoute {
+pub(crate) struct FileRoute {
     ref_count: Cell<u32>,
     server: Cell<Option<AnyServer>>,
     blob: Blob,
@@ -41,7 +41,7 @@ pub struct FileRoute {
     has_date_header: bool,
 }
 
-pub struct InitOptions<'a> {
+pub(crate) struct InitOptions<'a> {
     pub(crate) server: Option<AnyServer>,
     pub(crate) status_code: u16, // default 200
     pub(crate) headers: Option<&'a FetchHeaders>,
@@ -50,8 +50,12 @@ pub struct InitOptions<'a> {
 use crate::webcore::headers_ref::blob_content_type;
 
 #[inline]
-fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
-    bun_http_jsc::headers_jsc::from_fetch_headers(fetch_headers, blob_content_type(blob))
+fn headers_from(
+    global: &JSGlobalObject,
+    fetch_headers: Option<&FetchHeaders>,
+    blob: &Blob,
+) -> JsResult<Headers> {
+    bun_http_jsc::headers_jsc::from_fetch_headers(global, fetch_headers, blob_content_type(blob))
 }
 
 #[inline]
@@ -124,12 +128,21 @@ impl FileRoute {
         }
     }
 
-    pub(crate) fn init_from_blob(blob: Blob, opts: &InitOptions<'_>) -> RefPtr<FileRoute> {
-        let headers = headers_from(opts.headers, &blob);
-        RefPtr::new(FileRoute::new(blob, headers, opts.server, opts.status_code))
+    pub(crate) fn init_from_blob(
+        global: &JSGlobalObject,
+        blob: Blob,
+        opts: &InitOptions<'_>,
+    ) -> JsResult<RefPtr<FileRoute>> {
+        let headers = headers_from(global, opts.headers, &blob)?;
+        Ok(RefPtr::new(FileRoute::new(
+            blob,
+            headers,
+            opts.server,
+            opts.status_code,
+        )))
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<FileRoute>>> {
@@ -165,7 +178,7 @@ impl FileRoute {
                     "expected blob not to be heap-allocated"
                 );
                 *body_value = BodyValue::Blob(blob.dupe());
-                let headers = headers_from(response.get_init_headers(), &blob);
+                let headers = headers_from(global, response.get_init_headers(), &blob)?;
                 let status_code = response.status_code();
 
                 return Ok(Some(RefPtr::new(FileRoute::new(
@@ -184,7 +197,7 @@ impl FileRoute {
                     !b.is_heap_allocated(),
                     "expected blob not to be heap-allocated"
                 );
-                let headers = headers_from(None, &b);
+                let headers = headers_from(global, None, &b)?;
                 return Ok(Some(RefPtr::new(FileRoute::new(b, headers, None, 200))));
             }
         }
@@ -244,7 +257,7 @@ impl FileRoute {
         // Held until `on_response_complete`; a reload can drop the route
         // table's ref while a `FileResponseStream` is still streaming.
         let route = RefPtr::from_this(this);
-        if let Some(mut server) = route.server.get() {
+        if let Some(server) = route.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
@@ -363,6 +376,19 @@ impl FileRoute {
             return Serve::Done;
         }
 
+        let etag = self.headers.get(b"etag").filter(|v| !v.is_empty());
+        let last_modified_ms = if req.header(b"if-modified-since").is_some()
+            || req.header(b"if-unmodified-since").is_some()
+            || req.header(b"if-range").is_some()
+        {
+            let Ok(lmd) = self.last_modified_date() else {
+                return Serve::Done;
+            };
+            lmd
+        } else {
+            None
+        };
+
         // Range applies to the slice the route was configured with, not the
         // underlying file: a Bun.file(p).slice(a,b) route exposes only [a,b).
         // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's
@@ -373,22 +399,11 @@ impl FileRoute {
             && self.status_code == 200
             && !self.has_content_range_header
         {
-            RangeRequest::from_request(req, size)
+            RangeRequest::from_request(req, size, etag, last_modified_ms)
         } else {
             RangeRequest::Result::None
         };
 
-        let etag = self.headers.get(b"etag").filter(|v| !v.is_empty());
-        let last_modified_ms = if req.header(b"if-modified-since").is_some()
-            || req.header(b"if-unmodified-since").is_some()
-        {
-            let Ok(lmd) = self.last_modified_date() else {
-                return Serve::Done;
-            };
-            lmd
-        } else {
-            None
-        };
         let status_code =
             status_for_preconditions(req, method, self.status_code, etag, last_modified_ms, range);
 
@@ -464,7 +479,7 @@ impl FileRoute {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        if let Some(mut server) = self.server.get() {
+        if let Some(server) = self.server.get() {
             server.on_static_request_complete();
         }
     }
@@ -481,6 +496,7 @@ impl Drop for FileRoute {
 /// else (4) If-Modified-Since. Steps 1/2 yield 412 on failure and must run
 /// before steps 3/4 can yield 304. Preconditions only apply when the selected
 /// representation would otherwise be 200 (§13.1.1).
+/// Step 5, If-Range, is already applied to `range` by `RangeRequest::from_request`.
 pub(crate) fn status_for_preconditions(
     req: &AnyRequest,
     method: Method,

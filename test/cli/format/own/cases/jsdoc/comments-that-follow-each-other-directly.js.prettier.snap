@@ -1,0 +1,59 @@
+-------------------------------
+{ jsdoc: true, printWidth: 80 }
+-------------------------------
+class A {
+  /**
+   * @constructor
+   * @overload
+   * @param {string}   a
+   *//**
+   * @constructor
+   * @param {number | string}   a   the thing
+   */
+  constructor(a, b) {}
+}
+
+/**
+ * @overload
+ * @param {string}  a
+ * @returns {void}
+ *//**
+ * @overload
+ * @param {number}  a
+ * @returns {void}
+ *//**
+ * @param {string | number}  a
+ * @returns {void}
+ */
+function f(a) {}
+
+--------------------------------
+{ jsdoc: true, printWidth: 100 }
+--------------------------------
+class A {
+  /**
+   * @constructor
+   * @overload
+   * @param {string}   a
+   *//**
+   * @constructor
+   * @param {number | string}   a   the thing
+   */
+  constructor(a, b) {}
+}
+
+/**
+ * @overload
+ * @param {string}  a
+ * @returns {void}
+ *//**
+ * @overload
+ * @param {number}  a
+ * @returns {void}
+ *//**
+ * @param {string | number}  a
+ * @returns {void}
+ */
+function f(a) {}
+
+===================== End =====================

@@ -88,8 +88,9 @@ const mutexStatics = {
   /** Like `lock`, but `null` when the mutex is not taken, after `timeoutMs` if one is given and at once otherwise. */
   lockIfAvailable(mutex: unknown, timeoutMs?: number) {
     assertMutex(mutex);
-    const held =
-      timeoutMs === undefined ? mutexTryLock.$call(mutex) : mutexLock.$call(mutex, timeoutArgument(timeoutMs));
+    const timeout = timeoutMs === undefined ? 0 : timeoutArgument(timeoutMs);
+    // A zero timeout never waits, so it must not trip over a mutex this thread already holds.
+    const held = timeout === 0 ? mutexTryLock.$call(mutex) : mutexLock.$call(mutex, timeout);
     if (!held) return null;
     const token = new UnlockToken();
     armToken(token, mutex);

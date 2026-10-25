@@ -211,7 +211,7 @@ const repros: Repro[] = [
   },
 ];
 
-describe.each(surfaces)("$name", surface => {
+describe.concurrent.each(surfaces)("$name", surface => {
   for (const repro of repros) {
     describe(repro.name, () => {
       // One transpile per surface and repro. Each expression is logged with its
@@ -228,7 +228,7 @@ describe.each(surfaces)("$name", surface => {
   }
 });
 
-describe("define values are symbols, not text", () => {
+describe.concurrent("define values are symbols, not text", () => {
   test("a member chain follows a renamed local and a renamed import", async () => {
     // Long names: the minifier generates short names, so these cannot come back.
     using dir = tempDir("bundler-define-link", {
@@ -571,7 +571,7 @@ describe("define values are symbols, not text", () => {
   });
 });
 
-describe("a define key has one spelling", () => {
+describe.concurrent("a define key has one spelling", () => {
   test("the later of two spellings of one key wins", () => {
     const wrong: string[] = [];
     for (const object of ["a", "x", "cfg", "app", "settings", "env"]) {
@@ -611,7 +611,7 @@ describe("a define key has one spelling", () => {
   });
 });
 
-describe("define key errors", () => {
+describe.concurrent("define key errors", () => {
   test.each([
     ["a-b", 'define key "a-b" must be a valid identifier'],
     ["a.b-c", 'define key "a.b-c" contains invalid identifier "b-c"'],

@@ -3360,6 +3360,7 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some(n) = &mut self.inference_contexts[level].context
         {
             n.intra_expression_inference_sites.push((file, node, ty));
+            n.level = level;
         }
     }
 

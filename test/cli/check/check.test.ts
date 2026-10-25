@@ -13848,6 +13848,45 @@ export const c = { m() { return this.z; }, g: id(() => missing) };
       expect(exitCode).toBe(1);
     });
 
+    // `now` needs `D`, so the members checked so far are inferred from first. `double` is compared with `() => any`,
+    // which asks for its return type. Its `this` needs `D` too, and infers from the same members.
+    test("a method is circular if the inference that types its `this` asks for its return type", async () => {
+      using dir = project({
+        "a.ts": `type Computed = { [k: string]: (() => any) | { get(): any; set(v: any): void } };
+type Values<C> = { [K in keyof C]: C[K] extends () => infer R ? R : C[K] extends { get(): infer R } ? R : never };
+declare function define<D = {}, C extends Computed = {}>(o: {
+  data?(): D;
+  computed?: C & ThisType<D & Values<C>>;
+  watch?: { [K in keyof D]?: (this: D & Values<C>, now: D[K], before: D[K]) => void };
+}): D & Values<C>;
+export const a = define({
+  data() { return { n: 1, label: "" }; },
+  computed: {
+    double() { return this.n * 2; },
+    text: { get() { return this.label + this.double; }, set(v: string) { this.n = v; } },
+  },
+  watch: { n(now, before) { const r: never = [now, before, this.double]; } },
+});
+export const b = define({
+  data() { return { n: 1 }; },
+  computed: { double(): number { return this.n * 2; }, half() { return this.double / 4; } },
+  watch: { n(now) { const r: never = [now, this.half]; } },
+});
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(11,5): error TS7023: 'double' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(12,13): error TS7023: 'get' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(12,41): error TS2615: Type of property 'double' circularly references itself in mapped type 'Values<{ double(): any; text: { get(): any; set(v: string): void; }; }>'.
+        a.ts(12,74): error TS2322: Type 'string' is not assignable to type 'number'.
+        a.ts(14,35): error TS2322: Type 'any[]' is not assignable to type 'never'.
+        a.ts(18,56): error TS7023: 'half' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(19,27): error TS2322: Type 'any[]' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS7022 and TS7023 when `return f()` checks the callee while another resolution is in progress", async () => {
       using dir = project({
         "a.ts": `export function p1() { const a = (x = (b() as any)) => x; function b() { return a(); } }

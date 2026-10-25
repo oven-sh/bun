@@ -120,6 +120,10 @@ pub(super) struct Inference {
     pub(super) inferred_type_params: Vec<TypeId>,
     /// `intraExpressionInferenceSites`
     pub(super) intra_expression_inference_sites: Vec<(FileId, ExprId, TypeId)>,
+    /// The context's index in `Checker::inference_contexts`. Valid while it has sites.
+    pub(super) level: usize,
+    /// It's only the `InferenceState` of the context at `level`, which has the candidates. See `with_candidates`.
+    is_state_only: bool,
 }
 
 impl Inference {
@@ -149,6 +153,8 @@ impl Inference {
             no_constraint_checks: false,
             inferred_type_params: Vec::new(),
             intra_expression_inference_sites: Vec::new(),
+            level: 0,
+            is_state_only: false,
         };
         // Built in place, because a list of two candidates is 232 bytes.
         (inference.candidates).extend(params.iter().map(|_| Candidate {
@@ -187,6 +193,8 @@ impl Inference {
             no_constraint_checks,
             inferred_type_params,
             intra_expression_inference_sites,
+            level,
+            is_state_only,
         } = self;
         params.clear();
         candidates.clear();
@@ -199,7 +207,8 @@ impl Inference {
         (*sig, *propagated, *return_context, *outer_return_context) = (None, None, None, None);
         (*contra, *bivariant) = (false, false);
         (*any_default, *no_default, *skipped_generic_function) = (false, false, false);
-        *no_constraint_checks = false;
+        (*no_constraint_checks, *is_state_only) = (false, false);
+        *level = 0;
         (*priority, *inference_priority) = (0, PRIORITY_MAX);
         *expanding = 0;
         *original_target = TypeId::NEVER;
@@ -560,6 +569,16 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The part of `inferFromTypes` that runs once it has found which type parameter `target` is.
     fn add_candidate(
+        &mut self,
+        n: &mut Inference,
+        index: usize,
+        candidate: TypeId,
+        target: TypeId,
+    ) {
+        self.with_candidates(n, |c, n| c.add_candidate_to(n, index, candidate, target));
+    }
+
+    fn add_candidate_to(
         &mut self,
         n: &mut Inference,
         index: usize,
@@ -1534,7 +1553,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // it.
                     if let Some(implied_arity) = self
                         .inference_info_for_type(n, element_types[start_length])
-                        .and_then(|i| n.candidates[i].implied_arity)
+                        .and_then(|i| self.with_candidates(n, |_, n| n.candidates[i].implied_arity))
                     {
                         let skipped = (end_length + source_arity).saturating_sub(implied_arity);
                         let first =
@@ -2133,7 +2152,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // from, and infer from that to `T`, at a lower priority than a direct inference to
                 // `T`, and lower still if it is only partial.
                 if let Some(index) = self.inference_info_for_type(n, of)
-                    && n.candidates[index].fixed.is_none()
+                    && self.with_candidates(n, |_, n| n.candidates[index].fixed.is_none())
                     && let Some(inferred) = self.reverse_mapped_type(source, target, of)
                 {
                     let priority = if self.is_non_inferrable(source) {
@@ -3114,13 +3133,70 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `inferFromIntraExpressionSites`
+    ///
+    /// An inference can ask for the return type of a function whose `this` this context types. That fixes type
+    /// parameters of this context, and infers from the same sites first, because the list is emptied after the loop.
+    /// So during the loop the context is back in its slot, where `with_inference_context` finds it.
     fn infer_from_intra_expression_sites(&mut self, n: &mut Inference) {
-        for (file, e, ty) in std::mem::take(&mut n.intra_expression_inference_sites) {
+        if n.intra_expression_inference_sites.is_empty() {
+            return;
+        }
+        cold_path();
+        let level = n.level;
+        let mut state = self.spare_inference();
+        state.params.clone_from(&n.params);
+        (state.candidates).resize_with(n.params.len(), Candidate::default);
+        (state.sig, state.source_outer_mapper) = (n.sig, n.source_outer_mapper);
+        (state.level, state.is_state_only) = (level, true);
+        let sites = n.intra_expression_inference_sites.clone();
+        self.swap_with_inference_context(level, n);
+        for (file, e, ty) in sites {
             if let Some(contextual_type) =
                 self.contextual_type(file, e, ContextFlags::NO_CONSTRAINTS)
             {
-                self.infer(n, ty, contextual_type, 0);
+                self.infer(&mut state, ty, contextual_type, 0);
             }
+        }
+        self.swap_with_inference_context(level, n);
+        n.intra_expression_inference_sites.clear();
+        state.reset_to_empty();
+        self.spare_inferences.push(state);
+    }
+
+    /// Swaps `n` with the context at `level` of `inference_contexts`. One of them is the placeholder of
+    /// `with_inference_context`. The `returnMapper` stays in the slot.
+    fn swap_with_inference_context(&mut self, level: usize, n: &mut Inference) {
+        if let Some(info) = self.inference_contexts.get_mut(level)
+            && let Some(context) = info.context.as_deref_mut()
+        {
+            std::mem::swap(context, n);
+            std::mem::swap(&mut context.return_context, &mut n.return_context);
+        }
+    }
+
+    /// Runs `f` with the `InferenceInfo`s in `n.candidates`. An `InferenceState` borrows them from its context.
+    #[inline]
+    fn with_candidates<R>(
+        &mut self,
+        n: &mut Inference,
+        f: impl FnOnce(&mut Self, &mut Inference) -> R,
+    ) -> R {
+        if !n.is_state_only {
+            return f(self, n);
+        }
+        cold_path();
+        self.swap_candidates_with_inference_context(n);
+        let result = f(self, n);
+        self.swap_candidates_with_inference_context(n);
+        result
+    }
+
+    fn swap_candidates_with_inference_context(&mut self, n: &mut Inference) {
+        if let Some(info) = self.inference_contexts.get_mut(n.level)
+            && let Some(context) = info.context.as_deref_mut()
+            && context.candidates.len() == n.candidates.len()
+        {
+            std::mem::swap(&mut context.candidates, &mut n.candidates);
         }
     }
 

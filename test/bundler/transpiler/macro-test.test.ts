@@ -157,6 +157,7 @@ test.concurrent("a fold that leaves a member of a namespace import as the callee
     "comma.mjs": header + `console.log(${call(foldedWhenMinified).join(", ")});\n`,
     "tag.mjs": header + "console.log((true && m.fn)`x`);\n",
     "substituted-tag.mjs": header + "export function h() {\n  const t = m.fn;\n  return t`x` + 1;\n}\n",
+    "substituted-call.mjs": header + "export function h() {\n  const t = m.fn;\n  return t() + 1;\n}\n",
     "in-macro-runtime.mjs": header + "console.log((true && m.fn)());\n",
   });
   const build = async (...args: string[]) => {
@@ -169,14 +170,15 @@ test.concurrent("a fold that leaves a member of a namespace import as the callee
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Debug builds print "[macro] call fn" to stdout first, so only the last line is compared.
-    return { lastLine: stdout.trim().split("\n").at(-1), stderr, exitCode };
+    return { stdout, lastLine: stdout.trim().split("\n").at(-1), stderr, exitCode };
   };
-  const [plain, plainMinified, minified, tag, substitutedTag, inMacroRuntime] = await Promise.all([
+  const [plain, plainMinified, minified, tag, substitutedTag, substitutedCall, inMacroRuntime] = await Promise.all([
     build("folded.mjs"),
     build("--minify-syntax", "folded.mjs"),
     build("--minify-syntax", "comma.mjs"),
     build("tag.mjs"),
     build("--minify-syntax", "substituted-tag.mjs"),
+    build("--minify-syntax", "substituted-call.mjs"),
     build("--target=macro", "in-macro-runtime.mjs"),
   ]);
 
@@ -192,6 +194,8 @@ test.concurrent("a fold that leaves a member of a namespace import as the callee
   };
   expect(tag).toMatchObject(notATag);
   expect(substitutedTag).toMatchObject(notATag);
+  // The single-use `t` is replaced by `m.fn`, and the `+` is visited again with that callee.
+  expect(substitutedCall).toMatchObject({ stdout: expect.stringContaining('return "ran" + 1;'), exitCode: 0 });
   // Code that runs inside a macro gets no macro call, so the call keeps its comma.
   expect(inMacroRuntime).toMatchObject({ lastLine: "console.log((0, m.fn)());", exitCode: 0 });
 });

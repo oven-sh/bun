@@ -2769,6 +2769,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         false
     }
 
+    /// Is `id` the symbol that single-use substitution replaces, or a symbol merged into it?
+    #[inline(always)]
+    fn is_symbol_to_substitute(&self, id: Ref, r#ref: Ref) -> bool {
+        id.eql(r#ref)
+            || self.symbols[id.inner_index() as usize]
+                .link
+                .get()
+                .eql(r#ref)
+    }
+
     fn substitute_single_use_symbol_in_expr(
         &mut self,
         expr: Expr,
@@ -2786,12 +2796,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         'outer: {
             match expr.data {
                 js_ast::ExprData::EIdentifier(ident) => {
-                    if ident.ref_.eql(r#ref)
-                        || self.symbols[ident.ref_.inner_index() as usize]
-                            .link
-                            .get()
-                            .eql(r#ref)
-                    {
+                    if self.is_symbol_to_substitute(ident.ref_, r#ref) {
                         self.ignore_usage(r#ref);
                         return Substitution::Success(replacement);
                     }
@@ -3039,14 +3044,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::ECall(mut e) => {
                     // Don't substitute something into a call target that could change "this"
-                    match replacement.data {
-                        js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_) => {
-                            if matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
-                            {
-                                break 'outer;
-                            }
-                        }
-                        _ => {}
+                    if matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if self.is_symbol_to_substitute(id.ref_, r#ref))
+                        && self.has_value_for_this_in_call(&replacement)
+                    {
+                        break 'outer;
                     }
 
                     if let Some(done) = self.substitute_single_use_symbol_in_child(
@@ -3127,7 +3128,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::ExprData::ETemplate(mut e) => {
                     if let Some(tag) = e.tag.as_mut() {
                         // A tag takes "this" like a call target does
-                        if matches!(tag.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
+                        if matches!(tag.data, js_ast::ExprData::EIdentifier(id) if self.is_symbol_to_substitute(id.ref_, r#ref))
                             && self.has_value_for_this_in_call(&replacement)
                         {
                             break 'outer;

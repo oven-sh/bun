@@ -848,8 +848,10 @@ impl Route {
                 (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
             };
 
-            // The closure runs under the per-entry mutex, like every other write to a cached `Entry`.
-            let Ok(entry_abs_path) = entry_r.abs_path_or_try_fill(|| {
+            // Where the file is. That is asked for on every load and not kept on the `Entry`:
+            // an `Entry` stays in its listing across `reload()`, and by then a link can lead
+            // somewhere else or be a file.
+            let abs_path_str: &'static [u8] = {
                 let mut abs_path_str: &[u8] = b"";
                 // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
@@ -897,7 +899,7 @@ impl Route {
                                     bstr::BStr::new(&route_file_buf[..abs_len])
                                 ),
                             );
-                            return Err(());
+                            return None;
                         }
                     }
                     FileSystem::set_max_fd(file.as_ref().unwrap().handle().native());
@@ -916,20 +918,20 @@ impl Route {
                                 bstr::BStr::new(abs_path_str)
                             ),
                         );
-                        return Err(());
+                        return None;
                     }
                 };
 
-                Ok(Interned::from_static(
-                    FileSystem::instance()
+                // The path of the `Entry` is interned once. A route that no link leads to is
+                // that path, so loading it again adds no string.
+                match bun_resolver::Resolver::entry_abs_path(entry_r) {
+                    Some(entry_path) if entry_path == _abs => entry_path,
+                    _ => FileSystem::instance()
                         .dirname_store()
                         .append(_abs)
                         .expect("unreachable"),
-                ))
-            }) else {
-                return None;
+                }
             };
-            let abs_path_str = entry_abs_path.as_bytes();
 
             #[cfg(windows)]
             let abs_path: AbsPath = {

@@ -2647,6 +2647,7 @@ describe("bundler", () => {
         import { kind as forInModuleKind } from "./for-in-module.cjs";
         import { foo as blockShadowFoo } from "./block-shadow.cjs";
         import { foo as functionModuleFoo } from "./function-module.cjs";
+        import { leak as bareModuleLeak, real as bareModuleReal } from "./bare-module.cjs";
         console.log(
           JSON.stringify({
             lib,
@@ -2666,6 +2667,7 @@ describe("bundler", () => {
             forInModuleKind,
             blockShadowFoo: typeof blockShadowFoo,
             functionModuleFoo: typeof functionModuleFoo,
+            bareModule: [typeof bareModuleLeak, bareModuleReal],
           }),
         );
       `,
@@ -2695,6 +2697,11 @@ describe("bundler", () => {
         module.exports = { fake: true };
         var exports = module.exports;
         exports.foo = 1;
+      `,
+      "/bare-module.cjs": /* js */ `
+        module = { exports: { fake: true } };
+        module.exports.leak = 1;
+        exports.real = 2;
       `,
       "/destructured.cjs": /* js */ `
         var { exports } = { exports: { local: true } };
@@ -2776,11 +2783,12 @@ describe("bundler", () => {
         "/for-in-module.cjs",
         "/block-shadow.cjs",
         "/function-module.cjs",
+        "/bare-module.cjs",
       ],
     },
     run: {
       stdout:
-        '{"lib":{"answer":42,"kind":"boolean"},"fake":{"viaParam":"boolean"},"reassigned":{"before":1,"after":"string"},"uninit":{"foo":123,"bar":124},"nested":{"viaParam":"boolean"},"aliasedA":"aliased","chainedB":"chained","destructured":{"kind":"boolean"},"forHeader":{"kind":"boolean"},"forOf":{},"moduleRequire":{"dep":"dep","kind":"boolean"},"ambientOk":1,"namedExports":["undefined",2],"namedModule":["undefined",2],"forInModuleKind":"undefined","blockShadowFoo":"undefined","functionModuleFoo":"undefined"}',
+        '{"lib":{"answer":42,"kind":"boolean"},"fake":{"viaParam":"boolean"},"reassigned":{"before":1,"after":"string"},"uninit":{"foo":123,"bar":124},"nested":{"viaParam":"boolean"},"aliasedA":"aliased","chainedB":"chained","destructured":{"kind":"boolean"},"forHeader":{"kind":"boolean"},"forOf":{},"moduleRequire":{"dep":"dep","kind":"boolean"},"ambientOk":1,"namedExports":["undefined",2],"namedModule":["undefined",2],"forInModuleKind":"undefined","blockShadowFoo":"undefined","functionModuleFoo":"undefined","bareModule":["undefined",2]}',
     },
   });
   // In an unwrapped package `module.exports = require()` becomes `export * from`.

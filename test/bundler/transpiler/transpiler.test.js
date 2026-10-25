@@ -202,6 +202,8 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = [y][0]()", "x = [y][0]()");
       ts.expectPrintedMin_("x = [() => y][0]()", "x = [() => y][0]()");
       ts.expectPrintedMin_("x = [a, b][1]()", "x = [a, b][1]()");
+      ts.expectPrintedMin_("x = [obj.m][0]?.()", "x = [obj.m][0]?.()");
+      ts.expectPrintedMin_("x = [obj.m]?.[0]()", "x = [obj.m][0]()");
       // `new` passes no `this`.
       ts.expectPrintedMin_("x = new [C][0]()", "x = new C");
 
@@ -4879,7 +4881,10 @@ console.log(foo, array);
         objectTag: "({ f: o.f }).f`t`",
         arrayTag: "[o.f][0]`t`",
         arrayCall: "[o.f][0]()",
+        arrayOptionalCall: "[o.f][0]?.()",
         arrayOfIdentifierCall: "[unbound][0]()",
+        arrayOfTwoCall: "[0, unbound][1]()",
+        arrayOfFunctionCall: "[function () { return this; }][0]()",
         viaConst: "(() => { const t = o.f; return t`t`; })()",
         commaTag: "(0, o.f)`t`",
         commaCall: "(0, o.f)()",

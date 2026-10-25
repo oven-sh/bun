@@ -19,7 +19,8 @@ pub(crate) struct HotReloadEvent {
     pub(crate) atomics: *mut WatcherAtomics,
     pub(crate) concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
     pub(crate) files: StringArrayHashMap<()>,
-    pub(crate) dirs: StringArrayHashMap<()>,
+    /// The value is whether an event added, removed or renamed a name in the directory.
+    pub(crate) dirs: StringArrayHashMap<bool>,
     /// NUL-joined absolute paths.
     pub(crate) extra_files: Vec<u8>,
     pub(crate) timer: std::time::Instant,
@@ -94,14 +95,14 @@ impl HotReloadEvent {
         let _g = dev.graph_safety_lock.guard();
 
         // First handle directories, because this may mutate `event.files`
-        if dev.directory_watchers.watches.count() > 0 {
-            for changed_dir_with_slash in self.dirs.keys() {
+        let has_failure_watches = dev.directory_watchers.watches.count() > 0;
+        for (changed_dir_with_slash, &names_changed) in self.dirs.iter() {
+            // A failed bare import busts nothing and has no watch, so a changed name busts here.
+            if has_failure_watches || names_changed {
                 let changed_dir = bun_paths::string_paths::without_trailing_slash_windows_path(
                     changed_dir_with_slash,
                 );
 
-                // Bust resolution cache, but since Bun does not watch all
-                // directories in a codebase, this only targets the following resolutions
                 // SAFETY: server_transpiler is initialized in DevServer::init before any
                 // HotReloadEvent can fire.
                 let _ = unsafe { dev.server_transpiler.assume_init_mut() }
@@ -109,7 +110,10 @@ impl HotReloadEvent {
                     .bust_dir_cache(changed_dir);
 
                 // if a directory watch exists for resolution failures, check those now.
-                if let Some(watcher_index) = dev.directory_watchers.watches.get_index(changed_dir) {
+                if has_failure_watches
+                    && let Some(watcher_index) =
+                        dev.directory_watchers.watches.get_index(changed_dir)
+                {
                     let mut new_chain: Option<u32> = None;
                     let mut it: Option<u32> =
                         Some(dev.directory_watchers.watches.values()[watcher_index].first_dep);
@@ -142,7 +146,7 @@ impl HotReloadEvent {
                             // into BundleV2 is too complicated. the resolution is
                             // cached, anyways.
                             // Note: inlined `append_file` body for disjoint borrow
-                            // (`self.dirs.keys()` is held immutably across this loop).
+                            // (`self.dirs` is held immutably across this loop).
                             bun_core::handle_oom(self.files.get_or_put(source_file_path.slice()));
                             dev.directory_watchers.free_dependency_index(index);
                         } else {
@@ -230,13 +234,34 @@ impl HotReloadEvent {
         bun_core::handle_oom(self.files.get_or_put(file_path));
     }
 
+    /// Whether a watcher op on a directory means that a name in it was added, removed or renamed.
+    fn changes_names(op: bun_watcher::Op) -> bool {
+        use bun_watcher::Op;
+        if bun_core::env::IS_WINDOWS {
+            // Added and RenamedNew carry no op; `WRITE` is a write to a file under the directory.
+            op.is_empty() || op.intersects(Op::DELETE | Op::RENAME)
+        } else if bun_core::env::IS_KQUEUE {
+            // Any change of the entries is `WRITE`; `DELETE` and `RENAME` are the directory itself.
+            op.contains(Op::WRITE)
+        } else {
+            // inotify: `WRITE` is a write to a file in it; `RENAME` is the directory itself moving.
+            op.intersects(Op::CREATE | Op::DELETE | Op::MOVE_TO)
+        }
+    }
+
     /// Records a changed directory (and, when present, the changed entry
     /// within it) in the pending hot-reload event (deduplicated).
-    pub(crate) fn append_dir(&mut self, dir_path: &[u8], maybe_sub_path: Option<&[u8]>) {
+    pub(crate) fn append_dir(
+        &mut self,
+        dir_path: &[u8],
+        maybe_sub_path: Option<&[u8]>,
+        op: bun_watcher::Op,
+    ) {
         if dir_path.is_empty() {
             return;
         }
-        bun_core::handle_oom(self.dirs.get_or_put(dir_path));
+        let gop = bun_core::handle_oom(self.dirs.get_or_put(dir_path));
+        *gop.value_ptr |= Self::changes_names(op);
 
         let Some(sub_path) = maybe_sub_path else {
             return;

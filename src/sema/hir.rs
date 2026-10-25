@@ -1361,10 +1361,6 @@ pub fn modifier_text(modifier: Flags) -> &'static str {
 pub enum DiagnosticKind {
     /// `SourceFile.Diagnostics()`: parser.go and scanner.go. `hasParseDiagnostics` counts only these.
     Parse,
-    /// A file with code that TypeScript's parser rejects since 7.1 and accepted before, `a ** b as T ** c`, has all of
-    /// 7.1's `Parse` diagnostics as these. Its tree and its other diagnostics are those of `Dialect::typescript_5`, which
-    /// is what `bun lint` reads. `bun check` reports these in place of the `Parse` ones.
-    ParseSince71,
     /// `SourceFile.JSDiagnostics()`
     Js,
     /// `SourceFile.JSDocDiagnostics()`. Reported only if the file is checked (`IsCheckJSEnabledForFile`).
@@ -2729,8 +2725,8 @@ impl<S: Storage> FileIn<S> {
     }
     /// True if the file has a `Parse` or a `Grammar` diagnostic.
     pub fn has_parse_or_grammar_diagnostics(&self) -> bool {
-        use DiagnosticKind::{Grammar, Parse, ParseSince71};
-        (self.diagnostics.iter()).any(|d| matches!(d.kind, Parse | ParseSince71 | Grammar))
+        use DiagnosticKind::{Grammar, Parse};
+        (self.diagnostics.iter()).any(|d| matches!(d.kind, Parse | Grammar))
     }
     /// True if `GetSyntacticDiagnostics` can return the diagnostics that only JavaScript files get: a `Js` diagnostic,
     /// or one from `getAdditionalJSSyntacticDiagnostics`, which are about decorators.

@@ -532,7 +532,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                     DiagnosticKind::Grammar => reach == Reach::Checked,
                     DiagnosticKind::Checker => reach != Reach::Unvisited,
                     DiagnosticKind::Parse
-                    | DiagnosticKind::ParseSince71
                     | DiagnosticKind::Js
                     | DiagnosticKind::JsDoc
                     | DiagnosticKind::Oxc

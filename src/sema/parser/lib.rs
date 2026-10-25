@@ -238,28 +238,6 @@ pub(crate) fn parse(
     atoms: &dyn Intern,
     scratch: &mut Scratch,
 ) -> Result<Parsed, Rejected> {
-    use bun_sema::hir::DiagnosticKind::{Parse, ParseSince71};
-    let parsed = parse_in_dialect(text, options, atoms, scratch)?;
-    if !(parsed.file.diagnostics.iter()).any(|it| it.kind == ParseSince71) {
-        return Ok(parsed);
-    }
-    let errors = parsed.file.diagnostics.iter().filter(|it| it.kind == Parse);
-    let mut errors: Vec<_> = errors.cloned().collect();
-    errors.iter_mut().for_each(|it| it.kind = ParseSince71);
-    scratch.recycle(parsed.file);
-    let mut options = options;
-    options.dialect.typescript_5 = true;
-    let mut parsed = parse_in_dialect(text, options, atoms, scratch)?;
-    parsed.file.diagnostics.extend(errors);
-    Ok(parsed)
-}
-
-fn parse_in_dialect(
-    text: &[u8],
-    options: Options,
-    atoms: &dyn Intern,
-    scratch: &mut Scratch,
-) -> Result<Parsed, Rejected> {
     let parsed = parser::run(text, options, Some(atoms), scratch)?;
     // Whether the comments of a TypeScript file get read depends on all of its comments, so that needs a second parse.
     if !options.reads_jsdoc

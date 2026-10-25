@@ -7219,9 +7219,13 @@ it("answers a client that always has a few requests waiting behind a response, h
     client.on("close", resolve);
     client.on("data", chunk => {
       received += chunk;
-      for (let match; (match = /^HTTP\/1\.1 200 OK\r\n[^]*?\r\n\r\n(\d+)(?=HTTP|$)/.exec(received));) {
-        answers.push(match[1]);
-        received = received.slice(match[0].length);
+      for (let headEnd; (headEnd = received.indexOf("\r\n\r\n")) >= 0;) {
+        const length = /^content-length: (\d+)$/im.exec(received.slice(0, headEnd))?.[1];
+        if (length === undefined) return reject(new Error(`no Content-Length in ${received.slice(0, headEnd)}`));
+        const bodyEnd = headEnd + 4 + Number(length);
+        if (received.length < bodyEnd) break;
+        answers.push(received.slice(headEnd + 4, bodyEnd));
+        received = received.slice(bodyEnd);
       }
       if (answers.length === requests) resolve();
       else sendMore();

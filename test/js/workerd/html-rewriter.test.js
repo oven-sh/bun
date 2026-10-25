@@ -3657,7 +3657,10 @@ describe("a document that arrives on a pipe, with nothing else alive", () => {
       expect(await run(script, { input })).toEqual(ran({ text: rewritten }, "beforeExit"));
     });
 
-    // The jobs of the last chunk's handlers run before the end handlers, in both of the ways above.
+    // When the event loop delivers the last chunk, the jobs of its handlers run before the end
+    // handlers, in both of the ways above. This is not the order of a read that a drain ack
+    // starts: that read delivers the chunk and the end on its caller's stack, with no checkpoint
+    // between them, so the end handlers run first there.
     it.concurrent("the order is element, its microtask, end", async () => {
       const script = `
         const order = [];

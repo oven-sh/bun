@@ -60,7 +60,7 @@ pub struct FileReader {
     /// path; `pull_into_sink` is the drain-ack resume.
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
-    /// Decided once per sink, in `attach_sink`.
+    /// Set in `attach_sink`. `pull_into_sink` lends it to its caller for the read it starts.
     pub(crate) checkpoint_owner: Cell<CheckpointOwner>,
 }
 
@@ -534,7 +534,7 @@ impl FileReader {
     /// Wires the native sink. This reader owes the checkpoint for its deliveries unless the sink is named here.
     pub(crate) fn attach_sink(&self, sink: SinkHandle) {
         self.checkpoint_owner.set(match sink {
-            // `FileSink` opens `completion_scope` where it enters JS. The fetch request body hands the bytes to the HTTP thread and enters none.
+            // A `FileSink` owes its own checkpoints (`completion_scope`). The fetch request body hands the bytes to the HTTP thread and enters no JS.
             SinkHandle::FileSink(_) | SinkHandle::FetchRequestBody(_) => CheckpointOwner::Sink,
             _ => CheckpointOwner::Reader,
         });
@@ -604,19 +604,16 @@ impl FileReader {
         }
     }
 
-    /// The read that `pull_into_sink` starts for a sink this reader checkpoints: it runs on the stack of whoever acked the drain, so what it delivers is theirs.
+    /// The read that `pull_into_sink` starts for a sink this reader checkpoints: it runs on the stack of whoever acked the drain, so what it delivers is theirs. That caller can be script with the event loop not entered (an 'exit' listener, until #43741).
     #[cold]
     #[inline(never)]
     fn read_for_drain_caller(&self) {
-        // SAFETY: see `parent()`. The read can drop the last ref; the pin keeps `self` for the reset below.
-        let _pin = unsafe { RefPtr::init_ref(self.parent()) };
         self.checkpoint_owner.set(CheckpointOwner::DrainCaller);
         self.reader().unpause();
         // SAFETY: as in `pull_into_sink`.
         unsafe { IOReader::read(self.reader.get()) };
-        if self.checkpoint_owner.get() == CheckpointOwner::DrainCaller {
-            self.checkpoint_owner.set(CheckpointOwner::Reader);
-        }
+        // `self` is live here: whoever acked the drain roots the wrapper, the read pins it, and the wrapper's own ref outlives the read.
+        self.checkpoint_owner.set(CheckpointOwner::Reader);
     }
 
     /// The JS stream was errored with `reason`. A native reader that waits now fails with it.

@@ -34,6 +34,9 @@ pub(crate) struct Scanner<'a> {
     pub(crate) search_count: usize,
     /// The directory being iterated; its fd closes once every child `ScanEntry` has been opened.
     current_dir: Option<Rc<Dir>>,
+    /// The path the scan took to the directory being iterated. `Entry.dir` is the path its
+    /// listing was first read by, which is another one when a link and its target share it.
+    walked_dir: &'static [u8],
 }
 
 // FIFO queue of scan entries (pop_front / push_back).
@@ -89,6 +92,7 @@ impl<'a> Scanner<'a> {
             has_iterated: false,
             search_count: 0,
             current_dir: None,
+            walked_dir: b"",
         })
     }
 
@@ -131,6 +135,11 @@ impl<'a> Scanner<'a> {
         else {
             return Err(ScanError::DoesNotExist);
         };
+        let path = self
+            .fs()
+            .dirname_store
+            .append_slice(path)
+            .map_err(|_| ScanError::OutOfMemory)?;
 
         let root = self
             .read_dir_with_name(path, None)
@@ -140,13 +149,7 @@ impl<'a> Scanner<'a> {
             let e = root_err.original_err;
             if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOTDIR) {
                 if self.is_test_file(path) {
-                    let stored = self
-                        .fs()
-                        .filename_store
-                        .append_slice(path)
-                        .map_err(|_| ScanError::OutOfMemory)?;
-                    let rel_path = Interned::from_static(stored);
-                    self.test_files.push(rel_path);
+                    self.test_files.push(Interned::from_static(path));
                 }
             } else if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 return Err(ScanError::DoesNotExist);
@@ -224,9 +227,10 @@ impl<'a> Scanner<'a> {
     /// `handle` stays owned by the caller; the resolver caches the listing but not the fd.
     fn read_dir_with_name(
         &mut self,
-        name: &[u8],
+        name: &'static [u8],
         handle: Option<Fd>,
     ) -> crate::Result<&'static mut EntriesOption> {
+        self.walked_dir = name;
         let fs_ptr = self.fs;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
@@ -327,6 +331,12 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
+    /// Whether the scan reached `entry` by `entry.dir`, the path `entry.abs_path()` is made of.
+    fn reached_by_own_path(&self, entry: &fs::Entry) -> bool {
+        strings::without_trailing_slash(entry.dir)
+            == strings::without_trailing_slash(self.walked_dir)
+    }
+
     pub(crate) fn next(&mut self, entry: &mut fs::Entry) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
@@ -349,7 +359,7 @@ impl<'a> Scanner<'a> {
 
                 // Prune ignored directory trees early so we never traverse them.
                 if !self.path_ignore_patterns.is_empty() {
-                    let parts: [&[u8]; 2] = [entry.dir, entry.base()];
+                    let parts: [&[u8]; 2] = [self.walked_dir, entry.base()];
                     // reshaped for borrowck — drop the &mut borrow from
                     // abs_buf and reborrow open_dir_buf immutably so &self methods
                     // can be called with the slice.
@@ -374,12 +384,13 @@ impl<'a> Scanner<'a> {
                     // SAFETY: StringOrTinyString is repr(C) POD ([u8;31] + u8) with
                     // no Drop. Upstream type lacks Clone/Copy, so bitwise-copy here.
                     name: unsafe { core::ptr::read(&raw const entry.base_) },
-                    dir_path: entry.dir,
+                    dir_path: self.walked_dir,
                 });
             }
             fs::EntryKind::File => {
-                // already seen it!
-                if !entry.abs_path().is_empty() {
+                // already seen it! `abs_path` marks the file at the path of `entry`. Reached by
+                // another path to its directory, it is another test file.
+                if !entry.abs_path().is_empty() && self.reached_by_own_path(entry) {
                     return;
                 }
 
@@ -388,7 +399,7 @@ impl<'a> Scanner<'a> {
                     return;
                 }
 
-                let parts: [&[u8]; 2] = [entry.dir, entry.base()];
+                let parts: [&[u8]; 2] = [self.walked_dir, entry.base()];
                 // reshaped for borrowck — drop the &mut borrow from
                 // abs_buf and reborrow open_dir_buf immutably so &self methods
                 // below can be called with the slice.
@@ -411,8 +422,14 @@ impl<'a> Scanner<'a> {
                     return;
                 }
 
-                // Marks `entry` as seen. The file is kept as `path`, the one the filters saw.
-                let found = match bun_resolver::Resolver::entry_abs_path(entry) {
+                // Marks `entry` as seen when `path` is its own. The file is kept as `path`, the
+                // one the filters saw.
+                let entry_path = if self.reached_by_own_path(entry) {
+                    bun_resolver::Resolver::entry_abs_path(entry)
+                } else {
+                    None
+                };
+                let found = match entry_path {
                     Some(entry_path) if entry_path == path => entry_path,
                     _ => match self.filename_store().append_slice(path) {
                         Ok(s) => s,

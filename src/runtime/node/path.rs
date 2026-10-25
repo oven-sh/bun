@@ -68,12 +68,29 @@ impl<'a, T: PathCharCwd> PathScratch<'a, T> {
         }
     }
 
+    /// [`Self::new`], but a pooled scratch is its whole tier. [`Self::ends`] carves it.
+    #[inline]
+    fn new_tier(pool: &'a mut RarePathBuf, len: usize) -> Self {
+        if !T::IS_U16 && len <= Self::POOL_MAX {
+            return Self::Pooled(bytemuck::cast_slice_mut::<u8, T>(pool.get(len)));
+        }
+        Self::new(pool, len)
+    }
+
     #[inline]
     fn slice(&mut self) -> &mut [T] {
         match self {
             Self::Pooled(s) => s,
             Self::Spill(b) => &mut b[..],
         }
+    }
+
+    /// The first `front` elements and the last `back` elements. A tier ends on a page boundary.
+    #[inline]
+    fn ends(&mut self, front: usize, back: usize) -> (&mut [T], &mut [T]) {
+        let all = self.slice();
+        let (rest, last) = all.split_at_mut(all.len() - back);
+        (&mut rest[..front], last)
     }
 }
 
@@ -693,9 +710,9 @@ fn relative_js_t<T: PathCharCwd>(
 ) -> JsResult<JSValue> {
     // ×3 for buf/from_buf/tmp_buf carved from one slab.
     let buf_len = relative_buf_len(from, to);
-    let mut scratch = PathScratch::<T>::new(pool, buf_len * 3);
-    let (buf, rest) = scratch.slice().split_at_mut(buf_len);
-    let (from_buf, tmp_buf) = rest.split_at_mut(buf_len);
+    let mut scratch = PathScratch::<T>::new_tier(pool, buf_len * 3);
+    let (rest, tmp_buf) = scratch.ends(buf_len * 2, buf_len);
+    let (buf, from_buf) = rest.split_at_mut(buf_len);
     if is_windows {
         relative_windows_js_t(global_object, from, to, buf, from_buf, tmp_buf)
     } else {
@@ -777,8 +794,8 @@ fn resolve_js_t<T: PathCharCwd>(
 ) -> JsResult<JSValue> {
     // Carve buf/buf2 from one pooled slab.
     let buf_len = resolve_buf_len(is_windows, paths);
-    let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
+    let mut scratch = PathScratch::<T>::new_tier(pool, buf_len * 2);
+    let (buf, buf2) = scratch.ends(buf_len, buf_len);
     if is_windows {
         resolve_windows_js_t(global_object, paths, buf, buf2)
     } else {
@@ -867,8 +884,8 @@ fn to_namespaced_path_js_t<T: PathCharCwd>(
     }
     // ×2 for buf/buf2.
     let buf_len = to_namespaced_path_buf_len(path);
-    let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
+    let mut scratch = PathScratch::<T>::new_tier(pool, buf_len * 2);
+    let (buf, buf2) = scratch.ends(buf_len, buf_len);
     to_namespaced_path_windows_js_t(global_object, path, buf, buf2)
 }
 

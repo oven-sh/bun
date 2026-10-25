@@ -2060,6 +2060,18 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     Ok(&buf[to_start.min(to_end)..to_end])
 }
 
+/// Writes `piece` and `separator` directly before `buf[start..]` and returns the new start.
+#[inline]
+fn prepend_t<T: PathCharCwd>(buf: &mut [T], start: usize, piece: &[T], separator: T) -> usize {
+    let end = start - 1;
+    let start = end - piece.len();
+    buf[end] = separator;
+    if !piece.is_empty() {
+        buf[start..end].copy_from_slice(piece);
+    }
+    start
+}
+
 /// Based on Node v21.6.1 path.posix.resolve:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1095
 pub fn resolve_posix_t<'a, T: PathCharCwd>(
@@ -2070,10 +2082,9 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
     // Backed by expandable buf2 because resolvedPath may be long.
     // We use buf2 here because resolvePosixT is called by other methods and using
     // buf2 here avoids stepping on others' toes.
-    let mut resolved_path_len: usize = 0;
+    // resolvedPath is `buf2[resolved_path_start..]`.
+    let mut resolved_path_start: usize = buf2.len();
     let mut resolved_absolute: bool = false;
-
-    let mut buf_size: usize;
 
     let mut i_i64: i64 = if paths.is_empty() {
         -1
@@ -2103,27 +2114,19 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
 
         // Translated from the following JS code:
         //   resolvedPath = `${path}/${resolvedPath}`;
-        if resolved_path_len > 0 {
-            let buf_offset = len + 1;
-            // Move all bytes to the right by path.len + 1 for the separator.
-            // Use copy_within because resolvedPath and buf2 overlap.
-            buf2.copy_within(0..resolved_path_len, buf_offset);
-        }
-        buf_size = len;
-        memmove(&mut buf2[0..buf_size], path);
-        buf_size += 1;
-        buf2[len] = T::from_u8(CHAR_FORWARD_SLASH);
-        buf_size += resolved_path_len;
-
-        buf2[buf_size] = T::default();
-        resolved_path_len = buf_size;
+        resolved_path_start = prepend_t(
+            buf2,
+            resolved_path_start,
+            path,
+            T::from_u8(CHAR_FORWARD_SLASH),
+        );
         resolved_absolute = path[0] == T::from_u8(CHAR_FORWARD_SLASH);
 
         i_i64 -= 1;
     }
 
     // Exit early for empty path.
-    if resolved_path_len == 0 {
+    if resolved_path_start == buf2.len() {
         return Ok(l::<T>(CHAR_STR_DOT));
     }
 
@@ -2131,26 +2134,23 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
     // handle relative paths to be safe (might happen when process.cwd() fails)
 
     // Normalize the path
-    let normalized_len = normalize_string_t::<T, { Platform::Posix }>(
-        &buf2[0..resolved_path_len],
+    // An absolute path is written behind its leading slash.
+    let root_len = usize::from(resolved_absolute);
+    let resolved_path_len = normalize_string_t::<T, { Platform::Posix }>(
+        &buf2[resolved_path_start..],
         !resolved_absolute,
         T::from_u8(CHAR_FORWARD_SLASH),
-        buf,
+        &mut buf[root_len..],
     );
     // resolvedPath is now backed by buf.
-    resolved_path_len = normalized_len;
 
     // Translated from the following JS code:
     //   if (resolvedAbsolute) {
     //     return `/${resolvedPath}`;
     //   }
     if resolved_absolute {
-        buf_size = resolved_path_len + 1;
-        // Use copy_within because resolvedPath and buf overlap.
-        buf.copy_within(0..resolved_path_len, 1);
         buf[0] = T::from_u8(CHAR_FORWARD_SLASH);
-        buf[buf_size] = T::default();
-        return Ok(&buf[0..buf_size]);
+        return Ok(&buf[0..resolved_path_len + 1]);
     }
     // Translated from the following JS code:
     //   return resolvedPath.length > 0 ? resolvedPath : '.';
@@ -2178,7 +2178,8 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     // Backed by expandable buf2 because resolvedTail may be long.
     // We use buf2 here because resolvePosixT is called by other methods and using
     // buf2 here avoids stepping on others' toes.
-    let mut resolved_tail_len: usize = 0;
+    // resolvedTail is `buf2[resolved_tail_start..]`.
+    let mut resolved_tail_start: usize = buf2.len();
     let mut resolved_absolute: bool = false;
 
     let mut buf_offset: usize;
@@ -2191,17 +2192,14 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
         i64::try_from(paths.len() - 1).expect("int cast")
     };
     while i_i64 > -2 {
-        // Backed by expandable buf2, to not conflict with buf2 backed resolvedTail,
-        // because path may be long.
-        // Borrowck: `path` may alias paths[], tmp_buf, or buf2,
-        // and the loop body subsequently mutates tmp_buf/buf2 while still indexing
+        // Borrowck: `path` may alias paths[] or tmp_buf, which the loop body writes while indexing
         // `path`. Store as raw (ptr, len) and materialize short-lived slices at use
         // sites; all overlapping moves go through `ptr::copy` (memmove
         // semantics).
         let mut path_ptr: *const T;
         let mut path_len: usize;
         macro_rules! path { () => {
-            // SAFETY: (path_ptr, path_len) describes a live region inside paths[]/tmp_buf/buf2;
+            // SAFETY: (path_ptr, path_len) describes a live region inside paths[]/tmp_buf;
             // borrows are short-lived (read-only) and never held across mutation of the same range.
             unsafe { core::slice::from_raw_parts(path_ptr, path_len) }
         }; }
@@ -2259,7 +2257,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                         break 'brk &fast_key[..];
                     }
                     buf_size = 1;
-                    // Reuse buf2 for the env key because it's used to get the path.
+                    // Reuse the front of buf2 for the env key. resolvedTail is at the end of buf2.
                     buf2[0] = T::from_u8(b'=');
                     buf_offset = buf_size;
                     buf_size += resolved_device_len;
@@ -2286,8 +2284,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                 // TODO: Enable test once spawnResult.stdout works on Windows.
                 // test/js/node/path/resolve.test.js
                 if let Some(r) = bun_sys::windows::getenv_w(key_w) {
-                    // Store in tmp_buf AFTER the device: buf2[0..resolved_tail_len]
-                    // already backs the accumulated tail, so writing there clobbers it.
+                    // Store in tmp_buf AFTER the device, which is tmp_buf[0..resolved_device_len].
                     if T::IS_U16 {
                         buf_size = r.len().min(tmp_buf.len() - resolved_device_len);
                         // T == u16 when IS_U16; bytemuck checks the layout at runtime.
@@ -2502,26 +2499,17 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
         } else {
             // Translated from the following JS code:
             //   resolvedTail = `${StringPrototypeSlice(path, rootEnd)}\\${resolvedTail}`;
-            let slice_len = len - root_end;
-            if resolved_tail_len > 0 {
-                buf_offset = slice_len + 1;
-                // Move all bytes to the right by path slice.len + 1 for the separator
-                // Use copy_within because resolvedTail and buf2 overlap.
-                buf2.copy_within(0..resolved_tail_len, buf_offset);
-            }
-            buf_size = slice_len;
-            if slice_len > 0 {
-                // SAFETY: path has len elements and buf2 has room for the tail.
-                unsafe {
-                    core::ptr::copy(path_ptr.add(root_end), buf2.as_mut_ptr(), slice_len);
-                }
-            }
-            buf_offset = buf_size;
-            buf_size += 1;
-            buf2[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-            buf_size += resolved_tail_len;
-
-            resolved_tail_len = buf_size;
+            // SAFETY: path has len elements. Read only the elements from root_end on, and not
+            // through `path!()`: when path is in tmp_buf, the elements before root_end were
+            // written again as resolvedDevice.
+            let path_tail =
+                unsafe { core::slice::from_raw_parts(path_ptr.add(root_end), len - root_end) };
+            resolved_tail_start = prepend_t(
+                buf2,
+                resolved_tail_start,
+                path_tail,
+                T::from_u8(CHAR_BACKWARD_SLASH),
+            );
             resolved_absolute = _is_absolute;
 
             if _is_absolute && resolved_device_len > 0 {
@@ -2532,7 +2520,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     }
 
     // Exit early for empty path.
-    if resolved_tail_len == 0 {
+    if resolved_tail_start == buf2.len() {
         return Ok(l::<T>(CHAR_STR_DOT));
     }
 
@@ -2540,28 +2528,29 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     // but handle relative paths to be safe (can happen if reading the cwd fails).
 
     // Normalize the tail path
-    let normalized_len = normalize_string_t::<T, { Platform::Windows }>(
-        &buf2[0..resolved_tail_len],
+    // An absolute path is written behind its device and separator.
+    buf_offset = if resolved_absolute {
+        resolved_device_len + 1
+    } else {
+        0
+    };
+    let resolved_tail_len = normalize_string_t::<T, { Platform::Windows }>(
+        &buf2[resolved_tail_start..],
         !resolved_absolute,
         T::from_u8(CHAR_BACKWARD_SLASH),
-        buf,
+        &mut buf[buf_offset..],
     );
     // resolvedTail is now backed by buf.
-    resolved_tail_len = normalized_len;
 
     // Translated from the following JS code:
     //   resolvedAbsolute ? `${resolvedDevice}\\${resolvedTail}`
     if resolved_absolute {
-        buf_offset = resolved_device_len + 1;
         buf_size = buf_offset + resolved_tail_len;
-        // Use copy_within because resolvedTail and buf overlap.
-        buf.copy_within(0..resolved_tail_len, buf_offset);
         buf[resolved_device_len] = T::from_u8(CHAR_BACKWARD_SLASH);
         memmove(
             &mut buf[0..resolved_device_len],
             &tmp_buf[0..resolved_device_len],
         );
-        buf[buf_size] = T::default();
         return Ok(&buf[0..buf_size]);
     }
     // Translated from the following JS code:

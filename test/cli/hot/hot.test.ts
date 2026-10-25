@@ -9,6 +9,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
@@ -954,6 +955,16 @@ function follow(stream: ReadableStream<Uint8Array>) {
   };
 }
 
+/** Resolves to the text of a `--hot` process's stderr once a reload fails, which prints "error: ...", or at EOF. */
+async function failedReload(stderr: ReadableStream<Uint8Array>) {
+  let text = "";
+  for await (const chunk of stderr) {
+    text += Buffer.from(chunk).toString();
+    if (/^error: .*\n/m.test(text)) break;
+  }
+  return text;
+}
+
 /** Windows only. Suspends the process while `change` runs, so all of its file events are queued on resume. */
 function whileSuspended(pid: number, change: () => void) {
   const kernel32 = dlopen("kernel32.dll", {
@@ -1125,6 +1136,88 @@ it.skipIf(isWindows)("survives a directory event for a folder whose cached listi
 
   writeFileSync(join(cwd, "main.ts"), `console.log("reloaded");\nprocess.exit(0);\n`);
   expect(await stdout("reloaded")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// `bun install` links a workspace package like this: node_modules/lib is a link to ../packages/lib.
+const importedFolders = [
+  ["through a link in node_modules", "lib"],
+  ["by a relative path", "./packages/lib"],
+] as const;
+
+it.each(importedFolders)("reloads when a file of a folder imported %s is renamed, then replaced", async (_, lib) => {
+  const main = `import { a } from "${lib}/a";\nimport { c } from "${lib}/c";\nconsole.log("loaded", a, c);\n`;
+  const exportsItsName = `export const c = import.meta.file;`;
+  using dir = tempDir("hot-folder-rename", {
+    "main.ts": main,
+    "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+    "packages/lib/a.ts": `export const a = "a.ts";`,
+    "packages/lib/c.ts": exportsItsName,
+  });
+  const root = String(dir);
+  const folder = join(root, "packages", "lib");
+  mkdirSync(join(root, "node_modules"));
+  // A junction on Windows, where a symlink to a folder needs a privilege. A junction takes an absolute target.
+  symlinkSync(isWindows ? folder : join("..", "packages", "lib"), join(root, "node_modules", "lib"), "junction");
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const failed = failedReload(runner.stderr);
+  const loaded = (output: string) => Promise.race([stdout(output), failed]);
+  expect(await loaded("loaded a.ts c.ts\n")).toBe(true);
+
+  renameSync(join(folder, "c.ts"), join(folder, "c.tsx"));
+  expect(await loaded("loaded a.ts c.tsx\n")).toBe(true);
+
+  // Linux reports a removed file only to the watch of its folder, as a name to find in the folder's cached listing.
+  writeFileSync(join(folder, "c.js"), exportsItsName);
+  unlinkSync(join(folder, "c.tsx"));
+  expect(await loaded("loaded a.ts c.js\n")).toBe(true);
+
+  // writeFileSync truncates after it writes, so a shorter file could be read with the rest of the old one.
+  writeFileSync(join(root, "main.ts"), main + `process.exit(0);\n`);
+  expect(await failed).not.toContain("error: ");
+  expect(await runner.exited).toBe(0);
+});
+
+it.each(importedFolders)("imports a file created in a folder imported %s", async (_, lib) => {
+  const main = (names: string[]) =>
+    names.map(name => `import { ${name} } from "${lib}/${name}";\n`).join("") +
+    `console.log("loaded", ${names.join(", ")});\n`;
+  using dir = tempDir("hot-folder-create", {
+    "main.ts": main(["a"]),
+    "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+    "packages/lib/a.ts": `export const a = "a.ts";`,
+  });
+  const root = String(dir);
+  const folder = join(root, "packages", "lib");
+  mkdirSync(join(root, "node_modules"));
+  symlinkSync(isWindows ? folder : join("..", "packages", "lib"), join(root, "node_modules", "lib"), "junction");
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const failed = failedReload(runner.stderr);
+  const loaded = (output: string) => Promise.race([stdout(output), failed]);
+  expect(await loaded("loaded a.ts\n")).toBe(true);
+
+  writeFileSync(join(folder, "d.ts"), `export const d = "d.ts";`);
+  writeFileSync(join(root, "main.ts"), main(["a", "d"]));
+  expect(await loaded("loaded a.ts d.ts\n")).toBe(true);
+
+  writeFileSync(join(root, "main.ts"), main(["a", "d"]) + `process.exit(0);\n`);
+  expect(await failed).not.toContain("error: ");
   expect(await runner.exited).toBe(0);
 });
 

@@ -116,6 +116,27 @@ describe("shared struct", () => {
     expect(c.n).toBe(1);
   });
 
+  test("overwriting a field with strings and nested structs stays correct", () => {
+    shared struct Node {
+      value;
+    }
+    const parent = new Node();
+    for (let i = 0; i < 2000; i++) {
+      parent.value = `string ${i}`;
+      expect(parent.value).toBe(`string ${i}`);
+      const child = new Node();
+      child.value = i;
+      parent.value = child;
+      expect(parent.value.value).toBe(i);
+    }
+    // Strings compare by content, not by which allocation holds them.
+    parent.value = "same";
+    expect(Atomics.compareExchange(parent, "value", "sa" + "me", "next")).toBe("same");
+    expect(parent.value).toBe("next");
+    expect(Atomics.compareExchange(parent, "value", "other", "never")).toBe("next");
+    expect(parent.value).toBe("next");
+  });
+
   test("Atomics still works on typed arrays", () => {
     const ia = new Int32Array(new SharedArrayBuffer(8));
     Atomics.store(ia, 0, 7);

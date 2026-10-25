@@ -1769,6 +1769,17 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
+    /// `check_expression` for the callee or an argument of a call. `getResolvedSignature` returns
+    /// `links.resolvedSignature`, so a second check of a call checks neither of them again.
+    fn check_operand_of_call(&mut self, file: FileId, e: ExprId, is_resolved_before: bool) {
+        if !is_resolved_before || self.rechecked_exprs.contains_key(&(file, e)) {
+            return self.check_expression(file, e);
+        }
+        let outer = self.suspend_recheck();
+        self.check_expression(file, e);
+        self.end_recheck(outer);
+    }
+
     /// The part of `check_expression` after `checkExpressionEx`. `ty` is the type of `e`.
     #[inline(never)]
     fn check_subexpressions(&mut self, file: FileId, e: ExprId, ty: TypeId) {
@@ -1792,7 +1803,9 @@ impl<'s> Checker<'_, 's> {
                     self.serialization_level = serialization_level.max(MAX_SERIALIZATION_LEVEL);
                 }
                 let callee = hir[c].callee;
-                self.check_expression(file, callee);
+                let is_resolved_before =
+                    self.is_rechecking() && self.cached_resolved_signature(file, e).is_some();
+                self.check_operand_of_call(file, callee, is_resolved_before);
                 if callee.is_none() || !matches!(hir[callee].kind, ExprKind::Super) {
                     self.check_type_nodes(file, hir.list_at(hir[c].type_args));
                 }
@@ -1810,7 +1823,7 @@ impl<'s> Checker<'_, 's> {
                     }
                 } else {
                     for x in hir.ids(hir[c].args) {
-                        self.check_expression(file, x);
+                        self.check_operand_of_call(file, x, is_resolved_before);
                     }
                 }
                 self.serialization_level = serialization_level;

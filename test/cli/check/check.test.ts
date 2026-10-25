@@ -10643,6 +10643,39 @@ export function f(input: { v: string } | undefined) {
       expect(exitCode).toBe(0);
     });
 
+    // The return type is inferred first. That checks `isS(x)` in the argument, and the walk ends with an incomplete type
+    // and stores no type for the `for` loop. tsc checks the argument again, but not the operands of the resolved call
+    // in it. So the loop gets its type from the `x` inside of the `finally` block, which sees every way in.
+    test("the second check of an argument doesn't check the operands of a resolved call in it", async () => {
+      using dir = project({
+        "a.ts": `declare const c: boolean;
+declare const k: string;
+declare function assertS(x: unknown): asserts x is string;
+declare function isS(x: unknown): x is string;
+declare function next<T>(x: T): T | undefined;
+export function f(q: { v: number } | undefined) {
+  let x: string | number | undefined = 0;
+  try {
+    try { if (c) return; } finally { assertS(x); }
+    while (c && 1);
+  } finally {
+    switch (k) { case "s": for (;;) { if (c) break; } if (isS(x)) { } }
+  }
+  switch (typeof q) {
+    case "string":
+      q = next(isS(x) ? q : q);
+      x.toFixed();
+      x = q.v;
+  }
+  return x;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe("a.ts(18,11): error TS18048: 'q' is possibly 'undefined'.");
+      expect(exitCode).toBe(1);
+    });
+
     test("what can be reached after a `finally` block depends on how the block was entered", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

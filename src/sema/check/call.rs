@@ -302,7 +302,9 @@ impl<'p, 's> Checker<'p, 's> {
         let outer_errors = self.call_resolution_errors.take();
         let is_re_resolved = std::mem::replace(&mut self.is_call_re_resolved, is_in_progress);
         self.last_call_outcome = CallOutcome::Chosen;
+        self.resolutions_with_unused_result += u32::from(is_assigned);
         let resolved = self.resolve_signature(file, call);
+        self.resolutions_with_unused_result -= u32::from(is_assigned);
         let outcome = std::mem::replace(&mut self.last_call_outcome, CallOutcome::Chosen);
         self.is_call_re_resolved = is_re_resolved;
         let reported = std::mem::replace(&mut self.call_resolution_errors, outer_errors);

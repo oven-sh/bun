@@ -16723,6 +16723,125 @@ export const x91 = get(() => ({ extra: x50 }), c => c.get("user"));
       expect(exitCode).toBe(1);
     });
 
+    // The members of the argument of `router` are checked twice, and the second time `query` has the signature that a
+    // resolution inside its own resolution assigned. So nothing asks for the return type of `x82Go` again after `x20`
+    // became `any`, and `v` keeps the error type of a parameter that's referenced in its own annotation.
+    test("nothing is evaluated again inside its own evaluation for a call that has its signature", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          ...JSON.parse(tsconfig),
+          files: ["index.ts", "m0.ts", "types.ts", "m6.ts", "base.ts", "m3.ts", "rpc.ts", "m7.ts", "m2.ts", "m8.ts"],
+        }),
+        "base.ts": `import { init } from "./rpc"; import type { Context } from "./rpc";
+export const t = init<Context>();
+export const pub = t.procedure;
+export const authed = pub.use(({ }) => { });
+export const admin = authed.use(async ({ }) => ({ }));
+`,
+        "index.ts": `export { x80, x81, x82Go } from "./m8";
+export { x70, x71 } from "./m7";
+export * from "./m0";
+export * from "./types";
+export * from "./m2";
+export * from "./m3";
+export * from "./m6";
+`,
+        "m0.ts": `import { v, hooks, router, flag, Router  } from "./rpc";
+import { x70   } from "./index";
+class X01Reg<T extends Record<string, Router<any>>> { }
+export const x01 = new X01Reg({ }).add("b", x70);
+`,
+        "m2.ts": `
+
+import { x01 } from "./index";
+import { x81 } from "./index";
+import { x30, x31 } from "./index";
+export const x20 = { a: x01.itemsQ.a, b: x81, c: x30(x31) }
+export type X20Key = keyof typeof x20;
+export function x20Get<K extends X20Key>(k: K) { }
+`,
+        "m3.ts": `import { v, hooks, router, flag, Router } from "./rpc";
+import type { Parser, Def } from "./rpc";export function x30<P extends Parser<any>>(p: P) { }
+export const x31 = v.bool();
+`,
+        "m6.ts": `
+import type { T53 } from "./index";export function x62(v: T53) { if (typeof v === "object" && v && "a" in v) return v.a; }
+`,
+        "m7.ts": `import { v, hooks, router, flag, Router } from "./rpc"; import { t, pub, authed, admin } from "./base";
+
+import { x81, x82Go } from "./index";
+import { x20, x20Get } from "./m2";
+
+export const x70 = router({
+  remove: admin.use(({ }) => ({ extra: x82Go })).query(({ input }) => input.id),
+  list: admin.input(v.obj({ })).mutation(({ input }) => input.id),
+  sub: x20.b,
+});
+
+export function x71() { }
+`,
+        "m8.ts": ` import { t, pub, authed, admin } from "./base";
+import { x62 } from "./index";
+export function x80(n: number) { }
+export const x81 = t.router({ });
+   
+export function x82Go() { const v = x62(null!); return v; }
+`,
+        "rpc.ts": `export interface Parser<T> { }
+export type Out<P> = P extends Parser<infer T> ? T : never;
+export type Flat<T> = { [K in keyof T]: T[K]  }
+export class Builder<Ctx extends object, In = void> {  use<E extends object>(f: (o: { }) => E | Promise<E>) { return new Builder<Flat<Omit<Ctx, keyof E> & E>, In>(this.parser, [...this.steps, f]); }
+  query<R>(f: (o: { ctx: Ctx;}) => R) { }
+}
+export type Def = { }
+export class Router<D extends Def> { }
+export type Caller<D> = { }
+export function router<D extends Def>(d: D) { }
+export function init<Ctx extends object>() { return { procedure: new Builder<Ctx>(), router, merge: <A extends Def, B extends Def>(a: Router<A>, b: Router<B>) => a.merge(b) }}
+export type Inputs<R> = R extends Router<infer D> ? { } : never;
+export type Outputs<R> = R extends Router<infer D> ? { } : never;export function hooks<D extends Def>(r: Router<D>) { }
+
+export const v = { }
+export interface User { } export interface Post { }
+export interface Context { }
+export declare const flag: boolean;
+`,
+        "types.ts": `import type { X20Key } from "./index";
+
+export type T53 = X20Key | X20Key;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        "base.ts(4,31): error TS2345: Argument of type '({}: {}) => void' is not assignable to parameter of type '(o: {}) => object | Promise<object>'.",
+        "  Type 'void' is not assignable to type 'object | Promise<object>'.",
+        "index.ts(2,10): error TS2303: Circular definition of import alias 'x70'.",
+        "m0.ts(4,14): error TS7022: 'x01' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m0.ts(4,31): error TS2554: Expected 0 arguments, but got 1.",
+        "m0.ts(4,36): error TS2339: Property 'add' does not exist on type 'X01Reg<Record<string, Router<any>>>'.",
+        "m2.ts(6,14): error TS7022: 'x20' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m2.ts(7,13): error TS2456: Type alias 'X20Key' circularly references itself.",
+        "m3.ts(3,22): error TS2339: Property 'bool' does not exist on type '{}'.",
+        "m6.ts(2,52): error TS7023: 'x62' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+        "m6.ts(2,56): error TS2502: 'v' is referenced directly or indirectly in its own type annotation.",
+        "m7.ts(6,14): error TS7022: 'x70' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m7.ts(7,56): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+        "m7.ts(7,59): error TS2339: Property 'input' does not exist on type '{ ctx: Flat<Omit<Flat<Omit<Flat<Omit<Context, never> & object>, never>>, \"extra\"> & { extra: () => any; }>; }'.",
+        "m7.ts(7,59): error TS7022: 'input' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m7.ts(8,15): error TS2339: Property 'input' does not exist on type 'Builder<Flat<Omit<Flat<Omit<Context, never> & object>, never>>, void>'.",
+        "m7.ts(8,23): error TS2339: Property 'obj' does not exist on type '{}'.",
+        "m7.ts(8,45): error TS7031: Binding element 'input' implicitly has an 'any' type.",
+        "m8.ts(6,17): error TS7023: 'x82Go' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+        "m8.ts(6,33): error TS7022: 'v' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "rpc.ts(4,164): error TS2554: Expected 0 arguments, but got 2.",
+        "rpc.ts(4,169): error TS2339: Property 'parser' does not exist on type 'Builder<Ctx, In>'.",
+        "rpc.ts(4,186): error TS2339: Property 'steps' does not exist on type 'Builder<Ctx, In>'.",
+        "rpc.ts(11,165): error TS2339: Property 'merge' does not exist on type 'Router<A>'.",
+        "types.ts(3,13): error TS2456: Type alias 'T53' circularly references itself.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // The second check of `x32().x.nest` resolves the return type of `x32`, `cache` and the return type of `make` again,
     // because `x20` has its type by then. So the annotation of `cache` is evaluated inside its own evaluation. This time
     // `make` gets as far as `x42`, which leads through `x12` to the second resolution of the return type of `x32`.

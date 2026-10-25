@@ -1094,6 +1094,7 @@ impl<'s> Program<'s> {
             last_call_outcome: call::CallOutcome::Chosen,
             call_resolution_stack: Vec::new(),
             signatures_resolved_within: Vec::new(),
+            resolutions_with_unused_result: 0,
             restrictive_instantiations: Default::default(),
             unresolved_renamed_params: Default::default(),
             pinned_restrictive_instantiations: Default::default(),
@@ -2166,6 +2167,9 @@ pub struct Checker<'p, 's> {
     /// nested in the outermost one that returns, if `Program::calls` doesn't accept that result.
     /// `getResolvedSignature` returns it instead of the result of each enclosing resolution.
     signatures_resolved_within: Vec<(FileId, ExprId, call::ResolvedCall)>,
+    /// The number of resolutions in progress of a call that has an entry there. `getResolvedSignature` would return that
+    /// signature and check nothing.
+    resolutions_with_unused_result: u32,
     /// `cachedTypes[CachedTypeKindRestrictiveInstantiation][t] == t`: the conditional types that
     /// `getRestrictiveInstantiation` has returned.
     restrictive_instantiations: crate::util::FxHashSet<TypeId>,
@@ -2979,6 +2983,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// Those before it on the path are resolved again, because `findResolutionCycleStartIndex` stops there. The type of a
     /// parameter whose name is a pattern is a resolution in TypeScript, which finds the cycle.
     fn ends_at_resolution_with_result(&self, i: usize) -> bool {
+        // tsc doesn't get here at all, so the visit ends as early as it can.
+        if self.resolutions_with_unused_result != 0 {
+            return matches!(self.stack[i], Query::Expr(..))
+                && (self.frames.get(self.first_resolution_from(i)))
+                    .is_some_and(|frame| frame.has_result);
+        }
         matches!(self.stack[i], Query::Expr(..) | Query::TypeNode(..))
             && self.frames[i..].iter().any(|frame| frame.has_result)
     }

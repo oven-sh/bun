@@ -2690,6 +2690,352 @@ describe("received field values (RFC 9113 §8.2.1, §8.3)", () => {
   });
 });
 
+describe("header blocks that are not sent", () => {
+  const onStream1 = (frames: Frame[]) => frames.filter(f => f.streamId === 1).map(f => [f.type, f.flags, f.length]);
+  const endsStream1 = (f: Frame) =>
+    f.streamId === 1 &&
+    (f.type === FrameType.RST_STREAM ||
+      ((f.type === FrameType.DATA || f.type === FrameType.HEADERS) && (f.flags & 0x1) !== 0));
+
+  // "%" takes 6 bits in the Huffman code, so 300 of them stay over the limit of 200.
+  const tooLong = { "x-long": Buffer.alloc(300, "%").toString() };
+  const overTheLimit: Record<string, (stream: http2.ServerHttp2Stream) => void> = {
+    "respond()": stream => stream.respond({ ":status": 200, ...tooLong }),
+    "respond() with a body behind it": stream => {
+      stream.respond({ ":status": 200, ...tooLong });
+      stream.end("body");
+    },
+    "respond() with a body and trailers behind it": stream => {
+      stream.respond({ ":status": 200, ...tooLong }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => stream.sendTrailers({ a: "b" }));
+      stream.end("body");
+    },
+    "respond() with a body and empty trailers behind it": stream => {
+      stream.respond({ ":status": 200, ...tooLong }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => stream.sendTrailers({}));
+      stream.end("body");
+    },
+    "respond() that waits for trailers nobody sends": stream => {
+      stream.respond({ ":status": 200, ...tooLong }, { waitForTrailers: true });
+      stream.end("body");
+    },
+    "writeHead()": stream => {
+      const res = new http2.Http2ServerResponse(stream);
+      res.writeHead(200, tooLong);
+      res.end("body");
+    },
+    "additionalHeaders()": stream => stream.additionalHeaders({ ":status": 103, ...tooLong }),
+  };
+  const overTheLimitCases = Object.keys(overTheLimit).flatMap(name => [
+    [name, "GET"],
+    [name, "POST"],
+  ]) as [string, "GET" | "POST"][];
+
+  const goawayCodes = (frames: Frame[]) => [
+    ...new Set(frames.filter(f => f.type === FrameType.GOAWAY).map(goawayErrorCode)),
+  ];
+
+  test.each(overTheLimitCases)("%s over maxSendHeaderBlockLength resets the stream of a %s", async (name, method) => {
+    const srv = http2.createServer({ maxSendHeaderBlockLength: 200 });
+    const events: unknown[] = [];
+    const closed = new Promise<http2.ServerHttp2Stream>(resolve => {
+      srv.on("stream", stream => {
+        stream.on("frameError", (...args) => events.push(["frameError", ...args]));
+        stream.on("error", (err: NodeJS.ErrnoException) => events.push(["error", err.code, err.message]));
+        stream.on("close", () => resolve(stream));
+        overTheLimit[name](stream);
+      });
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      // The body of the POST never comes.
+      c.sendFrame(FrameType.HEADERS, method === "GET" ? 0x5 : 0x4, 1, requestHeaderBlock(method));
+      const rst = await c.waitFor(endsStream1);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.FRAME_SIZE_ERROR);
+      expect((await closed).rstCode).toBe(ErrorCode.FRAME_SIZE_ERROR);
+      await c.waitClosed();
+      expect(onStream1(c.frames)).toEqual([[FrameType.RST_STREAM, 0, 4]]);
+      expect(goawayCodes(c.frames)).toEqual([ErrorCode.NO_ERROR]);
+      expect(events).toEqual([
+        ["frameError", FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR, 1],
+        ["error", "ERR_HTTP2_STREAM_ERROR", "Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR"],
+      ]);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test("no frame follows the reset of a stream", async () => {
+    const srv = http2.createServer({ maxSendHeaderBlockLength: 200 });
+    srv.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.additionalHeaders({ ":status": 103, ...tooLong });
+      stream.respond({ ":status": 200 });
+      stream.end("body");
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(endsStream1);
+      await c.waitClosed();
+      // node resets the stream a turn of the event loop later, by when the response has closed it.
+      const types = onStream1(c.frames).map(([type]) => type);
+      expect(types.slice(0, -1)).not.toContain(FrameType.RST_STREAM);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test("the session that dropped a response closes once its other streams are done", async () => {
+    const srv = http2.createServer({ maxSendHeaderBlockLength: 200 });
+    let first: http2.ServerHttp2Stream;
+    srv.on("stream", stream => {
+      stream.on("error", () => {});
+      if (stream.id === 1) {
+        first = stream;
+        return;
+      }
+      stream.respond({ ":status": 200, ...tooLong });
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
+      await c.waitForGoaway();
+      expect(c.closed).toBe(false);
+      first!.respond({ ":status": 200 });
+      first!.end("body");
+      await c.waitClosed();
+      expect(onStream1(c.frames).map(([type, flags]) => [type, flags])).toEqual([
+        [FrameType.HEADERS, 0x4],
+        [FrameType.DATA, 0x1],
+      ]);
+      expect(goawayCodes(c.frames)).toEqual([ErrorCode.NO_ERROR]);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test("request() over maxSendHeaderBlockLength sends no stream frame and closes the session", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, { maxSendHeaderBlockLength: 200 });
+    try {
+      const sessionClosed = once(client, "close");
+      const events: unknown[] = [];
+      const req = client.request(tooLong);
+      req.on("frameError", (...args) => events.push(["frameError", ...args]));
+      req.on("error", (err: NodeJS.ErrnoException) => events.push(["error", err.code, err.message]));
+      const { promise: closed, resolve } = Promise.withResolvers<void>();
+      req.on("close", resolve);
+      await raw.waitFor(f => f.type === FrameType.SETTINGS);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      await closed;
+      expect(events).toEqual([
+        ["frameError", FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR, 1],
+        ["error", "ERR_HTTP2_STREAM_ERROR", "Stream closed with error code NGHTTP2_REFUSED_STREAM"],
+      ]);
+      await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      await sessionClosed;
+      expect(raw.frames.filter(f => f.streamId !== 0)).toEqual([]);
+      expect(goawayCodes(raw.frames)).toEqual([ErrorCode.NO_ERROR]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("request() throws for a connection-specific header and sends nothing", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    try {
+      const sessionErrors: unknown[] = [];
+      client.on("error", err => sessionErrors.push(err));
+      const thrownBy = (headers: http2.OutgoingHttpHeaders | string[]) => {
+        try {
+          client.request(headers as http2.OutgoingHttpHeaders).on("error", () => {});
+        } catch (err: any) {
+          return [err.name, err.code, err.message];
+        }
+      };
+      const forbidden = (name: string) => [
+        "TypeError",
+        "ERR_HTTP2_INVALID_CONNECTION_HEADERS",
+        `HTTP/1 Connection specific headers are forbidden: "${name}"`,
+      ];
+      // Once while the session is connecting and once on the open session.
+      for (let round = 0; round < 2; round++) {
+        for (const name of [
+          "connection",
+          "upgrade",
+          "http2-settings",
+          "keep-alive",
+          "proxy-connection",
+          "transfer-encoding",
+        ]) {
+          expect(thrownBy({ [name]: "close" })).toEqual(forbidden(name));
+        }
+        expect(thrownBy({ Connection: "close" })).toEqual(forbidden("connection"));
+        expect(thrownBy({ connection: ["close"] })).toEqual(forbidden("connection"));
+        expect(thrownBy(["connection", "close"])).toEqual(forbidden("connection"));
+        for (const te of ["gzip", "", "Trailers", "trailers, gzip", ["gzip"], ["trailers", "gzip"]]) {
+          expect(thrownBy({ te })).toEqual(forbidden("te"));
+        }
+        expect(thrownBy(["te", "gzip"])).toEqual(forbidden("te"));
+        expect(thrownBy(["te", "trailers", "te", "gzip"])).toEqual(forbidden("te"));
+        expect(thrownBy({ ":method": "CONNECT", "connection": "close" })?.[1]).toBe("ERR_HTTP2_CONNECT_AUTHORITY");
+        if (round === 0) await once(client, "connect");
+      }
+
+      // None of them took a stream id, and what node lets through still goes out.
+      for (const headers of [
+        { te: "trailers" },
+        { TE: ["trailers"] },
+        ["te", "trailers"],
+        ["te", "trailers", "te", "trailers"],
+        { connection: [] },
+      ]) {
+        expect(thrownBy(headers)).toBeUndefined();
+      }
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 9);
+      expect(raw.frames.filter(f => f.type === FrameType.HEADERS).map(f => f.streamId)).toEqual([1, 3, 5, 7, 9]);
+      expect(sessionErrors).toEqual([]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // What node counts as no field at all: a key that holds undefined or an empty array, and "".
+  const noFields: Record<string, http2.OutgoingHttpHeaders> = {
+    "{}": {},
+    "{ x: [] }": { x: [] },
+    "{ x: [], y: [] }": { x: [], y: [] },
+    "{ x: undefined }": { x: undefined },
+    "{ x: undefined, y: [] }": { x: undefined, y: [] },
+    "{ ':status': undefined }": { ":status": undefined },
+    "{ 'not a token': undefined }": { "not a token": undefined },
+    "{ ':status': [] }": { ":status": [] },
+    "{ 'not a token': [] }": { "not a token": [] },
+    "{ '': 'v' }": { "": "v" },
+  };
+  const sendTrailers = (stream: http2.Http2Stream, trailers: http2.OutgoingHttpHeaders) => {
+    stream.on("error", () => {});
+    return new Promise<unknown>(resolve => {
+      stream.on("wantTrailers", () => {
+        try {
+          stream.sendTrailers(trailers);
+          resolve(undefined);
+        } catch (err: any) {
+          stream.close();
+          resolve(err.code);
+        }
+      });
+    });
+  };
+
+  test.each(Object.keys(noFields))(
+    "a server's sendTrailers(%s) ends the stream with an empty DATA frame",
+    async name => {
+      const srv = http2.createServer();
+      const thrown = new Promise(resolve => {
+        srv.on("stream", stream => {
+          stream.respond({ ":status": 200 }, { waitForTrailers: true });
+          resolve(sendTrailers(stream, noFields[name]));
+          stream.end("body");
+        });
+      });
+      srv.listen(0, "127.0.0.1");
+      await once(srv, "listening");
+      const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        c.sendSettingsAck();
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+        await c.waitFor(endsStream1);
+        expect(await thrown).toBeUndefined();
+        expect(onStream1(c.frames).slice(1)).toEqual([
+          [FrameType.DATA, 0, 4],
+          [FrameType.DATA, 0x1, 0],
+        ]);
+      } finally {
+        c.destroy();
+        srv.close();
+      }
+    },
+  );
+
+  test.each(Object.keys(noFields))(
+    "a client's sendTrailers(%s) ends the stream with an empty DATA frame",
+    async name => {
+      const raw = await RawH2Server.listen();
+      const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+      try {
+        client.on("error", () => {});
+        const req = client.request({ ":method": "POST" }, { waitForTrailers: true });
+        const thrown = sendTrailers(req, noFields[name]);
+        req.end("body");
+        await raw.waitFor(endsStream1);
+        expect(await thrown).toBeUndefined();
+        expect(onStream1(raw.frames).slice(1)).toEqual([
+          [FrameType.DATA, 0, 4],
+          [FrameType.DATA, 0x1, 0],
+        ]);
+      } finally {
+        client.destroy();
+        raw.close();
+      }
+    },
+  );
+
+  test("sendTrailers() leaves out the keys that hold undefined or an empty array", async () => {
+    const srv = http2.createServer();
+    const trailers = { "a": undefined, "b": "1", "c": [], "d": ["2", "3"], "content-type": [], "Content-Type": "e" };
+    const thrown = new Promise(resolve => {
+      srv.on("stream", stream => {
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        resolve(sendTrailers(stream, trailers));
+        stream.end("body");
+      });
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(srv.address() as net.AddressInfo).port}`);
+    try {
+      const received = once(client.request({ ":path": "/" }), "trailers");
+      expect(await thrown).toBeUndefined();
+      expect(Object.entries((await received)[0])).toEqual([
+        ["b", "1"],
+        ["d", "2, 3"],
+        ["content-type", "e"],
+      ]);
+    } finally {
+      client.destroy();
+      srv.close();
+    }
+  });
+});
+
 describe("DATA on a closed stream (RFC 9113 §5.1)", () => {
   const resets = (frames: Frame[]) =>
     frames.filter(f => f.type === FrameType.RST_STREAM).map(f => [f.streamId, f.payload.readUInt32BE(0)]);

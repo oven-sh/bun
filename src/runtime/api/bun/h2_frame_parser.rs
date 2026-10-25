@@ -5400,7 +5400,14 @@ impl H2FrameParser {
         let stream = self.stream_from_js(cx.global(), stream_id.to_js())?;
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
+        self.end_without_trailers(stream);
+        Ok(())
+    }
 
+    fn end_without_trailers(&self, stream: &mut Stream) {
+        if stream.state == StreamState::CLOSED {
+            return;
+        }
         stream.wait_for_trailers = false;
         let _ = self.send_data(
             stream,
@@ -5412,7 +5419,6 @@ impl H2FrameParser {
                 defer_write_callback: false,
             },
         );
-        Ok(())
     }
 
     /// node's strictSingleValueFields option (default true): when disabled, duplicate
@@ -5549,6 +5555,9 @@ impl H2FrameParser {
         // The header/sensitive-object getters and value coercions below can run user JS
         // while `stream` is borrowed.
         let mut stream = self.enter_stream_dispatch(stream_ptr);
+        if stream.state == StreamState::CLOSED {
+            return Ok(());
+        }
 
         let Some(headers_obj) = headers.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
@@ -5581,7 +5590,12 @@ impl H2FrameParser {
 
         // Encode trailer headers using HPACK
         while let Some((header_name, js_value)) = iter.next()? {
-            if header_name.length() == 0 {
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L844
+            if header_name.length() == 0 || js_value.is_undefined() {
+                continue;
+            }
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L782-L785
+            if js_value.js_type().is_array() && js_value.get_length(global_object)? == 0 {
                 continue;
             }
 
@@ -5599,7 +5613,7 @@ impl H2FrameParser {
                 return Err(global_object.throw_value(exception));
             }
 
-            if js_value.is_undefined_or_null() {
+            if js_value.is_null() {
                 let exception = global_object.to_type_error(
                     bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
                     format_args!("Invalid value for header \"{}\"", BStr::new(name)),
@@ -5760,6 +5774,11 @@ impl H2FrameParser {
                     return Ok(());
                 }
             }
+        }
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L2463-L2472
+        if encoded_headers.is_empty() {
+            self.end_without_trailers(&mut stream);
+            return Ok(());
         }
         let encoded_data = encoded_headers.as_slice();
         let encoded_size = encoded_data.len();
@@ -6441,6 +6460,13 @@ impl H2FrameParser {
         if stream_id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
         }
+        // Before anything is encoded: a block that is not sent must stay out of the HPACK table.
+        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
+            if unsafe { (*stream).state } == StreamState::CLOSED {
+                return Ok(JSValue::js_number(stream_id as f64));
+            }
+        }
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
@@ -7024,9 +7050,6 @@ impl H2FrameParser {
         if self.max_send_header_block_length.get() != 0
             && encoded_size > self.max_send_header_block_length.get() as usize
         {
-            stream.state = StreamState::CLOSED;
-            stream.rst_code = ErrorCode::REFUSED_STREAM.0;
-
             self.dispatch_with_2_extra(
                 js::on_frame_error_get_cached,
                 stream.get_identifier(),
@@ -7034,6 +7057,16 @@ impl H2FrameParser {
                 JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
             );
 
+            // The peer waits on a server's stream. A client's request never reached the peer,
+            // so there is nothing to reset: nghttp2 closes it as refused.
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L678
+            if self.is_server.get() {
+                self.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
+                return Ok(JSValue::js_number(stream_id as f64));
+            }
+
+            stream.state = StreamState::CLOSED;
+            stream.rst_code = ErrorCode::REFUSED_STREAM.0;
             self.dispatch_with_extra(
                 js::on_stream_error_get_cached,
                 stream.get_identifier(),

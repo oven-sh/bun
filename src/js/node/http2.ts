@@ -3829,14 +3829,26 @@ const kForbiddenConnectionHeaders = new SafeSet([
   "proxy-connection",
   "transfer-encoding",
 ]);
+// A key that holds undefined or an empty array is no field, and a one-element array is its element.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L777-L818
+function assertNotConnectionHeader(name, value): void {
+  if (value === undefined) return;
+  let isArray = $isArray(value);
+  if (isArray) {
+    if (value.length === 0) return;
+    if (value.length === 1) {
+      value = value[0];
+      isArray = false;
+    }
+  }
+  const lower = name.toLowerCase();
+  if (kForbiddenConnectionHeaders.has(lower) || (lower === "te" && (isArray || String(value) !== "trailers"))) {
+    throw $ERR_HTTP2_INVALID_CONNECTION_HEADERS(`HTTP/1 Connection specific headers are forbidden: "${lower}"`);
+  }
+}
 function assertNoConnectionHeaders(headers): void {
   for (const name in headers) {
-    const lower = name.toLowerCase();
-    if (kForbiddenConnectionHeaders.has(lower) || (lower === "te" && headers[name] !== "trailers")) {
-      const err = new TypeError(`HTTP/1 Connection specific headers are forbidden: "${lower}"`);
-      err.code = "ERR_HTTP2_INVALID_CONNECTION_HEADERS";
-      throw err;
-    }
+    assertNotConnectionHeader(name, headers[name]);
   }
 }
 
@@ -4088,7 +4100,7 @@ class ServerHttp2Session extends Http2Session {
     frameError(self: ServerHttp2Session, stream: ServerHttp2Stream, frameType: number, errorCode: number) {
       if (!self || typeof stream !== "object") return;
       // Emit the frameError event with the frame type and error code
-      process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
+      process.nextTick(emitFrameErrorEventNT, self, stream, frameType, errorCode);
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
@@ -5111,7 +5123,7 @@ class ClientHttp2Session extends Http2Session {
       (self: ClientHttp2Session, stream: ClientHttp2Stream, frameType: number, errorCode: number) => {
         if (!self || typeof stream !== "object") return;
         // Emit the frameError event with the frame type and error code
-        process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
+        process.nextTick(emitFrameErrorEventNT, self, stream, frameType, errorCode);
       },
     ),
     aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) => {
@@ -6167,6 +6179,15 @@ class ClientHttp2Session extends Http2Session {
         }
       }
 
+      if (rawHeadersList === null) {
+        assertNoConnectionHeaders(headers);
+      } else {
+        // node looks at each pair, and `headers` holds a repeated name as one array.
+        for (let i = 0; i < rawHeadersList.length; i += 2) {
+          assertNotConnectionHeader(String(rawHeadersList[i]), rawHeadersList[i + 1]);
+        }
+      }
+
       // node injects defaulted pseudo-headers in this order: :method, :authority, :scheme,
       // :path - the object's insertion order is the wire order.
       let method = headers[":method"];
@@ -6672,8 +6693,14 @@ function onErrorSecureServerSession(err, socket) {
   }
 }
 
-function emitFrameErrorEventNT(stream, frameType, errorCode) {
-  stream.emit("frameError", frameType, errorCode);
+function emitFrameErrorEventNT(session, stream, frameType, errorCode) {
+  stream.emit("frameError", frameType, errorCode, stream.id);
+  // The native side has closed the stream by now.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L677-L680
+  setImmediate(closeSession, session);
+}
+function closeSession(session) {
+  session.close();
 }
 class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase) {
   declare keepAliveTimeout: number | undefined;

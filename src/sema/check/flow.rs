@@ -5119,7 +5119,9 @@ impl<'p, 's> Checker<'p, 's> {
                 Flow::Assign {
                     target: FlowTarget::Expr(e),
                     ..
-                } => u32::from(bound.get_assignment_target_kind(hir, e) == AssignmentKind::Compound),
+                } => {
+                    u32::from(bound.get_assignment_target_kind(hir, e) == AssignmentKind::Compound)
+                }
                 _ => 1,
             };
             (highest[i], lowest[i], lengths[i]) = (i as u32, i as u32, 1);
@@ -7831,7 +7833,9 @@ impl<'p, 's> Checker<'p, 's> {
         let last_about = |first: u32| {
             let after = (runs.assignments).partition_point(|&it| it <= (root, first, flow.0));
             match runs.assignments[..after].last() {
-                Some(&(its_root, its_first, node)) if (its_root, its_first) == (root, first) => node,
+                Some(&(its_root, its_first, node)) if (its_root, its_first) == (root, first) => {
+                    node
+                }
                 _ => 0,
             }
         };

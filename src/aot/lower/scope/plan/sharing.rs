@@ -144,7 +144,11 @@ fn find_time_of_last_store(
     if stores.iter().any(|store| store.2 != owner) {
         return None;
     }
-    let is_own_store = |target: ExprId| stores.binary_search_by_key(&target, |store| store.1).is_ok();
+    let is_own_store = |target: ExprId| {
+        stores
+            .binary_search_by_key(&target, |store| store.1)
+            .is_ok()
+    };
     let is_stable = context.is_stable_ignoring(symbol, is_own_store);
     is_stable.then_some(time)
 }

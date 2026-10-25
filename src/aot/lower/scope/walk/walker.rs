@@ -28,7 +28,8 @@ pub(in crate::lower::scope) fn walk_file(
     sort_unique(&mut walk.function_references);
     sort_unique(&mut walk.eval_uses);
     sort_unique(&mut walk.stored_slots);
-    walk.symbol_stores.sort_unstable_by_key(|store| (store.0, store.1));
+    walk.symbol_stores
+        .sort_unstable_by_key(|store| (store.0, store.1));
     sort_unique(&mut walk.function_of_field);
     sort_unique(&mut walk.slot_initializations);
     for walked_loop in &mut walk.loops {

@@ -1202,15 +1202,8 @@ class Worker extends EventEmitter {
       this.#stdin.destroy();
     }
     this.#stdinPort?.close();
-    // node delivers everything the worker posted before it exited ahead of
-    // 'exit' (kOnExit drains the public port), then closes the port.
-    {
-      let entry;
-      while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
-        this.emit("message", entry.message);
-      }
-      this.#publicPort.close();
-    }
+    // Nothing is queued here: the port is started before the thread, so it delivered what the worker posted ahead of this task.
+    this.#publicPort.close();
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }

@@ -734,6 +734,21 @@ describe("stdio is flushed when the worker exits synchronously", () => {
       expect(await runHeld(["-e", parent])).toEqual({ stdout: lines("W") + "[exit 0]\n", stderr: "", exitCode: 0 });
     });
 
+    // As above for the public port: 1,100 messages are more than one drain task delivers.
+    test.concurrent.skipIf(!isLinux)("more parentPort messages than one port drain delivers all arrive", async () => {
+      const workerSource =
+        'for (let i = 0; i < 1100; i++) require("node:worker_threads").parentPort.postMessage(i);\nprocess.exit(0);';
+      expect(await runHeld([fixture, workerSource, "messages"])).toEqual({
+        stdout:
+          JSON.stringify({
+            events: [...Array.from({ length: 1100 }, (_, i) => `message ${i} live`), "exit 0"],
+            terminated: "not called",
+          }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test.concurrent.skipIf(!isLinux)(
       "terminate() from a 'message' listener settles after the worker's own exit",
       async () => {

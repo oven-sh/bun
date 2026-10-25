@@ -649,94 +649,104 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         j
     }
 
+    /// Records the `const` leaves of a destructured macro result. Returns the
+    /// result without the properties and items that `binding` cannot read.
+    ///
+    /// A narrowed object or array is a new node. The node of `expr` can have
+    /// another reader: a macro can return one object at two places, and a
+    /// pattern can bind one key two times.
     pub(crate) fn visit_binding_and_expr_for_macro(
         &mut self,
         binding: Binding,
         expr: Expr,
         kind: LocalKind,
         has_default: bool,
-    ) {
-        match binding.data {
-            BData::BObject(bound_object) => {
-                let bound_object = bound_object.get();
-                if let ExprData::EObject(mut object) = expr.data {
-                    if object.was_originally_macro {
-                        for property in bound_object.properties() {
-                            if property.flags.contains(flags::Property::IsSpread) {
-                                return;
-                            }
-                        }
-                        let mut end: u32 = 0;
-                        for property in bound_object.properties() {
-                            if let Some(name) = property.key.as_string_literal(self.arena) {
-                                if let Some(query) = object.as_property(name) {
-                                    match query.expr.data {
-                                        ExprData::EObject(_) | ExprData::EArray(_) => {
-                                            self.visit_binding_and_expr_for_macro(
-                                                property.value,
-                                                query.expr,
-                                                kind,
-                                                property.default_value.is_some(),
-                                            );
-                                        }
-                                        _ => {
-                                            if self.options.features.inlining {
-                                                if let BData::BIdentifier(id) = property.value.data
-                                                {
-                                                    self.admit_const_value(
-                                                        id.r#ref,
-                                                        kind,
-                                                        property.default_value.is_some(),
-                                                        query.expr,
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                    let i = query.i as usize;
-                                    if i >= end as usize {
-                                        object.properties.slice_mut().swap(i, end as usize);
-                                        end += 1;
-                                    }
-                                }
-                            }
-                        }
-                        object.properties.truncate(end as usize);
+    ) -> Expr {
+        match (binding.data, expr.data) {
+            (BData::BObject(bound), ExprData::EObject(object)) if object.was_originally_macro => {
+                let bound = bound.get();
+                // A rest element, or a key that is not one flat string, can read any property.
+                for property in bound.properties() {
+                    if property.flags.contains(flags::Property::IsSpread)
+                        || !matches!(property.key.data, ExprData::EString(key) if key.next.is_none())
+                    {
+                        return expr;
                     }
                 }
-            }
-            BData::BArray(bound_array) => {
-                let bound_array = bound_array.get();
-                if let ExprData::EArray(mut array) = expr.data {
-                    if array.was_originally_macro && !bound_array.has_spread {
-                        let bound_items = bound_array.items();
-                        let trunc_n = array.items.len().min(bound_items.len());
-                        array.items.truncate(trunc_n);
-                        let n = array.items.len_u32() as usize;
-                        for (item, child_expr) in bound_items[..n]
-                            .iter()
-                            .zip(array.items.slice_mut().iter_mut())
-                        {
-                            if matches!(item.binding.data, BData::BMissing(_)) {
-                                *child_expr = self.new_expr(E::Missing {}, expr.loc);
-                                continue;
-                            }
-                            self.visit_binding_and_expr_for_macro(
-                                item.binding,
-                                *child_expr,
-                                kind,
-                                item.default_value.is_some(),
-                            );
+                let mut kept = G::PropertyList::init_capacity(bound.properties().len());
+                let mut kept_from: BumpVec<'a, u32> = BumpVec::new_in(self.arena);
+                for property in bound.properties() {
+                    let Some(name) = property.key.as_string_literal(self.arena) else {
+                        continue;
+                    };
+                    let Some(query) = object.as_property(name) else {
+                        continue;
+                    };
+                    let value = self.visit_binding_and_expr_for_macro(
+                        property.value,
+                        query.expr,
+                        kind,
+                        property.default_value.is_some(),
+                    );
+                    match kept_from.iter().position(|&from| from == query.i) {
+                        // The pattern binds this key again. Keep the whole value.
+                        Some(at) => kept[at].value = Some(query.expr),
+                        None => {
+                            let mut copy =
+                                object.properties.slice()[query.i as usize].shallow_clone();
+                            copy.value = Some(value);
+                            kept_from.push(query.i);
+                            kept.push(copy);
                         }
                     }
                 }
+                self.new_expr(
+                    E::Object {
+                        properties: kept,
+                        is_single_line: object.is_single_line,
+                        was_originally_macro: true,
+                        close_brace_loc: object.close_brace_loc,
+                        ..Default::default()
+                    },
+                    expr.loc,
+                )
             }
-            BData::BIdentifier(id) => {
+            (BData::BArray(bound), ExprData::EArray(array))
+                if array.was_originally_macro && !bound.has_spread =>
+            {
+                let bound_items = bound.get().items();
+                let n = array.items.len().min(bound_items.len());
+                let mut items = ExprNodeList::init_capacity(n);
+                for (item, child) in bound_items[..n].iter().zip(&array.items.slice()[..n]) {
+                    items.push(if matches!(item.binding.data, BData::BMissing(_)) {
+                        self.new_expr(E::Missing {}, expr.loc)
+                    } else {
+                        self.visit_binding_and_expr_for_macro(
+                            item.binding,
+                            *child,
+                            kind,
+                            item.default_value.is_some(),
+                        )
+                    });
+                }
+                self.new_expr(
+                    E::Array {
+                        items,
+                        is_single_line: array.is_single_line,
+                        was_originally_macro: true,
+                        close_bracket_loc: array.close_bracket_loc,
+                        ..Default::default()
+                    },
+                    expr.loc,
+                )
+            }
+            (BData::BIdentifier(id), _) => {
                 if self.options.features.inlining {
                     self.admit_const_value(id.r#ref, kind, has_default, expr);
                 }
+                expr
             }
-            BData::BMissing(_) => {}
+            _ => expr,
         }
     }
 
@@ -786,7 +796,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BData::BObject(_) | BData::BArray(_) => {
                 if Self::ALLOW_MACROS {
                     if could_be_macro && let Some(value) = decl.value {
-                        self.visit_binding_and_expr_for_macro(decl.binding, value, kind, false);
+                        decl.value = Some(self.visit_binding_and_expr_for_macro(
+                            decl.binding,
+                            value,
+                            kind,
+                            false,
+                        ));
                     }
                 }
             }

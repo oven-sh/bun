@@ -280,6 +280,12 @@ describe("a macro result that is bound to a name", () => {
     [`let { a, b } = obj(); a = 99; export default [a, b];`, [99, { c: 2 }]],
     [`const [u = 5, n = 6] = undefs(); export default [u, n];`, [5, null]],
     [`const { a = 10, b = 20, c = 30 } = holes(); export default [a, b, c];`, [10, 4, null]],
+    [`const key = () => "b"; const { a, [key()]: computed } = obj(); export default [a, computed];`, [1, { c: 2 }]],
+    [`const { ["x" + "x"]: joined, x } = keys(); export default [joined, x];`, [1, 5]],
+    [`const { 0: zero, x } = keys(); export default [zero, x];`, ["zero", 5]],
+    [`const { b: { c }, b } = obj(); export default [c, b];`, [2, { c: 2 }]],
+    [`const { p: { a }, q } = twice(); export default [a, q];`, [1, { a: 1, b: 2 }]],
+    [`const { list: [first], list } = obj(); export default [first, list];`, [1, [1, 2]]],
     [`const n = num(); const s = hello(); export default [n + n, s + s.length];`, [42, "Hello5"]],
     [`export default [obj().b.c, arr()[2][0], arr().length, hello().length, num() + num()];`, [2, 3, 3, 5, 42]],
   ];

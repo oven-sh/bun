@@ -1619,7 +1619,8 @@ function emitUpgrade(socket, req, complete) {
     // Node's socketOnEnd stays on the socket until the body has ended.
     socket.on("end", socket.end);
     stream = socket[kUpgradeStream] = new UpgradeStream(socket, req);
-    req.once("close", onUpgradeRequestClose);
+    // The stream destroyer (a `for await` that is left early) clears req.socket.
+    req.once("close", onUpgradeRequestClose.bind(socket));
   }
   try {
     if (!server.emit("upgrade", req, stream, kEmptyBuffer)) socket.destroy();
@@ -1628,10 +1629,7 @@ function emitUpgrade(socket, req, complete) {
   }
 }
 function onUpgradeRequestClose(this: any) {
-  const socket = this.socket;
-  if (socket == null) return;
-  socket.removeListener("end", socket.end);
-  socket[kUpgradeStream]?.requestBodyCompleted();
+  this[kUpgradeStream]?.requestBodyCompleted();
 }
 const { kTimeout } = require("internal/timers");
 // Scratch options object for the builtin ServerResponse (see the dispatcher).
@@ -2362,6 +2360,7 @@ function onConnectionClosed(this: any, left) {
   socket[kHandle] = undefined;
   if (left !== undefined) {
     // Not closed: the body of an accepted Upgrade request has ended, and the connection is the socket's from here on.
+    socket.removeListener("end", socket.end);
     const req = socket[kUpgradeRequest];
     if (req !== undefined) {
       socket[kUpgradeRequest] = undefined;

@@ -141,18 +141,20 @@ describe("an Upgrade request with a body", () => {
   describe.each(["tcp", "unix"] as const)("over %s", door => {
     const head = "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 8\r\n\r\n";
 
-    // The 'upgrade' listener only reads. Resolves with the connected client and the stream that the listener got.
-    async function upgrade(firstWrite: string) {
+    // The 'upgrade' listener only reads, after `letGo` of the request. Resolves with the connected client and the stream that the listener got.
+    async function upgrade(firstWrite: string, letGo?: (req: http.IncomingMessage) => Promise<void> | void) {
       const events: string[] = [];
       const dir = tempDir("upgrade-body", {});
       const server = http.createServer();
       const upgraded = Promise.withResolvers<Duplex>();
-      server.on("upgrade", (req, stream) => {
+      server.on("upgrade", async (req, stream) => {
         for (const event of ["end", "finish", "error", "close"]) {
           req.socket.on(event, () => events.push(`socket ${event}`));
           stream.on(event, () => events.push(`stream ${event}`));
         }
-        stream.resume();
+        req.on("error", () => {});
+        await letGo?.(req);
+        stream.on("data", chunk => events.push(`stream data ${chunk}`));
         upgraded.resolve(stream);
       });
       await once(
@@ -205,5 +207,44 @@ describe("an Upgrade request with a body", () => {
         expect(events.slice(0, 2)).toEqual(["socket end", "stream end"]);
       },
     );
+
+    const earlyWays: [string, (req: http.IncomingMessage) => Promise<void> | void][] = [
+      [
+        "leaves `for await (const chunk of req)` early",
+        async req => {
+          for await (const _ of req) break;
+        },
+      ],
+      ["calls req.resume() and forgets the request", req => void req.resume()],
+    ];
+    describe.skipIf(isWindows && door === "unix").each(earlyWays)("a listener that %s", (_, letGo) => {
+      test("gets what follows the body, and keeps the socket when the client half-closes", async () => {
+        using connection = await upgrade(head + "half", letGo);
+        const { client, stream, events } = connection;
+        const ended = once(stream, "end");
+        client.end("halftunnel");
+        await ended;
+        stream.end("still open");
+        expect((await client.toArray()).join("")).toBe("still open");
+        expect(events.slice(0, 3)).toEqual(["stream data tunnel", "socket end", "stream end"]);
+      });
+
+      test("has its socket ended and closed when the client leaves before the body has ended", async () => {
+        using connection = await upgrade(head + "half", letGo);
+        const { client, server, stream } = connection;
+        const closed = once(stream, "close");
+        client.destroy();
+        await closed;
+        expect(await promisify(server.getConnections).call(server)).toBe(0);
+      });
+    });
+
+    test.skipIf(isWindows && door === "unix")("req.destroy() before the body has ended closes the socket", async () => {
+      using connection = await upgrade(head + "half", req => void req.destroy());
+      const { client, server, stream } = connection;
+      if (!stream.closed) await once(stream, "close");
+      if (!client.closed) await once(client.resume(), "close");
+      expect(await promisify(server.getConnections).call(server)).toBe(0);
+    });
   });
 });

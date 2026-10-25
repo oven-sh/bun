@@ -384,9 +384,7 @@ pub struct DirEntry {
     pub fd: Fd,
     pub(crate) generation: Generation,
     pub data: dir_entry::EntryMap,
-    /// The hash (`bun_alloc::Result::hash`) of every cache key mapped to this
-    /// listing, once a second key is: the key it was read under, then each
-    /// alias. Guarded by `entries_mutex`.
+    /// Hashes of the cache keys mapped to this listing once it has two; guarded by `entries_mutex`.
     #[expect(
         clippy::box_collection,
         reason = "a listing with one key pays one pointer, not an empty `Vec`"
@@ -408,17 +406,15 @@ impl DirEntry {
         }
     }
 
-    /// Hashes of the cache keys mapped to this listing, the key it was read
-    /// under first. Empty while that key is the only one.
-    pub fn owners(&self) -> &[u64] {
+    /// Key hashes mapped to this listing, own key first; empty while it has one key.
+    pub(crate) fn owners(&self) -> &[u64] {
         match &self.owners {
             Some(owners) => owners,
             None => &[],
         }
     }
 
-    /// Records that the key hashing to `alias_key` is mapped to this listing
-    /// too. `own_key` is the hash of the key the listing was read under.
+    /// Adds `alias_key` to the key hashes of this listing, whose own key hashes to `own_key`.
     pub(crate) fn add_alias(&mut self, own_key: u64, alias_key: u64) {
         if alias_key == own_key {
             return;
@@ -429,8 +425,7 @@ impl DirEntry {
         }
     }
 
-    /// Puts `fresh`, a new read of the same directory, in this slot. The keys
-    /// mapped to the slot stay with it.
+    /// Replaces the listing with `fresh`, a new read of the same directory, and keeps its keys.
     pub(crate) fn refill(&mut self, mut fresh: DirEntry) {
         fresh.owners = self.owners.take();
         *self = fresh;

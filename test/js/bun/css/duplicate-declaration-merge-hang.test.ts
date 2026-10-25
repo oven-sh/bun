@@ -99,27 +99,28 @@ test("deferred merge re-minify keeps per-merge output", () => {
   // The merged-in rule stages dark-mode fallback vars, and its re-minify
   // stages them again (deduplicated into the same entries). The deferred
   // flush must run before the extras are collected, so the dark-mode rule is
-  // attached to this rule and the re-staged entries are neither leaked into
-  // the next rule's extras (.b must not get a dark-mode rule) nor asserted on.
-  // The re-minify must also not emit a second copy of the fallback vars.
-  expect(cssInternals._test(".a{color:red}.a{color-scheme:light dark}.b{color:blue}", "", { chrome: 80 << 16 })).toBe(
+  // attached to this rule. The re-minify must not emit a second copy of the
+  // fallback vars.
+  const merged =
     ".a {\n" +
-      "  color: red;\n" +
-      "  --buncss-light: initial;\n" +
-      "  --buncss-dark: ;\n" +
-      "  color-scheme: light dark;\n" +
-      "}\n" +
-      "\n" +
-      "@media (prefers-color-scheme: dark) {\n" +
-      "  .a {\n" +
-      "    --buncss-light: ;\n" +
-      "    --buncss-dark: initial;\n" +
-      "  }\n" +
-      "}\n" +
-      "\n" +
-      ".b {\n" +
-      "  color: #00f;\n" +
-      "}\n",
+    "  color: red;\n" +
+    "  --buncss-light: initial;\n" +
+    "  --buncss-dark: ;\n" +
+    "  color-scheme: light dark;\n" +
+    "}\n" +
+    "\n" +
+    "@media (prefers-color-scheme: dark) {\n" +
+    "  .a {\n" +
+    "    --buncss-light: ;\n" +
+    "    --buncss-dark: initial;\n" +
+    "  }\n" +
+    "}\n";
+  expect(cssInternals._test(".a{color:red}.a{color-scheme:light dark}", "", { chrome: 80 << 16 })).toBe(merged);
+
+  // The re-staged entries must not leak into the next rule's extras: .b gets
+  // no dark-mode rule.
+  expect(cssInternals._test(".a{color:red}.a{color-scheme:light dark}.b{color:blue}", "", { chrome: 80 << 16 })).toBe(
+    merged + "\n" + ".b {\n" + "  color: #00f;\n" + "}\n",
   );
 
   // A merge run ended by a non-merging style rule still cascades: after the

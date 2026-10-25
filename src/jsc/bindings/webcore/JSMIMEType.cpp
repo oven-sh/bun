@@ -457,7 +457,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMETypeProtoFuncToString, (JSGlobalObject * globalOb
     return JSValue::encode(jsString(vm, builder.toString()));
 }
 
-// Define the properties and functions on the prototype.
+// Define the properties and functions on the prototype
 // DOMAttribute: JSC throws its own TypeError for a receiver that is not a MIMEType and does not call the getter.
 static const HashTableValue JSMIMETypePrototypeValues[] = {
     { "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterType, jsMIMETypeProtoSetterType } },

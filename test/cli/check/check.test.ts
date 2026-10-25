@@ -15731,6 +15731,68 @@ export function f(p0 = {}, [{ name: p1, nested: p2 } = p1]: Args) { if (p1) { ({
       expect(exitCode).toBe(1);
     });
 
+    // The third visit of `g`, from `list()`, is the first to end, and not in a cycle. `getTypeOfAccessors` assigns only if
+    // the symbol has no type yet, so the tuple stays, though the visit around it ends in the cycle and reports TS7023.
+    test("a getter keeps the type of a visit inside a circular visit, with the errors of that visit", async () => {
+      const own =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      const circular =
+        "error TS7023: 'g' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.";
+      using one = project({
+        "a.ts": `declare function wrap<T>(x: T): { v: T };
+declare function pair<A>(a: A): [A];
+declare const flag: boolean;
+function list() { return wrap(holder.g); }
+class C { p = flag ? new C().p : list(); }
+var first = wrap(holder.g).v;
+var holder = { get g() { return pair([first, new C().p]); } };
+export const probe: never = holder.g;
+`,
+      });
+      const { stdout, exitCode } = await check(one);
+      expect(stdout.split("\n")).toEqual([
+        `a.ts(5,11): error TS7022: 'p' implicitly has type 'any' ${own}`,
+        "a.ts(5,30): error TS2729: Property 'p' is used before its initialization.",
+        `a.ts(6,5): error TS7022: 'first' implicitly has type 'any' ${own}`,
+        "a.ts(6,18): error TS2454: Variable 'holder' is used before being assigned.",
+        `a.ts(7,20): ${circular}`,
+        "a.ts(8,14): error TS2322: Type '[any[]]' is not assignable to type 'never'.",
+      ]);
+      expect(exitCode).toBe(1);
+      for (const files of [
+        ["holder.ts", "list.ts"],
+        ["list.ts", "holder.ts"],
+      ]) {
+        using two = project({
+          "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files }),
+          "lib.ts": `export declare class Router<D> { def: D; }
+export declare function merge<A, B>(a: Router<A>, b: Router<B>): Router<A & B>;
+export declare function wrap<T>(x: T): { v: T };
+export declare function pair<A>(a: A): [A];
+export declare const flag: boolean;
+`,
+          "holder.ts": `import { merge, wrap, pair } from "./lib"; import { C } from "./list";
+export var first = wrap(holder.g).v;
+export var holder = { get g() { return pair(merge(first, new C().p)); } };
+`,
+          "list.ts": `import { merge, flag } from "./lib"; import { first, holder } from "./holder";
+export function list() { return merge(holder.g, first); }
+export class C { p = flag ? new C().p : list(); }
+`,
+        });
+        const { stdout, exitCode } = await check(two);
+        expect(stdout.split("\n")).toEqual([
+          `holder.ts(2,12): error TS7022: 'first' implicitly has type 'any' ${own}`,
+          "holder.ts(2,25): error TS2454: Variable 'holder' is used before being assigned.",
+          `holder.ts(3,27): ${circular}`,
+          "list.ts(2,39): error TS2741: Property 'def' is missing in type '[Router<unknown>]' but required in type 'Router<unknown>'.",
+          `list.ts(3,18): error TS7022: 'p' implicitly has type 'any' ${own}`,
+          "list.ts(3,37): error TS2729: Property 'p' is used before its initialization.",
+        ]);
+        expect(exitCode).toBe(1);
+      }
+    });
+
     test("reports TS7022 and TS7023 when `return f()` checks the callee while another resolution is in progress", async () => {
       using dir = project({
         "a.ts": `export function p1() { const a = (x = (b() as any)) => x; function b() { return a(); } }

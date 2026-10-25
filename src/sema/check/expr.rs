@@ -5415,26 +5415,42 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = self.type_of_literal_prop_uncached(file, p);
         let is_final = !(self.frames.last()).is_some_and(|it| it.has_read_members_in_place);
         let left = self.leave(Query::LiteralProp(file, p));
+        // `getTypeOfAccessors`: `if links.resolvedType == nil`. When two visits of an accessor nest, the inner one assigns.
+        let is_accessor = matches!(self.hir(file)[p].kind, PropKind::Getter | PropKind::Setter);
+        let known = (self.p.literal_prop_types.get(&self.task, &(file, p))).filter(|_| is_accessor);
         if self.left_a_cycle {
             let stored = self.cycle_result();
-            (self.p.literal_prop_types).rewrite(&self.task, (file, p), TypeId::ANY, stored);
+            if known.is_none() {
+                (self.p.literal_prop_types).rewrite(&self.task, (file, p), TypeId::ANY, stored);
+            }
             let hir = self.hir(file);
             if let ExprKind::Fn(accessor) = hir[hir[p].value].kind {
                 let owner = Some(Query::LiteralProp(file, p));
                 self.report_circular_return_type(owner, file, accessor);
             }
-            return TypeId::ANY;
+            return known.unwrap_or(TypeId::ANY);
         }
-        // `getTypeOfAccessors`: `if links.resolvedType == nil`. When two visits of an accessor nest, the inner one assigns.
-        if matches!(self.hir(file)[p].kind, PropKind::Getter | PropKind::Setter)
-            && let Some(known) = self.p.literal_prop_types.get(&self.task, &(file, p))
-        {
+        if let Some(known) = known {
             return known;
         }
         match left {
             Ok(_) if !is_final => ty,
             // When two visits of any other `p` nest, the outer one assigns last, as for an expression.
             Ok(stored) => (self.p.literal_prop_types).rewrite(&self.task, (file, p), ty, stored),
+            Err(_)
+                if is_accessor
+                    && self.stack.contains(&Query::LiteralProp(file, p))
+                    && self
+                        .left_frame
+                        .is_some_and(|frame| self.rejected_at < frame.serial)
+                    && !(self.types().object_flags(ty)).contains(ObjectFlags::HAS_UNRESOLVED) =>
+            {
+                let first = Query::LiteralProp(file, p);
+                (self.p.literal_prop_types).insert(&self.task, (file, p), ty, Stored::new());
+                self.note_result(first);
+                self.store_results_below_first_result(first);
+                ty
+            }
             Err(open) => {
                 self.cache_provisionally(Query::LiteralProp(file, p), u64::from(ty.0), open);
                 ty

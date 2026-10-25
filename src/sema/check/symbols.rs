@@ -443,7 +443,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// variables and the return types that were resolved on the way to it, and nothing asks for them again from there.
     /// The same is true of them: their frames only inherited that they're non-cacheable. What was reported on the way
     /// isn't reported again either, so it belongs to `first`, the query of that result.
-    fn store_results_below_first_result(&mut self, first: Query) {
+    pub(super) fn store_results_below_first_result(&mut self, first: Query) {
         let Some(frame) = self.left_frame.take() else {
             return;
         };

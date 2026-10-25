@@ -1,6 +1,6 @@
 import { dns } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, compileFixture, isLinux } from "harness";
+import { bunEnv, bunExe, compileFixture, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 
 // The DNS cache is process-global, so this runs in its own process to get
@@ -51,16 +51,20 @@ const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
 test.skipIf(!isLinux || !cc)(
   "a connection that gives up on a running lookup does not hold up the next one",
   async () => {
-    const shim = compileFixture(join(import.meta.dir, "hold-getaddrinfo-fixture.c"), { flags: ["-ldl"] });
+    const shim = compileFixture(join(import.meta.dir, "hold-getaddrinfo-fixture.c"), { flags: ["-ldl", "-lpthread"] });
+    using dir = tempDir("hold-dns", {});
+    // The shim creates this file as it begins holding the first lookup.
+    const signalFile = join(String(dir), "holding");
     const holdMs = 500;
     const script = `
     using server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") });
     const url = "http://held.test:" + server.port + "/";
-    // Abort the first fetch as soon as its lookup is in flight (the first cache miss).
+    // Abort the first fetch once the shim reports that it holds its lookup.
     const controller = new AbortController();
     const first = fetch(url, { signal: controller.signal }).then(r => r.status, e => e.name);
+    const { existsSync } = require("node:fs");
     const deadline = Date.now() + 5_000;
-    while (Bun.dns.getCacheStats().cacheMisses < 1 && Date.now() < deadline) await Bun.sleep(1);
+    while (!existsSync(process.env.HOLD_DNS_SIGNAL_FILE) && Date.now() < deadline) await Bun.sleep(1);
     controller.abort();
     await first;
     const started = performance.now();
@@ -76,6 +80,7 @@ test.skipIf(!isLinux || !cc)(
         LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,
         HOLD_DNS_NAME: "held.test",
         HOLD_DNS_MS: String(holdMs),
+        HOLD_DNS_SIGNAL_FILE: signalFile,
       },
       stdout: "pipe",
       stderr: "pipe",

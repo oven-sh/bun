@@ -734,6 +734,45 @@ export const d: Q<S<N3>, T<N3>> = [1];
     }
   });
 
+  // `G` has a default, so `discounted` has no contextual signature. The inference compares it with the members of the
+  // union in the constraint, and that asks for its return type while `this` is still the object literal. The task of
+  // `use.ts` gets there first, because `cart.ts` is long. It finds the errors, so the task of `cart.ts` ignores what it
+  // stored under `cart.ts`. If it found the comparison, it would resolve the return type after the call.
+  test("asks for a return type where one checker does, even if another file's task has made the comparison that asks", async () => {
+    using dir = project({
+      "store.ts": `export type Getters<S> = Record<string, ((state: S) => any) | (() => any)>;
+type Values<G> = { readonly [K in keyof G]: G[K] extends (...a: any[]) => infer R ? R : never };
+export declare function defineStore<S = {}, G extends Getters<S> = {}>(o: {
+  state?: () => S;
+  getters?: G & ThisType<S & Values<G>> & Getters<S>;
+}): S & Values<G>;
+`,
+      "cart.ts": `import { defineStore } from "./store";
+${Array.from({ length: 300 }, (_, i) => `export const x${i} = [1, 2].map(v => ({ v, i: ${i} })).length;\n`).join("")}export const cart = defineStore({
+  state: () => ({ prices: [1, 2], coupon: "" }),
+  getters: {
+    total: s => s.prices.length,
+    discounted() { return this.coupon ? this.total * 0.9 : this.total; },
+    text() { return this.discounted.toFixed(2); },
+  },
+});
+`,
+      "use.ts": `import { cart } from "./cart";
+export const text = cart.text;
+`,
+    });
+    // Without the rule, a release build loses the first two errors in 84 % of the runs.
+    const threads = isDebug || isASAN ? [2, 8, 16] : [1, 2, 2, 8, 8, 16, 16];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(
+        `cart.ts(306,32): error TS2339: Property 'coupon' does not exist on type '{ total: (s: { prices: number[]; coupon: string; }) => number; discounted(): number | ((s: { prices: number[]; coupon: string; }) => number); text(): any; }'.
+cart.ts(306,41): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+cart.ts(307,37): error TS2339: Property 'toFixed' does not exist on type '() => number | ((s: { prices: number[]; coupon: string; }) => number)'.`,
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
   // By the variances of `Extract`, `Declared<T>` isn't related to `Indexed<T>`. `U` is invariant, so where TypeScript
   // reports that, it continues and compares the two conditional types structurally. That succeeds and replaces the
   // failure: `run(name)` has no error, and what's checked later finds the two related. The task of `b.ts` gets to the

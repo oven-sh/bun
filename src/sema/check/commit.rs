@@ -63,7 +63,9 @@
 //!   (`Checker::is_left_to_an_earlier_file`). And whether tsc reports an error can depend on the context in which it first
 //!   gets there. So a task ignores what a task of a later file has stored under a file, if the later task found an error
 //!   there and this task would still report it (`View::hides`). A task only moves forward in program order, so it
-//!   never finds such entries of its own. This covers the entries under nodes, not those under records.
+//!   never finds such entries of its own. This covers the entries under nodes. Of those under records, the comparisons
+//!   in the later task's commit aren't stored: one that's found wouldn't ask for the return type of a function of that
+//!   file, so the type would be resolved later and in another context than on one thread.
 //! - **What no check visits is resolved in program order.** tsc resolves what's in a type literal in the type arguments of
 //!   an import type when something needs it, and reports what's wrong there if that's by the end of the file's check. So
 //!   the task of a later file that gets there waits for that check, as for a cycle. The file's own task waits for the
@@ -94,7 +96,7 @@
 //!   error, the success stays in the task that did (`relations_of_this_task`).
 //! - Variances don't wait for a commit either. See `Claims`.
 
-use super::task::{Task, tables_of, tables_written_immediately};
+use super::task::{Task, slot_of, tables_of, tables_written_immediately};
 use super::{Checker, Program, Spare};
 use crate::local::{Log, node_word};
 use crate::program::{FileId, Sym};
@@ -790,6 +792,11 @@ impl<'s> Checker<'_, 's> {
             }
         });
         self.withhold_until_the_file_ends(&mut log, is_between_files);
+        if !self.files_with_errors.is_empty() {
+            cold_path();
+            const RELATIONS: u32 = slot_of("relations");
+            log.record_keys.retain(|&[slot, _]| slot != RELATIONS);
+        }
         let mut committing = p.commits.committing.lock();
         let is_invalid =
             !self.task.is_trusted() && self.task.view().is_some() && p.is_invalid(&self.task);

@@ -9,7 +9,7 @@ use crate::ir::generated::{FunctionFlags, FunctionKind, TypeSiteKind};
 use crate::ir::{DeclaredType, Id, LayoutId, Mapped, PositionFlags, TypeId, TypeTable, ValueId};
 use crate::lower::positions::SiteOrigin;
 use crate::lower::private_names::PrivateHolder;
-use crate::lower::types::has_layout_in_every_value;
+use crate::lower::types::{has_layout_in_every_value, lists_int32};
 use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, expression, function};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -26,8 +26,10 @@ enum Receiver {
     ObjectType(LayoutId),
     // A class of this file. The layout lists the fields that the class itself declares.
     Class(LayoutId),
-    // A class of another file, whose fields have no types in this fragment, or a union of classes and object types.
+    // A class of another file, whose fields have no types in this fragment, or a union of classes.
     Declared,
+    // A union that has an object type among its members.
+    UnionWithObjectType,
     WithoutSlots,
 }
 
@@ -77,6 +79,20 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // The checker narrows only references, but an `int32` member is claimed at every read, whatever the receiver is.
+    fn reads_int32_member(&mut self, access: ExprId) -> bool {
+        let Some((_, key)) = self.hir.member_key(access) else {
+            return false;
+        };
+        if !self.has_constant_key(key) {
+            return false;
+        }
+        match self.queries.expression_type(access) {
+            Ok(ty) => lists_int32(self, ty),
+            Err(_) => false,
+        }
+    }
+
     // The types of the fields of a class are only expected where nobody checked the file of the class.
     fn has_typed_fields(&self, class: ClassRef) -> bool {
         match self.queries.role(class.file) {
@@ -101,13 +117,17 @@ impl FileLowering<'_, '_, '_, '_> {
                 None => Receiver::WithoutSlots,
             },
             ShapeKind::Union(members) => {
+                let mut union = Receiver::Declared;
                 for &member in members {
                     match self.classify_receiver_type(member) {
-                        Receiver::ObjectType(_) | Receiver::Class(_) | Receiver::Declared => {}
+                        Receiver::ObjectType(_) | Receiver::UnionWithObjectType => {
+                            union = Receiver::UnionWithObjectType;
+                        }
+                        Receiver::Class(_) | Receiver::Declared => {}
                         Receiver::WithoutSlots => return Receiver::WithoutSlots,
                     }
                 }
-                Receiver::Declared
+                union
             }
             _ => Receiver::WithoutSlots,
         }
@@ -116,7 +136,9 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_listed_slot(&mut self, receiver: Receiver, key: MemberKey) -> Option<(LayoutId, u32)> {
         let layout = match receiver {
             Receiver::ObjectType(layout) | Receiver::Class(layout) => layout,
-            Receiver::Declared | Receiver::WithoutSlots => return None,
+            Receiver::Declared | Receiver::UnionWithObjectType | Receiver::WithoutSlots => {
+                return None;
+            }
         };
         let name = find_constant_name(self, key)?;
         let key = self.name_key(name);
@@ -146,7 +168,11 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // What is written at a field of a class is the type of its slot, whoever inherits or instantiates the class.
-    fn find_declared_position(&mut self, access: ExprId, fields_have_slots: bool) -> DeclaredType {
+    fn find_declared_position(&mut self, access: ExprId, receiver: Receiver) -> DeclaredType {
+        let fields_have_slots = match receiver {
+            Receiver::Class(_) | Receiver::Declared | Receiver::UnionWithObjectType => true,
+            Receiver::ObjectType(_) | Receiver::WithoutSlots => false,
+        };
         match self.queries.member_access(access) {
             Ok(MemberLookup::Member(member)) => match member.kind {
                 ObjectMemberKind::Method => method_position(),
@@ -156,7 +182,11 @@ impl FileLowering<'_, '_, '_, '_> {
                         .written
                         .written()
                         .or_else(|| member.types.checked.ok());
-                    let position = self.map_position(access, declared);
+                    let mut position = self.map_position(access, declared);
+                    let is_int32 = declared.is_some_and(|declared| lists_int32(self, declared));
+                    if is_int32 && receiver == Receiver::UnionWithObjectType {
+                        position = self.widen_int32(position);
+                    }
                     match member.is_optional {
                         true => self.add_undefined(position),
                         false => position,
@@ -176,8 +206,8 @@ impl FileLowering<'_, '_, '_, '_> {
             debug_assert!(false, "a member is a Dot or an Index expression");
             return DeclaredType::untyped();
         };
-        let (slot, fields_have_slots) = match key {
-            MemberKey::PrivateName(_) => (self.find_private_slot(access), false),
+        let (slot, receiver) = match key {
+            MemberKey::PrivateName(_) => (self.find_private_slot(access), Receiver::WithoutSlots),
             MemberKey::Name(_) | MemberKey::Computed(_) => {
                 let receiver = self.queries.expression_type(object);
                 let receiver = receiver.and_then(|receiver| self.queries.without_nullish(receiver));
@@ -185,25 +215,25 @@ impl FileLowering<'_, '_, '_, '_> {
                     Ok(receiver) => self.classify_receiver_type(receiver),
                     Err(_) => Receiver::WithoutSlots,
                 };
-                let fields_have_slots = match receiver {
-                    Receiver::Class(_) | Receiver::Declared => true,
-                    Receiver::ObjectType(_) | Receiver::WithoutSlots => false,
-                };
-                (self.find_listed_slot(receiver, key), fields_have_slots)
+                (self.find_listed_slot(receiver, key), receiver)
             }
         };
         let Some((layout, field)) = slot else {
-            return self.find_declared_position(access, fields_have_slots);
+            return self.find_declared_position(access, receiver);
         };
         if self.is_method_field(layout, field) {
             return method_position();
         }
         let position = self.field_position(layout, field);
-        // What is an `int32` in the definitions seen so far may be a `number` in one that comes later or lies in another file, so each read claims the `int32` for itself.
         let is_united = self.fragment.layout_keys()[layout.index()].has_united_definitions();
         if !is_united || !position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
             return position;
         }
+        self.widen_int32(position)
+    }
+
+    // What is an `int32` in the object types seen so far may be a `number` in one that comes later or lies in another file, so each read claims the `int32` for itself.
+    fn widen_int32(&mut self, position: DeclaredType) -> DeclaredType {
         let ty = self.fragment.types.union(position.ty, TypeTable::NUMBER);
         let flags = position.flags.without(PositionFlags::IS_INT32_PROMISE);
         DeclaredType::new(Mapped::checked(ty), position.site, flags)
@@ -278,7 +308,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !self.file.is_checked() {
             return value;
         }
-        let reference = self.file.classify_reference(expression);
+        let mut reference = self.file.classify_reference(expression);
+        if reference == Reference::NotAReference && self.file.reads_int32_member(expression) {
+            reference = Reference::Member;
+        }
         // A built-in that the table resolves says more than the type the checker has for it.
         let names_resolved_builtin = match reference {
             Reference::Binding(symbol) => self.file.builtins.of_symbol(symbol).is_some(),
@@ -500,9 +533,12 @@ export function probe(c: C) { return c.x + 1; }
         let main = "/// <reference path=\"./bun-declarations.d.ts\" />
 import type { int32 } from \"bun\";
 interface Point { x: int32; y?: int32 }
+interface Named { x: int32; name: string }
 class Pixel { x: int32 = 0; }
 export function plain(point: Point) { return [point.x, point[\"x\"], point.y]; }
-export function instance(pixel: Pixel) { return pixel.x; }
+export function unnamed(make: () => Point, list: Point[], at: number) { return [make().x, list[at].x, (at ? make() : list[0]).y]; }
+export function either(value: Point | Named, other: Point | Pixel | null) { return [value.x, other?.x]; }
+export function instance(pixel: Pixel, make: () => Pixel) { return [pixel.x, make().x]; }
 ";
         let declarations = "declare module \"bun\" {
   type int32 = number & { readonly \"bun.int32\"?: true };
@@ -510,7 +546,9 @@ export function instance(pixel: Pixel) { return pixel.x; }
 ";
         let files = [("main.ts", main), ("bun-declarations.d.ts", declarations)];
         let int32 = Type::integers(i32::MIN.into(), i32::MAX.into());
-        assert_eq!(narrowed_types_in(&files, "plain"), vec![int32; 3]);
+        assert_eq!(narrowed_types_in(&files, "plain"), vec![int32.clone(); 3]);
+        assert_eq!(narrowed_types_in(&files, "unnamed"), vec![int32.clone(); 3]);
+        assert_eq!(narrowed_types_in(&files, "either"), vec![int32; 2]);
         let narrowed = narrowed_types_in(&files, "instance");
         assert!(narrowed.is_empty(), "{narrowed:?}");
     }

@@ -141,6 +141,9 @@ const readersOfTheConstant: Record<string, number> = {
   "stubs/AOTStubsPropertyExtraProperties.cpp": 1,
   "stubs/AOTStubsStrings.cpp": 1,
 };
+// TODO: AnalysisContext::limit() gives the verifier the larger of the build's value and the constant, so that its analyses do not
+// give up where a build lowers a limit. The build hands the verifier that value, and this line goes out of here.
+readersOfTheConstant["analysis/AOTEscapeAnalysis.cpp"] = 1;
 
 // --aot-limit=All:<n> lowers each limit to no less than its `smallest`. A row whose `smallest` is not 0 is a limit behind which something is not yet right, or the width of a format.
 const smallest: Record<string, number> = {

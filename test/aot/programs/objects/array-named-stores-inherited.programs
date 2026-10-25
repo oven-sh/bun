@@ -2106,7 +2106,7 @@ for (let i = 0; i < 4000; i++) {
 }
 console.log(text);
 //// conversion-of-undefined-or-null-to-an-object-throws.js
-// `bun run` quotes the source in some of these messages, an executable does not (docs/bundler/aot-compatibility.mdx).
+// `bun run` quotes the source in some of these messages, an executable does not (docs/compiler/compatibility.mdx).
 const describe = error => error.name + ": " + error.message.replace(/ \(evaluating '.*'\)$/, "");
 
 for (const run of [

@@ -21,7 +21,7 @@ const bytes = Buffer.alloc(16);
 function write(key) { return bytes.writeBigInt64LE(box[key + hidden], 0) + bytes.writeBigUInt64BE(box[key + hidden], 8) + ":" + bytes.toString("hex"); }
 class Holder { constructor(base) { if (base !== undefined) this.base = base; } }
 for (const f of [create, setPrototype, reflectSetPrototype, reflectGetPrototype, reflectOwnKeys, reflectDescriptor, reflectApply, reflectApplyList, write]) for (const key in values) {
-  // How an executable words the rejection of a proxy by a function of Node is its own (docs/bundler/aot-compatibility.mdx).
+  // How an executable words the rejection of a proxy by a function of Node is its own (docs/compiler/compatibility.mdx).
   if (f !== write || !key.match(/^(proxy|revoked)$/)) lines.push(f.name + " " + key + ": " + attempt(() => f(key)));
 }
 for (const key of ["undefined", "null", "zero", "text", "frozen", "revoked"]) lines.push("reflectSetTarget " + key + ": " + attempt(() => reflectSetTarget(key)));

@@ -30,6 +30,8 @@ const MAX_UNEXPECTED_DIAGNOSTICS_SHOWN: usize = 5;
 const FILTER_VARIABLE: &str = "AOT_IR_FILTER";
 const JOB_COUNT_VARIABLE: &str = "AOT_IR_JOBS";
 const OUTPUT_FOLDER_VARIABLE: &str = "AOT_IR_OUTPUT";
+/// Set where a run that the engine did not verify is a failure, as in CI.
+const ENGINE_IS_REQUIRED_VARIABLE: &str = "AOT_IR_REQUIRES_ENGINE";
 
 // A panic hook has no other way to learn which files are running.
 static RUNNING_FILES: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -151,6 +153,11 @@ fn run_area(area: &str) {
         failed_file_count == 0,
         "{failed_file_count} of {} files failed",
         tests.len()
+    );
+    assert!(
+        skipped.is_empty() || std::env::var_os(ENGINE_IS_REQUIRED_VARIABLE).is_none(),
+        "the engine verified none of {} runs, and {ENGINE_IS_REQUIRED_VARIABLE} is set",
+        skipped.len()
     );
 }
 

@@ -383,7 +383,7 @@ impl CompileTarget {
                     bun_core::err_generic!(
                         "Unsupported target {} in \"bun{}\"\n\
                          To see the supported targets:\n  \
-                         https://bun.com/docs/bundler/executables",
+                         https://bun.com/docs/compiler/executables",
                         bun_fmt::quote(token),
                         bstr::BStr::new(input_),
                     );

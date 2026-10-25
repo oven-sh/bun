@@ -34,7 +34,7 @@ import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { units as partsOfOneTestFile, unitsThatDraw, unitsThatOnlyDraw } from "../test/aot/parts.mts";
+import { drawsShares, units as partsOfOneTestFile, unitsThatOnlyDraw } from "../test/aot/parts.mts";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
   getAbi,
@@ -52,6 +52,7 @@ import {
   tmpdir,
   which,
 } from "./agent.ts";
+import { mustRunSomething, pickDrawnTests, pickTestsWithSomethingFor } from "./aot-tests.ts";
 import {
   escapeCodeBlock,
   escapeHtml,
@@ -358,13 +359,19 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
-    /** What the draws go by in place of the commit: --one-in here, and the shares of programs in test/aot (AOT_SHARE). */
+    /** What the draws go by in place of the commit, as `<revision>` or `<revision>+<number of the share>`: --one-in here, and the shares of programs in test/aot (AOT_SHARE). */
     ["aot-sample"]: {
       type: "string",
       default: undefined,
     },
     /** These are run whatever --one-in draws. */
     ["always-draw"]: {
+      type: "string",
+      multiple: true,
+      default: undefined,
+    },
+    /** One of these fails if it runs no test: each was skipped, or there was none. */
+    ["must-run"]: {
       type: "string",
       multiple: true,
       default: undefined,
@@ -2246,7 +2253,7 @@ async function spawnBunTest(
     env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
   }
 
-  const { ok, error, stdout, crashes, exitCode, signalCode, duration } = await spawnBun(execPath, {
+  let { ok, error, stdout, crashes, exitCode, signalCode, duration } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: opts.cwd,
     // release-asan with debug-assertions on runs every spawned subprocess
@@ -2261,6 +2268,10 @@ async function spawnBunTest(
   });
   let { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
   if (crashes) stdoutPreview += crashes;
+  if (ok && mustRunATest(testPath) && !/^ *[1-9]\d* (?:pass|fail|todo)$/m.test(stripAnsi(stdout))) {
+    ok = false;
+    error = "no test ran: scripts/aot-tests.ts lists the tests that run nothing in this step";
+  }
 
   // If we generated a JUnit file and we're on BuildKite, upload it immediately
   if (junitFilePath && isReallyTest && isBuildkite && cliOptions["junit-upload"]) {
@@ -2527,6 +2538,18 @@ function isTestStrict(path: string): boolean {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
 }
 
+/** Of paths under test/. */
+const kindOfAotTest = {
+  draws: (path: string) => drawsShares(path.replaceAll("\\", "/"), path => readFileSync(join(testsPath, path), "utf8")),
+  onlyDraws: (path: string) => unitsThatOnlyDraw.has(path.replaceAll("\\", "/")),
+};
+
+function mustRunATest(testPath: string): boolean {
+  const mustRun = options["must-run"];
+  const path = testPath.replaceAll("\\", "/").replace(/^test\//, "");
+  return !!mustRun && mustRunSomething({ mustRun, takes: options["aot-takes"] }, path, kindOfAotTest);
+}
+
 /** It has the name of a test file and is none: test/aot/parts.mts. */
 function isPartOfOneTestFile(path: string): boolean {
   return partsOfOneTestFile.includes(path.replaceAll("\\", "/").replace(/^test\//, ""));
@@ -2781,35 +2804,18 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
 
   const aotTakes = options["aot-takes"];
   if (aotTakes) {
-    const spelled = (testPath: string) => testPath.replaceAll("\\", "/");
-    // A test file draws if it calls one of the helpers that do.
-    const draws = (testPath: string) =>
-      isPartOfOneTestFile(testPath)
-        ? unitsThatDraw.has(spelled(testPath))
-        : /\b(generated|programs|programsBuiltWith|variant|joined|inShare|inShareOfList|partInShare)\(/.test(
-            readFileSync(join(cwd, testPath), "utf8"),
-          );
-    const taken = availableTests.filter(testPath =>
-      aotTakes === "drawn" ? draws(testPath) : !unitsThatOnlyDraw.has(spelled(testPath)),
-    );
+    const taken = pickTestsWithSomethingFor(aotTakes, availableTests, kindOfAotTest);
     !isQuiet && console.log("Tests that have something", aotTakes, taken.length, "/", availableTests.length);
     availableTests.splice(0, availableTests.length, ...taken);
   }
 
   const oneIn = parseInt(options["one-in"] ?? "1");
   if (oneIn > 1) {
-    // Every shard draws the same files, because it draws by the path and the commit.
+    // Every shard draws the same files, because it draws by the path and the sample.
     const commit = options["aot-sample"] ?? process.env.BUILDKITE_COMMIT ?? "";
-    const isDrawn = (testPath: string) =>
-      createHash("sha1")
-        .update(`${commit} ${testPath.replaceAll("\\", "/")}`)
-        .digest()
-        .readUInt32LE(0) %
-        oneIn ===
-      0;
-    const alwaysDrawn: string[] = options["always-draw"] ?? [];
-    const drawnTests = availableTests.filter(
-      testPath => isDrawn(testPath) || alwaysDrawn.some(group => testPath.replaceAll("\\", "/").includes(group)),
+    const drawnTests = pickDrawnTests(
+      { oneIn, sample: commit, alwaysDraw: options["always-draw"] ?? [] },
+      availableTests,
     );
     !isQuiet &&
       console.log("Drawing tests: one in", oneIn, "for", commit, drawnTests.length, "/", availableTests.length);

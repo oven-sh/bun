@@ -103,7 +103,7 @@ fn five_variables() {
 
 #[test]
 fn commonjs_variables() {
-    let source = "module; exports; require; __filename; __dirname;";
+    let source = "[module, exports, require, __filename, __dirname].length;";
     with_case(SCRIPT, source, |case| {
         let texts = ["module", "exports", "require", "__filename", "__dirname"];
         for (variable, text) in VARIABLES.into_iter().zip(texts) {

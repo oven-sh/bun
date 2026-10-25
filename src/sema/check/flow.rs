@@ -222,6 +222,38 @@ pub(super) struct FlowMemo {
     exhaustive_states_computing: SmallVec<[usize; 2]>,
     /// `last_assignment_pos`
     last_assignment_positions: std::cell::RefCell<FxHashMap<(FileId, SymbolId), u32>>,
+    runs: FlowRuns,
+    /// See `parent_of_whole_expression`.
+    pub(super) parents_of_long_expressions: FxHashMap<(FileId, Node), Node>,
+}
+
+/// Not in tsgo. The runs of a file's flow graph: assignments, call statements and array mutations,
+/// each the antecedent of the next. Most of them leave a given reference alone. See
+/// `skip_unrelated_nodes`.
+#[derive(Default)]
+struct FlowRuns {
+    file: Option<FileId>,
+    /// Indexed by flow node: its index in `nodes`, or `u32::MAX`.
+    position: Vec<u32>,
+    /// The runs, one after another. Node numbers ascend within a run.
+    nodes: Vec<RunNode>,
+    /// Indexed like `nodes`: the last node at or before this one in its run that can be a call
+    /// that isn't idle, or `u32::MAX`. Calls only become idle, so an entry only moves down.
+    last_busy_call: Vec<u32>,
+    /// For each assignment and declaration: the `root_key` of its target, the target's first
+    /// property as in `TestSubjects::chains`, and the node. Sorted.
+    assignments: Vec<(u32, u32, u32)>,
+    /// The assignments at which a walk resolves the name of a key, in ascending order.
+    computed_key_nodes: Vec<u32>,
+}
+
+#[derive(Copy, Clone)]
+struct RunNode {
+    flow: u32,
+    /// The index of the run's first node.
+    run_start: u32,
+    /// The index of the first shared node at or after this one in the run, or `u32::MAX`.
+    next_shared: u32,
 }
 
 /// `FlowLoopKey`, without the reference.
@@ -447,6 +479,10 @@ struct Walk {
     /// How many back edges of loops are being followed.
     back_edges: u32,
     steps: u32,
+    /// The walk tries to skip once `steps` is past this. See `skip_unrelated_nodes`.
+    next_skip: u32,
+    /// How many steps the walk takes before it tries again, after a try that passed few nodes.
+    steps_between_skips: u32,
     /// The number of nested `getTypeAtFlowNode` invocations that would be in progress.
     depth: u32,
     /// The depth reached `MAX_FLOW_DEPTH` (`flowAnalysisDisabled`), so the result is errorType.
@@ -454,6 +490,10 @@ struct Walk {
 }
 
 const MAX_STEPS: u32 = 2_000_000;
+/// A walk that has taken this many steps starts to skip. See `skip_unrelated_nodes`.
+const LONG_WALK: u32 = 32;
+/// A try to skip costs about as much as this many steps.
+const WORTHWHILE_SKIP: u32 = 8;
 
 /// A key for a name or for `this`, not necessarily unique. 0 for any other root of a reference.
 fn root_key(root: Root) -> u32 {
@@ -587,6 +627,31 @@ impl NarrowingSubjects for CallStatementSubjects<'_> {
     fn add_union(&mut self) {
         self.4 = true;
     }
+}
+
+/// Collects `FlowRuns::assignments` for one node.
+struct AssignmentSubjects<'a> {
+    node: u32,
+    assignments: &'a mut Vec<(u32, u32, u32)>,
+    /// The node concerns the root whatever the reference's first property is.
+    ignores_property: bool,
+    resolves_key: bool,
+}
+
+impl NarrowingSubjects for AssignmentSubjects<'_> {
+    fn add(&mut self, root: u32, first: u32) {
+        if root != 0 {
+            let first = if self.ignores_property { 0 } else { first };
+            self.assignments.push((root, first, self.node));
+        }
+    }
+
+    fn bails_on_computed_key(&mut self, _: ResolvesKey) -> bool {
+        self.resolves_key = true;
+        false
+    }
+
+    fn add_union(&mut self) {}
 }
 
 impl TestSubjects {
@@ -764,6 +829,8 @@ impl Walk {
             reduced: Vec::new(),
             back_edges: 0,
             steps: 0,
+            next_skip: LONG_WALK,
+            steps_between_skips: 0,
             depth: 0,
             too_deep: false,
         }
@@ -5048,6 +5115,11 @@ impl<'p, 's> Checker<'p, 's> {
                             if matches!(hir[owner].kind, StmtKind::ForIn { .. }));
                     u32::from(is_of_for_in)
                 }
+                // Only `x += 1` and `x++` ask for the type at the antecedent.
+                Flow::Assign {
+                    target: FlowTarget::Expr(e),
+                    ..
+                } => u32::from(bound.get_assignment_target_kind(hir, e) == AssignmentKind::Compound),
                 _ => 1,
             };
             (highest[i], lowest[i], lengths[i]) = (i as u32, i as u32, 1);
@@ -6379,6 +6451,20 @@ impl<'p, 's> Checker<'p, 's> {
                 walk.too_deep = true;
                 break TypeId::ERROR;
             }
+            if walk.steps > walk.next_skip
+                && let Some((arrived_at, last_shared)) = self.try_to_skip(walk, flow)
+            {
+                if last_shared.is_some() {
+                    if let Some(known) = walk.shared_flows.get(last_shared) {
+                        incomplete = known.incomplete;
+                        shared_flow = FlowId::NONE;
+                        break known.ty;
+                    }
+                    shared_flow = last_shared;
+                }
+                flow = arrived_at;
+                continue;
+            }
             if bound.is_shared(flow) {
                 if let Some(known) = walk.shared_flows.get(flow) {
                     incomplete = known.incomplete;
@@ -7698,6 +7784,234 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
+    /// Waits twice as long after each try in a row that passed few nodes, so that a walk through
+    /// nodes that can't be skipped doesn't pay for a search at each of them. The steps it takes in
+    /// between are at most as many as it had to take before.
+    fn try_to_skip(&mut self, walk: &mut Walk, flow: FlowId) -> Option<(FlowId, FlowId)> {
+        let steps = walk.steps;
+        let skipped = self.skip_unrelated_nodes(walk, flow);
+        walk.steps_between_skips = if walk.steps - steps >= WORTHWHILE_SKIP {
+            0
+        } else {
+            (walk.steps_between_skips * 2).max(1)
+        };
+        walk.next_skip = walk.steps.saturating_add(walk.steps_between_skips);
+        skipped
+    }
+
+    /// FOR SPEED. Follows a walk from `flow` through the nodes of its run that leave the reference
+    /// alone: idle calls, array mutations, and assignments to something else. Returns where it ends
+    /// up and the last shared node it passed. Only that one can have an entry in `sharedFlows`,
+    /// because every walk for the reference that enters these nodes leaves them at the same place.
+    /// Without this, n references after n assignments take n * n steps.
+    #[inline(never)]
+    fn skip_unrelated_nodes(&mut self, walk: &mut Walk, flow: FlowId) -> Option<(FlowId, FlowId)> {
+        let reference = &walk.reference;
+        let file = reference.file;
+        let bound = self.bound(file);
+        let antecedent = |flow: u32| match bound.flow[flow as usize] {
+            Flow::Assign { before, .. }
+            | Flow::Call { before, .. }
+            | Flow::ArrayMutation { before, .. } => Some(before),
+            _ => None,
+        };
+        antecedent(flow.0)?;
+        let root = root_key(reference.root);
+        if root == 0
+            || reference.unresolved.get() != 0
+            || self.task.file != Some(file)
+            || self.is_automatic_type(walk.declared)
+        {
+            return None;
+        }
+        if self.flow_memo.runs.file != Some(file) {
+            self.index_flow_runs(file);
+        }
+        let runs = &self.flow_memo.runs;
+        let last_about = |first: u32| {
+            let after = (runs.assignments).partition_point(|&it| it <= (root, first, flow.0));
+            match runs.assignments[..after].last() {
+                Some(&(its_root, its_first, node)) if (its_root, its_first) == (root, first) => node,
+                _ => 0,
+            }
+        };
+        let mut last_related = last_about(TestSubjects::NO_PROPERTY).max(last_about(0));
+        if let Some(AccessedName::Some(name)) = reference.path.first().map(|step| step.name.get()) {
+            last_related = last_related.max(last_about(name.0.wrapping_add(1)));
+        }
+        let keys = &runs.computed_key_nodes;
+        if let Some(&node) = keys[..keys.partition_point(|&node| node <= flow.0)].last() {
+            last_related = last_related.max(node);
+        }
+        let position = runs.position[flow.idx()];
+        let start = runs.nodes[position as usize].run_start;
+        let up_to_here = &runs.nodes[start as usize..=position as usize];
+        let mut first_passed =
+            start + up_to_here.partition_point(|node| node.flow <= last_related) as u32;
+        if first_passed > position {
+            return None;
+        }
+        if let Some(call) = self.find_last_busy_call(file, start, position) {
+            first_passed = first_passed.max(call + 1);
+            if first_passed > position {
+                return None;
+            }
+        }
+        let runs = &self.flow_memo.runs;
+        let first = runs.nodes[first_passed as usize];
+        let last_shared = match runs.nodes.get(first.next_shared as usize) {
+            Some(shared) if first.next_shared <= position => FlowId(shared.flow),
+            _ => FlowId::NONE,
+        };
+        walk.steps = walk.steps.saturating_add(position - first_passed);
+        Some((antecedent(first.flow)?, last_shared))
+    }
+
+    /// Returns the index of the last node in `start..=position` of `FlowRuns::nodes`, which are in
+    /// one run, that is a call not known to be idle.
+    fn find_last_busy_call(&mut self, file: FileId, start: u32, position: u32) -> Option<u32> {
+        let bound = self.bound(file);
+        let memo = &mut self.flow_memo;
+        let mut at = position;
+        let found = loop {
+            let known = memo.runs.last_busy_call[at as usize];
+            if known != at {
+                if known == u32::MAX {
+                    break known;
+                }
+                at = known;
+                continue;
+            }
+            let flow = FlowId(memo.runs.nodes[at as usize].flow);
+            if matches!(bound.flow[flow.idx()], Flow::Call { .. }) && !memo.is_idle_call(file, flow)
+            {
+                break at;
+            }
+            if at == start {
+                break u32::MAX;
+            }
+            at -= 1;
+        };
+        let mut at = position;
+        while at != found {
+            let known = std::mem::replace(&mut memo.runs.last_busy_call[at as usize], found);
+            if known == u32::MAX || known == at && at == start {
+                break;
+            }
+            at = if known == at { at - 1 } else { known };
+        }
+        (found != u32::MAX).then_some(found)
+    }
+
+    #[inline(never)]
+    fn index_flow_runs(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // The run of each node at first, then its index in `nodes`.
+        let mut position = vec![u32::MAX; bound.flow.len()];
+        let mut is_continued = vec![false; bound.flow.len()];
+        let mut lengths: Vec<u32> = Vec::new();
+        let mut assignments = Vec::new();
+        let mut computed_key_nodes = Vec::new();
+        for (i, &node) in bound.flow.iter().enumerate() {
+            let (Flow::Assign { before, .. }
+            | Flow::Call { before, .. }
+            | Flow::ArrayMutation { before, .. }) = node
+            else {
+                continue;
+            };
+            // A node that two nodes follow continues in the first one's run.
+            let continues = before.idx() < i
+                && position[before.idx()] != u32::MAX
+                && !std::mem::replace(&mut is_continued[before.idx()], true);
+            if !continues {
+                lengths.push(0);
+            }
+            let run = if continues {
+                position[before.idx()]
+            } else {
+                lengths.len() as u32 - 1
+            };
+            position[i] = run;
+            lengths[run as usize] += 1;
+            let Flow::Assign { target, .. } = node else {
+                continue;
+            };
+            let about = &mut AssignmentSubjects {
+                node: i as u32,
+                assignments: &mut assignments,
+                ignores_property: false,
+                resolves_key: false,
+            };
+            let declared = match target {
+                FlowTarget::Expr(e) => {
+                    self.note_chain(file, e, false, TestSubjects::NO_PROPERTY, about);
+                    PatId::NONE
+                }
+                FlowTarget::Var(d) => hir[d].pat,
+                FlowTarget::Pat(p) => p,
+            };
+            if let Some(&symbol) = bound.pat_symbol.get(declared.idx())
+                && symbol.is_some()
+            {
+                about.add(root_key(Root::Symbol(symbol)), TestSubjects::NO_PROPERTY);
+            }
+            // `for (const k in x?.a)` concerns `x`.
+            if let FlowTarget::Var(d) = target
+                && let stmt = bound.var_stmt[d.idx()]
+                && stmt.is_some()
+                && let Parent::Stmt(owner) = bound.parent_of_stmt(stmt)
+                && let StmtKind::ForIn { left, expr, .. } = hir[owner].kind
+                && left == stmt
+            {
+                about.ignores_property = true;
+                self.note_chain(file, expr, false, TestSubjects::NO_PROPERTY, about);
+            }
+            if about.resolves_key {
+                computed_key_nodes.push(i as u32);
+            }
+        }
+        assignments.shared_sort_unstable();
+        let mut end = 0;
+        let starts: Vec<u32> = (lengths.iter())
+            .map(|&length| {
+                end += length;
+                end - length
+            })
+            .collect();
+        let mut next_free = starts.clone();
+        let unset = RunNode {
+            flow: 0,
+            run_start: 0,
+            next_shared: u32::MAX,
+        };
+        let mut nodes = vec![unset; end as usize];
+        for (i, position) in position.iter_mut().enumerate() {
+            if let Some(free) = next_free.get_mut(*position as usize) {
+                nodes[*free as usize].flow = i as u32;
+                nodes[*free as usize].run_start = starts[*position as usize];
+                *position = std::mem::replace(free, *free + 1);
+            }
+        }
+        for at in (0..nodes.len()).rev() {
+            nodes[at].next_shared = if bound.is_shared(FlowId(nodes[at].flow)) {
+                at as u32
+            } else {
+                match nodes.get(at + 1) {
+                    Some(next) if next.run_start == nodes[at].run_start => next.next_shared,
+                    _ => u32::MAX,
+                }
+            };
+        }
+        self.flow_memo.runs = FlowRuns {
+            file: Some(file),
+            position,
+            last_busy_call: (0..end).collect(),
+            nodes,
+            assignments,
+            computed_key_nodes,
+        };
+    }
+
     /// FOR SPEED. Follows a walk from `before`, the antecedent of the idle call `flow`, through the
     /// idle calls that only one node follows. Returns where it ends up and how many calls it
     /// passed. Idle calls don't affect any walk. Each reference in n consecutive call statements
@@ -7743,6 +8057,7 @@ impl<'p, 's> Checker<'p, 's> {
             memo.settled_calls.clear();
             memo.settled_calls.resize(words, (0, 0));
             memo.idle_runs.clear();
+            memo.runs.file = None;
         }
         let (word, bit) = (flow.idx() / 64, 1 << (flow.idx() % 64));
         memo.settled_calls[word].0 |= bit;

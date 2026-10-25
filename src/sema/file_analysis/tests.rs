@@ -365,7 +365,9 @@ fn fold_errors_precede_format_error() {
     let feature_import = add_repeated_feature_import(&mut file);
     let uses = [known::value, known::module].map(|name| {
         let ident = file.expr(ExprKind::Ident(name), 0, 0);
-        file.stmt(StmtKind::Expr(ident), 0)
+        let member = file.dot((ident, Chain::No), (known::value, 0), 0);
+        let member = file.expr(member, 0, 0);
+        file.stmt(StmtKind::Expr(member), 0)
     });
     let analyzed = workspace.analyze(file, &[import, feature_import, uses[0], uses[1]]);
     let expected = [

@@ -6,7 +6,7 @@
 //
 //   AOT_BUILTINS_FILTER=<r>  only the functions whose path matches the regular expression
 //
-// With a sanitizer or in a debug build the calls take eight times as long: there they come in parts, each a test file of its own (../parts.mts).
+// With a sanitizer or in a debug build the calls take eight times as long, on Windows twice as long: there they come in parts, each a test file of its own (../parts.mts).
 import { test } from "bun:test";
 import { comesInParts, nativeContract } from "./native-contract/contract";
 

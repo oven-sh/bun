@@ -21,6 +21,26 @@ impl Folder<'_, '_> {
         !self.folded_by_build_alone.contains(e.idx())
     }
 
+    pub(super) fn condition_in_bun_run(&self, e: ExprId) -> Option<bool> {
+        self.condition(e).filter(|_| self.is_folded_by_bun_run(e))
+    }
+
+    /// As a condition, `void x` is false and `typeof x` is true whatever `x` is.
+    pub(super) fn is_truthy_in_bun_run(&self, e: ExprId) -> Option<bool> {
+        let (mut e, mut is_negated) = (e, false);
+        let is_truthy = loop {
+            match self.hir[e].kind {
+                ExprKind::Unary { op, operand } if op == UnOp::Not => {
+                    (e, is_negated) = (operand, !is_negated);
+                }
+                ExprKind::Unary { op, .. } if op == UnOp::Void => break Some(false),
+                ExprKind::Unary { op, .. } if op == UnOp::Typeof => break Some(true),
+                _ => break self.condition_in_bun_run(e),
+            }
+        };
+        is_truthy.map(|is_truthy| is_truthy != is_negated)
+    }
+
     pub(super) fn exclude_operand(&mut self, operand: ExprId, decided_by: ExprId) {
         self.excluded_operands.push(ExcludedOperand {
             operand,
@@ -71,11 +91,10 @@ impl Folder<'_, '_> {
         right: ExprId,
         deciding_condition: bool,
     ) -> bool {
-        let condition_in_bun_run = |operand: ExprId| {
-            let condition = self.condition(operand);
-            condition.filter(|_| self.is_folded_by_bun_run(operand))
-        };
-        let (left, right) = (condition_in_bun_run(left), condition_in_bun_run(right));
+        let (left, right) = (
+            self.condition_in_bun_run(left),
+            self.condition_in_bun_run(right),
+        );
         let is_decided_by_one = [left, right].contains(&Some(deciding_condition));
         is_decided_by_one || (left.is_some() && right.is_some())
     }

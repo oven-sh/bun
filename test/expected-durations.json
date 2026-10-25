@@ -1095,26 +1095,44 @@
     "windows": 34666
   },
   "aot/builtins/differential-1.test.ts": {
-    "default": 69417,
-    "asan": 2413,
-    "musl": 11848,
-    "windows": 10571
+    "default": 57000,
+    "asan": 2400,
+    "windows": 200
   },
   "aot/builtins/differential-2.test.ts": {
-    "default": 81000,
-    "asan": 2413,
-    "musl": 6527,
-    "windows": 174
+    "default": 59000,
+    "asan": 2400,
+    "windows": 200
   },
   "aot/builtins/differential-3.test.ts": {
-    "default": 70103,
-    "asan": 2413,
-    "windows": 208
+    "default": 51000,
+    "asan": 2400,
+    "windows": 200
   },
   "aot/builtins/differential-4.test.ts": {
-    "default": 92244,
-    "asan": 2413,
-    "windows": 211
+    "default": 87000,
+    "asan": 2400,
+    "windows": 200
+  },
+  "aot/builtins/differential-5.test.ts": {
+    "default": 40000,
+    "asan": 2400,
+    "windows": 200
+  },
+  "aot/builtins/differential-6.test.ts": {
+    "default": 94000,
+    "asan": 2400,
+    "windows": 200
+  },
+  "aot/builtins/differential-7.test.ts": {
+    "default": 70000,
+    "asan": 2400,
+    "windows": 200
+  },
+  "aot/builtins/differential-8.test.ts": {
+    "default": 48000,
+    "asan": 2400,
+    "windows": 200
   },
   "aot/builtins/differential/operands.test.ts": {
     "default": 899,
@@ -1141,26 +1159,30 @@
     "asan": 382,
     "windows": 67
   },
-  "aot/builtins/native-contract.test.ts": {
-    "default": 114435,
-    "asan": 4604,
-    "windows": 193869
-  },
   "aot/builtins/native-contract-in-parts-1.test.ts": {
     "default": 300,
-    "asan": 250000
+    "asan": 250000,
+    "windows": 70000
   },
   "aot/builtins/native-contract-in-parts-2.test.ts": {
     "default": 300,
-    "asan": 250000
+    "asan": 250000,
+    "windows": 70000
   },
   "aot/builtins/native-contract-in-parts-3.test.ts": {
     "default": 300,
-    "asan": 250000
+    "asan": 250000,
+    "windows": 70000
   },
   "aot/builtins/native-contract-in-parts-4.test.ts": {
     "default": 300,
-    "asan": 250000
+    "asan": 250000,
+    "windows": 70000
+  },
+  "aot/builtins/native-contract.test.ts": {
+    "default": 114000,
+    "asan": 4600,
+    "windows": 1000
   },
   "aot/builtins/native-contract/noticed-changes.test.ts": {
     "default": 635,
@@ -1189,10 +1211,23 @@
     "musl": 11315,
     "windows": 23150
   },
-  "aot/builtins/unused-calls.test.ts": {
-    "default": 177184,
-    "asan": 451420,
-    "windows": 187800
+  "aot/builtins/unused-calls-1.test.ts": {
+    "default": 58000,
+    "asan": 140000,
+    "musl": 68000,
+    "windows": 75000
+  },
+  "aot/builtins/unused-calls-2.test.ts": {
+    "default": 58000,
+    "asan": 140000,
+    "musl": 68000,
+    "windows": 75000
+  },
+  "aot/builtins/unused-calls-3.test.ts": {
+    "default": 58000,
+    "asan": 140000,
+    "musl": 68000,
+    "windows": 75000
   },
   "aot/bun-intrinsics-any-installed-types.test.ts": {
     "default": 7602,
@@ -2504,8 +2539,14 @@
   "aot/every-threshold-of-the-compiler-is-declared-as-one.test.ts": {
     "default": 1000
   },
-  "aot/every-way-to-a-loader-finds-the-built-in-module-that-the-program-names.test.ts": {
-    "default": 60000
+  "aot/every-way-to-a-loader-finds-the-built-in-module-that-the-program-names-1.test.ts": {
+    "default": 70000
+  },
+  "aot/every-way-to-a-loader-finds-the-built-in-module-that-the-program-names-2.test.ts": {
+    "default": 70000
+  },
+  "aot/every-way-to-a-loader-finds-the-built-in-module-that-the-program-names-3.test.ts": {
+    "default": 70000
   },
   "aot/exception-checks.test.ts": {
     "default": 4872
@@ -4158,6 +4199,535 @@
     "asan": 22376,
     "windows": 82534
   },
+  "aot/joined-programs-claims-checked-1.test.ts": {
+    "default": 49000
+  },
+  "aot/joined-programs-claims-checked-2.test.ts": {
+    "default": 90000,
+    "asan": 50000,
+    "musl": 110000,
+    "windows": 95000
+  },
+  "aot/joined-programs-claims-checked-3.test.ts": {
+    "default": 17000
+  },
+  "aot/joined-programs-limits-lowered-1.test.ts": {
+    "default": 3000,
+    "asan": 6000,
+    "musl": 3000,
+    "windows": 3000,
+    "windows-aarch64": 3000
+  },
+  "aot/joined-programs-limits-lowered-2.test.ts": {
+    "default": 3000,
+    "asan": 6000,
+    "musl": 3000,
+    "windows": 3000,
+    "windows-aarch64": 3000
+  },
+  "aot/joined-programs-limits-lowered-3.test.ts": {
+    "default": 3000,
+    "asan": 6000,
+    "musl": 3000,
+    "windows": 3000,
+    "windows-aarch64": 3000
+  },
+  "aot/joined-programs-limits-lowered-4.test.ts": {
+    "default": 3000,
+    "asan": 6000,
+    "musl": 3000,
+    "windows": 3000,
+    "windows-aarch64": 3000
+  },
+  "aot/joined-programs-limits-lowered-5.test.ts": {
+    "default": 3000,
+    "asan": 6000,
+    "musl": 3000,
+    "windows": 3000,
+    "windows-aarch64": 3000
+  },
+  "aot/joined-programs-limits-lowered-6.test.ts": {
+    "default": 11000,
+    "asan": 22000,
+    "musl": 14000,
+    "windows": 13000,
+    "windows-aarch64": 13000
+  },
+  "aot/joined-programs-limits-lowered-7.test.ts": {
+    "default": 18000,
+    "asan": 36000,
+    "musl": 22000,
+    "windows": 21000,
+    "windows-aarch64": 21000
+  },
+  "aot/joined-programs-limits-lowered-8.test.ts": {
+    "default": 13000,
+    "asan": 25000,
+    "musl": 15000,
+    "windows": 14000,
+    "windows-aarch64": 14000
+  },
+  "aot/joined-programs-limits-lowered-9.test.ts": {
+    "default": 9000,
+    "asan": 18000,
+    "musl": 11000,
+    "windows": 10000,
+    "windows-aarch64": 10000
+  },
+  "aot/joined-programs-limits-lowered-10.test.ts": {
+    "default": 10000,
+    "asan": 20000,
+    "musl": 12000,
+    "windows": 11000,
+    "windows-aarch64": 11000
+  },
+  "aot/joined-programs-limits-lowered-11.test.ts": {
+    "default": 6000,
+    "asan": 13000,
+    "musl": 8000,
+    "windows": 7000,
+    "windows-aarch64": 7000
+  },
+  "aot/joined-programs-limits-lowered-12.test.ts": {
+    "default": 14000,
+    "asan": 28000,
+    "musl": 17000,
+    "windows": 16000,
+    "windows-aarch64": 16000
+  },
+  "aot/joined-programs-limits-lowered-13.test.ts": {
+    "default": 12000,
+    "asan": 24000,
+    "musl": 14000,
+    "windows": 14000,
+    "windows-aarch64": 14000
+  },
+  "aot/joined-programs-limits-lowered-14.test.ts": {
+    "default": 6000,
+    "asan": 13000,
+    "musl": 8000,
+    "windows": 7000,
+    "windows-aarch64": 7000
+  },
+  "aot/joined-programs-limits-lowered-15.test.ts": {
+    "default": 6000,
+    "asan": 13000,
+    "musl": 8000,
+    "windows": 7000,
+    "windows-aarch64": 7000
+  },
+  "aot/joined-programs-limits-lowered-16.test.ts": {
+    "default": 8000,
+    "asan": 15000,
+    "musl": 9000,
+    "windows": 9000,
+    "windows-aarch64": 9000
+  },
+  "aot/joined-programs-limits-lowered-17.test.ts": {
+    "default": 8000,
+    "asan": 17000,
+    "musl": 10000,
+    "windows": 10000,
+    "windows-aarch64": 10000
+  },
+  "aot/joined-programs-limits-lowered-18.test.ts": {
+    "default": 7000,
+    "asan": 14000,
+    "musl": 8000,
+    "windows": 8000,
+    "windows-aarch64": 8000
+  },
+  "aot/joined-programs-limits-lowered-19.test.ts": {
+    "default": 8000,
+    "asan": 17000,
+    "musl": 10000,
+    "windows": 10000,
+    "windows-aarch64": 10000
+  },
+  "aot/joined-programs-limits-lowered-20.test.ts": {
+    "default": 10000,
+    "asan": 20000,
+    "musl": 12000,
+    "windows": 11000,
+    "windows-aarch64": 11000
+  },
+  "aot/joined-programs-limits-lowered-21.test.ts": {
+    "default": 6000,
+    "asan": 13000,
+    "musl": 8000,
+    "windows": 7000,
+    "windows-aarch64": 7000
+  },
+  "aot/joined-programs-limits-lowered-22.test.ts": {
+    "default": 24000,
+    "asan": 48000,
+    "musl": 29000,
+    "windows": 27000,
+    "windows-aarch64": 27000
+  },
+  "aot/joined-programs-limits-lowered-23.test.ts": {
+    "default": 6000,
+    "asan": 13000,
+    "musl": 8000,
+    "windows": 7000,
+    "windows-aarch64": 7000
+  },
+  "aot/joined-programs-limits-lowered-24.test.ts": {
+    "default": 12000,
+    "asan": 24000,
+    "musl": 14000,
+    "windows": 14000,
+    "windows-aarch64": 14000
+  },
+  "aot/joined-programs-limits-lowered-25.test.ts": {
+    "default": 75000,
+    "asan": 150000,
+    "musl": 91000,
+    "windows": 86000,
+    "windows-aarch64": 86000
+  },
+  "aot/joined-programs-limits-lowered-26.test.ts": {
+    "default": 15000,
+    "asan": 29000,
+    "musl": 18000,
+    "windows": 17000,
+    "windows-aarch64": 17000
+  },
+  "aot/joined-programs-limits-lowered-27.test.ts": {
+    "default": 8000,
+    "asan": 15000,
+    "musl": 9000,
+    "windows": 9000,
+    "windows-aarch64": 9000
+  },
+  "aot/joined-programs-limits-lowered-28.test.ts": {
+    "default": 7000,
+    "asan": 14000,
+    "musl": 8000,
+    "windows": 8000,
+    "windows-aarch64": 8000
+  },
+  "aot/joined-programs-limits-lowered-29.test.ts": {
+    "default": 11000,
+    "asan": 22000,
+    "musl": 14000,
+    "windows": 13000,
+    "windows-aarch64": 13000
+  },
+  "aot/joined-programs-limits-lowered-30.test.ts": {
+    "default": 13000,
+    "asan": 27000,
+    "musl": 16000,
+    "windows": 15000,
+    "windows-aarch64": 15000
+  },
+  "aot/joined-programs-limits-lowered-31.test.ts": {
+    "default": 7000,
+    "asan": 14000,
+    "musl": 8000,
+    "windows": 8000,
+    "windows-aarch64": 8000
+  },
+  "aot/joined-programs-limits-lowered-32.test.ts": {
+    "default": 7000,
+    "asan": 14000,
+    "musl": 8000,
+    "windows": 8000,
+    "windows-aarch64": 8000
+  },
+  "aot/joined-programs-limits-lowered-33.test.ts": {
+    "default": 8000,
+    "asan": 17000,
+    "musl": 10000,
+    "windows": 10000,
+    "windows-aarch64": 10000
+  },
+  "aot/joined-programs-limits-lowered-34.test.ts": {
+    "default": 8000,
+    "asan": 15000,
+    "musl": 9000,
+    "windows": 9000,
+    "windows-aarch64": 9000
+  },
+  "aot/joined-programs-limits-lowered-35.test.ts": {
+    "default": 8000,
+    "asan": 15000,
+    "musl": 9000,
+    "windows": 9000,
+    "windows-aarch64": 9000
+  },
+  "aot/joined-programs-limits-lowered-36.test.ts": {
+    "default": 8000,
+    "asan": 15000,
+    "musl": 9000,
+    "windows": 9000,
+    "windows-aarch64": 9000
+  },
+  "aot/joined-programs-limits-lowered-37.test.ts": {
+    "default": 8000,
+    "asan": 17000,
+    "musl": 10000,
+    "windows": 10000,
+    "windows-aarch64": 10000
+  },
+  "aot/joined-programs-limits-lowered-38.test.ts": {
+    "default": 8000,
+    "asan": 15000,
+    "musl": 9000,
+    "windows": 9000,
+    "windows-aarch64": 9000
+  },
+  "aot/joined-programs-limits-lowered-39.test.ts": {
+    "default": 8000,
+    "asan": 17000,
+    "musl": 10000,
+    "windows": 10000,
+    "windows-aarch64": 10000
+  },
+  "aot/joined-programs-limits-lowered-40.test.ts": {
+    "default": 8000,
+    "asan": 17000,
+    "musl": 10000,
+    "windows": 10000,
+    "windows-aarch64": 10000
+  },
+  "aot/joined-programs-limits-lowered-41.test.ts": {
+    "default": 9000,
+    "asan": 18000,
+    "musl": 11000,
+    "windows": 10000,
+    "windows-aarch64": 10000
+  },
+  "aot/joined-programs-limits-lowered-42.test.ts": {
+    "default": 11000,
+    "asan": 22000,
+    "musl": 14000,
+    "windows": 13000,
+    "windows-aarch64": 13000
+  },
+  "aot/joined-programs-limits-lowered-43.test.ts": {
+    "default": 12000,
+    "asan": 24000,
+    "musl": 14000,
+    "windows": 14000,
+    "windows-aarch64": 14000
+  },
+  "aot/joined-programs-limits-lowered-44.test.ts": {
+    "default": 10000,
+    "asan": 20000,
+    "musl": 12000,
+    "windows": 11000,
+    "windows-aarch64": 11000
+  },
+  "aot/joined-programs-limits-lowered-45.test.ts": {
+    "default": 11000,
+    "asan": 22000,
+    "musl": 14000,
+    "windows": 13000,
+    "windows-aarch64": 13000
+  },
+  "aot/joined-programs-limits-lowered-46.test.ts": {
+    "default": 13000,
+    "asan": 27000,
+    "musl": 16000,
+    "windows": 15000,
+    "windows-aarch64": 15000
+  },
+  "aot/joined-programs-limits-lowered-47.test.ts": {
+    "default": 41000,
+    "asan": 83000,
+    "musl": 50000,
+    "windows": 47000,
+    "windows-aarch64": 47000
+  },
+  "aot/joined-programs-limits-lowered-48.test.ts": {
+    "default": 36000,
+    "asan": 71000,
+    "musl": 43000,
+    "windows": 41000,
+    "windows-aarch64": 41000
+  },
+  "aot/joined-programs-limits-lowered-49.test.ts": {
+    "default": 22000,
+    "asan": 45000,
+    "musl": 27000,
+    "windows": 26000,
+    "windows-aarch64": 26000
+  },
+  "aot/joined-programs-limits-lowered-50.test.ts": {
+    "default": 16000,
+    "asan": 32000,
+    "musl": 20000,
+    "windows": 18000,
+    "windows-aarch64": 18000
+  },
+  "aot/joined-programs-limits-lowered-51.test.ts": {
+    "default": 8000,
+    "asan": 15000,
+    "musl": 9000,
+    "windows": 9000,
+    "windows-aarch64": 9000
+  },
+  "aot/joined-programs-limits-lowered-52.test.ts": {
+    "default": 66000,
+    "asan": 133000,
+    "musl": 81000,
+    "windows": 76000,
+    "windows-aarch64": 76000
+  },
+  "aot/joined-programs-limits-lowered-53.test.ts": {
+    "default": 102000,
+    "asan": 204000,
+    "musl": 124000,
+    "windows": 117000,
+    "windows-aarch64": 117000
+  },
+  "aot/joined-programs-limits-lowered-54.test.ts": {
+    "default": 98000,
+    "asan": 196000,
+    "musl": 119000,
+    "windows": 112000,
+    "windows-aarch64": 112000
+  },
+  "aot/joined-programs-limits-lowered-55.test.ts": {
+    "default": 69000,
+    "asan": 139000,
+    "musl": 84000,
+    "windows": 79000,
+    "windows-aarch64": 79000
+  },
+  "aot/joined-programs-limits-lowered-56.test.ts": {
+    "default": 98000,
+    "asan": 196000,
+    "musl": 119000,
+    "windows": 112000,
+    "windows-aarch64": 112000
+  },
+  "aot/joined-programs-limits-lowered-57.test.ts": {
+    "default": 89000,
+    "asan": 178000,
+    "musl": 108000,
+    "windows": 102000,
+    "windows-aarch64": 102000
+  },
+  "aot/joined-programs-limits-lowered-58.test.ts": {
+    "default": 7000,
+    "asan": 14000,
+    "musl": 8000,
+    "windows": 8000,
+    "windows-aarch64": 8000
+  },
+  "aot/joined-programs-limits-lowered-59.test.ts": {
+    "default": 8000,
+    "asan": 15000,
+    "musl": 9000,
+    "windows": 9000,
+    "windows-aarch64": 9000
+  },
+  "aot/joined-programs-limits-lowered-60.test.ts": {
+    "default": 8000,
+    "asan": 15000,
+    "musl": 9000,
+    "windows": 9000,
+    "windows-aarch64": 9000
+  },
+  "aot/joined-programs-limits-lowered-61.test.ts": {
+    "default": 8000,
+    "asan": 15000,
+    "musl": 9000,
+    "windows": 9000,
+    "windows-aarch64": 9000
+  },
+  "aot/joined-programs-limits-lowered-62.test.ts": {
+    "default": 8000,
+    "asan": 17000,
+    "musl": 10000,
+    "windows": 10000,
+    "windows-aarch64": 10000
+  },
+  "aot/joined-programs-limits-lowered-63.test.ts": {
+    "default": 8000,
+    "asan": 15000,
+    "musl": 9000,
+    "windows": 9000,
+    "windows-aarch64": 9000
+  },
+  "aot/joined-programs-limits-lowered-64.test.ts": {
+    "default": 13000,
+    "asan": 27000,
+    "musl": 16000,
+    "windows": 15000,
+    "windows-aarch64": 15000
+  },
+  "aot/joined-programs-limits-lowered-65.test.ts": {
+    "default": 53000,
+    "asan": 106000,
+    "musl": 65000,
+    "windows": 61000,
+    "windows-aarch64": 61000
+  },
+  "aot/joined-programs-limits-lowered-66.test.ts": {
+    "default": 58000,
+    "asan": 116000,
+    "musl": 71000,
+    "windows": 66000,
+    "windows-aarch64": 66000
+  },
+  "aot/joined-programs-limits-lowered-67.test.ts": {
+    "default": 69000,
+    "asan": 137000,
+    "musl": 83000,
+    "windows": 78000,
+    "windows-aarch64": 78000
+  },
+  "aot/joined-programs-limits-lowered-68.test.ts": {
+    "default": 3000,
+    "asan": 6000,
+    "musl": 3000,
+    "windows": 3000,
+    "windows-aarch64": 3000
+  },
+  "aot/joined-programs-limits-lowered-69.test.ts": {
+    "default": 6000,
+    "asan": 13000,
+    "musl": 8000,
+    "windows": 7000,
+    "windows-aarch64": 7000
+  },
+  "aot/joined-programs-limits-lowered-70.test.ts": {
+    "default": 31000,
+    "asan": 63000,
+    "musl": 38000,
+    "windows": 36000,
+    "windows-aarch64": 36000
+  },
+  "aot/joined-programs-limits-lowered-71.test.ts": {
+    "default": 10000,
+    "asan": 20000,
+    "musl": 12000,
+    "windows": 11000,
+    "windows-aarch64": 11000
+  },
+  "aot/joined-programs-limits-lowered-72.test.ts": {
+    "default": 16000,
+    "asan": 32000,
+    "musl": 20000,
+    "windows": 18000,
+    "windows-aarch64": 18000
+  },
+  "aot/joined-programs-moved-loads-checked-1.test.ts": {
+    "default": 47000
+  },
+  "aot/joined-programs-moved-loads-checked-2.test.ts": {
+    "default": 55000,
+    "asan": 50000,
+    "musl": 70000,
+    "windows": 60000,
+    "windows-aarch64": 60000
+  },
+  "aot/joined-programs-moved-loads-checked-3.test.ts": {
+    "default": 18000
+  },
   "aot/joined-programs-predictions-fail-1.test.ts": {
     "default": 90000
   },
@@ -4193,6 +4763,33 @@
   },
   "aot/joined-programs-predictions-fail-9.test.ts": {
     "default": 90000
+  },
+  "aot/joined-programs-proofs-checked-1.test.ts": {
+    "default": 42000
+  },
+  "aot/joined-programs-proofs-checked-2.test.ts": {
+    "default": 56000
+  },
+  "aot/joined-programs-proofs-checked-3.test.ts": {
+    "default": 19000
+  },
+  "aot/joined-programs-validated-1.test.ts": {
+    "default": 49000
+  },
+  "aot/joined-programs-validated-2.test.ts": {
+    "default": 63000,
+    "asan": 58000,
+    "musl": 72000,
+    "windows": 101000
+  },
+  "aot/joined-programs-validated-3.test.ts": {
+    "default": 51000
+  },
+  "aot/joined-programs-validated-4.test.ts": {
+    "default": 130000,
+    "asan": 90000,
+    "musl": 142000,
+    "windows": 143000
   },
   "aot/jsdoc-import-tags.test.ts": {
     "default": 14211,
@@ -5234,10 +5831,30 @@
   "aot/perf/idioms-in-a-very-large-program.test.ts": {
     "default": 300
   },
+  "aot/perf/idioms-in-parts-1.test.ts": {
+    "default": 48000,
+    "asan": 200,
+    "windows": 100
+  },
+  "aot/perf/idioms-in-parts-2.test.ts": {
+    "default": 48000,
+    "asan": 200,
+    "windows": 100
+  },
+  "aot/perf/idioms-in-parts-3.test.ts": {
+    "default": 48000,
+    "asan": 200,
+    "windows": 100
+  },
+  "aot/perf/idioms-in-parts-4.test.ts": {
+    "default": 48000,
+    "asan": 200,
+    "windows": 100
+  },
   "aot/perf/idioms.test.ts": {
-    "default": 183371,
-    "asan": 209,
-    "windows": 66
+    "default": 800,
+    "asan": 200,
+    "windows": 100
   },
   "aot/perf/lone-reads-in-cold-code.test.ts": {
     "default": 1008,
@@ -5780,8 +6397,22 @@
     "windows": 60740
   },
   "aot/roads-to-members-of-the-runtime-4.test.ts": {
-    "default": 170426,
-    "windows": 176339
+    "default": 62000,
+    "asan": 130000,
+    "musl": 75000,
+    "windows": 65000
+  },
+  "aot/roads-to-members-of-the-runtime-5.test.ts": {
+    "default": 62000,
+    "asan": 130000,
+    "musl": 75000,
+    "windows": 65000
+  },
+  "aot/roads-to-members-of-the-runtime-6.test.ts": {
+    "default": 62000,
+    "asan": 130000,
+    "musl": 75000,
+    "windows": 65000
   },
   "aot/root-dir-has-no-say.test.ts": {
     "default": 757,
@@ -5942,8 +6573,17 @@
     "default": 19196,
     "windows": 19627
   },
-  "aot/runtime-use-world.test.ts": {
-    "default": 196126
+  "aot/runtime-use-world-1.test.ts": {
+    "default": 60000
+  },
+  "aot/runtime-use-world-2.test.ts": {
+    "default": 45000
+  },
+  "aot/runtime-use-world-3.test.ts": {
+    "default": 55000
+  },
+  "aot/runtime-use-world-4.test.ts": {
+    "default": 60000
   },
   "aot/sabotages.test.ts": {
     "default": 57717,
@@ -6564,9 +7204,17 @@
     "default": 129657,
     "windows": 134535
   },
-  "aot/trimmed-is-whole/environment.test.ts": {
-    "default": 218872,
-    "windows": 769
+  "aot/trimmed-is-whole/environment-1.test.ts": {
+    "default": 85000,
+    "windows": 800
+  },
+  "aot/trimmed-is-whole/environment-2.test.ts": {
+    "default": 85000,
+    "windows": 800
+  },
+  "aot/trimmed-is-whole/environment-3.test.ts": {
+    "default": 85000,
+    "windows": 800
   },
   "aot/trimmed-matches-untrimmed-1.test.ts": {
     "default": 65573,

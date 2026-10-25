@@ -2875,7 +2875,7 @@ console.log(JSON.stringify(viaV8.a), viaV8.b.get(1), Buffer.isBuffer(v8.serializ
 console.log(Object.keys(v8.getHeapStatistics()).sort().join(), v8.getHeapStatistics().total_heap_size > 0, Array.isArray(v8.getHeapSpaceStatistics()), typeof v8.cachedDataVersionTag(), typeof v8.setFlagsFromString, typeof v8.writeHeapSnapshot, typeof v8.isStringOneByteRepresentation?.("a"));
 console.log(JSON.stringify(structuredClone({ nested: { date: new Date(5), re: /x/g.source } })), structuredClone(new Error("cloned")).message);
 //// the-example-of-the-page.js
-// The example of docs/bundler/aot-compatibility.mdx, "Built-in modules": node:path is imported by name, node:dgram is not, and the third name is no module. The names come from the environment. Plain Bun finds node:dgram.
+// The example of docs/compiler/compatibility.mdx, "Built-in modules": node:path is imported by name, node:dgram is not, and the third name is no module. The names come from the environment. Plain Bun finds node:dgram.
 import "node:path";
 
 for (const name of process.env.NAMES.split(",")) {

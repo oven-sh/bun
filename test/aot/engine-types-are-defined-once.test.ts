@@ -3,18 +3,11 @@
 // JSC::AOT::Typed::AllocationUse, of 12 and of 24 bytes, shared Vector's buffer code so: an optimized build hid it.
 // Goes by the text: `namespace` lines and closing braces at column 0, and definitions that begin at column 0.
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { sayWhenSkipped, sources } from "./harness/engine-text";
 
-const sources = [process.env.BUN_WEBKIT_PATH, join(import.meta.dir, "..", "..", "vendor", "WebKit")]
-  .filter(path => path !== undefined)
-  .map(path => join(path, "Source", "JavaScriptCore", "aot"))
-  .find(path => existsSync(join(path, "ir")));
-if (!sources) {
-  console.error(
-    "SKIPPED: test/aot/engine-types-are-defined-once.test.ts: there is no Source/JavaScriptCore/aot in $BUN_WEBKIT_PATH or vendor/WebKit",
-  );
-}
+sayWhenSkipped("test/aot/engine-types-are-defined-once.test.ts");
 
 const definition =
   /^(?:template<[^>]*>\s*)?(?:struct|class|union|enum class|enum)\s+(?:alignas\([^)]*\)\s+)?(?:JS_EXPORT_PRIVATE\s+)?([A-Za-z_]\w*)\s*(?:final\s*)?(?::[^:]|\{|$)/;

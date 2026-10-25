@@ -3060,7 +3060,7 @@ impl File<'_> {
     /// True if `node` is an expression other than a function or a class. Most steps of a walk up to a container are
     /// over such a node, and this is cheaper than `kind`.
     #[inline]
-    fn is_plain_expression(&self, node: Node) -> bool {
+    pub fn is_plain_expression(&self, node: Node) -> bool {
         let bases = &self.bases.0;
         node.0.wrapping_sub(bases[0]) < bases[1] - bases[0]
             && !matches!(

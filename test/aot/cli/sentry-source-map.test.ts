@@ -1,4 +1,4 @@
-// docs/bundler/aot-debugging.mdx, "Use with Sentry": an executable built with --minify --sourcemap=external reports errors through
+// docs/compiler/debugging.mdx, "Use with Sentry": an executable built with --minify --sourcemap=external reports errors through
 // the stock @sentry/bun SDK, and the map beside the executable leads from the event back to the sources. Nothing is sent: the
 // transport prints the envelopes. The SDK is installed into the temporary folder, so that no other test sees its packages.
 import { expect } from "bun:test";

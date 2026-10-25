@@ -249,11 +249,15 @@ impl SsaState {
     }
 
     fn link_dominator(&mut self, block: BlockId) {
-        let predecessors = &self.states[block.index()].predecessors;
-        let first = predecessors.first().copied();
+        let predecessors = self.states[block.index()].predecessors.iter().copied();
+        let mut predecessors = predecessors.filter(|&predecessor| {
+            let dominator = self.states[predecessor.index()].dominator;
+            !dominator.is_some_and(|dominator| self.is_never_entered(dominator.root))
+        });
+        let first = predecessors.next();
         let mut parent =
             first.filter(|predecessor| self.states[predecessor.index()].dominator.is_some());
-        for &predecessor in predecessors.iter().skip(1) {
+        for predecessor in predecessors {
             parent = parent.and_then(|parent| self.lowest_common_ancestor(parent, predecessor));
         }
         let link = parent.and_then(|parent| {

@@ -1,0 +1,543 @@
+---
+title: "Smaller executables"
+description: "Remove the Bun and Node.js APIs your program never calls from an executable, with bun compile --trim"
+---
+
+<Warning>`--trim` and ahead-of-time compilation are experimental.</Warning>
+
+```bash terminal icon="terminal"
+bun compile --trim ./server.ts
+```
+
+A standalone executable is a copy of `bun` with your program attached. So a ten-line server ships a package manager, a test runner, a type checker, a linter, several JIT compilers, SQLite and three image decoders. `--trim` removes what your program doesn't use. The `compile` line shows the size of the executable and how much `--trim` removed.
+
+```txt
+ [108ms]  bundle  1 modules
+ [129ms] compile  server  33.4 MB (106.1 MB of unused Bun APIs removed)
+```
+
+[`bun compile`](/compiler/aot) is short for `bun build --compile --aot`, which takes `--trim` too. So does `bun build --compile` without `--aot`, where it removes less. In `Bun.build`, it's [`compile: { trim: true }`](/compiler/executables#api-reference).
+
+Here's the todo server from [Ahead-of-time compilation](/compiler/aot#build-an-executable), built five ways. `--no-aot` builds what `bun build --compile` builds: an executable that runs your program with the JIT compilers.
+
+| Command                                                      | Linux x64 |
+| ------------------------------------------------------------ | --------: |
+| `bun compile --no-aot`                                       |    140 MB |
+| `bun compile`                                                |     69 MB |
+| `bun compile --no-aot --trim`                                |     86 MB |
+| `bun compile --trim`                                         |     33 MB |
+| `bun compile --trim --disallow-code-generation-from-strings` |     33 MB |
+
+All five answer every route the same way. Your program behaves the same with and without `--trim`, apart from the exceptions in [What a trimmed executable does not do](#what-a-trimmed-executable-does-not-do). Any other difference is a bug in Bun. The flag in the last row is different: it changes what a program can do. It saves nothing here, because nothing in this program calls `eval` or `new Function`. See [Turn off code from strings](#turn-off-code-from-strings).
+
+Compressed with `gzip`, as in a container image, the executable of `bun compile` is 33 MB. With `--trim` it's 14 MB.
+
+A trimmed executable starts as fast as an untrimmed one and uses as much memory.
+
+Every size on this page is for Linux x64.
+
+## What `--trim` removes
+
+`--trim` only removes a feature when the compiler can prove your program never uses it. Features fall into three groups.
+
+| Group             | What's in it                                                                                                                               | `--trim` removes it                                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| Tools             | The `bun` command line, `bun check`, `bun lint`, `bun fmt`, the ahead-of-time compiler. Unless you pass `--no-aot`, the JIT compilers      | Always                                                     |
+| APIs              | `bun:sqlite`, `Bun.Image`, `HTMLRewriter`, `bun:ffi`, `Bun.sql`, `Bun.redis`, WebAssembly, `Intl`, the bundler, the debugger and many more | When your code never uses it                               |
+| Code from strings | `eval`, `new Function`, and the JavaScript parser and interpreter that run their code                                                      | When your program never calls `eval()` or `new Function()` |
+
+### Tools
+
+`bun install`, `bun test`, `bun build` and the rest of the command line are only in an executable because the executable is a copy of `bun`. Nothing in JavaScript calls them, and a compiled executable never starts the JIT compilers. So `bun compile` leaves both out of every executable, with or without `--trim`: 140 MB becomes 69 MB. That doesn't depend on your program. With `--no-aot` the executable is a whole copy of `bun`, and `--trim` removes the command line but keeps the JIT compilers: 86 MB.
+
+Two things do use the tools: `BUN_BE_BUN=1`, and `Bun.build` with `check` or `compile.aot`. With `BUN_BE_BUN=1` the executable tells you to run `bun` instead, and exits with code `70`. A program that calls `Bun.build` keeps the type checker, the compiler and the JIT compilers, unless you pass `--trim`. `install.auto` in `bunfig.toml` has no effect, because the package manager is part of the command line.
+
+### APIs
+
+`bun compile` reads the whole program, including dependencies. It knows which globals, which members of `Bun` and `process`, which built-in modules and which methods of built-in objects your code uses. Bun removes every feature that nothing uses. You don't list anything: a program that imports `bun:sqlite` gets SQLite, and a program that doesn't ships without it.
+
+Methods count because some of them are large. One call to `toLocaleString()` needs the number formatting of `Intl`, which is 6 MB. The locale counts too: `toLocaleString("de")` keeps the data for one language. A locale that isn't a constant, or that's omitted, keeps the data for all of them. See [Locales](#locales).
+
+The bundler and the transpiler are features too. The executable includes the bundler if your program uses `Bun.build` or imports an HTML file, and the transpiler if it uses `Bun.Transpiler`.
+
+With `--no-aot`, Bun doesn't analyze your program, so it only removes the tools.
+
+This step takes the todo server from 69 MB to 33 MB. It relies on the compiler seeing every API your program will ever use (a closed-world assumption, like GraalVM Native Image). [What blocks `--trim`](#what-blocks---trim) lists what gets in the way.
+
+### Code from strings
+
+The JavaScript parser and the interpreter run the code that `eval` and `new Function` create. They stay in the executable when the compiler finds a call to either one, or anything else that can [run code that isn't in the executable](#what-blocks---trim). Otherwise Bun removes them. They take 2 to 4 MB.
+
+If a dependency calls `new Function` and your program can do without it, [turn off code from strings](#turn-off-code-from-strings).
+
+## See what the compiler found
+
+`--explain=trim` lists the APIs your program uses, and why `--trim` kept or removed each feature. It works with `bun compile`, and with `bun check --aot`, which writes no executable. It doesn't need `--trim`: without it, the report shows what `--trim` would do. In `Bun.build`, `compile: { aotExplain: "trim" }` adds the lines to `result.logs`.
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.serve({
+  port: 3000,
+  routes: { "/": () => new Response("hello") },
+});
+console.log("listening");
+```
+
+```bash terminal icon="terminal"
+bun check --aot --explain=trim ./server.ts
+```
+
+```txt
+aot: trim: the compiler can see every API this program uses
+aot: trim: uses Bun serve
+aot: trim: uses console log
+aot: trim: locales: none
+aot: trim: kept Bun.serve (serve): used (Bun.serve) at server.ts:1:1
+aot: trim: removed bun:sqlite and node:sqlite (sqlite): unused
+```
+
+The report is a few hundred lines long. The examples on this page only show the lines that matter.
+
+The first line matters most. Here the compiler can see every API, so Bun removes every feature that isn't used. Otherwise the report starts with one or more [`blocked by`](#what-blocks---trim) lines.
+
+Each `uses` line is an API. The list is long because it includes what Bun's own built-in modules use. An API that your program only tests for, as in `typeof WebSocket`, isn't a use and has no line.
+
+`locales:` has the locales that your code passes to `Intl`: `none`, a list, or `all` with the reason, the built-in that takes the locale, and the location. See [Locales](#locales).
+
+A `kept` line is a feature that `--trim` keeps, with the reason after the colon. The word in parentheses is the feature's name in [`compile.trim.allow`](#keep-a-feature). A small feature without a name there has no parentheses. A `removed` line is a feature that `--trim` removes.
+
+| After the colon                               | `--trim` keeps the feature because                                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `used (Bun.serve) at server.ts:1:1`           | your code uses that API there                                                                          |
+| `needed by Bun.serve`                         | another feature that stays needs it. A longer chain reads `needed by A <- B`                           |
+| `needed by --inspect`                         | an option in `--compile-exec-argv` needs it. `needed by --compile-inspector` is the same for that flag |
+| `code loaded at run time could use it (eval)` | `--trim` is blocked, for the reason in parentheses                                                     |
+| `listed in compile.trim.allow (sqlite)`       | it's in `allow`                                                                                        |
+| `runs at startup`                             | every executable runs it at startup                                                                    |
+
+The report goes to stderr. To fail a CI job when a new dependency blocks `--trim`, search for `blocked by`.
+
+```bash terminal icon="terminal"
+if bun check --aot --explain=trim ./server.ts 2>&1 | grep "trim: blocked by"; then exit 1; fi
+```
+
+The job's log then has the lines that `grep` found.
+
+## What blocks `--trim`
+
+This program turns a string into a function at run time, like some libraries do, and can do without.
+
+```ts probe.ts icon="/icons/typescript.svg"
+function compile(body: string): Function | undefined {
+  try {
+    return new Function("value", body);
+  } catch {
+    return undefined;
+  }
+}
+
+const double = compile(process.argv[2] ?? "return value * 2");
+console.log(double ? "generated code" : "plain code");
+```
+
+```bash terminal icon="terminal"
+bun check --aot --explain=trim ./probe.ts
+```
+
+```txt
+aot: trim: blocked by eval: the program calls eval() or new Function() (Function) at probe.ts:3:16
+```
+
+A string passed to `new Function` could use anything, so the compiler can't see every API this program uses. The line has the reason, the built-in that causes it, and the location in your code. If the call is in one of Bun's own modules, as with `node:vm`, the location is the statement in your code that leads there.
+
+A string that's a constant blocks nothing. Bun compiles `new Function("a", "b", "return a + b")`, `Function("return 1")` and `(0, eval)("1 + 1")` with the rest of your program, so a library that only probes with `new Function("")` costs nothing. A direct `eval("...")` still blocks, because its code can see the variables around it.
+
+One such call is enough, in your own code or in a dependency. How much `--trim` keeps depends on the reason.
+
+| The line starts with                                                                     | Your program                                                                                                         | `--trim` keeps                                                                                                                                                                                          |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `blocked by eval: the program calls eval() or new Function()`                            | calls `eval`, `new Function` or the constructor of async or generator functions                                      | The parser, the interpreter, `process.getBuiltinModule` and JavaScript's built-ins, but not [`Intl`, `Temporal` or `WebAssembly`](#intl-temporal-and-webassembly). Unused Bun and Node.js APIs still go |
+| `blocked by runtime-code: the program can run code that isn't in the executable`         | uses one of the built-ins in the next table                                                                          | What `eval` keeps, and native addons                                                                                                                                                                    |
+| `blocked by dynamic-import: the program calls import() or require() with a dynamic path` | imports a module from a path that isn't a constant, starts a `Worker`, or runs code from a string, which can import  | The loaders for [data files](/compiler/compatibility#code-that-isnt-in-the-executable). It decides everything else as usual, so a built-in module that only a dynamic path reaches is removed           |
+| `blocked by external-import: the program imports a module that isn't in the executable`  | imports a package that you marked `--external`, or a module by its URL (`https:`, `data:`)                           | Every API                                                                                                                                                                                               |
+| `blocked by build-option: a build option lets the executable load code at run time`      | is built with `--compile-inspector`, or with an option in `--compile-exec-argv` that loads code, such as `--preload` | Every API                                                                                                                                                                                               |
+| `blocked by limit-reached: the analysis hit a compiler limit`                            | is larger than one of the compiler's limits. [`--explain`](/compiler/explain) shows which                            | Every API                                                                                                                                                                                               |
+| `blocked by no-aot: the program wasn't built with --aot`                                 | is built with `--no-aot`, or with `bun build --compile`                                                              | Every API, and the JIT compilers                                                                                                                                                                        |
+| `blocked by analysis-disabled: a developer option turned the analysis off`               | is built with one of the flags for working on the compiler                                                           | Every API                                                                                                                                                                                               |
+| `blocked by no-report: the compiler didn't report which APIs are used`                   | has found a bug in Bun. [Report it](https://github.com/oven-sh/bun/issues)                                           | Every API                                                                                                                                                                                               |
+
+The report has one line for each reason, so you can fix all of them before you run it again.
+
+These built-ins block `--trim` too. Only a call that your program can reach counts. Importing the module doesn't: `import { isMainThread } from "node:worker_threads"` blocks nothing.
+
+| Built-in                                                                                                  | The line starts with        | Why                                                                 |
+| --------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------- |
+| `ShadowRealm.prototype.evaluate`, `module._compile`                                                       | `blocked by eval`           | They run a string                                                   |
+| `node:vm`, `ShadowRealm.prototype.importValue`                                                            | `blocked by runtime-code`   | They run strings and load modules                                   |
+| `bun:ffi`, `Bun.FFI`, `process.dlopen`, a `.node` file                                                    | `blocked by runtime-code`   | Native code can call anything                                       |
+| `Bun.build`, `Bun.plugin`, `Bun.Transpiler`                                                               | `blocked by runtime-code`   | They load or create code at run time                                |
+| `new Worker()`                                                                                            | `blocked by dynamic-import` | It finds its file by name. Only an entry point of the build can run |
+| `require` used as a value, `process.mainModule.require`, `process.getBuiltinModule(name)`, `Module._load` | `blocked by dynamic-import` | Whoever gets them can ask for any module by name                    |
+
+With [`--aot-allow-code-from-disk`](/compiler/compatibility#load-code-from-disk), the path may name a file with code, so `--trim` also keeps what `eval` keeps, the transpiler and the interpreter. Unused Bun and Node.js APIs still go. A file that `import()` or `require()` loads from disk finds the APIs that your program uses. If it calls one that `--trim` removed, the call throws an error that names the feature: list it in `allow` to keep it. A debugger only starts in an executable that's built with `--compile-inspector`: without it, `inspector.open()` from `node:inspector` starts nothing, so it blocks nothing.
+
+These block nothing, because the compiler sees the name: `globalThis.fetch`, `typeof globalThis.fetch`, `process.env.HOME` and `process.getBuiltinModule("node:fs")`. `value.constructor` and `settings[name]` block nothing either. `settings[name]` can have a cost of its own: see [Look up by key with a `Map`](#look-up-by-key-with-a-map).
+
+An `import()` or a `require()` of a package that wasn't installed at build time blocks nothing either. The build warns about it, and the call throws at run time, so it loads nothing.
+
+`const { serve } = Bun` and `const b = Bun; b.serve(options)` cost nothing: the compiler tracks them.
+
+A computed key on `process`, as in `process[name]` or `name in process`, has a price. The compiler can't tell which member your program will ask for, so the executable keeps every feature of that object. So does passing the object itself to other code: `inspect(process)`, `for (const name in process)`, `return process`. The report says so.
+
+```txt
+aot: trim: uses process (escapes, so any member may be used)
+```
+
+A read such as `process[name]` also costs what `settings[name]` costs. And if the key turns out to be `"dlopen"`, the native addon that your program loads can ask for a feature that `--trim` removed.
+
+`Bun` is different. A member of `Bun` counts as used where your code names it on `Bun`: `Bun.file(path)`, `const { file } = Bun`, `import { file } from "bun"`. A constant key names the member too: `Bun["file"]`, or `Bun[key]` after `const key = "file"`. `Bun[name]`, `{ ...Bun }`, `for (const name in Bun)`, `console.log(Bun)` and passing `Bun` to code that the compiler can't follow name no member, so they keep nothing. Neither does a key that your code puts together with a call, such as `Bun[["fi", "le"].join("")]`. Every name is still there, and `typeof Bun[name]` is what it is under `bun run`. Calling a member that nothing names throws the error in [Using a removed feature](#using-a-removed-feature). To keep one, name it somewhere in your code or add it to [`compile.trim.allow`](#keep-a-feature).
+
+### `Intl`, `Temporal` and `WebAssembly`
+
+These three are large: `Intl` and its data are 11 MB on Linux. So they follow the same rule as `Bun`. `--trim` keeps a part of them when your code or a dependency names it:
+
+- `new Intl.Segmenter()`, `globalThis.Intl.Collator`, `Temporal.Now`, `WebAssembly.instantiate(bytes)`
+- `value.toLocaleString()`, `a.localeCompare(b)`, `date.toLocaleDateString()`, whatever the type of the value
+- a string literal that has the name in it, such as `"return new Intl.NumberFormat()." + method`, because it may end up in `new Function` or be used as a key
+- a method's name in a list of constants, such as `["localeCompare", "toLocaleString"]`, because the list may be a list of keys
+- `Intl[name]`, which keeps all of `Intl`
+
+A `new Function(text)` whose text comes from somewhere else, and a call like `value[name]()`, name nothing. They used to keep all three in every program that has zod in it.
+
+The names are still there: `typeof Intl.Collator` is `"function"`. Calling a part that was removed throws the error in [Using a removed feature](#using-a-removed-feature). If your program runs templates or scripts that it reads at run time and they format dates or numbers, add `"intl"` to [`compile.trim.allow`](#keep-a-feature).
+
+## Make it smaller
+
+`--trim` stops where it would have to guess. You know things about your program that the compiler can't prove, so you can go further. The steps below start with the one that usually saves the most.
+
+### Turn off code from strings
+
+When `--trim` is blocked, the cause is often a dependency that calls `new Function`, or has a code path that could. zod 4, ajv, TypeBox and Elysia do.
+
+If your program doesn't need code from strings, say so at build time. [`--disallow-code-generation-from-strings`](/runtime/code-generation-from-strings) means what it means in Node.js: `eval()`, `new Function()` and the constructors of async and generator functions throw an `EvalError`. `node:vm` isn't affected. With the flag, those calls can't run anything, so they no longer block `--trim`. Bun then removes the parser, the interpreter and whatever else your code doesn't use.
+
+```bash terminal icon="terminal"
+bun check --aot --disallow-code-generation-from-strings --explain=trim ./probe.ts
+```
+
+```txt
+aot: trim: the compiler can see every API this program uses
+```
+
+```bash terminal icon="terminal"
+bun compile --disallow-code-generation-from-strings ./probe.ts && ./probe
+```
+
+```txt
+plain code
+```
+
+The flag doesn't need `--trim`. In `Bun.build`, the option is `compile: { disallowCodeGenerationFromStrings: true }`.
+
+| Program, with `--trim`             | Without the flag | With the flag |
+| ---------------------------------- | ---------------: | ------------: |
+| `probe.ts`                         |            40 MB |         29 MB |
+| A script that validates with zod 4 |            37 MB |         34 MB |
+| A Hono server                      |            40 MB |         40 MB |
+| The todo server                    |            33 MB |         33 MB |
+
+The flag changes what your program does, with or without `--trim`. It's also a flag of `bun` itself, so you can find out what breaks before you build.
+
+```bash terminal icon="terminal"
+bun --disallow-code-generation-from-strings ./probe.ts
+```
+
+```txt
+plain code
+```
+
+| Library      | With the flag                                                              |
+| ------------ | -------------------------------------------------------------------------- |
+| zod 4, Hono  | Work. zod tries `new Function` in a `try` block and falls back             |
+| Elysia       | Works with `new Elysia({ aot: false })`. Otherwise it throws at startup    |
+| Express      | Works                                                                      |
+| Fastify, Koa | Throw an `EvalError` at startup: a dependency generates code when it loads |
+
+The flag only takes care of the `eval` row in [What blocks `--trim`](#what-blocks---trim). Every other row still applies, and `=strict` doesn't change that. Express and Elysia are still blocked with the flag, and it saves them little: Express stays at 51 MB, and Elysia goes from 47 MB to 45 MB. For a program like that, fix the other `blocked by` lines first.
+
+### Look up by key with a `Map`
+
+A program that blocks nothing can still include more than it needs. The sign is a long run of `uses property` lines with methods that your code never mentions.
+
+```ts lookup.ts icon="/icons/typescript.svg"
+const settings: Record<string, unknown> = JSON.parse(process.argv[2]!);
+const value = settings[process.argv[3]!];
+console.log(typeof value === "function" ? value() : value);
+```
+
+```bash terminal icon="terminal"
+bun check --aot --explain=trim ./lookup.ts
+```
+
+```txt
+aot: trim: the compiler can see every API this program uses
+aot: trim: uses property constructor
+aot: trim: uses property match
+aot: trim: kept eval, new Function and the JavaScript interpreter (interpreter): used (Function)
+aot: trim: kept regular expressions: used (String.prototype.match) at lookup.ts:2:15
+```
+
+A key finds more than the object's own properties. If it's `"match"`, `settings[key]` is the method that a string inherits, and this program calls what it finds. The compiler can't tell what the key will be. It can't tell what `JSON.parse` returns either: an object, an array, a string or a number. So the list has every method of every built-in class, and Bun keeps them all, except for [`Intl`, `Temporal` and `WebAssembly`](#intl-temporal-and-webassembly), which have to be named. Some of the rest are large: `match` needs regular expressions, and `constructor` finds `Function`, which needs the interpreter. `lookup.ts` is 34 MB. With a `Map`, which has no inherited keys, it's 27 MB.
+
+These lookups cost little or nothing:
+
+- The key is a number, as in `list[i]`.
+- Nothing calls what the lookup finds. `console.log(settings[key])` prints `[Function: toLocaleString]`, and for that Bun keeps the name and not the code behind it.
+- The compiler can see where the object was created, as with an object literal or an instance of one of your classes. Then the key only finds what that object inherits. For `{ theme: "dark" }[key]`, that's the methods of `Object.prototype`.
+
+Hono and zod have lookups of the expensive kind, which is why they're still 40 MB and 34 MB with the flag in the table above. You can't rewrite a dependency, but you can [list the locales](#locales) that your program needs.
+
+### Locales
+
+The locale data of `Intl` is the largest thing that `--trim` removes. A program that formats numbers in German doesn't need the data for other languages.
+
+```ts price.ts icon="/icons/typescript.svg"
+console.log((1234.5).toLocaleString("de"));
+```
+
+```bash terminal icon="terminal"
+bun check --aot --explain=trim ./price.ts 2>&1 | grep -E "locales|\(intl\)"
+```
+
+```txt
+aot: trim: locales: de
+aot: trim: kept Intl.NumberFormat, Intl.DurationFormat and toLocaleString on numbers and BigInts (intl): used (Number.prototype.toLocaleString) at price.ts:1:14
+```
+
+Bun keeps the data for the locales that your code passes as constants, as in `toLocaleString("de")`, `new Intl.DateTimeFormat(["en-US", "en"])` or `const locale = "de"` at the top of a module. One locale that isn't a constant, or that's omitted so that the system's locale applies, keeps every language. So does anything that can run code that isn't in the executable, such as `eval`. The `locales:` line says which one it is, and where.
+
+```txt
+aot: trim: locales: all, because the locale isn't a constant (Intl.NumberFormat) at price.ts:4:31
+aot: trim: locales: all, because a call passes no locale, so the system's applies (String.prototype.localeCompare) at sort.ts:2:27
+```
+
+In all of these cases you can list the locales yourself. Bun then keeps exactly these locales.
+
+```ts build.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./price.ts"],
+  compile: { outfile: "./price", aot: true, trim: { locales: ["en", "de"] } },
+});
+```
+
+On the command line, it's `--trim --trim-locales en,de`.
+
+If the program asks for a language whose data was removed, the process exits with code `70`. A `try` block can't catch that.
+
+```txt
+error: the locale data this program needs was removed by --trim. Add the locale to compile.trim.locales to keep it.
+```
+
+On macOS, Bun uses the system's ICU library, so `locales` has no effect there.
+
+### Remove function source code
+
+`bun compile` embeds the source code of every function, so that `fn.toString()` can return it. `--no-compile-function-source` removes it.
+
+```bash terminal icon="terminal"
+bun compile --trim --no-compile-function-source ./server.ts
+```
+
+`fn.toString()` then returns `function name() { [native code] }`. An `eval()` or `new Function()` call that the compiler didn't find at build time throws an `EvalError`. See [Options that load code](/compiler/compatibility#options-that-load-code).
+
+The flag doesn't need `--trim`. In `Bun.build`, the option is `compile: { functionSource: false }`.
+
+### Read the build's log
+
+The CLI prints how many megabytes it removed. With `log: true` in `trim`, `Bun.build` also adds the features to `result.logs`. For the todo server with `trim: { log: true }`:
+
+```txt
+compile.trim: removed 105.0 MB of the runtime, 98.3 MB of it from the file: cli, process-kill, process-report, dialogs, ipc, native-code, jit, bundler, test, inspector, source-maps, image, archive, sqlite, sql, redis, s3, html-rewriter, webassembly, shell, webview, fetch, sockets, dns, http2, http3, websocket, udp, node-vm, node-crypto, web-crypto, password, brotli, intl, temporal, bun-jsc, plugin, fs-router, terminal, cron, secrets, markdown, yaml, toml, json5, jsonc, jsonl, xml, glob, semver, color, csrf, hash, crypto-hasher, url-pattern
+```
+
+Some names include several others. `cli` is the whole command line, so `lint`, `fmt`, `check`, `install` and the rest aren't listed again. `native-code` includes `ffi` and `native-addons`.
+
+The error messages of a removed native library are gone from the file too. `strings server | grep -c "malformed database schema"`, a message of SQLite, prints `0`.
+
+The first line has two numbers: what Bun removed, and how much of that made the file shorter. Bun cuts whole pages out of the file, and the format of the executable allows a limited number of cuts. What it can't cut it overwrites in place, so the file keeps its length there. What Bun overwrites compresses to almost nothing.
+
+When the cuts run out, the log has a line for what stayed:
+
+```txt
+compile.trim: 1.4 MB stayed in the file as filler (BudgetSpent)
+```
+
+If nothing can be cut at all, the file doesn't get smaller. Bun prints this warning with or without `log: true`:
+
+```txt
+compile.trim: warning: 98.3 MB could not leave the file (HeaderRoomExhausted) and was overwritten in place
+```
+
+### When the build fails
+
+`Bun.build` rejects when there's a mistake in `trim`.
+
+| Message                                                                          | Cause                                                               |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `compile.trim: unknown name "sqlite3". Did you mean "sqlite"?`                   | A name in `allow` or `remove` that Bun doesn't know                 |
+| `compile.trim: "sqlite" is listed in both allow and remove`                      | The same name in both lists                                         |
+| `compile.trim: this build of Bun has no data for the locale "xx"`                | A locale in `locales` that Bun has no data for                      |
+| `compile.trim must be true, false or an object: { allow, remove, locales, log }` | Anything else, such as an array or a key that isn't one of the four |
+
+## Using a removed feature
+
+Bun removes code, not names. Every global, class, prototype, property, method name and constant of a removed feature is still there, so `typeof`, `in` and `instanceof` answer as before. What's gone is what they do: a call, a `new`, a getter or a setter of a removed feature throws.
+
+Your own code rarely gets there, because `--trim` keeps what it uses. Code in a string can. It can use all of JavaScript and `process.getBuiltinModule`, plus every Bun and Node.js API that your own code uses. Any other API throws an error that says how to keep it.
+
+```ts color.ts icon="/icons/typescript.svg"
+console.log(typeof HTMLRewriter);
+
+try {
+  console.log(new Function("return Bun.color('red', 'hex')")());
+} catch (error) {
+  console.log((error as NodeJS.ErrnoException).code);
+  console.log((error as Error).message);
+}
+```
+
+Built with `bun compile --trim`, this program prints:
+
+```txt
+function
+ERR_FEATURE_REMOVED
+Bun.color was removed by --trim because your code never uses it. To keep it, add "color" to compile.trim.allow in Bun.build().
+```
+
+To keep an API, use it somewhere in your code or add it to [`compile.trim.allow`](#keep-a-feature). A small feature has no name there, and its error only mentions the first way.
+
+Your own code gets there in one way: through a name that it only has at run time. The members of `Bun`, and methods such as `toLocaleString` and `localeCompare` that need [`Intl`](#intl-temporal-and-webassembly), are kept when something names them. In `(1234.5)[name]("de-DE")`, nothing does if `name` comes from `process.argv`, a config file or `Object.getOwnPropertyNames(Number.prototype)`. Without `--trim` the call returns `"1.234,5"`. With `--trim` it throws `toLocaleString was removed by --trim because your code never uses it`. There are two ways out. Name the method in code that runs, for example by checking the name first with `["toLocaleString", "toFixed"].includes(name)` or `name === "toLocaleString"`. Or add `"intl"` to `compile.trim.allow`.
+
+```txt
+Bun.escapeHTML was removed by --trim because your code never uses it. To keep it, use it somewhere in your code.
+```
+
+| Code in a string, or a native addon                                                        | With the feature removed                                   |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `typeof HTMLRewriter`, `"HTMLRewriter" in globalThis`, `Object.keys(Bun)`                  | The same as before                                         |
+| `new HTMLRewriter()`, `Bun.color("red", "hex")`                                            | Throws an `Error` whose `code` is `"ERR_FEATURE_REMOVED"`  |
+| `import("bun:sqlite")`, `require("bun:sqlite")`, `process.getBuiltinModule("node:sqlite")` | Throws an `Error` whose `code` is `"ERR_MODULE_NOT_FOUND"` |
+
+A check such as `if (Bun.Image)` or `typeof HTMLRewriter === "function"` can't tell that the feature is gone: the code takes the same path as before, and throws where it uses the feature. A `try` block around the call can.
+
+`bun test` doesn't find these errors, because it runs your source files, where nothing is removed. Start the executable and test it from outside, like a deployed server.
+
+If your own code names the API, the error is a bug in Bun. [Report it](https://github.com/oven-sh/bun/issues). Until it's fixed, add the feature to the list: `trim: { allow: ["color"] }`.
+
+### Keep a feature
+
+`allow` in [`compile.trim`](/compiler/executables#api-reference) keeps a feature that your code never uses, and the features it needs. There's no CLI flag for it, so you need a build script.
+
+```ts build.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./color.ts"],
+  compile: { outfile: "./color", aot: true, trim: { allow: ["color"] } },
+});
+```
+
+Built this way, `color.ts` prints:
+
+```txt
+function
+#ff0000
+```
+
+Use `allow` when something the compiler can't see uses the API: a string passed to `eval` or `new Function`, or a native addon.
+
+| `trim`                      | Bun removes                                                               |
+| --------------------------- | ------------------------------------------------------------------------- |
+| `true`                      | The APIs your code never calls. The same as `--trim`                      |
+| `{ allow: ["sqlite"] }`     | What `true` removes, except `sqlite` and the features that `sqlite` needs |
+| `{ remove: ["sqlite"] }`    | What `true` removes, and `sqlite`, even if your code uses it              |
+| `{ locales: ["en", "de"] }` | What `true` removes, and the data for every other locale                  |
+| `{ log: true }`             | What `true` removes. `result.logs` lists it                               |
+
+Every name is in the type [`Bun.Build.TrimFeature`](https://github.com/oven-sh/bun/blob/main/packages/bun-types/trim.d.ts), so your editor completes them. Hover over a name to see which APIs it covers and roughly how large it is. [`--explain=trim`](#see-what-the-compiler-found) has the name in parentheses on each `kept` and `removed` line.
+
+### Remove a feature
+
+`remove` takes a feature out of the executable even if your code or a dependency uses it. Use it when an executable must not be able to do something, whatever code ends up running in it.
+
+```ts build.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./server.ts"],
+  compile: { outfile: "./server", aot: true, trim: { remove: ["native-code", "sqlite", "image", "brotli"] } },
+});
+```
+
+Only the code behind the feature is removed. `import { dlopen } from "bun:ffi"` still works, `typeof dlopen` is still `"function"`, and a program that never calls it runs as before. A call throws.
+
+```txt
+error: bun:ffi and its C compiler isn't in this executable: it was built with compile.trim.remove in Bun.build().
+ code: "ERR_FEATURE_REMOVED"
+```
+
+The names are the ones that `allow` takes. A name can't be in both lists. In the report of [`--explain=trim`](#see-what-the-compiler-found), the feature's line ends with `listed in compile.trim.remove`.
+
+Bun doesn't offer what it can't do. Without `brotli`, `fetch` sends `Accept-Encoding: gzip, deflate, zstd`. If a server answers with `Content-Encoding: br` anyway, the `fetch` rejects. The rest of `node:zlib` works.
+
+## What a trimmed executable does not do
+
+|                                                                     | Without `--trim`        | With `--trim`                                                         |
+| ------------------------------------------------------------------- | ----------------------- | --------------------------------------------------------------------- |
+| `BUN_BE_BUN=1 ./server install`, with `--no-aot`                    | Acts as the `bun` CLI   | Tells you to run `bun` instead, and exits with code `70`              |
+| `BUN_BE_BUN=1 ./server --version`                                   | Prints the version      | Prints the version                                                    |
+| A `bunfig.toml` in the directory the executable runs in             | Bun reads it at startup | Bun doesn't read it, unless you also pass `--compile-autoload-bunfig` |
+| `Bun.build` with `check` or `compile.aot`, called by the executable | Works                   | Throws a `TypeError`                                                  |
+
+A trimmed executable still reads `.env`, prints stack traces with the lines and columns of your sources, and writes profiles with `--cpu-prof` and `--heap-prof` in `BUN_OPTIONS`. Addresses in crash reports and profiles mean the same as in the untrimmed executable. On macOS, Bun signs the executable again. To debug a program with the inspector, build it with [`--compile-inspector`](/compiler/compatibility#options-that-load-code), which keeps the debugger.
+
+### Which options still work
+
+Most options in [`BUN_OPTIONS`](/compiler/executables#runtime-arguments-via-bun_options) and `--compile-exec-argv` work as before. A few need a feature that `--trim` removed.
+
+| Options                                                                                                           | Can't be used with                                  |
+| ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `--help`, `-h`, `--aot`, `--aot-log-type-mismatches`, `--expose-internals`, `--watch`, `--hot`, `-i`, `--install` | Any trimmed executable                              |
+| `--preload`, `-r`, `--require`, `--import`, `--eval`, `-e`, `--print`, `-p`                                       | An executable that `--trim` removed an API from     |
+| `--fetch-preconnect`, `--redis-preconnect`, `--sql-preconnect`                                                    | An executable whose program doesn't use that client |
+
+```bash terminal icon="terminal"
+BUN_OPTIONS=--sql-preconnect ./server
+```
+
+The executable prints why and exits with code `1`, before any of your code runs. The message has the long name of the option, whichever way you wrote it.
+
+```txt
+error: --sql-preconnect can't be used with this executable because --trim removed the feature it needs
+```
+
+`--preload` and the other options that load code are in the second row because that code could use any API. A build flag comes first: all of them, and `--inspect`, need `--compile-inspector`. See [Options that load code](/compiler/compatibility#options-that-load-code).
+
+An option in `--compile-exec-argv` is part of the build, so `bun compile --trim` keeps what the option needs. With `--compile-exec-argv=--inspect` the executable has the debugger and keeps every API. `--compile-inspector` counts the same way.
+
+`-i` and `--install` install missing packages while the program runs. That takes the package manager, which is one of the tools. `trim: { allow: ["install"] }` keeps it.
+
+What comes after the name of the executable on the command line is never an option of Bun. It goes to your program.
+
+### Which builds of Bun can trim
+
+`--trim` works on every platform that Bun ships for, with a `bun` that was linked for it. A `bun` that you built yourself may not be.
+
+```txt
+error: this build of Bun doesn't support --trim (NoTrimTable)
+```
+
+## If a feature is missing
+
+Your program can recover from every error under [Using a removed feature](#using-a-removed-feature). If code reaches a removed feature in a way that Bun didn't foresee, the process exits with code `70`, and a `try` block can't catch that.
+
+```txt
+error: --trim removed HTMLRewriter from this executable, but the program needs it. This is a bug in Bun. Please report it with this number: 118
+```
+
+[Report it](https://github.com/oven-sh/bun/issues) with the number. Until it's fixed, add the feature to [`compile.trim.allow`](#keep-a-feature).

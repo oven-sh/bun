@@ -4007,7 +4007,7 @@ declare module "bun" {
      *
      * Equivalent CLI flag: `--bytecode-order <file>[,<file>...]`
      *
-     * @see https://bun.com/docs/bundler/executables#profile-guided-bytecode-layout
+     * @see https://bun.com/docs/compiler/executables#profile-guided-bytecode-layout
      */
     bytecodeOrder?: string | string[] | false | null;
     /**

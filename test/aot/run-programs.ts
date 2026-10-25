@@ -27,6 +27,7 @@
 //                                         "skipInVariants": why variant() leaves the program out
 //                                         "skipInVariant": { "<label>": why variant("<label>", ..) or programsBuiltWith(.., "<label>", ..) alone leaves the program out }
 //                                         "todoOn": { "<process.platform>" or "<process.platform>-<process.arch>": what happens there today }: the program is listed as a todo and not run there alone
+//                                         "failsWithLimit": { "<limit>:<value>": what happens today }: joined-programs.ts, which lowers the limits, builds the program apart from its group; not read here
 //                                         "alone": why programs-as-entry-points.ts leaves the program out: what it prints hangs on being the first entry point, or on what else the executable holds
 //                                         "mainThread": why programs-as-separate-entry-points.ts leaves the program out: a Worker does not print what the main thread prints
 //   // STATISTIC: <name> (= | >= | <=) <n>  a line of the entry point: what the build counted under that `StatisticId`, as the hidden `--explain=statistics` prints it.
@@ -55,6 +56,7 @@
 //   TEST_PART=aot/strings bun test ..                     one topic, the same
 //   AOT_SHARE=all bun test ..                             every program
 //   AOT_SHARE=<revision> bun test ..                      the programs that the Bun of that revision takes
+//   AOT_SHARE=<revision>+<number> bun test ..             another share by the same revision: each lane of CI has a number (scripts/aot-tests.ts), so together they take more
 //   AOT_PROGRAMS=quick bun test ..                        one program in ten, the same ones every time
 //   AOT_PROGRAMS= bun test ..                             everything, packages/ too, even with a debug or ASAN build of Bun
 //   AOT_PROGRAMS=replace bun test ..                      the programs whose path contains the text
@@ -87,11 +89,23 @@
 //   untyped-code          code without type information
 //   untyped-stress        the same, ported from stress tests that were written for the `jsc` shell
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { availableParallelism, tmpdir } from "os";
 import { join, relative, sep } from "path";
 import { describedRows, readTable, type Row } from "./built-ins-alone/table";
+import { shareNumber } from "./fresh-seed";
 import { findBuiltinTable, generators, writeGroups, writeProgram, type WrittenProgram } from "./generate";
 import { locksEnvironment } from "./hardened";
 
@@ -102,7 +116,8 @@ const updates = !!process.env.AOT_PROGRAMS_UPDATE;
 
 // CI has four cores for five minutes a file, and every program in every way would take it a day for each commit. So a run that is told nothing takes a share of the programs, and which
 // share follows from the revision of the Bun under test: each commit takes others, and in time all are taken. A test is named after its program, so AOT_PROGRAMS=<name> runs a red again.
-const seedOfShare = process.env.AOT_SHARE ?? Bun.revision;
+const spelledShare = process.env.AOT_SHARE ?? Bun.revision;
+const seedOfShare = spelledShare.split("+")[0];
 export const isToldWhatToTake = seedOfShare === "all" || process.env.AOT_PROGRAMS !== undefined || updates;
 // Most helpers have a rule of their own for the quick subset. One that has none passes `alsoOfQuickSubset`, or a debug or ASAN build would take everything.
 const takesEverything = (alsoOfQuickSubset: boolean) => isToldWhatToTake || (wanted === "quick" && !alsoOfQuickSubset);
@@ -112,34 +127,64 @@ let hasSaidShare = false;
 const takes = process.env.AOT_TAKES;
 /** Whether this run takes what every run takes: the programs of a list, what once went wrong. */
 export const takesWhatIsFixed = takes !== "drawn";
+/** Whether this run takes what is drawn: a share, a sample. */
+export const takesWhatIsDrawn = takes !== "fixed";
 
 /** For a tool that takes every n-th program, starting at the i-th, as `<i>/<n>`: part `part` of `parts`, or, in a run that takes a share, one of `oneIn` pieces of that part. */
 export function partInShare(part: number, parts: number, oneIn: number, alsoOfQuickSubset = false): string {
   if (takesEverything(alsoOfQuickSubset)) return `${part}/${parts}`;
-  return `${part + parts * Number(BigInt(Bun.hash(seedOfShare)) % BigInt(oneIn))}/${parts * oneIn}`;
+  return `${part + parts * Number((BigInt(Bun.hash(seedOfShare)) + BigInt(shareNumber)) % BigInt(oneIn))}/${parts * oneIn}`;
+}
+
+function sayShare() {
+  if (!hasSaidShare)
+    console.error(
+      `SHARE: this run takes a part of the programs. AOT_SHARE=${spelledShare} takes the same part, AOT_SHARE=all takes all of them`,
+    );
+  hasSaidShare = true;
 }
 
 /** Whether this run takes the program, the case or the pair `name`, of whose kind a run takes one in `oneIn`. */
 export function inShare(name: string, oneIn: number, alsoOfQuickSubset = false): boolean {
   if (takes === "fixed") return false;
   if (takesEverything(alsoOfQuickSubset)) return true;
-  if (!hasSaidShare) console.error(`SHARE: this run takes a part of the programs. AOT_SHARE=${seedOfShare} takes the same part, AOT_SHARE=all takes all of them`);
-  hasSaidShare = true;
-  return BigInt(Bun.hash(seedOfShare + " " + name.replaceAll("\\", "/"))) % BigInt(oneIn) === 0n;
+  sayShare();
+  return (
+    BigInt(Bun.hash(seedOfShare + " " + name.replaceAll("\\", "/"))) % BigInt(oneIn) === BigInt(shareNumber % oneIn)
+  );
+}
+
+/** The `count` of `items` that this run takes, by their names, so that what a run costs does not hang on the draw. All of them where the run is told what to take. */
+export function takeFromShare<T>(items: T[], count: number, nameOf: (item: T) => string): T[] {
+  if (takes === "fixed") return [];
+  if (isToldWhatToTake || items.length <= count) return items;
+  sayShare();
+  const rankOf = new Map(items.map(item => [item, Bun.hash(seedOfShare + " " + nameOf(item).replaceAll("\\", "/"))]));
+  const ranked = items.toSorted((a, b) => (rankOf.get(a)! < rankOf.get(b)! ? -1 : 1));
+  const first = (shareNumber * count) % items.length;
+  const drawn = new Set([...ranked, ...ranked].slice(first, first + count));
+  return items.filter(item => drawn.has(item));
 }
 
 /** For what no run is meant to take whole: one in `oneIn` by the commit, so that in time all are taken, and nothing where the run is told what to take. */
 export const inShareOfTheRest = (name: string, oneIn: number) => !isToldWhatToTake && inShare(name, oneIn, true);
 
 /** For what takes one in `oneIn` of a list, as a debug or ASAN build of Bun takes a tenth of many: whether it takes `name`, the `index`-th. By the commit, as every share, so that in time all are taken; every `oneIn`-th where the run is told what to take. */
-export const inShareOfList = (name: string, index: number, oneIn = 10) => (isToldWhatToTake ? index % oneIn === 0 : inShare(name, oneIn, true));
+export const inShareOfList = (name: string, index: number, oneIn = 10) =>
+  isToldWhatToTake ? index % oneIn === 0 : inShare(name, oneIn, true);
 
 // One build takes about as long as the whole default limit of bun:test. This holds for every file that imports this one or supported.ts.
 setDefaultTimeout(120_000);
 
 // Not every build of Bun includes the compiler. One without it says so before it looks for the entry point.
 export const unsupported = /^error: --aot ((?:only supports|isn't available) .*)$/m.exec(
-  Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--aot", "./no-such-file.ts"], cwd: root, env: bunEnv, stdout: "ignore", stderr: "pipe" }).stderr.toString(),
+  Bun.spawnSync({
+    cmd: [bunExe(), "build", "--compile", "--aot", "./no-such-file.ts"],
+    cwd: root,
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  }).stderr.toString(),
 )?.[1];
 if (unsupported) console.error(`SKIPPED: the tests of --aot in this file: ${unsupported}`);
 
@@ -159,7 +204,12 @@ function findKept(folder: string, into: string[]) {
   for (const entry of entries) {
     const path = join(folder, entry.name);
     if (entry.isDirectory()) findKept(path, into);
-    else if (/\.([cm]?[jt]s|tsx)$/.test(entry.name) && !/\.d\.[cm]?ts$/.test(entry.name) && !helpers.has(relative(root, path).replaceAll("\\", "/"))) into.push(path);
+    else if (
+      /\.([cm]?[jt]s|tsx)$/.test(entry.name) &&
+      !/\.d\.[cm]?ts$/.test(entry.name) &&
+      !helpers.has(relative(root, path).replaceAll("\\", "/"))
+    )
+      into.push(path);
   }
 }
 
@@ -174,12 +224,15 @@ const groups = new Map<string, { topic: string; group: string; rows: Row[]; prog
 let rowsOfBuiltinTable: Row[] | undefined;
 
 /** The path of a program below ./programs, kept there or not. It names the program, and the parts of a folder, the quick subset and the share go by it. */
-export const inPrograms = (path: string) => relative(writtenRoot !== undefined && path.startsWith(writtenRoot + sep) ? writtenRoot : root, path);
+export const inPrograms = (path: string) =>
+  relative(writtenRoot !== undefined && path.startsWith(writtenRoot + sep) ? writtenRoot : root, path);
 
 function findWritten(topic: string, into: string[]) {
   const generator = generators[topic]();
   if (writtenRoot === undefined) {
-    const folder = (writtenRoot = String(tempDir("aot-written-programs", { "tsconfig.json": JSON.stringify({ extends: join(root, "tsconfig.json") }) })));
+    const folder = (writtenRoot = String(
+      tempDir("aot-written-programs", { "tsconfig.json": JSON.stringify({ extends: join(root, "tsconfig.json") }) }),
+    ));
     // `bun test test/aot` is one process for all files: the next one begins anew.
     afterAll(() => {
       rmSync(folder, { recursive: true, force: true });
@@ -205,7 +258,10 @@ function findWritten(topic: string, into: string[]) {
   if (rowsOfBuiltinTable === undefined) {
     const path = findBuiltinTable(bunExe());
     rowsOfBuiltinTable = path === undefined ? [] : describedRows(readTable(path));
-    if (path === undefined) console.error(`SKIPPED: the programs that follow from the table of built-ins: there is no aot_builtin_table.json in $AOT_BUILTIN_TABLE, beside ${bunExe()} or in the folder codegen beside it`);
+    if (path === undefined)
+      console.error(
+        `SKIPPED: the programs that follow from the table of built-ins: there is no aot_builtin_table.json in $AOT_BUILTIN_TABLE, beside ${bunExe()} or in the folder codegen beside it`,
+      );
   }
   for (const [group, rows] of generator.fromTable.groups(rowsOfBuiltinTable)) {
     const path = join(writtenRoot, topic, group);
@@ -218,7 +274,9 @@ function findWritten(topic: string, into: string[]) {
 export function listWrittenPrograms(files = /./): string[] {
   const all: string[] = [];
   for (const topic of Object.keys(generators)) findWritten(topic, all);
-  return all.filter(path => files.test(groups.has(path) ? `${path}.${generators[groups.get(path)!.topic]().fromTable!.extension}` : path));
+  return all.filter(path =>
+    files.test(groups.has(path) ? `${path}.${generators[groups.get(path)!.topic]().fromTable!.extension}` : path),
+  );
 }
 
 /** Where a program that a script writes lies, written. `name`: its path below ./programs without the extension. Not to be called from inside a test. */
@@ -238,14 +296,16 @@ export const isGroup = (path: string) => groups.has(path);
 export function find(topic?: string): string[] {
   const all: string[] = [];
   if (topic === undefined || existsSync(join(root, topic))) findKept(join(root, topic ?? ""), all);
-  for (const each of topic === undefined ? Object.keys(generators) : topic in generators ? [topic] : []) findWritten(each, all);
+  for (const each of topic === undefined ? Object.keys(generators) : topic in generators ? [topic] : [])
+    findWritten(each, all);
   return all;
 }
 
 /** Whether AOT_PROGRAMS=<text> selects the program. */
 const isWanted = (path: string) => inPrograms(path).includes(wanted);
 /** No group is made of which AOT_PROGRAMS=<text> selects nothing. The names of its programs are <group> or <group>-<more words>. */
-export const mayHoldWhatIsWanted = (path: string) => !groups.has(path) || wanted === "quick" || isWanted(path) || wanted.includes(groups.get(path)!.group + "-");
+export const mayHoldWhatIsWanted = (path: string) =>
+  !groups.has(path) || wanted === "quick" || isWanted(path) || wanted.includes(groups.get(path)!.group + "-");
 
 /** Those of `listed` for which `takes` holds, written where a script writes them. A group is made, and `takes` is asked of its programs. */
 export function taken(listed: string[], takes: (path: string) => boolean): string[] {
@@ -272,7 +332,14 @@ export function taken(listed: string[], takes: (path: string) => boolean): strin
       BUN_JSC_randomIntegrityAuditRate: undefined,
       ASAN_OPTIONS: isASAN ? [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") : bunEnv.ASAN_OPTIONS,
     };
-    const entries = writeGroups(bunExe(), topic, new Map(some.map(({ group, rows }) => [group, rows])), writtenRoot!, jobs, env);
+    const entries = writeGroups(
+      bunExe(),
+      topic,
+      new Map(some.map(({ group, rows }) => [group, rows])),
+      writtenRoot!,
+      jobs,
+      env,
+    );
     for (const group of some) group.programs = entries.get(group.group)!.map(entry => join(writtenRoot!, topic, entry));
   }
   return paths.flatMap(path => groups.get(path)?.programs!.filter(takes) ?? [path]);
@@ -295,7 +362,8 @@ export function writeShareOfWrittenPrograms(share: string): string {
 const slots = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism());
 let free = slots;
 const waiting: (() => void)[] = [];
-const takeSlot = (isNext = false) => (free > 0 ? void free-- : new Promise<void>(resolve => (isNext ? waiting.unshift(resolve) : waiting.push(resolve))));
+const takeSlot = (isNext = false) =>
+  free > 0 ? void free-- : new Promise<void>(resolve => (isNext ? waiting.unshift(resolve) : waiting.push(resolve)));
 function giveSlot() {
   const next = waiting.shift();
   if (next) next();
@@ -339,21 +407,40 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
   // A child that hangs is killed here, and the signal fails the test. A test that merely timed out would leave it running.
   // A build that verifies the IR after every pass takes sixteen times as long as one that does not. --aot-validate checks each built-in module that a program holds: one that starts a Worker holds most of them, one that may load code from disk all.
   const isLong = cmd.includes("--aot-check=verify-each-pass") || cmd.includes("--aot-validate");
-  const timeout = limit ?? (isLong || moreBuildFlags.length || isASAN ? 240_000 : collectsAtEveryAllocation(env) ? 120_000 : 90_000);
+  const timeout =
+    limit ?? (isLong || moreBuildFlags.length || isASAN ? 240_000 : collectsAtEveryAllocation(env) ? 120_000 : 90_000);
   const start = performance.now();
-  await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout, killSignal: "SIGKILL" });
+  await using proc = Bun.spawn({
+    cmd,
+    cwd,
+    env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout,
+    killSignal: "SIGKILL",
+  });
   // A build that is asked to end says what each of its threads is still compiling. One that is killed says nothing.
   const secondsToAnswer = 3;
   const isBuild = behindTheFlag && (cmd.includes("build") || cmd.includes("compile"));
-  const asked = isBuild && !isWindows ? setTimeout(() => proc.kill("SIGTERM"), timeout - secondsToAnswer * 1000) : undefined;
+  const asked =
+    isBuild && !isWindows ? setTimeout(() => proc.kill("SIGTERM"), timeout - secondsToAnswer * 1000) : undefined;
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   clearTimeout(asked);
   const milliseconds = Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1000;
   const result = { stdout, stderr, exitCode, signal: proc.signalCode };
   const lasted = performance.now() - start;
-  if ((proc.signalCode === "SIGKILL" && lasted >= timeout) || (proc.signalCode === "SIGTERM" && asked && lasted >= timeout - secondsToAnswer * 1000)) {
+  if (
+    (proc.signalCode === "SIGKILL" && lasted >= timeout) ||
+    (proc.signalCode === "SIGTERM" && asked && lasted >= timeout - secondsToAnswer * 1000)
+  ) {
     const stillCompiling = stderr.split("\n").filter(line => line.startsWith("Still "));
-    console.error([`KILLED at its time limit of ${timeout / 1000} s, with ${Math.round(milliseconds / 1000)} s of processor time used: ${cmd.at(-1)}`, ...stillCompiling].join("\n  "));
+    console.error(
+      [
+        `KILLED at its time limit of ${timeout / 1000} s, with ${Math.round(milliseconds / 1000)} s of processor time used: ${cmd.at(-1)}`,
+        ...stillCompiling,
+      ].join("\n  "),
+    );
     killedWhenTimeWasUp.add(result);
     if (milliseconds >= timeout / 10) atWorkWhenTimeWasUp.add(result);
   }
@@ -362,15 +449,27 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
 
 const killedWhenTimeWasUp = new WeakSet<object>();
 const atWorkWhenTimeWasUp = new WeakSet<object>();
-const collectsAtEveryAllocation = (env: Record<string, string | undefined>) => Number(env.BUN_JSC_slowPathAllocsBetweenGCs) <= 7;
+const collectsAtEveryAllocation = (env: Record<string, string | undefined>) =>
+  Number(env.BUN_JSC_slowPathAllocsBetweenGCs) <= 7;
 const collectsEveryMillisecond = (env: Record<string, string | undefined>) => env.BUN_JSC_collectContinuously === "1";
 
 // Where the kernel hands a core to a program (systemd-coredump, apport) it starts that program whatever the limit is, but for a limit of one byte, and the process that a signal ended is
 // gone only when the program has read it: seconds on a busy machine.
 export const withoutCoreDump = (cmd: string[]) =>
-  isWindows ? cmd : ["/bin/sh", "-c", `command -v prlimit > /dev/null 2>&1 && exec prlimit --core=1:1 "$@"; ulimit -c 0 && exec "$@"`, "--", ...cmd];
+  isWindows
+    ? cmd
+    : [
+        "/bin/sh",
+        "-c",
+        `command -v prlimit > /dev/null 2>&1 && exec prlimit --core=1:1 "$@"; ulimit -c 0 && exec "$@"`,
+        "--",
+        ...cmd,
+      ];
 /** For a process that is meant to end by a signal. CI's runner books a report that a passing file leaves on the next file that fails. */
-export const withoutCrashReport: Record<string, string> = { BUN_ENABLE_CRASH_REPORTING: "0", ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }) };
+export const withoutCrashReport: Record<string, string> = {
+  BUN_ENABLE_CRASH_REPORTING: "0",
+  ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }),
+};
 
 /** The parts of a run's result that must be equal between two ways of running a program. */
 export function told(run: { stdout: string; stderr: string; exitCode: number }) {
@@ -382,14 +481,19 @@ export function told(run: { stdout: string; stderr: string; exitCode: number }) 
     // and the name of the executable in the hint below it.
     stderr:
       run.exitCode === 0
-        ? run.stderr.replace(/^\(node:[0-9]+\) /gm, "(node) ").replace(/^\(Use `[^`\n]* --trace-warnings /gm, "(Use `bun --trace-warnings ")
+        ? run.stderr
+            .replace(/^\(node:[0-9]+\) /gm, "(node) ")
+            .replace(/^\(Use `[^`\n]* --trace-warnings /gm, "(Use `bun --trace-warnings ")
         : (run.stderr.split("\n").find(line => /^(error|[A-Za-z]*Error)\b/.test(line)) ?? ""),
     exitCode: run.exitCode,
   };
 }
 
 export function built(build: { stderr: string; exitCode: number }) {
-  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+    stderr: expect.not.stringMatching(/^error\b/m),
+    exitCode: 0,
+  });
 }
 
 // Every build writes the Bun that runs it once more, and CI tests bun-profile, which on Linux has its debug information in it:
@@ -407,12 +511,20 @@ export function withoutDebugInformation(_folder?: string): string[] {
     return ["--compile-executable-path", copy];
   }
   for (const name of readdirSync(tmpdir())) {
-    if (name.startsWith(prefix) && Date.now() - (statSync(join(tmpdir(), name), { throwIfNoEntry: false })?.mtimeMs ?? Infinity) > 24 * 60 * 60 * 1000) rmSync(join(tmpdir(), name), { force: true });
+    if (
+      name.startsWith(prefix) &&
+      Date.now() - (statSync(join(tmpdir(), name), { throwIfNoEntry: false })?.mtimeMs ?? Infinity) >
+        24 * 60 * 60 * 1000
+    )
+      rmSync(join(tmpdir(), name), { force: true });
   }
   const unfinished = `${copy}.${process.pid}`;
   // LeakSanitizer's suppressions (test/leaksan.supp) name functions, so under it the copy keeps its table of symbols.
   const removed = isASAN ? ["--strip-debug"] : [];
-  if (Bun.spawnSync({ cmd: [strip, ...removed, "-o", unfinished, bunExe()], stdout: "ignore", stderr: "ignore" }).exitCode !== 0) {
+  if (
+    Bun.spawnSync({ cmd: [strip, ...removed, "-o", unfinished, bunExe()], stdout: "ignore", stderr: "ignore" })
+      .exitCode !== 0
+  ) {
     rmSync(unfinished, { force: true });
     return [];
   }
@@ -422,9 +534,24 @@ export function withoutDebugInformation(_folder?: string): string[] {
 
 let executables = 0;
 
-type ProgramOptions = { build?: string[]; entryPoints?: string[]; buildEnv?: Record<string, string>; env?: Record<string, string>; reference?: "compiled"; erased?: "as plain Bun"; seconds?: number };
+type ProgramOptions = {
+  build?: string[];
+  entryPoints?: string[];
+  buildEnv?: Record<string, string>;
+  env?: Record<string, string>;
+  reference?: "compiled";
+  erased?: "as plain Bun";
+  seconds?: number;
+};
 // How the programs of one describe() are built and run.
-type Setup = { folder: string; carrier: string[]; buildFlags: string[]; runEnv: Record<string, string> | Record<string, string>[]; erasesTypes: boolean; stubCopies?: number };
+type Setup = {
+  folder: string;
+  carrier: string[];
+  buildFlags: string[];
+  runEnv: Record<string, string> | Record<string, string>[];
+  erasesTypes: boolean;
+  stubCopies?: number;
+};
 export type RunResult = ReturnType<typeof told>;
 export type StatisticBound = { name: string; relation: "=" | ">=" | "<="; bound: number };
 
@@ -448,9 +575,14 @@ export type CompiledProgram = {
   stubCopiesExpected?: boolean;
 };
 
-const loggingOptions = new Set(["logAOTPhaseTimes", "dumpAOTB3Graph", "dumpAOTDisassembly", "aotFunctionToDump", "aotMapFilePath"].map(name => `BUN_JSC_${name}`));
+const loggingOptions = new Set(
+  ["logAOTPhaseTimes", "dumpAOTB3Graph", "dumpAOTDisassembly", "aotFunctionToDump", "aotMapFilePath"].map(
+    name => `BUN_JSC_${name}`,
+  ),
+);
 
-const nextExecutablePath = (folder: string, name: string) => join(folder, `${name}-${executables++}${isWindows ? ".exe" : ""}`);
+const nextExecutablePath = (folder: string, name: string) =>
+  join(folder, `${name}-${executables++}${isWindows ? ".exe" : ""}`);
 
 const isTypeScriptFile = (name: string) => /\.(ts|tsx|mts|cts)$/.test(name) && !/\.d\.[mc]?ts$/.test(name);
 
@@ -463,25 +595,39 @@ export function hasTypes(path: string): boolean {
 function readStatisticBounds(path: string): StatisticBound[] {
   return Array.from(readFileSync(path, "utf8").matchAll(/^\/\/ STATISTIC\b(.*)$/gm), ([line, rest]) => {
     const [, name, relation, bound] = /^: (\w+) (=|>=|<=) (\d+)$/.exec(rest) ?? [];
-    if (name === undefined) throw new Error(`${path}: "${line}" is not of the form "// STATISTIC: <name> (= | >= | <=) <n>"`);
+    if (name === undefined)
+      throw new Error(`${path}: "${line}" is not of the form "// STATISTIC: <name> (= | >= | <=) <n>"`);
     return { name, relation: relation as StatisticBound["relation"], bound: Number(bound) };
   });
 }
 
 function expectStatistics(buildOutput: string, bounds: StatisticBound[]) {
-  const counted = new Map(Array.from(buildOutput.matchAll(/^(\w+) (\d+)$/gm), ([, name, value]) => [name, Number(value)] as const));
+  const counted = new Map(
+    Array.from(buildOutput.matchAll(/^(\w+) (\d+)$/gm), ([, name, value]) => [name, Number(value)] as const),
+  );
   const isMet = ({ name, relation, bound }: StatisticBound) => {
     const value = counted.get(name);
     if (value === undefined) return false;
     return relation === "=" ? value === bound : relation === ">=" ? value >= bound : value <= bound;
   };
   const unmet = bounds.filter(bound => !isMet(bound));
-  expect(unmet.map(({ name, relation, bound }) => `${name} ${relation} ${bound}, but the build counted ${counted.get(name) ?? "no such statistic"}`)).toEqual([]);
+  expect(
+    unmet.map(
+      ({ name, relation, bound }) =>
+        `${name} ${relation} ${bound}, but the build counted ${counted.get(name) ?? "no such statistic"}`,
+    ),
+  ).toEqual([]);
 }
 
 async function buildCompiled(program: CompiledProgram) {
   const executable = nextExecutablePath(program.outputFolder ?? program.cwd, "program");
-  const flags = ["--aot-check=validate-references", ...(isASAN || isDebug ? ["--aot-check=ClaimsToBackEnd"] : []), ...program.carrier, ...program.buildFlags, ...(program.statistics?.length || program.stubCopiesExpected ? ["--explain=statistics"] : [])];
+  const flags = [
+    "--aot-check=validate-references",
+    ...(isASAN || isDebug ? ["--aot-check=ClaimsToBackEnd"] : []),
+    ...program.carrier,
+    ...program.buildFlags,
+    ...(program.statistics?.length || program.stubCopiesExpected ? ["--explain=statistics"] : []),
+  ];
   const cmd = [bunExe(), "build", "--compile", "--aot", ...flags, ...program.entryPoints, "--outfile", executable];
   const ran = await spawned(cmd, program.cwd, { ...bunEnv, ...program.buildEnvironment });
   const build = { ...ran, executable };
@@ -490,7 +636,11 @@ async function buildCompiled(program: CompiledProgram) {
 }
 
 /** Builds the program, runs its executable once in each environment and hands each result to `check`. */
-async function runCompiled(program: CompiledProgram, check: (result: RunResult, environment: Record<string, string>) => void, beforeAskingAgain?: () => Promise<unknown>) {
+async function runCompiled(
+  program: CompiledProgram,
+  check: (result: RunResult, environment: Record<string, string>) => void,
+  beforeAskingAgain?: () => Promise<unknown>,
+) {
   const build = await buildCompiled(program);
   try {
     // Nor does how long a build takes that verifies the IR after every pass: it has found nothing invalid in what it got to.
@@ -508,12 +658,21 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
       // A list of environments goes from mild to harsh. A program that has taken a minute in the mild ones is not run in the harsh ones.
       if (collectsAtEveryAllocation(environment) && spentCollecting > 60_000) continue;
       const start = performance.now();
-      const startExecutable = () => spawned(withoutCoreDump([build.executable]), program.cwd, { ...bunEnv, ...environment, BUN_AOT_VERBOSE: "1" }, program.secondsToRun && program.secondsToRun * 1000);
+      const startExecutable = () =>
+        spawned(
+          withoutCoreDump([build.executable]),
+          program.cwd,
+          { ...bunEnv, ...environment, BUN_AOT_VERBOSE: "1" },
+          program.secondsToRun && program.secondsToRun * 1000,
+        );
       let ran = await (program.measures ? withEverySlot(1, startExecutable) : startExecutable());
       if (collectsAtEveryAllocation(environment)) spentCollecting += performance.now() - start;
       // How long a program takes where every allocation collects says nothing about it, nor where a collection is asked for every millisecond, nor where the executable checks
       // while it runs what the compiler took for proven. One that is still at work when its time is up has shown no fault, and has no output to compare.
-      const isSlowOnPurpose = collectsAtEveryAllocation(environment) || collectsEveryMillisecond(environment) || program.buildFlags.includes("--aot-validate");
+      const isSlowOnPurpose =
+        collectsAtEveryAllocation(environment) ||
+        collectsEveryMillisecond(environment) ||
+        program.buildFlags.includes("--aot-validate");
       // TODO: on Windows an executable in which a collection is asked for every millisecond has been killed at its time limit. Whether it was at work is not known.
       const stallsOnWindows = isWindows && collectsEveryMillisecond(environment) && killedWhenTimeWasUp.has(ran);
       if ((isSlowOnPurpose && atWorkWhenTimeWasUp.has(ran)) || stallsOnWindows) {
@@ -521,7 +680,11 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
         continue;
       }
       for (let attemptsLeft = program.measures ? 3 : 0; ; attemptsLeft--) {
-        expect({ environment, signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ environment, signal: null, stderr: "" });
+        expect({ environment, signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({
+          environment,
+          signal: null,
+          stderr: "",
+        });
         // The executable really ran compiled code and did not fall back to the embedded source.
         expect(ran.stderr).toContain("[aot] module: ");
         try {
@@ -529,7 +692,9 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
           break;
         } catch (error) {
           if (attemptsLeft === 0) throw error;
-          console.error(`ASKED AGAIN: ${inPrograms(besideOf(program.entryPoints[0])).replaceAll("\\", "/")}${program.buildFlags.length ? `, built with ${program.buildFlags.join(" ")}` : ""}`);
+          console.error(
+            `ASKED AGAIN: ${inPrograms(besideOf(program.entryPoints[0])).replaceAll("\\", "/")}${program.buildFlags.length ? `, built with ${program.buildFlags.join(" ")}` : ""}`,
+          );
           await beforeAskingAgain?.();
           ran = await withEverySlot(1, startExecutable);
         }
@@ -542,7 +707,9 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
 
 /** Builds the program with --aot. In each of its environments the executable must do what `expected` says. `way` names the build where they differ. */
 export async function expectCompiledOutput(way: string, program: CompiledProgram, expected: RunResult): Promise<void> {
-  await runCompiled(program, (result, environment) => expect({ way, environment, ...result }).toEqual({ way, environment, ...expected }));
+  await runCompiled(program, (result, environment) =>
+    expect({ way, environment, ...result }).toEqual({ way, environment, ...expected }),
+  );
 }
 
 async function expectBuildErrors(program: CompiledProgram, stored: string) {
@@ -559,10 +726,9 @@ async function expectBuildErrors(program: CompiledProgram, stored: string) {
 
 export function expectStored(file: string, result: RunResult) {
   // What is stored names the files of an executable as they are named elsewhere than on Windows.
-  const text = (result.stdout + (result.exitCode ? `exit code ${result.exitCode}\n${result.stderr}\n` : result.stderr)).replace(
-    /B:\\~BUN\\root[^\s'":]*/g,
-    path => "/$bunfs/root" + path.slice(12).replaceAll("\\", "/"),
-  );
+  const text = (
+    result.stdout + (result.exitCode ? `exit code ${result.exitCode}\n${result.stderr}\n` : result.stderr)
+  ).replace(/B:\\~BUN\\root[^\s'":]*/g, path => "/$bunfs/root" + path.slice(12).replaceAll("\\", "/"));
   if (updates) writeFileSync(file, text);
   expect(text).toBe(readFileSync(file, "utf8"));
 }
@@ -573,13 +739,37 @@ async function runReference(path: string, options: ProgramOptions, setup: Setup)
   try {
     if (options.reference === "compiled") {
       const flags = (options.build ?? []).filter(flag => !flag.startsWith("--aot-"));
-      built(await spawned([bunExe(), "build", "--compile", ...setup.carrier, ...flags, path, ...(options.entryPoints ?? []), "--outfile", executable], cwd, bunEnv));
+      built(
+        await spawned(
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            ...setup.carrier,
+            ...flags,
+            path,
+            ...(options.entryPoints ?? []),
+            "--outfile",
+            executable,
+          ],
+          cwd,
+          bunEnv,
+        ),
+      );
     }
-    const startReference = () => spawned(options.reference === "compiled" ? [executable] : [bunExe(), "run", path], cwd, { ...bunEnv, ...options.env });
+    const startReference = () =>
+      spawned(options.reference === "compiled" ? [executable] : [bunExe(), "run", path], cwd, {
+        ...bunEnv,
+        ...options.env,
+      });
     const plain = await (measuresTimeOrMemory(path) ? withEverySlot(1, startReference) : startReference());
     // A reference run that fails is useless: two runs that end with the same error would compare equal and prove nothing.
     const hasFailed = plain.signal !== null || plain.exitCode !== 0;
-    expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: hasFailed ? plain.stderr : "" }).toEqual({ signal: null, exitCode: 0, stderr: "" });
+    expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: hasFailed ? plain.stderr : "" }).toEqual({
+      signal: null,
+      exitCode: 0,
+      stderr: "",
+    });
     return told(plain);
   } finally {
     rmSync(executable, { force: true });
@@ -587,7 +777,10 @@ async function runReference(path: string, options: ProgramOptions, setup: Setup)
 }
 
 /** The lines of a map file, each split into its fields. */
-const readMap = (mapFile: string) => readFileSync(mapFile, "utf8").split("\n").map(line => line.split("\t"));
+const readMap = (mapFile: string) =>
+  readFileSync(mapFile, "utf8")
+    .split("\n")
+    .map(line => line.split("\t"));
 
 /**
  * Lays the code of the program out as if calls reached only far enough to need about `copies` copies of the shared stubs, as in a very large program.
@@ -596,24 +789,42 @@ const readMap = (mapFile: string) => readFileSync(mapFile, "utf8").split("\n").m
  */
 async function withStubCopies(program: CompiledProgram, copies: number): Promise<CompiledProgram> {
   const mapFile = nextExecutablePath(program.outputFolder ?? program.cwd, "map");
-  const build = await buildCompiled({ ...program, buildFlags: [...program.buildFlags, "--explain=statistics"], buildEnvironment: { ...program.buildEnvironment, BUN_JSC_aotMapFilePath: mapFile } });
+  const build = await buildCompiled({
+    ...program,
+    buildFlags: [...program.buildFlags, "--explain=statistics"],
+    buildEnvironment: { ...program.buildEnvironment, BUN_JSC_aotMapFilePath: mapFile },
+  });
   try {
     built(build);
     const lines = readMap(mapFile);
     const functionsEnd = Number(lines.find(fields => fields[0] === "R")?.[1]);
-    const functions = lines.filter(fields => fields[0] === "F").map(fields => ({ offset: Number(fields[2]), size: Number(fields[3]) })).sort((a, b) => a.offset - b.offset);
+    const functions = lines
+      .filter(fields => fields[0] === "F")
+      .map(fields => ({ offset: Number(fields[2]), size: Number(fields[3]) }))
+      .sort((a, b) => a.offset - b.offset);
     const functionOffsets = functions.map(({ offset }) => offset);
     // The stubs come first, then the functions.
     const functionsStart = functionOffsets.reduce((least, offset) => Math.min(least, offset), Infinity);
     const stubsSize = Number(/^SharedCodeBytesEmitted (\d+)$/m.exec(build.stderr)?.[1]);
-    expect({ functionsStart, functionsEnd, stubsSize }).toEqual({ functionsStart: expect.any(Number), functionsEnd: expect.any(Number), stubsSize: expect.any(Number) });
+    expect({ functionsStart, functionsEnd, stubsSize }).toEqual({
+      functionsStart: expect.any(Number),
+      functionsEnd: expect.any(Number),
+      stubsSize: expect.any(Number),
+    });
     expect(functionsEnd).toBeGreaterThan(functionsStart);
     // A copy serves the functions on both of its sides from which its far end is within reach.
     const reach = stubsSize + Math.ceil((functionsEnd - functionsStart) / (2 * copies));
     // So one copy does where the functions can be cut in two stretches, one for each side, and each is short enough or is a single function, which cannot be cut however long it is.
-    const isServedFromOneSide = (stretch: typeof functions) => stretch.length <= 1 || stretch.at(-1)!.offset + stretch.at(-1)!.size - stretch[0].offset <= reach - stubsSize;
-    const oneCopyMayDo = functions.some((_, index) => isServedFromOneSide(functions.slice(0, index)) && isServedFromOneSide(functions.slice(index)));
-    return { ...program, buildFlags: [...program.buildFlags, `--aot-limit=direct-call-reach:${reach}`], stubCopiesExpected: !oneCopyMayDo };
+    const isServedFromOneSide = (stretch: typeof functions) =>
+      stretch.length <= 1 || stretch.at(-1)!.offset + stretch.at(-1)!.size - stretch[0].offset <= reach - stubsSize;
+    const oneCopyMayDo = functions.some(
+      (_, index) => isServedFromOneSide(functions.slice(0, index)) && isServedFromOneSide(functions.slice(index)),
+    );
+    return {
+      ...program,
+      buildFlags: [...program.buildFlags, `--aot-limit=direct-call-reach:${reach}`],
+      stubCopiesExpected: !oneCopyMayDo,
+    };
   } finally {
     rmSync(build.executable, { force: true });
     rmSync(mapFile, { force: true });
@@ -621,7 +832,9 @@ async function withStubCopies(program: CompiledProgram, copies: number): Promise
 }
 
 async function run(path: string, beside: string, setup: Setup) {
-  const options: ProgramOptions = existsSync(beside + ".json") ? JSON.parse(readFileSync(beside + ".json", "utf8")) : {};
+  const options: ProgramOptions = existsSync(beside + ".json")
+    ? JSON.parse(readFileSync(beside + ".json", "utf8"))
+    : {};
   expect(Object.keys(options.buildEnv ?? {}).filter(name => !loggingOptions.has(name))).toEqual([]);
   const bounds = readStatisticBounds(path);
   const createProgram = (extraFlags: string[], statistics: StatisticBound[]): CompiledProgram => ({
@@ -645,9 +858,16 @@ async function run(path: string, beside: string, setup: Setup) {
   }
   // The flags of a variant change what the compiler does, and so do erased types: the counts hold for neither.
   const isBuiltAsWritten = setup.buildFlags.length === 0 && setup.stubCopies === undefined;
-  const ways = [{ way: "compiled", stored: beside + ".expected.txt", program: createProgram([], isBuiltAsWritten ? bounds : []) }];
+  const ways = [
+    { way: "compiled", stored: beside + ".expected.txt", program: createProgram([], isBuiltAsWritten ? bounds : []) },
+  ];
   if (setup.stubCopies !== undefined) ways[0].program = await withStubCopies(ways[0].program, setup.stubCopies);
-  if (setup.erasesTypes && hasTypes(path)) ways.push({ way: "compiled with types erased", stored: options.erased ? "" : beside + ".expected.txt", program: createProgram(["--aot-erase-types"], []) });
+  if (setup.erasesTypes && hasTypes(path))
+    ways.push({
+      way: "compiled with types erased",
+      stored: options.erased ? "" : beside + ".expected.txt",
+      program: createProgram(["--aot-erase-types"], []),
+    });
   let reference: RunResult | undefined;
   for (const { way, stored, program } of ways) {
     if (existsSync(stored)) {
@@ -656,7 +876,11 @@ async function run(path: string, beside: string, setup: Setup) {
     }
     const readReference = async () => (reference = await runReference(path, options, setup));
     reference ??= await readReference();
-    await runCompiled(program, (result, environment) => expect({ way, environment, ...result }).toEqual({ way, environment, ...reference! }), readReference);
+    await runCompiled(
+      program,
+      (result, environment) => expect({ way, environment, ...result }).toEqual({ way, environment, ...reference! }),
+      readReference,
+    );
   }
 }
 
@@ -666,12 +890,18 @@ const isQuick = (path: string) => (hash(path) >> 8n) % 10n === 0n;
 const isInTenthOfSlowBuild = (path: string) =>
   process.env.AOT_PROGRAMS === undefined && seedOfShare !== "all" ? inShare(inPrograms(path), 10, true) : isQuick(path);
 /** For what walks all folders and takes few: one program in ten, or in three, others for each commit and each `label`, so that in time all are taken. A run that is told what to take gets the same ones every time. */
-export const inTenthOfAll = (label: string, path: string) => (isToldWhatToTake ? isQuick(path) : inShare(`${label} tenth ${inPrograms(path)}`, 10, true));
-export const inThirdOfAll = (label: string, path: string) => (isToldWhatToTake ? (hash(path) >> 32n) % 3n === 0n : inShare(`${label} third ${inPrograms(path)}`, 3, true));
+export const inTenthOfAll = (label: string, path: string) =>
+  isToldWhatToTake ? isQuick(path) : inShare(`${label} tenth ${inPrograms(path)}`, 10, true);
+export const inThirdOfAll = (label: string, path: string) =>
+  isToldWhatToTake ? (hash(path) >> 32n) % 3n === 0n : inShare(`${label} third ${inPrograms(path)}`, 3, true);
 export const besideOf = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
 /** Where what is stored beside a program lies in ./programs, for a program that is kept there and for one that is yet to be written. */
 export const keptBeside = (path: string) => join(root, inPrograms(besideOf(path)));
-const runsWithASAN = (path: string) => isASAN && takesWhatIsFixed && existsSync(keptBeside(path) + ".json") && !!JSON.parse(readFileSync(keptBeside(path) + ".json", "utf8")).runWithASAN;
+const runsWithASAN = (path: string) =>
+  isASAN &&
+  takesWhatIsFixed &&
+  existsSync(keptBeside(path) + ".json") &&
+  !!JSON.parse(readFileSync(keptBeside(path) + ".json", "utf8")).runWithASAN;
 
 function define(title: string, chosen: string[], settings: Omit<Setup, "folder" | "carrier">) {
   const folder = String(tempDir("aot-programs", {}));
@@ -685,14 +915,18 @@ function define(title: string, chosen: string[], settings: Omit<Setup, "folder" 
     for (const path of chosen) {
       const beside = besideOf(path);
       const name = inPrograms(beside).replaceAll("\\", "/");
-      const skipWithASAN: string | undefined = isASAN && existsSync(beside + ".json") ? JSON.parse(readFileSync(beside + ".json", "utf8")).skipWithASAN : undefined;
-      const todoHere = existsSync(beside + ".json") ? todoReason(JSON.parse(readFileSync(beside + ".json", "utf8"))) : undefined;
+      const skipWithASAN: string | undefined =
+        isASAN && existsSync(beside + ".json")
+          ? JSON.parse(readFileSync(beside + ".json", "utf8")).skipWithASAN
+          : undefined;
+      const todoHere = existsSync(beside + ".json")
+        ? todoReason(JSON.parse(readFileSync(beside + ".json", "utf8")))
+        : undefined;
       if (existsSync(beside + ".todo.txt")) test.todo(name);
       else if (todoHere) {
         console.error(`TODO: ${name}: ${todoHere}`);
         test.todo(name);
-      }
-      else if (skipWithASAN) {
+      } else if (skipWithASAN) {
         console.error(`SKIPPED: ${name}: ${skipWithASAN}`);
         test.skip(name, () => {});
       }
@@ -704,16 +938,17 @@ function define(title: string, chosen: string[], settings: Omit<Setup, "folder" 
 
 /** Defines one test per program in a folder. A large folder is split into `parts` by a hash of the path. */
 export function programs(topic: string, part = 1, parts = 1) {
-  define(
-    `compile/aot/${topic}`,
-    taken(
-      find(topic)
-        .filter(path => Number(hash(path) % BigInt(parts)) === part - 1)
-        .filter(mayHoldWhatIsWanted),
-      path => (wanted === "quick" ? isInTenthOfSlowBuild(path) || runsWithASAN(path) : isWanted(path)) && inShare(inPrograms(path), 10),
-    ),
-    { buildFlags: [], runEnv: {}, erasesTypes: true },
-  );
+  const listed = find(topic)
+    .filter(path => Number(hash(path) % BigInt(parts)) === part - 1)
+    .filter(mayHoldWhatIsWanted);
+  const isAsked = (path: string) =>
+    wanted === "quick" ? isInTenthOfSlowBuild(path) || runsWithASAN(path) : isWanted(path);
+  const chosen = taken(listed, path => isAsked(path) && inShare(inPrograms(path), 10));
+  define(`compile/aot/${topic}`, chosen.length ? chosen : takeFromShare(taken(listed, isAsked), 1, inPrograms), {
+    buildFlags: [],
+    runEnv: {},
+    erasesTypes: true,
+  });
 }
 
 const reading = String.raw`(?:performance\.now\(\)|Date\.now\(\)|Bun\.nanoseconds\(\)|hrtime(?:\.bigint)?\(\)|memoryUsage(?:\.rss)?\(\)(?:\.\w+)?)`;
@@ -732,14 +967,21 @@ function sourceOf(path: string): string {
   if (unwritten) return Object.values(unwritten.program.files).join("\n");
   if (!/[\\/]main\.[a-z]+$/.test(path)) return readFileSync(path, "utf8");
   const folder = join(path, "..");
-  const names = readdirSync(folder, { recursive: true, encoding: "utf8" }).filter(name => /\.([cm]?[jt]s|tsx)$/.test(name) && !name.includes("node_modules"));
+  const names = readdirSync(folder, { recursive: true, encoding: "utf8" }).filter(
+    name => /\.([cm]?[jt]s|tsx)$/.test(name) && !name.includes("node_modules"),
+  );
   return names.map(name => readFileSync(join(folder, name), "utf8")).join("\n");
 }
 
 /** What compares times says so where it leaves the sanitizer out: "skipWithASAN": "a clock". */
 /** Why a program is a todo on this platform, or on this platform and architecture. */
-export const todoReason = (options: { todoOn?: Record<string, string> }): string | undefined => options.todoOn?.[`${process.platform}-${process.arch}`] ?? options.todoOn?.[process.platform];
-export const isJudgedByClock = (path: string) => existsSync(keptBeside(path) + ".json") && /\bclock\b|\bcompares two times\b/.test(JSON.parse(readFileSync(keptBeside(path) + ".json", "utf8")).skipWithASAN ?? "");
+export const todoReason = (options: { todoOn?: Record<string, string> }): string | undefined =>
+  options.todoOn?.[`${process.platform}-${process.arch}`] ?? options.todoOn?.[process.platform];
+export const isJudgedByClock = (path: string) =>
+  existsSync(keptBeside(path) + ".json") &&
+  /\bclock\b|\bcompares two times\b/.test(
+    JSON.parse(readFileSync(keptBeside(path) + ".json", "utf8")).skipWithASAN ?? "",
+  );
 
 /**
  * The programs that every run takes, whatever its share and whatever the build of Bun: all of ./programs/counterexamples, and those that ./programs-in-every-run.txt lists, one a line,
@@ -747,17 +989,26 @@ export const isJudgedByClock = (path: string) => existsSync(keptBeside(path) + "
  */
 export function programsInEveryRun(part = 1, parts = 1) {
   // A machine that runs other tests beside this one moves a ratio of two times. What compares times is taken by the step of CI that holds up nothing.
-  const listed = readFileSync(join(import.meta.dir, "programs-in-every-run.txt"), "utf8").split(/\r?\n/).filter(line => line !== "");
+  const listed = readFileSync(join(import.meta.dir, "programs-in-every-run.txt"), "utf8")
+    .split(/\r?\n/)
+    .filter(line => line !== "");
   const nameOf = (path: string) => besideOf(inPrograms(path)).replaceAll("\\", "/");
-  const all = [...new Set(["counterexamples", ...listed.map(name => name.slice(0, name.indexOf("/")))])].flatMap(find).filter(path => !groups.has(path));
+  const all = [...new Set(["counterexamples", ...listed.map(name => name.slice(0, name.indexOf("/")))])]
+    .flatMap(find)
+    .filter(path => !groups.has(path));
   const names = new Set(all.map(nameOf));
-  if (part === 1) test("every line of programs-in-every-run.txt names a program", () => expect(listed.filter(name => !names.has(name))).toEqual([]));
+  if (part === 1)
+    test("every line of programs-in-every-run.txt names a program", () =>
+      expect(listed.filter(name => !names.has(name))).toEqual([]));
   const isListed = new Set(listed);
   define(
     "compile/aot/in-every-run",
     taken(
       all.filter(path => Number((hash(path) >> 24n) % BigInt(parts)) === part - 1),
-      path => (isJudgedByClock(path) ? takes !== "fixed" : takesWhatIsFixed) && (nameOf(path).startsWith("counterexamples/") || isListed.has(nameOf(path))) && (wanted === "" || wanted === "quick" || isWanted(path)),
+      path =>
+        (isJudgedByClock(path) ? takes !== "fixed" : takesWhatIsFixed) &&
+        (nameOf(path).startsWith("counterexamples/") || isListed.has(nameOf(path))) &&
+        (wanted === "" || wanted === "quick" || isWanted(path)),
     ),
     { buildFlags: [], runEnv: {}, erasesTypes: true },
   );
@@ -767,10 +1018,13 @@ export function programsInEveryRun(part = 1, parts = 1) {
 function markOfFailure(path: string): string | undefined {
   const name = inPrograms(besideOf(path)).replaceAll("\\", "/");
   const kept = join(root, name);
-  const options: { skipWithASAN?: string; todoOn?: Record<string, string> } = existsSync(kept + ".json") ? JSON.parse(readFileSync(kept + ".json", "utf8")) : {};
+  const options: { skipWithASAN?: string; todoOn?: Record<string, string> } = existsSync(kept + ".json")
+    ? JSON.parse(readFileSync(kept + ".json", "utf8"))
+    : {};
   // Such a build is many times slower, and what fails everywhere is looked at elsewhere.
   if (isASAN) return /^TODO\b/.test(options.skipWithASAN ?? "") ? `"skipWithASAN" in ${name}.json` : undefined;
-  if (existsSync(kept + ".todo.txt")) return readFileSync(kept + ".todo.txt", "utf8").startsWith("Not every time:") ? undefined : `${name}.todo.txt`;
+  if (existsSync(kept + ".todo.txt"))
+    return readFileSync(kept + ".todo.txt", "utf8").startsWith("Not every time:") ? undefined : `${name}.todo.txt`;
   const reason = todoReason(options);
   return reason && !reason.startsWith("Not every time:") ? `"todoOn" in ${name}.json` : undefined;
 }
@@ -783,7 +1037,11 @@ function markOfFailure(path: string): string | undefined {
 export function programsMarkedAsFailing() {
   const folder = String(tempDir("aot-programs", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
-  const isAsked = (path: string) => takes !== "fixed" && !inPrograms(path).startsWith("untyped-speed") && !isJudgedByClock(path) && (wanted === "" || wanted === "quick" || isWanted(path));
+  const isAsked = (path: string) =>
+    takes !== "fixed" &&
+    !inPrograms(path).startsWith("untyped-speed") &&
+    !isJudgedByClock(path) &&
+    (wanted === "" || wanted === "quick" || isWanted(path));
   const chosen = taken(
     find().filter(path => !groups.has(path)),
     path => isAsked(path) && markOfFailure(path) !== undefined,
@@ -796,7 +1054,9 @@ export function programsMarkedAsFailing() {
       test(
         inPrograms(besideOf(path)).replaceAll("\\", "/"),
         async () => {
-          const outcome = await slot(() => run(path, besideOf(path), { folder, carrier: [], buildFlags: [], runEnv: {}, erasesTypes: true })).then(
+          const outcome = await slot(() =>
+            run(path, besideOf(path), { folder, carrier: [], buildFlags: [], runEnv: {}, erasesTypes: true }),
+          ).then(
             () => "it does what is expected: the mark goes out",
             () => "it fails",
           );
@@ -814,10 +1074,19 @@ export function programsMarkedAsFailing() {
  * compared with plain Bun: programs() covers the build with erased types. AOT_PROGRAMS selects as in programs(). A large folder is split into `parts` as there.
  * `only` names the programs of the folder that are run, without the folder and without an extension; a name that is not there fails.
  */
-export function programsBuiltWith(topic: string, label: string, buildFlags: string[], runEnv: Record<string, string> = {}, part = 1, parts = 1, only?: readonly string[]) {
+export function programsBuiltWith(
+  topic: string,
+  label: string,
+  buildFlags: string[],
+  runEnv: Record<string, string> = {},
+  part = 1,
+  parts = 1,
+  only?: readonly string[],
+) {
   const all = find(topic);
   const nameOf = (path: string) => besideOf(relative(topic, inPrograms(path))).replaceAll("\\", "/");
-  const isNamed = (path: string, name: string) => (groups.has(path) ? `${name}-`.startsWith(`${nameOf(path)}-`) : name === nameOf(path));
+  const isNamed = (path: string, name: string) =>
+    groups.has(path) ? `${name}-`.startsWith(`${nameOf(path)}-`) : name === nameOf(path);
   const missing = only?.filter(name => !all.some(path => isNamed(path, name))) ?? [];
   if (missing.length) throw new Error(`no such program in ${topic}: ${missing.join(", ")}`);
   define(
@@ -834,7 +1103,11 @@ export function programsBuiltWith(topic: string, label: string, buildFlags: stri
     )
       .filter(path => !existsSync(besideOf(path) + ".build-errors.txt"))
       // As in variant(): <program>.json may say why the program is left out under this label.
-      .filter(path => !existsSync(besideOf(path) + ".json") || !JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).skipInVariant?.[label]),
+      .filter(
+        path =>
+          !existsSync(besideOf(path) + ".json") ||
+          !JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).skipInVariant?.[label],
+      ),
     { buildFlags, runEnv, erasesTypes: false },
   );
 }
@@ -857,7 +1130,8 @@ export function variant(
   always: string | string[] = [],
   stubCopies?: number,
 ) {
-  const isAlwaysTaken = (path: string) => takesWhatIsFixed && [always].flat().includes(besideOf(inPrograms(path)).replaceAll("\\", "/"));
+  const isAlwaysTaken = (path: string) =>
+    takesWhatIsFixed && [always].flat().includes(besideOf(inPrograms(path)).replaceAll("\\", "/"));
   // Two draws, since a group is drawn before its programs have names: one path or group in forty, then one program in ten.
   define(
     `compile/aot/variant/${label}`,
@@ -869,7 +1143,9 @@ export function variant(
         .filter(
           path =>
             isAlwaysTaken(path) ||
-            (inShare(label + " " + inPrograms(path), 40, true) && Number((hash(path) >> 16n) % BigInt(parts)) === part - 1 && (!isASAN || inThirdOfAll(label, path))),
+            (inShare(label + " " + inPrograms(path), 40, true) &&
+              Number((hash(path) >> 16n) % BigInt(parts)) === part - 1 &&
+              (!isASAN || inThirdOfAll(label, path))),
         ),
       path => isAlwaysTaken(path) || (wanted === "" || wanted === "quick" ? inTenthOfAll(label, path) : isWanted(path)),
     )
@@ -883,7 +1159,6 @@ export function variant(
     { buildFlags, runEnv, erasesTypes: false, stubCopies },
   );
 }
-
 
 export function variantWithTrimmedRuntime(part: number, parts: number) {
   using probe = tempDir("trimmed-runtime-probe", { "hello.ts": "console.log(1);" });

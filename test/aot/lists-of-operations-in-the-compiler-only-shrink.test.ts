@@ -197,6 +197,14 @@ known["represent/AOTChooseRepresentations.cpp isSumOfWhichOnlyLowBitsAreUsed"] =
 // TODO: two more, which only guess: what the back end folds on constants costs no code. A wrong guess moves an estimate of code size. The schema already says natural(Bitwise), natural(Addition).
 known["passes/AOTInlining.cpp foldableOpcodes"] = 6;
 known["passes/AOTInlining.cpp isConstantExpression"] = 9;
+// TODO: two more lists that spell one name more. Opcode::NewFunctionThatThrows (hasStringsForMessagesOnly): its string is read only for
+// the message of the error that the function throws. Opcode::TypedArrayRange (opcodesThrowingOnlyForLackOfMemory): it makes a typed array
+// over a range of another and throws only where there is no memory for it. Both answers go into the schema, and these lines out of here.
+for (const list of [
+  "image/AOTStringUses.cpp hasStringsForMessagesOnly",
+  "ir/AOTEffectsDeclared.h opcodesThrowingOnlyForLackOfMemory",
+])
+  known[list]++;
 
 function numberOfNamesIn(body: string): number {
   const names = { Opcode: new Set<string>(), InlineBuiltin: new Set<string>() };

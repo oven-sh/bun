@@ -1,6 +1,6 @@
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isGlibc, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isGlibc, isWindows, tempDir } from "harness";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import type { TargetReport } from "./check-target";
@@ -28,7 +28,7 @@ function describeChanges(reports: TargetReport[]): string[] {
 }
 
 /** Whether the calls come in parts with this Bun. */
-export const comesInParts = isASAN || isDebug;
+export const comesInParts = isASAN || isDebug || isWindows;
 
 export function nativeContractInParts(part: number, parts: number) {
   if (!comesInParts)

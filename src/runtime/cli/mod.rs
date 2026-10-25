@@ -2045,7 +2045,7 @@ Examples<d>:<r>
   <d>Bundle code to be run in Bun (reduces server startup time)<r>
   <b><green>bun build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>
 
-  <d>Creating a standalone executable (see https://bun.com/docs/bundler/executables)<r>
+  <d>Creating a standalone executable (see https://bun.com/docs/compiler/executables)<r>
   <b><green>bun build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>
 
 A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
@@ -2084,7 +2084,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
   <d>Build a package to publish: JavaScript, .d.ts files and a package.json in ./dist<r>
   <b><green>bun compile<r> <cyan>--library<r> <blue>./src/index.ts<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/bundler/aot<r>
+Full documentation is available at <magenta>https://bun.com/docs/compiler/aot<r>
 "
                 );
                 print_note_about_script("compile");

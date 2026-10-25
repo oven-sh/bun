@@ -1597,7 +1597,7 @@ fn typeof_require() {
 fn tests_of_loader_values() {
     check_dead_calls(LOADER_VALUES);
     check_dead_calls(UNDECIDED_LOADER_VALUES);
-    analyzed("a.js", "typeof module; !exports; module;", |s| {
+    analyzed("a.js", "[typeof module, !exports, module].length;", |s| {
         let type_test = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::Unary { .. }));
         let object = Constant::String(s.workspace.atom("object"));
         assert_eq!(constant(s, type_test[0]), FoldedValue::Constant(object));

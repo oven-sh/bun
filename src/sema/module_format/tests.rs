@@ -177,9 +177,9 @@ fn add_require_call(file: &mut FileBuilder) -> StmtId {
     add_call(file, callee)
 }
 
-fn add_identifier_statement(file: &mut FileBuilder, name: Atom) -> StmtId {
-    let identifier = file.expr(ExprKind::Ident(name), 0, 0);
-    file.stmt(StmtKind::Expr(identifier), 0)
+fn add_property_read(file: &mut FileBuilder, object: Atom) -> StmtId {
+    let member = add_member(file, object, known::value);
+    file.stmt(StmtKind::Expr(member), 0)
 }
 
 fn add_export_assignment(file: &mut FileBuilder) -> StmtId {
@@ -201,8 +201,8 @@ fn add_await_statement(file: &mut FileBuilder) -> StmtId {
 
 fn add_evidence(file: &mut FileBuilder, evidence: Evidence) -> StmtId {
     match evidence {
-        Evidence::Module => add_identifier_statement(file, known::module),
-        Evidence::Exports => add_identifier_statement(file, known::exports),
+        Evidence::Module => add_property_read(file, known::module),
+        Evidence::Exports => add_property_read(file, known::exports),
         Evidence::ExportAssignment => add_export_assignment(file),
         Evidence::With => add_with_statement(file),
     }
@@ -431,7 +431,7 @@ fn commonjs_with_unused_import_has_no_error() {
     let mut file = module_file();
     let body = [
         add_import(&mut file, known::module, false, ExprId::NONE),
-        add_identifier_statement(&mut file, known::module),
+        add_property_read(&mut file, known::module),
     ];
     let summary = analyze(file, &body);
     assert_eq!(summary.format, ModuleFormat::CommonJs);
@@ -476,7 +476,7 @@ fn import_statement_in_commonjs_names_evidence() {
 #[test]
 fn dead_module_use_is_no_evidence() {
     let add_module_use: fn(&mut FileBuilder) -> StmtId =
-        |file| add_identifier_statement(file, known::module);
+        |file| add_property_read(file, known::module);
     let mut file = FileBuilder::default();
     let body = [add_module_use(&mut file)];
     assert_eq!(analyze(file, &body).format, ModuleFormat::CommonJs);
@@ -505,7 +505,7 @@ fn top_level_await_outweighs_commonjs_evidence() {
     let cases = [(true, ModuleFormat::Esm), (false, ModuleFormat::CommonJs)];
     for (has_await, format) in cases {
         let mut file = file_with_await_bit();
-        let mut body = vec![add_identifier_statement(&mut file, known::module)];
+        let mut body = vec![add_property_read(&mut file, known::module)];
         if has_await {
             body.push(add_await_statement(&mut file));
         }
@@ -535,7 +535,7 @@ fn module_require_is_no_evidence() {
     let callee = add_member(&mut file, known::module, known::require);
     let body = [
         add_call(&mut file, callee),
-        add_identifier_statement(&mut file, known::module),
+        add_property_read(&mut file, known::module),
     ];
     assert_eq!(analyze(file, &body).format, ModuleFormat::CommonJs);
 }

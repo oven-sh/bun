@@ -1,6 +1,6 @@
 # What does a typed file in a package buy?
 
-A package can ship its JavaScript once more with the type annotations left in (`index.aot.ts`, behind the `"aot"` export condition; see `docs/bundler/aot-libraries.mdx`).
+A package can ship its JavaScript once more with the type annotations left in (`index.aot.ts`, behind the `"aot"` export condition; see `docs/compiler/libraries.mdx`).
 `bun compile` then compiles the package from that file. This folder measures what that is worth: the same program, the same answer, with the package as npm ships it and with its `.aot.ts` file.
 
     bun test/aot/typed-packages/measure/measure.ts --bun <bun with --aot> --released <a released bun> \

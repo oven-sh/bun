@@ -1,6 +1,6 @@
 use super::children::{TreeNode, push_children};
 use super::evaluate::Value;
-use super::folder::{Effects, Folder, MarkedNodes};
+use super::folder::{Folder, MarkedNodes};
 use crate::bind::Parent;
 use crate::hir::{BinOp, CaseId, ExprId, File, FnBody, IdList, Span, StmtId, StmtKind};
 use crate::util::PositionSet;
@@ -31,13 +31,8 @@ impl<'s> Folder<'_, 's> {
                     None => None,
                 };
                 roots.all.extend(excluded.map(TreeNode::Stmt));
-                if excluded.is_some() && self.is_folded_by_bun_run(test) {
-                    // `bun run` forgets a statement of the file that folds away, its test included.
-                    let is_whole_statement = (yes.is_none() || no.is_none())
-                        && self.folded(test).effects == Effects::None
-                        && self.bound.parent_of_stmt(stmt) == Parent::File;
-                    let removed = excluded.map(|part| if is_whole_statement { stmt } else { part });
-                    roots.in_bun_run.extend(removed.map(TreeNode::Stmt));
+                if self.is_folded_by_bun_run(test) {
+                    roots.in_bun_run.extend(excluded.map(TreeNode::Stmt));
                 }
             } else {
                 self.push_excluded_parts(stmt, &mut roots.all);
@@ -49,6 +44,7 @@ impl<'s> Folder<'_, 's> {
             push_children(self.hir, TreeNode::Expr(entry.0), &mut roots.all);
             roots.in_bun_run.extend_from_slice(&roots.all[first..]);
         }
+        self.push_statements_removed_by_bun_run(&mut roots);
         roots
     }
 

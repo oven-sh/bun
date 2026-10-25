@@ -3,14 +3,26 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim, featureOf, model } from "../bundler/compile-trim-features";
-import { unsupported, withoutDebugInformation } from "./run-programs";
-import { compareAll, described, jailOfThisMachine, Tally, type Program, type Result, type Settings } from "./trimmed-against-whole/compare";
+import { sampleRevision } from "./fresh-seed";
+import { takesWhatIsDrawn, takesWhatIsFixed, unsupported, withoutDebugInformation } from "./run-programs";
+import {
+  compareAll,
+  described,
+  jailOfThisMachine,
+  Tally,
+  type Program,
+  type Result,
+  type Settings,
+} from "./trimmed-against-whole/compare";
 import { aotPrograms, test262 } from "./trimmed-against-whole/corpora";
 import { programsOfEveryLocale } from "./trimmed-against-whole/locales";
 import { programsThatNameEverything, programsThatReachNames, reflect } from "./trimmed-against-whole/reach-names";
 import { readRemovedFeatures } from "./trimmed-against-whole/removed-features";
+import { calledOnItsHolder, waysToHandOn } from "./ways-to-hand-a-function-on";
 
 const canCompare = canTrim && !unsupported;
+const comparesWhatIsFixed = canCompare && takesWhatIsFixed;
+const comparesWhatIsDrawn = canCompare && takesWhatIsDrawn;
 
 const known = readFileSync(join(import.meta.dir, "trimmed-against-whole/known-differences.txt"), "utf8")
   .split("\n")
@@ -19,7 +31,9 @@ const known = readFileSync(join(import.meta.dir, "trimmed-against-whole/known-di
 
 function isKnown(result: Result): boolean {
   const said = `${result.trimmed?.stdout}\n${result.trimmed?.stderr}`;
-  return known.some(([kind, pattern]) => (kind === "program" ? pattern === `${result.corpus} ${result.name}` : new RegExp(pattern).test(said)));
+  return known.some(([kind, pattern]) =>
+    kind === "program" ? pattern === `${result.corpus} ${result.name}` : new RegExp(pattern).test(said),
+  );
 }
 
 function sample(programs: Program[], count: number, seed: string): Program[] {
@@ -69,51 +83,123 @@ async function expectSame(programs: Program[], minutes: number) {
   expect([...tally.rows.values()].reduce((same, row) => same + (row.get("same") ?? 0), 0)).toBeGreaterThan(0);
 }
 
+const programsThatCallInEveryWay = (...members: [holder: string, name: string][]): Program[] =>
+  members.flatMap(([holder, name]) =>
+    [calledOnItsHolder, ...waysToHandOn].map(([way, call]) => ({
+      corpus: "handed-on",
+      name: `${holder}.${name} after ${way}`,
+      entry: "program.ts",
+      files: () => ({
+        "program.ts": `try {\n  ${call(holder, name)}\n  console.log("returned");\n} catch (error) {\n  console.log(String(error));\n}\n`,
+      }),
+    })),
+  );
+
 const inOneMode = (programs: Program[]) => programs.filter(program => !program.name.endsWith("(strict too)"));
 const conformanceTests = () => inOneMode(test262(join(import.meta.dir, "trimmed-against-whole/test262")));
 
 // CI ends a file after five minutes, and each of the long tests starts programs for one to three: they are dealt out to the files trimmed-against-whole-<part>.test.ts.
 const parts: (() => void)[] = [
   () => {
-    test.skipIf(!canCompare)("a part that is left out of a program that uses it is found and named", async () => {
-      using scratch = tempDir("trimmed-against-whole", {});
-      const program: Program = { corpus: "control", name: "color", entry: "color.mjs", files: () => ({ "color.mjs": `console.log(Bun.color("red", "hex"));\n` }) };
-      const results: Result[] = [];
-      await compareAll([program], { ...settingsIn(String(scratch)), wronglyLeftOut: [featureOf("Bun.color")] }, result => results.push(result));
-      expect(results).toEqual([expect.objectContaining({ verdict: "differs", features: [featureOf("Bun.color")], world: "the compiler can see every API this program uses" })]);
-      expect(results[0].leftOut).toContain(featureOf("Bun.color"));
-      const [{ why, whole, trimmed }] = results;
-      if (why === "exit code 0 | 70") expect(trimmed?.stderr).toContain("--trim removed Bun.color from this executable");
-      else expect({ why, stderr: trimmed?.stderr }).toEqual({ why: "exit code 0 | 1", stderr: expect.stringContaining(`code: "ERR_FEATURE_REMOVED"`) });
-      expect(whole).toEqual({ stdout: "#ff0000\n", stderr: "", exitCode: 0, signal: null });
-    }, 300_000);
+    test.skipIf(!comparesWhatIsFixed)(
+      "a part that is left out of a program that uses it is found and named",
+      async () => {
+        using scratch = tempDir("trimmed-against-whole", {});
+        const program: Program = {
+          corpus: "control",
+          name: "color",
+          entry: "color.mjs",
+          files: () => ({ "color.mjs": `console.log(Bun.color("red", "hex"));\n` }),
+        };
+        const results: Result[] = [];
+        await compareAll(
+          [program],
+          { ...settingsIn(String(scratch)), wronglyLeftOut: [featureOf("Bun.color")] },
+          result => results.push(result),
+        );
+        expect(results).toEqual([
+          expect.objectContaining({
+            verdict: "differs",
+            features: [featureOf("Bun.color")],
+            world: "the compiler can see every API this program uses",
+          }),
+        ]);
+        expect(results[0].leftOut).toContain(featureOf("Bun.color"));
+        const [{ why, whole, trimmed }] = results;
+        if (why === "exit code 0 | 70")
+          expect(trimmed?.stderr).toContain("--trim removed Bun.color from this executable");
+        else
+          expect({ why, stderr: trimmed?.stderr }).toEqual({
+            why: "exit code 0 | 1",
+            stderr: expect.stringContaining(`code: "ERR_FEATURE_REMOVED"`),
+          });
+        expect(whole).toEqual({ stdout: "#ff0000\n", stderr: "", exitCode: 0, signal: null });
+      },
+      300_000,
+    );
 
-    test("readRemovedFeatures returns undefined for a file without the state section", () => expect(readRemovedFeatures(import.meta.path)).toBeUndefined());
+    test("readRemovedFeatures returns undefined for a file without the state section", () =>
+      expect(readRemovedFeatures(import.meta.path)).toBeUndefined());
 
     test.each([
       ["ELF", [0x7f, 0x45, 0x4c, 0x46]],
       ["Mach-O", [0xcf, 0xfa, 0xed, 0xfe]],
       ["PE", [0x4d, 0x5a]],
     ] as const)("readRemovedFeatures returns undefined for a truncated or corrupt %s file", (_, magic) => {
-      using dir = tempDir("removed-features", { truncated: Buffer.from(magic), corrupt: Buffer.concat([Buffer.from(magic), Buffer.alloc(64 - magic.length, 0xff)]) });
+      using dir = tempDir("removed-features", {
+        truncated: Buffer.from(magic),
+        corrupt: Buffer.concat([Buffer.from(magic), Buffer.alloc(64 - magic.length, 0xff)]),
+      });
       expect(readRemovedFeatures(join(String(dir), "truncated"))).toBeUndefined();
       expect(readRemovedFeatures(join(String(dir), "corrupt"))).toBeUndefined();
     });
 
-    test.skipIf(!canCompare)("readRemovedFeatures returns [] for an untrimmed Bun", () => expect(readRemovedFeatures(bunExe())).toEqual([]));
+    test.skipIf(!canCompare)("readRemovedFeatures returns [] for an untrimmed Bun", () =>
+      expect(readRemovedFeatures(bunExe())).toEqual([]),
+    );
 
-    test.skipIf(!canCompare)("names reached by constant and computed keys: --corpus names --seed fixed", () => expectSame(programsThatReachNames(reflect(bunExe()), "fixed", 30), 1), 900_000);
+    test.skipIf(!comparesWhatIsFixed)(
+      "names reached by constant and computed keys: --corpus names --seed fixed",
+      () => expectSame(programsThatReachNames(reflect(bunExe()), "fixed", 30), 1),
+      900_000,
+    );
 
-    test.skipIf(!canCompare)(`names reached by constant and computed keys: --corpus names --seed ${Bun.revision}`, () => expectSame(programsThatReachNames(reflect(bunExe()), Bun.revision, 400), 1), 900_000);
+    test.skipIf(!comparesWhatIsFixed)(
+      "members of functions, called in every way",
+      () => expectSame(programsThatCallInEveryWay(["Bun.cron", "parse"], ["Bun.inspect", "table"]), 1),
+      900_000,
+    );
+
+    test.skipIf(!comparesWhatIsDrawn)(
+      `names reached by constant and computed keys: --corpus names --seed ${sampleRevision}`,
+      () => expectSame(programsThatReachNames(reflect(bunExe()), sampleRevision, 400), 1),
+      900_000,
+    );
   },
   () => {
-    test.skipIf(!canCompare)("test262: the same 200 files on every commit", () => expectSame(conformanceTests(), 3), 900_000);
+    test.skipIf(!comparesWhatIsFixed)(
+      "test262: the same 200 files on every commit",
+      () => expectSame(conformanceTests(), 3),
+      900_000,
+    );
   },
   () => {
-    test.skipIf(!canCompare)("each service of Intl alone in a program, for every locale", () => expectSame(programsOfEveryLocale(), 2), 900_000);
+    test.skipIf(!comparesWhatIsFixed)(
+      "each service of Intl alone in a program, for every locale",
+      () => expectSame(programsOfEveryLocale(), 2),
+      900_000,
+    );
   },
   () => {
-    test.skipIf(!canCompare)("other programs on every commit, chosen by the revision of this Bun", () => expectSame(sample([...aotPrograms(), ...programsThatNameEverything(reflect(bunExe()))], 400, Bun.revision), 2), 900_000);
+    test.skipIf(!comparesWhatIsDrawn)(
+      `a sample of the other programs: seed ${sampleRevision}`,
+      () =>
+        expectSame(
+          sample([...aotPrograms(), ...programsThatNameEverything(reflect(bunExe()))], 400, sampleRevision),
+          2,
+        ),
+      900_000,
+    );
   },
 ];
 

@@ -97,7 +97,7 @@ function show(name: string, f: () => unknown): void {
   try {
     console.log(name + ": " + describe(f()));
   } catch (e: any) {
-    // `bun run` quotes the source in some of these messages, an executable does not (docs/bundler/aot-compatibility.mdx).
+    // `bun run` quotes the source in some of these messages, an executable does not (docs/compiler/compatibility.mdx).
     console.log(name + ": " + e.name + ": " + e.message.replace(/ \(evaluating '.*'\)$/, ""));
   }
 }

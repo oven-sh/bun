@@ -1,7 +1,7 @@
 # Working on `bun build --compile --aot`
 
 This is the guide for people (and agents) who change the ahead-of-time compiler. It says how to build, test, measure and compare, which design rules are settled, and what has already been tried.
-How the compiler works is explained in [`docs/bundler/aot-internals.mdx`](../../docs/bundler/aot-internals.mdx). Read that first.
+How the compiler works is explained in [`docs/compiler/internals.mdx`](../../docs/compiler/internals.mdx). Read that first.
 
 ## Where things are
 
@@ -105,7 +105,7 @@ These are settled. Each was argued, and most were learned by building the opposi
 **What users are promised**
 
 - **Normal TypeScript works.** A program that runs under plain Bun runs the same under `--aot`. Types make it faster; a value that does not fit its type never throws at run time. New errors appear only at compile time.
-  The one exception is the locked built-ins (`docs/bundler/aot-compatibility.mdx`).
+  The one exception is the locked built-ins (`docs/compiler/compatibility.mdx`).
 - **ECMAScript-exact.** An inference never decides what a program means. It only decides how fast the program gets there.
 - **The fallback is per value, not per program.** One `any` slows down the code that touches it, and nothing else. A line that undoes a whole benchmark is a cliff, and cliffs are bugs.
 - **The interpreter is never a fallback** for code that was there at build time. If reachable code is not compiled, that is a bug. Only code that the program builds from strings while it runs (`eval`, `new Function`) is interpreted, and there is no JIT in an executable, not even for that.

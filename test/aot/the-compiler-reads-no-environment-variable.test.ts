@@ -2,18 +2,11 @@
 // builds it. Goes by the text of the engine's sources. One place is let through. It belongs to the run time, has a
 // test of its own (checked-native-calls-are-listed.test.ts) and is left out of a hardened build.
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { sayWhenSkipped, sources } from "./harness/engine-text";
 
-const sources = [process.env.BUN_WEBKIT_PATH, join(import.meta.dir, "..", "..", "vendor", "WebKit")]
-  .filter(path => path !== undefined)
-  .map(path => join(path, "Source", "JavaScriptCore", "aot"))
-  .find(path => existsSync(join(path, "ir")));
-if (!sources) {
-  console.error(
-    "SKIPPED: test/aot/the-compiler-reads-no-environment-variable.test.ts: there is no Source/JavaScriptCore/aot in $BUN_WEBKIT_PATH or vendor/WebKit",
-  );
-}
+sayWhenSkipped("test/aot/the-compiler-reads-no-environment-variable.test.ts");
 
 const known = ["runtime/AOTNativeCallValidation.cpp"];
 

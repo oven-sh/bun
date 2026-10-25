@@ -13,13 +13,18 @@ export const sources = [
     .map(path => join(path, "Source", "JavaScriptCore", "aot")),
 ]
   .filter(path => path !== undefined)
-  .find(path => existsSync(join(path, "ir")));
+  // A prebuilt WebKit has the generators and the schema under aot/, and no list of sources.
+  .find(path => existsSync(join(path, "Sources.txt")));
+
+const missing =
+  "there is no Source/JavaScriptCore/aot in $BUN_WEBKIT_PATH or vendor/WebKit, and no $AOT_ENGINE_DIRECTORY";
+
+// Set where the sources are fetched for these tests: a skip there would pass without reading anything.
+if (!sources && process.env.AOT_REQUIRE_ENGINE_SOURCES)
+  throw new Error(`Missing the engine's sources, which AOT_REQUIRE_ENGINE_SOURCES asks for: ${missing}`);
 
 export function sayWhenSkipped(test: string) {
-  if (!sources)
-    console.error(
-      `SKIPPED: ${test}: there is no Source/JavaScriptCore/aot in $BUN_WEBKIT_PATH or vendor/WebKit, and no $AOT_ENGINE_DIRECTORY`,
-    );
+  if (!sources) console.error(`SKIPPED: ${test}: ${missing}`);
 }
 
 /** Comments and the insides of literals become spaces: every position and line stays where it was. */

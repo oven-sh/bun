@@ -89,11 +89,12 @@ function findAll(pattern: RegExp, path: string, text: string, firstLine = 1) {
 }
 
 test("the docs use no banned phrase", () => {
-  const pages = Array.from(
-    new Glob("aot*.mdx").scanSync(join(repository, "docs", "bundler")),
-    page => `docs/bundler/${page}`,
-  );
-  expect(pages).toContain("docs/bundler/aot.mdx");
+  // These two are about bun build --compile without --aot.
+  const otherPages = ["executables.mdx", "bytecode.mdx"];
+  const pages = Array.from(new Glob("*.mdx").scanSync(join(repository, "docs", "compiler")))
+    .filter(page => !otherPages.includes(page))
+    .map(page => `docs/compiler/${page}`);
+  expect(pages).toContain("docs/compiler/aot.mdx");
   const snippets = ["compile", "build", "run"].map(command => `docs/snippets/cli/${command}.mdx`);
   expect([...pages.sort(), ...snippets].flatMap(path => findAll(banned, path, read(path)))).toEqual([]);
 });

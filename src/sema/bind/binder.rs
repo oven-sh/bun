@@ -8,6 +8,8 @@ mod runtime_hooks;
 struct Label {
     /// Its antecedents.
     edges: smallvec::SmallVec<[FlowId; 4]>,
+    /// No antecedent has a higher id.
+    highest_edge: FlowId,
     /// Its flow node, created once something follows it.
     node: FlowId,
     is_loop: bool,
@@ -949,6 +951,7 @@ impl<'f, 's> Binder<'f, 's> {
     fn new_label(&mut self, is_loop: bool) -> FlowId {
         self.label_edges.push(Label {
             edges: Default::default(),
+            highest_edge: FlowId(0),
             node: FlowId::NONE,
             is_loop,
         });
@@ -1021,8 +1024,13 @@ impl<'f, 's> Binder<'f, 's> {
             return;
         }
         let at = self.edges_of(label);
-        let edges = &mut self.label_edges[at].edges;
-        if !edges.contains(&from) {
+        let Label { edges, highest_edge, .. } = &mut self.label_edges[at];
+        // Most antecedents are newer than all the others, so a label with very many is not searched for each.
+        let is_highest = from.0 > highest_edge.0;
+        if is_highest || !edges.contains(&from) {
+            if is_highest {
+                *highest_edge = from;
+            }
             edges.push(from);
             self.set_flow_node_referenced(from);
         }
@@ -2840,8 +2848,11 @@ impl<'f, 's> Binder<'f, 's> {
             // in two of the lists becomes an antecedent twice.
             let combined = self.edges_of(finally_label);
             for from in [normal_exit, exception_label, return_label] {
-                let edges = self.label_edges[self.edges_of(from)].edges.clone();
+                let Label { edges, highest_edge, .. } = &self.label_edges[self.edges_of(from)];
+                let (edges, highest_edge) = (edges.clone(), *highest_edge);
                 self.label_edges[combined].edges.extend(edges);
+                let highest_of_combined = &mut self.label_edges[combined].highest_edge;
+                highest_of_combined.0 = highest_of_combined.0.max(highest_edge.0);
             }
             self.flow = if self.has_edges(finally_label) {
                 self.node_of(finally_label)

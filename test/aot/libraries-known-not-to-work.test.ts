@@ -1,4 +1,4 @@
-// docs/bundler/aot-compatibility.mdx, "Libraries that are known not to work": a table of packages, what each does, and what you see in an executable.
+// docs/compiler/compatibility.mdx, "Libraries that are known not to work": a table of packages, what each does, and what you see in an executable.
 // Here each row has a small program that does what the package does. The program runs under plain Bun, is built with `bun compile`, and the
 // executable has to print the messages of the row, letter for letter. A row without a program fails, and so does a program without a row.
 import { describe, expect, test } from "bun:test";
@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { run } from "./harness/run";
 import { slot, unsupported } from "./run-programs";
 
-const page = readFileSync(join(import.meta.dir, "../../docs/bundler/aot-compatibility.mdx"), "utf8");
+const page = readFileSync(join(import.meta.dir, "../../docs/compiler/compatibility.mdx"), "utf8");
 const section = page.slice(page.indexOf("\n## Libraries that are known not to work\n")).split("\n## ")[1];
 
 const anchors = new Set(

@@ -60,12 +60,14 @@ const withoutTimes = (text: string) =>
     .split("\n")
     .map(line => line.replace(/ *\[\d+(\.\d+)?m?s\]/, "").trimEnd());
 
-const pages = readdirSync(join(import.meta.dir, "..", "..", "docs", "bundler")).filter(name =>
-  /^aot.*\.mdx$/.test(name),
+// These two are about bun build --compile without --aot.
+const otherPages = ["executables.mdx", "bytecode.mdx"];
+const pages = readdirSync(join(import.meta.dir, "..", "..", "docs", "compiler")).filter(
+  name => name.endsWith(".mdx") && !otherPages.includes(name),
 );
 
-describe.skipIf(!compiles || !hasTheShellOfThePages).each(pages)("docs/bundler/%s", name => {
-  const page = readFileSync(join(import.meta.dir, "..", "..", "docs", "bundler", name), "utf8");
+describe.skipIf(!compiles || !hasTheShellOfThePages).each(pages)("docs/compiler/%s", name => {
+  const page = readFileSync(join(import.meta.dir, "..", "..", "docs", "compiler", name), "utf8");
   const { files, examples } = examplesOf(page);
 
   test("has examples", () => {

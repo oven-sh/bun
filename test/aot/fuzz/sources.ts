@@ -41,6 +41,7 @@
 //   what-a-function-declares-however-often-call-and-apply-enter-it closures, functions, classes and objects declared in a function that call, apply or Reflect.apply enters, where the one place that enters it runs again or another door leads into the same function (what-a-function-declares-however-often-call-and-apply-enter-it.ts)
 //   every-birth-and-use the programs of ../generated/births-and-uses, of which the tests run one in forty: all of them, one after the other
 //   programs-as-they-are the programs of ../programs unchanged, one after the other: for lanes that change what is built beside a program (--company) or how it is built (--lowered-limits)
+//   programs-in-random-order the same programs, each drawn by its seed alone: the programs of one batch come from anywhere in ../programs, so a shared build joins programs that never stand side by side
 //   several-changes-behind-a-declared-type the same out of typed-object-mutations, looked at through the typed reference (several-changes-behind-a-declared-type.ts)
 //   counters-handed-to-the-one-call-in-a-loop a loop's counter, from small numbers to the ends of the 32 and the 53 bits, halves, -0 and NaN, handed in each turn to the only call of a function that is small or large and may write to the counter, the bound or the step (counters-handed-to-the-one-call-in-a-loop.ts)
 //   makers-of-makers-each-with-a-prototype-of-its-own one function makes a prototype object and a maker of objects below it and is called one to forty times, at the top level and elsewhere; the prototypes are changed, frozen, swapped, and the program asks which of them, of the makers and of the methods are the same (makers-of-makers-each-with-a-prototype-of-its-own.ts)
@@ -56,6 +57,16 @@
 //   built-ins-called-often-through-unknown-values one to five built-ins in one program, each called 1 to 400 times through a value the compiler cannot follow; in the middle that value, the receiver or an operand changes
 //   order-of-promise-jobs handlers of then, catch and finally on promises of every state, awaits, microtasks and ticks, some under a store of AsyncLocalStorage: each step writes down its number, and the program prints every order it saw
 //   arrays-grown-from-empty-literals arrays that start as `[]` at one place in the code and grow by a schedule that changes from call to call, filled in a dozen ways, then cut, frozen, given holes or kept
+//   closures-in-fields-replaced-from-outside closures kept in fields of classes and object literals, replaced by functions that know nothing about their target, then called, compared and marked through typed readers
+//   tail-calls-that-hand-rest-parameters-on functions that end in a call to one another, up to a million calls deep, and hand their rest parameters on: spread, by element, copied, or the array itself
+//   host-functions-that-throw native functions of Bun, Node.js and the web called with values they accept and values they refuse, while code of the program runs underneath them
+//   keys-of-built-in-objects-after-reads-and-copies the own keys of objects of the language, Bun, Node.js and the web, listed after members were read, asked for, added and deleted and the object was copied
+//   members-of-built-in-objects-handed-around objects and functions of the language, Bun, Node.js and the web, copied or handed through Proxies, revivers, Reflect, collections and closures; then every member is tested, read by name and called
+//   closures-tested-before-they-leave a closure is asked something and then returned, stored, thrown, yielded, captured or handed on, under the name that was asked or a second one (closures-tested-before-they-leave.ts)
+//   functions-that-make-many-objects-and-return-one one function makes 8 to 148 pairs of small objects, stores into some and returns one, two or a new one (functions-that-make-many-objects-and-return-one.ts)
+//   one-name-taken-apart-beside-other-kinds one function takes apart what a variable of type any holds, by a pattern, a spread, a loop or a built-in, and another stores a thing of another kind under that name (one-name-taken-apart-beside-other-kinds.ts)
+//   results-of-awaited-steps-used-behind-a-test the result of an awaited step of an async generator, used behind a test of that result: a pattern, `?.`, `== null`, `&&`, typeof (results-of-awaited-steps-used-behind-a-test.ts)
+//   lists-made-of-what-is-walked-and-used-on-a-rare-path a function makes a list of what it was handed, by the rest of a pattern, a spread or Array.from, and uses it on a path that seldom runs (lists-made-of-what-is-walked-and-used-on-a-rare-path.ts)
 //   a-full-heap-is-let-go-and-built-ins-make-things objects are kept until no more fit, all or half of them are let go, and at once one built-in that makes things is called thousands of times: there is room again, so no call may fail (a-full-heap-is-let-go-and-built-ins-make-things.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
@@ -104,7 +115,8 @@ function singleFilePrograms(root: string) {
 }
 
 // Depends on where the file lies, on the clock or on chance, or prints what differs by design (positions, source text).
-const cannotStandAlone = /from "\.|require\("\.|import\("\.|import\.meta|__dirname|__filename|process\.argv|\bprocess\b.*\bconsole\.log\(process\)|Bun\.main|\.stack\b|Date\.now|performance\.now|Math\.random|new Date\(\)|\.toString\(\)\.length|\.caller\b|getBuiltinModule|mkdtemp|hrtime|[cC]puUsage|memoryUsage|resourceUsage|randomUUID|randomBytes|getRandomValues|port: 0|listen\(0/;
+const cannotStandAlone =
+  /from "\.|require\("\.|import\("\.|import\.meta|__dirname|__filename|process\.argv|\bprocess\b.*\bconsole\.log\(process\)|Bun\.main|\.stack\b|Date\.now|performance\.now|Math\.random|new Date\(\)|\.toString\(\)\.length|\.caller\b|getBuiltinModule|mkdtemp|hrtime|[cC]puUsage|memoryUsage|resourceUsage|randomUUID|randomBytes|getRandomValues|port: 0|listen\(0/;
 
 function mutation(root: string, rejected: Set<string>): Source | undefined {
   const { paths: files, textOf } = singleFilePrograms(root);
@@ -140,20 +152,34 @@ function mutation(root: string, rejected: Set<string>): Source | undefined {
         continue;
       }
       const mutant = mutate(base, random, typed, { allows: text => bed.allows(text) });
-      if (mutant) return { source: "mutation", seed, text: typed ? mutant.text : reprinted(mutant.text), extension, notes: `${name}: ${mutant.applied.join(", ")}`, base: { name, text: base, extension } };
+      if (mutant)
+        return {
+          source: "mutation",
+          seed,
+          text: typed ? mutant.text : reprinted(mutant.text),
+          extension,
+          notes: `${name}: ${mutant.applied.join(", ")}`,
+          base: { name, text: base, extension },
+        };
     }
   };
 }
 
-function asTheyAre(root: string): Source | undefined {
+function asTheyAre(root: string, source: string, pick: (seed: number, count: number) => number): Source | undefined {
   const { paths: files, textOf } = singleFilePrograms(root);
   if (!files.length) return;
   return (seed, bed) => {
     if (bed.name !== "product") return;
-    const path = files[seed % files.length];
+    const path = files[pick(seed, files.length)];
     const text = textOf(path);
     if (text.length > 60_000 || cannotStandAlone.test(text)) return;
-    return { source: "programs-as-they-are", seed, text: path.endsWith(".js") && !/^(import|export)\b/m.test(text) ? staysAScript + text : text, extension: path.endsWith(".ts") ? "ts" : "js", notes: relative(root, path) };
+    return {
+      source,
+      seed,
+      text: path.endsWith(".js") && !/^(import|export)\b/m.test(text) ? staysAScript + text : text,
+      extension: path.endsWith(".ts") ? "ts" : "js",
+      notes: relative(root, path),
+    };
   };
 }
 
@@ -161,9 +187,18 @@ function everyBirthAndUse(): Source | undefined {
   const folder = join(import.meta.dir, "..", "generated", "births-and-uses");
   if (!existsSync(folder)) return;
   const names = readdirSync(folder)
-    .filter(name => name.endsWith(".ts") && !["run.ts", "also-with-types-erased.ts", "where-a-stretch-stands.ts"].includes(name) && !(process.env.AOT_FUZZ_BIRTHS_WITHOUT ?? "").split(",").includes(name))
+    .filter(
+      name =>
+        name.endsWith(".ts") &&
+        !["run.ts", "also-with-types-erased.ts", "where-a-stretch-stands.ts"].includes(name) &&
+        !(process.env.AOT_FUZZ_BIRTHS_WITHOUT ?? "").split(",").includes(name),
+    )
     .sort();
-  const differs = new Set(Object.values(JSON.parse(readFileSync(join(folder, "known-to-differ.json"), "utf8")) as Record<string, Record<string, string>>).flatMap(Object.keys));
+  const differs = new Set(
+    Object.values(
+      JSON.parse(readFileSync(join(folder, "known-to-differ.json"), "utf8")) as Record<string, Record<string, string>>,
+    ).flatMap(Object.keys),
+  );
   const tables = new Map<string, { name: string; file: string; text: string; flags?: string[] }[]>();
   return (seed, bed) => {
     if (bed.name !== "product") return;
@@ -177,7 +212,9 @@ function everyBirthAndUse(): Source | undefined {
     const { name, file, text, flags } = table[(Math.floor(seed / (names.length * 2)) * 7919) % table.length];
     if (flags?.length || differs.has(name) || text.length > 60_000) return;
     const program: Program = { text, extension: file.endsWith(".ts") ? "ts" : "js" };
-    return bed.accepts(program) && bed.allows(text) ? { source: "every-birth-and-use", seed, ...program, notes: `${from} ${name}`, group: from } : undefined;
+    return bed.accepts(program) && bed.allows(text)
+      ? { source: "every-birth-and-use", seed, ...program, notes: `${from} ${name}`, group: from }
+      : undefined;
   };
 }
 
@@ -188,23 +225,69 @@ const generated =
   (seed, bed) => {
     const random = new Random(seed);
     if (source === "many-of-one-thing" && bed.name !== "product") return;
-    if ((source === "typed-object-mutations" || source === "held-across-suspensions" || source === "where-the-stack-ends" || source === "changing-buffers" || source === "many-live-values" || source === "a-throw-at-every-call" || source === "values-across-joins" || source === "operators-at-the-edges" || source === "objects-across-awaits" || source === "every-kind-of-job" || source === "work-on-the-way-up" || source === "text-beside-compiled-code") && bed.name !== "product") return;
-    const typed = source === "typed-object-mutations" || source === "held-across-suspensions" || source === "where-the-stack-ends" || source === "changing-buffers" || source === "many-live-values" || source === "a-throw-at-every-call" || source === "values-across-joins" || source === "operators-at-the-edges" || source === "objects-across-awaits" || source === "every-kind-of-job" || source === "work-on-the-way-up" || source === "text-beside-compiled-code" || (source === "grammar" && bed.name === "product" && random.chance(0.5));
-    const program: Program = { text: generate(random, typed, { library: bed.name === "product" }), extension: typed ? "ts" : "js" };
-    return bed.accepts(program) && bed.allows(program.text) ? { source, seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+    if (
+      (source === "typed-object-mutations" ||
+        source === "held-across-suspensions" ||
+        source === "where-the-stack-ends" ||
+        source === "changing-buffers" ||
+        source === "many-live-values" ||
+        source === "a-throw-at-every-call" ||
+        source === "values-across-joins" ||
+        source === "operators-at-the-edges" ||
+        source === "objects-across-awaits" ||
+        source === "every-kind-of-job" ||
+        source === "work-on-the-way-up" ||
+        source === "text-beside-compiled-code") &&
+      bed.name !== "product"
+    )
+      return;
+    const typed =
+      source === "typed-object-mutations" ||
+      source === "held-across-suspensions" ||
+      source === "where-the-stack-ends" ||
+      source === "changing-buffers" ||
+      source === "many-live-values" ||
+      source === "a-throw-at-every-call" ||
+      source === "values-across-joins" ||
+      source === "operators-at-the-edges" ||
+      source === "objects-across-awaits" ||
+      source === "every-kind-of-job" ||
+      source === "work-on-the-way-up" ||
+      source === "text-beside-compiled-code" ||
+      (source === "grammar" && bed.name === "product" && random.chance(0.5));
+    const program: Program = {
+      text: generate(random, typed, { library: bed.name === "product" }),
+      extension: typed ? "ts" : "js",
+    };
+    return bed.accepts(program) && bed.allows(program.text)
+      ? { source, seed, ...program, notes: typed ? "typed" : "untyped" }
+      : undefined;
   };
 
 // A program that starts itself again as a Worker names its own file. One that loads code which the build never saw changes what the compiler may take for granted about everything built beside it.
-const standAlone = new Set(["workers-ended-in-the-middle", "code-the-build-never-saw-changes-what-it-is-handed", "lists-of-numbers-through-one-map-or-filter", "loops-whose-tests-are-settled-on-the-first-turn"]);
-const flagsOfSource: Record<string, string[]> = { "code-the-build-never-saw-changes-what-it-is-handed": ["--aot-allow-code-from-disk"] };
+const standAlone = new Set([
+  "workers-ended-in-the-middle",
+  "code-the-build-never-saw-changes-what-it-is-handed",
+  "lists-of-numbers-through-one-map-or-filter",
+  "loops-whose-tests-are-settled-on-the-first-turn",
+]);
+const flagsOfSource: Record<string, string[]> = {
+  "code-the-build-never-saw-changes-what-it-is-handed": ["--aot-allow-code-from-disk"],
+};
 
 /** A source that writes TypeScript, for the product alone. */
 const typedForTheProduct =
   (source: string, generate: Generator): Source =>
   (seed, bed) => {
     if (bed.name !== "product") return;
-    const program: Program = { text: generate(new Random(seed), true, { library: true }), extension: "ts", ...(flagsOfSource[source] ? { flags: flagsOfSource[source] } : {}) };
-    return bed.accepts(program) && bed.allows(program.text) ? { source, seed, ...program, notes: "typed", ...(standAlone.has(source) ? { standsAlone: true as const } : {}) } : undefined;
+    const program: Program = {
+      text: generate(new Random(seed), true, { library: true }),
+      extension: "ts",
+      ...(flagsOfSource[source] ? { flags: flagsOfSource[source] } : {}),
+    };
+    return bed.accepts(program) && bed.allows(program.text)
+      ? { source, seed, ...program, notes: "typed", ...(standAlone.has(source) ? { standsAlone: true as const } : {}) }
+      : undefined;
   };
 
 /** A source that writes JavaScript, for the product alone. */
@@ -213,7 +296,9 @@ const untypedForTheProduct =
   (seed, bed) => {
     if (bed.name !== "product") return;
     const program: Program = { text: generate(new Random(seed), false, { library: true }), extension: "js" };
-    return bed.accepts(program) && bed.allows(program.text) ? { source, seed, ...program, notes: "untyped" } : undefined;
+    return bed.accepts(program) && bed.allows(program.text)
+      ? { source, seed, ...program, notes: "untyped" }
+      : undefined;
   };
 
 /** `rejected` receives the names of the base programs that cannot be used; the caller adds those that differ unchanged. */
@@ -221,8 +306,12 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
   const sources: Record<string, Source> = {};
   const mutants = mutation(programsRoot, rejected);
   if (mutants) sources.mutation = mutants;
-  const unchanged = asTheyAre(programsRoot);
+  const unchanged = asTheyAre(programsRoot, "programs-as-they-are", (seed, count) => seed % count);
   if (unchanged) sources["programs-as-they-are"] = unchanged;
+  const shuffled = asTheyAre(programsRoot, "programs-in-random-order", (seed, count) =>
+    new Random(seed).between(0, count - 1),
+  );
+  if (shuffled) sources["programs-in-random-order"] = shuffled;
   const pairs = everyBirthAndUse();
   if (pairs) sources["every-birth-and-use"] = pairs;
   if (existsSync(join(import.meta.dir, "one-key-asked-in-every-way.ts"))) {
@@ -231,7 +320,9 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       if (bed.name !== "product") return;
       const typed = seed % 2 === 1;
       const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
-      return bed.accepts(program) && bed.allows(program.text) ? { source: "one-key-asked-in-every-way", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "one-key-asked-in-every-way", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
     };
   }
   if (existsSync(join(import.meta.dir, "names-given-by-key-with-something-done-in-between.ts"))) {
@@ -240,7 +331,14 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       if (bed.name !== "product") return;
       const typed = seed % 3 === 1;
       const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
-      return bed.accepts(program) && bed.allows(program.text) ? { source: "names-given-by-key-with-something-done-in-between", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+      return bed.accepts(program) && bed.allows(program.text)
+        ? {
+            source: "names-given-by-key-with-something-done-in-between",
+            seed,
+            ...program,
+            notes: typed ? "typed" : "untyped",
+          }
+        : undefined;
     };
   }
   if (existsSync(join(import.meta.dir, "text-written-into-parts-of-views.ts"))) {
@@ -249,7 +347,9 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       if (bed.name !== "product") return;
       const typed = seed % 2 === 1;
       const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
-      return bed.accepts(program) && bed.allows(program.text) ? { source: "text-written-into-parts-of-views", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "text-written-into-parts-of-views", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
     };
   }
   if (existsSync(join(import.meta.dir, "arrays-shifted-during-gc.ts"))) {
@@ -258,7 +358,9 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       if (bed.name !== "product") return;
       const typed = seed % 2 === 1;
       const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
-      return bed.accepts(program) && bed.allows(program.text) ? { source: "arrays-shifted-during-gc", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "arrays-shifted-during-gc", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
     };
   }
   if (existsSync(join(import.meta.dir, "bind-spread-flatmap-and-boolean-arithmetic.ts"))) {
@@ -267,7 +369,9 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       if (bed.name !== "product") return;
       const typed = seed % 2 === 1;
       const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
-      return bed.accepts(program) && bed.allows(program.text) ? { source: "bind-spread-flatmap-and-boolean-arithmetic", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "bind-spread-flatmap-and-boolean-arithmetic", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
     };
   }
   if (existsSync(join(import.meta.dir, "prototype-chains-linked-by-hand.ts"))) {
@@ -276,7 +380,9 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       if (bed.name !== "product") return;
       const typed = seed % 2 === 1;
       const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
-      return bed.accepts(program) && bed.allows(program.text) ? { source: "prototype-chains-linked-by-hand", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "prototype-chains-linked-by-hand", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
     };
   }
   if (existsSync(join(import.meta.dir, "sorts-with-hostile-comparators.ts"))) {
@@ -285,7 +391,9 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       if (bed.name !== "product") return;
       const typed = seed % 2 === 1;
       const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
-      return bed.accepts(program) && bed.allows(program.text) ? { source: "sorts-with-hostile-comparators", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "sorts-with-hostile-comparators", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
     };
   }
   if (existsSync(join(import.meta.dir, "order-of-promise-jobs.ts"))) {
@@ -294,7 +402,9 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       if (bed.name !== "product") return;
       const typed = seed % 2 === 1;
       const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
-      return bed.accepts(program) && bed.allows(program.text) ? { source: "order-of-promise-jobs", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "order-of-promise-jobs", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
     };
   }
   if (existsSync(join(import.meta.dir, "arrays-grown-from-empty-literals.ts"))) {
@@ -303,7 +413,119 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       if (bed.name !== "product") return;
       const typed = seed % 2 === 1;
       const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
-      return bed.accepts(program) && bed.allows(program.text) ? { source: "arrays-grown-from-empty-literals", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "arrays-grown-from-empty-literals", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "closures-in-fields-replaced-from-outside.ts"))) {
+    const { generate } = await import("./closures-in-fields-replaced-from-outside.ts");
+    sources["closures-in-fields-replaced-from-outside"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "closures-in-fields-replaced-from-outside", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "tail-calls-that-hand-rest-parameters-on.ts"))) {
+    const { generate } = await import("./tail-calls-that-hand-rest-parameters-on.ts");
+    sources["tail-calls-that-hand-rest-parameters-on"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "tail-calls-that-hand-rest-parameters-on", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "host-functions-that-throw.ts"))) {
+    const { generate } = await import("./host-functions-that-throw.ts");
+    sources["host-functions-that-throw"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "host-functions-that-throw", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "keys-of-built-in-objects-after-reads-and-copies.ts"))) {
+    const { generate } = await import("./keys-of-built-in-objects-after-reads-and-copies.ts");
+    sources["keys-of-built-in-objects-after-reads-and-copies"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? {
+            source: "keys-of-built-in-objects-after-reads-and-copies",
+            seed,
+            ...program,
+            notes: typed ? "typed" : "untyped",
+          }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "members-of-built-in-objects-handed-around.ts"))) {
+    const { generate } = await import("./members-of-built-in-objects-handed-around.ts");
+    sources["members-of-built-in-objects-handed-around"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "members-of-built-in-objects-handed-around", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "closures-tested-before-they-leave.ts"))) {
+    const { generate } = await import("./closures-tested-before-they-leave.ts");
+    sources["closures-tested-before-they-leave"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const program: Program = { text: generate(new Random(seed)), extension: "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "closures-tested-before-they-leave", seed, ...program, notes: "untyped" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "functions-that-make-many-objects-and-return-one.ts"))) {
+    const { generate } = await import("./functions-that-make-many-objects-and-return-one.ts");
+    sources["functions-that-make-many-objects-and-return-one"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const program: Program = { text: generate(new Random(seed)), extension: "ts" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "functions-that-make-many-objects-and-return-one", seed, ...program, notes: "typed" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "one-name-taken-apart-beside-other-kinds.ts"))) {
+    const { generate } = await import("./one-name-taken-apart-beside-other-kinds.ts");
+    sources["one-name-taken-apart-beside-other-kinds"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const program: Program = { text: generate(new Random(seed)), extension: "ts" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "one-name-taken-apart-beside-other-kinds", seed, ...program, notes: "typed" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "results-of-awaited-steps-used-behind-a-test.ts"))) {
+    const { generate } = await import("./results-of-awaited-steps-used-behind-a-test.ts");
+    sources["results-of-awaited-steps-used-behind-a-test"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const program: Program = { text: generate(new Random(seed)), extension: "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "results-of-awaited-steps-used-behind-a-test", seed, ...program, notes: "untyped" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "lists-made-of-what-is-walked-and-used-on-a-rare-path.ts"))) {
+    const { generate } = await import("./lists-made-of-what-is-walked-and-used-on-a-rare-path.ts");
+    sources["lists-made-of-what-is-walked-and-used-on-a-rare-path"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const program: Program = { text: generate(new Random(seed)), extension: "ts" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "lists-made-of-what-is-walked-and-used-on-a-rare-path", seed, ...program, notes: "typed" }
+        : undefined;
     };
   }
   if (existsSync(join(import.meta.dir, "unsound-types.ts"))) {
@@ -311,11 +533,91 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     sources["unsound-types"] = (seed, bed) => {
       if (bed.name !== "product") return;
       const { text, hole, parts, alone } = draw(new Random(seed));
-      return { source: "unsound-types", seed, text, extension: "ts", notes: parts.map(each => each.join(", ")).join(" | "), group: hole, alone, isForTypeScript: true };
+      return {
+        source: "unsound-types",
+        seed,
+        text,
+        extension: "ts",
+        notes: parts.map(each => each.join(", ")).join(" | "),
+        group: hole,
+        alone,
+        isForTypeScript: true,
+      };
     };
   }
-  for (const name of ["grammar", "protocols", "new-targets", "object-mutations", "typed-object-mutations", "held-across-suspensions", "where-the-stack-ends", "many-of-one-thing", "changing-buffers", "many-live-values", "a-throw-at-every-call", "values-across-joins", "operators-at-the-edges", "objects-across-awaits", "every-kind-of-job", "work-on-the-way-up", "text-beside-compiled-code", "several-changes-one-behind-the-other"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
-  for (const name of ["when-the-heap-is-full", "held-by-one-thing-alone", "errors-nobody-catches", "shapes-that-die-and-come-again", "workers-ended-in-the-middle", "calls-with-very-many-arguments", "strings-still-in-pieces", "changed-while-it-is-walked", "left-half-way", "numbers-across-their-borders", "at-the-border-of-a-representation", "patterns-made-at-run-time", "lists-read-where-they-are-made", "numbers-however-they-are-kept", "objects-read-where-they-are-made", "patterns-that-go-back-for-millions-of-turns", "errors-of-values-nobody-uses", "constant-lists-changed-by-every-road", "new-objects-kept-through-built-ins", "typed-instances-changed-through-built-ins", "several-changes-behind-a-declared-type", "two-names-where-ways-meet", "objects-with-very-many-fields", "one-name-for-many-kinds-of-things", "objects-that-the-host-keeps-and-hands-back", "closures-read-through-array-methods", "objects-that-live-for-one-turn-of-a-loop", "patterns-with-subjects-made-from-them", "bodies-in-every-encoding-read-as-json", "read-by-the-last-holder-while-others-are-made", "instances-below-built-in-classes-frozen-closed-and-redefined", "code-the-build-never-saw-changes-what-it-is-handed", "lists-of-numbers-through-one-map-or-filter", "loops-whose-tests-are-settled-on-the-first-turn", "counters-handed-to-the-one-call-in-a-loop", "strangers-where-a-type-names-a-class", "holders-with-the-same-keys-and-one-stranger", "names-asked-of-full-tables-and-texts-converted-again", "a-full-heap-is-let-go-and-built-ins-make-things"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);
-  for (const name of ["what-a-callback-declares-however-it-reaches-a-built-in", "tests-that-ask-which-runtime-this-is", "what-a-function-declares-however-often-call-and-apply-enter-it", "makers-of-makers-each-with-a-prototype-of-its-own", "built-ins-called-often-through-unknown-values"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = untypedForTheProduct(name, (await import(`./${name}.ts`)).generate);
+  for (const name of [
+    "grammar",
+    "protocols",
+    "new-targets",
+    "object-mutations",
+    "typed-object-mutations",
+    "held-across-suspensions",
+    "where-the-stack-ends",
+    "many-of-one-thing",
+    "changing-buffers",
+    "many-live-values",
+    "a-throw-at-every-call",
+    "values-across-joins",
+    "operators-at-the-edges",
+    "objects-across-awaits",
+    "every-kind-of-job",
+    "work-on-the-way-up",
+    "text-beside-compiled-code",
+    "several-changes-one-behind-the-other",
+  ])
+    if (existsSync(join(import.meta.dir, name + ".ts")))
+      sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
+  for (const name of [
+    "when-the-heap-is-full",
+    "held-by-one-thing-alone",
+    "errors-nobody-catches",
+    "shapes-that-die-and-come-again",
+    "workers-ended-in-the-middle",
+    "calls-with-very-many-arguments",
+    "strings-still-in-pieces",
+    "changed-while-it-is-walked",
+    "left-half-way",
+    "numbers-across-their-borders",
+    "at-the-border-of-a-representation",
+    "patterns-made-at-run-time",
+    "lists-read-where-they-are-made",
+    "numbers-however-they-are-kept",
+    "objects-read-where-they-are-made",
+    "patterns-that-go-back-for-millions-of-turns",
+    "errors-of-values-nobody-uses",
+    "constant-lists-changed-by-every-road",
+    "new-objects-kept-through-built-ins",
+    "typed-instances-changed-through-built-ins",
+    "several-changes-behind-a-declared-type",
+    "two-names-where-ways-meet",
+    "objects-with-very-many-fields",
+    "one-name-for-many-kinds-of-things",
+    "objects-that-the-host-keeps-and-hands-back",
+    "closures-read-through-array-methods",
+    "objects-that-live-for-one-turn-of-a-loop",
+    "patterns-with-subjects-made-from-them",
+    "bodies-in-every-encoding-read-as-json",
+    "read-by-the-last-holder-while-others-are-made",
+    "instances-below-built-in-classes-frozen-closed-and-redefined",
+    "code-the-build-never-saw-changes-what-it-is-handed",
+    "lists-of-numbers-through-one-map-or-filter",
+    "loops-whose-tests-are-settled-on-the-first-turn",
+    "counters-handed-to-the-one-call-in-a-loop",
+    "strangers-where-a-type-names-a-class",
+    "holders-with-the-same-keys-and-one-stranger",
+    "names-asked-of-full-tables-and-texts-converted-again",
+    "a-full-heap-is-let-go-and-built-ins-make-things",
+  ])
+    if (existsSync(join(import.meta.dir, name + ".ts")))
+      sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);
+  for (const name of [
+    "what-a-callback-declares-however-it-reaches-a-built-in",
+    "tests-that-ask-which-runtime-this-is",
+    "what-a-function-declares-however-often-call-and-apply-enter-it",
+    "makers-of-makers-each-with-a-prototype-of-its-own",
+    "built-ins-called-often-through-unknown-values",
+  ])
+    if (existsSync(join(import.meta.dir, name + ".ts")))
+      sources[name] = untypedForTheProduct(name, (await import(`./${name}.ts`)).generate);
   return sources;
 }

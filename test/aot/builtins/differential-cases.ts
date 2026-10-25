@@ -2,7 +2,7 @@
 // which code of its operands runs, with what, and when; what it stores, deletes, freezes and keeps; what it returns and throws;
 // which memory its result depends on. Retention in native memory that nothing hands back, and allocation of strings, cannot be seen.
 // The table is about executables, and an executable describes a value that a native function rejects without running code of the
-// program (docs/bundler/aot-compatibility.mdx). So do the processes that make the calls here: executableEnv.
+// program (docs/compiler/compatibility.mdx). So do the processes that make the calls here: executableEnv.
 //
 //   AOT_BUILTINS_UPDATE=1   checks every declared overload and writes differential/not-checked.txt: those that do not pass, each with the reason
 //   AOT_BUILTINS_TABLE=<f>  takes the table from the generator's aot_builtin_table.json in place of the one in this build of Bun

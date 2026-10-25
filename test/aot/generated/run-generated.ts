@@ -13,14 +13,29 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { built, inShare, inShareOfList, inShareOfTheRest, isToldWhatToTake, wanted as programsWanted, slot, takesWhatIsFixed, spawned, unsupported, withoutCoreDump, withoutCrashReport } from "../run-programs";
+import {
+  built,
+  inShare,
+  inShareOfList,
+  inShareOfTheRest,
+  isToldWhatToTake,
+  wanted as programsWanted,
+  slot,
+  takeFromShare,
+  takesWhatIsFixed,
+  spawned,
+  unsupported,
+  withoutCoreDump,
+  withoutCrashReport,
+} from "../run-programs";
 
 export type Generated = {
   name: string;
   isAlwaysRun: boolean;
   /** It once showed a fault. It is meant for every run, and no run leaves it to another commit. */
   wasOnceWrong?: boolean;
-  make: () => { file: string; text: string; files?: Record<string, string> };
+  /** `file` is what runs. `entryPoints` are files that the build is given behind it. */
+  make: () => { file: string; text: string; files?: Record<string, string>; entryPoints?: string[] };
   /** The program tries what --aot does not allow. It may fail to build, or catch a TypeError and print "THROWS TypeError". It may not print anything else that plain Bun does not. */
   mayBeRefused?: true;
   /**
@@ -59,14 +74,23 @@ const wanted = process.env.AOT_GENERATED ?? "";
 export const moreFlags = process.env.AOT_GENERATED_FLAGS?.split(" ").filter(flag => flag) ?? [];
 
 function departingGroups(ours: string[], theirs: string[], notCompared: RegExp) {
-  const groups = (lines: string[]) => Map.groupBy(lines.filter(line => line.includes(" | ")), line => line.slice(0, line.indexOf(" | ")));
+  const groups = (lines: string[]) =>
+    Map.groupBy(
+      lines.filter(line => line.includes(" | ")),
+      line => line.slice(0, line.indexOf(" | ")),
+    );
   const mine = groups(ours);
   const departing: string[] = [];
   for (const [group, lines] of groups(theirs)) {
     if (notCompared.test(group)) continue;
     const got = mine.get(group) ?? [];
     const at = lines.findIndex((line, i) => got[i] !== line);
-    if (at < 0 ? got.length === lines.length : /REFUSED|THROWS/.test((got[at]?.slice(group.length) ?? "") + lines[at].slice(group.length))) continue;
+    if (
+      at < 0
+        ? got.length === lines.length
+        : /REFUSED|THROWS/.test((got[at]?.slice(group.length) ?? "") + lines[at].slice(group.length))
+    )
+      continue;
     departing.push(`--aot: ${got.join("\n")}\nplain: ${lines.join("\n")}`);
   }
   return departing.slice(0, 20);
@@ -78,16 +102,47 @@ export function generated(title: string, programs: Generated[]) {
   if (!kept) afterAll(() => rmSync(root, { recursive: true, force: true }));
   const isMeantForEveryRun = (program: Generated) => program.isAlwaysRun || !!program.wasOnceWrong;
   const chosen = programs
-    .filter(program => (wanted === "all" ? true : wanted ? program.name.includes(wanted) : isMeantForEveryRun(program) || inShareOfTheRest(`${title} ${program.name}`, 400)))
+    .filter(program =>
+      wanted === "all"
+        ? true
+        : wanted
+          ? program.name.includes(wanted)
+          : isMeantForEveryRun(program) || inShareOfTheRest(`${title} ${program.name}`, 400),
+    )
     // A debug or ASAN build of Bun is many times slower.
-    .filter((program, index) => wanted || programsWanted !== "quick" || !isMeantForEveryRun(program) || inShareOfList(`${title} ${program.name}`, index))
-    .filter(program => wanted || (program.wasOnceWrong && takesWhatIsFixed) || !isMeantForEveryRun(program) || inShare(`${title} ${program.name}`, 4));
+    .filter(
+      (program, index) =>
+        wanted ||
+        programsWanted !== "quick" ||
+        !isMeantForEveryRun(program) ||
+        inShareOfList(`${title} ${program.name}`, index),
+    )
+    .filter(
+      program =>
+        wanted ||
+        (program.wasOnceWrong && takesWhatIsFixed) ||
+        !isMeantForEveryRun(program) ||
+        inShare(`${title} ${program.name}`, 4),
+    );
+  // A share that comes out empty takes one program.
+  if (chosen.length === 0 && !wanted)
+    chosen.push(
+      ...takeFromShare(
+        programs.some(isMeantForEveryRun) ? programs.filter(isMeantForEveryRun) : programs,
+        1,
+        program => `${title} ${program.name}`,
+      ),
+    );
   // The runner of CI ends a file after five minutes, and a machine that runs several jobs at once builds these programs at a quarter of its usual rate. What a run draws is a share
   // that goes by the commit, so a file that has run for 200 seconds starts no more of it and says so. What a run is told to take is run whole, and so is what once went wrong.
-  const mayBeLeftOut = (program: Generated) => !wanted && !isToldWhatToTake && !(program.wasOnceWrong && takesWhatIsFixed);
+  const mayBeLeftOut = (program: Generated) =>
+    !wanted && !isToldWhatToTake && !(program.wasOnceWrong && takesWhatIsFixed);
   let leftOut = 0;
   afterAll(() => {
-    if (leftOut) console.error(`SHARE: ${leftOut} of the ${chosen.length} programs that this run drew were not run: the file had run for 200 seconds`);
+    if (leftOut)
+      console.error(
+        `SHARE: ${leftOut} of the ${chosen.length} programs that this run drew were not run: the file had run for 200 seconds`,
+      );
   });
 
   describe.concurrent(`compile/aot/generated/${title}`, () => {
@@ -102,39 +157,92 @@ export function generated(title: string, programs: Generated[]) {
           slot(async () => {
             if (mayBeLeftOut(program) && performance.now() > 200_000) return void leftOut++;
             const folder = join(root, title.replaceAll(" ", "-"), String(index));
-            const { file, text, files } = program.make();
+            const { file, text, files, entryPoints = [] } = program.make();
             for (const [name, content] of Object.entries({ ...files, [file]: text })) {
               mkdirSync(dirname(join(folder, name)), { recursive: true });
               writeFileSync(join(folder, name), content);
             }
             const executable = join(folder, isWindows ? "program.exe" : "program");
             try {
-              if (program.mayBeUnjudgeable && (await spawned([bunExe(), "run", file], folder, { ...bunEnv, ...program.plainEnv })).exitCode !== 0) return;
-              const build = await spawned([bunExe(), "build", "--compile", "--aot", ...moreFlags, ...(program.flags ?? []), file, "--outfile", executable], folder, bunEnv);
+              if (
+                program.mayBeUnjudgeable &&
+                (await spawned([bunExe(), "run", file], folder, { ...bunEnv, ...program.plainEnv })).exitCode !== 0
+              )
+                return;
+              const build = await spawned(
+                [
+                  bunExe(),
+                  "build",
+                  "--compile",
+                  "--aot",
+                  ...moreFlags,
+                  ...(program.flags ?? []),
+                  file,
+                  ...entryPoints,
+                  "--outfile",
+                  executable,
+                ],
+                folder,
+                bunEnv,
+              );
               if (program.mayBeUnjudgeable && build.exitCode === 1 && /^error: TS\d+:/m.test(build.stderr)) return;
-              const fromSources = program.modeFailsToday || program.groupsMayBeRefused || program.isOnlyCompiled ? undefined : await spawned([bunExe(), "run", "--aot", file], folder, bunEnv);
-              if (program.mayBeRefused && build.exitCode === 1 && /^error\b/m.test(build.stderr)) return void (fromSources && expect(fromSources.exitCode).not.toBe(0));
+              const fromSources =
+                program.modeFailsToday || program.groupsMayBeRefused || program.isOnlyCompiled
+                  ? undefined
+                  : await spawned([bunExe(), "run", "--aot", file], folder, bunEnv);
+              if (program.mayBeRefused && build.exitCode === 1 && /^error\b/m.test(build.stderr))
+                return void (fromSources && expect(fromSources.exitCode).not.toBe(0));
               built(build);
               const compiled = await spawned([executable], folder, { ...bunEnv, BUN_AOT_VERBOSE: "1" });
-              if (fromSources) expect({ stdout: fromSources.stdout, signal: fromSources.signal, exitCode: fromSources.exitCode }).toEqual({ stdout: compiled.stdout, signal: compiled.signal, exitCode: compiled.exitCode });
+              if (fromSources)
+                expect({
+                  stdout: fromSources.stdout,
+                  signal: fromSources.signal,
+                  exitCode: fromSources.exitCode,
+                }).toEqual({ stdout: compiled.stdout, signal: compiled.signal, exitCode: compiled.exitCode });
               const plain = await spawned([bunExe(), "run", file], folder, { ...bunEnv, ...program.plainEnv });
               const exitCode = program.exitsAsPlainBunDoes ? plain.exitCode : program.leavesAnError ? 1 : 0;
               expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode });
               expect(compiled.stderr).toContain("[aot] module: ");
               if (program.linesDepartToday) return void expect(compiled.signal).toBeNull();
-              if (program.mayBeRefused && compiled.exitCode === 0 && compiled.stdout.startsWith("THROWS TypeError ")) return;
+              if (program.mayBeRefused && compiled.exitCode === 0 && compiled.stdout.startsWith("THROWS TypeError "))
+                return;
               const written = Object.entries(program.written ?? {});
-              const [ours, theirs] = [compiled.stdout.split("\n"), plain.stdout.split("\n").map(line => written.find(([start]) => line.startsWith(start))?.join("") ?? line)];
-              if (program.groupsMayBeRefused) return void expect({ departing: departingGroups(ours, theirs, program.groupsMayBeRefused), signal: compiled.signal, exitCode: compiled.exitCode }).toEqual({ departing: [], signal: null, exitCode: 0 });
+              const [ours, theirs] = [
+                compiled.stdout.split("\n"),
+                plain.stdout
+                  .split("\n")
+                  .map(line => written.find(([start]) => line.startsWith(start))?.join("") ?? line),
+              ];
+              if (program.groupsMayBeRefused)
+                return void expect({
+                  departing: departingGroups(ours, theirs, program.groupsMayBeRefused),
+                  signal: compiled.signal,
+                  exitCode: compiled.exitCode,
+                }).toEqual({ departing: [], signal: null, exitCode: 0 });
               const departing: string[] = [];
               for (let i = 0; i < Math.max(ours.length, theirs.length) && departing.length < 20; i++) {
                 if (ours[i] !== theirs[i]) departing.push(`--aot: ${ours[i]}\nplain: ${theirs[i]}`);
               }
-              expect({ departing, signal: compiled.signal, exitCode: compiled.exitCode, lines: ours.length }).toEqual({ departing: [], signal: null, exitCode, lines: theirs.length });
+              expect({ departing, signal: compiled.signal, exitCode: compiled.exitCode, lines: ours.length }).toEqual({
+                departing: [],
+                signal: null,
+                exitCode,
+                lines: theirs.length,
+              });
               for (const under of program.alsoUnder ?? []) {
-                const again = await spawned(program.mayStopOutOfMemory ? withoutCoreDump([executable]) : [executable], folder, { ...bunEnv, ...(program.mayStopOutOfMemory && withoutCrashReport), ...under });
+                const again = await spawned(
+                  program.mayStopOutOfMemory ? withoutCoreDump([executable]) : [executable],
+                  folder,
+                  { ...bunEnv, ...(program.mayStopOutOfMemory && withoutCrashReport), ...under },
+                );
                 if (program.mayStopOutOfMemory && again.stderr.includes("FATAL: out of memory")) continue;
-                expect({ under, stdout: again.stdout, signal: again.signal, exitCode: again.exitCode }).toEqual({ under, stdout: plain.stdout, signal: null, exitCode });
+                expect({ under, stdout: again.stdout, signal: again.signal, exitCode: again.exitCode }).toEqual({
+                  under,
+                  stdout: plain.stdout,
+                  signal: null,
+                  exitCode,
+                });
               }
             } finally {
               rmSync(executable, { force: true });

@@ -743,7 +743,7 @@ fn text_entry_orders_notes() {
                 why(IllTypedCause::Assertion).message
             ),
             format!("fix: {}", wording.fix),
-            "https://bun.com/docs/bundler/aot-explain#limit-reached".to_owned(),
+            "https://bun.com/docs/compiler/explain#limit-reached".to_owned(),
         ]
     );
     assert!(entry.notes.iter().all(|note| note.position.is_none()));
@@ -761,7 +761,7 @@ fn absent_notes_are_omitted() {
             "1 of 1 untyped access".to_owned(),
             format!("about 100% {ESTIMATE}"),
             format!("fix: {}", cause_wording(UnprovenCause::FieldDeleted).fix),
-            "https://bun.com/docs/bundler/aot-explain#field-deleted".to_owned(),
+            "https://bun.com/docs/compiler/explain#field-deleted".to_owned(),
         ]
     );
 }
@@ -779,7 +779,7 @@ fn text_entry_prints_code_of_wording() {
         let url = note_texts(&entry).pop().expect("the link is the last note");
         assert_eq!(
             url,
-            format!("https://bun.com/docs/bundler/aot-explain#{code}"),
+            format!("https://bun.com/docs/compiler/explain#{code}"),
             "{kind:?}"
         );
     }
@@ -803,7 +803,7 @@ fn list_and_json_entries_print_code_of_wording() {
         "unknown-code: passed-to-untyped-code at src/a.ts:2:14, 1 access"
     );
 
-    let url = r#""url":"https://bun.com/docs/bundler/aot-explain#passed-to-untyped-code""#;
+    let url = r#""url":"https://bun.com/docs/compiler/explain#passed-to-untyped-code""#;
     assert!(
         json.starts_with(r#"{"rank":1,"reason":"passed-to-untyped-code","#),
         "{json}"
@@ -822,7 +822,7 @@ fn list_and_json_entries_end_with_ill_typed_cause() {
 
     let IllTypedWording { message, fix, .. } = why(IllTypedCause::OutsideData);
     let fix = fix.replace('"', "\\\"");
-    let url = "https://bun.com/docs/bundler/aot-explain#external-data";
+    let url = "https://bun.com/docs/compiler/explain#external-data";
     let member = format!(
         r#""why":{{"reason":"external-data","message":"{message}","fix":"{fix}","url":"{url}"}}}}"#
     );

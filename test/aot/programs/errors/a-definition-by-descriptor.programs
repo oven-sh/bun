@@ -1008,7 +1008,7 @@ attempt("throw of a subclass", () => { throw new Failure("failed", 7); });
 attempt("throw in an enum lookup", () => { lookup(opaque(5 as Color)); });
 attempt("throw behind a never", () => { unreachable(opaque("x") as never); });
 //// places-that-throw-in-typed-code-with-another-text-or-column.ts
-// The places that throw in typed code where the message or a column is not that of plain Bun: see docs/bundler/aot-compatibility.mdx#error-messages and docs/bundler/aot-debugging.mdx#stack-traces. The class and the line are the same.
+// The places that throw in typed code where the message or a column is not that of plain Bun: see docs/compiler/compatibility.mdx#error-messages and docs/compiler/debugging.mdx#stack-traces. The class and the line are the same.
 const opaque = <T,>(value: T): T => [value, value][Number(process.argv.length > 100)];
 ////= framesOf-2
 function describe(thrown: unknown): string {
@@ -1107,7 +1107,7 @@ attempt("destructured parameter", () => { (({ x }: Point) => x)(noPoint as Point
 // What the program throws.
 attempt("throw in a field initializer", () => { new ThrowsInField(); });
 //// places-that-throw-with-another-text-or-column.js
-// The places that throw where the message, a column or a frame of a built-in is not that of plain Bun: see docs/bundler/aot-compatibility.mdx#error-messages and docs/bundler/aot-debugging.mdx#stack-traces. The class and the line are the same.
+// The places that throw where the message, a column or a frame of a built-in is not that of plain Bun: see docs/compiler/compatibility.mdx#error-messages and docs/compiler/debugging.mdx#stack-traces. The class and the line are the same.
 "use strict";
 const opaque = value => [value, 0][Number(process.argv.length > 100)];
 ////= framesOf

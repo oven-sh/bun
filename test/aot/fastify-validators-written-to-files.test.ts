@@ -1,4 +1,4 @@
-// docs/bundler/aot-compatibility.mdx, "Fastify": ajv makes a validator with `new Function`, which a compiled executable interprets.
+// docs/compiler/compatibility.mdx, "Fastify": ajv makes a validator with `new Function`, which a compiled executable interprets.
 // @fastify/ajv-compiler can write the validator to a file instead. The file is compiled with the program, and the server answers as it
 // does with the validator that ajv makes at run time.
 import { expect } from "bun:test";

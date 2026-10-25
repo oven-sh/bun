@@ -16,12 +16,16 @@ const tsconfig = JSON.stringify({
   },
 });
 
+// Every run takes these, whatever else it takes.
+const onceWrong = [12, 17, 22, 42, 45, 63];
+
 generated(
   "a closure sees the variables of the turn it was made in",
   Array.from({ length: 160 }, (_, index) => ({
     name: `seed ${(index >> 1) + 1}${index & 1 ? ", every function hot." : "."}`,
     // Every run takes the first twenty seeds; AOT_GENERATED=all takes all.
     isAlwaysRun: index < 40,
+    wasOnceWrong: onceWrong.includes((index >> 1) + 1),
     isOnlyCompiled: true as const,
     flags: index & 1 ? ["--aot-heat=everything-is-hot"] : [],
     make: () => ({

@@ -163,10 +163,12 @@ jobs:
         # A red step in front of this one does not hide what these tests say.
         if: ${{ !cancelled() }}
         # ir_tests.rs skips the engine's half of every test when TESTAOT is
-        # unset. Here a build without testaot has to fail the job.
+        # unset or was built from another schema than the codegen. Here a build
+        # without testaot has to fail the job, and so does such a skip.
         # The skipped test of bun_sema_standalone fails without this branch too.
         env:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+          AOT_IR_REQUIRES_ENGINE: 1
         run: |
           test -x "$TESTAOT"
           cargo test --no-fail-fast -p bun_aot -p bun_builtin_sources -p bun_bundler -p bun_sema -p bun_sema_driver -p bun_sema_parser -p bun_sema_standalone -p bun_trim -p bun_removable_features -p bun_exe_format -p bun_crash_handler -p bun_options_types -p bun_resolver -p bun_lint_react_compiler -p bun_sql_jsc -- --skip realpath_under_the_marked_root_stays_under_it

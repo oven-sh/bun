@@ -1,4 +1,4 @@
-// The lines an executable writes about itself at run time: a value that fails a written type. docs/bundler/aot-debugging.mdx describes
+// The lines an executable writes about itself at run time: a value that fails a written type. docs/compiler/debugging.mdx describes
 // the two formats, the counts and the two environment variables.
 import { expect } from "bun:test";
 import { readFileSync } from "fs";
@@ -18,7 +18,7 @@ const tsconfig = JSON.stringify({
   },
 });
 
-// The program of docs/bundler/aot-debugging.mdx.
+// The program of docs/compiler/debugging.mdx.
 const visits = `function double(n: number): number {
   return n * 2;
 }

@@ -12,12 +12,8 @@
     },
     "alwaysFailing": {
       "bun": {
-        "internal/http": [
-          "IsSlotFilled 7301"
-        ],
-        "internal/streams/end-of-stream": [
-          "TypeTest 8484"
-        ],
+        "internal/http": ["IsSlotFilled 7301"],
+        "internal/streams/end-of-stream": ["TypeTest 8484"],
         "internal/streams/readable": [
           "TypeTest 23368",
           "IsClosureOf 49006",
@@ -26,25 +22,10 @@
           "TypeTest 49261",
           "TypeTest 49347"
         ],
-        "internal/streams/state": [
-          "TypeTest 29229"
-        ],
-        "internal/streams/utils": [
-          "AreMembersUnchanged 4452",
-          "TypeTest 6426",
-          "TypeTest 6652",
-          "TypeTest 9597"
-        ],
-        "node:_http_incoming": [
-          "AreMembersUnchanged 18935",
-          "AreMembersUnchanged 41753",
-          "AreMembersUnchanged 46222"
-        ],
-        "node:_http_server": [
-          "IsSlotFilled 129866",
-          "IsClosureOf 184946",
-          "IsClosureOf 190498"
-        ]
+        "internal/streams/state": ["TypeTest 29229"],
+        "internal/streams/utils": ["AreMembersUnchanged 4452", "TypeTest 6426", "TypeTest 6652", "TypeTest 9597"],
+        "node:_http_incoming": ["AreMembersUnchanged 18935", "AreMembersUnchanged 41753", "AreMembersUnchanged 46222"],
+        "node:_http_server": ["IsSlotFilled 129866", "IsClosureOf 184946", "IsClosureOf 190498"]
       },
       "packages": 10,
       "program": 4
@@ -87,18 +68,16 @@
     "codeBytes": 7791720,
     "bytesAValue": 33.3,
     "tests": {
-      "executed": 14146,
+      "executed": 14131,
       "failed": 751
     },
     "typeTests": {
-      "executed": 7862,
+      "executed": 7841,
       "failed": 692
     },
     "alwaysFailing": {
       "bun": {
-        "internal/http": [
-          "IsSlotFilled 7301"
-        ],
+        "internal/http": ["IsSlotFilled 7301"],
         "node:_http_incoming": [
           "TypeTest 33750",
           "AreMembersUnchanged 41753",
@@ -113,10 +92,7 @@
           "IsClosureOf 190498",
           "TypeTest 204550"
         ],
-        "node:crypto": [
-          "TypeTest 10451",
-          "TypeTest 10576"
-        ]
+        "node:crypto": ["TypeTest 10451", "TypeTest 10576"]
       },
       "packages": 64,
       "program": 10
@@ -126,7 +102,7 @@
       "all": 1676,
       "ofFunctionsNotExpectedToRun": 10
     },
-    "accessesByName": 3264,
+    "accessesByName": 3252,
     "runtimeOperations": {
       "operationAOTAllocateSlow": 1,
       "operationAOTCodeURIOfAnyValue": 6,
@@ -219,9 +195,7 @@
     },
     "alwaysFailing": {
       "bun": {
-        "internal/http": [
-          "IsSlotFilled 7301"
-        ],
+        "internal/http": ["IsSlotFilled 7301"],
         "internal/streams/end-of-stream": [
           "TypeTest 4275",
           "TypeTest 6945",
@@ -238,9 +212,7 @@
           "TypeTest 4741",
           "TypeTest 4866"
         ],
-        "internal/streams/legacy": [
-          "TypeTest 5394"
-        ],
+        "internal/streams/legacy": ["TypeTest 5394"],
         "internal/streams/readable": [
           "TypeTest 31419",
           "TypeTest 31609",
@@ -252,9 +224,7 @@
           "TypeTest 60009",
           "IsSlotFilled 60883"
         ],
-        "internal/streams/state": [
-          "TypeTest 29229"
-        ],
+        "internal/streams/state": ["TypeTest 29229"],
         "internal/streams/utils": [
           "TypeTest 3657",
           "TypeTest 3695",
@@ -264,21 +234,9 @@
           "TypeTest 5168",
           "TypeTest 9597"
         ],
-        "node:_http_incoming": [
-          "TypeTest 33750",
-          "AreMembersUnchanged 41753",
-          "TypeTest 46085"
-        ],
-        "node:_http_server": [
-          "TypeTest 178502",
-          "IsClosureOf 184946",
-          "IsClosureOf 190498",
-          "TypeTest 204550"
-        ],
-        "node:events": [
-          "TypeTest 7893",
-          "TypeTest 37466"
-        ]
+        "node:_http_incoming": ["TypeTest 33750", "AreMembersUnchanged 41753", "TypeTest 46085"],
+        "node:_http_server": ["TypeTest 178502", "IsClosureOf 184946", "IsClosureOf 190498", "TypeTest 204550"],
+        "node:events": ["TypeTest 7893", "TypeTest 37466"]
       },
       "packages": 37,
       "program": 11
@@ -372,10 +330,7 @@
     },
     "alwaysFailing": {
       "bun": {
-        "node:async_hooks": [
-          "TypeTest 2259",
-          "TypeTest 2312"
-        ]
+        "node:async_hooks": ["TypeTest 2259", "TypeTest 2312"]
       },
       "packages": 52,
       "program": 23
@@ -552,18 +507,16 @@
     "codeBytes": 6860920,
     "bytesAValue": 29.36,
     "tests": {
-      "executed": 21457,
-      "failed": 844
+      "executed": 21537.02,
+      "failed": 724.01
     },
     "typeTests": {
-      "executed": 11993,
-      "failed": 694
+      "executed": 12000.02,
+      "failed": 566.01
     },
     "alwaysFailing": {
       "bun": {
-        "internal/http": [
-          "IsSlotFilled 7301"
-        ],
+        "internal/http": ["IsSlotFilled 7301"],
         "internal/streams/end-of-stream": [
           "HasNoExtraProperties 3897",
           "TypeTest 7770",
@@ -581,9 +534,7 @@
           "TypeTest 4741",
           "TypeTest 4866"
         ],
-        "internal/streams/legacy": [
-          "TypeTest 5394"
-        ],
+        "internal/streams/legacy": ["TypeTest 5394"],
         "internal/streams/readable": [
           "TypeTest 31609",
           "TypeTest 31652",
@@ -597,9 +548,7 @@
           "TypeTest 37096",
           "TypeTest 60009"
         ],
-        "internal/streams/state": [
-          "TypeTest 29229"
-        ],
+        "internal/streams/state": ["TypeTest 29229"],
         "internal/streams/utils": [
           "TypeTest 3657",
           "TypeTest 3695",
@@ -637,24 +586,19 @@
           "IsClosureOf 190498",
           "TypeTest 204550"
         ],
-        "node:events": [
-          "TypeTest 7893",
-          "AreMembersUnchanged 8375",
-          "TypeTest 20284",
-          "IsSlotFilled 37466"
-        ]
+        "node:events": ["TypeTest 7893", "AreMembersUnchanged 8375", "TypeTest 20284", "IsSlotFilled 37466"]
       },
-      "packages": 63,
+      "packages": 52,
       "program": 13
     },
     "uneven": 0,
     "calls": {
-      "all": 2299,
+      "all": 2265,
       "ofFunctionsNotExpectedToRun": 46
     },
-    "accessesByName": 4531,
+    "accessesByName": 4127,
     "runtimeOperations": {
-      "operationAOTAllocateSlow": 2,
+      "operationAOTAllocateSlow": 1,
       "operationAOTCodeURIOfAnyValue": 6,
       "operationAOTConcatenate": 3,
       "operationAOTCopyObject": 8,

@@ -183,7 +183,7 @@ for (const item of JSON.parse('[{"sku":"B-2","price":10}]')) items.push(readItem
   },
 };
 
-const page = join(import.meta.dir, "../../docs/bundler/aot-explain.mdx");
+const page = join(import.meta.dir, "../../docs/compiler/explain.mdx");
 const wordingSource = join(import.meta.dir, "../../src/aot/report/wording.rs");
 const hint = "Untyped code works, but runs slower. Run with --explain to see what to fix.";
 const columnLabels: Record<AccessColumn, string> = { free: "free", tested: "tested", byName: "by name" };
@@ -218,7 +218,7 @@ const counted = (number: number, one: string, many: string) => `${count(number)}
 const countAll = countAccesses;
 const typed = (accesses: AccessCounts) => accesses.free;
 const untyped = (accesses: AccessCounts) => countAll(accesses) - typed(accesses);
-const urlOf = (code: string) => `https://bun.com/docs/bundler/aot-explain#${code}`;
+const urlOf = (code: string) => `https://bun.com/docs/compiler/explain#${code}`;
 
 function percentOf(accesses: AccessCounts) {
   return Math.max(Math.floor((typed(accesses) * 1000) / countAll(accesses)), typed(accesses) > 0 ? 1 : 0) / 10;

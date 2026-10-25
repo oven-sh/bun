@@ -1,4 +1,4 @@
-// The page docs/bundler/aot-explain.mdx says what counts as a property access, and what an entry says of an object that JSON.parse has made.
+// The page docs/compiler/explain.mdx says what counts as a property access, and what an entry says of an object that JSON.parse has made.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
 import { run } from "./harness/run";
@@ -56,7 +56,7 @@ describe.concurrent("an object that JSON.parse has made reaches a type", () => {
       "   at main.ts:7:25",
       "note: why (external-data): The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).",
       "note: fix: build a new object of this type from it where it enters typed code.",
-      "note: https://bun.com/docs/bundler/aot-explain#unknown-object",
+      "note: https://bun.com/docs/compiler/explain#unknown-object",
     ]);
   });
 

@@ -12,11 +12,15 @@ const seeds = [
   ...Array.from({ length: 36 }, (_, index) => index + 1),
 ];
 
+// Every run takes these, whatever else it takes.
+const onceWrong = [6, 22];
+
 generated(
   "an instance below a built-in class answers as in plain Bun once it is frozen, closed or redefined",
   seeds.map((seed, index) => ({
     name: `seed ${seed}.`,
     isAlwaysRun: index < 16,
+    wasOnceWrong: onceWrong.includes(seed),
     isOnlyCompiled: true as const,
     flags: [],
     alsoUnder: [{ BUN_JSC_slowPathAllocsBetweenGCs: "7", BUN_JSC_scribbleFreeCells: "1", BUN_JSC_useZombieMode: "1" }],

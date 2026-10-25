@@ -1401,6 +1401,35 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
+    /// FOR SPEED. Returns the nearest ancestor of `e` that isn't a plain expression. A walk of more
+    /// than `LONG` steps notes where it ends for every `LONG`th node it passes, and the next one
+    /// stops at the first such node. Without this, the n terms of a sum take n * n steps.
+    fn parent_of_whole_expression(&mut self, file: FileId, e: ExprId) -> Node {
+        const LONG: u32 = 32;
+        let hir = self.hir(file);
+        let mut node = hir.parent(hir.node(e));
+        let mut steps = 0;
+        let mut passed = SmallVec::<[Node; 4]>::new();
+        while hir.is_plain_expression(node) {
+            steps += 1;
+            if steps >= LONG {
+                let known = &self.flow_memo.parents_of_long_expressions;
+                if let Some(&above) = known.get(&(file, node)) {
+                    node = above;
+                    break;
+                }
+                if steps % LONG == 0 {
+                    passed.push(node);
+                }
+            }
+            node = hir.parent(node);
+        }
+        for below in passed {
+            (self.flow_memo.parents_of_long_expressions).insert((file, below), node);
+        }
+        node
+    }
+
     /// `isThisPropertyAccessInConstructor`. `this.name = value` is a declaration only in a
     /// JavaScript file, so only there does `getDeclaringConstructor` find one. `e` accesses
     /// `receiver`'s property `name`. Returns `getFlowTypeOfProperty`'s initial type if `e` is
@@ -1412,8 +1441,9 @@ impl<'p, 's> Checker<'p, 's> {
         receiver: TypeId,
         name: Atom,
     ) -> Option<TypeId> {
+        let above = self.parent_of_whole_expression(file, e);
         let hir = self.hir(file);
-        let container = hir.get_this_container(hir.node(e), true, false);
+        let container = hir.this_container_from(above, true, false);
         if hir.kind(container) != Kind::Constructor {
             return None;
         }

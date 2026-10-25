@@ -50,7 +50,7 @@ const untypedParameters = "TS7006: the parameters of the decorator have no types
 const writtenAtRunTime =
   "it imports a module that it writes while it runs, and compiled code loads no code that was not compiled with it";
 
-// path -> test name as `bun test` prints it -> the difference documented in docs/bundler/aot-compatibility.mdx.
+// path -> test name as `bun test` prints it -> the difference documented in docs/compiler/compatibility.mdx.
 // But for the modules written at run time it is the same one everywhere: a type error stops the build.
 // In mode `bundles` a test with several entry points is one test per entry point, `<id>/<file name of the entry point>`.
 const expectedFailures: Record<string, Record<string, string>> = {

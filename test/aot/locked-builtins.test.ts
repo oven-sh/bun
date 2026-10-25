@@ -1,7 +1,7 @@
 // Under `--aot` the members that the built-in objects of the language have cannot be replaced, and two parts of Bun say so:
 //   - `bun build --compile --aot` stops with TS100014 at an assignment that always runs and always fails;
 //   - the compiled program throws a TypeError where the write runs, in sloppy code as in strict code, and `Reflect.*` returns false.
-// docs/bundler/aot-compatibility.mdx says which objects, which members, and what can be added. Here each write below goes through both, and through plain Bun.
+// docs/compiler/compatibility.mdx says which objects, which members, and what can be added. Here each write below goes through both, and through plain Bun.
 // The lists: rejected by both, rejected at run time alone, the same with and without `--aot`, and short ones that say what they hold.
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";

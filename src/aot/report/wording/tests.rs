@@ -3,7 +3,7 @@ use crate::diagnostic_codes::Code;
 use crate::ir::generated::{LimitId, TypeSiteKind, UserDiagnosticKind};
 
 const BUG_REPORT_REQUEST: &str = "this is a bug in Bun";
-const EXPLAIN_PAGE: &str = include_str!("../../../../docs/bundler/aot-explain.mdx");
+const EXPLAIN_PAGE: &str = include_str!("../../../../docs/compiler/explain.mdx");
 const BANNED: &[&str] = &[
     "admit",
     "unseen",

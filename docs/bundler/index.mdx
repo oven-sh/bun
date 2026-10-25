@@ -1333,15 +1333,15 @@ Writes the types of a library beside its JavaScript, without running `tsc`. Bun 
   index.aot.ts   232 bytes  (aot source)
 ```
 
-| File           | Holds                                              | How many                 | Read by                       |
-| -------------- | -------------------------------------------------- | ------------------------ | ----------------------------- |
-| `index.js`     | The bundle                                         | One for each entry point | Every runtime and bundler     |
-| `index.d.ts`   | The types of what the source file exports          | One for each source file | Editors, `tsc`, `bun check`   |
-| `index.aot.ts` | `index.js` with the types of your sources put back | One for each entry point | [`bun compile`](/bundler/aot) |
+| File           | Holds                                              | How many                 | Read by                        |
+| -------------- | -------------------------------------------------- | ------------------------ | ------------------------------ |
+| `index.js`     | The bundle                                         | One for each entry point | Every runtime and bundler      |
+| `index.d.ts`   | The types of what the source file exports          | One for each source file | Editors, `tsc`, `bun check`    |
+| `index.aot.ts` | `index.js` with the types of your sources put back | One for each entry point | [`bun compile`](/compiler/aot) |
 
 Each `.d.ts` file is where its source file is relative to [`root`](#root). Where one imports another, Bun writes the file name that Node.js would need, so `"./area"` becomes `"./area.js"`. TypeScript finds `area.d.ts` under that name with every `moduleResolution`. Files in `node_modules` get no `.d.ts` file.
 
-Point `"types"` in your `package.json` at `index.d.ts`, and the `"aot"` condition of `"exports"` at `index.aot.ts`: see [Publish a library](/bundler/aot-libraries). [`bun compile --library`](/bundler/aot-libraries) runs the same build and writes the `package.json` too.
+Point `"types"` in your `package.json` at `index.d.ts`, and the `"aot"` condition of `"exports"` at `index.aot.ts`: see [Publish a library](/compiler/libraries). [`bun compile --library`](/compiler/libraries) runs the same build and writes the `package.json` too.
 
 - **The CLI needs `--outdir`.** `Bun.build()` without `outdir` writes nothing and returns the files in `outputs`. They have `kind: "asset"`.
 - **`dts` can't be used with `compile`.**
@@ -1773,7 +1773,7 @@ bun build ./cli.tsx --outfile mycli --compile
 ./mycli
 ```
 
-See [standalone executables](/bundler/executables).
+See [standalone executables](/compiler/executables).
 
 ## Logs and errors
 

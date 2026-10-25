@@ -14,7 +14,14 @@ import { join } from "node:path";
  * `name`, a path under test/, is run in `parts` parts called `<name>-<part>`: `callee` of `module` is called with `before`, the part from 1, the number of parts and what `behind`
  * has for that part. Where `parts` is 0 there is one unit, `name`, and the call has `before` alone. Rows of one name are run together.
  */
-export type Row = [name: string, parts: number, module: string, callee: string, before?: unknown[], behind?: unknown[][] | undefined];
+export type Row = [
+  name: string,
+  parts: number,
+  module: string,
+  callee: string,
+  before?: unknown[],
+  behind?: unknown[][] | undefined,
+];
 
 const here = import.meta.dirname;
 const foldersIn = (folder: string) =>
@@ -106,7 +113,15 @@ export const rows: Row[] = [
   ...readdirSync(join(here, "packages"))
     .filter(file => file.endsWith(".ts") && file !== "run-packages.ts")
     .map(file => file.slice(0, -".ts".length))
-    .map((topic): Row => [`aot/packages-${topic}`, packageParts[topic] ?? 0, "./packages/run-packages", "packages", [topic]]),
+    .map(
+      (topic): Row => [
+        `aot/packages-${topic}`,
+        packageParts[topic] ?? 0,
+        "./packages/run-packages",
+        "packages",
+        [topic],
+      ],
+    ),
   ...foldersIn("frameworks/apps").flatMap((name): Row[] => [
     [`aot/frameworks/${name}`, 0, "./frameworks/run-framework", "testFramework", [name]],
     [`aot/frameworks/${name}-one-file`, 0, "./frameworks/run-framework", "testFramework", [name, "one file"]],
@@ -117,7 +132,11 @@ export const rows: Row[] = [
   variant(
     "collections-at-allocations",
     [],
-    [{ BUN_JSC_forceFencedBarrier: "1" }, ...[5, 3, 2, 1].map(every => collecting(every, true)), ...[7, 3, 2, 1].map(every => collecting(every, false))],
+    [
+      { BUN_JSC_forceFencedBarrier: "1" },
+      ...[5, 3, 2, 1].map(every => collecting(every, true)),
+      ...[7, 3, 2, 1].map(every => collecting(every, false)),
+    ],
     3,
     [[["async-and-generators/awaited-steps-that-wait-or-do-not"]]],
   ),
@@ -176,11 +195,15 @@ export const rows: Row[] = [
   }),
   variant("veneers", ["--aot-limit=function-call-reach:0"]),
   // A small program collects about twice by itself. The verifier marks the heap again behind each collection and names a cell that is reachable and was not marked.
-  variant("verified-collections", [], [
-    { BUN_JSC_verifyGC: "1" },
-    { BUN_JSC_verifyGC: "1", BUN_JSC_slowPathAllocsBetweenGCs: "5", BUN_JSC_useEdenCollectionsAtSlowPathAllocs: "1" },
-    { BUN_JSC_verifyGC: "1", BUN_JSC_slowPathAllocsBetweenGCs: "7" },
-  ]),
+  variant(
+    "verified-collections",
+    [],
+    [
+      { BUN_JSC_verifyGC: "1" },
+      { BUN_JSC_verifyGC: "1", BUN_JSC_slowPathAllocsBetweenGCs: "5", BUN_JSC_useEdenCollectionsAtSlowPathAllocs: "1" },
+      { BUN_JSC_verifyGC: "1", BUN_JSC_slowPathAllocsBetweenGCs: "7" },
+    ],
+  ),
   variant("verify-each-pass", ["--aot-check=verify-each-pass"], {}, 12, [
     [
       [
@@ -217,7 +240,11 @@ export const rows: Row[] = [
   builtWith("site-records", "every-function-cold", ["--aot-heat=everything-is-cold"]),
   builtWith("site-records", "every-function-cold-types-erased", ["--aot-heat=everything-is-cold", "--aot-erase-types"]),
 
-  births("a value of another kind arrives in the middle of the work", "a-value-of-another-kind-arrives-in-the-middle-of-the-work", false),
+  births(
+    "a value of another kind arrives in the middle of the work",
+    "a-value-of-another-kind-arrives-in-the-middle-of-the-work",
+    false,
+  ),
   births("arrays", "arrays", false),
   births("arrays whose storage is proven"),
   births("awaited values", "awaited-values", false),
@@ -228,10 +255,18 @@ export const rows: Row[] = [
   births("equal stretches that seldom run", "equal-stretches-that-seldom-run", false),
   births("fields that nothing reads by name", "fields-that-nothing-reads-by-name", false),
   births("functions whose last act is to call themselves", "functions-whose-last-act-is-to-call-themselves", false),
-  births("generators between their making and their first step", "generators-between-their-making-and-their-first-step", false),
+  births(
+    "generators between their making and their first step",
+    "generators-between-their-making-and-their-first-step",
+    false,
+  ),
   births("generators walked where they are made", "generators-walked-where-they-are-made", false),
   births("host functions", "host-functions", false),
-  births("lists made ahead of the one place that takes them", "lists-made-ahead-of-the-one-place-that-takes-them", false),
+  births(
+    "lists made ahead of the one place that takes them",
+    "lists-made-ahead-of-the-one-place-that-takes-them",
+    false,
+  ),
   births("lists that grow in loops", "lists-that-grow-in-loops", false),
   births("loops that leave nothing behind", "loops-that-leave-nothing-behind", false),
   births("loops with a way seldom taken", "loops-with-a-way-seldom-taken", false),
@@ -267,15 +302,32 @@ export const rows: Row[] = [
   births("two kinds of object held as the first and read through any", undefined, undefined, 3),
   births("two kinds of object read through any", undefined, undefined, 3),
   births("two kinds of value at one operator", "two-kinds-of-value-at-one-operator", false),
-  births("typed a value of another kind arrives in the middle of the work", "a-value-of-another-kind-arrives-in-the-middle-of-the-work", true),
+  births(
+    "typed a value of another kind arrives in the middle of the work",
+    "a-value-of-another-kind-arrives-in-the-middle-of-the-work",
+    true,
+  ),
   births("typed arrays", "arrays", true),
   births("typed counters near the ends of the whole numbers", "counters-near-the-ends-of-the-whole-numbers", true),
   births("typed equal stretches that seldom run", "equal-stretches-that-seldom-run", true),
   births("typed fields that nothing reads by name", "fields-that-nothing-reads-by-name", true),
-  births("typed functions whose last act is to call themselves", "functions-whose-last-act-is-to-call-themselves", true),
-  births("typed generators between their making and their first step", "generators-between-their-making-and-their-first-step", true),
+  births(
+    "typed functions whose last act is to call themselves",
+    "functions-whose-last-act-is-to-call-themselves",
+    true,
+  ),
+  births(
+    "typed generators between their making and their first step",
+    "generators-between-their-making-and-their-first-step",
+    true,
+  ),
   births("typed generators walked where they are made", "generators-walked-where-they-are-made", true),
-  births("typed lists made ahead of the one place that takes them", "lists-made-ahead-of-the-one-place-that-takes-them", true, 2),
+  births(
+    "typed lists made ahead of the one place that takes them",
+    "lists-made-ahead-of-the-one-place-that-takes-them",
+    true,
+    2,
+  ),
   births("typed lists that grow in loops", "lists-that-grow-in-loops", true),
   births("typed loops that leave nothing behind", "loops-that-leave-nothing-behind", true),
   births("typed loops with a way seldom taken", "loops-with-a-way-seldom-taken", true),
@@ -315,8 +367,9 @@ export const rows: Row[] = [
   ["aot/backend-packages/programs", 4, "./backend-packages/each-program", "testPrograms"],
   ["aot/backend-packages/programs-one-file", 0, "./backend-packages/each-program", "testPrograms", [1, 1, "one file"]],
   ["aot/bad-time/bad-time", 8, "./bad-time/run-bad-time", "badTime"],
-  ["aot/builtins/differential", 4, "./builtins/differential-cases", "differential"],
+  ["aot/builtins/differential", 8, "./builtins/differential-cases", "differential"],
   ["aot/builtins/native-contract-in-parts", 4, "./builtins/native-contract/contract", "nativeContractInParts"],
+  ["aot/builtins/unused-calls", 3, "./builtins/unused-calls-cases", "unusedCalls"],
   ["aot/calls-beyond-their-reach", 3, "./joined-programs", "joinedBeyondTheReachOfCalls"],
   ["aot/code-from-disk", 8, "./code-from-disk-cases", "codeFromDisk"],
   ["aot/code-the-compiler-never-saw", 3, "./code-the-compiler-never-saw-cases", "codeTheCompilerNeverSaw"],
@@ -326,6 +379,12 @@ export const rows: Row[] = [
   ["aot/each-case-alone", 20, "./each-case-alone-cases", "eachCaseAlone"],
   ["aot/every-program", 64, "./programs-as-entry-points", "programsAsEntryPoints"],
   ["aot/every-program-alone", 32, "./programs-as-separate-entry-points", "programsAsSeparateEntryPoints"],
+  [
+    "aot/every-way-to-a-loader-finds-the-built-in-module-that-the-program-names",
+    3,
+    "./every-way-to-a-loader-finds-the-built-in-module-that-the-program-names-cases",
+    "everyWayToALoader",
+  ],
   ["aot/engine-tests-in-parts", 12, "./engine-tests-in-parts", "engineTestsInParts"],
   ["aot/engine-tests-ir", 0, "./engine-test-commands", "runIRTests", ["engine"]],
   ["aot/engine-tests-ir-of-bun", 0, "./engine-test-commands", "runIRTests", ["bun"]],
@@ -344,14 +403,33 @@ export const rows: Row[] = [
     "joined",
     ["predictions-fail", ["--aot-testing=FailPredictions:2:1"]],
   ],
-  ["aot/joined-programs-claims-checked", 3, "./joined-programs", "joined", ["claims-checked", ["--aot-check=ClaimsToBackEnd"]]],
-  ["aot/joined-programs-limits-lowered", 9, "./joined-programs", "joinedWithLimitsLowered"],
-  ["aot/joined-programs-moved-loads-checked", 3, "./joined-programs", "joined", ["moved-loads-checked", ["--aot-check=MovedLoads"]]],
+  [
+    "aot/joined-programs-claims-checked",
+    3,
+    "./joined-programs",
+    "joined",
+    ["claims-checked", ["--aot-check=ClaimsToBackEnd"]],
+  ],
+  ["aot/joined-programs-limits-lowered", 72, "./joined-programs", "joinedWithLimitsLowered"],
+  [
+    "aot/joined-programs-moved-loads-checked",
+    3,
+    "./joined-programs",
+    "joined",
+    ["moved-loads-checked", ["--aot-check=MovedLoads"]],
+  ],
   // A group of 250 programs costs about one build, so these take fifty times the programs of variant-validate and variant-proofs-checked-at-run-time.
-  ["aot/joined-programs-proofs-checked", 3, "./joined-programs", "joined", ["proofs-checked", ["--aot-testing=CheckProofsAtRunTime"]]],
+  [
+    "aot/joined-programs-proofs-checked",
+    3,
+    "./joined-programs",
+    "joined",
+    ["proofs-checked", ["--aot-testing=CheckProofsAtRunTime"]],
+  ],
   ["aot/joined-programs-validated", 4, "./joined-programs", "joined", ["validated", ["--aot-validate"]]],
   ["aot/modules-three-ways", 4, "./three-ways/run-three-ways", "threeWays"],
   ["aot/one-line-changes-little", 8, "./one-line-changes-little-cases", "oneLineChangesLittle"],
+  ["aot/perf/idioms-in-parts", 4, "./perf/pinned-idioms", "pinnedIdiomsInParts"],
   ["aot/perf/pinned-applications", 0, "./perf/pinned-applications", "pinnedApplications"],
   ["aot/perf/pinned-everyday-idioms", 4, "./perf/pinned-everyday-idioms", "pinnedEverydayIdioms"],
   ["aot/process-platform-folds", 4, "./process-platform-folds-cases", "processPlatformFolds"],
@@ -363,37 +441,70 @@ export const rows: Row[] = [
     "./programs-that-stopped-a-validating-build-cases",
     "programsThatStoppedAValidatingBuild",
   ],
-  ["aot/roads-to-members-of-the-runtime", 4, "./roads-to-members-of-the-runtime-cases", "roadsTo"],
+  ["aot/roads-to-members-of-the-runtime", 6, "./roads-to-members-of-the-runtime-cases", "roadsTo"],
   ["aot/run-aot-frozen-arrays", 3, "./run-aot-frozen-arrays", "frozenArrayTests"],
   ["aot/runtime-use", 4, "./runtime-use-cases", "runtimeUseTests"],
   ["aot/runtime-use-hosts", 3, "./runtime-use-hosts-cases", "runtimeUseOfHostsTests"],
-  ...[
-    "bun",
-    "thin",
-    "hono",
-    "elysia",
-    "node",
-    "koa",
-    "express",
-    "fastify",
-    "fastify-schemas",
-    "tanstack",
-  ].map((name): Row => [`aot/servers/${name}`, 0, "./servers/one-server", "testServers", ["servers", name]]),
+  ["aot/runtime-use-world", 4, "./runtime-use-world-cases", "runtimeUseOfTheWorldTests"],
+  ...["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "fastify-schemas", "tanstack"].map(
+    (name): Row => [`aot/servers/${name}`, 0, "./servers/one-server", "testServers", ["servers", name]],
+  ),
   ...["bun", "elysia", "express", "fastify", "hono", "node"].map(
     (name): Row => [`aot/servers/features-of-${name}`, 0, "./servers/one-server", "testServers", ["features", name]],
   ),
   ...["bun", "elysia", "express", "fastify", "hono", "koa", "node"].map(
     (name): Row => [`aot/servers/budgets-of-${name}`, 0, "./servers/one-server", "testServers", ["budgets", name]],
   ),
-  ["aot/servers/api-servers", 0, "./servers/one-server", "testServers", ["api", "api-bun,api-thin,api-hono,api-elysia"]],
-  ["aot/servers/api-servers-on-node-http", 0, "./servers/one-server", "testServers", ["api", "api-node,api-express,api-fastify,api-koa"]],
-  ["aot/servers/every-pass-changes-one-of-the-servers", 0, "./servers/one-server", "testServers", ["every-pass-changes-a-real-program", "1"]],
+  [
+    "aot/servers/api-servers",
+    0,
+    "./servers/one-server",
+    "testServers",
+    ["api", "api-bun,api-thin,api-hono,api-elysia"],
+  ],
+  [
+    "aot/servers/api-servers-on-node-http",
+    0,
+    "./servers/one-server",
+    "testServers",
+    ["api", "api-node,api-express,api-fastify,api-koa"],
+  ],
+  [
+    "aot/servers/every-pass-changes-one-of-the-servers",
+    0,
+    "./servers/one-server",
+    "testServers",
+    ["every-pass-changes-a-real-program", "1"],
+  ],
+  ["aot/servers/effect-servers", 0, "./servers/one-server", "testServers", ["effect", "effect"]],
+  [
+    "aot/servers/schedules-of-servers",
+    0,
+    "./servers/one-server",
+    "testServers",
+    ["schedules", "hono,elysia,node,express,fastify"],
+  ],
+  ["aot/servers/schedules-of-tanstack", 0, "./servers/one-server", "testServers", ["schedules", "tanstack"]],
+  ["aot/backend/backend-with-a-database", 0, "./opt-in", "testOptIn", ["AOT_BACKEND", "1", "backend/backend"]],
   ["aot/startup-scaling/startup-scaling", 4, "./startup-scaling/startup-scaling", "describePart"],
   ["aot/trimmed-against-whole", 4, "./trimmed-against-whole-cases", "trimmedAgainstWhole"],
+  ["aot/trimmed-is-whole/environment", 3, "./trimmed-is-whole/environment-in-parts", "testEnvironments"],
   ["aot/trimmed-matches-untrimmed", 4, "./trimmed-is-whole/run", "testTrimmedMatchesUntrimmed"],
 
-  ["bundler/compile-trim-never-exits", 0, "../bundler/compile-trim-never-exits-run", "testRemovedFeaturesNeverExit", ["plain"]],
-  ["bundler/compile-trim-never-exits-aot", 0, "../bundler/compile-trim-never-exits-run", "testRemovedFeaturesNeverExit", ["aot"]],
+  [
+    "bundler/compile-trim-never-exits",
+    0,
+    "../bundler/compile-trim-never-exits-run",
+    "testRemovedFeaturesNeverExit",
+    ["plain"],
+  ],
+  [
+    "bundler/compile-trim-never-exits-aot",
+    0,
+    "../bundler/compile-trim-never-exits-run",
+    "testRemovedFeaturesNeverExit",
+    ["aot"],
+  ],
   ["bundler/compile-trim-runtime-by-use", 0, "../bundler/compile-trim-runtime-by-use-run", "testDeal"],
   ["bundler/compile-trim-runtime-by-use", 16, "../bundler/compile-trim-runtime-by-use-run", "testPrograms"],
   ["bundler/compile-trim-runtime-by-use-features", 4, "../bundler/compile-trim-runtime-by-use-run", "testFeatures"],
@@ -432,8 +543,33 @@ const onlyDraw = new Set([
   "variantsWithoutOneFlowResult",
 ]);
 // And these draw beside what they take in every run.
-const alsoDraw = new Set(["birthsAndUses", "madeCasesOfAllTopics", "packages", "programsInEveryRun", "variant"]);
-const unitsOfCallees = (callees: Set<string>) => new Set(rows.filter(([, , , callee]) => callees.has(callee)).flatMap(unitsOf).map(name => `${name}.test.ts`));
+const alsoDraw = new Set([
+  "birthsAndUses",
+  "madeCasesOfAllTopics",
+  "packages",
+  "programsInEveryRun",
+  "trimmedAgainstWhole",
+  "variant",
+]);
+const unitsOfCallees = (callees: Set<string>) =>
+  new Set(
+    rows
+      .filter(([, , , callee]) => callees.has(callee))
+      .flatMap(unitsOf)
+      .map(name => `${name}.test.ts`),
+  );
 /** The units that have something for the step that is drawn, and those among them that have nothing for the other. */
-export const unitsThatDraw = unitsOfCallees(new Set([...onlyDraw, ...alsoDraw]));
-export const unitsThatOnlyDraw = unitsOfCallees(onlyDraw);
+// These draw nothing. They are new to CI, and stay in the step that holds up nothing until they have been green there.
+const onTrial = [
+  "aot/backend/backend-with-a-database.test.ts",
+  "aot/servers/effect-servers.test.ts",
+  "aot/servers/schedules-of-servers.test.ts",
+  "aot/servers/schedules-of-tanstack.test.ts",
+];
+export const unitsThatDraw = new Set([...unitsOfCallees(new Set([...onlyDraw, ...alsoDraw])), ...onTrial]);
+export const unitsThatOnlyDraw = new Set([...unitsOfCallees(onlyDraw), ...onTrial]);
+/** Whether the test at `path`, under test/, has something for the step that is drawn. A test file has if it calls one of the helpers that draw. */
+export const drawsShares = (path: string, read: (path: string) => string) =>
+  units.includes(path)
+    ? unitsThatDraw.has(path)
+    : /\b(generated|programs|programsBuiltWith|variant|joined|inShare|inShareOfList|partInShare)\(/.test(read(path));

@@ -56,7 +56,7 @@ test("a computed specifier brings no module of Bun's own into the build and find
   expect(await run([every.executable, "node:zlib"], directory)).toEqual(found);
 });
 
-test("the example of docs/bundler/aot-compatibility.mdx: require(name) adds no built-in module, and an import by name keeps one", async () => {
+test("the example of docs/compiler/compatibility.mdx: require(name) adds no built-in module, and an import by name keeps one", async () => {
   const load = `const name = process.argv[2] ?? "node:path";\nconsole.log(Object.keys(require(name)).length > 0);\n`;
   using dir = tempDir("aot-load-by-name", {
     "load.js": `import "node:path";\n\n${load}`,

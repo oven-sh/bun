@@ -1,0 +1,6 @@
+{
+  "failsWithLimit": {
+    "All:0": "RangeError at the end of the stack: the call stays in tail position only while the type of its result is proven",
+    "MaxValueFlowMembersToldApart:0": "RangeError at the end of the stack: the call stays in tail position only while the type of its result is proven"
+  }
+}

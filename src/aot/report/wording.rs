@@ -8,7 +8,7 @@ use crate::ir::generated::{
     UnprovenCause,
 };
 
-pub(super) const DOCUMENTATION_URL: &[u8] = b"https://bun.com/docs/bundler/aot-explain#";
+pub(super) const DOCUMENTATION_URL: &[u8] = b"https://bun.com/docs/compiler/explain#";
 
 pub(super) struct CauseWording {
     pub message: &'static str,

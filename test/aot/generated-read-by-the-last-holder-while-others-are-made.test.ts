@@ -20,11 +20,15 @@ const seeds: [seed: number, flags: string[]][] = [
   ]),
 ];
 
+// Every run takes these, whatever else it takes.
+const onceWrong = [981780000000198, 981780000000316, 981780000000356];
+
 generated(
   "what the last holder reads in a loop is what plain Bun reads, however often the collector runs",
   seeds.map(([seed, flags], index) => ({
     name: `seed ${seed}.`,
     isAlwaysRun: index < 15,
+    wasOnceWrong: onceWrong.includes(seed),
     isOnlyCompiled: true as const,
     flags,
     alsoUnder: [collecting, { ...collecting, BUN_JSC_useEdenCollectionsAtSlowPathAllocs: "1" }],

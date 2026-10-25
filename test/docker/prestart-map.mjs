@@ -10,6 +10,7 @@
 // All matching prefixes add up. test/internal/prestart-map.test.ts fails when a
 // test file asks for a service the map does not give it.
 export const prestartMap = {
+  "aot/backend/backend-with-a-database": ["postgres_plain"],
   "js/sql/sql-mysql": ["mysql_plain", "mariadb_plain"],
   "js/sql/sql-mysql.test": ["mysql_native_password", "mysql_tls"],
   "js/sql/sql-mysql.auth": ["mysql_native_password"],

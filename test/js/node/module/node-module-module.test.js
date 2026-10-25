@@ -1157,12 +1157,11 @@ console.log("survived", require("./late.js"));`,
       });
 
       test.skipIf(!cmd)(
-        `is rejected before options.paths, and under any replacement of Module._resolveFilename (${runtime})`,
+        `like an empty id, is rejected before options.paths and before any replacement of Module._resolveFilename (${runtime})`,
         async () => {
           using dir = tempDir("module-request-not-a-string-order", {
             ...files,
             "main.cjs": `${cjs}
-              const both = () => [outcome(() => require(42)), outcome(() => require.resolve(42))];
               const results = {
                 "require.resolve(42, { paths: 'x' })": outcome(() => require.resolve(42, { paths: "x" })),
                 "require.resolve(42, { paths: 5 })": outcome(() => require.resolve(42, { paths: 5 })),
@@ -1170,10 +1169,24 @@ console.log("survived", require("./late.js"));`,
                 "require(42, { paths: [0] })": outcome(() => require(42, { paths: [0] })),
                 "require(42, { paths: [__dirname] })": outcome(() => require(42, { paths: [__dirname] })),
               };
-              Module._resolveFilename = () => dep;
-              results["a replacement that does not forward"] = both();
+              const original = Module._resolveFilename;
+              let calls = 0;
+              const rejected = () => [
+                outcome(() => require(42)),
+                outcome(() => require.resolve(42)),
+                outcome(() => require("")),
+                calls,
+              ];
+              Module._resolveFilename = function () {
+                calls++;
+                return original.apply(this, arguments);
+              };
+              results["a replacement that forwards"] = rejected();
+              Module._resolveFilename = () => (calls++, dep);
+              results["a replacement that does not forward"] = rejected();
+              results["require.resolve('') under it"] = [require.resolve("") === dep, calls];
               Module._resolveFilename = 42;
-              results["a replacement that is not callable"] = both();
+              results["a replacement that is not callable"] = rejected();
               console.log(JSON.stringify({ results, loaded }));
             `,
           });
@@ -1181,6 +1194,7 @@ console.log("survived", require("./late.js"));`,
           expect(stderr).toBe("");
           const id = invalid("id", "type number (42)");
           const request = invalid("request", "type number (42)");
+          const empty = "TypeError [ERR_INVALID_ARG_VALUE]: The argument 'id' must be a non-empty string. Received ''";
           expect(JSON.parse(stdout)).toEqual({
             results: {
               "require.resolve(42, { paths: 'x' })": request,
@@ -1188,8 +1202,12 @@ console.log("survived", require("./late.js"));`,
               "require(42, { paths: 'x' })": id,
               "require(42, { paths: [0] })": id,
               "require(42, { paths: [__dirname] })": id,
-              "a replacement that does not forward": [id, request],
-              "a replacement that is not callable": [id, request],
+              // [require(42), require.resolve(42), require(""), the calls of the replacement so far]
+              "a replacement that forwards": [id, request, empty, 0],
+              "a replacement that does not forward": [id, request, empty, 0],
+              // require.resolve() passes an empty request on.
+              "require.resolve('') under it": [true, 1],
+              "a replacement that is not callable": [id, request, empty, 1],
             },
             loaded: [],
           });

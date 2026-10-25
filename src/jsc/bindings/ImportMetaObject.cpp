@@ -360,7 +360,7 @@ static WTF::String urlOfLoadedModule(Zig::GlobalObject* globalObject, const WTF:
 
     auto urlPath = url.path();
     bool hasEscape = false;
-    // A file URL made from the path can differ from `url`, so the result depends on whether the file exists.
+    // A file URL made from the path differs from `url`, so the result depends on whether the file exists.
     bool mustConfirm = false;
     for (unsigned i = 0; i < urlPath.length(); i++) {
         switch (urlPath[i]) {
@@ -373,7 +373,7 @@ static WTF::String urlOfLoadedModule(Zig::GlobalObject* globalObject, const WTF:
                     return url.string();
             }
             hasEscape = true;
-            [[fallthrough]];
+            break;
         case '[':
         case ']':
         case '^':
@@ -389,16 +389,28 @@ static WTF::String urlOfLoadedModule(Zig::GlobalObject* globalObject, const WTF:
 #if OS(WINDOWS)
     hasEscape = true;
 #endif
-    auto decodedPath = hasEscape ? url.fileSystemPath() : WTF::String();
-    auto path = hasEscape ? WTF::StringView(decodedPath) : urlPath;
+    WTF::String decodedPath;
+    WTF::URL rebuilt;
+    auto path = urlPath;
+    if (hasEscape) {
+        decodedPath = url.fileSystemPath();
+        path = decodedPath;
+        rebuilt = WTF::URL::fileURLWithFileSystemPath(path);
+        mustConfirm = rebuilt.path() != urlPath;
+    }
+
     auto pathString = Bun::toStringView(path);
     auto key = Bun__importMetaResolveLoaderKey(globalObject, &pathString, mustConfirm);
     if (key.isDead())
         return url.string();
     auto loadedPath = key.transferToWTFString();
-    if (loadedPath.isEmpty() && !mustConfirm)
+    if (!loadedPath.isEmpty())
+        rebuilt = WTF::URL::fileURLWithFileSystemPath(loadedPath);
+    else if (!mustConfirm)
         return url.string();
-    return makeString(WTF::URL::fileURLWithFileSystemPath(loadedPath.isEmpty() ? path : WTF::StringView(loadedPath)).string(), url.queryWithLeadingQuestionMark(), url.fragmentIdentifierWithLeadingNumberSign());
+    else if (!hasEscape)
+        rebuilt = WTF::URL::fileURLWithFileSystemPath(path);
+    return makeString(rebuilt.string(), url.queryWithLeadingQuestionMark(), url.fragmentIdentifierWithLeadingNumberSign());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,

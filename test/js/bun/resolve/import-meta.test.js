@@ -594,7 +594,8 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
   // Each state of the loader's caches runs in its own process. `import.meta.resolve(x)` before and after
   // `import(x)` is the URL that the module loads under, and `import(import.meta.resolve(x))` is that module.
   const identitySource = `
-    import { mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+    import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+    import { join } from "node:path";
     import { fileURLToPath } from "node:url";
 
     const at = path => fileURLToPath(new URL(path, import.meta.url));
@@ -605,6 +606,11 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
         symlinkSync(at("./real"), at("./late"), "junction");
         return "./late/m.mjs";
       },
+      async lateFileLink() {
+        await import("./warm.mjs");
+        symlinkSync(at("./real/m.mjs"), at("./late.mjs"));
+        return "./late.mjs";
+      },
       // The loader listed the target of the link before the directory was there.
       async lateDirectoryBelowLink() {
         await import("./ldir/m.mjs");
@@ -612,11 +618,27 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
         writeFileSync(at("./real/sub/m.mjs"), ${JSON.stringify(moduleSource)});
         return "./ldir/sub/m.mjs";
       },
+      async temporaryDirectoryBelowLink() {
+        await import("./ldir/m.mjs");
+        const directory = mkdtempSync(at("./ldir/tmp-"));
+        writeFileSync(join(directory, "m.mjs"), ${JSON.stringify(moduleSource)});
+        return join(directory, "m.mjs");
+      },
       // An import failed before the directories were there, so the loader has one of them cached as not found.
       async belowNotFoundDirectory() {
         await import("./ldir/gen/a/m.mjs").catch(() => {});
         mkdirSync(at("./real/gen/a"), { recursive: true });
         writeFileSync(at("./real/gen/a/m.mjs"), ${JSON.stringify(moduleSource)});
+        return "./ldir/gen/a/m.mjs";
+      },
+      // The same, and then the loader reads the listing of the link again.
+      async belowNotFoundDirectoryAfterRefresh() {
+        await import("./ldir/m.mjs");
+        await import("./ldir/gen/a/m.mjs").catch(() => {});
+        mkdirSync(at("./real/gen/a"), { recursive: true });
+        writeFileSync(at("./real/gen/a/m.mjs"), ${JSON.stringify(moduleSource)});
+        writeFileSync(at("./real/late.mjs"), ${JSON.stringify(moduleSource)});
+        await import("./ldir/late.mjs");
         return "./ldir/gen/a/m.mjs";
       },
       // The loader listed the directory when "swap" was a directory. Then "swap" became a link.
@@ -632,6 +654,20 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
         rmSync(at("./f.mjs"));
         symlinkSync(at("./real/m.mjs"), at("./f.mjs"));
         return "./f.mjs";
+      },
+      // The loader followed the link once. Then the link got another target, or became a directory.
+      async fileLinkGotOtherTarget() {
+        await import("./lfile.mjs");
+        rmSync(at("./lfile.mjs"));
+        symlinkSync(at("./swap/m.mjs"), at("./lfile.mjs"));
+        return "./lfile.mjs";
+      },
+      async linkBecameDirectory() {
+        await import("./ldir/m.mjs");
+        rmSync(at("./ldir"));
+        mkdirSync(at("./ldir"));
+        writeFileSync(at("./ldir/m.mjs"), ${JSON.stringify(moduleSource)});
+        return "./ldir/m.mjs";
       },
       // The file is behind a link in a directory that the loader cannot list.
       unlistableParent() {
@@ -663,33 +699,88 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
     });
   }
 
-  // Node.js gives the real path in these states too.
-  it.each(["lateLink", "lateDirectoryBelowLink"])("follows a link in the state %s", async state => {
-    using dir = identityFixture();
+  function linkedIdentityFixture() {
+    const dir = identityFixture();
     const root = String(dir);
     symlinkSync(join(root, "real"), join(root, "ldir"), "junction");
-    const loaded = pathToFileURL(
-      join(root, "real", ...(state === "lateDirectoryBelowLink" ? ["sub"] : []), "m.mjs"),
-    ).href;
-    expect(await run(root, ["main.mjs", state])).toEqual({
-      resolved: { first: loaded, loaded, second: loaded, oneInstance: true },
+    if (!isWindows) symlinkSync(join("real", "m.mjs"), join(root, "lfile.mjs"));
+    return dir;
+  }
+
+  // Node.js gives the real path in these states too.
+  it.each(["lateLink", ...(isWindows ? [] : ["lateFileLink"]), "lateDirectoryBelowLink"])(
+    "follows a link in the state %s",
+    async state => {
+      using dir = linkedIdentityFixture();
+      const root = String(dir);
+      const loaded = pathToFileURL(
+        join(root, "real", ...(state === "lateDirectoryBelowLink" ? ["sub"] : []), "m.mjs"),
+      ).href;
+      expect(await run(root, ["main.mjs", state])).toEqual({
+        resolved: { first: loaded, loaded, second: loaded, oneInstance: true },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The loader does not look at the file system again here. The result is still the URL that it loads the module under.
+  it.each([
+    "temporaryDirectoryBelowLink",
+    "belowNotFoundDirectory",
+    "belowNotFoundDirectoryAfterRefresh",
+    "directoryBecameLink",
+    "linkBecameDirectory",
+    ...(isWindows ? [] : ["fileBecameLink", "fileLinkGotOtherTarget"]),
+  ])("agrees with the loader in the state %s", async state => {
+    using dir = linkedIdentityFixture();
+    const root = String(dir);
+    const result = await run(root, ["main.mjs", state]);
+    const loaded = result.resolved.loaded;
+    expect(result).toEqual({
+      resolved: { first: loaded, loaded: expect.any(String), second: loaded, oneInstance: true },
       stderr: "",
       exitCode: 0,
     });
   });
 
-  // The loader does not look at the file system again here. The result is still the URL that it loads the module under.
-  it.each(["belowNotFoundDirectory", "directoryBecameLink", ...(isWindows ? [] : ["fileBecameLink"])])(
-    "agrees with the loader in the state %s",
+  // `bun test` lists the directories below the working directory before a test runs.
+  it.each(["a link that is new", "a link that was a directory"])(
+    "agrees with the loader under bun test for %s",
     async state => {
-      using dir = identityFixture();
-      const root = String(dir);
-      symlinkSync(join(root, "real"), join(root, "ldir"), "junction");
-      const result = await run(root, ["main.mjs", state]);
-      const loaded = result.resolved.loaded;
-      expect(result).toEqual({
-        resolved: { first: loaded, loaded: expect.any(String), second: loaded, oneInstance: true },
-        stderr: "",
+      using dir = tempDir("import-meta-resolve-scanner", {
+        "src/real/m.mjs": moduleSource,
+        ...(state === "a link that was a directory" ? { "src/ldir/m.mjs": moduleSource } : {}),
+        "identity.test.mjs": `
+        import { test } from "bun:test";
+        import { rmSync, symlinkSync } from "node:fs";
+        import { join } from "node:path";
+
+        test("identity", async () => {
+          const link = join(import.meta.dirname, "src", "ldir");
+          rmSync(link, { recursive: true, force: true });
+          symlinkSync(join(import.meta.dirname, "src", "real"), link, "junction");
+
+          const specifier = "./src/ldir/m.mjs";
+          const first = import.meta.resolve(specifier);
+          const fromResolved = await import(first);
+          const loaded = await import(specifier);
+          console.log(
+            "identity:" +
+              JSON.stringify({
+                first,
+                loaded: loaded.default,
+                second: import.meta.resolve(specifier),
+                oneInstance: fromResolved === loaded,
+              }),
+          );
+        });
+      `,
+      });
+      const { resolved: output, exitCode } = await run(String(dir), ["test", "identity.test.mjs"]);
+      const identity = JSON.parse(/^identity:(.*)$/m.exec(output)?.[1] ?? null);
+      expect({ identity, exitCode }).toEqual({
+        identity: { first: identity?.loaded, loaded: expect.any(String), second: identity?.loaded, oneInstance: true },
         exitCode: 0,
       });
     },
@@ -702,21 +793,22 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
       "run/main.mjs": identitySource,
     });
     const root = String(dir);
-    symlinkSync(join(root, "data", "app"), join(root, "shared", "app"));
+    const shared = join(root, "shared");
+    symlinkSync(join(root, "data", "app"), join(shared, "app"));
     using unprivileged = unprivilegedSpawnOptions(root);
     // The process can go through "shared", but it cannot list it.
-    chmodSync(join(root, "shared"), 0o711);
-    const loaded = pathToFileURL(join(root, "data", "app", "m.mjs")).href;
-    expect(
-      await run(
-        join(root, "run"),
-        ["main.mjs", "unlistableParent", join(root, "shared", "app", "m.mjs")],
-        unprivileged,
-      ),
-    ).toEqual({
-      resolved: { first: loaded, loaded, second: loaded, oneInstance: true },
-      stderr: "",
-      exitCode: 0,
-    });
+    chmodSync(shared, 0o111);
+    try {
+      const loaded = pathToFileURL(join(root, "data", "app", "m.mjs")).href;
+      expect(
+        await run(join(root, "run"), ["main.mjs", "unlistableParent", join(shared, "app", "m.mjs")], unprivileged),
+      ).toEqual({
+        resolved: { first: loaded, loaded, second: loaded, oneInstance: true },
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      chmodSync(shared, 0o755);
+    }
   });
 });

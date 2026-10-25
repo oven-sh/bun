@@ -93,6 +93,8 @@ const messages = [];
 for (const name of names) {
   for (const [id, text] of Object.entries(rulesToday.get(name)?.meta.messages ?? {})) {
     const [in8, in9] = [rules8, rules9].map(rules => messageBefore(rules.get(name), name, id, text));
+    // A row for ESLint 9 is used for ESLint 8 too.
+    if (in9 && !in8 && rules8.has(name)) throw new Error(`${name}: ${id}`);
     if (in8 && String(in8) !== String(in9)) messages.push([name, id, ...in8, 8]);
     if (in9) messages.push([name, id, ...in9, 9]);
   }

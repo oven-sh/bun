@@ -291,16 +291,20 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let outer_errors = self.call_resolution_errors.take();
         let is_re_resolved = std::mem::replace(&mut self.is_call_re_resolved, is_in_progress);
+        self.has_own_instantiation = false;
         let resolved = self.resolve_signature(file, call);
+        let has_own_instantiation = std::mem::take(&mut self.has_own_instantiation);
         self.is_call_re_resolved = is_re_resolved;
         let reported = std::mem::replace(&mut self.call_resolution_errors, outer_errors);
         self.resolution_start = resolution_start;
         self.resolved_meanwhile.push((file, call, resolved));
-        let resolved = self.with_return_type_of_call(file, call, resolved);
-        self.resolved_meanwhile.pop();
-        if !is_in_progress && !self.calls_with_own_instantiation.is_empty() {
-            (self.calls_with_own_instantiation).retain(|&it| it != (file, call));
+        let marked = self.calls_with_own_instantiation.len();
+        if has_own_instantiation {
+            self.calls_with_own_instantiation.push((file, call));
         }
+        let resolved = self.with_return_type_of_call(file, call, resolved);
+        self.calls_with_own_instantiation.truncate(marked);
+        self.resolved_meanwhile.pop();
         // `getResolvedSignature`: `links.resolvedSignature != c.resolvingSignature`, "this inner
         // resolution sets the resolvedSignature first", and `result = links.resolvedSignature`.
         let assigned_within = (self.signatures_resolved_within.iter())
@@ -1165,12 +1169,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(sig) => sig,
             None => self.candidate_for_overload_failure(&s),
         };
-        if !is_chosen
-            && !s.candidates.contains(&sig)
-            && !self.calls_with_own_instantiation.contains(&(file, call))
-        {
-            self.calls_with_own_instantiation.push((file, call));
-        }
+        let has_own_instantiation = !is_chosen && !s.candidates.contains(&sig);
         // `reorderCandidates`: with `callChainFlags` a candidate is its `getOptionalCallSignature`.
         // Only the return type of the clone differs, so the chosen signature is cloned.
         let sig = self.optional_call_signature_in_chain(file, call, sig);
@@ -1186,8 +1185,13 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_chosen {
             // `resolvedSignature = result`, before the errors are reported.
             self.resolved_meanwhile.push((file, call, resolved));
+            let marked = self.calls_with_own_instantiation.len();
+            if has_own_instantiation {
+                self.calls_with_own_instantiation.push((file, call));
+            }
             let since = self.reported.len();
             self.report_call_resolution_errors(&s, signatures, head_message);
+            self.calls_with_own_instantiation.truncate(marked);
             self.resolved_meanwhile.pop();
             // Another checker may be the one to report it.
             let reported = self.take_reported_from(since);
@@ -1199,6 +1203,7 @@ impl<'p, 's> Checker<'p, 's> {
                 (self.call_resolution_errors.get_or_insert_default()).extend(reported);
             }
         }
+        self.has_own_instantiation = has_own_instantiation;
         resolved
     }
 

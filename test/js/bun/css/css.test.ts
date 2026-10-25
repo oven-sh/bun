@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -4848,18 +4848,241 @@ describe("css tests", () => {
       ".foo { background: repeating-radial-gradient(circle 20px, yellow, blue) }",
       ".foo{background:repeating-radial-gradient(20px,#ff0,#00f)}",
     );
+    // lightningcss prints `(20px,#ff0,#00f)` for these. A prefixed name has no circle radius, and `20px` is a position there:
+    // https://compat.spec.whatwg.org/#css-gradients-webkit-radial-gradient
     minify_test(
       ".foo { background: -webkit-repeating-radial-gradient(circle 20px, yellow, blue) }",
-      ".foo{background:-webkit-repeating-radial-gradient(20px,#ff0,#00f)}",
+      ".foo{background:-webkit-repeating-radial-gradient(circle 20px,yellow,blue)}",
     );
     minify_test(
       ".foo { background: -moz-repeating-radial-gradient(circle 20px, yellow, blue) }",
-      ".foo{background:-moz-repeating-radial-gradient(20px,#ff0,#00f)}",
+      ".foo{background:-moz-repeating-radial-gradient(circle 20px,yellow,blue)}",
     );
     minify_test(
       ".foo { background: -o-repeating-radial-gradient(circle 20px, yellow, blue) }",
-      ".foo{background:-o-repeating-radial-gradient(20px,#ff0,#00f)}",
+      ".foo{background:-o-repeating-radial-gradient(circle 20px,yellow,blue)}",
     );
+
+    describe("prefixed radial-gradient", () => {
+      const names = [
+        "-webkit-radial-gradient",
+        "-webkit-repeating-radial-gradient",
+        "-moz-radial-gradient",
+        "-moz-repeating-radial-gradient",
+        "-o-radial-gradient",
+        "-o-repeating-radial-gradient",
+      ];
+
+      // `<shape> || <extent>` means the same in the prefixed syntax.
+      const read: [args: string, minified: string][] = [
+        ["red, blue", "red,#00f"],
+        ["circle, red, blue", "circle,red,#00f"],
+        ["ellipse, red, blue", "red,#00f"],
+        ["closest-side, red, blue", "closest-side,red,#00f"],
+        ["farthest-corner, red, blue", "red,#00f"],
+        ["closest-side circle, red, blue", "circle closest-side,red,#00f"],
+        ["circle closest-corner, red, blue", "circle closest-corner,red,#00f"],
+        ["ellipse farthest-side, red, blue", "farthest-side,red,#00f"],
+        ["farthest-side ellipse, red, blue", "farthest-side,red,#00f"],
+        ["CIRCLE, red 10px, blue 50px", "circle,red 10px,#00f 50px"],
+      ];
+
+      // The prefixed syntax has no `at` and no radius in the shape. One or two lengths at the start are a position there.
+      const asWritten: [args: string, minified: string][] = [
+        ["circle at 30% 107%, red, blue", "circle at 30% 107%,red,blue"],
+        ["circle at center, red, blue", "circle at center,red,blue"],
+        ["at top left, red, blue", "at top left,red,blue"],
+        ["closest-side at 10px 20px, red, blue", "closest-side at 10px 20px,red,blue"],
+        ["circle 20px, red, blue", "circle 20px,red,blue"],
+        ["20px circle, red, blue", "20px circle,red,blue"],
+        ["ellipse 20px 30px, red, blue", "ellipse 20px 30px,red,blue"],
+        ["20px 30px ellipse, red, blue", "20px 30px ellipse,red,blue"],
+        ["20px, red, blue", "20px,red,blue"],
+        ["20px 30px, red, blue", "20px 30px,red,blue"],
+        ["10% 20%, red, blue", "10% 20%,red,blue"],
+        ["20px 30px at top left, red, blue", "20px 30px at top left,red,blue"],
+        // Chromium and WebKit reject a transition hint in a prefixed gradient.
+        ["red, 30%, blue", "red,30%,blue"],
+        ["circle, red, 50%, blue", "circle,red,50%,blue"],
+      ];
+
+      for (const name of names) {
+        for (const [args, minified] of [...read, ...asWritten]) {
+          minify_test(`.foo { background: ${name}(${args}) }`, `.foo{background:${name}(${minified})}`);
+        }
+        // The linear functions share the reader of the color stops.
+        const linear = name.replace("radial", "linear");
+        minify_test(`.foo { background: ${linear}(red, 30%, blue) }`, `.foo{background:${linear}(red,30%,blue)}`);
+        minify_test(
+          `.foo { background: ${linear}(red 10%, 50%, blue) }`,
+          `.foo{background:${linear}(red 10%,50%,blue)}`,
+        );
+        minify_test(`.foo { background: ${linear}(red 10%, blue) }`, `.foo{background:${linear}(red 10%,#00f)}`);
+      }
+
+      // The targets that `bun build` uses for `--target=browser`.
+      const bundlerDefaults = {
+        chrome: 80 << 16,
+        edge: 80 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+        opera: 67 << 16,
+      };
+
+      // Browsers reject the second value of each rule, so it must not replace the first.
+      for (const targets of [undefined, bundlerDefaults]) {
+        cssTest(
+          ".foo { background: radial-gradient(circle at 30% 107%, red, blue); background: -webkit-radial-gradient(circle at 30% 107%, red, blue) }",
+          ".foo { background: radial-gradient(circle at 30% 107%, red, #00f); background: -webkit-radial-gradient(circle at 30% 107%, red, blue); }",
+          targets,
+        );
+        cssTest(
+          ".foo { background: red; background: -webkit-radial-gradient(circle at center, red, blue) }",
+          ".foo { background: red; background: -webkit-radial-gradient(circle at center, red, blue); }",
+          targets,
+        );
+        cssTest(
+          ".foo { background-image: url(a.png); background-image: -moz-radial-gradient(circle 20px, red, blue) }",
+          '.foo { background-image: url("a.png"); background-image: -moz-radial-gradient(circle 20px, red, blue); }',
+          targets,
+        );
+        cssTest(
+          ".foo { background: red; background: -webkit-radial-gradient(circle, red, 50%, blue) }",
+          ".foo { background: red; background: -webkit-radial-gradient(circle, red, 50%, blue); }",
+          targets,
+        );
+        cssTest(
+          ".foo { background: red; background: -webkit-linear-gradient(red, 50%, blue) }",
+          ".foo { background: red; background: -webkit-linear-gradient(red, 50%, blue); }",
+          targets,
+        );
+      }
+
+      // `circle 20px` and `20px` are not the same value.
+      minify_test(
+        ".a { background: -webkit-radial-gradient(circle 20px, red, blue) } .b { background: -webkit-radial-gradient(20px, red, blue) }",
+        ".a{background:-webkit-radial-gradient(circle 20px,red,blue)}.b{background:-webkit-radial-gradient(20px,red,blue)}",
+      );
+
+      // Every property that takes an image reads the same syntax.
+      minify_test(
+        ".foo { border-image-source: -webkit-radial-gradient(circle at center, red, blue) }",
+        ".foo{border-image-source:-webkit-radial-gradient(circle at center,red,blue)}",
+      );
+      minify_test(
+        ".foo { -webkit-mask-image: -webkit-radial-gradient(circle at top left, red, blue) }",
+        ".foo{-webkit-mask-image:-webkit-radial-gradient(circle at top left,red,blue)}",
+      );
+      minify_test(
+        ".foo { background-image: image-set(-webkit-radial-gradient(circle 20px, red, blue) 1x) }",
+        ".foo{background-image:image-set(-webkit-radial-gradient(circle 20px,red,blue)1x)}",
+      );
+      minify_test(
+        ".foo { background: -webkit-radial-gradient(circle 20px, red, blue) !important }",
+        ".foo{background:-webkit-radial-gradient(circle 20px,red,blue)!important}",
+      );
+
+      test("Bun.build", async () => {
+        using dir = tempDir("css-prefixed-radial-gradient", {
+          "in.css": `
+.instagram { background: radial-gradient(circle at 30% 107%, red, blue); background: -webkit-radial-gradient(circle at 30% 107%, red, blue) }
+.fallback { background: red; background: -webkit-radial-gradient(circle at center, red, blue) }
+.radius { background: -webkit-radial-gradient(circle 20px, red, blue) }
+.layers { background-image: radial-gradient(circle at top left, red, blue), image-set("data:image/png;base64,AA==" 1x) }
+`,
+        });
+        const result = await Bun.build({ entrypoints: [join(String(dir), "in.css")] });
+        expect(result.logs).toEqual([]);
+        // The first line is a comment with the path of the file.
+        const css = await result.outputs[0].text();
+        expect(css.slice(css.indexOf("\n") + 1)).toBe(`.instagram {
+  background: radial-gradient(circle at 30% 107%, red, #00f);
+  background: -webkit-radial-gradient(circle at 30% 107%, red, blue);
+}
+
+.fallback {
+  background: red;
+  background: -webkit-radial-gradient(circle at center, red, blue);
+}
+
+.radius {
+  background: -webkit-radial-gradient(circle 20px, red, blue);
+}
+
+.layers {
+  background-image: radial-gradient(circle at 0 0, red, #00f), -webkit-image-set(url("data:image/png;base64,AA==") 1x);
+  background-image: radial-gradient(circle at 0 0, red, #00f), image-set("data:image/png;base64,AA==" 1x);
+}
+`);
+      });
+
+      describe("copies for targets that need a prefix", () => {
+        const old = { chrome: 20 << 16, firefox: 10 << 16, opera: 12 << 16 };
+        for (const fn of ["radial-gradient", "repeating-radial-gradient"]) {
+          for (const [standard, output] of [
+            ["red, blue", "red, #00f"],
+            ["circle, red, blue", "circle, red, #00f"],
+            ["closest-side, red, blue", "closest-side, red, #00f"],
+            ["circle farthest-side at center, red, blue", "circle farthest-side, red, #00f"],
+          ]) {
+            prefix_test(
+              `.foo { background: ${fn}(${standard}) }`,
+              `.foo {
+                background: -webkit-${fn}(${output});
+                background: -moz-${fn}(${output});
+                background: -o-${fn}(${output});
+                background: ${fn}(${output});
+              }`,
+              old,
+            );
+          }
+
+          // The prefixed syntax writes these in another way, so they get no copy.
+          for (const [standard, output] of [
+            ["circle at 30% 107%, red, blue", "circle at 30% 107%, red, #00f"],
+            ["at top left, red, blue", "at 0 0, red, #00f"],
+            ["circle 20px, red, blue", "20px, red, #00f"],
+            ["20px 30px, red, blue", "20px 30px, red, #00f"],
+            ["2em at left, red, blue", "2em at 0, red, #00f"],
+            ["circle, red, 30%, blue", "circle, red, 30%, #00f"],
+          ]) {
+            prefix_test(`.foo { background: ${fn}(${standard}) }`, `.foo { background: ${fn}(${output}); }`, old);
+            prefix_test(
+              `.foo { border-image-source: ${fn}(${standard}) }`,
+              `.foo { border-image-source: ${fn}(${output}); }`,
+              old,
+            );
+          }
+        }
+
+        // A layer with no copy stays as it is beside a layer that takes the prefix.
+        prefix_test(
+          '.foo { background-image: radial-gradient(circle at top left, red, blue), image-set("a.png" 1x) }',
+          `.foo {
+            background-image: radial-gradient(circle at 0 0, red, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: radial-gradient(circle at 0 0, red, #00f), image-set("a.png" 1x);
+          }`,
+          bundlerDefaults,
+        );
+
+        // The legacy `-webkit-gradient()` has a circle radius and a position.
+        prefix_test(
+          ".foo { background: radial-gradient(circle 20px at 10px 30px, red, blue) }",
+          `.foo {
+            background: -webkit-gradient(radial, 10 30, 0, 10 30, 20, from(red), to(#00f));
+            background: radial-gradient(20px at 10px 30px, red, #00f);
+          }`,
+          { chrome: 8 << 16 },
+        );
+
+        // An author prefix stays, and the targets that need no prefix get no copy.
+        prefix_test(
+          ".foo { background: -webkit-radial-gradient(circle, lab(50% 40 30), blue) }",
+          ".foo { background: -webkit-radial-gradient(circle, #bb5846, #00f); }",
+          bundlerDefaults,
+        );
+      });
+    });
     minify_test(
       ".foo { background: -webkit-gradient(radial, center center, 0, center center, 100, from(blue), to(yellow)) }",
       ".foo{background:-webkit-gradient(radial,50% 50%,0,50% 50%,100,from(#00f),to(#ff0))}",

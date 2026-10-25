@@ -61,12 +61,12 @@ impl Image {
         }
     }
 
-    pub(crate) fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image {
-        match self {
-            Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(arena, prefix))),
+    pub(crate) fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Option<Image> {
+        Some(match self {
+            Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(arena, prefix)?)),
             Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(arena, prefix)),
             _ => self.deep_clone(arena),
-        }
+        })
     }
 
     pub(crate) fn get_necessary_prefixes(
@@ -176,16 +176,12 @@ impl Image {
         }
 
         // Standard syntax, with prefixes.
-        if prefixes.contains(VendorPrefix::WEBKIT) {
-            res.append(prefix_image.get_prefixed(arena, css::VendorPrefix::WEBKIT));
-        }
-
-        if prefixes.contains(VendorPrefix::MOZ) {
-            res.append(prefix_image.get_prefixed(arena, css::VendorPrefix::MOZ));
-        }
-
-        if prefixes.contains(VendorPrefix::O) {
-            res.append(prefix_image.get_prefixed(arena, css::VendorPrefix::O));
+        for prefix in [VendorPrefix::WEBKIT, VendorPrefix::MOZ, VendorPrefix::O] {
+            if prefixes.contains(prefix)
+                && let Some(prefixed) = prefix_image.get_prefixed(arena, prefix)
+            {
+                res.append(prefixed);
+            }
         }
 
         if prefixes.contains(VendorPrefix::NONE) {

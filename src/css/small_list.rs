@@ -134,14 +134,24 @@ pub(crate) mod fallbacks_gated {
         ) {
             if pfs.contains(css::VendorPrefix::from_name_str(prefix)) {
                 let mut images = SmallList::<T, 1>::init_capacity(pfi.len());
+                // With no unprefixed form, the caller replaces the value with the last of these lists.
+                let mut is_new = !pfs.contains(css::VendorPrefix::NONE);
                 for i in 0..pfi.len() {
                     let in_ = pfi.at(i);
-                    let image = in_
-                        .get_image()
-                        .get_prefixed(alloc, css::VendorPrefix::from_name_str(prefix));
-                    images.append(in_.with_image(alloc, image));
+                    let image = in_.get_image();
+                    let copy =
+                        match image.get_prefixed(alloc, css::VendorPrefix::from_name_str(prefix)) {
+                            Some(copy) => {
+                                is_new |= copy.get_vendor_prefix() != image.get_vendor_prefix();
+                                copy
+                            }
+                            None => image.deep_clone(alloc),
+                        };
+                    images.append(in_.with_image(alloc, copy));
                 }
-                r.push(images);
+                if is_new {
+                    r.push(images);
+                }
             }
         }
 

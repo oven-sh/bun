@@ -232,9 +232,9 @@ impl Gradient {
         }
     }
 
-    /// Returns a copy of the gradient with the given vendor prefix.
-    pub(crate) fn get_prefixed(&self, bump: &Arena, prefix: VendorPrefix) -> Gradient {
-        match self {
+    /// Returns a copy of the gradient with the given vendor prefix, or `None` when the prefixed function does not take the same arguments.
+    pub(crate) fn get_prefixed(&self, bump: &Arena, prefix: VendorPrefix) -> Option<Gradient> {
+        Some(match self {
             Gradient::Linear(linear) => Gradient::Linear({
                 let mut x = linear.deep_clone(bump);
                 x.vendor_prefix = prefix;
@@ -245,18 +245,12 @@ impl Gradient {
                 x.vendor_prefix = prefix;
                 x
             }),
-            Gradient::Radial(radial) => Gradient::Radial({
-                let mut x = radial.deep_clone(bump);
-                x.vendor_prefix = prefix;
-                x
-            }),
-            Gradient::RepeatingRadial(radial) => Gradient::RepeatingRadial({
-                let mut x = radial.deep_clone(bump);
-                x.vendor_prefix = prefix;
-                x
-            }),
+            Gradient::Radial(radial) => Gradient::Radial(radial.with_prefix(bump, prefix)?),
+            Gradient::RepeatingRadial(radial) => {
+                Gradient::RepeatingRadial(radial.with_prefix(bump, prefix)?)
+            }
             _ => self.deep_clone(bump),
-        }
+        })
     }
 
     /// Returns a fallback gradient for the given color fallback type.
@@ -321,7 +315,7 @@ impl LinearGradient {
         } else {
             LineDirection::Vertical(VerticalPositionKeyword::Bottom)
         };
-        let items = parse_items::<LengthPercentage>(input)?;
+        let items = parse_items::<LengthPercentage>(input, vendor_prefix != VendorPrefix::NONE)?;
         Ok(LinearGradient {
             direction,
             items,
@@ -471,20 +465,30 @@ pub struct RadialGradient {
 
 impl RadialGradient {
     fn parse(input: &mut css::Parser, vendor_prefix: VendorPrefix) -> Result<RadialGradient> {
+        // A prefixed name takes the css3-images-20110217 syntax, which shares only `<shape> || <extent>`.
+        let is_prefixed = vendor_prefix != VendorPrefix::NONE;
         // todo_stuff.depth
-        let shape = input.try_parse(EndingShape::parse).ok();
-        let position = input
-            .try_parse(|input_: &mut css::Parser| -> Result<Position> {
-                input_.expect_ident_matching(b"at")?;
-                Position::parse(input_)
-            })
-            .ok();
+        let shape = if is_prefixed {
+            input.try_parse(EndingShape::parse_keywords).ok()
+        } else {
+            input.try_parse(EndingShape::parse).ok()
+        };
+        let position = if is_prefixed {
+            None
+        } else {
+            input
+                .try_parse(|input_: &mut css::Parser| -> Result<Position> {
+                    input_.expect_ident_matching(b"at")?;
+                    Position::parse(input_)
+                })
+                .ok()
+        };
 
         if shape.is_some() || position.is_some() {
             input.expect_comma()?;
         }
 
-        let items = parse_items::<LengthPercentage>(input)?;
+        let items = parse_items::<LengthPercentage>(input, is_prefixed)?;
         Ok(RadialGradient {
             // todo_stuff.depth
             shape: shape.unwrap_or_else(EndingShape::default),
@@ -493,6 +497,24 @@ impl RadialGradient {
             items,
             vendor_prefix,
         })
+    }
+
+    /// Returns a copy under `prefix`, or `None` when `RadialGradient::parse` does not read it there.
+    fn with_prefix(&self, bump: &Arena, prefix: VendorPrefix) -> Option<RadialGradient> {
+        let is_keyword = matches!(
+            self.shape,
+            EndingShape::Circle(Circle::Extent(_)) | EndingShape::Ellipse(Ellipse::Extent(_))
+        );
+        let has_hint = self
+            .items
+            .iter()
+            .any(|item| matches!(item, GradientItem::Hint(_)));
+        if !is_keyword || !self.position.is_center() || has_hint {
+            return None;
+        }
+        let mut copy = self.deep_clone(bump);
+        copy.vendor_prefix = prefix;
+        Some(copy)
     }
 
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -581,7 +603,7 @@ impl ConicGradient {
             input.expect_comma()?;
         }
 
-        let items = parse_items::<AnglePercentage>(input)?;
+        let items = parse_items::<AnglePercentage>(input, false)?;
         Ok(ConicGradient {
             angle: angle.unwrap_or(Angle::Deg(0.0)),
             position: position.unwrap_or_else(|_| Position::center()),
@@ -1071,6 +1093,30 @@ pub enum EndingShape {
 impl EndingShape {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)].
 
+    /// `<shape> || <extent>`, with no radius.
+    fn parse_keywords(input: &mut css::Parser) -> Result<EndingShape> {
+        let mut extent = input.try_parse(ShapeExtent::parse).ok();
+        let is_circle = input
+            .try_parse(|i| i.expect_ident_matching(b"circle"))
+            .is_ok();
+        let has_shape = is_circle
+            || input
+                .try_parse(|i| i.expect_ident_matching(b"ellipse"))
+                .is_ok();
+        if extent.is_none() {
+            extent = input.try_parse(ShapeExtent::parse).ok();
+            if extent.is_none() && !has_shape {
+                return Err(input.new_error_for_next_token());
+            }
+        }
+        let extent = extent.unwrap_or(ShapeExtent::FarthestCorner);
+        Ok(if is_circle {
+            EndingShape::Circle(Circle::Extent(extent))
+        } else {
+            EndingShape::Ellipse(Ellipse::Extent(extent))
+        })
+    }
+
     fn default() -> EndingShape {
         EndingShape::Ellipse(Ellipse::Extent(ShapeExtent::FarthestCorner))
     }
@@ -1434,6 +1480,7 @@ crate::css_eql_partialeq!(
 
 pub(crate) fn parse_items<D: GradientPosition>(
     input: &mut css::Parser,
+    is_prefixed: bool,
 ) -> Result<Vec<GradientItem<D>>> {
     let mut items: Vec<GradientItem<D>> = Vec::new();
     let mut seen_stop = false;
@@ -1442,7 +1489,8 @@ pub(crate) fn parse_items<D: GradientPosition>(
         input.parse_until_before(
             css::Delimiters::COMMA,
             |i: &mut css::Parser| -> Result<()> {
-                if seen_stop {
+                // Chromium and WebKit reject a transition hint in a prefixed gradient.
+                if seen_stop && !is_prefixed {
                     if let Ok(hint) = i.try_parse(D::parse) {
                         seen_stop = false;
                         items.push(GradientItem::Hint(hint));

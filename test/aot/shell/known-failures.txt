@@ -638,14 +638,10 @@ strings/properties-of-sums-that-may-be-numbers	// IRT= 1 addedUp : number = Add
 strings/properties-of-sums-that-may-be-numbers	// IRT= 1 addedUp : undefined\|\S+ = PropGet v\d+ name="length"
 strings/properties-of-sums-that-may-be-numbers	// IRT= 1 lengthOfSum : undefined\|\S+ = PropGet v\d+ name="length"
 strings/properties-of-sums-that-may-be-numbers	// IRT= 1 textOfSum (PropGet v\d+|CallMethod v\d+ \(\)) name="toString"
-strings/regexp	// CALLS+ found (?<!Typed)StringMatchRegExp
 strings/regexp	// CALLS+ fromBoth ConstructInternalFunction2
 strings/regexp	// CALLS+ parts operationAOTStringSplitString
-strings/regexp	// CALLS+ shout operationAOTStringReplaceRegExp
 strings/regexp	// CALLS+ swap operationAOTStringReplaceString
 strings/regexp	// CALLS+ vowels StringReplaceRegExpString
-strings/regexp	// CALLS+ where operationAOTStringSearchRegExp
-strings/regexp	// CALLS+ words operationAOTStringSplitRegExp
 strings/regexp-literals-inline-or-stored	// CALLS+ testedOfProperty operationAOTSharedRegExpLiteral
 strings/regexps-built-at-start-from-arguments	// COUNTER: RegExpsCreatedWithoutRecord = 12
 strings/regexps-built-at-start-from-arguments	// KNOWN tokens (0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)
@@ -683,7 +679,6 @@ strings/regexps-from-string-literals-2	// KNOWN hints1 reu+sed:sla+sh<\/?x[/]
 strings/regexps-from-string-literals-2	// UNKNOWN ty+peobject
 strings/regexps-from-text-kept-under-constant-symbols	// KNOWN hints1 ^<(?:[aA][bB]|[cC][dD])>
 strings/repeat-and-pad	// CALLS- indentedByAnything operationAOTStringPad
-strings/replace-all	// CALLS+ byRegExp operationAOTStringReplaceAllRegExp
 strings/search	// CALLS+ includes1 StringFindString
 strings/search	// CALLS+ indexOf1 StringFindString
 strings/search	// CALLS+ searchKnown StringFindString
@@ -913,7 +908,6 @@ structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration
 structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 0 sumPoint = TypeTest
 structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 1 sumPair = TypeTest
 structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 2 sumPoint = GetSlot v\d+ key="[xy]" receivers=\[L\d+\] level=Proven
-structural-types/a-tag-decides-the-layout-whatever-the-tag-is-called	// IRT= 0 areaByKind = TypeTest
 structural-types/an-instance-under-a-computed-key-of-a-union-type-passes-for-the-index-signature	// IRT= 0 barkIn testedType=undefined.null.object
 typed-objects/members-behind-a-view-are-filled-at-birth	// IRT= 0 readBag = TypeTest
 typed-objects/members-behind-a-view-are-filled-at-birth	// IRT= 0 readBag GetSlotOrUndefined

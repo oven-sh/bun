@@ -84,6 +84,7 @@ pub struct LinkInput<'a, 's> {
     pub units: Vec<LinkUnit>,
     pub projects: PerProject<LinkProject<'a, 's>>,
     pub limits: &'a LimitValues,
+    pub reports_type_mismatches: bool,
     pub in_parallel: InParallel<'a>,
     pub beside: Beside<'a>,
 }
@@ -155,6 +156,7 @@ pub fn link_while(
         units,
         projects,
         limits,
+        reports_type_mismatches,
         in_parallel,
         beside,
     } = input;
@@ -319,6 +321,7 @@ pub fn link_while(
             run_beside(beside, build_records, || meanwhile(&keys)).0
         },
     );
+    let module_origins = collect_module_origins(&projects, &modules, &numbering);
     let mut writes_preload = false;
     run_beside(
         beside,
@@ -329,6 +332,7 @@ pub fn link_while(
                 numbering: &numbering,
                 property_keys: &merged_property_keys.table,
                 strings: &strings,
+                origins_in_logging_build: reports_type_mismatches.then_some(&module_origins[..]),
                 in_parallel,
             };
             writes_preload = mark_unused_records(defined, &uses, b"preload");
@@ -358,7 +362,6 @@ pub fn link_while(
         runtime_functions: records.runtime_functions,
         web_assembly_modules: records.web_assembly_modules,
     };
-    let module_origins = collect_module_origins(&projects, &modules, &numbering);
     count_definitions(&definitions, &retained, &mut times.counters);
     count_module_forms(&projects, &modules, &mut times.counters);
     let names = ProgramNames::new(&program, &body_remap, module_origins, beside);

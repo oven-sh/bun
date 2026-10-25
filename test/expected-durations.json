@@ -2077,9 +2077,62 @@
     "default": 300,
     "asan": 200000
   },
+  "aot/engine-tests-ir-of-bun.test.ts": {
+    "default": 6000
+  },
+  "aot/engine-tests-ir.test.ts": {
+    "default": 30000
+  },
+  "aot/engine-tests-native-1.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-2.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-3.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-4.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-5.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-6.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-7.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-8.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-9.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-10.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-11.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-12.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-13.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-14.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-15.test.ts": {
+    "default": 17000
+  },
+  "aot/engine-tests-native-16.test.ts": {
+    "default": 17000
+  },
   "aot/engine-tests.test.ts": {
-    "default": 204149,
-    "musl": 268565
+    "default": 2500
   },
   "aot/engine-types-are-defined-once.test.ts": {
     "default": 22,
@@ -2347,6 +2400,102 @@
   },
   "aot/every-program-9.test.ts": {
     "default": 42050
+  },
+  "aot/every-program-alone-1.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-10.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-11.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-12.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-13.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-14.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-15.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-16.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-17.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-18.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-19.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-2.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-20.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-21.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-22.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-23.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-24.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-25.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-26.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-27.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-28.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-29.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-3.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-30.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-31.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-32.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-4.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-5.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-6.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-7.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-8.test.ts": {
+    "default": 60000
+  },
+  "aot/every-program-alone-9.test.ts": {
+    "default": 60000
   },
   "aot/every-store-to-a-variable-of-a-context-shows-on-the-sandbox-object.test.ts": {
     "default": 842,
@@ -3142,6 +3291,9 @@
   },
   "aot/generated-built-ins-called-as-members-of-a-table.test.ts": {
     "default": 300
+  },
+  "aot/generated-built-ins-called-through-unknown-values.test.ts": {
+    "default": 118000
   },
   "aot/generated-built-ins-that-write-behind-a-callback.test.ts": {
     "default": 300

@@ -132,6 +132,33 @@ test.concurrent(
 );
 
 test.concurrent(
+  "logs a value that does not match an interface the program never creates",
+  async () => {
+    using dir = project(`interface User {
+  id: number;
+  name: string;
+}
+function greet(user: User): string {
+  return user.name + " #" + user.id;
+}
+const read = (text: string): any => JSON.parse(text);
+console.log(greet(read('{"id":"7"}')));
+console.log(greet(read("[1,2]")));
+`);
+    await build(String(dir), "--aot-log-type-mismatches");
+
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    const ofGreet = lines(stderr).filter(line => line.function === "greet" && !line.count.endsWith("total"));
+    expect(ofGreet.map(({ kind, expected, got }) => ({ kind, expected, got }))).toEqual([
+      { kind: "argument", expected: "User", got: "untyped object" },
+      { kind: "argument", expected: "User", got: "Array" },
+    ]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "undefined #7\nundefined #undefined\n", exitCode: 0 });
+  },
+  120_000,
+);
+
+test.concurrent(
   "a site writes its 1st and 10th failure and a total at exit, and never a value",
   async () => {
     using dir = project(

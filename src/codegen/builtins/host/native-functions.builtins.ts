@@ -51,6 +51,8 @@ const functionsWithUndeclaredMembers = [
   "process.memoryUsage",
 ];
 
+const functionsBelowOtherObjects = ["%ModuleRequire%.resolve", "Bun.$", "Bun.sql"];
+
 // src/jsc/modules/NodeUtilTypesModule.cpp. Each looks at the type or the C++ class of a cell, isAsyncFunction also at what lies above a function.
 const typeTestsOfNode = [
   "isAnyArrayBuffer",
@@ -116,6 +118,10 @@ export default b.declarations(
       }),
     ),
   functionsWithUndeclaredMembers.flatMap(path => b.extend(path, { hasUndeclaredMembers: true })),
+  // The others are ordinary native functions, so `call`, `apply` and `bind` are found above them.
+  functionsWithUndeclaredMembers
+    .filter(path => !functionsBelowOtherObjects.includes(path))
+    .flatMap(path => b.inherits(path, "Function.prototype")),
 
   b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator"), testsKindOfCell),
   b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator"), testsKindOfCell),

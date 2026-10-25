@@ -129,6 +129,7 @@ impl Build<'_> {
             units,
             projects,
             limits: &self.limits,
+            reports_type_mismatches: self.options.aot.reports_type_mismatches,
             in_parallel: &in_parallel,
             beside: &beside,
         };

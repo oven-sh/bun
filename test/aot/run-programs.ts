@@ -27,6 +27,7 @@
 //                                         "skipInVariant": { "<label>": why variant("<label>", ..) or programsBuiltWith(.., "<label>", ..) alone leaves the program out }
 //                                         "todoOn": { "<process.platform>": what happens there today }: the program is listed as a todo and not run on that platform alone
 //                                         "alone": why programs-as-entry-points.ts leaves the program out: what it prints hangs on being the first entry point, or on what else the executable holds
+//                                         "mainThread": why programs-as-separate-entry-points.ts leaves the program out: a Worker does not print what the main thread prints
 //   // STATISTIC: <name> (= | >= | <=) <n>  a line of the entry point: what the build counted under that `StatisticId`, as the hidden `--explain=statistics` prints it.
 //                                         It shows that an optimization ran on a host built-in, which `testaot` and so shell/expectations.py do not have.
 //                                         Checked on the build that keeps the types, and not where a variant adds build flags

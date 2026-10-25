@@ -71,6 +71,12 @@ const noticedBy: Record<string, Row | Row[]> = {
     flags: [],
     programs: ["young-cells-stored-into-old-arrays-survive.ts", "references-in-optional-fields-survive-collections.ts"],
   },
+  // The call clamps the bounds again, so the answers stay right: only the check of a validating build sees it.
+  PartsOfViewsEndOneLater: {
+    folder: "host-classes",
+    flags: ["--aot-validate"],
+    programs: ["text-is-encoded-into-the-rest-of-a-view.ts"],
+  },
   NoCallWrites: toldTheBackEnd(
     "--aot-check=MovedLoads",
     "a-field-is-read-on-both-sides-of-a-call-that-stores-into-it.ts",

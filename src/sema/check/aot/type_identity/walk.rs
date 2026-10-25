@@ -27,7 +27,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if let TypeData::Ref { target, .. } = data {
             return ObjectOrigin::Symbol(self.files().canonical(*target));
         }
-        if let Some(alias) = self.c.alias_symbol_of_type(ty)
+        if let Some((alias, _)) = self.c.alias_of_type(ty)
             && is_top_level_alias(self, alias)
         {
             return ObjectOrigin::Symbol(alias);

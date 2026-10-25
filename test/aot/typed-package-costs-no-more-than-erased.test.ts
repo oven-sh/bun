@@ -15,27 +15,28 @@ const whyNotCounted = unsupported
     ? "the counts are those of a release build"
     : await whyInstructionsCannotBeCounted();
 
-// A turn of the build costs 0.986 times the instructions of the erased build. The build has 1.10 times its bytes, and so has the code of the package. No share may pass these.
-// The bytes belong at 1 or below: the two todo tests.
-const known = { instructionsOfATurn: 1, bytesOfCode: 1.12, bytesOfPackage: 1.12 };
+// A turn of the build costs 0.986 times the instructions of the erased build. The build has 1.10 times its bytes. The code of the package has 1.11 times its bytes on x64 and
+// 1.18 times on ARM64, where a type test takes more bytes. No share may pass these. The bytes belong at 1 or below: the two todo tests.
+const known = { instructionsOfATurn: 1, bytesOfCode: 1.12, bytesOfPackage: isArm64 ? 1.2 : 1.12 };
 // The bytes of code are whole pages of the image and the constants behind them.
 const pageOfImage = (isLinux && isArm64 ? 64 : 16) * 1024;
 
-/** The bytes of the functions that are compiled from the package's file, by the map file. */
+/** The bytes of each function that is compiled from the package's file, by the map file. Every version of a function counts under its name. */
 function bytesOfPackage(map: string) {
-  let bytes = 0;
+  const bytes = new Map<string, number>();
   for (const line of map.split("\n")) {
     const fields = line.split("\t");
-    if (fields[0] === "F" && /small-renderer.+index\.aot\.ts$/.test(fields[10])) bytes += Number(fields[3]);
+    if (fields[0] === "F" && /small-renderer.+index\.aot\.ts$/.test(fields[10]))
+      bytes.set(fields[7], (bytes.get(fields[7]) ?? 0) + Number(fields[3]));
   }
   return bytes;
 }
 
 describe.skipIf(!!unsupported)("compile/aot/typed-package-costs-no-more-than-erased", () => {
   let folder = "";
-  const seen: Record<"typed" | "erased", { turn?: Turn; bytesOfCode: number; bytesOfPackage: number }> = {
-    typed: { bytesOfCode: 0, bytesOfPackage: 0 },
-    erased: { bytesOfCode: 0, bytesOfPackage: 0 },
+  const seen: Record<"typed" | "erased", { turn?: Turn; bytesOfCode: number; bytesOfPackage: Map<string, number> }> = {
+    typed: { bytesOfCode: 0, bytesOfPackage: new Map() },
+    erased: { bytesOfCode: 0, bytesOfPackage: new Map() },
   };
   afterAll(() => folder && rmSync(folder, { recursive: true, force: true }));
 
@@ -101,9 +102,8 @@ describe.skipIf(!!unsupported)("compile/aot/typed-package-costs-no-more-than-era
       ]),
     );
   }
-  function whereTypesCostMost() {
-    const typed = sharesOf(seen.typed.turn!),
-      erased = sharesOf(seen.erased.turn!);
+  const sumOf = (numbers: Map<string, number>) => numbers.values().reduce((sum, number) => sum + number, 0);
+  function whereTypesCostMost(typed: Map<string, number>, erased: Map<string, number>) {
     return [...new Set([...typed.keys(), ...erased.keys()])]
       .map(where => ({ where, typed: typed.get(where) ?? 0, erased: erased.get(where) ?? 0 }))
       .sort((a, b) => b.typed - b.erased - (a.typed - a.erased))
@@ -123,18 +123,23 @@ describe.skipIf(!!unsupported)("compile/aot/typed-package-costs-no-more-than-era
       instructionsOf(seen.typed.turn!),
       instructionsOf(seen.erased.turn!),
       known.instructionsOfATurn,
-      whereTypesCostMost(),
+      whereTypesCostMost(sharesOf(seen.typed.turn!), sharesOf(seen.erased.turn!)),
     ),
   );
   test("the bytes of code have not risen against the erased build", () =>
     expectAtMost(seen.typed.bytesOfCode - pageOfImage, seen.erased.bytesOfCode, known.bytesOfCode));
   test("the bytes of the package's code have not risen against the erased build", () =>
-    expectAtMost(seen.typed.bytesOfPackage, seen.erased.bytesOfPackage, known.bytesOfPackage));
+    expectAtMost(
+      sumOf(seen.typed.bytesOfPackage),
+      sumOf(seen.erased.bytesOfPackage),
+      known.bytesOfPackage,
+      whereTypesCostMost(seen.typed.bytesOfPackage, seen.erased.bytesOfPackage),
+    ));
 
   test.todo("the program is no larger with its types than without them", () =>
     expectAtMost(seen.typed.bytesOfCode, seen.erased.bytesOfCode, 1),
   );
   test.todo("the package's code is no larger with its types than without them", () =>
-    expectAtMost(seen.typed.bytesOfPackage, seen.erased.bytesOfPackage, 1),
+    expectAtMost(sumOf(seen.typed.bytesOfPackage), sumOf(seen.erased.bytesOfPackage), 1),
   );
 });

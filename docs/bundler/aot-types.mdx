@@ -245,8 +245,8 @@ function greet(user: User): string {
   return user.name + " #" + user.id;
 }
 
-const user: any = JSON.parse('{"id":7,"name":"Ada"}');
-console.log(greet(user));
+const read = (text: string): any => JSON.parse(text);
+console.log(greet(read('{"id":7,"name":"Ada"}')));
 ```
 
 [`--aot-log-type-mismatches`](/bundler/aot-debugging#log-them-at-run-time) logs every guard that fails.
@@ -272,8 +272,8 @@ function greet(user: User): string {
   return user.name + " #" + user.id;
 }
 
-const user: User = JSON.parse('{"id":7,"name":"Ada"}'); // [!code highlight]
-console.log(greet(user));
+const read = (text: string): User => JSON.parse(text); // [!code highlight]
+console.log(greet(read('{"id":7,"name":"Ada"}')));
 ```
 
 ```bash terminal icon="terminal"

@@ -481,10 +481,13 @@ impl<'s> Checker<'_, 's> {
     fn check_parameter(&mut self, file: FileId, func: FnId, p: ParamId) {
         let hir = self.hir(file);
         let (node, kind) = (&hir[p], hir[func].kind);
-        let modifiers = hir.param_modifiers(p);
-        if !modifiers.is_empty() {
+        if !hir.param_modifiers(p).is_empty() {
             self.check_grammar_modifiers(file, p);
-            self.check_decorators(file, modifiers);
+        }
+        for &(owner, decorator) in hir.decorators.iter() {
+            if owner == DecoratorOwner::Param(p) {
+                self.check_decorator_expression(file, decorator);
+            }
         }
         self.check_type_node(file, node.ty);
         let name = match hir[node.pat].kind {

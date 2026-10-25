@@ -52,7 +52,8 @@ export function functionsOf(map: string, code: Buffer) {
 
 async function build(bun: string, program: string, work: string, flags: string[]): Promise<Built> {
   mkdirSync(work, { recursive: true });
-  const [executable, ir, map] = ["program", "program.ir", "program.map"].map(name => join(work, name));
+  const executable = join(work, process.platform === "win32" ? "program.exe" : "program");
+  const [ir, map] = ["program.ir", "program.map"].map(name => join(work, name));
   await using child = Bun.spawn({
     cmd: [bun, "build", "--compile", "--aot", ...flags, `--aot-out=${ir}`, program, "--outfile", executable],
     cwd: dirname(program),

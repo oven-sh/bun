@@ -1176,6 +1176,68 @@ v14: int|whole @Double = CallInline -, v13 inlineBuiltin=MathFloor overload=Math
 v15: int[0, 4294967295] @Int64 = CallInline v2, v14 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
 ```
 
+### Native code that only needs the memory
+
+Many native functions take a typed array or a string and never look at the object. `encoder.encodeInto(text, view)` needs the characters of `text` and the bytes of `view`, and it's done with both when it returns.
+
+The row already says so, in `uses`. **The row's uses decide: a function that only reads or writes the contents of an operand while it runs gets an address and a count, and a function that holds on to the array gets the array.**
+
+```ts src/codegen/builtins/host/web-values.builtins.ts
+{
+  args: { source: b.string, destination: arrayBufferView },
+  returns: b.ordinaryObjectOf("ReadAndWrittenCounts").fresh,
+  capability: "heap",
+  uses: { this: b.inspected, source: [b.readAsCharacters], destination: [b.readsContents(), b.writesContents()] },
+  directEntry: b.typedEntry({
+    calls: { latin1: "TextEncoder__encodeInto8", utf16: "TextEncoder__encodeInto16" },
+    headers: ["headers-handwritten.h"],
+    parameters: ["Characters", "Bytes"],
+    returnsFields: ["read", "written"],
+  }),
+},
+```
+
+| Parameter                  | Compiled code passes                                                                          | The generator rejects it unless                                            |
+| -------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `Bytes`, `BytesOfReceiver` | The address of the first byte and the number of bytes, read at the call                       | The operand is a view, and its uses are only inspected, read and written   |
+| `Characters`               | The address of the first character, with the top bit set for 16-bit characters, and the count | The operand is a string, and its only use is `readAsCharacters`            |
+| `returnsFields`            | Nothing. The fields of the result's layout come back in two registers                         | The layout has at most two integer fields, and the function takes no realm |
+
+An operand that's kept, returned, called, or read after the call has returned can't be `Bytes`. That covers anything that returns a promise, takes a callback, or keeps a key or a dictionary. Such a function keeps getting the cell, and the bytes are never copied to make a span possible.
+
+`b.typedEntry` writes the C++ function that compiled code enters. It has the calling convention of an operation, picks the C function by the width of the characters, and returns the fields. Nobody writes a second entry by hand.
+
+A rope is resolved before any address is taken. A view that has lost its memory is an empty span. The view and the string stay operands of the call, so the collector sees them.
+
+Where the program only reads `read` and `written`, no object is made. Where it keeps the object, `NewObjectOfBuiltinLayout` makes an ordinary object from the two registers, with the names of the layout in their order.
+
+**A view of a view is an allocation like any other.** A row with `rangeOf: "this"`, such as `subarray`, is taken apart by `SimplifyBuiltinCalls`.
+
+```txt
+v6: boolean = HasFixedBytes v1
+Branch v6 -> taken b3(), notTaken b4()
+b3():
+  v7 = GetTypedArrayLength v1
+  v8 = StringRange v7, v2            // clamps the bounds, as slice does
+  v11: Uint8Array = TypedArrayRange v1, v9, v10
+b4() frequency=Unlikely:
+  v12: Uint8Array = CallBuiltin v1, v2 overload=TypedArrayPrototypeSubarray/0
+```
+
+A view over a resizable buffer, a length-tracking view, a detached view and a bound that's no number take the call as it was. `TypedArrayRange` has no conditions left, so `SinkAllocations` treats it like an object literal: it moves it to whoever needs the view, or removes it.
+
+For each row with `Bytes`, the generator declares the row once more with the bounds of each view as two more operands (`generator/forms-in-ranges.ts`). Both enter the same C function. When a part of a view that isn't made yet reaches an operand that's taken as bytes, the call moves to that overload.
+
+```txt
+v19 = CallBuiltin -, v18, v1, v9, v10 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0 builtinCallForm=Fields
+```
+
+So `encoder.encodeInto(text, view.subarray(written))` allocates nothing. The bounds are clamped against the length again at the call, because the buffer may have been transferred in between.
+
+The second overload says exactly what its row says: the same types, uses, reads and writes. The generator rejects anything else, because what the compiler believes about a call must not change when the call moves.
+
+That overload is a helper of the compiler, so there's no function behind it to fall back on. A call moves there only while the types prove that each view is one. If a later pass loses such a type, `Select` keeps the call and writes the parameter's type on the operand as an `AssumeType`. A build with `--aot-validate` checks that at run time, and also that each part lies inside its view.
+
 ### Why built-in objects are locked
 
 Step 2 needs `Array.prototype.push` to be the original. A JIT handles that with a watchpoint: it assumes that nobody replaces `push`, and throws the compiled code away if somebody does. Code that's compiled ahead of time can't be thrown away. There are three ways out.

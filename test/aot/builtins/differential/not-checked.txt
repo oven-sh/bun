@@ -21,7 +21,6 @@ BunTestJestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestViSpyOn/0: it is not called: it reaches outside JavaScript
 BunUdpSocket/0: it is not called: it blocks, starts a process or opens a socket
-CompilerHelpersCountCodePoints/0: it differs in parameters
 CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it
 CompilerHelpersGetDisposeMethod/0: it is not called: this realm does not have it
@@ -29,6 +28,7 @@ CompilerHelpersOwnEntriesFlat/0: it is not called: it works on the instance of a
 CompilerHelpersPlainQueryEntries/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryKeys/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryValues/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0: it is not called: the compiler hands it bounds that it has clamped itself, and takes them on trust
 CrashHandlerJscCrashHandlerAbort/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerFastfail/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerOperatorNew/0: the process ended or did not come back
@@ -56,7 +56,6 @@ ImportMetaResolveSync/0: it is not called: this realm does not have it
 MysqlBindingCreateConnection/0: it differs in parameters
 NativeBindgenBake_pluginsBindTsRestartProcess/0: the process ended or did not come back
 NativeBindgenBake_pluginsBindTsSetPages/0: the test itself threw: 47 |   const method = value[name] as Function;
-NativeBindgenCode_resolver_testingBindTsCompareCodeResolution/0: the process ended or did not come back
 NativeBindgenFrameworkRouterBindTsParseRoutePattern/0: the process ended or did not come back
 NativeBindgenNode_cluster_bindingBindTsClusterCloseHandle/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenNode_cluster_bindingBindTsClusterCloseHandle/1: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
@@ -89,7 +88,6 @@ NativeFunctionsBunProcessCppJsFunction_throwValue/0: it is not called: this real
 NativeFunctionsBunProcessCppProcess_functionEmitHelper/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppProcess_functionWriteWarning/0: it is not called: this realm does not have its holder
 NativeFunctionsChecker_queries_testingBindTsDescribeCheckerQueries/0: it is not called: a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose
-NativeFunctionsCode_resolver_testingBindTsCompareCodeResolution/0: it is not called: a helper of Bun's own tests that does not come back for some operands
 NativeFunctionsCode_resolver_testingBindTsDescribeCodeGraph/0: it is not called: a helper of Bun's own tests that does not come back for some operands
 NativeFunctionsDns_internalsBindTsNewResolver/0: no set of operands selects it
 NativeFunctionsDns_internalsBindTsSeedCacheForTesting/0: it is not called: it changes how the rest of the process behaves

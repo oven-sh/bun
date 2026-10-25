@@ -82,6 +82,7 @@ function unused(): string {
                 units,
                 projects: *projects,
                 limits: &limits,
+                reports_type_mismatches: false,
                 in_parallel: &forward,
                 beside,
             });
@@ -99,6 +100,7 @@ function unused(): string {
                     units,
                     projects: *projects,
                     limits: &limits,
+                    reports_type_mismatches: false,
                     in_parallel: &forward,
                     beside,
                 };

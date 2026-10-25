@@ -70,6 +70,8 @@ const needNoCompiler = [
   "aot/the-fuzzer-keeps-a-wrong-answer-beside-a-clock.test.ts",
   "cli/aot-compile-executable-path.test.ts",
   "cli/aot-unknown-flags.test.ts",
+  "bundler/bun-build-api-dts.test.ts",
+  "bundler/bun-build-dts.test.ts",
   "cli/compile/compile-library.test.ts",
   "cli/test/test-aot-mocks-and-lazy-constants.test.ts",
   "internal/build-hardened-flags.test.ts",

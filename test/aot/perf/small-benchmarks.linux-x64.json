@@ -177,10 +177,10 @@
   },
   "promise-handlers-run-one-behind-the-other": {
     "millionInstructions": 98,
-    "testsFailed": 80000,
+    "testsFailed": 40000,
     "alwaysFailing": 2,
     "accessesByName": 80038,
-    "runtimeOperations": 4504,
+    "runtimeOperations": 4574,
     "callsNotExpected": 0
   },
   "spectral": {

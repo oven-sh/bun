@@ -100,6 +100,7 @@ async-and-generators/suspended-generator-partial-reads
 async-and-generators/sync-iterables-delegated-to-and-awaited-over
 async-and-generators/the-async-context-follows-awaits-timers-ticks-and-promises
 async-and-generators/the-parameters-of-a-generator-function-are-evaluated-at-the-call
+async-and-generators/then-on-a-fulfilled-promise
 async-and-generators/what-a-yield-answers-is-used-and-its-operand-rejects
 async-and-generators/what-an-async-generator-throws-reaches-the-catch-around-the-loop
 built-ins-alone/array-from-over-maps-sets-and-their-iterators
@@ -164,6 +165,7 @@ calls/a-small-function-calls-an-async-function-that-takes-the-rest-of-its-argume
 calls/a-spread-call-of-a-method-that-returns-this
 calls/a-spread-resolved-behind-the-last-round
 calls/a-variable-that-holds-a-bound-function-an-object-or-a-class-is-constructed-and-called
+calls/a-variable-that-holds-json-parse-or-string-is-called-in-a-loop
 calls/a-worker-is-terminated-inside-a-loop-that-calls-nothing
 calls/an-async-function-that-takes-the-rest-of-its-arguments-is-found-by-name-and-called-at-every-level-on-the-way-up-from-the-end-of-the-stack
 calls/async-functions-of-a-library-that-take-the-rest-of-their-arguments-are-called-at-every-level-on-the-way-up-from-the-end-of-the-stack
@@ -490,7 +492,6 @@ escape-analysis/fields-are-deleted-from-objects-that-stay-in-one-function
 escape-analysis/find-over-an-array-literal-that-a-function-answers-and-every-pass-is-verified
 escape-analysis/find-over-one-of-two-array-literals-and-every-pass-is-verified
 escape-analysis/five-objects-that-leave-on-one-way-are-candidates-for-one-variable
-escape-analysis/objects-behind-defaults-arms-and-tests-are-not-built
 escape-analysis/objects-that-refer-to-each-other-built-on-one-path
 escape-analysis/pairs-of-numbers-that-are-only-read-and-pairs-that-somebody-looks-at
 escape-analysis/pairs-of-numbers-that-are-only-read-and-pairs-that-somebody-looks-at-untyped
@@ -500,6 +501,7 @@ function-prototypes/a-bound-plain-function-is-constructed-and-the-function-went-
 function-prototypes/a-constructor-function-called-without-new-hands-this-to-its-catch-block-ahead-of-the-test
 function-prototypes/constructor-function-prototype-mutations
 function-prototypes/functions-that-hold-names-of-their-own-are-called-through-call-and-apply
+function-prototypes/two-families-of-constructor-functions-share-the-names-of-a-method-and-a-getter
 globals-the-realm-lacks/disposable-stack-named-in-types
 globals-the-realm-lacks/iterator-chunks-asked-every-way
 globals-the-realm-lacks/iterator-concat-asked-every-way
@@ -537,9 +539,12 @@ host-classes/bodies-of-every-holder-are-parsed-alike-with-and-without-a-declared
 host-classes/bodies-parsed-into-declared-types
 host-classes/builtin-modules-load-with-locked-prototypes
 host-classes/byte-order-marks-in-bodies-parsed-into-declared-types
+host-classes/bytes-are-read-on-both-sides-of-a-call-that-encodes-into-a-part-validated
 host-classes/bytes-are-set-and-ranges-taken-with-every-kind-of-receiver-source-and-position
 host-classes/constructors-on-the-global-object-keep-the-ordinary-has-instance-and-their-parent
 host-classes/empty-bodies-parsed-into-declared-types
+host-classes/encode-into-a-part-of-a-part-after-the-view-becomes-a-buffer
+host-classes/encode-into-a-part-of-a-part-of-a-view-or-a-buffer
 host-classes/encode-into-writes-into-views-of-every-kind
 host-classes/every-member-of-a-file
 host-classes/function-subclasses-of-locked-classes
@@ -561,6 +566,7 @@ host-classes/search-params-without-the-object-and-the-global-stays
 host-classes/spy-on-builtin-instance
 host-classes/spy-on-locked-member
 host-classes/subclasses-of-locked-classes
+host-classes/text-is-encoded-into-the-rest-of-a-view
 host-classes/texts-are-encoded-by-every-kind-of-encoder-into-every-kind-of-destination
 host-classes/the-class-of-what-a-hasher-hands-out-is-reached-through-constructor
 host-classes/the-environment-shared-with-a-worker-is-seen-under-every-name
@@ -1184,6 +1190,7 @@ ways-into-library-modules/util-inspect-through-get-builtin-module-as-a-reaction
 webassembly/module-in-data-url
 workers/a-worker-that-parsed-a-text-ends
 workers/channels-between-workers
+workers/commonjs-worker-calls-really-exit-last
 workers/eight-workers-meet-a-member-that-no-code-spells
 workers/embedded-worker-and-main-import-one-module
 workers/embedded-worker-path-chosen-at-run-time

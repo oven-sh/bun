@@ -2082,7 +2082,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             if let Some(found) = self.export_in_table(module, name) {
                 return Some(found);
             }
-            if name == known::default || !self.has_export_stars(module) {
+            if name == known::default || self.export_stars_of(module).is_empty() {
                 return None;
             }
         }
@@ -2203,7 +2203,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         let symbol = symbol?;
         // Before the visited check: a plain `export *` reverts what an `export type *` of the same
         // module recorded.
-        if !is_type_only && self.has_type_only_stars {
+        if !is_type_only {
             let names = self.each_export(symbol).map(|export| export.0);
             visit.non_type_only_names.extend(names);
         }
@@ -2704,7 +2704,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         // `findInMap`. The entry for the `export *` declarations isn't an alias.
         let exports = self.exports(module);
         let is_exported = (exports.iter()).any(|&(_, it)| resolved(it) == resolved(local));
-        if !is_exported && self.has_export_stars(module) {
+        if !is_exported && !self.export_stars_of(module).is_empty() {
             resolved(local);
         }
     }
@@ -7907,7 +7907,7 @@ impl<'s> Files<'s> {
                     // merged into the symbol at its declaration.
                     // `getResolvedMembersOrExportsOfSymbol` calls `getExportsOfModuleWorker`, and
                     // stores nothing in `moduleSymbolLinks`.
-                    let resolved_exports = if !self.has_export_stars(main_module) {
+                    let resolved_exports = if self.export_stars_of(main_module).is_empty() {
                         SymbolMap::new_in(self.arena)
                     } else {
                         let links = resolve!(&*self, resolver => resolver.exports_of_module_worker(main_module));
@@ -10253,13 +10253,6 @@ impl<'s> Files<'s> {
             );
         }
         stars
-    }
-
-    fn has_export_stars(&self, symbol: Sym) -> bool {
-        self.parts(symbol).iter().any(|part| {
-            let mut stars = self.bound(part.file).export_stars.iter();
-            stars.any(|star| star.0 == part.id)
-        })
     }
 
     pub fn is_type_only_star_export(&self, module: Sym, name: Atom) -> bool {

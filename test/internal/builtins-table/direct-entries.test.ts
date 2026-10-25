@@ -395,6 +395,40 @@ test("the bounds of a part of a view are two more operands, behind the others", 
   ]);
 });
 
+test("the form in ranges of a row says what the row says", () => {
+  const bytesInRange: DirectParameterSpec = { value: "BytesInRange", cppType: "uint8_t*, size_t" };
+  const typeWithKey = (type: ModelType, key: string) => ({ ...type, key });
+  const views = typeWithKey(anyView, "views");
+  const effects = { capability: "heap", reads: ["TypedArrayElements"], writes: ["TypedArrayElements"] };
+  const result = { type: typeWithKey(number, "number") };
+  const row = { parameters: [taking(views, readAndWritten)], effects, result } as unknown as Columns;
+  const problemsWith = (changes: object) => {
+    const form = { ...row, parameters: [...row.parameters!, taking(anything), taking(anything)], ...changes };
+    return problemsOf({
+      ...row,
+      code: { directEntry: entryTaking(bytes), inRanges: { overload: form, views: [] } } as Columns["code"],
+    });
+  };
+  const bounds = [taking(anything), taking(anything)];
+  expect(problemsWith({})).toEqual([]);
+  expect(problemsWith({ effects: { ...effects, writes: ["ObjectFields", "Elements"] } })).toEqual([
+    problem("its form in ranges has other writes: ObjectFields,Elements, and the row has TypedArrayElements"),
+  ]);
+  expect(problemsWith({ effects: { ...effects, reads: [] } })).toEqual([
+    problem("its form in ranges has other reads: none, and the row has TypedArrayElements"),
+  ]);
+  const anyObject = typeWithKey({ ...nothing, hasAnyObject: true }, "object");
+  expect(problemsWith({ parameters: [taking(anyObject, readAndWritten), ...bounds] })).toEqual([
+    problem("its form in ranges has other accepted type of operand: object, and the row has views"),
+  ]);
+  expect(problemsWith({ parameters: [taking(views, { uses: ["Inspects", "ReadsContents"] }), ...bounds] })).toEqual([
+    problem(
+      "its form in ranges has other uses of operand: Inspects,ReadsContents, and the row has Inspects,ReadsContents,WritesContents",
+    ),
+  ]);
+  expect(bytesInRange.value).toBe("BytesInRange");
+});
+
 test("a function that returns fields returns at most two integers and has no realm", () => {
   const count = { name: null, isOptional: false, type: integersIn(0, 2 ** 32) };
   const returning = (...fields: unknown[]) =>

@@ -167,6 +167,7 @@ const smallest: Record<string, number> = {
 // The front end's. In place of a new one: a row of limits.def, which LimitValues hands to every stage.
 const plainConstantsOfTheFrontEnd: Record<string, number> = {
   "aot/options.rs": 1,
+  "aot/compile.rs": 1,
   "aot/modules/requests.rs": 1,
   "aot/modules/commonjs_exports/text.rs": 1,
   "aot/lower/positions.rs": 1,

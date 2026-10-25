@@ -27,6 +27,7 @@ const seeds = [
   "protocols:1792629295471",
   "protocols:1792629297559",
   "protocols:1792651312456",
+  "text-written-into-parts-of-views:1431792903008731",
   "unsound-types:1792623818290",
   "unsound-types:1792625088050",
 ];

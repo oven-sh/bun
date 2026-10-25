@@ -48,6 +48,7 @@
 //   names-asked-of-full-tables-and-texts-converted-again objects that keep a table of their names, from nearly empty to full of deleted places, asked by read, in, hasOwn, store and delete while they grow and shrink; hundreds of lasting texts whose lower and upper case forms are asked for again and again (names-asked-of-full-tables-and-texts-converted-again.ts)
 //   names-given-by-key-with-something-done-in-between objects of many births are given one to eleven hundred names by key, most of them literal texts that are another one in each turn; between two such stores a name is defined anew or deleted, the object is closed or put below a String object, a typed array, a proxy; then a collection; also stores by index below those
 //   arrays-shifted-during-gc arrays that had elements inserted or removed at the front are read, written, swapped, sorted and resized while garbage keeps the collector running
+//   text-written-into-parts-of-views text is encoded into views and into parts of views while the buffers behind them are transferred, resized and collected (text-written-into-parts-of-views.ts)
 //   sorts-with-hostile-comparators sort and toSorted of arrays and typed arrays of every kind of element, order and length, with a comparator that answers at random, NaN, one thing always or no number at all, and at one call throws, changes the array, its length or its kind of storage, or sorts it again
 //   bind-spread-flatmap-and-boolean-arithmetic bind in a constructor, spreads, flatMap, arithmetic on booleans and getters under computed keys, each many times at one place, with something unusual arriving in the middle
 //   prototype-chains-linked-by-hand constructor functions and classes linked by Object.setPrototypeOf, Object.create, __extends or util.inherits, often in a factory that takes the base; in the middle the chain or a method changes
@@ -236,6 +237,15 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       const typed = seed % 3 === 1;
       const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
       return bed.accepts(program) && bed.allows(program.text) ? { source: "names-given-by-key-with-something-done-in-between", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "text-written-into-parts-of-views.ts"))) {
+    const { generate } = await import("./text-written-into-parts-of-views.ts");
+    sources["text-written-into-parts-of-views"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text) ? { source: "text-written-into-parts-of-views", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
     };
   }
   if (existsSync(join(import.meta.dir, "arrays-shifted-during-gc.ts"))) {

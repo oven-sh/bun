@@ -1,7 +1,7 @@
 use super::answers::FunctionRef;
 use crate::bind::FnOwner;
 use crate::check::Checker;
-use crate::hir::{Flags, FnId, FnKind};
+use crate::hir::{FnId, FnKind};
 use crate::program::FileId;
 use crate::util::SharedSort;
 
@@ -68,10 +68,8 @@ impl<'p> Checker<'p, '_> {
 impl Checker<'_, '_> {
     pub(in crate::check) fn is_left_out(&self, file: FileId, function: FnId) -> bool {
         let bodies = self.left_out.bodies;
-        let written = self.hir(file).fns.get(function.idx());
-        written.is_some_and(|it| it.flags.contains(Flags::REPLACED_BODY))
-            || bodies.is_some_and(|bodies| bodies.contains(FunctionRef { file, function }))
-                && !self.may_have_parameters_evaluated_with_class(file, function)
+        bodies.is_some_and(|bodies| bodies.contains(FunctionRef { file, function }))
+            && !self.may_have_parameters_evaluated_with_class(file, function)
     }
 
     fn may_have_parameters_evaluated_with_class(&self, file: FileId, function: FnId) -> bool {
@@ -104,10 +102,6 @@ impl Checker<'_, '_> {
         let functions =
             functions.filter(|&it| !self.may_have_parameters_evaluated_with_class(file, it));
         ranges.extend(functions.map(|it| self.left_out_range(file, it)));
-        let hir = self.hir(file);
-        let replaced = (0..hir.fns.len() as u32).map(FnId);
-        let replaced = replaced.filter(|&it| hir[it].flags.contains(Flags::REPLACED_BODY));
-        ranges.extend(replaced.map(|it| (hir[it].start, self.end_of_node(file, hir.node(it)))));
         ranges.shared_sort_unstable();
         let mut end_of_outermost = 0;
         ranges.retain(|&(_, end)| {

@@ -28,15 +28,31 @@ describe.concurrent("a function that only code outside the program calls", () =>
 console.log((globalThis as any).handler({ request: { method: "GET" } }));
 `,
     });
+    // The order of the causes follows how often the compiler expects each line to run, which is not what is asked here.
+    const ofUnknownCode = causes.filter(cause => cause.reason === "called-by-unknown-code");
     expect({
       inHandle: causes.filter(cause => cause.line === 2).map(placeOf),
-      first: placeOf(causes[0]),
+      ofUnknownCode: ofUnknownCode.map(placeOf),
       exitCode,
     }).toEqual({
       inHandle: [],
-      first: "main.ts:5:14 called-by-unknown-code",
+      ofUnknownCode: ["main.ts:5:14 called-by-unknown-code"],
       exitCode: 0,
     });
-    expect(causes[0].accesses).toBeGreaterThanOrEqual(2);
+    expect(ofUnknownCode[0].accesses).toBeGreaterThanOrEqual(2);
+  }, 60_000);
+
+  test("points at the access, not at the function's declaration, where a global may hold the function", async () => {
+    const { causes } = await explain({
+      "main.ts": `function handle(context: any) {
+  return context.request.method;
+}
+(globalThis as any)[process.argv[2] ?? "handler"] = handle;
+console.log((globalThis as any).handler({ request: { method: "GET" } }));
+`,
+    });
+    const ofBuiltinObjects = causes.filter(cause => cause.reason === "not-a-plain-object");
+    expect(ofBuiltinObjects.map(placeOf)).toContain("main.ts:4:2 not-a-plain-object");
+    expect(ofBuiltinObjects.filter(cause => cause.line === 1).map(placeOf)).toEqual([]);
   }, 60_000);
 });

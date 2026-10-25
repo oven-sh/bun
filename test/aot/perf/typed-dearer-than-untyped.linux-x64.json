@@ -13,6 +13,7 @@
   "built-in/object-to-string-of-a-payload": 1.06,
   "built-in/process-env-by-key": 1.12,
   "built-in/string-of-a-header": 1.09,
+  "bytes/encode-into-the-rest-of-a-view": 2.24,
   "bytes/sum-an-array-declared-an-array-or-a-view": 1.12,
   "class/new-three-stores-in-function": 1.06,
   "class/setter-in-function": 1.75,

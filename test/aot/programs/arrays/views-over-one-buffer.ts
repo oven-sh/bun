@@ -1,5 +1,6 @@
-// A view over a buffer is a new object, so its methods need no test of it; its bytes are the buffer's, so every other view sees what is stored.
-// IR= 0 lengthsOfNewViews IsPristine
+// A view that a constructor makes over a buffer is a new object, so its methods need no test of it; a part of a view is made in one of two places, and is tested where they meet; its bytes are the buffer's, so every other view sees what is stored.
+// IR= 0 lengthsOfNewViews IsPristine v(2|14|15)\b
+// IR= 3 lengthsOfNewViews IsPristine
 // IR= 1 lengthsOfGivenView IsPristine
 // IR= 1 storedThroughViewNobodyReads PutTypedArrayElement
 // IR= 2 storedThroughOtherView GetTypedArrayElement

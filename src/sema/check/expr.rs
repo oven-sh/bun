@@ -1211,7 +1211,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `isJSLiteralType`. A property missing from a JavaScript object literal's type is
             // `any`.
             let is_unchecked_js = self.is_unchecked_js_suggestion(file, e, left);
-            if (!is_unchecked_js || self.is_inferred_file(file)) && self.is_js_literal_type(left) {
+            if !is_unchecked_js && self.is_js_literal_type(left) {
                 return (TypeId::ANY, may_short_circuit);
             }
             // `leftType.symbol == c.globalThisSymbol`

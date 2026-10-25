@@ -24,7 +24,7 @@ pub use vocabulary::ObjectFlags;
 pub use vocabulary::*;
 
 use super::*;
-use crate::bind::{Decl, ScopeId, SymbolId};
+use crate::bind::{Decl, Parent, ScopeId, SymbolId};
 use crate::node::{Kind, Node, NodeData};
 use smallvec::SmallVec;
 use std::cell::OnceCell;
@@ -206,7 +206,34 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         match hir.data(at) {
             NodeData::Expr(e) => Some(e),
             NodeData::Paren(p) => hir.parens.get(p.idx()).map(|it| it.0),
-            _ => None,
+            // A function or class expression's node data is its function or class handle, not an
+            // `ExprId`.
+            _ => match hir.kind(at) {
+                Kind::FunctionExpression | Kind::ArrowFunction => {
+                    match self
+                        .c
+                        .bound(node.file)
+                        .fns
+                        .get(hir.function_of(at).idx())?
+                        .owner
+                    {
+                        crate::bind::FnOwner::Expr(e) => Some(e),
+                        _ => None,
+                    }
+                }
+                Kind::ClassExpression => {
+                    match *self
+                        .c
+                        .bound(node.file)
+                        .class_owner
+                        .get(hir.class_of(at).idx())?
+                    {
+                        crate::bind::ClassOwner::Expr(e) => Some(e),
+                        crate::bind::ClassOwner::Stmt(_) => None,
+                    }
+                }
+                _ => None,
+            },
         }
     }
 
@@ -748,7 +775,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             // An object literal property's name gets `getContextualTypeForObjectLiteralElement`, the same as its value.
             if at.part() == Some(crate::node::Part::Name)
                 && let NodeData::Prop(p) = hir.data(at.row())
-                && hir[p].kind == PropKind::Init
+                && matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand)
                 && hir.kind(at.row()) != Kind::JsxAttribute
             {
                 return self.contextual_type(NodeRef {
@@ -867,6 +894,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 op: BinOp::Instanceof,
                 ..
             }
+        ) || matches!(
+            self.c.bound(call.file).parent_of_expr(e),
+            Parent::ClassDecorator(_) | Parent::MemberDecorator(_) | Parent::ParamDecorator(_)
         );
         if !is_call_like {
             return None;

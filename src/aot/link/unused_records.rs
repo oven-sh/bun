@@ -1,10 +1,13 @@
+use super::names::ModuleOrigin;
 use super::state::{Numbering, UnitIds};
 use super::unit::LinkUnit;
 use crate::builtins::table;
 use crate::ir::generated::{
     FieldFlags, Layout, LayoutFlags, LayoutKind, PropertyKey, PropertyKeyKind,
 };
-use crate::ir::{Id, InParallel, PropertyKeyId, PropertyKeyTable, StringTable, for_each_mut};
+use crate::ir::{
+    Id, InParallel, ModuleId, PropertyKeyId, PropertyKeyTable, StringTable, for_each_mut,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(super) struct UseInput<'a> {
@@ -12,6 +15,8 @@ pub(super) struct UseInput<'a> {
     pub numbering: &'a Numbering,
     pub property_keys: &'a PropertyKeyTable,
     pub strings: &'a StringTable,
+    /// The origin of each module, in a build that logs type mismatches.
+    pub origins_in_logging_build: Option<&'a [ModuleOrigin]>,
     pub in_parallel: InParallel<'a>,
 }
 
@@ -123,6 +128,13 @@ fn is_stored_by_native_code(input: &UseInput<'_>, key: PropertyKeyId) -> bool {
     name.is_some_and(table::is_stored_by_native_code)
 }
 
+// The log compares a value with the type as the application declares it, whatever the rest of the program makes or stores.
+fn is_compared_as_declared(input: &UseInput<'_>, layout: &Layout) -> bool {
+    let origin = |module: ModuleId| Some(input.origins_in_logging_build?[module.index()]);
+    let origin = layout.module.and_then(origin);
+    origin.is_some_and(|origin| origin != ModuleOrigin::Runtime)
+}
+
 /// Says of a plain record that nothing in the program makes an object with it: it only describes objects.
 /// Answers whether the program writes a property under `asked_name`.
 pub(super) fn mark_unused_records(
@@ -138,7 +150,7 @@ pub(super) fn mark_unused_records(
     let is_asked_name_written =
         asked_key.is_some_and(|key| is_written[key.index()].load(Ordering::Relaxed));
     input.for_each_layout(layouts, &is_allocated, &|layout, is_allocated| {
-        if !is_plain_record(layout) {
+        if !is_plain_record(layout) || is_compared_as_declared(input, layout) {
             return;
         }
         if !is_allocated {

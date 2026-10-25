@@ -4,8 +4,8 @@
 //! computed for one is stored in an array and needs no hashing. A cell starts at zero, meaning "not
 //! computed", and is written once. A read is one load.
 //!
-//! A page of cells that's never written is never read either, so it's never resident. See `FixedCells`
-//! and `Cells`.
+//! The memory comes zero-filled from the allocator, which for arrays of this size gets it from the
+//! operating system, so a page that's never touched is never resident.
 //!
 //! A table's third type parameter determines who writes an entry and when it becomes visible to
 //! whom: `Frozen`, `Buffered`, `FileLocal`. See `Policy`.

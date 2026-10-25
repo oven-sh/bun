@@ -415,6 +415,7 @@ console.log("afterward", kept.length);
   }, 120_000);
 
   // Native code that makes an object for each piece of its input enters no function of the program: it asks by itself, once an object, whether the error is owed.
+  // The list that is copied takes about half of the room. With its six copies it is larger than the whole range.
   test.skipIf(runsOutOfRoomEarly)(
     "one text or one message with more objects than fit is a RangeError of JSON.parse and of structuredClone",
     async () => {
@@ -429,7 +430,7 @@ function attempt(what: string, fill: () => unknown[]) {
 }
 attempt("a text", () => JSON.parse(text));
 attempt("a text and a reviver", () => JSON.parse(text, (key, value) => value));
-const part: unknown[] = JSON.parse("[" + '{"a":1,"b":2},'.repeat(400_000) + "0]");
+const part: unknown[] = JSON.parse("[" + '{"a":1,"b":2},'.repeat(200_000) + "0]");
 attempt("copies", () => {
   const all: unknown[] = [];
   for (let i = 0; i < 6; i++) all.push(structuredClone(part));

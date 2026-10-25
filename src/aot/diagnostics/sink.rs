@@ -189,7 +189,7 @@ pub(crate) fn log_diagnostic_at(
         line_text,
     }) = place
     {
-        reported.path = position.path.clone();
+        reported.path.clone_from(&position.path);
         reported.has_undefined_range = false;
         (reported.line, reported.column) = (position.line, position.column);
         (reported.source, reported.source_line) = (vec![line_text.clone()], position.line);

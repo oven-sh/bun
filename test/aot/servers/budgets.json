@@ -211,11 +211,11 @@
     "bytesAValue": 34.48,
     "tests": {
       "executed": 14779,
-      "failed": 559
+      "failed": 581
     },
     "typeTests": {
       "executed": 8044,
-      "failed": 509
+      "failed": 531
     },
     "alwaysFailing": {
       "bun": {
@@ -509,25 +509,26 @@
     "codeBytes": 1580704,
     "bytesAValue": 23.99,
     "tests": {
-      "executed": 4074,
-      "failed": 153
+      "executed": 4063,
+      "failed": 142
     },
     "typeTests": {
-      "executed": 2243,
-      "failed": 141
+      "executed": 2232,
+      "failed": 130
     },
     "alwaysFailing": {
       "bun": {},
       "packages": 10,
-      "program": 9
+      "program": 7
     },
     "uneven": 0,
     "calls": {
       "all": 373,
       "ofFunctionsNotExpectedToRun": 10
     },
-    "accessesByName": 1098,
+    "accessesByName": 1088,
     "runtimeOperations": {
+      "operationAOTEncodeTextToBytes": 10,
       "operationAOTFillSiteCache": 1,
       "operationAOTFinishAsyncIteratorStep": 3,
       "operationAOTJSONAppendString": 91,

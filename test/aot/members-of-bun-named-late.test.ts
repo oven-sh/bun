@@ -5,7 +5,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { describe, test } from "./supported";
+import { describe, eachRow, gap, test } from "./supported";
 
 const bunLeaves = `const functionNobodyKnows = globalThis[process.argv[2] ?? "Boolean"];
 globalThis[process.argv[3] ?? "nothing"] = functionNobodyKnows(1);
@@ -20,9 +20,24 @@ function behindCalls(count: number, first: string, last: string) {
 }
 
 const url = `"postgres://127.0.0.1:1/x"`;
+const notCompiled = "Bun.SQL was not compiled into this executable";
 
-describe.concurrent("the class that a module of Bun makes", () => {
-  test.each([
+// `open` hands its parameter to a function that nobody knows, and is first called with a value that nobody knows.
+function openAfterUnknownValue(read: string) {
+  return `const hide = globalThis[process.argv[4] ?? "Object"];
+const open = bun => {
+  hide(bun);
+  return new (${read})(${url});
+};
+try {
+  open(hide({}));
+} catch {}
+`;
+}
+
+// Which names the compiler comes to late depends on the order of its work, so each way is tried behind few calls and behind many.
+describe.concurrent.each([6, 14])("the class that a module of Bun makes, behind %d calls", count => {
+  eachRow<[string, string, string]>([
     ["named on Bun", "", `() => new Bun.SQL(${url})`],
     ["taken out of Bun by a pattern", "", `() => {\n    const { SQL } = Bun;\n    return new SQL(${url});\n  }`],
     [
@@ -33,13 +48,54 @@ describe.concurrent("the class that a module of Bun makes", () => {
     ["named on a constant", "", `() => {\n    const bun = Bun;\n    return new bun.SQL(${url});\n  }`],
     ["named on a constant of the module", "const bun = Bun;\n", `() => new bun.SQL(${url})`],
     ["named on a parameter", `const open = bun => new bun.SQL(${url});\n`, `() => open(Bun)`],
+    gap(notCompiled, [
+      "named on a parameter that took an unknown value first",
+      openAfterUnknownValue("bun.SQL"),
+      `() => open(Bun)`,
+    ]),
     ["named on globalThis.Bun", "", `() => new globalThis.Bun.SQL(${url})`],
     ["named by a string in brackets", "", `() => new Bun["SQL"](${url})`],
     ["read by Reflect.get", "", `() => new (Reflect.get(Bun, "SQL"))(${url})`],
+    ["read by Reflect.get with a receiver", "", `() => new (Reflect.get(Bun, "SQL", Bun))(${url})`],
+    ["read by Reflect.get taken out of Reflect", "const { get } = Reflect;\n", `() => new (get(Bun, "SQL"))(${url})`],
+    ["read by Reflect.get.call", "", `() => new (Reflect.get.call(undefined, Bun, "SQL"))(${url})`],
+    [
+      "read by Reflect.get under a key in a parameter",
+      `const open = key => new (Reflect.get(Bun, key))(${url});\n`,
+      `() => open("SQL")`,
+    ],
+    gap(notCompiled, [
+      "read by Reflect.get on a parameter that took an unknown value first",
+      openAfterUnknownValue(`Reflect.get(bun, "SQL")`),
+      `() => open(Bun)`,
+    ]),
+    gap(notCompiled, [
+      "read by Reflect.get on globalThis.Bun",
+      "",
+      `() => new (Reflect.get(globalThis.Bun, "SQL"))(${url})`,
+    ]),
+    [
+      "read by Reflect.getOwnPropertyDescriptor",
+      "",
+      `() => new (Reflect.getOwnPropertyDescriptor(Bun, "SQL").value)(${url})`,
+    ],
+    [
+      "read by Object.getOwnPropertyDescriptor",
+      "",
+      `() => new (Object.getOwnPropertyDescriptor(Bun, "SQL").value)(${url})`,
+    ],
     ["named on require()", "", `() => new (import.meta.require("bun").SQL)(${url})`],
+    gap(notCompiled, ["named on a spread copy", "", `() => new ({ ...Bun }).SQL(${url})`]),
+    gap(notCompiled, ["named on a copy by Object.assign", "", `() => new (Object.assign({}, Bun).SQL)(${url})`]),
+    gap(notCompiled, ["named on an object below Bun", "", `() => new (Object.create(Bun).SQL)(${url})`]),
+    gap(notCompiled, [
+      "named on what a promise resolves to",
+      "",
+      `async () => new (await Promise.resolve(Bun)).SQL(${url})`,
+    ]),
   ])("%s", async (_, first, last) => {
     using dir = tempDir("aot-members-of-bun-named-late", {
-      "program.mjs": `${behindCalls(6, first, last)}console.log(typeof (await holder6.next()));\n`,
+      "program.mjs": `${behindCalls(count, first, last)}console.log(typeof (await holder${count}.next()));\n`,
     });
     const directory = String(dir);
     const built = await run(
@@ -95,15 +151,27 @@ async function membersUsed(text: string) {
     .map(line => line.slice(prefix.length));
 }
 
-test("every member of Bun that is read by its name counts as used, early or late", async () => {
-  // TODO: Bun.ModuleGraph, which lets in code from outside the executable, is still missed where it is named late.
+// TODO: the members that let in code from outside the executable are still missed where they are named late: Bun.ModuleGraph always, the functions where a built-in reads them.
+const letInOutsideCode = ["ModuleGraph", "Transpiler", "build", "plugin"];
+test.concurrent.each([
+  ["its name", (name: string) => `Bun.${name}`, ["ModuleGraph"]],
+  ["Reflect.get", (name: string) => `Reflect.get(Bun, "${name}")`, letInOutsideCode],
+  [
+    "Reflect.getOwnPropertyDescriptor",
+    (name: string) => `Reflect.getOwnPropertyDescriptor(Bun, "${name}")`,
+    letInOutsideCode,
+  ],
+])("every member of Bun that is read by %s counts as used, early or late", async (_, read, missed) => {
   const names = Reflect.ownKeys(Bun).filter(
-    key => typeof key === "string" && /^[A-Za-z_$][\w$]*$/.test(key) && key !== "ModuleGraph",
+    key => typeof key === "string" && /^[A-Za-z_$][\w$]*$/.test(key) && !missed.includes(key),
   ) as string[];
-  const reads = `() => [\n${names.map(name => `    Bun.${name},`).join("\n")}\n  ]`;
-  const [early, late] = await Promise.all(
-    [0, 6].map(count => membersUsed(`${behindCalls(count, "", reads)}console.log(holder${count}.next().length);\n`)),
+  const reads = `() => [\n${names.map(name => `    ${read(name)},`).join("\n")}\n  ]`;
+  const [early, late, later] = await Promise.all(
+    [0, 6, 14].map(count =>
+      membersUsed(`${behindCalls(count, "", reads)}console.log(holder${count}.next().length);\n`),
+    ),
   );
   expect(names.filter(name => !early.includes(name))).toEqual([]);
   expect(names.filter(name => !late.includes(name))).toEqual([]);
+  expect(names.filter(name => !later.includes(name))).toEqual([]);
 });

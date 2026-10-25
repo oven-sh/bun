@@ -1097,7 +1097,14 @@ impl Engine for Engines {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cgroup_line, parse_limit};
+    use super::{parse_cgroup_line, parse_limit, Engines, START};
+    use core::sync::atomic::Ordering;
+
+    #[test]
+    fn for_editor_expects_few_vms() {
+        let _engines = Engines::for_editor();
+        assert!(START.is_for_few.load(Ordering::Relaxed));
+    }
 
     #[test]
     fn parses_cgroup_lines() {

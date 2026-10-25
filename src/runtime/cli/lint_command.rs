@@ -478,6 +478,17 @@ pub(crate) fn run_and_exit(
     cwd: Option<&[u8]>,
     run: impl FnOnce(&Environment) -> Outcome,
 ) -> ! {
+    run_and_exit_with(command, cwd, true, run)
+}
+
+/// `run_and_exit`, but `isolates_fd_1` says whether fd 1 becomes stderr for everything but the output. The rules'
+/// test runner writes its lines to fd 1 itself, so it keeps fd 1.
+fn run_and_exit_with(
+    command: &[u8],
+    cwd: Option<&[u8]>,
+    isolates_fd_1: bool,
+    run: impl FnOnce(&Environment) -> Outcome,
+) -> ! {
     disallow_code_generation_before(command);
     if let Some(cwd) = cwd_before(command) {
         change_directory(cwd);
@@ -499,11 +510,18 @@ pub(crate) fn run_and_exit(
     // Only the output goes to fd 1 as it was: it becomes stderr for the rest, like a plugin's `console.log`, before
     // any VM starts. Windows keeps fd 1, so there a plugin's output still lands in the output.
     #[cfg(unix)]
-    let to_stdout = (bun_sys::dup(bun_core::Fd::stdout()).map(File::from_fd).ok())
-        .filter(|_| bun_sys::dup2(bun_core::Fd::stderr(), bun_core::Fd::stdout()).is_ok())
-        .unwrap_or_else(File::stdout);
+    let to_stdout = if isolates_fd_1 {
+        (bun_sys::dup(bun_core::Fd::stdout()).map(File::from_fd).ok())
+            .filter(|_| bun_sys::dup2(bun_core::Fd::stderr(), bun_core::Fd::stdout()).is_ok())
+            .unwrap_or_else(File::stdout)
+    } else {
+        File::stdout()
+    };
     #[cfg(not(unix))]
-    let to_stdout = File::stdout();
+    let to_stdout = {
+        let _ = isolates_fd_1;
+        File::stdout()
+    };
     let js_engine = super::lint_js::Engines::default();
     // `path.win32.resolve` needs it when a path is on a different drive than its base.
     bun_paths::fs::FileSystem::init(&working_directory());
@@ -616,7 +634,7 @@ impl LintCommand {
     pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
         if HAS_TEST_RUNNER && let [b"--run-eslint-tests", rest @ ..] = &args[..] {
-            run_and_exit(b"lint", None, |environment| Outcome {
+            run_and_exit_with(b"lint", None, false, |environment| Outcome {
                 exit_code: u8::from(!bun_lint_driver::for_tests::run_eslint_tests(
                     rest,
                     environment,

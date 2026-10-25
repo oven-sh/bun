@@ -324,16 +324,19 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        if !source_map.is_standalone_module_graph && bun_paths::is_absolute(base_filename) {
+        let display = if !source_map.is_standalone_module_graph
+            && bun_paths::is_absolute(base_filename)
+        {
             // `platform::Auto` is a cfg-selected
             // type alias (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            return Some(bun_core::String::clone_utf8(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
-            ));
-        }
+            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name)
+        } else {
+            name
+        };
 
-        Some(bun_core::String::clone_utf8(name))
+        // Copied: script that runs before a frame is printed can free the map.
+        Some(bun_core::String::clone_utf8(display))
     }
 
     /// Only valid if `lookup.source_map.is_external()`

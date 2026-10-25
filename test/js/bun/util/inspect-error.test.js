@@ -408,9 +408,12 @@ describe("source map remapping of the printed stack", () => {
     const map = {
       version: 3,
       sources: ["orig.ts"],
-      sourcesContent: ["// the original source\n"],
+      sourcesContent: [
+        'function thrower() { throw new Error("RELOADED"); }\nexport function caller() { thrower(); }\n',
+      ],
       names: [],
-      mappings: ";;AAUI;AAUA",
+      // Line 2 -> orig.ts:1:5, line 3 -> orig.ts:2:5.
+      mappings: ";;AAAI;AACA",
     };
     const { dir, out, stderr, exitCode } = await run({
       "rel.js": [
@@ -431,26 +434,27 @@ describe("source map remapping of the printed stack", () => {
         "  return error;",
         "}",
         "const out = { inspect: Bun.inspect(thrown()), stack: thrown().stack };",
+        'process.on("exit", () => console.log(JSON.stringify({ ...out, reloads })));',
         "console.error(thrown());",
-        "console.log(JSON.stringify({ ...out, reloads }));",
+        "throw thrown();",
       ].join("\n"),
     });
 
     const files = ["orig.ts", "rel.js"];
-    const expected = ["at thrower (orig.ts:11:5)", "at caller (orig.ts:21:5)"];
+    const expected = ["at thrower (orig.ts:1:5)", "at caller (orig.ts:2:5)"];
     expect({
       reloads: out.reloads,
       inspect: frames(out.inspect, dir, files),
-      consoleError: frames(stderr, dir, files),
+      consoleErrorThenUncaught: frames(stderr, dir, files),
       stack: frames(out.stack, dir, files),
     }).toEqual({
-      // Once for Bun.inspect and once for console.error.
-      reloads: 2,
+      // Bun.inspect, console.error and the uncaught error. Reading `stack` does not read `cause`.
+      reloads: 3,
       inspect: expected,
-      consoleError: expected,
+      consoleErrorThenUncaught: [...expected, ...expected],
       stack: expected,
     });
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
   });
 });
 

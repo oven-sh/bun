@@ -14083,12 +14083,29 @@ export const a = define({
   computed: { double() { return this.n * 2; } },
   watch: { n(now) {}, other() {} },
 });
+// The type is stored for the expression inside the parentheses, so the \`return\` statement checks it again.
+export const b = define({
+  data() { return { n: this.start }; },
+  computed: { double() { return (this.n * 2); } },
+  watch: { n(now) {}, other() {} },
+});
+export const c = define({
+  data() { return { n: this.start }; },
+  computed: { double() { return ((this.n) * 2); } },
+  watch: { n(now) {}, other() {} },
+});
 `,
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
         "a.ts(9,15): error TS7023: 'double' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
-        a.ts(10,23): error TS2353: Object literal may only specify known properties, and 'other' does not exist in type '{ n?: ((now: number) => void) | undefined; }'."
+        a.ts(10,23): error TS2353: Object literal may only specify known properties, and 'other' does not exist in type '{ n?: ((now: number) => void) | undefined; }'.
+        a.ts(15,15): error TS7023: 'double' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(15,34): error TS2571: Object is of type 'unknown'.
+        a.ts(16,23): error TS2353: Object literal may only specify known properties, and 'other' does not exist in type '{ n?: ((now: number) => void) | undefined; }'.
+        a.ts(20,15): error TS7023: 'double' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(20,34): error TS2571: Object is of type 'unknown'.
+        a.ts(21,23): error TS2353: Object literal may only specify known properties, and 'other' does not exist in type '{ n?: ((now: number) => void) | undefined; }'."
       `);
       expect(exitCode).toBe(1);
     });

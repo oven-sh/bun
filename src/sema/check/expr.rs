@@ -588,6 +588,8 @@ impl<'p, 's> Checker<'p, 's> {
             || !self.check_mode().is_empty()
             || !matches!(self.stack[self.stack.len() - 2], Query::Return(..))
             || !self.is_checked_by_check_expression_cached(file, e)
+            // tsc caches a `return` statement's expression without its parentheses, so the walk checks it again.
+            || is_parenthesized(self.hir(file), e)
             || (self.types().object_flags(ty)).contains(ObjectFlags::HAS_UNRESOLVED)
         {
             return;

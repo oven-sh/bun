@@ -267,6 +267,63 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
   );
 
   test(
+    "offers a quick fix and source.fixAll, and lints on save when not on every change",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", { "bunfig.toml": '[lint.rules]\n"no-var" = "error"\n', "a.js": "" });
+      await using client = new Client(String(dir));
+      const started = await initialize(client, [String(dir)], {
+        initializationOptions: { lint: { run: "onSave" } },
+      });
+      expect(started.error).toBeUndefined();
+      client.notify("initialized");
+      const text = "var a = 1;\nvar b = 2;\nconsole.log(a, b);\n";
+      open(client, join(String(dir), "a.js"), text);
+      const opened = await client.diagnostics(join(String(dir), "a.js"));
+      expect(opened.params.diagnostics.map((it: any) => it.code)).toEqual(["no-var", "no-var"]);
+
+      // Not on a change, on the save that follows it.
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(String(dir), "a.js"), version: 2 },
+        contentChanges: [{ text: "var a = 1;\nlet b = 2;\nconsole.log(a, b);\n" }],
+      });
+      client.notify("textDocument/didSave", { textDocument: { uri: uriOf(String(dir), "a.js") } });
+      const saved = await client.diagnostics(join(String(dir), "a.js"));
+      expect(saved.params.version).toBe(2);
+      expect(saved.params.diagnostics.map((it: any) => it.code)).toEqual(["no-var"]);
+
+      const uri = uriOf(String(dir), "a.js");
+      const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 10 } };
+      const actions = await client.request("textDocument/codeAction", {
+        textDocument: { uri },
+        range,
+        context: { diagnostics: saved.params.diagnostics },
+      });
+      expect(actions.error).toBeUndefined();
+      const editsOf = (action: any): TextEdit[] =>
+        action.edit.changes?.[uri] ?? action.edit.documentChanges.find((it: any) => it.textDocument.uri === uri).edits;
+      const quick = actions.result.find((it: any) => it.kind === "quickfix" && it.title === "Fix no-var");
+      expect(applyEdits("var a = 1;\nlet b = 2;\nconsole.log(a, b);\n", editsOf(quick))).toBe(
+        "let a = 1;\nlet b = 2;\nconsole.log(a, b);\n",
+      );
+      const all = await client.request("textDocument/codeAction", {
+        textDocument: { uri },
+        range,
+        context: { diagnostics: [], only: ["source.fixAll"] },
+      });
+      expect(all.result.map((it: any) => it.kind)).toEqual(["source.fixAll.bun"]);
+      expect(applyEdits("var a = 1;\nlet b = 2;\nconsole.log(a, b);\n", editsOf(all.result[0]))).toBe(
+        "let a = 1;\nlet b = 2;\nconsole.log(a, b);\n",
+      );
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
     "formats with [fmt] of the bunfig.toml of the folder",
     async () => {
       using dir = tempDir("bun-lint-lsp", { "bunfig.toml": "[fmt]\nsemi = false\n", "a.js": "" });
@@ -294,6 +351,7 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
       using dir = tempDir("bun-lint-lsp", {
         ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/hello": "error" } }),
         "plugin.mjs": `
+        import { writeSync } from "node:fs";
         process.on("exit", () => console.error("the plugin's exit handler ran"));
         export default {
           meta: { name: "demo" },
@@ -303,6 +361,8 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
                 return {
                   Program(node) {
                     console.log("the plugin prints to stdout");
+                    process.stdout.write("the plugin writes to process.stdout\\n");
+                    writeSync(1, "the plugin writes to fd 1\\n");
                     console.error("the plugin prints to stderr");
                     context.report({ node, message: "hello from the plugin" });
                   },
@@ -326,6 +386,8 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
       const { exitCode, stderr, garbage, rest } = await client.end();
       expect([garbage, rest]).toEqual([[], ""]);
       expect(stderr).toContain("the plugin prints to stdout");
+      expect(stderr).toContain("the plugin writes to process.stdout");
+      expect(stderr).toContain("the plugin writes to fd 1");
       expect(stderr).toContain("the plugin prints to stderr");
       expect(stderr).toContain("the plugin's exit handler ran");
       expect(exitCode).toBe(0);

@@ -110,14 +110,7 @@ impl FormatCommand {
             Global::exit(0);
         }
         if options.lsp {
-            serve_editor(
-                b"fmt",
-                &args,
-                bun_lint_driver::lsp::Features {
-                    format: true,
-                    lint: false,
-                },
-            );
+            serve_editor(b"fmt", &args);
         }
         let cwd = options.cwd.clone();
         run_and_exit(b"fmt", cwd.as_deref(), |environment| {

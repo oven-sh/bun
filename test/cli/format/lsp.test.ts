@@ -1,13 +1,16 @@
 // `bun fmt --no-script --lsp`: the language server over standard input and output, as an editor uses it.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
 
 const command = [bunExe(), "fmt", "--no-script", "--lsp"];
+
+// `bun lint` is compiled into debug and canary builds only: there the server lints too.
+const lints = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
 // Each test spawns a debug build and waits for initialize, a format and exit, which is seconds under ASAN; a Prettier
 // plugin runs in a VM, which takes seconds more to start.
@@ -106,10 +109,30 @@ class Client {
     watcher.resolve(message);
   }
 
+  /** What `send` has not written yet, while `together` runs. */
+  private held: string[] | undefined;
+
   private send(message: object) {
     const body = JSON.stringify({ jsonrpc: "2.0", ...message });
-    this.proc.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+    const frame = `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+    if (this.held) return void this.held.push(frame);
+    this.proc.stdin.write(frame);
     this.proc.stdin.flush();
+  }
+
+  /** Sends what `send` is called with in `run` as one write. */
+  together(run: () => void) {
+    this.held = [];
+    run();
+    const frames = this.held.join("");
+    this.held = undefined;
+    this.proc.stdin.write(frames);
+    this.proc.stdin.flush();
+  }
+
+  /** The id of the last request sent. */
+  get lastId() {
+    return this.next;
   }
 
   request(method: string, params: unknown = {}): Promise<Message> {
@@ -178,7 +201,7 @@ function applyEdits(text: string, edits: TextEdit[]) {
 
 describe.concurrent("bun fmt --lsp", () => {
   test(
-    "answers initialize with the capabilities of a formatter, and not those of a linter",
+    "answers initialize with the capabilities of a formatter, and of a linter where the build has bun lint",
     async () => {
       using dir = tempDir("bun-fmt-lsp", { "a.js": "a;\n" });
       await using client = new Client(String(dir));
@@ -194,16 +217,21 @@ describe.concurrent("bun fmt --lsp", () => {
       expect(capabilities.documentFormattingProvider).toBe(true);
       expect(capabilities.documentRangeFormattingProvider).toBe(true);
       expect(capabilities.workspace.workspaceFolders).toEqual({ supported: true, changeNotifications: true });
-      expect(capabilities.codeActionProvider).toBe(false);
+      expect(capabilities.codeActionProvider).toEqual(
+        lints ? { codeActionKinds: ["quickfix", "source.fixAll.bun"] } : false,
+      );
       client.notify("initialized");
       open(client, join(String(dir), "a.js"), "debugger;\n");
       expect((await format(client, join(String(dir), "a.js"))).result).toEqual([]);
+      if (lints) {
+        const published = await client.notification(it => it.method === "textDocument/publishDiagnostics");
+        expect(published.params.diagnostics.map((it: any) => it.code)).toEqual(["no-debugger"]);
+      }
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();
-      // Nothing is linted.
       const diagnostics = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
-      expect(diagnostics.filter(it => it.params.diagnostics.length > 0)).toEqual([]);
+      expect(diagnostics.filter(it => it.params.diagnostics.length > 0)).toHaveLength(lints ? 1 : 0);
       expect([garbage, rest]).toEqual([[], ""]);
       expect(exitCode).toBe(0);
     },
@@ -356,6 +384,104 @@ exports.format = async (text, options) => {
       expect([garbage, rest]).toEqual([[], ""]);
       expect(stderr).toContain("plugin says hello on stdout");
       expect(stderr).toContain("plugin says hello on stderr");
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
+    "answers null for a syntax error and for a file that --ignore-unknown skips, never with an edit",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", {
+        "bunfig.toml": "[fmt]\nignoreUnknown = true\n",
+        "a.js": "",
+        "notes.zzz": "",
+      });
+      await using client = new Client(String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      open(client, join(String(dir), "a.js"), "const x  =  ;\n");
+      const broken = await format(client, join(String(dir), "a.js"));
+      expect(broken).toMatchObject({ result: null });
+      expect(broken.error).toBeUndefined();
+      // `bun fmt --stdin-filepath notes.zzz` prints nothing and exits with 0 here, which is not an empty document.
+      open(client, join(String(dir), "notes.zzz"), "some   text\n", "plaintext");
+      const unknown = await format(client, join(String(dir), "notes.zzz"));
+      expect(unknown.error).toBeUndefined();
+      expect(applyEdits("some   text\n", unknown.result ?? [])).toBe("some   text\n");
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
+    "refuses a second initialize, and answers a cancelled request with RequestCancelled",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", { "a.js": "" });
+      await using client = new Client(String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      expect((await initialize(client, [String(dir)])).error).toEqual({ code: -32600, message: expect.any(String) });
+      client.notify("initialized");
+      open(client, join(String(dir), "a.js"), "a  ;\n");
+      // The folder's thread is on the first request while the reader takes the second and its cancellation.
+      let first!: Promise<Message>, second!: Promise<Message>;
+      client.together(() => {
+        first = format(client, join(String(dir), "a.js"));
+        second = format(client, join(String(dir), "a.js"));
+        client.notify("$/cancelRequest", { id: client.lastId });
+      });
+      expect((await first).error).toBeUndefined();
+      expect((await second).error).toEqual({ code: -32800, message: expect.any(String) });
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // Each change of a configuration file gives the folder a new set of VMs, and the old ones are freed with their
+  // threads. JSC starts helper threads of the process when the first VM is freed, so the count is taken after that.
+  test.skipIf(!isLinux)(
+    "frees the threads of a folder's VMs when its configuration changes",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", {
+        "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
+        "node_modules/prettier/index.cjs": `exports.resolveConfig = async () => null;
+exports.format = async (text, options) => text.replace(/ +/g, " ");
+`,
+        "node_modules/prettier-plugin-astro/package.json": '{ "name": "prettier-plugin-astro", "version": "4.0.0" }',
+        ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n',
+        "bunfig.toml": "[fmt]\nprintWidth = 80\n",
+        "a.astro": "",
+      });
+      await using client = new Client(String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const text = "<p   >a</p>\n";
+      open(client, join(String(dir), "a.astro"), text, "astro");
+      const threads = () => readdirSync(`/proc/${client.proc.pid}/task`).length;
+      const counts: number[] = [];
+      for (let generation = 1; generation <= 20; generation++) {
+        writeFileSync(join(String(dir), "bunfig.toml"), `[fmt]\nprintWidth = ${80 + generation}\n`);
+        client.notify("workspace/didChangeWatchedFiles", {
+          changes: [{ uri: uriOf(String(dir), "bunfig.toml"), type: 2 }],
+        });
+        const formatted = await format(client, join(String(dir), "a.astro"));
+        expect(formatted.error).toBeUndefined();
+        expect(applyEdits(text, formatted.result)).toBe("<p >a</p>\n");
+        counts.push(threads());
+      }
+      expect(counts[19]).toBe(counts[1]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
       expect(exitCode).toBe(0);
     },
     timeout,

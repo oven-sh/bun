@@ -627,7 +627,7 @@ describe("bun", () => {
     // Initialize, a format and exit of a debug build take seconds under ASAN.
     const timeout = isDebug || isASAN ? 120_000 : 10_000;
     test(
-      "everywhere bun fmt --no-script --lsp formats and does not lint",
+      "everywhere bun fmt --no-script --lsp formats, and lints where the build has bun lint",
       async () => {
         using dir = tempDir("bun-fmt-lsp-everywhere", {
           "bunfig.toml": `[lint.rules]\n"no-var" = "error"\n`,
@@ -686,11 +686,12 @@ describe("bun", () => {
         });
         const initialized = await answer(1);
         expect(initialized.result.serverInfo.name).toBe("bun");
-        // Formatting is on and linting is off, in a release build as in a canary one.
+        // Formatting is on in every build. `bun lint` is compiled into debug and canary builds only.
+        const lints = isDebug || isCanary;
         expect(initialized.result.capabilities).toMatchObject({
           documentFormattingProvider: true,
           documentRangeFormattingProvider: true,
-          codeActionProvider: false,
+          codeActionProvider: lints ? { codeActionKinds: ["quickfix", "source.fixAll.bun"] } : false,
         });
         send({ method: "initialized", params: {} });
         send({
@@ -719,21 +720,25 @@ describe("bun", () => {
           applied = applied.slice(0, offset(edit.range.start)) + edit.newText + applied.slice(offset(edit.range.end));
         }
         expect(applied).toBe("var a = 1;\n");
-        // `bunfig.toml` turns `no-var` on, and lint is off in this server: there is no fix to offer.
+        // `bunfig.toml` turns `no-var` on: a fix to offer where the server lints, none where it does not.
         const range = { start: { line: 0, character: 0 }, end: { line: 0, character: text.length } };
         send({
           id: 3,
           method: "textDocument/codeAction",
           params: { textDocument: { uri }, range, context: { diagnostics: [] } },
         });
-        expect((await answer(3)).result).toEqual([]);
+        const actions: { kind: string; title: string }[] = (await answer(3)).result;
+        if (lints) expect(actions).toContainEqual(expect.objectContaining({ kind: "quickfix", title: "Fix no-var" }));
+        else expect(actions).toEqual([]);
         send({ id: 4, method: "shutdown" });
         expect((await answer(4)).result).toBeNull();
         send({ method: "exit" });
         const exitCode = await proc.exited;
         await reading;
         const published = messages.filter(message => message.method === "textDocument/publishDiagnostics");
-        expect(published.flatMap(message => message.params.diagnostics)).toEqual([]);
+        const codes = published.flatMap(message => message.params.diagnostics.map((it: any) => it.code));
+        if (lints) expect(codes).toContain("no-var");
+        else expect(codes).toEqual([]);
         expect(exitCode).toBe(0);
       },
       timeout,

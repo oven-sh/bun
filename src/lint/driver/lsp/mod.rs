@@ -37,11 +37,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use text::{Encoding, Lines, Range};
 
-/// What the server does: `bun fmt --lsp` formats, `bun lint --lsp` does both.
+/// What the server does: `bun lint --lsp` does both, `bun fmt --lsp` formats, and lints where the build has `bun lint`.
 #[derive(Copy, Clone)]
 pub struct Features {
     pub format: bool,
     pub lint: bool,
+}
+
+/// What follows the command on the command line, without `--lsp`: the flags of the command that started the server.
+/// The other command runs with its defaults.
+#[derive(Copy, Clone)]
+pub enum Args<'a> {
+    Lint(&'a [&'a [u8]]),
+    Format(&'a [&'a [u8]]),
 }
 
 /// The engine of one workspace folder while its configurations stay as they are. Its realms run on threads of their
@@ -240,8 +248,7 @@ struct Known {
 
 /// What all threads share.
 struct Server<'s> {
-    /// What follows the command on the command line: flags of `bun lint` when [`Features::lint`], else of `bun fmt`.
-    args: &'s [&'s [u8]],
+    args: Args<'s>,
     environment: &'s Environment<'s>,
     process: &'s Process<'s>,
     out: Writer<'s>,
@@ -461,17 +468,21 @@ impl<'s> Server<'s> {
 
     /// The flags of `bun lint` in `root`.
     fn lint_options_of(&self, root: &Root) -> Result<Options, Vec<u8>> {
+        let args: &[&[u8]] = match self.args {
+            Args::Lint(args) => args,
+            Args::Format(_) => &[],
+        };
         match root.is_folder {
-            true => (self.process.lint_options)(&root.path, self.args),
-            false => Options::parse(self.args).map_err(|UsageError(message)| message),
+            true => (self.process.lint_options)(&root.path, args),
+            false => Options::parse(args).map_err(|UsageError(message)| message),
         }
     }
 
-    /// The flags of `bun fmt` in `root`. The arguments are its when the server does not lint.
+    /// The flags of `bun fmt` in `root`.
     fn format_options_of(&self, root: &Root) -> Result<crate::fmt::cli::Options, Vec<u8>> {
-        let args: &[&[u8]] = match self.features().lint {
-            true => &[],
-            false => self.args,
+        let args: &[&[u8]] = match self.args {
+            Args::Format(args) => args,
+            Args::Lint(_) => &[],
         };
         match root.is_folder {
             true => (self.process.format_options)(&root.path, args),
@@ -1255,9 +1266,8 @@ impl<'d> Desk<'d, '_, '_> {
     }
 }
 
-/// Serves a client until it says `exit` or is gone, which ends the process. `args`: what follows the command on the
-/// command line, without `--lsp`.
-pub fn serve<'a>(args: &'a [&'a [u8]], environment: &'a Environment<'a>, process: &'a Process<'a>) {
+/// Serves a client until it says `exit` or is gone, which ends the process.
+pub fn serve<'a>(args: Args<'a>, environment: &'a Environment<'a>, process: &'a Process<'a>) {
     let server = &Server {
         args,
         environment,

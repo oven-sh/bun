@@ -6,7 +6,7 @@ use bstr::BStr;
 
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
-use bun_lint_driver::lsp::{Features, Process, Realms};
+use bun_lint_driver::lsp::{Args, Features, Process, Realms};
 use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig, git};
 use bun_sys::File;
 
@@ -540,8 +540,24 @@ impl Realms for super::lint_js::Engines {
 }
 
 /// `bun lint --lsp` and `bun fmt --lsp`: serves the editor on standard input and output until it says `exit`.
-/// `command` is `lint` or `fmt`, `args` what follows it.
-pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]], features: Features) -> ! {
+/// `command` is `lint` or `fmt`, `args` what follows it. `bun fmt --lsp` lints too where the build has `bun lint`.
+pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
+    let (args, features) = match command {
+        b"lint" => (
+            Args::Lint(args),
+            Features {
+                lint: true,
+                format: true,
+            },
+        ),
+        _ => (
+            Args::Format(args),
+            Features {
+                lint: IS_ENABLED,
+                format: true,
+            },
+        ),
+    };
     // The messages go to a private copy of fd 1, and fd 1 becomes stderr: what else prints in this process, like
     // `console.log` in a plugin, does not get between them.
     #[cfg(unix)]
@@ -623,14 +639,7 @@ impl LintCommand {
             Global::exit(0);
         }
         if options.lsp {
-            serve_editor(
-                b"lint",
-                &args,
-                Features {
-                    lint: true,
-                    format: true,
-                },
-            );
+            serve_editor(b"lint", &args);
         }
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
             let mut defaults = LintDefaults::default();

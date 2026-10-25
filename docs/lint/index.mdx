@@ -259,6 +259,61 @@ warn: Loaded 10,114 files in 1.4s to lint vite.config.ts
 
 With an oxlint config, `--tsconfig` does what it does in oxlint. It sets the `tsconfig.json` that the `import` rules resolve imports with, for its `paths`. It doesn't change which `tsconfig.json` a file is type checked with, so the warning only suggests `"include"`.
 
+## Editor integration
+
+`bun fmt --no-script --lsp` is a language server that lints and formats: your editor starts it once, shows the problems of each open file as you type, offers their fixes, and applies `source.fixAll` and formatting on save. It reads the `bunfig.toml` and the ESLint or oxlint config of each workspace folder, as `bun lint` does there. `--no-script` keeps a `fmt` script in `package.json` from running instead. Linting needs a [canary build](/installation#canary-builds); every build formats. `bun lint --lsp` starts the same server with the flags of `bun lint`.
+
+The Bun extension for VS Code starts it for you. In Neovim:
+
+```lua init.lua icon="file-code"
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = { "javascript", "javascriptreact", "typescript", "typescriptreact" },
+  callback = function(args)
+    vim.lsp.start({
+      name = "bun",
+      cmd = { "bun", "fmt", "--no-script", "--lsp" },
+      root_dir = vim.fs.root(args.buf, { "bunfig.toml", "package.json" }),
+    })
+  end,
+})
+vim.api.nvim_create_autocmd("BufWritePre", {
+  callback = function(args)
+    vim.lsp.buf.code_action({ context = { only = { "source.fixAll" } }, apply = true })
+    vim.lsp.buf.format({ bufnr = args.buf, name = "bun" })
+  end,
+})
+```
+
+In Helix:
+
+```toml languages.toml icon="file-code"
+[language-server.bun]
+command = "bun"
+args = ["fmt", "--no-script", "--lsp"]
+
+[[language]]
+name = "typescript"
+language-servers = ["bun"]
+auto-format = true
+```
+
+In Zed, `settings.json`:
+
+```json settings.json icon="file-json"
+{
+  "lsp": {
+    "bun": { "binary": { "path": "bun", "arguments": ["fmt", "--no-script", "--lsp"] } }
+  },
+  "languages": {
+    "TypeScript": {
+      "language_servers": ["bun", "..."],
+      "code_actions_on_format": { "source.fixAll.bun": true },
+      "formatter": { "language_server": { "name": "bun" } }
+    }
+  }
+}
+```
+
 ## Git hooks
 
 `--staged` lints only the files you're about to commit, so you don't need `lint-staged`.

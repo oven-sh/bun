@@ -275,6 +275,56 @@ No path to give? Name the parser instead. Your config still applies, except for 
 bun run generate-types | bun fmt --parser typescript > types.ts
 ```
 
+## Editor integration
+
+`bun fmt --no-script --lsp` is a language server: your editor starts it once and asks it to format on save. It reads the `bunfig.toml`, `.prettierrc` and `.editorconfig` of each workspace folder, as `bun fmt` does there. `--no-script` keeps a `fmt` script in `package.json` from running instead. In a [canary build](/installation#canary-builds), the same server lints too: see [the linter's editor integration](/lint#editor-integration).
+
+The Bun extension for VS Code starts it for you. In Neovim:
+
+```lua init.lua icon="file-code"
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = { "javascript", "javascriptreact", "typescript", "typescriptreact", "json", "jsonc", "css", "html", "markdown", "yaml" },
+  callback = function(args)
+    vim.lsp.start({
+      name = "bun",
+      cmd = { "bun", "fmt", "--no-script", "--lsp" },
+      root_dir = vim.fs.root(args.buf, { "bunfig.toml", "package.json" }),
+    })
+  end,
+})
+vim.api.nvim_create_autocmd("BufWritePre", {
+  callback = function(args)
+    vim.lsp.buf.format({ bufnr = args.buf, name = "bun" })
+  end,
+})
+```
+
+In Helix:
+
+```toml languages.toml icon="file-code"
+[language-server.bun]
+command = "bun"
+args = ["fmt", "--no-script", "--lsp"]
+
+[[language]]
+name = "typescript"
+language-servers = ["bun"]
+auto-format = true
+```
+
+In Zed, `settings.json`:
+
+```json settings.json icon="file-json"
+{
+  "lsp": {
+    "bun": { "binary": { "path": "bun", "arguments": ["fmt", "--no-script", "--lsp"] } }
+  },
+  "languages": {
+    "TypeScript": { "language_servers": ["bun", "..."], "formatter": { "language_server": { "name": "bun" } } }
+  }
+}
+```
+
 ## Git hooks
 
 `--staged` formats only the files you're about to commit and stages them again, so you don't need `lint-staged`.

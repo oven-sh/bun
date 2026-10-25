@@ -40,13 +40,23 @@ impl<'a> Formatter<'a> {
     /// `write` is inlined, so this and the functions like it call it in one place only.
     #[inline]
     fn in_scope(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
-        let (outer, has_cursor) = (self.context().is_quiet, self.context().cursor.is_active());
-        match has_cursor {
+        let outer = self.enter_scope(span);
+        write(self);
+        self.leave_scope(span, outer);
+    }
+
+    /// Returns what [`Formatter::is_quiet`] was, for [`Formatter::leave_scope`].
+    fn enter_scope(&mut self, span: Span) -> bool {
+        let outer = self.context().is_quiet;
+        match self.context().cursor.is_active() {
             true => self.enter_scope_with_cursor(span),
             false => self.context_mut().is_quiet = outer || self.has_no_comments_in(span),
         }
-        write(self);
-        if has_cursor {
+        outer
+    }
+
+    fn leave_scope(&mut self, span: Span, outer: bool) {
+        if self.context().cursor.is_active() {
             crate::cursor::exit_node(span, self);
         }
         self.context_mut().is_quiet = outer;

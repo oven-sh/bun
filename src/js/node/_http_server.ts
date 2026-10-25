@@ -3591,19 +3591,15 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       this._header = " ";
     }
     if (callback) queueEndCallback(this, callback);
-    // Node compares the lengths whatever has become of the socket, and counts a chunk that it then drops. Only the native handle counts.
+    // Node throws for a body that is short of its strict length. A closed handle has not counted what Node counts and then drops, so here that body only has no 'finish'.
     const expected = strictContentLength(this, headerState, true);
-    let written = expected !== undefined ? handle.getBytesWritten?.() : undefined;
-    if (written !== undefined) {
-      if (chunk) written += typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
-      if (written !== expected) throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(written, expected);
-    }
     // With the head out and no chunk or terminating chunk to send, Node's end() writes nothing, so its onFinish() still runs.
     if (
       !chunk &&
       !droppedChunk &&
       headerState === NodeHTTPHeaderState.sent &&
-      !(this._hasBody && willBeChunked(this))
+      !(this._hasBody && willBeChunked(this)) &&
+      (expected === undefined || (handle.getBytesWritten?.() ?? expected) === expected)
     ) {
       // Node's condition also has `writableLength`: bytes of earlier writes that never left. There those writes have
       // failed the socket, or end() never calls back. A closed native handle counts none: a large write still waits

@@ -365,7 +365,7 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
 
   // An eslint.config.mjs is read in the plugins' VM, which the server has only on Unix.
   test.skipIf(isWindows)(
-    "tells the user about a document that needs eslint, which is not installed, and publishes nothing for it",
+    "tells the user about a document that needs eslint, which is not installed, and publishes no problem for it",
     async () => {
       using dir = tempDir("bun-lint-lsp", {
         "eslint.config.mjs": `export default [
@@ -393,8 +393,12 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();
       expect([garbage, rest]).toEqual([[], ""]);
+      // The document that is not linted is cleared once, in case an earlier generation had problems for it.
       const about = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
-      expect(about.map(it => it.params.uri)).toEqual([uriOf(js)]);
+      expect(about.map(it => [it.params.uri, it.params.diagnostics.length])).toEqual([
+        [uriOf(one), 0],
+        [uriOf(js), 1],
+      ]);
       expect(client.received.filter(names)).toHaveLength(1);
       expect(exitCode).toBe(0);
     },
@@ -413,7 +417,7 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
       expect((await initialize(client, [String(dir)])).error).toBeUndefined();
       client.notify("initialized");
       const a = join(String(dir), "a.js");
-      open(client, a, "var a = 1;\n");
+      open(client, a, "var a = 1;\nconsole.log(a);\n");
       expect((await client.diagnostics(a)).params.diagnostics.map((it: any) => it.code)).toEqual(["no-var"]);
 
       await Bun.write(
@@ -429,10 +433,10 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
       // linted the second document.
       client.notify("textDocument/didChange", {
         textDocument: { uri: uriOf(a), version: 2 },
-        contentChanges: [{ text: "var b = 2;\n" }],
+        contentChanges: [{ text: "var b = 2;\nconsole.log(b);\n" }],
       });
       const b = join(String(dir), "b.js");
-      open(client, b, "var b = 1;\n");
+      open(client, b, "var b = 1;\nconsole.log(b);\n");
       expect((await client.diagnostics(b)).params.diagnostics.map((it: any) => it.code)).toEqual(["no-var"]);
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");

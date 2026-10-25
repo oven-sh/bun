@@ -286,6 +286,8 @@ describe("a macro result that is bound to a name", () => {
     [`const { b: { c }, b } = obj(); export default [c, b];`, [2, { c: 2 }]],
     [`const { p: { a }, q } = twice(); export default [a, q];`, [1, { a: 1, b: 2 }]],
     [`const { list: [first], list } = obj(); export default [first, list];`, [1, [1, 2]]],
+    [`const { list, list: [first] } = obj(); export default [first, list];`, [1, [1, 2]]],
+    [`const { q, q: { a } } = twice(); export default [a, q];`, [1, { a: 1, b: 2 }]],
     [`const n = num(); const s = hello(); export default [n + n, s + s.length];`, [42, "Hello5"]],
     [`export default [obj().b.c, arr()[2][0], arr().length, hello().length, num() + num()];`, [2, 3, 3, 5, 42]],
   ];
@@ -370,9 +372,6 @@ describe("a macro result that is bound to a name", () => {
     files[`macro/${i}.ts`] = `import { ${names} } from "../m.ts" with { type: "macro" };\n${body}\n`;
   });
 
-  // A door builds and loads each module, which takes a debug build more than the default 5 seconds under load.
-  const doorLimit = 60_000;
-
   // One directory serves each door. The doors read the same modules and write to their own folders.
   let fixture: ReturnType<typeof tempDir>;
   // What each module exports with a plain import.
@@ -383,7 +382,7 @@ describe("a macro result that is bound to a name", () => {
     // Each written module has its value, and no generated module throws.
     expect(Object.values(plain.seen).slice(0, written.length)).toEqual(written.map(([, exported]) => exported));
     expect(Object.values(plain.seen).filter(value => String(value).startsWith("threw "))).toEqual([]);
-  }, doorLimit);
+  });
   afterAll(() => fixture[Symbol.dispose]());
 
   async function observe(dir: string, ext: string) {
@@ -400,45 +399,38 @@ describe("a macro result that is bound to a name", () => {
     return { seen: Object.fromEntries(bodies.map((body, i) => [`${i}: ${body}`, seen[i]])), stderr, exitCode };
   }
 
-  test.concurrent(
-    "bun run",
-    async () => {
-      expect(await observe("macro", "ts")).toEqual(plain);
-    },
-    doorLimit,
-  );
+  // The doors run one at a time: each starts several processes, and a debug build is slow under load.
+  test("bun run", async () => {
+    expect(await observe("macro", "ts")).toEqual(plain);
+  });
 
   // `--no-bundle --target=bun` and `--minify` turn the inliner on. The plain build leaves it off.
-  test.concurrent.each([
+  test.each([
     ["bun build", []],
     ["bun build --no-bundle", ["--no-bundle"]],
     ["bun build --minify", ["--minify"]],
-  ])(
-    "%s",
-    async (door, flags) => {
-      const outdir = door.replaceAll(" ", "-");
-      await using build = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          ...flags,
-          ...bodies.map((_, i) => `./macro/${i}.ts`),
-          "--target=bun",
-          "--outdir=" + outdir,
-          // Without a name pattern, 9 or more entry points go to a `macro/` folder (#38732).
-          "--entry-naming=[name].[ext]",
-        ],
-        env: bunEnv,
-        cwd: String(fixture),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-      expect({ buildErr, buildExit }).toEqual({ buildErr: "", buildExit: 0 });
-      expect(await observe(outdir, "js")).toEqual(plain);
-    },
-    doorLimit,
-  );
+  ])("%s", async (door, flags) => {
+    const outdir = door.replaceAll(" ", "-");
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        ...flags,
+        ...bodies.map((_, i) => `./macro/${i}.ts`),
+        "--target=bun",
+        "--outdir=" + outdir,
+        // Without a name pattern, 9 or more entry points go to a `macro/` folder (#38732).
+        "--entry-naming=[name].[ext]",
+      ],
+      env: bunEnv,
+      cwd: String(fixture),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ buildErr, buildExit }).toEqual({ buildErr: "", buildExit: 0 });
+    expect(await observe(outdir, "js")).toEqual(plain);
+  });
 
   // The inliner takes a `const` primitive from a macro at each position. It takes no `let` and no `var`: the
   // program can assign to them.

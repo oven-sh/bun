@@ -6069,36 +6069,40 @@ describe("css tests", () => {
       expect(() => minify_test_with_options(source, "")).toThrow(new Error(`parsing failed: ${message}`));
     });
 
-    // The minified output, or undefined when the source is a parse error.
-    function minifyOrParseError(source: string): string | undefined {
+    // The minified output, or the message of the parse error.
+    function minifyOrParseError(source: string): { output: string } | { error: string } {
       try {
-        return minify_test_with_options(source, "");
+        return { output: minify_test_with_options(source, "") };
       } catch (e) {
         if (!(e instanceof Error) || !e.message.startsWith("parsing failed: ")) throw e;
-        return undefined;
+        return { error: e.message.slice("parsing failed: ".length) };
       }
     }
     const squash = (text: string) => text.replace(/\s+/g, "");
 
-    // A condition in parentheses that stops short is an error, unless Bun keeps it as written (#46756).
+    // A condition in parentheses that stops short is this error, unless Bun keeps it as written (#46756).
     test.each([
       // These built with no condition at all.
-      ["@media (width <) { .foo { color: chartreuse }}", "(width <)"],
-      ["@media (width >=) { .foo { color: chartreuse }}", "(width >=)"],
-      ["@media (100px < width <) { .foo { color: chartreuse }}", "(100px < width <)"],
-      ['@import "foo.css" (width <);', "(width <)"],
+      ["@media (width <) { .foo { color: chartreuse }}", "(width <)", "Unexpected end of input"],
+      ["@media (width >=) { .foo { color: chartreuse }}", "(width >=)", "Unexpected end of input"],
+      ["@media (100px < width <) { .foo { color: chartreuse }}", "(100px < width <)", "Unexpected end of input"],
+      ['@import "foo.css" (width <);', "(width <)", "Unexpected end of input"],
       // These built as `(width)`, `(height)` and `(-webkit-device-pixel-ratio)`.
-      ["@media (min-width) { .foo { color: chartreuse }}", "(min-width)"],
-      ["@media (max-height) { .foo { color: chartreuse }}", "(max-height)"],
-      ["@media (-webkit-min-device-pixel-ratio) { .foo { color: chartreuse }}", "(-webkit-min-device-pixel-ratio)"],
-      ["@media screen and (min-width) { .foo { color: chartreuse }}", "(min-width)"],
-      ["@container (min-width) { .foo { color: chartreuse }}", "(min-width)"],
-      ['@import "foo.css" (min-width);', "(min-width)"],
-      ["@custom-media --m (min-width);", "(min-width)"],
-    ])("%s is an error or keeps %s", (source, condition) => {
-      const output = minifyOrParseError(source);
-      const kept = output === undefined || squash(output).includes(squash(condition));
-      expect(kept ? "an error, or kept as written" : output).toBe("an error, or kept as written");
+      ["@media (min-width) { .foo { color: chartreuse }}", "(min-width)", "Invalid media query"],
+      ["@media (max-height) { .foo { color: chartreuse }}", "(max-height)", "Invalid media query"],
+      [
+        "@media (-webkit-min-device-pixel-ratio) { .foo { color: chartreuse }}",
+        "(-webkit-min-device-pixel-ratio)",
+        "Invalid media query",
+      ],
+      ["@media screen and (min-width) { .foo { color: chartreuse }}", "(min-width)", "Invalid media query"],
+      ["@container (min-width) { .foo { color: chartreuse }}", "(min-width)", "Invalid media query"],
+      ['@import "foo.css" (min-width);', "(min-width)", "Invalid media query"],
+      ["@custom-media --m (min-width);", "(min-width)", "Invalid media query"],
+    ])("%s keeps %s or is the error %s", (source, condition, message) => {
+      const result = minifyOrParseError(source);
+      const kept = "output" in result && squash(result.output).includes(squash(condition));
+      expect(kept ? { error: message } : result).toEqual({ error: message });
     });
 
     test("a media query list cut after any token prints what it holds, or is an error", () => {
@@ -6153,7 +6157,8 @@ describe("css tests", () => {
           const cut = tokens.slice(0, end);
           const unclosed = cut.filter(t => t === "(").length - cut.filter(t => t === ")").length;
           const list = cut.join(" ") + Buffer.alloc(unclosed, ")").toString();
-          const output = minifyOrParseError(`@media ${list} {.foo{color:red}}`);
+          const result = minifyOrParseError(`@media ${list} {.foo{color:red}}`);
+          const output = "output" in result ? result.output : undefined;
           const prelude = whole.get(squash(list));
           cuts++;
           if (prelude !== undefined) {

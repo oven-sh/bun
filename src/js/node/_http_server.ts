@@ -1759,9 +1759,9 @@ function connectionListenerInternal(server, socket) {
   process.nextTick(readStartAfterAttach, socket);
 }
 
-// Nor does a pause() by a 'connection' listener behind ours: in Node the 'resume' event of that call starts the handle's reads. Bytes that were put back may have handed the socket to 'upgrade' or 'connect' by now.
+// Nor does a pause() by a 'connection' listener behind ours: in Node the 'resume' event of that call starts the handle's reads. Bytes that were put back may have reached a listener by now, whose pause() stays: 'request' (incoming is set), 'upgrade' or 'connect' (no parser).
 function readStartAfterAttach(socket) {
-  if (socket.parser) readStart(socket);
+  if (socket.parser?.incoming === null) readStart(socket);
 }
 
 function socketSetEncoding(): never {

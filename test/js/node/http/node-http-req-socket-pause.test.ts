@@ -11,7 +11,7 @@ import type { AddressInfo, Socket } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import path from "node:path";
 import type { Duplex } from "node:stream";
-import { connect as tlsConnect } from "node:tls";
+import { createServer as createTlsServer, connect as tlsConnect } from "node:tls";
 
 it("req.socket emits 'pause' once an unread request body fills the IncomingMessage buffer", async () => {
   // Node's test-http-no-read-no-dump: a handler that never reads the body sees
@@ -987,12 +987,13 @@ describe("request whose whole body is in the segment that paused the connection"
   });
 });
 
+const keys = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+const tlsOptions = {
+  key: readFileSync(path.join(keys, "agent1-key.pem")),
+  cert: readFileSync(path.join(keys, "agent1-cert.pem")),
+};
+
 describe.each(["http", "https", "emit('connection')", "http2 with allowHTTP1"] as const)("%s: socket.pause()", kind => {
-  const keys = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
-  const tlsOptions = {
-    key: readFileSync(path.join(keys, "agent1-key.pem")),
-    cert: readFileSync(path.join(keys, "agent1-cert.pem")),
-  };
   const secure = kind === "https" || kind === "http2 with allowHTTP1";
   const get = (url: string) => `GET ${url} HTTP/1.1\r\nHost: a\r\n\r\n`;
 
@@ -1131,7 +1132,6 @@ it.each(["upgrade", "connect"] as const)(
     });
     const front = createNetServer(socket => {
       socket.once("data", chunk => {
-        socket.pause();
         socket.unshift(chunk);
         server.emit("connection", socket);
       });
@@ -1155,6 +1155,66 @@ it.each(["upgrade", "connect"] as const)(
     } finally {
       client.destroy();
       server.closeAllConnections();
+      front.close();
+    }
+  },
+);
+
+it.each(["emit('connection')", "http2 with allowHTTP1"] as const)(
+  "%s: a pause by the request listener holds the body back when a front server put the head back",
+  async kind => {
+    const secure = kind === "http2 with allowHTTP1";
+    const dispatched = Promise.withResolvers<[IncomingMessage, ServerResponse]>();
+    const listener = (req: IncomingMessage, res: ServerResponse) => {
+      if (req.url === "/ping") return void res.end("pong");
+      req.socket.pause();
+      dispatched.resolve([req, res]);
+    };
+    const server = secure
+      ? createHttp2SecureServer({ ...tlsOptions, allowHTTP1: true }, listener as any)
+      : createServer(listener);
+    const putBack = (socket: Socket) => {
+      socket.on("error", () => {});
+      socket.once("data", chunk => {
+        socket.unshift(chunk);
+        server.emit(secure ? "secureConnection" : "connection", socket);
+      });
+    };
+    const front = secure
+      ? createTlsServer({ ...tlsOptions, ALPNProtocols: ["http/1.1"] }, putBack)
+      : createNetServer(putBack);
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const { port } = front.address() as AddressInfo;
+    const open = async () => {
+      const socket = secure
+        ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] })
+        : connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, secure ? "secureConnect" : "connect");
+      return socket;
+    };
+    const client = await open();
+    try {
+      client.write("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\n");
+      const [req, res] = await dispatched.promise;
+      client.write("hello");
+      // Like roundTrip(): once it is over, the server has seen, or put off, all that was written before.
+      const ping = await open();
+      ping.resume().write("GET /ping HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+      await once(ping, "close");
+      expect({ paused: req.socket.isPaused(), buffered: req.readableLength, complete: req.complete }).toEqual({
+        paused: true,
+        buffered: 0,
+        complete: false,
+      });
+      req.socket.resume();
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      expect(body).toBe("hello");
+      res.end();
+    } finally {
+      client.destroy();
+      (server as Server).closeAllConnections?.();
       front.close();
     }
   },

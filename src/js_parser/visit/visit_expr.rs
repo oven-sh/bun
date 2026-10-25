@@ -1534,14 +1534,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         // Mark the control flow as dead if the branch is never taken
-        let live = if side_effects.value {
+        if side_effects.value {
             // "true ? live : dead"
             p.visit_expr(&mut e_.yes);
             let old = p.is_control_flow_dead;
             p.is_control_flow_dead = true;
             p.visit_expr(&mut e_.no);
             p.is_control_flow_dead = old;
-            e_.yes
+
+            *e = Self::live_branch(p, e_.test, e_.yes, side_effects.side_effects, in_);
         } else {
             // "false ? dead : live"
             let old = p.is_control_flow_dead;
@@ -1549,23 +1550,52 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut e_.yes);
             p.is_control_flow_dead = old;
             p.visit_expr(&mut e_.no);
-            e_.no
-        };
 
-        // "(a, false) ? b : c" => "a, c"
-        if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+            *e = Self::live_branch(p, e_.test, e_.no, side_effects.side_effects, in_);
+        }
+    }
+
+    /// What is left of a `?:` whose test has a known value.
+    /// "(1 ? fn : 2)()" => "fn()"
+    /// "(1 ? this.fn : 2)" => "this.fn"
+    /// "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+    /// "(a, false) ? b : c" => "a, c"
+    fn live_branch(
+        p: &mut Self,
+        test: Expr,
+        live: Expr,
+        test_side_effects: SideEffects,
+        in_: ExprIn,
+    ) -> Expr {
+        if test_side_effects == SideEffects::CouldHaveSideEffects {
             if let Some(test) =
-                SideEffects::simplify_unused_expr(p, e_.test).filter(|test| !test.is_empty())
+                SideEffects::simplify_unused_expr(p, test).filter(|test| !test.is_empty())
             {
-                *e = test.join_with_comma(live);
-                return;
+                return test.join_with_comma(live);
             }
         }
+        p.unwrapped_by_fold(live, in_.is_callee_or_tag(), test.loc)
+    }
 
-        // "(1 ? fn : 2)()" => "fn()"
-        // "(1 ? this.fn : 2)" => "this.fn"
-        // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-        *e = live.unwrapped_by_fold(in_.is_callee_or_tag(), e_.test.loc);
+    /// What a fold leaves when it replaces `(0, x)`, `true && x` or `true ? x : y`
+    /// by the operand `x`. A call or a tagged template passes the object of a
+    /// property access as `this`, so there the operand stays `(0, x)`.
+    ///
+    /// esbuild has no such check in its folds since 0.16.5. It marks a call or a
+    /// template whose callee or tag is a property access in the source, and its
+    /// printer adds `(0, ...)` to every other property access in that position.
+    pub(crate) fn unwrapped_by_fold(
+        &mut self,
+        operand: Expr,
+        is_callee_or_tag: bool,
+        zero_loc: bun_ast::Loc,
+    ) -> Expr {
+        if is_callee_or_tag && operand.has_value_for_this_in_call() {
+            return self
+                .new_expr(E::Number::new(0.0), zero_loc)
+                .join_with_comma(operand);
+        }
+        operand
     }
 
     /// `(0, x)`, `a && x`, `a || x`, `a ?? x`, `o.p ??= x` and `a ? x : y`: a fold

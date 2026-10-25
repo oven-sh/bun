@@ -358,7 +358,7 @@ impl BinaryExpressionVisitor {
                         // "(null ?? fn)()" => "fn()"
                         // "(null ?? this.fn)" => "this.fn"
                         // "(null ?? this.fn)()" => "(0, this.fn)()"
-                        return e_.right.unwrapped_by_fold(is_callee_or_tag, e_.left.loc);
+                        return p.unwrapped_by_fold(e_.right, is_callee_or_tag, e_.left.loc);
                     }
                 }
             }
@@ -370,7 +370,7 @@ impl BinaryExpressionVisitor {
                         // "(0 || fn)()" => "fn()"
                         // "(0 || this.fn)" => "this.fn"
                         // "(0 || this.fn)()" => "(0, this.fn)()"
-                        return e_.right.unwrapped_by_fold(is_callee_or_tag, e_.left.loc);
+                        return p.unwrapped_by_fold(e_.right, is_callee_or_tag, e_.left.loc);
                     }
                 }
             }
@@ -382,7 +382,7 @@ impl BinaryExpressionVisitor {
                         // "(1 && fn)()" => "fn()"
                         // "(1 && this.fn)" => "this.fn"
                         // "(1 && this.fn)()" => "(0, this.fn)()"
-                        return e_.right.unwrapped_by_fold(is_callee_or_tag, e_.left.loc);
+                        return p.unwrapped_by_fold(e_.right, is_callee_or_tag, e_.left.loc);
                     }
                 }
             }
@@ -670,7 +670,11 @@ impl BinaryExpressionVisitor {
                         if obj.properties.len_u32() == 0 {
                             if dot.name != b"__proto__" {
                                 // "(({}).x ??= this.fn)()" => "(0, this.fn)()"
-                                return e_.right.unwrapped_by_fold(is_callee_or_tag, e_.left.loc);
+                                return p.unwrapped_by_fold(
+                                    e_.right,
+                                    is_callee_or_tag,
+                                    e_.left.loc,
+                                );
                             }
                         }
                     }

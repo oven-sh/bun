@@ -1083,7 +1083,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
               closeBehindLastWrite(socket);
             }
           }
-          if (!hasBody) http_req.complete = true;
+          if (!hasBody) completeWithoutBody(http_req, socket);
           return;
         }
 
@@ -1231,8 +1231,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           emitRequest(server, socket, http_req, http_res, expectation);
         }
 
-        // Node's parserOnMessageComplete: a message without a body is complete once the listener returns. EOF stays lazy (_read).
-        if (!hasBody) http_req.complete = true;
+        if (!hasBody) completeWithoutBody(http_req, socket);
 
         if (handle.finished || didFinish) {
           handle = undefined;
@@ -2192,6 +2191,12 @@ function emitRequest(server, socket, req, res, expectation) {
         res.end();
       }
   }
+}
+
+// Node's parserOnMessageComplete: a message without a body is complete once the listener returns, and the reads go on unless http paused them. EOF stays lazy (_read).
+function completeWithoutBody(req, socket) {
+  req.complete = true;
+  if (!socket._paused && socket.readable && socket.isPaused()) socket.resume();
 }
 
 function resetSocketTimeout(server, socket) {

@@ -335,7 +335,6 @@ describe("HTTP/3 header callbacks without onheaders", () => {
     oninfo: (block: Record<string, string>) => void (seen.info = block[":status"]),
     ontrailers(this: any, block: object) {
       seen.trailers = { ...block };
-      // A closed stream no longer has its headers, so they are read here.
       seen.status = this.headers?.[":status"];
     },
   });
@@ -1705,6 +1704,109 @@ describe("verifyClient", () => {
       announcedStreams: 0,
       server: "ERR_QUIC_TRANSPORT_ERROR",
       client: "ERR_QUIC_TRANSPORT_ERROR",
+    });
+  });
+});
+
+// Node keeps `headers` and `pendingTrailers` on a closed stream since v26.6.0 (nodejs/node#64289).
+describe("a closed stream", () => {
+  const request = { ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+  const serve = (onheaders: (this: any, headers: Record<string, any>) => void) =>
+    listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders,
+        // A stream is asked for its trailers only when this is set.
+        onwanttrailers() {},
+      },
+    );
+  const connectTo = async (server: QuicEndpoint) => {
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    } as SessionOptions);
+    await client.opened;
+    return client;
+  };
+
+  test("keeps the headers it received", async () => {
+    const served = Promise.withResolvers<any>();
+    const received = Promise.withResolvers<Record<string, any>>();
+    await using server = await serve(function () {
+      served.resolve(this);
+      this.sendHeaders({ ":status": "200", "x-served-by": "bun" }, { terminal: true });
+    });
+    const client = await connectTo(server);
+
+    const stream = await client.createBidirectionalStream({ headers: request, onheaders: received.resolve });
+    const [serverStream, response] = await Promise.all([served.promise, received.promise]);
+    await Promise.all([stream.closed, serverStream.closed]);
+    const closed = {
+      client: { destroyed: stream.destroyed, headers: stream.headers },
+      server: { destroyed: serverStream.destroyed, headers: serverStream.headers },
+    };
+    client.close();
+    expect(closed).toEqual({
+      client: { destroyed: true, headers: response },
+      server: { destroyed: true, headers: request },
+    });
+  });
+
+  test("keeps the pendingTrailers it did not send", async () => {
+    const trailers = { "x-checksum": "abc123" };
+    const served: Record<string, any> = {};
+    await using server = await serve(function (headers) {
+      served[headers[":path"]] = this;
+      this.pendingTrailers = trailers;
+      if (headers[":path"] === "/body") {
+        this.sendHeaders({ ":status": "200" });
+        this.writer.writeSync(new TextEncoder().encode("body"));
+        this.writer.endSync();
+      } else {
+        // No body follows these headers, so the stream is never asked for its trailers.
+        this.sendHeaders({ ":status": "200" }, { terminal: true });
+      }
+    });
+    const client = await connectTo(server);
+
+    // The trailers that the client got, and what the server's stream has left once both ends are closed.
+    const respond = async (path: string) => {
+      let peer: Record<string, any> | undefined;
+      const stream = await client.createBidirectionalStream({
+        headers: { ...request, ":path": path },
+        onheaders() {},
+        ontrailers(block: Record<string, any>) {
+          peer = block;
+        },
+      });
+      for await (const _ of stream);
+      await Promise.all([stream.closed, served[path].closed]);
+      return { peer, pendingTrailers: served[path].pendingTrailers };
+    };
+    const sent = await respond("/body");
+    const noBody = await respond("/no-body");
+
+    const stream = await client.createBidirectionalStream({});
+    stream.closed.catch(() => {});
+    // The request body is still open when the stream is destroyed.
+    stream.sendHeaders(request);
+    stream.pendingTrailers = trailers;
+    stream.destroy();
+    const destroyed = { pendingTrailers: stream.pendingTrailers };
+    client.close();
+
+    expect({ sent, noBody, destroyed }).toEqual({
+      sent: { peer: trailers, pendingTrailers: undefined },
+      noBody: { peer: undefined, pendingTrailers: trailers },
+      destroyed: { pendingTrailers: trailers },
     });
   });
 });

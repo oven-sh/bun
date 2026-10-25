@@ -2622,8 +2622,6 @@ class QuicStream {
     inner.ontrailers = undefined;
     inner.oninfo = undefined;
     inner.onwanttrailers = undefined;
-    inner.headers = undefined;
-    inner.pendingTrailers = undefined;
     this.#handle = undefined;
     this[kDrain]?.();
     if (inner.fileHandle !== undefined) {

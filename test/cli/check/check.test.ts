@@ -8643,6 +8643,32 @@ export const a: never = cart.count.a;
       }
     });
 
+    // TypeScript keeps the signature that a call resolved to. So `x`, `y`, `n` and `i` are still the error type when their
+    // initializers are checked again, no matter which file's error prints them.
+    test.each(["a.ts", "use.ts"])(
+      "prints a property whose initializer is a failed call as `any`, for an error in %s",
+      async printedIn => {
+        const use = "export const inner: never = cart.ids.inner;\n";
+        using dir = project({
+          "a.ts": `declare function defineStore<S = {}, G extends Record<string, unknown> = {}>(o: { state?: () => S; view?: G & ThisType<S & G> }): S & G;
+export const cart = defineStore({
+  state: () => ({ name: "x" }),
+  view: {
+    label() { return [this.name]; },
+    ids: { get inner() { return { x: this.label(), y: this.label().length, n: new this.label(), i: this.label()[0], z: this.label, w: this.name! }; } },
+  },
+});
+${printedIn === "a.ts" ? use : ""}`,
+          "use.ts": `import { cart } from "./a";\n${printedIn === "use.ts" ? use : "cart;\n"}`,
+        });
+        const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+        expect(stdout.split("\n").filter(line => line.includes("TS2322"))).toEqual([
+          `${printedIn}(${printedIn === "a.ts" ? 9 : 2},14): error TS2322: Type '{ x: any; y: any; n: any; i: any; z: () => string[]; w: string; }' is not assignable to type 'never'.`,
+        ]);
+        expect(exitCode).toBe(1);
+      },
+    );
+
     // The call to `String` starts a new resolution stack, so both getters are visited a second time inside their first
     // visit. The inner visit of `first` ends in the cycle and assigns `any`. The outer one gets `string`, but
     // `getTypeOfAccessors` only assigns if the symbol has no type yet.

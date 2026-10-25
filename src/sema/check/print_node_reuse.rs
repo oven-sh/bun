@@ -21,6 +21,19 @@ pub(super) struct SerializeTypeOptions {
     pub(super) is_optional_reverse_mapped: bool,
 }
 
+/// True if `e` is a call, or reads a property of what a call returned.
+fn is_from_call(hir: &File, mut e: ExprId) -> bool {
+    while e.is_some() {
+        e = match hir[e].kind {
+            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) => return true,
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            ExprKind::NonNull(x) => x,
+            _ => return false,
+        };
+    }
+    false
+}
+
 impl<'p> Printer<'_, 'p, '_> {
     /// `b.ctx.enclosingDeclaration != nil`. True if a declaration's type is derived from its syntax.
     fn reuses_nodes(&self) -> bool {
@@ -542,9 +555,11 @@ impl<'p> Printer<'_, 'p, '_> {
         };
         // The symbol that a property assignment declares isn't the property of the object literal's type.
         // `getTypeOfSymbol` checks the initializer again, now. Only an error type gets here with another context.
+        // `getResolvedSignature` keeps the signature of a call, so what a call returned is still the error type.
         if ty == TypeId::ERROR
             && let NodeData::Prop(p) = self.c.hir(file).data(declaration)
             && self.c.hir(file)[p].kind == PropKind::Init
+            && !is_from_call(self.c.hir(file), self.c.hir(file)[p].value)
         {
             let initializer = self.c.hir(file)[p].value;
             ty = self.c.check_expression_anew(file, initializer);

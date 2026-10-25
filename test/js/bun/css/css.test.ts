@@ -8480,7 +8480,7 @@ describe("css tests", () => {
 
       @supports (color: lab(0% 0 0)) {
         .foo {
-          box-shadow: 2s oklch(60% .2 30);
+          box-shadow: 2s oklab(59.686% .1009 .1192);
         }
       }
     `,
@@ -8500,7 +8500,7 @@ describe("css tests", () => {
 
       @supports (color: lab(0% 0 0)) {
         .foo {
-          box-shadow: 2s lab(51.6908% 61.9679 48.0969);
+          box-shadow: 2s lab(52.2319% 40.1449 59.9171);
         }
       }
     `,

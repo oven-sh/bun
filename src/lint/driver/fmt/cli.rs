@@ -706,6 +706,7 @@ impl Options {
 
     fn with(self, args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = self;
+        let args = crate::cli::without_editor_flags(args);
         // The only flag that takes a value and can be negated.
         let args = args.iter().copied().filter(|arg| {
             let is_no_config = *arg == b"--no-config";

@@ -1298,6 +1298,8 @@ impl Options {
 
     fn with(self, args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = self;
+        let stripped = without_editor_flags(args);
+        let args = &stripped[..];
         // Flags that oxlint spells differently.
         let (mut rewritten, count): (Vec<&[u8]>, usize) = (Vec::new(), args.len());
         for (at, arg) in args.iter().copied().enumerate() {
@@ -1349,4 +1351,22 @@ impl Options {
         })?;
         Ok(options)
     }
+}
+
+/// Drops `--stdio` and `--clientProcessId=<pid>`, which editors pass to every language server, from a command line
+/// that has `--lsp`. Without it they stay unknown flags.
+pub(crate) fn without_editor_flags<'a>(args: &[&'a [u8]]) -> Vec<&'a [u8]> {
+    let flag_count = args.iter().take_while(|arg| **arg != b"--").count();
+    let flags = &args[..flag_count];
+    if !flags.contains(&&b"--lsp"[..]) {
+        return args.to_vec();
+    }
+    let is_of_editor = |arg: &[u8]| {
+        arg == b"--stdio"
+            || arg
+                .strip_prefix(b"--clientProcessId=")
+                .is_some_and(|pid| !pid.is_empty() && pid.iter().all(u8::is_ascii_digit))
+    };
+    let kept = flags.iter().copied().filter(|arg| !is_of_editor(arg));
+    kept.chain(args[flag_count..].iter().copied()).collect()
 }

@@ -3,18 +3,6 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {
-  itBundled("minify/WhitespaceKeepsSeparatorAfterEscapedUnicodeIdentifier", {
-    files: {
-      "/entry.ts": /* ts */ `
-        const paths = ["a", "b"];
-        for (const slóð of paths) console.log(slóð);
-      `,
-    },
-    target: "bun",
-    minifyWhitespace: true,
-    run: { stdout: "a\nb" },
-  });
-
   // A direct eval at the top level of a file the bundler wraps in a CommonJS
   // closure can reach that file's top-level names, so they are not renamed.
   itBundled("minify/DirectEvalKeepsTopLevelNamesOfWrappedFile", {
@@ -1884,6 +1872,21 @@ describe("bundler", () => {
       expect(code).toContain("exports.caf\\u{e9} in o");
     },
     run: { stdout: nonAsciiIdentifierStdout },
+  });
+  // https://github.com/oven-sh/bun/issues/46618
+  itBundled("minify/WhitespaceKeepsSeparatorAfterEscapedUnicodeIdentifier", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const paths = ["a", "b"];
+        for (const slóð of paths) console.log(slóð);
+      `,
+    },
+    target: "bun",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("for(const sl\\u{f3}\\u{f0} of paths)");
+    },
+    run: { stdout: "a\nb" },
   });
 
   // Without minifySyntax the block body must be preserved verbatim.

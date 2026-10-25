@@ -300,6 +300,9 @@ impl<'p, 's> Checker<'p, 's> {
             self.signatures_resolved_within
                 .retain(|r| !(r.0 == file && r.1 == call));
         }
+        // `getResolvedSignature` would return it. Here the call is resolved again, and the result isn't used.
+        let is_assigned =
+            (self.signatures_resolved_within.iter()).any(|r| r.0 == file && r.1 == call);
         let outer_errors = self.call_resolution_errors.take();
         let is_re_resolved = std::mem::replace(&mut self.is_call_re_resolved, is_in_progress);
         self.last_call_outcome = CallOutcome::Chosen;
@@ -319,7 +322,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getResolvedSignature`: `links.resolvedSignature != c.resolvingSignature`, "this inner
         // resolution sets the resolvedSignature first", and `result = links.resolvedSignature`. For a call that no
         // candidate accepts, `resolveCall` has assigned its own result since ("Preemptively cache the result").
-        if outcome != CallOutcome::Chosen {
+        if outcome != CallOutcome::Chosen && !is_assigned {
             self.signatures_resolved_within
                 .retain(|r| !(r.0 == file && r.1 == call));
         }
@@ -394,9 +397,9 @@ impl<'p, 's> Checker<'p, 's> {
         resolved
     }
 
-    /// `NodeCheckFlagsContextChecked` and the parameter types of the functions among the arguments of `call` stay as a
+    /// `NodeCheckFlagsContextChecked` and the parameter types of the functions in the arguments of `call` stay as a
     /// resolution of `call` left them that ran inside the resolution at `stack[enclosing]`, so that one doesn't assign
-    /// them again.
+    /// them again. That's not for a function in an argument of another call.
     fn keep_context_checks_for_enclosing_resolution(
         &mut self,
         file: FileId,
@@ -406,12 +409,28 @@ impl<'p, 's> Checker<'p, 's> {
         if self.context_checked_under.is_empty() {
             return;
         }
-        let (bound, serial) = (self.bound(file), self.frames[enclosing].serial);
+        let (hir, bound, serial) = (
+            self.hir(file),
+            self.bound(file),
+            self.frames[enclosing].serial,
+        );
+        let call = hir.node(call);
+        let is_call = |node| {
+            node == call
+                || matches!(
+                    hir.kind(node),
+                    Kind::CallExpression
+                        | Kind::NewExpression
+                        | Kind::TaggedTemplateExpression
+                        | Kind::JsxElement
+                        | Kind::JsxSelfClosingElement
+                )
+        };
         for under in &mut self.context_checked_under {
             if under.0 > enclosing
                 && under.2.0 == file
-                && matches!(bound.fns[under.2.1.idx()].owner, FnOwner::Expr(argument)
-                    if bound.parent_of_expr(argument) == Parent::Expr(call))
+                && matches!(bound.fns[under.2.1.idx()].owner, FnOwner::Expr(function)
+                    if hir.find_ancestor(hir.parent(hir.node(function)), is_call) == call)
             {
                 (under.0, under.1) = (enclosing, serial);
             }

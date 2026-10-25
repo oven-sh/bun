@@ -8921,6 +8921,60 @@ export class C { run() { return tap(f.go(), x => { const p: never = x; }); } }
       expect(exitCode).toBe(1);
     });
 
+    test("a parameter of a callback in an object or an array keeps the contextual type that a resolution inside the call's resolution assigned", async () => {
+      using dir = project({
+        "a.ts": `import { C, D, E } from "./b";
+export declare function tap<T>(x: T): T;
+export declare function inObject<T>(x: T, o: { f: (x: T) => void }): T;
+export declare function inArray<T>(x: T, o: [(x: T) => void]): T;
+declare const n: number;
+export const f = tap({ go() { if (n) return [new C().run()]; return tap(1); } });
+export const g = tap({ go() { if (n) return [new D().run()]; return tap(1); } });
+export const h = tap({ go() { if (n) return [new E().run()]; return tap(1); } });
+`,
+        "b.ts": `import { inObject, inArray, f, g, h } from "./a";
+export class C { run() { return inObject(f.go(), { f: x => { const p: never = x; } }); } }
+export class D { run() { return inArray(g.go(), [x => { const p: never = x; }]); } }
+export class E { run() { return inObject(h.go(), { f(x) { const p: never = x; } }); } }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(6,24): error TS7023: 'go' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "a.ts(7,24): error TS7023: 'go' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "a.ts(8,24): error TS7023: 'go' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "b.ts(2,18): error TS7023: 'run' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "b.ts(2,68): error TS2322: Type 'any' is not assignable to type 'never'.",
+          "b.ts(3,18): error TS7023: 'run' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "b.ts(3,63): error TS2322: Type 'any' is not assignable to type 'never'.",
+          "b.ts(4,18): error TS7023: 'run' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "b.ts(4,65): error TS2322: Type 'any' is not assignable to type 'never'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    // The inner call of `merge` fails each time it's resolved. Once a resolution inside its first one has assigned a
+    // signature, `getResolvedSignature` returns that one until the first resolution replaces it.
+    test("a call that fails is resolved once inside its first resolution", async () => {
+      using dir = project({
+        "a.ts": `type Def = { [k: string]: number };
+declare class Router<D extends Def> { def: D; keys(): (keyof D)[]; }
+declare function merge<A extends Def, B extends Def>(a: Router<A>, b: Router<B>): Router<A & B>;
+function f() { return merge(merge(f(), [1]), f()); }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(4,10): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "a.ts(4,40): error TS2741: Property 'def' is missing in type 'number[]' but required in type 'Router<Def>'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // m3.ts is checked first. The declaration of `g` prints the constraint of `T`, which is the first to ask for the
     // type of `b`. The errors of a missing property and of a type that isn't iterable are deferred to the end of a
     // file's check, and that of m3.ts is over by then.

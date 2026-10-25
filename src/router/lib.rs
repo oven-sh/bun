@@ -476,7 +476,8 @@ impl<'a> RouteLoader<'a> {
             index: None,
             route_dirname_len,
         };
-        this.load(resolver, root_dir_info, base_dir);
+        let routes_dir = this.config.dir.clone();
+        this.load(resolver, root_dir_info, &routes_dir, base_dir);
         if this.all_routes.is_empty() {
             return Routes {
                 static_: this.static_list,
@@ -537,10 +538,12 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
+    /// `dir` is the path walked to `root_dir_info`. `Entry.dir` is where its listing was first read.
     fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
         root_dir_info: &DirInfo,
+        dir: &[u8],
         base_dir: &[u8],
     ) {
         let fs = self.fs;
@@ -586,10 +589,11 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
 
-                    let abs_parts = [entry.dir(), entry.base()];
-                    if let Some(dir_info) = resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
-                    {
-                        self.load(resolver, &dir_info, base_dir);
+                    let abs_parts = [dir, entry.base()];
+                    // The buffer of `abs()` is thread-local: the walk below joins into it again.
+                    let child_dir = fs.abs(&abs_parts).to_vec();
+                    if let Some(dir_info) = resolver.read_dir_info_ignore_error(&child_dir) {
+                        self.load(resolver, &dir_info, &child_dir, base_dir);
                     }
                 }
 
@@ -602,20 +606,12 @@ impl<'a> RouteLoader<'a> {
 
                     for _extname in self.config.extensions.iter() {
                         if &extname[1..] == _extname.as_ref() {
-                            // `entry.dir()` is `base_dir` or a subdirectory of it, cached
-                            // with or without a trailing slash depending on which resolver
-                            // spelled it first (`base_dir` always has one). Both spellings
-                            // trim to the same `public_dir`.
-                            let entry_dir = entry.dir();
-                            debug_assert!(entry_dir.len() + 1 >= base_dir.len());
-                            if entry_dir.len() >= base_dir.len() {
-                                debug_assert!(bun_paths::resolve_path::is_sep_any(
-                                    entry_dir[base_dir.len() - 1]
-                                ));
-                            }
-
-                            // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
-                            let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
+                            // `dir` starts with `base_dir`, which ends with a separator.
+                            debug_assert!(dir.len() >= base_dir.len());
+                            debug_assert!(bun_paths::resolve_path::is_sep_any(
+                                dir[base_dir.len() - 1]
+                            ));
+                            let public_dir = &dir[base_dir.len() - 1..];
 
                             // SAFETY: `entry_ptr` is EntryStore-owned (process
                             // lifetime) with no other live `&mut` borrow here.
@@ -625,6 +621,7 @@ impl<'a> RouteLoader<'a> {
                                     extname,
                                     entry_ptr,
                                     self.log,
+                                    dir,
                                     public_dir,
                                     self.route_dirname_len,
                                 )
@@ -720,6 +717,7 @@ impl Route {
         extname: &[u8],
         entry: *mut Fs::Entry,
         log: &mut bun_ast::Log,
+        dir_: &[u8],
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
@@ -731,7 +729,7 @@ impl Route {
         // process lifetime; no other live `&mut` to it during this call.
         let entry_r = unsafe { &*entry };
         // The public path and the longer absolute path are both built in `route_file_buf`.
-        let dir = strings::without_trailing_slash(entry_r.dir());
+        let dir = strings::without_trailing_slash(dir_);
         if dir.len() + 1 + base_.len() >= MAX_PATH_BYTES {
             log.add_error_fmt(
                 None,
@@ -872,7 +870,7 @@ impl Route {
                     *file = Some(bun_sys::File::from_fd(valid));
                     needs_close.set(false);
                 } else {
-                    let parts = [entry_r.dir(), entry_r.base()];
+                    let parts = [dir_, entry_r.base()];
                     let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
                     // Rebind so the later getFdPath error
                     // message prints the computed path instead of `b""`.

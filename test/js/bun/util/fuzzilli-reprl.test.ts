@@ -5,17 +5,9 @@ import path from "node:path";
 // The fuzzilli REPRL wrapper (src/js/eval/fuzzilli-reprl.ts) executes
 // fuzzer-generated scripts in-process. APIs that intentionally kill the
 // process outside of normal exception handling must be stubbed out before the
-// loop starts, otherwise every fuzz case reaching them is reported as a crash.
-//
-// - process.execve replaces the process image on success, which would silently
-//   end the REPRL loop.
-// - process.kill delivers a real signal. With this pid it kills the REPRL
-//   child, and with pid 0 or -1 it kills the fuzzer and every other REPRL
-//   child.
-//
-// The fixture prints the status of each exec cycle. Status 0 for the payload
-// means that the call returned: the wrapper reports 1 << 8 for a script that
-// threw, and prints an `uncaught:` line.
+// loop starts, otherwise every fuzz case reaching them is reported as a
+// crash: process.execve replaces the process image, and process.kill sends a
+// real signal to any pid. Status 0 means that the payload returned.
 test.concurrent.each([
   ["process.execve returns", `process.execve("fuzzilli-reprl-execve-does-not-exist", []);`],
   ["process.kill returns", `process.kill(process.pid, "SIGKILL");`],

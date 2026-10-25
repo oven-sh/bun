@@ -3,6 +3,18 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {
+  itBundled("minify/WhitespaceKeepsSeparatorAfterEscapedUnicodeIdentifier", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const paths = ["a", "b"];
+        for (const slóð of paths) console.log(slóð);
+      `,
+    },
+    target: "bun",
+    minifyWhitespace: true,
+    run: { stdout: "a\nb" },
+  });
+
   // A direct eval at the top level of a file the bundler wraps in a CommonJS
   // closure can reach that file's top-level names, so they are not renamed.
   itBundled("minify/DirectEvalKeepsTopLevelNamesOfWrappedFile", {

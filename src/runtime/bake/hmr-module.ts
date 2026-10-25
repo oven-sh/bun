@@ -35,6 +35,8 @@ let refreshRuntime: any;
  * in Mozilla Firefox in 2025. Bun lazily evaluates it, so a SyntaxError gets
  * thrown upon first usage. */
 let lazyDynamicImportWithOptions: null | Function = null;
+/** Above zero in the synchronous part of a load that a module body makes: `import()`, `route.page()`. See `waitsFor`. */
+let bodyLoads = 0;
 /** Client only. What `loadExports` loaded, and the React Fast Refresh runtime. True: only a page reload evaluates it again. */
 const roots = new Map<HMRModule, boolean>();
 /** For a module, the self-accept callback that was called last and the evaluation that it got. */
@@ -62,7 +64,7 @@ export async function loadExports<T>(id: Id): Promise<T> {
   if (side === "client") {
     const target = registry.get(id);
     try {
-      // A module body can make this load with `route.page()`. Like an import, it gets a module that is being evaluated as it is.
+      // A module body can make this load with `route.page()`. It gets a module that is being evaluated as it is.
       loaded = target?.state === State.Pending ? target : loadModuleAsync(id, false, null);
     } finally {
       // Before the wait, and when the load throws: an update that comes then has to find the mark.
@@ -147,6 +149,8 @@ export class HMRModule {
   evaluation = 0;
   /** Set by the current evaluation when it waits: for an import, or on its own top-level await. */
   loading: Promise<HMRModule> | null = null;
+  /** The imports that the current evaluation waits for. See `waitsFor`. */
+  waits: HMRModule[] | null = null;
   /** Kept across evaluations. `import.meta.hot.data` rewrites to `data`. */
   hotData: any = {};
 
@@ -191,7 +195,13 @@ export class HMRModule {
 
   /** Lowered from `.e_import` (import(id)) */
   dynamicImport(id: Id, opts?: ImportCallOptions) {
-    const found = loadModuleAsync(id, true, this);
+    bodyLoads++;
+    let found: ReturnType<typeof loadModuleAsync<true>>;
+    try {
+      found = loadModuleAsync(id, true, this);
+    } finally {
+      bodyLoads--;
+    }
     if (found) {
       if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
       return (found as Promise<HMRModule>).then(getEsmExports);
@@ -429,10 +439,13 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       beginEvaluation(mod);
       isUserDynamic = false as IsUserDynamic;
     } else {
-      // An importer gets a module that is being evaluated as it is: a wait here could be a wait for itself.
       if (importer) {
         addImporter(mod, importer);
-        return mod;
+        const { loading } = mod;
+        // A first evaluation is taken as it is, as on main. `loading` is null for a module that waits for nothing.
+        if (loading === null || mod.evaluation === 0 || mod.state !== State.Pending) return mod;
+        // After an update the importer waits for `mod`, unless that wait could be a wait for itself.
+        return waitsFor(mod) ? mod : loading;
       }
       // What has no importer is not in an import cycle: a request, an update, the end of a replaced body.
       return mod.loading ?? mod;
@@ -474,14 +487,16 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     if (importer) addImporter(mod, importer);
     const { evaluation } = mod;
 
-    let list: (HMRModule | Promise<HMRModule>)[], hasAsyncImport: boolean;
+    let list: (HMRModule | Promise<HMRModule>)[], waits: HMRModule[] | null;
     try {
-      ({ list, isAsync: hasAsyncImport } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
+      ({ list, waits } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
     } catch (e) {
       // A dependency threw before this module's body ran, so the next load evaluates it again.
       mod.state = State.Stale;
       throw e;
     }
+    const hasAsyncImport = waits !== null;
+    mod.waits = waits;
     DEBUG.ASSERT(
       hasAsyncImport //
         ? list.some(x => x instanceof Promise)
@@ -571,6 +586,23 @@ function isReplaced(mod: HMRModule, evaluation: number) {
 /** What a replaced evaluation hands to the ones that wait for it: the module as its new code leaves it. */
 function loadReplacement(mod: HMRModule) {
   return loadModuleAsync(mod.id, false, null);
+}
+
+/** Whether a wait for `mod` could never end: `mod` waits, through other modules too, for a module whose load is on the stack. */
+function waitsFor(mod: HMRModule) {
+  // Any body that is not done can be the one that awaits an `import()` or a `route.page()`. The entry point loads the pages.
+  if (bodyLoads > 0 || (side === "client" && roots.get(mod))) return true;
+  const seen = new Set<HMRModule>();
+  const stack = [mod];
+  while (stack.length > 0) {
+    const m = stack.pop()!;
+    if (seen.has(m)) continue;
+    seen.add(m);
+    // A module in its synchronous part is on the stack: the importer, or a module above it.
+    if (m.loading === null) return true;
+    if (m.waits) stack.push(...m.waits);
+  }
+  return false;
 }
 
 /** The end of a body. Null, or for a replaced body: the dispose callbacks that it registered late run, then the new code takes its place. */
@@ -689,7 +721,8 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
 ) {
   let i = 0;
   let list: ReturnType<T>[] = [];
-  let isAsync = false;
+  /** The imports whose load returned a promise. */
+  let waits: HMRModule[] | null = null;
   const { length } = deps;
   while (i < length) {
     const dep = deps[i] as string;
@@ -719,7 +752,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
         DEBUG.ASSERT(typeof key === "string");
         i++;
       }
-      isAsync ||= promiseOrModule instanceof Promise;
+      if (promiseOrModule instanceof Promise) (waits ??= []).push(registry.get(dep)!);
     } else {
       DEBUG.ASSERT(!registry.get(dep)?.esm);
       i = expectedExportKeyEnd;
@@ -729,7 +762,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       }
     }
   }
-  return { list, isAsync };
+  return { list, waits };
 }
 
 function getEsmExports(m: HMRModule) {
@@ -1199,6 +1232,16 @@ function isReactRefreshBoundary(esmExports): boolean {
 
 function implicitAcceptFunction() {}
 
+/** `route.page()` and `route.layouts()`: a module body makes this load, and the loader cannot know which one. */
+function loadRoute(id: Id) {
+  bodyLoads++;
+  try {
+    return loadExports(id);
+  } finally {
+    bodyLoads--;
+  }
+}
+
 declare global {
   interface Error {
     asyncId?: string;
@@ -1233,8 +1276,8 @@ if (side === "client") {
     // For a router whose pages also run in the browser: the modules of the current route.
     route: route
       ? {
-          page: () => (route.page ? loadExports(route.page) : Promise.resolve(null)),
-          layouts: () => Promise.all(route.layouts.map(id => loadExports(id))),
+          page: () => (route.page ? loadRoute(route.page) : Promise.resolve(null)),
+          layouts: () => Promise.all(route.layouts.map(loadRoute)),
         }
       : null,
   });

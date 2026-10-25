@@ -1044,32 +1044,75 @@ pub mod fs {
             Ok(dir)
         }
 
-        /// Cache (or threadlocal-
-        /// stash) an `EntriesOption::Err` for `dir` and hand back its address.
+        /// Answers a read of `dir` that failed. A directory with no listing is cached
+        /// under that one key, as not found or as the error. A listing that was being
+        /// read again (`in_place`) can have more keys, which a bust only reaches
+        /// through it, so it stays mapped and is expired instead.
         fn read_directory_error(
             &mut self,
             dir: &[u8],
+            in_place: Option<*mut DirEntry>,
             err: crate::Error,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
+            let failed = EntriesOption::Err(dir_entry::Err {
+                original_err: err,
+                canonical_error: err,
+            });
+            if let Some(listing) = in_place {
+                // SAFETY: BSSMap-owned `DirEntry`; `entries_mutex` is held.
+                Self::expire_listing(unsafe { &mut *listing });
+                return Ok(temp_entries_option_write(failed));
+            }
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 self.entries.mark_not_found(get_or_put_result);
-                return Ok(temp_entries_option_write(EntriesOption::Err(
-                    dir_entry::Err {
-                        original_err: err,
-                        canonical_error: err,
-                    },
-                )));
+                return Ok(temp_entries_option_write(failed));
             }
-            let opt = self.entries.put(
-                &mut get_or_put_result,
-                EntriesOption::Err(dir_entry::Err {
-                    original_err: err,
-                    canonical_error: err,
-                }),
-            )?;
+            let opt = self.entries.put(&mut get_or_put_result, failed)?;
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
             Ok(unsafe { &mut *opt })
+        }
+
+        /// Leaves nothing of a directory that could not be read: no entry for its next
+        /// read to reuse, and no resolver that trusts the listing. Every key of it
+        /// misses, and the next read under any of them tries the directory again.
+        fn expire_listing(listing: &mut DirEntry) {
+            listing.data.clear();
+            listing.fd = Fd::INVALID;
+            listing.generation = GENERATION_STALE;
+        }
+
+        /// `dir`, the key of `slot`, did not open. Expires and returns its listing when
+        /// the listing's own directory does not open either: a lookup under any of its
+        /// keys then finds the directory once it is back, also when no bust names it.
+        /// `None` when `dir` has no listing, or is a second path to a directory that
+        /// still opens.
+        pub(crate) fn expire_unopened_listing(
+            &mut self,
+            dir: &[u8],
+            slot: bun_alloc::Result,
+        ) -> Option<&DirEntry> {
+            debug_assert!(
+                self.entries_mutex.is_held_by_current_thread(),
+                "expire_unopened_listing: caller must hold entries_mutex",
+            );
+            let Some(EntriesOption::Entries(listing)) = self.entries.at_index(slot.index) else {
+                return None;
+            };
+            let listing = std::ptr::from_mut::<DirEntry>(*listing);
+            // SAFETY: BSSMap-owned `DirEntry`; `entries_mutex` is held.
+            let own_dir =
+                strings::paths::without_trailing_slash_windows_path(unsafe { (*listing).dir });
+            if own_dir != strings::paths::without_trailing_slash_windows_path(dir) {
+                if let Ok(fd) = self.open_dir(own_dir) {
+                    let _ = bun_sys::close(fd);
+                    return None;
+                }
+            }
+            // SAFETY: see above; the borrow taken from `at_index` has ended.
+            let listing = unsafe { &mut *listing };
+            Self::expire_listing(listing);
+            Some(listing)
         }
 
         /// Picks the `entries` slot of a directory. `walked` is the directory
@@ -1210,10 +1253,22 @@ pub mod fs {
             let had_handle = maybe_handle.is_some();
             let handle: Fd = match maybe_handle {
                 Some(h) => h,
-                None => match self.open_dir(dir) {
-                    Ok(h) => h,
-                    Err(err) => return self.read_directory_error(dir, err),
-                },
+                None => {
+                    // A listing is read again from its own directory: `dir` can be a
+                    // second path to it, and lead somewhere else by now.
+                    let own_dir = match in_place {
+                        Some(existing) => {
+                            // SAFETY: BSSMap-owned `DirEntry`; `entries_mutex` is held.
+                            let own_dir = unsafe { (*existing).dir };
+                            strings::paths::without_trailing_slash_windows_path(own_dir)
+                        }
+                        None => dir,
+                    };
+                    match self.open_dir(own_dir) {
+                        Ok(h) => h,
+                        Err(err) => return self.read_directory_error(dir, in_place, err),
+                    }
+                }
             };
 
             // Close the handle on every exit path. Use
@@ -1249,13 +1304,7 @@ pub mod fs {
             let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
             {
                 Ok(e) => e,
-                Err(err) => {
-                    if let Some(existing) = in_place {
-                        // SAFETY: see above.
-                        unsafe { (*existing).data.clear() };
-                    }
-                    return self.read_directory_error(dir, err);
-                }
+                Err(err) => return self.read_directory_error(dir, in_place, err),
             };
 
             // `EntriesOption::Entries` here holds an unbounded `&mut DirEntry` (raw, BSSMap-stored
@@ -1595,9 +1644,7 @@ pub mod fs {
                     let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir) {
                         Ok(h) => h,
                         Err(err) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err.into()).ok();
+                            return self.read_directory_error(dir, Some(e_ptr), err.into()).ok();
                         }
                     };
                     let _close_guard = scopeguard::guard(handle, |h| {
@@ -1612,11 +1659,7 @@ pub mod fs {
                             // SAFETY: see above — slot is exclusively owned here.
                             unsafe { (*e_ptr).refill(new_entry) };
                         }
-                        Err(err) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err).ok();
-                        }
+                        Err(err) => return self.read_directory_error(dir, Some(e_ptr), err).ok(),
                     }
                 }
             }

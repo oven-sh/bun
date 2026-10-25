@@ -3414,6 +3414,22 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
+    /// `dir`, the key of `slot` in the listing cache, did not open. Returns false when
+    /// it has no listing to expire, see `RealFS::expire_unopened_listing`. Else each
+    /// other path to that listing loses its `DirInfo`, as in a bust. The caller holds
+    /// `entries_mutex`.
+    fn expire_unopened_listing(&mut self, dir: &[u8], slot: allocators::Result) -> bool {
+        // SAFETY: `rfs_ptr` points at the process-global RealFS singleton.
+        let rfs = unsafe { &mut *self.rfs_ptr() };
+        let Some(listing) = rfs.expire_unopened_listing(dir, slot) else {
+            return false;
+        };
+        for &key in listing.owners() {
+            self.dir_cache_mut().remove_hash(key);
+        }
+        true
+    }
+
     fn dir_info_for_resolution(
         &mut self,
         dir_path_maybe_trail_slash: &[u8],
@@ -3464,6 +3480,7 @@ impl<'a> Resolver<'a> {
                     bun_ast::Loc::EMPTY,
                     format_args!("Unable to open directory: {}", bstr::BStr::new(err.name())),
                 );
+                self.expire_unopened_listing(dir_path, cached_dir_entry_result);
                 return Err(err.into());
             }
         };
@@ -4585,8 +4602,17 @@ impl<'a> Resolver<'a> {
                             //
                             //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
                             //   ...
-                            self.dir_cache_mut().mark_not_found(queue_top.result);
-                            rfs!().entries.mark_not_found(cached_dir_entry_result);
+                            //
+                            // A directory that has a listing is tried again by each lookup
+                            // instead: nothing busts a path cached as not found when the
+                            // directory comes back.
+                            if !self.expire_unopened_listing(
+                                queue_top_unsafe_path,
+                                cached_dir_entry_result,
+                            ) {
+                                self.dir_cache_mut().mark_not_found(queue_top.result);
+                                rfs!().entries.mark_not_found(cached_dir_entry_result);
+                            }
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;

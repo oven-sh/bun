@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { closeSync, openSync, readSync, writeSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 
 // Reading a Bun.file() backed by a file descriptor goes through
@@ -146,6 +147,10 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
         const bytes = await Bun.file(fd).slice(7).text();
         writeSync(fd, "XY");
         result["after slice(7).text()"] = { bytes, file: await Bun.file(readWrite).text() };
+        // The descriptor is at byte 2 now. A read of another range does not move it.
+        const other = await Bun.file(fd).slice(10, 14).text();
+        writeSync(fd, "ZW");
+        result["between two writes"] = { bytes: other, file: await Bun.file(readWrite).text() };
       } finally {
         closeSync(fd);
       }
@@ -172,6 +177,7 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
 
       expect(result).toEqual({
         "after slice(7).text()": { bytes: "789abcdefghij", file: "XY" + content.slice(2) },
+        "between two writes": { bytes: "abcd", file: "XYZW" + content.slice(4) },
         "after a text() that fails": { error: { code: "EBADF", syscall: "read" }, file: content + "XY" },
         "after a FormData part that fails": { error: { code: "EBADF", syscall: "read" }, file: content + "XY" },
         "after a FormData part of slice(2, 2) that fails": {
@@ -240,14 +246,14 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
       });
     });
 
-    test("past the end, or of a file that is not regular, seeks", async () => {
+    test.concurrent("past the end, or of a file that is not regular, seeks", async () => {
       using dir = tempDir("bun-file-fd-read", { "fd-seek.txt": content });
       const path = join(String(dir), "fd-seek.txt");
 
       // A FIFO that holds "hello world". It has no offsets, so the seek fails and the read is in order.
       async function fromFifo(name: string, read: (file: Blob) => Promise<string>) {
         const fifo = join(String(dir), name);
-        expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
+        mkfifo(fifo);
         const fd = openSync(fifo, "r+");
         try {
           writeSync(fd, "hello world");
@@ -275,7 +281,7 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
     });
 
     // procfs reports a size of 0 for its files, so every start is past the end.
-    test.skipIf(process.platform !== "linux")("of a procfs file seeks", async () => {
+    test.concurrent.skipIf(!isLinux)("of a procfs file seeks", async () => {
       await using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
       const ostype = Bun.file("/proc/sys/kernel/ostype").slice(2, 5);
 

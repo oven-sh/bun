@@ -21,6 +21,29 @@ pub(crate) struct ColonListType<T: ColonListValue> {
     pub values: Vec<T>,
 }
 
+/// The first `:` or `=` of `arg` outside a `["quoted"]` part, which a define key can hold.
+fn separator_index(arg: &[u8]) -> Option<usize> {
+    let mut start = 0;
+    loop {
+        let at = start + strings::index_of_any(&arg[start..], b":=[")?;
+        if arg[at] != b'[' {
+            return Some(at);
+        }
+        start = at + 1;
+        let Some(&quote @ (b'"' | b'\'')) = arg.get(start) else {
+            continue;
+        };
+        let mut end = start + 1;
+        while let Some(&byte) = arg.get(end) {
+            if byte == quote {
+                start = end + 1;
+                break;
+            }
+            end += if byte == b'\\' { 2 } else { 1 };
+        }
+    }
+}
+
 impl<T: ColonListValue> ColonListType<T> {
     fn init(count: usize) -> Self {
         // `Vec::with_capacity` + `push`, which is infallible here.
@@ -35,10 +58,7 @@ impl<T: ColonListValue> ColonListType<T> {
             // Support either ":" or "=" as the separator, preferring whichever is first.
             // ":" is less confusing IMO because that syntax is used with flags
             // but "=" is what esbuild uses and I want this to be somewhat familiar for people using esbuild
-            let midpoint = strings::index_of_char(str, b':')
-                .unwrap_or(u32::MAX)
-                .min(strings::index_of_char(str, b'=').unwrap_or(u32::MAX));
-            if midpoint == u32::MAX {
+            let Some(midpoint) = separator_index(str) else {
                 if T::IS_LOADER {
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>--loader {}<r> is missing a \":\" separator. Expected <cyan>--loader .ext:loader<r>, for example <cyan>--loader .md:text<r>",
@@ -51,8 +71,7 @@ impl<T: ColonListValue> ColonListType<T> {
                     );
                 }
                 Global::exit(1);
-            }
-            let midpoint = midpoint as usize;
+            };
 
             if T::IS_LOADER {
                 if !str[0..midpoint].is_empty() && str[0] != b'.' {

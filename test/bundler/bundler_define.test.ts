@@ -132,6 +132,7 @@ const repros: Repro[] = [
       'process.env["SOME-VAR"]': "3",
       'process.env["dotted.name"]': "4",
       'process.env["quo\\"te"]': "5",
+      'process.env["with:colon=equals"]': "6",
     },
     cases: [
       ["((g) => g)(this)", "((g) => g)(window)"],
@@ -143,6 +144,8 @@ const repros: Repro[] = [
       ['process.env["dotted.name"]', "4"],
       // An escaped quote in a key part
       ["process.env['quo\"te']", "5"],
+      // The `--define` flag splits the key from the value after the quoted part
+      ['process.env["with:colon=equals"]', "6"],
       // Only a top-level `this` is replaced
       ["function () { return this; }", "function() { return this; }"],
     ],

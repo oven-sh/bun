@@ -442,6 +442,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
     '{ Request: Class<Omit<Request, "keepalive" | "duplex">>; Response: typeof Response & { prototype: Response } }',
   "server.bind.ts": "{ ServerWebSocket: Class<Required<Bun.ServerWebSocket>> }",
   "server_body.bind.ts": null,
+  "shared_struct_classes.bind.ts": null,
   "shell_body.bind.ts": null,
   "socket_body.bind.ts": null,
   "sourcemap.bind.ts": null,

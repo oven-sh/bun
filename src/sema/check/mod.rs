@@ -1049,6 +1049,8 @@ impl<'s> Program<'s> {
             assigned_unknown: Vec::new(),
             context_checking: Vec::new(),
             contextual_signature_in_check: None,
+            last_logical_chain: (FileId(0), ExprId::NONE, crate::bind::Parent::None),
+            last_nullishness: ((FileId(0), ExprId::NONE), 0),
             context_checked_here: Default::default(),
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
@@ -2011,6 +2013,10 @@ pub struct Checker<'p, 's> {
     context_checking: Vec<((FileId, crate::hir::FnId), AssignedSignature, usize)>,
     /// `getContextualSignature` of the innermost of them, if no inference context covers it.
     contextual_signature_in_check: Option<ContextualSignatureInCheck>,
+    /// The operator that `parent_of_logical_chain` was last called for, and the result.
+    last_logical_chain: (FileId, ExprId, crate::bind::Parent),
+    /// The `??` or `??=` that `syntactic_nullishness` last answered for, and the answer.
+    last_nullishness: ((FileId, ExprId), u8),
     /// The functions whose entry in `Program::context_checked` this checker wrote or tried to
     /// write. See `is_context_checked`.
     context_checked_here: crate::util::FxHashSet<(FileId, crate::hir::FnId)>,

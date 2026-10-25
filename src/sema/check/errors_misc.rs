@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::bind::{FnOwner, Parent, UNREACHABLE};
+use smallvec::SmallVec;
 
 const ALWAYS: u8 = 1;
 const NEVER: u8 = 2;
@@ -261,7 +262,7 @@ impl Checker<'_, '_> {
     }
 
     /// `getSyntacticNullishnessSemantics`
-    fn syntactic_nullishness(&self, file: FileId, e: ExprId) -> u8 {
+    fn syntactic_nullishness(&mut self, file: FileId, e: ExprId) -> u8 {
         let hir = self.hir(file);
         let e = self.skip_outer_expressions(file, e);
         match hir[e].kind {
@@ -294,22 +295,46 @@ impl Checker<'_, '_> {
             ExprKind::Assign {
                 op: None, value, ..
             } => self.syntactic_nullishness(file, value),
-            // The left operand when it isn't nullish, otherwise the right one.
+            // The left operand when it isn't nullish, otherwise the right one. The parser builds `a ?? b ?? c` in a
+            // loop, so nothing limits how deep the left operands nest. Each operator of the chain asks about its left
+            // operand, so the walk ends at the operator that was asked about last.
             ExprKind::Binary {
-                op: BinOp::Nullish,
-                left,
-                right,
+                op: BinOp::Nullish, ..
             }
             | ExprKind::Assign {
                 op: Some(BinOp::Nullish),
-                target: left,
-                value: right,
+                ..
             } => {
-                let left = self.syntactic_nullishness(file, left);
-                let mut result = left & NEVER;
-                if left & ALWAYS != 0 {
-                    result |= self.syntactic_nullishness(file, right);
+                let mut right_operands: SmallVec<[ExprId; 4]> = SmallVec::new();
+                let mut at = e;
+                while let ExprKind::Binary {
+                    op: BinOp::Nullish,
+                    left,
+                    right,
                 }
+                | ExprKind::Assign {
+                    op: Some(BinOp::Nullish),
+                    target: left,
+                    value: right,
+                } = hir[at].kind
+                    && (file, at) != self.last_nullishness.0
+                {
+                    right_operands.push(right);
+                    at = self.skip_outer_expressions(file, left);
+                }
+                let mut result = if (file, at) == self.last_nullishness.0 {
+                    self.last_nullishness.1
+                } else {
+                    self.syntactic_nullishness(file, at)
+                };
+                while let Some(right) = right_operands.pop() {
+                    let left = result;
+                    result = left & NEVER;
+                    if left & ALWAYS != 0 {
+                        result |= self.syntactic_nullishness(file, right);
+                    }
+                }
+                self.last_nullishness = ((file, e), result);
                 result
             }
             ExprKind::Cond { branches, .. } => {

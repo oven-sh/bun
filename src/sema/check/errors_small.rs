@@ -127,9 +127,32 @@ impl<'p> Checker<'p, '_> {
         if !self.p.files.options.strict_null_checks {
             return;
         }
+        let hir = self.hir(file);
+        let body = match self.parent_of_logical_chain(file, e) {
+            Parent::Stmt(s) if s.is_some() => match hir[s].kind {
+                StmtKind::If { yes, .. } => Some(hir.node(yes)),
+                _ => None,
+            },
+            _ => None,
+        };
+        if is_and || body.is_some() {
+            self.check_known_truthy_types(file, left, left, body.unwrap_or(Node::NONE));
+        }
+    }
+
+    /// Walks up from `e`, which is `&&`, `||` or `??`, out of the chain of such operators that it's part of.
+    fn parent_of_logical_chain(&mut self, file: FileId, e: ExprId) -> Parent {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Walks up out of the chain it's part of.
         let mut parent = bound.parent_of_expr(e);
+        // A chain's operators are checked one after the other, outward or inward. The walk from each of them would
+        // make a chain of n operators take n * n steps.
+        let (last_file, last, answer) = self.last_logical_chain;
+        if last_file == file
+            && (parent == Parent::Expr(last) || bound.parent_of_expr(last) == Parent::Expr(e))
+        {
+            self.last_logical_chain.1 = e;
+            return answer;
+        }
         while let Parent::Expr(p) = parent
             && matches!(
                 hir[p].kind,
@@ -141,16 +164,8 @@ impl<'p> Checker<'p, '_> {
         {
             parent = bound.parent_of_expr(p);
         }
-        let body = match parent {
-            Parent::Stmt(s) if s.is_some() => match hir[s].kind {
-                StmtKind::If { yes, .. } => Some(hir.node(yes)),
-                _ => None,
-            },
-            _ => None,
-        };
-        if is_and || body.is_some() {
-            self.check_known_truthy_types(file, left, left, body.unwrap_or(Node::NONE));
-        }
+        self.last_logical_chain = (file, e, parent);
+        parent
     }
 
     /// `checkTestingKnownTruthyTypes`. `whole` is the condition the check was first called with, whose type is

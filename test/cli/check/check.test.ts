@@ -31243,6 +31243,8 @@ describe.concurrent("--check", () => {
     const size = isDebug || isASAN ? 50 : 400;
     // Lines, not depth: nothing here nests.
     const long = isDebug || isASAN ? 3000 : 40000;
+    // Operands of one expression that the parser, the binder and the checker handle in loops.
+    const chain = isDebug || isASAN ? 20_000 : 200_000;
     // Members of one list. A search through the list for each member makes these take 7 to 15 s in a release build.
     const wide = isDebug || isASAN ? 256 : 4096;
     // Names in one declaration or one object literal, where such a search takes 9 s.
@@ -31303,6 +31305,23 @@ describe.concurrent("--check", () => {
           `declare const a: { p?: number };\nexport const r = ${range(n)
             .map(() => "a.p")
             .join(" && ")};`,
+      ],
+      [
+        // Each operator looks for what's around the whole chain.
+        "a long chain of `||`",
+        chain,
+        n => `declare function f(): number;\nexport const r = f()${repeat(" || f()", n)};`,
+      ],
+      [
+        "a long chain of `&&`",
+        chain,
+        n => `declare function f(): number;\nexport const r = f()${repeat(" && f()", n)};`,
+      ],
+      [
+        // Each operator also asks whether its left operand, which is the chain so far, can be nullish.
+        "a long chain of `??`",
+        chain,
+        n => `declare function f(): number | undefined;\nexport const r = f()${repeat(" ?? f()", n)};`,
       ],
       [
         "a chain of `+`",

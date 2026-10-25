@@ -467,7 +467,6 @@ impl RealPath {
             buf,
             &[dir_real_path, base],
         )
-        .map(|joined| &*joined)
     }
 }
 

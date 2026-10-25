@@ -87,7 +87,12 @@ interface AtomicsConditionConstructor {
    * Like `wait`, but gives up after `timeout` milliseconds. Without a `predicate` it returns whether it was notified;
    * with one it loops until the predicate returns true and returns whether it did.
    */
-  waitFor(condition: AtomicsCondition, unlockToken: AtomicsUnlockToken, timeout: number, predicate?: () => boolean): boolean;
+  waitFor(
+    condition: AtomicsCondition,
+    unlockToken: AtomicsUnlockToken,
+    timeout: number,
+    predicate?: () => boolean,
+  ): boolean;
 
   /** Wakes up to `count` waiters (all if omitted). Returns how many were woken. */
   notify(condition: AtomicsCondition, count?: number): number;

@@ -4126,8 +4126,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    /// At an import that binds a macro that a call would run: stops the parse if the host asked.
-    fn defer_macro_import(&self) -> Result<(), crate::Error> {
+    /// The one writer of `macro_.refs`. The parse stops if the host asked and a call would run it.
+    fn put_macro_ref(
+        &mut self,
+        r#ref: Ref,
+        data: crate::parser::MacroRefData<'a>,
+    ) -> Result<(), crate::Error> {
         if self.options.features.defer_macro_imports
             && !SCAN_ONLY
             && !self.options.features.is_macro_runtime
@@ -4138,6 +4142,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return Err(crate::Error::MacroDeferred);
         }
+        self.macro_.refs.put(r#ref, data)?;
         Ok(())
     }
 
@@ -4152,7 +4157,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
         if is_macro {
-            self.defer_macro_import()?;
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
             self.import_records.items_mut()[id as usize].path.namespace = crate::Macro::NAMESPACE;
             self.import_records.items_mut()[id as usize]
@@ -4163,7 +4167,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name = self.load_name_from_ref(name_loc.ref_);
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, name_loc.loc, name)?;
                 self.is_import_item.insert(r#ref, ());
-                self.macro_.refs.put(
+                self.put_macro_ref(
                     r#ref,
                     crate::parser::MacroRefData {
                         import_record_id: id,
@@ -4176,7 +4180,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name = self.load_name_from_ref(stmt.namespace_ref);
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, star, name)?;
                 stmt.namespace_ref = r#ref;
-                self.macro_.refs.put(
+                self.put_macro_ref(
                     r#ref,
                     crate::parser::MacroRefData {
                         import_record_id: id,
@@ -4192,7 +4196,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
                 self.is_import_item.insert(r#ref, ());
                 // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
-                self.macro_.refs.put(
+                self.put_macro_ref(
                     r#ref,
                     crate::parser::MacroRefData {
                         import_record_id: id,
@@ -4346,10 +4350,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if let Some(remap) = macro_remap {
                     if let Some(remapped_path) = remap.get(b"default") {
-                        self.defer_macro_import()?;
                         let new_import_id =
                             self.add_import_record(ImportKind::Stmt, path.loc, remapped_path);
-                        self.macro_.refs.put(
+                        self.put_macro_ref(
                             r#ref,
                             crate::parser::MacroRefData {
                                 import_record_id: new_import_id,
@@ -4428,10 +4431,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if let Some(remap) = macro_remap {
                 if let Some(remapped_path) = remap.get(alias) {
-                    self.defer_macro_import()?;
                     let new_import_id =
                         self.add_import_record(ImportKind::Stmt, path.loc, remapped_path);
-                    self.macro_.refs.put(
+                    self.put_macro_ref(
                         r#ref,
                         crate::parser::MacroRefData {
                             import_record_id: new_import_id,

@@ -575,10 +575,9 @@ describe("event loop routing around macros", () => {
 describe("macros in more modules than the work pool has threads", () => {
   const poolEnv = { ...bunEnv, UV_THREADPOOL_SIZE: "2" };
   // A process that hangs is killed, so that the test says how it ended and leaves none behind.
-  // On a busy machine one process of a debug build can need more than the 5 seconds that
-  // `bun test` gives a test, so each test here names its time.
   const killAfter = isCI || isDebug || isASAN ? 60_000 : 4_000;
-  const timeout = killAfter + 10_000;
+  // A test has to outlast the kill: the 5 s default does where that is 4 s, and so does the CI runner's --timeout.
+  const timeout = !isCI && (isDebug || isASAN) ? killAfter + 10_000 : undefined;
   const readsAFile = `import { promises as fs } from "node:fs";\nexport async function m() {\n  return (await fs.readFile(import.meta.dir + "/data.txt", "utf8")).trim();\n}\n`;
   // A macro's runtime on a pool thread is never torn down. What the garbage in it owns (the Blob
   // of Bun.file() is one) then reads as leaked when the process exits, with one module too.
@@ -859,7 +858,8 @@ describe("macros in more modules than the work pool has threads", () => {
   );
 
   // The threads of the second pool are named "Bun Macro <n>", those of the work pool "Bun Pool
-  // <n>". A file that the JS thread parses keeps its macros on that thread.
+  // <n>". A file that the JS thread parses keeps its macros on that thread. The three modules that
+  // a pool parses bind the macro by a named, a default and a namespace import.
   function macroOfEachHost() {
     const files: Record<string, string> = {
       "where.ts": [
@@ -867,6 +867,7 @@ describe("macros in more modules than the work pool has threads", () => {
         `export function where() {`,
         `  return Bun.isMainThread + ":" + readFileSync("/proc/thread-self/comm", "utf8").trim();`,
         `}`,
+        `export default where;`,
       ].join("\n"),
       "index.ts": [
         `import { v as imported } from "./mod0.ts";`,
@@ -886,8 +887,14 @@ describe("macros in more modules than the work pool has threads", () => {
         `for (const [form, value] of Object.entries(forms)) console.log(form + ": " + thread(value));`,
       ].join("\n"),
     };
-    for (let i = 0; i < 4; i++) {
-      files[`mod${i}.ts`] = `import { where } from "./where.ts" with { type: "macro" };\nexport const v = where();\n`;
+    const bindings = {
+      "mod0.ts": [`{ where }`, `where()`],
+      "mod1.ts": [`where`, `where()`],
+      "mod2.ts": [`{ where }`, `where()`],
+      "mod3.ts": [`* as macros`, `macros.where()`],
+    };
+    for (const [file, [binding, call]] of Object.entries(bindings)) {
+      files[file] = `import ${binding} from "./where.ts" with { type: "macro" };\nexport const v = ${call};\n`;
     }
     return files;
   }
@@ -1096,6 +1103,32 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)
       const refusal = "Macros cannot be used with --disallow-code-generation-from-strings=strict: 0";
       const strict = { BUN_OPTIONS: "--disallow-code-generation-from-strings=strict" };
       expect(await run(files, "index.ts", strict)).toEqual(printed(refusal, refusal, refusal));
+    },
+    timeout,
+  );
+
+  test.concurrent.skipIf(!isLinux)(
+    "the second pool has no thread for an import that binds no macro",
+    async () => {
+      const bindsNothing = `import "./m.ts" with { type: "macro" };\nimport {} from "./m.ts" with { type: "macro" };\nexport const v = "bound nothing";\n`;
+      const files = {
+        "m.ts": returnsHello,
+        "bare.ts": bindsNothing,
+        "mod.ts": callsAMacro,
+        "index.ts": [
+          ...countsMacroThreads,
+          `console.log((await import("./bare.ts")).v + ":", macroThreads());`,
+          `const build = await Bun.build({ entrypoints: ["./bare.ts"] });`,
+          `console.log(build.success + ":", macroThreads());`,
+          `const code = ${JSON.stringify(bindsNothing)}.replaceAll("./m.ts", import.meta.dir + "/m.ts");`,
+          `await new Bun.Transpiler({ loader: "ts" }).transform(code);`,
+          `console.log("transformed:", macroThreads());`,
+          `console.log((await import("./mod.ts")).v + ":", macroThreads() > 0);`,
+        ].join("\n"),
+      };
+      expect(await run(files, "index.ts")).toEqual(
+        printed("bound nothing: 0", "true: 0", "transformed: 0", "hello: true"),
+      );
     },
     timeout,
   );

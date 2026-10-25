@@ -1,6 +1,6 @@
 import { BunFile, Loader } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isMusl, makeTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isMusl, makeTree, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import source from "./native_plugin.cc" with { type: "file" };
@@ -741,6 +741,56 @@ console.log(JSON.stringify(json))
     expect(stdout.split("Freed compilation ctx!").length - 1).toBe(1);
     const resultLine = stdout.split("\n").find(line => line.startsWith('{"failed"'));
     expect(resultLine).toBe('{"failed":true,"freed":1}');
+    expect(exitCode).toBe(0);
+  });
+
+  // The parse of a file that imports a macro stops at the import and runs again on another thread
+  // pool, and the plugin runs before the first parse only. macOS and Windows read files on a pool
+  // of their own and lose every plugin message on the way back, so the variable turns that off.
+  it("reports what the plugin logged for a file that imports a macro", async () => {
+    using dir = tempDir("native-plugin-warns", {
+      "macro.ts": `export function m() {\n  return "hello";\n}\n`,
+      "uses-macro.ts": `import { m } from "./macro.ts" with { type: "macro" };\nexport const viaMacro = m();\n`,
+      "plain.ts": `export const plain = "plain";\n`,
+      "index.ts": `import { viaMacro } from "./uses-macro.ts";\nimport { plain } from "./plain.ts";\nconsole.log(viaMacro, plain);\n`,
+      "fails.ts": `import { m } from "./macro.ts" with { type: "macro" };\nexport const viaMacro = m();\nexport const s = ;\n`,
+      "build.ts": /* ts */ `
+        import * as path from "path";
+        const napiModule = require(path.join(process.env.BUN_TEST_TEMP_DIR!, "build/Release/xXx123_foo_counter_321xXx.node"));
+        const plugins = [
+          {
+            name: "warns",
+            setup(build) {
+              build.onBeforeParse({ filter: /\\.ts$/ }, { napiModule, symbol: "plugin_impl_warns" });
+            },
+          },
+        ];
+        const logs = result => result.logs.map(log => [log.level, log.message, path.basename(log.position?.file ?? "")]);
+        const built = await Bun.build({ entrypoints: [path.join(import.meta.dir, "index.ts")], plugins });
+        const failed = await Bun.build({ entrypoints: [path.join(import.meta.dir, "fails.ts")], plugins, throw: false });
+        console.log(JSON.stringify({
+          built: { success: built.success, logs: logs(built).sort() },
+          failed: { success: failed.success, logs: logs(failed) },
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "build.ts"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_IO_POOL: "1", BUN_TEST_TEMP_DIR: tempdir },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const resultLine = stdout.split("\n").find(line => line.startsWith('{"built"'));
+    const parsed = resultLine ? JSON.parse(resultLine) : { stderr, stdout };
+    const warning = (file: string) => ["warn", "a warning from the plugin", file];
+    expect(parsed).toEqual({
+      built: { success: true, logs: [warning("index.ts"), warning("plain.ts"), warning("uses-macro.ts")] },
+      failed: { success: false, logs: [warning("fails.ts"), ["error", "Unexpected ;", "fails.ts"]] },
+    });
     expect(exitCode).toBe(0);
   });
 

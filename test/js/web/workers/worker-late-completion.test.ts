@@ -570,6 +570,8 @@ describe.skipIf(isWindows || (!isDebug && !isASAN))("terminate() while a job wai
     };
     const named = new RegExp(`taken at .*${ticket.replace(".", "\\.")}:\\d+`);
     await read(() => named.test(stderr));
+    // A host that is gone reads neither FIFO, and an open for writing would then never return.
+    expect(stderr).toMatch(named);
     // One byte for each macro, and end of file for the parked read.
     fs.writeFileSync(held, "xx");
     fs.closeSync(fs.openSync(parked, "w"));

@@ -98,6 +98,8 @@ pub struct ParseTask {
     pub(crate) opened_own_fd: bool,
     /// The parser returned `MACRO_DEFERRED` for this task: its next parse runs the macros.
     pub(crate) macro_deferred: bool,
+    /// What a native plugin logged before `MACRO_DEFERRED`: the next run does not call the plugin.
+    pub(crate) pending_log: Option<Box<Log>>,
     pub(crate) external_free_function: ExternalFreeFunction,
     pub(crate) side_effects: bun_ast::SideEffects,
     pub(crate) loader: Option<Loader>,
@@ -307,6 +309,7 @@ impl ParseTask {
             secondary_path_for_commonjs_interop: None,
             opened_own_fd: false,
             macro_deferred: false,
+            pending_log: None,
             external_free_function: ExternalFreeFunction::NONE,
             loader: None,
             task: ThreadPoolLib::Task {
@@ -339,6 +342,7 @@ impl Default for ParseTask {
             contents_or_fd: ContentsOrFd::Contents(b""),
             opened_own_fd: false,
             macro_deferred: false,
+            pending_log: None,
             external_free_function: ExternalFreeFunction::NONE,
             side_effects: bun_ast::SideEffects::HasSideEffects,
             loader: None,
@@ -631,6 +635,7 @@ pub mod parse_worker {
             secondary_path_for_commonjs_interop: None,
             opened_own_fd: false,
             macro_deferred: false,
+            pending_log: None,
             external_free_function: ExternalFreeFunction::NONE,
             task: ThreadPoolLib::Task {
                 node: ThreadPoolLib::Node::default(),
@@ -2841,7 +2846,7 @@ pub mod parse_worker {
         );
 
         let mut step: Step = Step::Pending;
-        let mut log = Log::init();
+        let mut log = this.pending_log.take().map_or_else(Log::init, |log| *log);
         debug_assert!(this.source_index.is_valid()); // forgot to set source_index
 
         let value: ResultValue = 'value: {
@@ -2918,6 +2923,9 @@ pub mod parse_worker {
 
                     if e == MACRO_DEFERRED {
                         this.macro_deferred = true;
+                        if !log.msgs.is_empty() {
+                            this.pending_log = Some(Box::new(log));
+                        }
                         worker.unget();
                         if bun_threading::MacroPool::ensure_worker() {
                             return bun_threading::MacroPool::schedule(&raw mut this.task);

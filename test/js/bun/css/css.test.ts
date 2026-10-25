@@ -2200,6 +2200,27 @@ describe("css tests", () => {
         chrome: 95 << 16,
       },
     );
+
+    // Every target supports the later longhand, so it replaces the buffered value.
+    // A flush here would put `border-image` ahead of `border`, which resets it.
+    prefix_test(
+      `
+      .foo {
+        border: 4px solid;
+        border-image: linear-gradient(red, blue);
+        border-image-slice: 1;
+      }
+    `,
+      `
+      .foo {
+        border: 4px solid;
+        border-image: linear-gradient(red, #00f) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
   });
 
   describe("box-shadow", () => {

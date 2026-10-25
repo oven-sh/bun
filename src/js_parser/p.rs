@@ -5924,23 +5924,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A top-level `this` with a user `--define this=...` applied first.
-    pub(crate) fn value_for_this_with_defines(
+    /// A `this` outside every function, with a user `--define this=...` applied first.
+    #[inline(never)]
+    pub(crate) fn value_for_top_level_this(
         &mut self,
-        loc: bun_ast::Loc,
+        this: &Expr,
         assign_target: js_ast::AssignTarget,
         is_delete_target: bool,
     ) -> Option<Expr> {
-        if self.fn_only_data_visit.is_this_nested {
-            return None;
-        }
+        debug_assert!(!self.fn_only_data_visit.is_this_nested);
         let defines = self.define;
         if let Some(data) = defines.identifiers.get(b"this".as_slice()) {
             if !data.valueless() {
-                return Some(self.value_for_define(loc, assign_target, is_delete_target, data));
+                return Some(self.value_for_define(this, assign_target, is_delete_target, data));
             }
         }
-        self.value_for_this(loc)
+        self.value_for_this(this.loc)
     }
 
     pub(crate) fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
@@ -7091,13 +7090,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
+    /// `replaced` is the expression the define matched.
+    #[inline(never)]
     pub(crate) fn value_for_define(
         &mut self,
-        loc: bun_ast::Loc,
+        replaced: &Expr,
         assign_target: js_ast::AssignTarget,
         is_delete_target: bool,
         define_data: &DefineData,
     ) -> Expr {
+        let loc = replaced.loc;
         // Callers gate on `!valueless()` before reaching here, so `value` is a
         // real Expr.Data by contract.
         let value = define_data.value;
@@ -7118,6 +7120,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     IdentifierOpts::new()
                         .with_assign_target(assign_target)
                         .with_is_delete_target(is_delete_target)
+                        .with_is_call_target(Self::is_same_node(self.call_target, replaced.data))
+                        .with_is_template_tag(Self::is_same_node(self.template_tag, replaced.data))
                         .with_was_originally_identifier(true),
                 );
             }
@@ -7135,6 +7139,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
         Expr { data: value, loc }
+    }
+
+    /// Is `expr` the node `target` (`call_target`, `template_tag`) holds? `this` and `import.meta` have no identity.
+    fn is_same_node(target: js_ast::ExprData, expr: js_ast::ExprData) -> bool {
+        use js_ast::ExprData as D;
+        match (target, expr) {
+            (D::EDot(a), D::EDot(b)) => core::ptr::eq(&raw const *a, &raw const *b),
+            (D::EIndex(a), D::EIndex(b)) => core::ptr::eq(&raw const *a, &raw const *b),
+            (D::EIdentifier(a), D::EIdentifier(b)) => a.ref_.eql(b.ref_),
+            (D::EThis(_), D::EThis(_)) | (D::EImportMeta(_), D::EImportMeta(_)) => true,
+            _ => false,
+        }
     }
 
     /// esbuild's `instantiateDefineExpr`: resolves the first part of `name`, then builds property accesses.
@@ -7162,7 +7178,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             b"this" => {
                 self.this_expr_count = self.this_expr_count.wrapping_add(1);
-                // Not `value_for_this_with_defines`: `--define this=this.x` must not recurse
+                // Not `value_for_top_level_this`: `--define this=this.x` must not recurse
                 match self.value_for_this(loc) {
                     Some(value) => value,
                     None => Expr {
@@ -7204,14 +7220,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if rest.is_empty() {
             return value;
         }
-        // The last link is the assignment or delete target, as the literal `a.b.c = 1` would be
+        // The last link is used as the literal `a.b.c` would be: assigned, deleted, called, or a template tag
         self.member_expression(
             loc,
             value,
             &rest,
             IdentifierOpts::new()
                 .with_assign_target(opts.assign_target())
-                .with_is_delete_target(opts.is_delete_target()),
+                .with_is_delete_target(opts.is_delete_target())
+                .with_is_call_target(opts.is_call_target())
+                .with_is_template_tag(opts.is_template_tag()),
         )
     }
 

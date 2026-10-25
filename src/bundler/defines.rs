@@ -22,7 +22,7 @@ use crate::defines_table::{
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
     Define, DefineData, DefineKeyError, DotDefine, Flags, IdentifierDefine, Options, RawDefines,
-    UserDefines, UserDefinesArray, are_parts_equal, canonical_define_key, parse_define_key,
+    UserDefines, UserDefinesArray, are_parts_equal, canonical_define_key, validate_define_key,
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.
@@ -386,8 +386,8 @@ impl DefineDataExt for DefineData {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<DefineData, crate::Error> {
-        match parse_define_key(key) {
-            Ok(_) => {}
+        match validate_define_key(key) {
+            Ok(()) => {}
             Err(DefineKeyError::InvalidIdentifier(part)) if strings::eql(part, key) => {
                 log.add_error_fmt(
                     None,

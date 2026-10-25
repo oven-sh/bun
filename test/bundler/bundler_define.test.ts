@@ -131,6 +131,7 @@ const repros: Repro[] = [
       HEX: "0xffn",
       'process.env["SOME-VAR"]': "3",
       'process.env["dotted.name"]': "4",
+      'process.env["quo\\"te"]': "5",
     },
     cases: [
       ["((g) => g)(this)", "((g) => g)(window)"],
@@ -140,6 +141,8 @@ const repros: Repro[] = [
       ["process.env['SOME-VAR']", "3"],
       ['process?.env?.["SOME-VAR"]', "3"],
       ['process.env["dotted.name"]', "4"],
+      // An escaped quote in a key part
+      ["process.env['quo\"te']", "5"],
       // Only a top-level `this` is replaced
       ["function () { return this; }", "function() { return this; }"],
     ],
@@ -368,6 +371,21 @@ describe("define values are symbols, not text", () => {
           exports.readExpression = function () { return ${read}; };
           function readDeclaration() { return ${read}; }
           exports.readDeclaration = readDeclaration;
+        `,
+      }),
+    },
+    {
+      name: "a call and a tagged template of a CommonJS method through an import namespace",
+      key: "READ_TAG",
+      value: "lib.readTag",
+      files: (callee: string) => ({
+        "entry.js": `
+          import * as lib from "./lib.cjs";
+          console.log(${callee}(), ${callee}\`\`);
+        `,
+        "lib.cjs": `
+          exports.tag = "exports";
+          exports.readTag = function () { return this.tag; };
         `,
       }),
     },

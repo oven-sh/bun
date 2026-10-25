@@ -2393,8 +2393,11 @@ export default class {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ stdout, exitCode }).toEqual({ stdout: '{"3":"P","4":"R","5":"S","P":3,"R":4,"S":5}\n', exitCode: 0 });
-      void stderr;
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: '{"3":"P","4":"R","5":"S","P":3,"R":4,"S":5}\n',
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     it("a third block counts on from the enum of the second block", () => {

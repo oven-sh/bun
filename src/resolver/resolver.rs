@@ -4884,9 +4884,11 @@ impl<'a> Resolver<'a> {
 
                         if !bun_paths::is_absolute(absolute_original_path) {
                             let parts: [&[u8]; 2] = [abs_base_url, original_path.as_ref()];
+                            // Not `tsconfig_path_abs`: `load_tsconfig` joins an `extends`
+                            // into that one while `load_as_file` still reads this path.
                             absolute_original_path = match self
                                 .fs_ref()
-                                .abs_buf_checked(&parts, bufs!(tsconfig_path_abs))
+                                .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
                             {
                                 Some(p) => p,
                                 None => continue,
@@ -5902,16 +5904,14 @@ impl<'a> Resolver<'a> {
         // (debug_logs / load_extension / dirname_store) don't trip borrowck
         // while each read goes through safe `BackRef: Deref` (pointee outlives
         // holder by ARENA invariant).
-        // SAFETY: `rfs` points at the process-global RealFS singleton (see note at fn top).
         let dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption> =
-            match unsafe { &mut *rfs }.read_directory(
-                dir_path,
-                None,
-                self.generation,
-                self.store_fd,
-            ) {
-                Ok(e) => bun_ptr::BackRef::new(&*e),
-                Err(_) => dec_ret!(None),
+            match self.cached_listing(dir_path) {
+                CachedListing::Hit(cached) => cached,
+                CachedListing::NotFound => dec_ret!(None),
+                CachedListing::Miss => match self.read_directory_after_dir_info(dir_path) {
+                    Ok(e) => e,
+                    Err(_) => dec_ret!(None),
+                },
             };
 
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
@@ -6068,6 +6068,103 @@ impl<'a> Resolver<'a> {
             }
         }
         dec_ret!(None);
+    }
+
+    /// What `RealFS::read_directory` answers for `dir` without reading it, found by the
+    /// same probe and the same compares.
+    #[inline]
+    fn cached_listing(&self, dir: &[u8]) -> CachedListing {
+        Self::assert_valid_cache_key(dir);
+        // SAFETY: `rfs_ptr()` is the process-global RealFS singleton.
+        let rfs = unsafe { &mut *self.rfs_ptr() };
+        let _entries_lock = rfs.entries_mutex.lock_guard();
+        let Ok(cached) = rfs.listing_slot(dir, b"") else {
+            return CachedListing::Miss;
+        };
+        let Some(slot) = rfs.entries.at_index(cached.index) else {
+            return if cached.status == allocators::ItemStatus::NotFound
+                && self.generation == Fs::GENERATION_BASE
+            {
+                CachedListing::NotFound
+            } else {
+                CachedListing::Miss
+            };
+        };
+        if matches!(
+            &*slot,
+            Fs::file_system::real_fs::EntriesOption::Entries(entries)
+                if entries.generation < self.generation
+        ) {
+            return CachedListing::Miss;
+        }
+        CachedListing::Hit(bun_ptr::BackRef::new(&*slot))
+    }
+
+    /// Reads `dir` for `load_as_file`. The walk that builds its `DirInfo` runs first: it
+    /// follows the links on the way, so it reads the directory into the listing of its
+    /// real path. `RealFS::read_directory` alone has only `dir` to key the listing by.
+    #[cold]
+    #[inline(never)]
+    fn read_directory_after_dir_info(
+        &mut self,
+        dir: &[u8],
+    ) -> crate::CrateResult<bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>> {
+        if !self.dir_info_is_not_found(dir)
+            && self.read_dir_info_ignore_error(dir).is_none()
+            && self.parent_lists(dir)
+        {
+            self.forget_not_found(dir);
+        }
+        // SAFETY: `rfs_ptr()` is the process-global RealFS singleton.
+        let entries = unsafe { &mut *self.rfs_ptr() }.read_directory(
+            dir,
+            None,
+            self.generation,
+            self.store_fd,
+        )?;
+        Ok(bun_ptr::BackRef::new(&*entries))
+    }
+
+    /// Whether the cached listing of the parent of `dir` has its name.
+    fn parent_lists(&mut self, dir: &[u8]) -> bool {
+        let parent = Dirname::dirname(dir);
+        if parent.len() >= dir.len() {
+            return false;
+        }
+        let parent_info = {
+            let _resolver_lock = self.mutex.lock_guard();
+            self.dir_cache_mut().get(parent).map(DirInfoRef::from_slot)
+        };
+        parent_info
+            .and_then(|info| info.get_entry(self.generation, bun_paths::basename(dir)))
+            .is_some()
+    }
+
+    fn dir_info_is_not_found(&mut self, dir: &[u8]) -> bool {
+        let _resolver_lock = self.mutex.lock_guard();
+        self.dir_cache_mut()
+            .get_or_put(dir)
+            .is_ok_and(|it| it.status == allocators::ItemStatus::NotFound)
+    }
+
+    /// Unmaps `dir` where the walk that could not open it left it as not found, in
+    /// `dir_cache` and in `rfs.entries`. The walk records every error that way, and the
+    /// `dir_cache` key would outlive a bust of the parent directory. Without them the
+    /// next read of `dir` opens it and keeps the error it gets.
+    fn forget_not_found(&mut self, dir: &[u8]) {
+        if self.dir_info_is_not_found(dir) {
+            self.dir_cache_mut().remove(dir);
+        }
+        // SAFETY: `rfs_ptr()` is the process-global RealFS singleton.
+        let rfs = unsafe { &mut *self.rfs_ptr() };
+        let _entries_lock = rfs.entries_mutex.lock_guard();
+        if rfs
+            .entries
+            .get_or_put(dir)
+            .is_ok_and(|it| it.status == allocators::ItemStatus::NotFound)
+        {
+            rfs.entries.remove(dir);
+        }
     }
 
     fn load_extension(
@@ -6759,6 +6856,16 @@ impl core::ops::Deref for TSConfigRef {
 }
 
 // ─── nested helper types ───────────────────────────────────────────────────
+
+/// `Resolver::cached_listing`
+enum CachedListing {
+    /// A listing that is current for this resolver, or the error a read got.
+    Hit(bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>),
+    /// The directory is known to be missing.
+    NotFound,
+    /// `RealFS::read_directory` would read the directory.
+    Miss,
+}
 
 enum DependencyToResolve {
     NotFound,

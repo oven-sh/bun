@@ -347,12 +347,7 @@ impl<'s> Checker<'_, 's> {
             }
             FnBody::Block(list) => self.check_function_or_module_block(file, list),
             FnBody::Expr(e) => {
-                // `getReturnTypeFromBody` has checked `e` with `checkExpressionCached`. This is
-                // `checkExpression(body)`.
-                if self.is_checked_with_incomplete_walk(file, e) {
-                    self.check_expression_again(file, e);
-                }
-                self.check_expression(file, e);
+                self.check_expression_after_cached(file, e);
                 self.check_returned_body(file, func, e);
             }
             FnBody::None => {}
@@ -1511,7 +1506,13 @@ impl<'s> Checker<'_, 's> {
             }
             // `checkReturnStatement`
             StmtKind::Return(e) => {
-                self.check_expression(file, e);
+                // `checkExpressionCached` of the parenthesized expression. `getReturnTypeFromBody`
+                // has stored the type of the expression in the parentheses.
+                if e.is_some() && is_parenthesized(hir, e) {
+                    self.check_expression_after_cached(file, e);
+                } else {
+                    self.check_expression(file, e);
+                }
                 if let Some(func) = self.check_grammar_return_statement(file, s) {
                     self.return_type_of_fn(file, func);
                     self.check_return_statement(file, s, func, e);
@@ -1774,6 +1775,15 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
+    /// `checkExpression(e)` after `getReturnTypeFromBody` has checked `e` with `checkExpressionCached`. It doesn't look
+    /// at the stored type.
+    fn check_expression_after_cached(&mut self, file: FileId, e: ExprId) {
+        if self.is_checked_with_incomplete_walk(file, e) {
+            self.check_expression_again(file, e);
+        }
+        self.check_expression(file, e);
+    }
+
     /// `check_expression` for the callee or an argument of a call. `getResolvedSignature` returns
     /// `links.resolvedSignature`, so a second check of a call checks neither of them again.
     fn check_operand_of_call(&mut self, file: FileId, e: ExprId, is_resolved_before: bool) {
@@ -1880,7 +1890,7 @@ impl<'s> Checker<'_, 's> {
             // `checkYieldExpression`
             ExprKind::Yield { value, .. } => {
                 self.check_grammar_yield_expression(file, e);
-                self.check_expression(file, value);
+                self.check_expression_after_cached(file, value);
                 if matches!(hir[e].kind, ExprKind::Yield { star: false, .. }) {
                     check_yield_result(self, file, e);
                 }

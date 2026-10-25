@@ -10908,6 +10908,30 @@ export function f() {
       expect(exitCode).toBe(1);
     });
 
+    test.each([
+      ["a parenthesized returned expression", "(() => { return (root.v); })()", 44],
+      ["the operand of `yield`", "(function* () { yield root.v; })()", 49],
+    ])("%s is checked again after a walk that ended with an incomplete type", async (_, call, column) => {
+      using dir = project({
+        "a.ts": `declare const c: boolean;
+declare const root: { kids: unknown[] };
+declare const arr: unknown[];
+export function f() {
+  for (const key in root) {
+    while (root) { }
+    while (c) {
+      while (c) { if (c) break; }
+      try { arr.push(${call}); } finally { }
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(`a.ts(9,${column}): error TS2339: Property 'v' does not exist on type 'never'.`);
+      expect(exitCode).toBe(1);
+    });
+
     test("what can be reached after a `finally` block depends on how the block was entered", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

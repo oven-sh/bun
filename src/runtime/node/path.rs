@@ -908,45 +908,28 @@ fn to_namespaced_path(
 // ABI: The C++ side (src/jsc/bindings/Path.cpp) declares these as
 // `SYSV_ABI`, so on Windows-x64 the wrapper MUST be `extern "sysv64"` — using
 // `extern "C"` there would be the Win64 ABI (RCX/RDX/R8/R9 + shadow space) and
-// would mis-read every argument.
+// would mis-read every argument. `jsc_host_abi!` picks the ABI per target.
 macro_rules! export_path_host_fn {
     ($( $export:literal => $target:path ),* $(,)?) => {$(
         const _: () = {
-            #[cfg(all(windows, target_arch = "x86_64"))]
-            #[unsafe(export_name = $export)]
-            extern "sysv64" fn __wrapped(
-                global: &JSGlobalObject,
-                is_windows: bool,
-                args_ptr: *const JSValue,
-                args_len: u16,
-            ) -> JSValue {
-                // SAFETY: `args_ptr` points to `args_len` JSValues from the C++
-                // CallFrame (NodePath.cpp). Borrowed for the synchronous call.
-                // (Body kept in sync with the non-Windows arm below — bughunt
-                // changed the target signature to take a slice but only updated
-                // one cfg arm.)
-                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
-                crate::jsc::host_fn::to_js_host_call(
-                    global,
-                    || $target(global, is_windows, args),
-                )
-            }
-            #[cfg(not(all(windows, target_arch = "x86_64")))]
-            #[unsafe(export_name = $export)]
-            extern "C" fn __wrapped(
-                global: &JSGlobalObject,
-                is_windows: bool,
-                args_ptr: *const JSValue,
-                args_len: u16,
-            ) -> JSValue {
-                // SAFETY: `args_ptr` points to `args_len` JSValues from the C++
-                // CallFrame (the caller is `Bun__Path__*` in NodePath.cpp). The
-                // slice is borrowed for the synchronous host-call only.
-                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
-                crate::jsc::host_fn::to_js_host_call(
-                    global,
-                    || $target(global, is_windows, args),
-                )
+            bun_jsc::jsc_host_abi! {
+                #[unsafe(export_name = $export)]
+                unsafe fn __wrapped(
+                    global: &JSGlobalObject,
+                    is_windows: bool,
+                    args_ptr: *const JSValue,
+                    args_len: usize,
+                ) -> JSValue {
+                    // SAFETY: C++ passes `args_len` JSValues that its caller
+                    // keeps alive and in place for this synchronous call: a
+                    // MarkedArgumentBuffer (`createZigFunction`, Path.cpp) or a
+                    // local (the direct `Bun__Path__dirname` callers).
+                    let args = unsafe { bun_core::ffi::slice(args_ptr, args_len) };
+                    crate::jsc::host_fn::to_js_host_call(
+                        global,
+                        || $target(global, is_windows, args),
+                    )
+                }
             }
         };
     )*};

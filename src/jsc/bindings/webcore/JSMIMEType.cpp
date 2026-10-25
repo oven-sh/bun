@@ -338,16 +338,8 @@ JSMIMETypePrototype::JSMIMETypePrototype(VM& vm, Structure* structure)
 // Host function implementations
 JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterType, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        Bun::throwInvalidThisError(globalObject, scope, JSC::JSValue::decode(thisValue), "MIMEType"_s);
-        return {};
-    }
-
-    return JSValue::encode(jsString(vm, thisObject->type()));
+    auto* thisObject = uncheckedDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
+    return JSValue::encode(jsString(globalObject->vm(), thisObject->type()));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsMIMETypeProtoSetterType, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
@@ -378,16 +370,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsMIMETypeProtoSetterType, (JSGlobalObject * globalObje
 
 JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterSubtype, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        Bun::throwInvalidThisError(globalObject, scope, JSC::JSValue::decode(thisValue), "MIMEType"_s);
-        return {};
-    }
-
-    return JSValue::encode(jsString(vm, thisObject->subtype()));
+    auto* thisObject = uncheckedDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
+    return JSValue::encode(jsString(globalObject->vm(), thisObject->subtype()));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsMIMETypeProtoSetterSubtype, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
@@ -421,12 +405,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterEssence, (JSGlobalObject * globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        Bun::throwInvalidThisError(globalObject, scope, JSC::JSValue::decode(thisValue), "MIMEType"_s);
-        return {};
-    }
-
+    auto* thisObject = uncheckedDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     String essence = tryMakeString(thisObject->type(), '/', thisObject->subtype());
     if (essence.isNull() || Bun::exceedsStringLimit(essence.length())) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -435,18 +414,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterEssence, (JSGlobalObject * globalO
     return JSValue::encode(jsString(vm, essence));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterParams, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterParams, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        Bun::throwInvalidThisError(globalObject, scope, JSC::JSValue::decode(thisValue), "MIMEType"_s);
-        return {};
-    }
-
-    return JSValue::encode(thisObject->parameters());
+    return JSValue::encode(uncheckedDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue))->parameters());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMIMETypeProtoFuncToString, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -487,12 +457,13 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMETypeProtoFuncToString, (JSGlobalObject * globalOb
     return JSValue::encode(jsString(vm, builder.toString()));
 }
 
-// Define the properties and functions on the prototype
+// Define the properties and functions on the prototype.
+// DOMAttribute: JSC throws its own TypeError for a receiver that is not a MIMEType and does not call the getter.
 static const HashTableValue JSMIMETypePrototypeValues[] = {
-    { "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterType, jsMIMETypeProtoSetterType } },
-    { "subtype"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterSubtype, jsMIMETypeProtoSetterSubtype } },
-    { "essence"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterEssence, 0 } },
-    { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterParams, 0 } },
+    { "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterType, jsMIMETypeProtoSetterType } },
+    { "subtype"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterSubtype, jsMIMETypeProtoSetterSubtype } },
+    { "essence"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterEssence, 0 } },
+    { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterParams, 0 } },
     { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMETypeProtoFuncToString, 0 } },
 };
 

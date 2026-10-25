@@ -1,7 +1,14 @@
 const { iniInternals } = require("bun:internal-for-testing");
 const { parse } = iniInternals;
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { join } from "node:path";
+
+function numbered(count: number, text: (i: number) => string) {
+  let all = "";
+  for (let i = 0; i < count; i++) all += text(i);
+  return all;
+}
 
 describe("parse ini", () => {
   test("weird section", () => {
@@ -535,6 +542,194 @@ brr = 3
     });
   });
 
+  // The parser scans an object of up to 32 keys for a key, and uses a hash table for a larger object.
+  // Each case runs with the object under test on both sides of that limit.
+  describe.each([0, 31, 32, 33, 300])("an object with %d other keys", count => {
+    const otherKeys = Array.from({ length: count }, (_, i) => `other${i}`);
+    const otherLines = otherKeys.map(key => `${key} = x`);
+    const others = Object.fromEntries(otherKeys.map(key => [key, "x"]));
+
+    function expectParsed(lines: string[], expected: object) {
+      const parsed = parse(lines.join("\n"));
+      expect(parsed).toEqual(expected);
+      // `toEqual` accepts the keys in any order.
+      expect(JSON.stringify(parsed)).toBe(JSON.stringify(expected));
+    }
+
+    test("a repeated key replaces the value and keeps its place", () => {
+      expectParsed(["a = 1", ...otherLines, "b = 2", "a = 3"], { a: "3", ...others, b: "2" });
+    });
+
+    test("key[] after a plain key makes an array of both values", () => {
+      expectParsed(["a = 1", ...otherLines, "b = 2", "a[] = 3"], { a: ["1", "3"], ...others, b: "2" });
+    });
+
+    test("a plain key after key[] adds to the array", () => {
+      expectParsed(["a[] = 1", ...otherLines, "b = 2", "a = 3", "a[] = 4"], {
+        a: ["1", "3", "4"],
+        ...others,
+        b: "2",
+      });
+    });
+
+    test("a section that is opened again keeps its keys", () => {
+      expectParsed(["[s]", "x = 1", ...otherLines, "[t]", "y = 2", "[s]", "z = 3", "x = 9"], {
+        s: { x: "9", ...others, z: "3" },
+        t: { y: "2" },
+      });
+    });
+
+    test("a nested section is found again in its parent", () => {
+      expectParsed(["[a]", ...otherLines, "[a.b]", "x = 1", "[a]", "y = 2", "[a.b]", "z = 3"], {
+        a: { ...others, b: { x: "1", z: "3" }, y: "2" },
+      });
+    });
+
+    test("a key replaces a nested section, and the header of that section is then skipped", () => {
+      expectParsed(["[a]", ...otherLines, "[a.b]", "x = 1", "[a]", "b = 5", "[a.b]", "y = 2", "[c]", "z = 3"], {
+        a: { ...others, b: "5" },
+        c: { z: "3" },
+      });
+    });
+
+    test("the header of a key with a string value is skipped", () => {
+      expectParsed(["foo = bar", ...otherLines, "[foo]", "x = 1", "[ok]", "y = 2"], {
+        foo: "bar",
+        ...others,
+        ok: { y: "2" },
+      });
+    });
+
+    test("a section adds to the keys of a JSON value", () => {
+      const json = JSON.stringify({ a: 1, b: [2], ...others });
+      expectParsed([`foo = '${json}'`, "[foo]", "c = 3", "a = 7", "b = 8"], {
+        foo: { a: "7", b: [2, "8"], ...others, c: "3" },
+      });
+    });
+
+    test("a section replaces the first of two equal keys of a JSON value", () => {
+      const json = `{"a":1,${otherKeys.map(key => `"${key}":"x",`).join("")}"a":2}`;
+      expectParsed([`foo = '${json}'`, "[foo]", "a = 3"], { foo: { a: 2, ...others } });
+    });
+
+    test("a header continues in the last object of an array", () => {
+      const json = JSON.stringify({ x: 1, ...others });
+      expectParsed([...otherLines, `a[] = '${json}'`, "[a.b]", "k = v", "[a.c]", "[a.b]", "l = w", "[a]", "m = n"], {
+        ...others,
+        a: [{ x: 1, ...others, b: { k: "v", l: "w" }, c: {} }],
+      });
+    });
+
+    test.each([
+      ["whose last element is not an object", "a[] = 1", ["1"]],
+      ["that is empty", "a = '[]'", []],
+    ])("a header under an array %s is skipped", (_, line, a) => {
+      expectParsed([...otherLines, line, "[a.b]", "k = v", "[ok]", "y = 2"], { ...others, a, ok: { y: "2" } });
+    });
+
+    test("a header that is skipped leaves the section that was open", () => {
+      expectParsed(["[s]", ...otherLines, "a[] = 1", "[s.a.b]", "k = v", "[", "m = n"], {
+        s: { ...others, a: ["1"], m: "n" },
+      });
+    });
+
+    test("a __proto__ key is skipped, and a [__proto__] section is an own property", () => {
+      expectParsed([...otherLines, "__proto__ = 1", "ok = 1", "[__proto__]", "x = 1", "[s]", "[__proto__]", "y = 2"], {
+        ...others,
+        ok: "1",
+        ["__proto__"]: { x: "1", y: "2" },
+        s: {},
+      });
+    });
+
+    test("two sections that take turns, with their keys in opposite orders", () => {
+      const keys = ["first", ...otherKeys];
+      const reversed = keys.toReversed();
+      expectParsed(
+        [
+          ...keys.flatMap((key, i) => ["[a]", `${key} = a`, "[b]", `${reversed[i]} = b`]),
+          ...keys.flatMap((key, i) => ["[a]", `${key} = A`, "[b]", `${reversed[i]}[] = B`]),
+        ],
+        {
+          a: Object.fromEntries(keys.map(key => [key, "A"])),
+          b: Object.fromEntries(reversed.map(key => [key, ["b", "B"]])),
+        },
+      );
+    });
+  });
+
+  // The same lines with and without 33 more keys in each object: the first is read through the hash table, the second
+  // with a scan.
+  test("an object of many keys is read like a small one in 24 random files", () => {
+    const filler = numbered(33, i => `filler${i} = x\n`);
+    const withoutFiller = (value: unknown): unknown =>
+      Array.isArray(value)
+        ? value.map(withoutFiller)
+        : value && typeof value === "object"
+          ? Object.fromEntries(
+              Object.entries(value)
+                .filter(([key]) => !key.startsWith("filler"))
+                .map(([key, inner]) => [key, withoutFiller(inner)]),
+            )
+          : value;
+    let seed = 1;
+    const random = (below: number) => (seed = (seed * 48271) % 0x7fffffff) % below;
+    for (let file = 0; file < 24; file++) {
+      let small = "";
+      let large = filler;
+      for (let line = 0; line < 30; line++) {
+        const key = `k${random(5)}`;
+        const text = [
+          `${key} = ${line}\n`,
+          `${key}[] = ${line}\n`,
+          `${key} = '{"k${random(5)}":${line},"a":[1,{"b":2}]}'\n`,
+          `[${key}]\n`,
+          `[${key}.k${random(5)}]\n`,
+          `[${key}.a.c]\n`,
+        ][random(6)];
+        small += text;
+        large += text.startsWith("[") ? text + filler : text;
+      }
+      expect(JSON.stringify(withoutFiller(parse(large)))).toBe(JSON.stringify(parse(small)));
+    }
+  });
+
+  test("two keys with the same hash stay apart in an object of many keys", () => {
+    // The hash table of an object uses the low 32 bits of wyhash.
+    const [one, two] = ["key85982", "key146395"];
+    expect(Bun.hash.wyhash(one) & 0xffff_ffffn).toBe(Bun.hash.wyhash(two) & 0xffff_ffffn);
+    const parsed = parse(numbered(40, i => `other${i} = x\n`) + `${one} = 1\n${two} = 2\n${one} = 3\n${two}[] = 4\n`);
+    expect(Object.keys(parsed)).toHaveLength(42);
+    expect([parsed[one], parsed[two]]).toEqual(["3", ["2", "4"]]);
+  });
+
+  test("a key is found among 4,000 keys", () => {
+    const parsed = parse(
+      numbered(4000, i => `key${i} = ${i}\n`) + "key0 = first\nkey2000[] = middle\nkey3999 = last\n[key1]\nx = 1\n",
+    );
+    expect(Object.keys(parsed)).toHaveLength(4000);
+    expect([parsed.key0, parsed.key1, parsed.key2000, parsed.key3999]).toEqual([
+      "first",
+      "1",
+      ["2000", "middle"],
+      "last",
+    ]);
+  });
+
+  test("a section is found among 4,000 sections", () => {
+    const parsed = parse(
+      numbered(4000, i => `[section${i}]\nkey = ${i}\n`) +
+        "[section0]\nkey = first\n[section2000]\nkey[] = middle\n[section3999.nested]\nkey = last\n",
+    );
+    expect(Object.keys(parsed)).toHaveLength(4000);
+    expect([parsed.section0, parsed.section1, parsed.section2000, parsed.section3999]).toEqual([
+      { key: "first" },
+      { key: "1" },
+      { key: ["2000", "middle"] },
+      { key: "3999", nested: { key: "last" } },
+    ]);
+  });
+
   test("bigboi", async () => {
     const foo = await Bun.$`cat ${__dirname}/foo.ini`.text();
     const result = parse(foo);
@@ -639,6 +834,59 @@ brr = 3
       expect(() => parse(ini)).not.toThrow();
     });
   });
+});
+
+// A read that scans the lines before each line takes 13 to 50 seconds of CPU for these files in a debug build,
+// and 5 to 17 seconds in a release build.
+describe.concurrent("a large .npmrc is read in time in proportion to its lines", () => {
+  const lines = isDebug ? 16_000 : 64_000;
+
+  test.each<[string, () => string]>([
+    ["keys", () => numbered(lines, i => `key${i} = value\n`)],
+    ["key[] lines", () => numbered(lines, i => `key${i}[] = value\n`)],
+    ["sections", () => numbered(lines, i => `[section${i}]\n`)],
+    ["nested sections", () => numbered(lines, i => `[a.b${i}]\n`)],
+    ["the keys of one section", () => "[section]\n" + numbered(lines, i => `key${i} = value\n`)],
+    [
+      "the keys that a section adds to a JSON value",
+      () =>
+        `foo = '{${numbered(lines / 2, i => `"json${i}":${i},`)}"last":0}'\n[foo]\n` +
+        numbered(lines / 2, i => `key${i} = value\n`),
+    ],
+    ["two sections that take turns", () => numbered(lines / 2, i => `[a]\nkey${i} = value\n[b]\nkey${i} = value\n`)],
+  ])(
+    "%s",
+    async (_, npmrc) => {
+      using dir = tempDir("ini-large-npmrc", {
+        ".npmrc": npmrc(),
+        "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+        "home/.gitkeep": "",
+      });
+      const home = join(String(dir), "home");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "bin"],
+        cwd: String(dir),
+        // `bun pm bin` reads the `.npmrc` of the project, and no other: `home` has none.
+        env: {
+          ...bunEnv,
+          HOME: home,
+          USERPROFILE: home,
+          XDG_CONFIG_HOME: home,
+          NPM_CONFIG_USERCONFIG: undefined,
+          npm_config_userconfig: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+      // CPU time, in seconds. Wall-clock time means little on a busy machine.
+      expect(Number(proc.resourceUsage()!.cpuTime.total) / 1e6).toBeLessThan(isDebug || isASAN ? 4 : 1);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    },
+    60_000,
+  );
 });
 
 const wtf = {

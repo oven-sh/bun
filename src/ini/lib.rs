@@ -120,9 +120,11 @@ mod draft {
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
     use bun_ast::E::Rope;
-    use bun_ast::{E, Expr, ExprData, StoreRef};
+    use bun_ast::{E, Expr, ExprData, G, StoreRef};
     use bun_ast::{Loc, Log, Source};
-    use bun_collections::VecExt;
+    use bun_collections::array_hash_map::hash_string;
+    use bun_collections::hashbrown::HashTable;
+    use bun_collections::{HashMap, VecExt};
     use bun_core::{Output, ZStr};
     use bun_dotenv::Loader as DotEnvLoader;
     use bun_options_types::schema::api::{BunInstall, Ca, NpmRegistry, NpmUrlAuth};
@@ -135,12 +137,107 @@ mod draft {
 
     type OOM<T> = Result<T, AllocError>;
 
-    /// Hard cap on dot-separated segments in a section-header rope. The rope is
-    /// consumed by `E::Object::get_or_put_object`, which recurses once per
-    /// `rope.next` link, so an unbounded header overflows the stack. Past the
-    /// cap the remainder of the header (dots included) becomes the final
-    /// segment.
+    /// Bounds the nesting that one section header makes, and the tail walk of `Rope::append`. The rest of a longer header is its last segment.
     const MAX_SECTION_ROPE_SEGMENTS: usize = 512;
+
+    /// A lookup scans up to this many keys. More keys than that get a hash table.
+    const SCAN_MAX: usize = 32;
+
+    /// A debug build checks the table of an object of up to this many properties against a scan.
+    const CHECKED_MAX: usize = 512;
+
+    /// Finds a property by key in an object that `Parser::parse` fills, through a hash table if the object is large.
+    #[derive(Default)]
+    struct KeyIndex {
+        /// By object address.
+        objects: HashMap<usize, ObjectKeys>,
+    }
+
+    #[derive(Default)]
+    struct ObjectKeys {
+        /// The first property of each key.
+        slots: HashTable<KeySlot>,
+        /// `properties[..indexed]` are in `slots`.
+        indexed: usize,
+    }
+
+    struct KeySlot {
+        /// `hash_string` of the key. A table that grows reads it and not the key.
+        hash: u32,
+        /// In `properties`.
+        position: u32,
+    }
+
+    impl KeyIndex {
+        /// The position that `E::Object::as_property` returns.
+        #[inline]
+        fn find(&mut self, object: StoreRef<E::Object>, key: &[u8]) -> Option<usize> {
+            if object.properties.len() <= SCAN_MAX {
+                return object.as_property(key).map(|query| query.i as usize);
+            }
+            self.find_indexed(object, key)
+        }
+
+        #[cold]
+        #[inline(never)]
+        fn find_indexed(&mut self, object: StoreRef<E::Object>, key: &[u8]) -> Option<usize> {
+            let props = object.properties.slice();
+            let key_at = |slot: &KeySlot| property_key(&props[slot.position as usize]);
+            let rehash = |slot: &KeySlot| table_hash(slot.hash);
+            let keys = self.objects.entry(object.as_ptr() as usize).or_default();
+            // The table is read from the property list, so it has the keys of a JSON value that a `[section]` reopens.
+            keys.slots
+                .reserve(props.len().saturating_sub(keys.indexed), rehash);
+            for (position, prop) in props.iter().enumerate().skip(keys.indexed) {
+                let Some(name) = property_key(prop) else {
+                    continue;
+                };
+                let hash = hash_string(name);
+                keys.slots
+                    .entry(
+                        table_hash(hash),
+                        |slot| slot.hash == hash && key_at(slot) == Some(name),
+                        rehash,
+                    )
+                    .or_insert(KeySlot {
+                        hash,
+                        position: position as u32,
+                    });
+            }
+            keys.indexed = props.len();
+            let hash = hash_string(key);
+            let found = keys
+                .slots
+                .find(table_hash(hash), |slot| {
+                    slot.hash == hash && key_at(slot) == Some(key)
+                })
+                .map(|slot| slot.position as usize);
+            // `parse` only appends properties and replaces their values, so the table matches the list.
+            debug_assert!(
+                props.len() > CHECKED_MAX
+                    || found == object.as_property(key).map(|query| query.i as usize)
+            );
+            found
+        }
+    }
+
+    /// The key that `E::Object::as_property` compares for this property, or `None` for a property that it skips.
+    fn property_key(prop: &G::Property) -> Option<&[u8]> {
+        prop.value?;
+        match &prop.key.as_ref()?.data {
+            ExprData::EString(key) => {
+                // `as_property` transcodes a UTF-16 key. `parse` and the JSON parser that it calls only make UTF-8 ones.
+                debug_assert!(key.is_utf8());
+                Some(key.data.slice())
+            }
+            _ => None,
+        }
+    }
+
+    /// `hashbrown` takes its tag from the top bits.
+    fn table_hash(hash: u32) -> u64 {
+        (u64::from(hash) << 32) | u64::from(hash)
+    }
 
     // ──────────────────────────────────────────────────────────────────────────
     // Parser
@@ -203,6 +300,7 @@ mod draft {
             let root: StoreRef<E::Object> =
                 self.out.data.e_object().expect("Parser.out is E.Object");
             let mut head: StoreRef<E::Object> = root;
+            let mut keys = KeyIndex::default();
 
             let ropealloc = bump;
 
@@ -249,11 +347,9 @@ mod draft {
                             offset,
                         )?
                         .into_section();
-                        let mut r = root;
-                        let parent_object = match r.get_or_put_object(section, bump) {
-                            Ok(v) => v,
-                            Err(E::SetError::OutOfMemory) => return Err(AllocError),
-                            Err(E::SetError::Clobber) => {
+                        head = match Self::open_section(&mut keys, root, section) {
+                            Some(object) => object,
+                            None => {
                                 // We're in here if key exists but it is not an object
                                 //
                                 // This is possible if someone did:
@@ -289,10 +385,6 @@ mod draft {
                                 break 'treat_as_key;
                             }
                         };
-                        head = parent_object
-                            .data
-                            .e_object()
-                            .expect("get_or_put_object returns E.Object");
                         break 'treat_as_key;
                     }
                     if !treat_as_key {
@@ -367,36 +459,72 @@ mod draft {
                     _ => value_raw,
                 };
 
-                if is_array {
-                    if let Some(val) = E::Object::get(&head, key) {
-                        if !matches!(val.data, ExprData::EArray(_)) {
-                            let mut arr = E::Array::default();
-                            arr.push(bump, val)?;
-                            head.put(bump, key, Expr::init(arr, Loc::EMPTY))?;
-                        }
-                    } else {
-                        head.put(bump, key, Expr::init(E::Array::default(), Loc::EMPTY))?;
-                    }
-                }
+                let at = keys.find(head, key);
+                let existing = at.and_then(|i| head.properties.slice()[i].value);
 
                 // safeguard against resetting a previously defined
                 // array by accidentally forgetting the brackets
-                let mut was_already_array = false;
-                if let Some(mut val) = E::Object::get(&head, key) {
-                    if matches!(val.data, ExprData::EArray(_)) {
-                        was_already_array = true;
-                        val.data
-                            .e_array_mut()
-                            .expect("infallible: variant checked")
-                            .push(bump, value)?;
-                        head.put(bump, key, val)?;
-                    }
+                if let Some(ExprData::EArray(mut array)) = existing.map(|val| val.data) {
+                    array.push(bump, value)?;
+                    continue;
                 }
-                if !was_already_array {
-                    head.put(bump, key, value)?;
+
+                let value = if is_array {
+                    let mut array = E::Array::default();
+                    if let Some(val) = existing {
+                        array.push(bump, val)?;
+                    }
+                    array.push(bump, value)?;
+                    Expr::init(array, Loc::EMPTY)
+                } else {
+                    value
+                };
+                match at {
+                    Some(i) => head.properties.slice_mut()[i].value = Some(value),
+                    None => {
+                        let key = Expr::allocate(bump, E::EString::init(key), value.loc);
+                        head.append_property(key, value);
+                    }
                 }
             }
             Ok(())
+        }
+
+        /// The object that a section header names, with the objects on the way made if they are missing. `None` if a segment names another kind of value.
+        fn open_section(
+            keys: &mut KeyIndex,
+            root: StoreRef<E::Object>,
+            section: &mut Rope,
+        ) -> Option<StoreRef<E::Object>> {
+            let mut object = root;
+            let mut segment = StoreRef::from_bump(section);
+            loop {
+                let next = ptr::NonNull::new(segment.next).map(StoreRef::from_non_null);
+                let name = segment.head.data.e_string()?;
+                let child = match keys.find(object, &name.data) {
+                    Some(i) => match object.properties.slice()[i].value?.data {
+                        ExprData::EObject(existing) => existing,
+                        // Under an array, the rest of the header is in its last element.
+                        ExprData::EArray(array) if next.is_some() => {
+                            match array.items.last()?.data {
+                                ExprData::EObject(last) => last,
+                                _ => return None,
+                            }
+                        }
+                        _ => return None,
+                    },
+                    None => {
+                        let created = Expr::init(E::Object::default(), segment.head.loc);
+                        object.append_property(segment.head, created);
+                        created.data.e_object()?
+                    }
+                };
+                let Some(next) = next else {
+                    return Some(child);
+                };
+                object = child;
+                segment = next;
+            }
         }
 
         fn prepare_str(

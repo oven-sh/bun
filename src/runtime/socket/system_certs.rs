@@ -1,13 +1,16 @@
 //! The system certificate store on Linux and the other non-Apple Unixes, for `--use-system-ca` and `tls.getCACertificates('system')`:
 //! `us_load_system_certificates_posix`, called once per process from `root_certs.cpp`.
 //!
-//! Sources are the union of what Node's `GetOpenSSLSystemCertificates` reads — `$SSL_CERT_FILE` else OpenSSL's
-//! default file, and every regular file in `$SSL_CERT_DIR` else OpenSSL's default directory, where a variable that is
-//! set but empty turns its source off — and the well-known distro bundles and directories earlier Bun releases read,
-//! so no layout trusts fewer CAs than before. Distros alias these heavily (Debian links every root two or three times
-//! under /etc/ssl/certs and repeats them in the bundle; Fedora points four bundle paths at one file), so each file is
-//! read once per inode, each directory walked once per inode, and each certificate kept once per DER encoding. PEM
-//! framing and X.509 parsing stay in BoringSSL.
+//! Sources are the ones Node's `GetOpenSSLSystemCertificates` reads: `$SSL_CERT_FILE` else OpenSSL's default file, and
+//! every regular file directly in `$SSL_CERT_DIR` (no recursion) else OpenSSL's default directory. In BoringSSL, as in
+//! Node's own OpenSSL, those are `/etc/ssl/cert.pem` and `/etc/ssl/certs`. A variable that is set but empty turns its
+//! source off. Every distro's CA tool puts its trust output there: `update-ca-certificates` and `certctl` write it,
+//! and the ca-certificates RPM links `/etc/ssl` to what `update-ca-trust` writes under `/etc/pki`. The tools' input
+//! trees (`/usr/share/ca-certificates`, `/usr/local/share/ca-certificates`, `/usr/local/share/certs`) are not read:
+//! a certificate there can be one the administrator deselected, or one the tool has not yet activated. Distros alias
+//! the output heavily (Debian links every root two or three times under /etc/ssl/certs and repeats them in the
+//! bundle; Fedora links three names to one bundle), so each file is read once per inode, each directory walked once
+//! per inode, and each certificate kept once per DER encoding. PEM framing and X.509 parsing stay in BoringSSL.
 
 use core::ffi::{c_char, c_long, c_void};
 use core::ptr;
@@ -18,35 +21,9 @@ use bun_sys::O;
 
 use super::cert_files;
 
-#[cfg(not(target_os = "android"))]
-const WELL_KNOWN_BUNDLES: &[&[u8]] = &[
-    b"/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Gentoo/Arch/NixOS
-    b"/etc/pki/tls/certs/ca-bundle.crt",   // Fedora/RHEL 6
-    b"/etc/ssl/ca-bundle.pem",             // openSUSE
-    b"/etc/pki/tls/cert.pem",              // Fedora/RHEL 7+
-    b"/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", // CentOS/RHEL 7+, Amazon Linux
-    b"/etc/ssl/cert.pem",                  // Alpine, FreeBSD
-    b"/usr/local/etc/openssl/cert.pem",
-    b"/usr/local/share/ca-certificates/ca-certificates.crt",
-];
-
-#[cfg(not(target_os = "android"))]
-const WELL_KNOWN_DIRS: &[&[u8]] = &[
-    b"/etc/ssl/certs",
-    b"/etc/pki/tls/certs",
-    b"/usr/share/ca-certificates",
-    b"/usr/local/share/certs",
-    b"/etc/openssl/certs",
-    b"/var/ssl/certs",
-    b"/usr/local/etc/openssl/certs",
-    b"/System/Library/OpenSSL/certs",
-];
-
 // Android has no OpenSSL layout: mainline store (API 30+), base store, user-installed store.
 #[cfg(target_os = "android")]
-const WELL_KNOWN_BUNDLES: &[&[u8]] = &[];
-#[cfg(target_os = "android")]
-const WELL_KNOWN_DIRS: &[&[u8]] = &[
+const ANDROID_STORES: &[&[u8]] = &[
     b"/apex/com.android.conscrypt/cacerts",
     b"/system/etc/security/cacerts",
     b"/data/misc/user/0/cacerts-added",
@@ -214,15 +191,6 @@ extern "C" fn us_load_system_certificates_posix() -> *mut boringssl::X509_LAZY_C
         }
         loader.load_pem(pem);
     });
-    if env_var::SSL_CERT_FILE::get().is_none() {
-        for path in WELL_KNOWN_BUNDLES {
-            // `default_file` is in this list, and a FIFO there cannot be opened a second time.
-            if *path != default_file.as_bytes() {
-                loader.load_file(ZBox::from_bytes(path).as_zstr());
-            }
-        }
-    }
-
     match env_var::SSL_CERT_DIR::get() {
         // OpenSSL accepts several directories separated by ':' here.
         Some(dirs) => {
@@ -236,7 +204,8 @@ extern "C" fn us_load_system_certificates_posix() -> *mut boringssl::X509_LAZY_C
             loader.load_directory(
                 unsafe { ZStr::from_c_ptr(boringssl::X509_get_default_cert_dir()) }.as_bytes(),
             );
-            for dir in WELL_KNOWN_DIRS {
+            #[cfg(target_os = "android")]
+            for dir in ANDROID_STORES {
                 loader.load_directory(dir);
             }
         }

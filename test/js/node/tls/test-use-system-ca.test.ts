@@ -73,9 +73,8 @@ describe("--use-system-ca", () => {
   });
 });
 
-// On Linux the loader reads a superset of what Node's --use-system-ca reads ($SSL_CERT_FILE else /etc/ssl/cert.pem, and
-// every regular file in $SSL_CERT_DIR else /etc/ssl/certs) plus the well-known distro bundle/dir paths, and reports
-// each certificate once however many of those alias it.
+// On Linux the loader reads what Node's --use-system-ca reads ($SSL_CERT_FILE else /etc/ssl/cert.pem, and every regular
+// file in $SSL_CERT_DIR else /etc/ssl/certs) and reports each certificate once however many names alias it.
 describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
   const fixtureCert = (name: string) =>
     readFileSync(join(import.meta.dir, "../test/fixtures/keys", `${name}-cert.pem`), "utf8");
@@ -167,10 +166,127 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
     const withDefaultDir = await systemFingerprints({ SSL_CERT_FILE: bundle });
     const withExplicitDir = await systemFingerprints({ SSL_CERT_FILE: bundle, SSL_CERT_DIR: "/etc/ssl/certs" });
     expect(withDefaultDir[0]).toBe(fingerprint(fixtureCert("ca1")));
-    // The default also walks the well-known distro directories, so it is a superset (in order) of the explicit one.
-    let j = 0;
-    for (const fp of withDefaultDir) if (fp === withExplicitDir[j]) j++;
-    expect(j).toBe(withExplicitDir.length);
+    expect(withDefaultDir).toEqual(withExplicitDir);
+  });
+
+  // With SSL_CERT_FILE unset and the directory turned off, only OpenSSL's default file is read. On Debian and Ubuntu
+  // there is none, so the list is empty.
+  test("SSL_CERT_FILE unset and SSL_CERT_DIR empty reads only the default file", async () => {
+    const defaultFile = "/etc/ssl/cert.pem";
+    const expected: string[] = [];
+    if (existsSync(defaultFile)) {
+      for (const block of readFileSync(defaultFile, "utf8").match(
+        /-----BEGIN CERTIFICATE-----[^]*?-----END CERTIFICATE-----/g,
+      ) ?? []) {
+        const fp = fingerprint(block);
+        if (!expected.includes(fp)) expected.push(fp);
+      }
+    }
+    expect(await systemFingerprints({ SSL_CERT_DIR: "" })).toEqual(expected);
+  });
+
+  // A bind mount in a private user and mount namespace replaces a system directory for one process tree. Skipped
+  // where unprivileged user namespaces are disabled, like in most containers.
+  const canBindMount =
+    Bun.which("unshare") !== null &&
+    Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+
+  describe.skipIf(!canBindMount)("in a private mount namespace", () => {
+    const keys = join(import.meta.dir, "../test/fixtures/keys");
+    const ca1 = join(keys, "ca1-cert.pem");
+
+    // Runs bun in system-CA mode with `target` replaced by `source`, and reports how many certificates
+    // tls.getCACertificates("system") lists, whether ca1 is among them, and whether a server whose certificate ca1
+    // signed is trusted.
+    async function withMounted(target: string, source: string) {
+      await using proc = spawn({
+        cmd: [
+          "unshare",
+          "-Urm",
+          "/bin/sh",
+          "-ec",
+          'mount --bind "$MOUNT_SOURCE" "$MOUNT_TARGET" && exec "$@"',
+          "sh",
+          bunExe(),
+          "-e",
+          `const tls = require("tls"), fs = require("fs");
+           const { X509Certificate } = require("crypto");
+           const ca = new X509Certificate(fs.readFileSync(${JSON.stringify(ca1)})).fingerprint256;
+           const system = tls.getCACertificates("system");
+           const listed = system.some(pem => new X509Certificate(pem).fingerprint256 === ca);
+           const server = tls.createServer({ key: fs.readFileSync(${JSON.stringify(join(keys, "agent1-key.pem"))}), cert: fs.readFileSync(${JSON.stringify(join(keys, "agent1-cert.pem"))}) }, s => s.end());
+           server.listen(0, () => {
+             const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", checkServerIdentity: () => undefined }, () => {
+               console.log(JSON.stringify({ count: system.length, listed, connect: "authorized" }));
+               socket.destroy();
+               server.close();
+             });
+             socket.on("error", e => { console.log(JSON.stringify({ count: system.length, listed, connect: e.code })); server.close(); });
+           });`,
+        ],
+        env: {
+          ...bunEnv,
+          SSL_CERT_FILE: undefined,
+          SSL_CERT_DIR: undefined,
+          NODE_EXTRA_CA_CERTS: undefined,
+          NODE_USE_SYSTEM_CA: "1",
+          MOUNT_SOURCE: source,
+          MOUNT_TARGET: target,
+        },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    // update-ca-certificates reads /usr/share/ca-certificates, where /etc/ca-certificates.conf can deselect an entry,
+    // and /usr/local/share/ca-certificates, where a file counts only once the tool has run. It writes the selected
+    // roots to /etc/ssl/certs. Only that output is trusted.
+    test.each(
+      (
+        [
+          ["/usr/share/ca-certificates", "ca1.crt", false],
+          ["/usr/local/share/ca-certificates", "ca-certificates.crt", false],
+          ["/etc/ssl/certs", "ca1.pem", true],
+        ] as const
+      ).filter(([dir]) => existsSync(dir)),
+    )("a CA in %s/%s -> trusted: %p", async (dir, name, trusted) => {
+      using source = tempDir("system-ca-input", { [name]: readFileSync(ca1, "utf8") });
+      expect(await withMounted(dir, String(source))).toEqual({
+        count: expect.any(Number),
+        listed: trusted,
+        connect: trusted ? "authorized" : "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      });
+    });
+
+    // The ca-certificates RPM (RHEL, Fedora, Amazon Linux) keeps its store under /etc/pki and exposes it through
+    // links in /etc/ssl. Every link leads to one bundle file, which is read once.
+    const bundle = "pki/ca-trust/extracted/pem/tls-ca-bundle.pem";
+    test.skipIf(!existsSync("/etc/ssl")).each([
+      [
+        "Fedora: /etc/ssl/certs is a directory of links to the bundle, /etc/ssl/cert.pem is one too",
+        ["certs/.keep"],
+        { "certs/ca-bundle.crt": bundle, "certs/ca-certificates.crt": bundle, "cert.pem": bundle },
+      ],
+      [
+        "RHEL 9: /etc/ssl/certs is a link to /etc/pki/tls/certs, no /etc/ssl/cert.pem",
+        ["pki/tls/certs/.keep"],
+        { "pki/tls/certs/ca-bundle.crt": bundle, certs: "pki/tls/certs" },
+      ],
+    ])("%s", async (_, dirs, links) => {
+      using source = tempDir("system-ca-rpm", {
+        [bundle]: readFileSync(ca1, "utf8"),
+        ...Object.fromEntries(dirs.map(keep => [keep, ""])),
+      });
+      for (const [link, target] of Object.entries(links)) {
+        symlinkSync(join(String(source), target), join(String(source), link));
+      }
+      expect(await withMounted("/etc/ssl", String(source))).toEqual({ count: 1, listed: true, connect: "authorized" });
+    });
   });
 });
 

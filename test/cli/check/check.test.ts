@@ -15662,6 +15662,30 @@ var holder = { get g() { return pair(merge(first, new C().p)); } };
       expect(exitCode).toBe(1);
     });
 
+    // `x` has the error type, so printing the declaration checks `p1` again. `getBindingElementTypeFromParentType` asks
+    // `getTypeOfInitializer` for the default of the pattern that declares `p1`, which returns the type stored for it.
+    test("printing a declaration doesn't check the default of a binding pattern again that reads a name of the pattern", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, declaration: true },
+        }),
+        "a.ts": `type Args = ["a", number] | ["c"];
+export function f(p0 = {}, [{ name: p1, nested: p2 } = p1]: Args) { if (p1) { ({ y: p0 = p0 } = p1); } return { x: p1, y: p0 }; }
+`,
+      });
+      const { stdout, stderr, exitCode } = await check(dir);
+      expect({ stdout: stdout.split("\n"), stderr }).toEqual({
+        stdout: [
+          `a.ts(2,31): error TS2339: Property 'name' does not exist on type '"a" | "c"'.`,
+          "a.ts(2,37): error TS7022: 'p1' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          `a.ts(2,41): error TS2339: Property 'nested' does not exist on type '"a" | "c"'.`,
+          "a.ts(2,56): error TS2373: Parameter '{ name: p1, nested: p2 }' cannot reference identifier 'p1' declared after it.",
+        ],
+        stderr: "Found 4 errors in 1 file, checked 1 file [time]",
+      });
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS7022 and TS7023 when `return f()` checks the callee while another resolution is in progress", async () => {
       using dir = project({
         "a.ts": `export function p1() { const a = (x = (b() as any)) => x; function b() { return a(); } }

@@ -3237,7 +3237,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `checkDeclarationInitializer` has assigned `links.resolvedType` of the initializer unless
         // the declaration has a type annotation.
         let is_annotated = bound.pat_parent[pattern.idx()].has_type_annotation(hir);
-        let actual = if is_annotated {
+        let actual = if is_annotated || self.is_rechecking() {
             self.get_type_of_initializer(file, initializer)
         } else {
             self.type_of_declaration_initializer(file, initializer)

@@ -100,6 +100,32 @@
           "description": "If the extension should start Bun's language server (`bun fmt --lsp`) for formatting and lint fixes.",
           "scope": "window",
           "default": true
+        },
+        "bun.lint.enable": {
+          "type": "boolean",
+          "description": "If the Bun language server should report lint diagnostics and fixes. Needs a build of Bun that has `bun lint`.",
+          "scope": "window",
+          "default": true
+        },
+        "bun.lint.run": {
+          "type": "string",
+          "enum": [
+            "onType",
+            "onSave"
+          ],
+          "enumDescriptions": [
+            "Refresh lint diagnostics as you type.",
+            "Refresh lint diagnostics when the file is saved."
+          ],
+          "description": "When the Bun language server refreshes lint diagnostics. Needs a build of Bun that has `bun lint`.",
+          "scope": "window",
+          "default": "onType"
+        },
+        "bun.format.enable": {
+          "type": "boolean",
+          "description": "If the Bun language server should format documents.",
+          "scope": "window",
+          "default": true
         }
       }
     },

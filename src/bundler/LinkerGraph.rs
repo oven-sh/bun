@@ -156,6 +156,11 @@ pub mod js_meta {
 
     pub struct JSMeta {
         pub probably_typescript_type: ProbablyTypescriptType,
+        /// What each import of the file binds to, and the parts that each reader
+        /// of the import depends on (`re_exports`). An entry can bind a ref to
+        /// itself: a symbol of another file that this file uses directly, or an
+        /// import that prints as a property of another file's exports object.
+        /// That import stays unbound and the entry only carries `re_exports`.
         pub imports_to_bind: RefImportData,
         pub resolved_exports: ResolvedExports,
         pub resolved_export_star: ExportData,

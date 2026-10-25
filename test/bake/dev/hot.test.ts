@@ -581,6 +581,27 @@ devTest("import.meta.hot on/off events in a server module", {
     await dev.fetch("/").equals({ save: 1, calls: ["vite:beforeUpdate", "bun:beforeUpdate"] });
   },
 });
+devTest("a server module update applies when an import.meta.hot event listener throws", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      globalThis.listenerCalls ??= 0;
+      // A listener written for Vite reads a payload. Bun passes none, so the listener throws.
+      import.meta.hot.on("vite:beforeUpdate", payload => {
+        globalThis.listenerCalls++;
+        return payload.updates.length;
+      });
+      export default function () {
+        return Response.json({ save: 0, listenerCalls: globalThis.listenerCalls });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ save: 0, listenerCalls: 0 });
+    await dev.patch("routes/index.ts", { find: "save: 0", replace: "save: 1" });
+    await dev.fetch("/").equals({ save: 1, listenerCalls: 1 });
+  },
+});
 devTest("hmr forwards every merged inotify sub-path from a directory batch", {
   // Windows can't rename over an open file (EPERM) and the merged-names
   // code path under test is `Environment.isLinux`-gated anyway.

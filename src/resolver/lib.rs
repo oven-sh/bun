@@ -1065,6 +1065,80 @@ pub mod fs {
             Ok(unsafe { &mut *opt })
         }
 
+        /// Picks the `entries` slot of a directory. `walked` is the directory
+        /// as the caller reached it, and `real` is its real path if the caller
+        /// knows one, else empty.
+        ///
+        /// Without `real` the listing is keyed by `walked`. With it the listing
+        /// belongs to the key of `real`, so that every path to one directory
+        /// reads one `DirEntry`: when that key has a slot, `walked` is mapped
+        /// to it here, in place of a slot `walked` got from a reader that had
+        /// no real path. When it has none, the caller reads the directory into
+        /// a `DirEntry` named `real` and stores it with
+        /// [`put_listing`](Self::put_listing), which maps `walked` to the new
+        /// slot. The caller holds `entries_mutex`.
+        #[inline(always)]
+        pub(crate) fn listing_slot(
+            &mut self,
+            walked: &[u8],
+            real: &[u8],
+        ) -> crate::CrateResult<bun_alloc::Result> {
+            if real.is_empty() {
+                return self.entries.get_or_put(walked);
+            }
+            self.shared_listing_slot(walked, real)
+        }
+
+        #[cold]
+        #[inline(never)]
+        fn shared_listing_slot(
+            &mut self,
+            walked: &[u8],
+            real: &[u8],
+        ) -> crate::CrateResult<bun_alloc::Result> {
+            let slot = self.entries.get_or_put(real)?;
+            if slot.status == bun_alloc::ItemStatus::Exists {
+                self.map_to_listing_slot(walked, &slot);
+            }
+            Ok(slot)
+        }
+
+        /// Stores `value` in the slot that [`listing_slot`](Self::listing_slot)
+        /// picked for `walked`, and maps `walked` to it when the slot belongs
+        /// to the key of the real directory.
+        pub(crate) fn put_listing(
+            &mut self,
+            slot: &mut bun_alloc::Result,
+            walked: &[u8],
+            value: EntriesOption,
+        ) -> crate::CrateResult<*mut EntriesOption> {
+            self.entries.put(slot, value)?;
+            self.map_to_listing_slot(walked, slot);
+            // The pointer `put` returned does not outlive the map borrows above.
+            let stored = self
+                .entries
+                .at_index(slot.index)
+                .expect("put assigned the slot");
+            Ok(std::ptr::from_mut::<EntriesOption>(stored))
+        }
+
+        /// Maps the key of `walked` to `slot`, which holds a value, and adds
+        /// the key to the owners of the listing there.
+        fn map_to_listing_slot(&mut self, walked: &[u8], slot: &bun_alloc::Result) {
+            debug_assert!(
+                self.entries_mutex.is_held_by_current_thread(),
+                "map_to_listing_slot: caller must hold entries_mutex",
+            );
+            let walked_hash = EntriesMap::key_hash(walked);
+            if walked_hash == slot.hash {
+                return;
+            }
+            self.entries.alias(walked_hash, slot.index);
+            if let Some(EntriesOption::Entries(listing)) = self.entries.at_index(slot.index) {
+                listing.add_alias(slot.hash, walked_hash);
+            }
+        }
+
         pub fn read_directory(
             &mut self,
             dir_: &[u8],
@@ -1098,7 +1172,7 @@ pub mod fs {
 
             let mut in_place: Option<*mut DirEntry> = None;
 
-            let mut cache_result = self.entries.get_or_put(dir)?;
+            let mut cache_result = self.listing_slot(dir, b"")?;
             if cache_result.has_checked_if_exists() {
                 if let Some(cached_result) = self.entries.at_index(cache_result.index) {
                     // erase to raw immediately so the early-return reborrow

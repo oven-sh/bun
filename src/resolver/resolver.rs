@@ -3438,7 +3438,7 @@ impl<'a> Resolver<'a> {
         // the `dir_info_uncached` call, mirroring `dir_info_cached_miss`: the
         // route loaders iterate the `DirEntry.data` map under this lock.
         let _entries_unlock = rfs!().entries_mutex.lock_guard();
-        let mut cached_dir_entry_result = rfs!().entries.get_or_put(dir_path)?;
+        let mut cached_dir_entry_result = rfs!().listing_slot(dir_path, b"")?;
 
         // NOTE: always assigned by either the cached-hit arm or the
         // `needs_iter` block below; null-init so rustc accepts the proof.
@@ -3571,9 +3571,18 @@ impl<'a> Resolver<'a> {
         // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
         // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
         let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
+        // The key of a path that was once walked through a link maps to the listing of
+        // the real directory, whose name is the real path.
+        let abs_path = if listing_is_named(dir_entries_dir, dir_path) {
+            dir_entries_dir
+        } else {
+            Fs::file_system::DirnameStore::instance().append_slice(dir_path)?
+        };
         self.dir_info_uncached(
             dir_info_ptr,
-            dir_entries_dir,
+            abs_path,
+            // no parent to learn a real path from
+            b"",
             // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
             dir_entries_option,
             dir_cache_info_result,
@@ -4365,7 +4374,12 @@ impl<'a> Resolver<'a> {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { queue[i].assume_init_mut() };
-                        slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                        // `safe_path` becomes `DirInfo.abs_path`, which stays as walked. A
+                        // key that a link leads through maps to the listing of the real
+                        // directory, which is named by that one.
+                        if listing_is_named(entries.dir, top) {
+                            slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                        }
                         slot.fd = entries.fd;
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -4638,8 +4652,23 @@ impl<'a> Resolver<'a> {
                 &safe_path[dir_path_i..end]
             };
 
-            let mut cached_dir_entry_result =
-                rfs!().entries.get_or_put(dir_path).expect("unreachable");
+            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
+            // `put`; resolver mutex held.
+            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
+                .map(|p| unsafe { DirInfoRef::from_raw(p) });
+
+            // The listing is kept under the real directory, so a link on the way to this
+            // one is followed before the slot is chosen.
+            let real_dir: &'static [u8] = match parent_dir_ptr {
+                Some(parent) if !self.opts.preserve_symlinks => {
+                    self.real_dir_from_parent(parent, dir_path, open_dir)
+                }
+                _ => b"",
+            };
+
+            let mut cached_dir_entry_result = rfs!()
+                .listing_slot(dir_path, real_dir)
+                .expect("unreachable");
 
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
                 core::ptr::null_mut();
@@ -4665,9 +4694,20 @@ impl<'a> Resolver<'a> {
                     if let Some(existing) = in_place {
                         // SAFETY: see block-wide note above.
                         unsafe { &*existing }.dir
-                    } else {
+                    } else if real_dir.is_empty() {
                         Fs::file_system::DirnameStore::instance()
                             .append_slice(dir_path)
+                            .expect("unreachable")
+                    } else {
+                        // Named as a walk to the real directory names it: with a
+                        // trailing separator.
+                        let sep: &[u8] = if real_dir[real_dir.len() - 1] == SEP {
+                            b""
+                        } else {
+                            SEP_STR.as_bytes()
+                        };
+                        Fs::file_system::DirnameStore::instance()
+                            .append_parts(&[real_dir, sep])
                             .expect("unreachable")
                     },
                     self.generation,
@@ -4735,8 +4775,9 @@ impl<'a> Resolver<'a> {
                     // freshly boxed entry (see block-wide note above).
                     unsafe { (*dir_entries_ptr).data.count() },
                 );
-                dir_entries_option = rfs!().entries.put(
+                dir_entries_option = rfs!().put_listing(
                     &mut cached_dir_entry_result,
+                    dir_path,
                     Fs::file_system::real_fs::EntriesOption::Entries(
                         // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly boxed entry.
                         unsafe { &mut *dir_entries_ptr },
@@ -4756,14 +4797,11 @@ impl<'a> Resolver<'a> {
                     DirInfo::DirInfo::default(),
                 )
             }?;
-            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
-            // `put`; resolver mutex held.
-            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
-                .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
             self.dir_info_uncached(
                 dir_info_ptr,
                 dir_path,
+                real_dir,
                 // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and outlives the resolver.
                 dir_entries_option,
                 queue_top.result,
@@ -6098,10 +6136,88 @@ impl<'a> Resolver<'a> {
             .map(Interned::as_bytes)
     }
 
+    /// The real path of the directory walked as `path`, or empty when `path` is
+    /// the real path: where a link at `path` leads, else the place of the
+    /// directory under the real path of `parent`. `dir_info_cached_miss` asks
+    /// before it chooses the listing slot, which belongs to the real directory.
+    /// `fd` is open on the directory, or invalid. The caller holds
+    /// `entries_mutex`.
+    fn real_dir_from_parent(&mut self, parent: DirInfoRef, path: &[u8], fd: FD) -> &'static [u8] {
+        // The process-global RealFS, by raw pointer: `Entry::symlink` reborrows it
+        // only internally, so the `&mut self` calls below do not invalidate it.
+        let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
+
+        let mut base = bun_paths::basename(path);
+        if base.len() > 1 && base[base.len() - 1] == SEP {
+            base = &base[0..base.len() - 1];
+        }
+
+        // `entries_mutex` is held and is non-recursive, so go through the
+        // `_locked` accessor.
+        let Some(parent_entries) = parent.get_entries_ref_locked(self.generation) else {
+            return b"";
+        };
+        let Some(lookup) = parent_entries.get(base) else {
+            return b"";
+        };
+        let entry = lookup.entry();
+        if fd.is_valid() && !entry.cache().fd.is_valid() && self.store_fd {
+            // Every cached-`Entry` rewrite takes the per-entry mutex.
+            let _entry_guard = entry.mutex.lock_guard();
+            entry.set_cache_fd(fd);
+        }
+
+        // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
+        // rewrite inside `symlink()` is serialized on `Entry.mutex`.
+        let mut real = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
+        if real.is_empty() {
+            if parent.abs_real_path.is_empty() {
+                return b"";
+            }
+            let Some(joined) = self.fs_ref().abs_buf_checked(
+                &[parent.abs_real_path, base],
+                bufs!(dir_info_uncached_filename),
+            ) else {
+                return b"";
+            };
+            // `entry` is not a link, and a reader on the real path of `parent` finds the
+            // same `entry`, so the joined path is not kept in it. Once the real directory
+            // has a listing, its name is that path.
+            // SAFETY: `rfs_ptr` points at the process-global RealFS; `entries_mutex` held.
+            let listed: &'static [u8] = match unsafe { &mut *rfs_ptr }.entries.get(joined) {
+                Some(Fs::file_system::real_fs::EntriesOption::Entries(listing)) => {
+                    strings::without_trailing_slash_windows_path(listing.dir)
+                }
+                _ => b"",
+            };
+            real = if listed == joined {
+                listed
+            } else {
+                self.fs_ref()
+                    .dirname_store
+                    .append_slice(joined)
+                    .expect("unreachable")
+            };
+        }
+
+        if let Some(logs) = self.debug_logs.as_mut() {
+            let mut buf = Vec::new();
+            let _ = write!(
+                &mut buf,
+                "Resolved symlink \"{}\" to \"{}\"",
+                bstr::BStr::new(path),
+                bstr::BStr::new(real)
+            );
+            logs.add_note(buf);
+        }
+        real
+    }
+
     fn dir_info_uncached(
         &mut self,
         info: *mut DirInfo::DirInfo,
         path: &'static [u8],
+        abs_real_path: &'static [u8],
         _entries: *mut Fs::file_system::real_fs::EntriesOption,
         _result: allocators::Result,
         dir_entry_index: allocators::IndexType,
@@ -6143,7 +6259,7 @@ impl<'a> Resolver<'a> {
         let info = unsafe { &mut *info };
         *info = DirInfo::DirInfo {
             abs_path: path,
-            // .abs_real_path = path,
+            abs_real_path,
             parent: parent_index,
             entries: dir_entry_index,
             ..Default::default()
@@ -6289,77 +6405,6 @@ impl<'a> Resolver<'a> {
             info.package_json_for_dependencies = info
                 .package_json_for_dependencies
                 .or(parent_.package_json_for_dependencies);
-
-            // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
-            if !self.opts.preserve_symlinks {
-                // The only caller that reaches this with `parent` set
-                // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
-                // mutex is non-recursive, so go through the `_locked` accessor.
-                if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
-                    if let Some(lookup) = parent_entries.get(base) {
-                        let entries_fd = entries!().fd;
-                        if entries_fd.is_valid()
-                            && !lookup.entry().cache().fd.is_valid()
-                            && self.store_fd
-                        {
-                            // Every cached-`Entry` rewrite takes the per-entry mutex.
-                            let _entry_guard = lookup.entry().mutex.lock_guard();
-                            lookup.entry().set_cache_fd(entries_fd);
-                        }
-                        // SAFETY: EntryStore-owned slot — read-only borrow,
-                        // dies (NLL) before any later `&mut` to this slot.
-                        let entry = lookup.entry();
-
-                        // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
-                        // rewrite inside `symlink()` is serialized on `Entry.mutex`.
-                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
-                        if !symlink.is_empty() {
-                            if let Some(logs) = self.debug_logs.as_mut() {
-                                let mut buf = Vec::new();
-                                let _ = write!(
-                                    &mut buf,
-                                    "Resolved symlink \"{}\" to \"{}\"",
-                                    bstr::BStr::new(path),
-                                    bstr::BStr::new(symlink)
-                                );
-                                logs.add_note(buf);
-                            }
-                            info.abs_real_path = symlink;
-                        } else if !parent_.abs_real_path.is_empty()
-                            && let Some(joined) = self.fs_ref().abs_buf_checked(
-                                &[parent_.abs_real_path, base],
-                                bufs!(dir_info_uncached_filename),
-                            )
-                        {
-                            // this might leak a little i'm not sure
-                            symlink = self
-                                .fs_ref()
-                                .dirname_store
-                                .append_slice(joined)
-                                .expect("unreachable");
-
-                            if let Some(logs) = self.debug_logs.as_mut() {
-                                let mut buf = Vec::new();
-                                let _ = write!(
-                                    &mut buf,
-                                    "Resolved symlink \"{}\" to \"{}\"",
-                                    bstr::BStr::new(path),
-                                    bstr::BStr::new(symlink)
-                                );
-                                logs.add_note(buf);
-                            }
-                            {
-                                // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = lookup.entry().mutex.lock_guard();
-                                lookup
-                                    .entry()
-                                    .set_cache_symlink(Interned::from_static(symlink));
-                            }
-                            info.abs_real_path = symlink;
-                        }
-                    }
-                }
-            }
 
             if parent_.is_node_modules() || parent_.is_inside_node_modules() {
                 info.flags
@@ -6860,6 +6905,14 @@ fn primary_side_effects(
             }
         }
     }
+}
+
+/// Whether the cached listing named `listing_dir` was read as `dir`. The key of a
+/// directory that a link leads to is mapped to the listing of the real directory,
+/// which is named by the real path.
+fn listing_is_named(listing_dir: &[u8], dir: &[u8]) -> bool {
+    strings::without_trailing_slash_windows_path(listing_dir)
+        == strings::without_trailing_slash_windows_path(dir)
 }
 
 #[inline]

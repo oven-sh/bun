@@ -1,0 +1,910 @@
+delayed bug: no resolution for an import
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: RINvCsb7BXuhgVTrp_11rustc_arena7outlineNCINvMs6_B2_NtB2_13DroplessArena15alloc_from_iterTNtNtCswkJ7fMS3pI_10rustc_span13span_encoding4SpanNtNtB1t_6def_id10LocalDefIdEINtNtNtNtCs8SdRKRosQ9h_4core4iter8adapters10filter_map9FilterMapINtNtNtB2N_5slice4iter4Ite
+   8: <rustc_ast_lowering::LoweringContext>::lower_generic_param
+   9: <rustc_ast_lowering::LoweringContext>::lower_generic_param
+  10: rustc_ast_lowering::lower_to_hir
+  11: rustc_query_impl::query_system
+  12: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  13: rustc_query_impl::query_system
+  14: rustc_interface::callbacks::track_span_parent
+  15: rustc_query_impl::query_system
+  16: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  17: rustc_query_impl::query_system
+  18: <rustc_middle::ty::predicate::Clause as rustc_type_ir::upcast::UpcastFrom<rustc_middle::ty::context::TyCtxt, rustc_type_ir::binder::Binder<rustc_middle::ty::context::TyCtxt, rustc_type_ir::predicate::ProjectionClause<rustc_middle::ty::context::TyCtxt>>>>::upcast_from
+  19: rustc_middle::hir::map::hir_crate_items
+  20: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  21: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  22: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  23: rustc_interface::passes::analysis
+  24: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  25: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  26: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  27: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  28: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  29: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  30: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  31: BaseThreadInitThunk
+  32: RtlUserThreadStart
+
+delayed bug: no resolution for an import
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: RINvCsb7BXuhgVTrp_11rustc_arena7outlineNCINvMs6_B2_NtB2_13DroplessArena15alloc_from_iterTNtNtCswkJ7fMS3pI_10rustc_span13span_encoding4SpanNtNtB1t_6def_id10LocalDefIdEINtNtNtNtCs8SdRKRosQ9h_4core4iter8adapters10filter_map9FilterMapINtNtNtB2N_5slice4iter4Ite
+   8: <rustc_ast_lowering::LoweringContext>::lower_generic_param
+   9: <rustc_ast_lowering::LoweringContext>::lower_generic_param
+  10: <rustc_ast_lowering::LoweringContext>::lower_generic_param
+  11: rustc_ast_lowering::lower_to_hir
+  12: rustc_query_impl::query_system
+  13: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  14: rustc_query_impl::query_system
+  15: rustc_interface::callbacks::track_span_parent
+  16: rustc_query_impl::query_system
+  17: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  18: rustc_query_impl::query_system
+  19: <rustc_middle::ty::predicate::Clause as rustc_type_ir::upcast::UpcastFrom<rustc_middle::ty::context::TyCtxt, rustc_type_ir::binder::Binder<rustc_middle::ty::context::TyCtxt, rustc_type_ir::predicate::ProjectionClause<rustc_middle::ty::context::TyCtxt>>>>::upcast_from
+  20: rustc_middle::hir::map::hir_crate_items
+  21: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  22: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  23: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  24: rustc_interface::passes::analysis
+  25: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  26: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  27: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  28: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  29: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  30: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  31: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  32: BaseThreadInitThunk
+  33: RtlUserThreadStart
+
+delayed bug: no resolution for an import
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: RINvCsb7BXuhgVTrp_11rustc_arena7outlineNCINvMs6_B2_NtB2_13DroplessArena15alloc_from_iterTNtNtCswkJ7fMS3pI_10rustc_span13span_encoding4SpanNtNtB1t_6def_id10LocalDefIdEINtNtNtNtCs8SdRKRosQ9h_4core4iter8adapters10filter_map9FilterMapINtNtNtB2N_5slice4iter4Ite
+   8: <rustc_ast_lowering::LoweringContext>::lower_generic_param
+   9: <rustc_ast_lowering::LoweringContext>::lower_generic_param
+  10: <rustc_ast_lowering::LoweringContext>::lower_generic_param
+  11: rustc_ast_lowering::lower_to_hir
+  12: rustc_query_impl::query_system
+  13: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  14: rustc_query_impl::query_system
+  15: rustc_interface::callbacks::track_span_parent
+  16: rustc_query_impl::query_system
+  17: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  18: rustc_query_impl::query_system
+  19: <rustc_middle::ty::predicate::Clause as rustc_type_ir::upcast::UpcastFrom<rustc_middle::ty::context::TyCtxt, rustc_type_ir::binder::Binder<rustc_middle::ty::context::TyCtxt, rustc_type_ir::predicate::ProjectionClause<rustc_middle::ty::context::TyCtxt>>>>::upcast_from
+  20: rustc_middle::hir::map::hir_crate_items
+  21: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  22: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  23: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  24: rustc_interface::passes::analysis
+  25: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  26: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  27: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  28: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  29: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  30: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  31: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  32: BaseThreadInitThunk
+  33: RtlUserThreadStart
+
+delayed bug: `Res::Err` but no error emitted
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: RINvCsb7BXuhgVTrp_11rustc_arena7outlineNCINvMs6_B2_NtB2_13DroplessArena15alloc_from_iterTNtNtNtCscGBe64ZeOFm_12rustc_middle2ty9predicate6ClauseNtNtCswkJ7fMS3pI_10rustc_span13span_encoding4SpanEINtNtNtNtCs8SdRKRosQ9h_4core4iter8adapters10filter_map9FilterMa
+   8: rustc_hir_typeck::used_trait_imports
+   9: rustc_hir_typeck::used_trait_imports
+  10: rustc_hir_typeck::used_trait_imports
+  11: rustc_hir_typeck::used_trait_imports
+  12: rustc_hir_typeck::used_trait_imports
+  13: rustc_hir_typeck::used_trait_imports
+  14: rustc_hir_typeck::used_trait_imports
+  15: rustc_hir_typeck::intrinsicck::check_transmutes
+  16: <hashbrown::raw::RawTable<usize>>::reserve_rehash::<indexmap::inner::get_hash<(rustc_middle::ty::predicate::Predicate, rustc_middle::traits::ObligationCause), ()>::{closure#0}>
+  17: rustc_hir_typeck::typeck_root
+  18: rustc_query_impl::query_system
+  19: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  20: rustc_query_impl::query_system
+  21: rustc_hir_analysis::check_crate
+  22: rustc_interface::passes::analysis
+  23: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  24: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  25: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  26: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  27: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  28: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  29: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  30: BaseThreadInitThunk
+  31: RtlUserThreadStart
+
+delayed bug: `Res::Err` but no error emitted
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: RINvCsb7BXuhgVTrp_11rustc_arena7outlineNCINvMs6_B2_NtB2_13DroplessArena15alloc_from_iterTNtNtNtCscGBe64ZeOFm_12rustc_middle2ty9predicate6ClauseNtNtCswkJ7fMS3pI_10rustc_span13span_encoding4SpanEINtNtNtNtCs8SdRKRosQ9h_4core4iter8adapters10filter_map9FilterMa
+   8: rustc_hir_typeck::used_trait_imports
+   9: rustc_hir_typeck::used_trait_imports
+  10: rustc_hir_typeck::used_trait_imports
+  11: rustc_hir_typeck::used_trait_imports
+  12: rustc_hir_typeck::used_trait_imports
+  13: rustc_hir_typeck::used_trait_imports
+  14: rustc_hir_typeck::used_trait_imports
+  15: rustc_hir_typeck::used_trait_imports
+  16: rustc_hir_typeck::used_trait_imports
+  17: rustc_hir_typeck::used_trait_imports
+  18: rustc_hir_typeck::used_trait_imports
+  19: rustc_hir_typeck::intrinsicck::check_transmutes
+  20: <hashbrown::raw::RawTable<usize>>::reserve_rehash::<indexmap::inner::get_hash<(rustc_middle::ty::predicate::Predicate, rustc_middle::traits::ObligationCause), ()>::{closure#0}>
+  21: rustc_hir_typeck::typeck_root
+  22: rustc_query_impl::query_system
+  23: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  24: rustc_query_impl::query_system
+  25: rustc_hir_analysis::check_crate
+  26: rustc_interface::passes::analysis
+  27: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  28: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  29: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  30: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  31: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  32: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  33: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  34: BaseThreadInitThunk
+  35: RtlUserThreadStart
+
+delayed bug: 
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: rustc_hir_typeck::used_trait_imports
+   8: rustc_hir_typeck::used_trait_imports
+   9: rustc_hir_typeck::used_trait_imports
+  10: rustc_hir_typeck::used_trait_imports
+  11: rustc_hir_typeck::used_trait_imports
+  12: rustc_hir_typeck::used_trait_imports
+  13: rustc_hir_typeck::used_trait_imports
+  14: rustc_hir_typeck::used_trait_imports
+  15: rustc_hir_typeck::used_trait_imports
+  16: rustc_hir_typeck::intrinsicck::check_transmutes
+  17: <hashbrown::raw::RawTable<usize>>::reserve_rehash::<indexmap::inner::get_hash<(rustc_middle::ty::predicate::Predicate, rustc_middle::traits::ObligationCause), ()>::{closure#0}>
+  18: rustc_hir_typeck::typeck_root
+  19: rustc_query_impl::query_system
+  20: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  21: rustc_query_impl::query_system
+  22: rustc_hir_analysis::check_crate
+  23: rustc_interface::passes::analysis
+  24: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  25: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  26: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  27: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  28: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  29: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  30: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  31: BaseThreadInitThunk
+  32: RtlUserThreadStart
+
+delayed bug: 
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: rustc_hir_typeck::used_trait_imports
+   8: rustc_hir_typeck::used_trait_imports
+   9: rustc_hir_typeck::used_trait_imports
+  10: rustc_hir_typeck::used_trait_imports
+  11: rustc_hir_typeck::used_trait_imports
+  12: rustc_hir_typeck::intrinsicck::check_transmutes
+  13: <hashbrown::raw::RawTable<usize>>::reserve_rehash::<indexmap::inner::get_hash<(rustc_middle::ty::predicate::Predicate, rustc_middle::traits::ObligationCause), ()>::{closure#0}>
+  14: rustc_hir_typeck::typeck_root
+  15: rustc_query_impl::query_system
+  16: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  17: rustc_query_impl::query_system
+  18: rustc_hir_analysis::check_crate
+  19: rustc_interface::passes::analysis
+  20: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  21: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  22: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  23: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  24: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  25: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  26: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  27: BaseThreadInitThunk
+  28: RtlUserThreadStart
+
+delayed bug: `Res::Err` but no error emitted
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: RINvCsb7BXuhgVTrp_11rustc_arena7outlineNCINvMs6_B2_NtB2_13DroplessArena15alloc_from_iterTNtNtNtCscGBe64ZeOFm_12rustc_middle2ty9predicate6ClauseNtNtCswkJ7fMS3pI_10rustc_span13span_encoding4SpanEINtNtNtNtCs8SdRKRosQ9h_4core4iter8adapters10filter_map9FilterMa
+   8: rustc_hir_typeck::used_trait_imports
+   9: rustc_hir_typeck::used_trait_imports
+  10: rustc_hir_typeck::used_trait_imports
+  11: rustc_hir_typeck::used_trait_imports
+  12: rustc_hir_typeck::used_trait_imports
+  13: rustc_hir_typeck::used_trait_imports
+  14: rustc_hir_typeck::used_trait_imports
+  15: rustc_hir_typeck::used_trait_imports
+  16: rustc_hir_typeck::used_trait_imports
+  17: rustc_hir_typeck::used_trait_imports
+  18: rustc_hir_typeck::used_trait_imports
+  19: rustc_hir_typeck::used_trait_imports
+  20: rustc_hir_typeck::intrinsicck::check_transmutes
+  21: <hashbrown::raw::RawTable<usize>>::reserve_rehash::<indexmap::inner::get_hash<(rustc_middle::ty::predicate::Predicate, rustc_middle::traits::ObligationCause), ()>::{closure#0}>
+  22: rustc_hir_typeck::typeck_root
+  23: rustc_query_impl::query_system
+  24: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  25: rustc_query_impl::query_system
+  26: rustc_hir_analysis::check_crate
+  27: rustc_interface::passes::analysis
+  28: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  29: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  30: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  31: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  32: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  33: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  34: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  35: BaseThreadInitThunk
+  36: RtlUserThreadStart
+
+delayed bug: `Res::Err` but no error emitted
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: RINvCsb7BXuhgVTrp_11rustc_arena7outlineNCINvMs6_B2_NtB2_13DroplessArena15alloc_from_iterTNtNtNtCscGBe64ZeOFm_12rustc_middle2ty9predicate6ClauseNtNtCswkJ7fMS3pI_10rustc_span13span_encoding4SpanEINtNtNtNtCs8SdRKRosQ9h_4core4iter8adapters10filter_map9FilterMa
+   8: rustc_hir_typeck::used_trait_imports
+   9: rustc_hir_typeck::used_trait_imports
+  10: rustc_hir_typeck::used_trait_imports
+  11: rustc_hir_typeck::used_trait_imports
+  12: rustc_hir_typeck::used_trait_imports
+  13: rustc_hir_typeck::used_trait_imports
+  14: rustc_hir_typeck::used_trait_imports
+  15: rustc_hir_typeck::used_trait_imports
+  16: rustc_hir_typeck::used_trait_imports
+  17: rustc_hir_typeck::used_trait_imports
+  18: rustc_hir_typeck::used_trait_imports
+  19: rustc_hir_typeck::intrinsicck::check_transmutes
+  20: <hashbrown::raw::RawTable<usize>>::reserve_rehash::<indexmap::inner::get_hash<(rustc_middle::ty::predicate::Predicate, rustc_middle::traits::ObligationCause), ()>::{closure#0}>
+  21: rustc_hir_typeck::typeck_root
+  22: rustc_query_impl::query_system
+  23: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  24: rustc_query_impl::query_system
+  25: rustc_hir_analysis::check_crate
+  26: rustc_interface::passes::analysis
+  27: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  28: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  29: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  30: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  31: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  32: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  33: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  34: BaseThreadInitThunk
+  35: RtlUserThreadStart
+
+delayed bug: 
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: rustc_hir_typeck::used_trait_imports
+   8: rustc_hir_typeck::used_trait_imports
+   9: rustc_hir_typeck::used_trait_imports
+  10: rustc_hir_typeck::used_trait_imports
+  11: rustc_hir_typeck::used_trait_imports
+  12: rustc_hir_typeck::used_trait_imports
+  13: rustc_hir_typeck::used_trait_imports
+  14: rustc_hir_typeck::used_trait_imports
+  15: rustc_hir_typeck::used_trait_imports
+  16: rustc_hir_typeck::intrinsicck::check_transmutes
+  17: <hashbrown::raw::RawTable<usize>>::reserve_rehash::<indexmap::inner::get_hash<(rustc_middle::ty::predicate::Predicate, rustc_middle::traits::ObligationCause), ()>::{closure#0}>
+  18: rustc_hir_typeck::typeck_root
+  19: rustc_query_impl::query_system
+  20: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  21: rustc_query_impl::query_system
+  22: rustc_hir_analysis::check_crate
+  23: rustc_interface::passes::analysis
+  24: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  25: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  26: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  27: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  28: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  29: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  30: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  31: BaseThreadInitThunk
+  32: RtlUserThreadStart
+
+delayed bug: `Res::Err` but no error emitted
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: RINvCsb7BXuhgVTrp_11rustc_arena7outlineNCINvMs6_B2_NtB2_13DroplessArena15alloc_from_iterTNtNtNtCscGBe64ZeOFm_12rustc_middle2ty9predicate6ClauseNtNtCswkJ7fMS3pI_10rustc_span13span_encoding4SpanEINtNtNtNtCs8SdRKRosQ9h_4core4iter8adapters10filter_map9FilterMa
+   8: rustc_hir_typeck::used_trait_imports
+   9: rustc_hir_typeck::used_trait_imports
+  10: rustc_hir_typeck::used_trait_imports
+  11: rustc_hir_typeck::used_trait_imports
+  12: rustc_hir_typeck::used_trait_imports
+  13: rustc_hir_typeck::used_trait_imports
+  14: rustc_hir_typeck::used_trait_imports
+  15: rustc_hir_typeck::used_trait_imports
+  16: rustc_hir_typeck::used_trait_imports
+  17: rustc_hir_typeck::used_trait_imports
+  18: rustc_hir_typeck::intrinsicck::check_transmutes
+  19: <hashbrown::raw::RawTable<usize>>::reserve_rehash::<indexmap::inner::get_hash<(rustc_middle::ty::predicate::Predicate, rustc_middle::traits::ObligationCause), ()>::{closure#0}>
+  20: rustc_hir_typeck::typeck_root
+  21: rustc_query_impl::query_system
+  22: RINvMs6_NtCsf5ULUiSLOyr_9hashbrown3rawINtB6_8RawTableTTNtNtNtCscGBe64ZeOFm_12rustc_middle6traits5solve14CanonicalInputjETINtNtNtBX_5query5erase10ErasedDataAhj38_ENtNtNtBX_9dep_graph5graph12DepNodeIndexEEE14reserve_rehashNCNvMs1_NtCs7avRpAPtF2Y_21rustc_data
+  23: rustc_query_impl::query_system
+  24: rustc_hir_analysis::check_crate
+  25: rustc_interface::passes::analysis
+  26: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  27: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  28: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  29: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  30: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  31: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  32: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  33: BaseThreadInitThunk
+  34: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_local
+  10: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  11: rustc_privacy::check_mod_privacy
+  12: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  13: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  14: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  15: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  16: rustc_data_structures::sync::parallel::par_fns
+  17: rustc_interface::passes::analysis
+  18: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  19: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  20: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  21: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  22: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  23: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  24: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  25: BaseThreadInitThunk
+  26: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_local
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  10: rustc_privacy::check_mod_privacy
+  11: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  12: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  13: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  14: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  15: rustc_data_structures::sync::parallel::par_fns
+  16: rustc_interface::passes::analysis
+  17: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  18: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  19: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  20: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  21: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  22: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  23: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  24: BaseThreadInitThunk
+  25: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_local
+  10: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  11: rustc_privacy::check_mod_privacy
+  12: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  13: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  14: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  15: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  16: rustc_data_structures::sync::parallel::par_fns
+  17: rustc_interface::passes::analysis
+  18: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  19: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  20: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  21: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  22: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  23: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  24: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  25: BaseThreadInitThunk
+  26: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  10: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_local
+  11: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  12: rustc_privacy::check_mod_privacy
+  13: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  14: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  15: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  16: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  17: rustc_data_structures::sync::parallel::par_fns
+  18: rustc_interface::passes::analysis
+  19: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  20: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  21: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  22: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  23: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  24: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  25: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  26: BaseThreadInitThunk
+  27: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  10: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  11: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_local
+  12: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  13: rustc_privacy::check_mod_privacy
+  14: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  15: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  16: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  17: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  18: rustc_data_structures::sync::parallel::par_fns
+  19: rustc_interface::passes::analysis
+  20: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  21: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  22: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  23: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  24: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  25: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  26: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  27: BaseThreadInitThunk
+  28: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_local
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  10: rustc_privacy::check_mod_privacy
+  11: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  12: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  13: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  14: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  15: rustc_data_structures::sync::parallel::par_fns
+  16: rustc_interface::passes::analysis
+  17: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  18: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  19: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  20: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  21: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  22: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  23: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  24: BaseThreadInitThunk
+  25: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_local
+  10: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  11: rustc_privacy::check_mod_privacy
+  12: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  13: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  14: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  15: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  16: rustc_data_structures::sync::parallel::par_fns
+  17: rustc_interface::passes::analysis
+  18: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  19: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  20: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  21: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  22: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  23: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  24: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  25: BaseThreadInitThunk
+  26: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  10: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_local
+  11: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  12: rustc_privacy::check_mod_privacy
+  13: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  14: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  15: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  16: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  17: rustc_data_structures::sync::parallel::par_fns
+  18: rustc_interface::passes::analysis
+  19: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  20: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  21: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  22: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  23: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  24: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  25: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  26: BaseThreadInitThunk
+  27: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_local
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  10: rustc_privacy::check_mod_privacy
+  11: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  12: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  13: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  14: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  15: rustc_data_structures::sync::parallel::par_fns
+  16: rustc_interface::passes::analysis
+  17: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  18: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  19: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  20: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  21: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  22: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  23: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  24: BaseThreadInitThunk
+  25: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  10: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  11: rustc_privacy::check_mod_privacy
+  12: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  13: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  14: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  15: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  16: rustc_data_structures::sync::parallel::par_fns
+  17: rustc_interface::passes::analysis
+  18: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  19: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  20: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  21: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  22: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  23: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  24: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  25: BaseThreadInitThunk
+  26: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  10: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_local
+  11: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  12: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  13: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  14: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  15: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  16: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  17: rustc_privacy::check_mod_privacy
+  18: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  19: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  20: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  21: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  22: rustc_data_structures::sync::parallel::par_fns
+  23: rustc_interface::passes::analysis
+  24: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  25: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  26: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  27: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  28: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  29: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  30: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  31: BaseThreadInitThunk
+  32: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  10: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_local
+  11: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  12: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  13: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  14: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  15: rustc_privacy::check_mod_privacy
+  16: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  17: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  18: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  19: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  20: rustc_data_structures::sync::parallel::par_fns
+  21: rustc_interface::passes::analysis
+  22: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  23: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  24: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  25: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  26: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  27: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  28: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  29: BaseThreadInitThunk
+  30: RtlUserThreadStart
+
+delayed bug: no type-dependent def for method call
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\backtrace.rs:296
+   4: <alloc::raw_vec::RawVec<annotate_snippets::snippet::Group>>::grow_one
+   5: <rustc_errors::DiagCtxtHandle>::emit_diagnostic
+   6: <rustc_errors::diagnostic::Diag>::emit
+   7: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   8: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+   9: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  10: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_local
+  11: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  12: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  13: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  14: <rustc_privacy::TypePrivacyVisitor as rustc_hir::intravisit::Visitor>::visit_expr
+  15: rustc_privacy::check_mod_privacy
+  16: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  17: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  18: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  19: <jiff::fmt::strtime::Display as core::fmt::Display>::fmt
+  20: rustc_data_structures::sync::parallel::par_fns
+  21: rustc_interface::passes::analysis
+  22: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  23: <rustc_privacy::DefIdsToImplsCollector as rustc_privacy::DefIdVisitor>::visit_def_id
+  24: rustc_query_impl::self_profile::alloc_self_profile_query_strings
+  25: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  26: RINvNtNtCsj9dtQ0ybtN8_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCsdQ0xeFxWCgx_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCs3bSRhLwHB70_17rustc_driver_i
+  27: std::sys::backtrace::__rust_begin_short_backtrace::<std::thread::lifecycle::spawn_unchecked<ctrlc::set_handler_inner<rustc_driver_impl::install_ctrlc_handler::{closure#0}>::{closure#0}, !>::{closure#1}::{closure#0}::{closure#0}, ()>
+  28: std::sys::thread::windows::impl$0::new::thread_start
+             at /rustc/574ff7d98bd6d037e5236a8453029173b32631fd/library/std\src\sys\thread\windows.rs:58
+  29: BaseThreadInitThunk
+  30: RtlUserThreadStart
+
+
+
+rustc version: 1.100.0-nightly (574ff7d98 2026-09-14)
+platform: x86_64-pc-windows-msvc

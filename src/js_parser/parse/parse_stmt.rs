@@ -904,6 +904,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                if p.lexer.is_contextual_keyword(b"struct") || p.lexer.is_contextual_keyword(b"shared")
+                {
+                    // "export struct Foo {}" and "export shared struct Foo {}"
+                    opts.is_export = true;
+                    return p.parse_stmt(opts);
+                }
+
                 if p.lexer.is_contextual_keyword(b"async") {
                     let async_range = p.lexer.range();
                     p.lexer.next()?;

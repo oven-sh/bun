@@ -1637,7 +1637,8 @@ impl Run<'_> {
                     .concat(),
                 );
             }
-            if let Err(why) = fs::write_new(&environment.cwd, &path, &output) {
+            if let Err(why) = fs::write_new(&environment.cwd, &path, &output, environment.to_stdout)
+            {
                 return self.fail(
                     &[&b"There was a problem writing the output file:\n"[..], &why].concat(),
                 );
@@ -1794,12 +1795,12 @@ impl Run<'_> {
         let mut suppressed = Suppressions::load(&path)?;
         if writes {
             suppressed.suppress(results, cwd, options.suppress_rule.as_deref(), is_oxlint);
-            suppressed.save(cwd, &path)?;
+            suppressed.save(cwd, &path, self.environment.to_stdout)?;
         }
         let unused = suppressed.apply(results, cwd, is_oxlint);
         if options.prune_suppressions {
             suppressed.prune(&unused, cwd);
-            suppressed.save(cwd, &path)?;
+            suppressed.save(cwd, &path, self.environment.to_stdout)?;
             return Ok(Suppressed {
                 updated,
                 ..Suppressed::default()

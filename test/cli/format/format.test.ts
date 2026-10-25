@@ -4389,6 +4389,26 @@ exports.format = async (text, options) => {
       timeout,
     );
 
+    test.skipIf(isWindows)(
+      "what Prettier logs goes to stderr, and stdout is the formatted text alone",
+      async () => {
+        const logging = {
+          ...files,
+          "node_modules/prettier/index.cjs": `exports.resolveConfig = async () => null;
+exports.format = async text => {
+  console.log("from Prettier");
+  return text.replace(/ +/g, " ");
+};
+`,
+        };
+        const result = await format(logging, ["--stdin-filepath", "c.astro"], { stdin: "<p   >c</p>\n" });
+        expect(result.raw).toBe("<p >c</p>\n");
+        expect(result.stderr).toBe("from Prettier");
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
     test(
       "--parser with the plugin's parser: piped code goes to Prettier without a file name",
       async () => {

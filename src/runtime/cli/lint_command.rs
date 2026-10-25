@@ -450,11 +450,11 @@ pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
 }
 
 /// Prints the output of `bun lint`, `bun fmt` or `bun check` and returns the exit code. `stdout` is the requested
-/// output: the formatted text, the report, a list. `Output` drops write errors, and with exit code 0 a script like
-/// `bun fmt --stdin-filepath f < f > f.tmp && mv f.tmp f` would then lose `f` on a full disk. So that's an error here.
-/// A reader that has gone away (`| head`) isn't.
-pub(crate) fn print(stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
-    let write_result = bun_sys::write_all_to_stdio(bun_core::Fd::stdout(), stdout);
+/// output: the formatted text, the report, a list. It goes to `to_stdout`. `Output` drops write errors, and with exit
+/// code 0 a script like `bun fmt --stdin-filepath f < f > f.tmp && mv f.tmp f` would then lose `f` on a full disk. So
+/// that's an error here. A reader that has gone away (`| head`) isn't.
+pub(crate) fn print(to_stdout: bun_core::Fd, stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
+    let write_result = bun_sys::write_all_to_stdio(to_stdout, stdout);
     let _ = Output::error_writer().write_all(stderr);
     let exit_code = match write_result {
         Err(error) if error.get_errno() != bun_sys::E::EPIPE => {
@@ -496,6 +496,14 @@ pub(crate) fn run_and_exit(
         run_git(command)
     };
     let command_line: Vec<&[u8]> = bun_core::argv().iter().skip(1).collect();
+    // Only the output goes to fd 1 as it was: it becomes stderr for the rest, like a plugin's `console.log`, before
+    // any VM starts. Windows keeps fd 1, so there a plugin's output still lands in the output.
+    #[cfg(unix)]
+    let to_stdout = (bun_sys::dup(bun_core::Fd::stdout()).map(File::from_fd).ok())
+        .filter(|_| bun_sys::dup2(bun_core::Fd::stderr(), bun_core::Fd::stdout()).is_ok())
+        .unwrap_or_else(File::stdout);
+    #[cfg(not(unix))]
+    let to_stdout = File::stdout();
     let js_engine = super::lint_js::Engines::default();
     // `path.win32.resolve` needs it when a path is on a different drive than its base.
     bun_paths::fs::FileSystem::init(&working_directory());
@@ -509,7 +517,8 @@ pub(crate) fn run_and_exit(
             is_tty: Output::is_stderr_tty(),
             colors: Output::enable_ansi_colors_stderr(),
         },
-        columns: super::run_command::RunCommand::columns_of_stdout,
+        to_stdout: to_stdout.fd(),
+        columns: columns_of,
         is_ai_agent: Output::is_ai_agent(),
         is_github_action: Output::is_github_action(),
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
@@ -522,9 +531,26 @@ pub(crate) fn run_and_exit(
     };
     let outcome = run(&environment);
     // The report is the output. Everything else is printed separately.
-    let exit_code = print(&outcome.stdout, &outcome.stderr, outcome.exit_code);
+    let exit_code = print(
+        environment.to_stdout,
+        &outcome.stdout,
+        &outcome.stderr,
+        outcome.exit_code,
+    );
     js_engine.end_all();
     Global::exit(u32::from(exit_code));
+}
+
+/// Width of the terminal at `fd` in columns: `COLUMNS` if it's set, else what the terminal says, else 80.
+fn columns_of(fd: bun_core::Fd) -> u16 {
+    if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS"))
+        && let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10)
+        && n > 0
+    {
+        return n;
+    }
+    (bun_core::output::File::from(fd).winsize())
+        .map_or(80, |size| if size.col > 0 { size.col } else { 80 })
 }
 
 impl Realms for super::lint_js::Engines {
@@ -556,15 +582,10 @@ pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
             },
         ),
     };
-    // Only the messages go to the client: fd 1 becomes stderr for the rest, like a plugin's `console.log`.
-    #[cfg(unix)]
-    let to_client = bun_sys::dup(bun_core::Fd::stdout())
-        .and_then(|own| bun_sys::dup2(bun_core::Fd::stderr(), bun_core::Fd::stdout()).map(|_| own))
-        .map_or_else(|_| File::stdout(), File::from_fd);
-    #[cfg(not(unix))]
-    let to_client = File::stdout();
     let from_client = File::stdin();
     run_and_exit(command, None, |environment| {
+        // Only the messages go to the client: `run_and_exit` has made fd 1 stderr for the rest.
+        let to_client = File::borrow(&environment.to_stdout);
         bun_lint_driver::lsp::serve(
             args,
             environment,

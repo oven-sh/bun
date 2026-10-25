@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
@@ -1148,9 +1148,53 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
         },
         ["-f", "unix"],
       );
-      expect(stdout).toBe("to stdout lint --threads 2 -f unix");
-      expect(stderr).toBe("to stderr");
+      // Outside Windows, fd 1 is stderr while plugins run: only the report goes to stdout.
+      if (isWindows) {
+        expect(stdout).toBe("to stdout lint --threads 2 -f unix");
+        expect(stderr).toBe("to stderr");
+      } else {
+        expect(stdout).toBe("");
+        expect(stderr).toBe("to stdout lint --threads 2 -f unix\nto stderr");
+      }
       expect(exitCode).toBe(7);
+    },
+    timeout,
+  );
+
+  test(
+    "a plugin's console.log() goes to stderr, so the JSON report stays JSON",
+    async () => {
+      const plugin = `
+      export default {
+        meta: { name: "logs" },
+        rules: {
+          always: {
+            create(context) {
+              return {
+                Program(node) {
+                  console.log("logged by the plugin");
+                  context.report({ node, message: "reported" });
+                },
+              };
+            },
+          },
+        },
+      };`;
+      const { raw, stderr, exitCode } = await lint(
+        {
+          ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "logs/always": "error" } }),
+          "plugin.mjs": plugin,
+          "a.js": "1;\n",
+        },
+        ["-f", "json"],
+      );
+      if (isWindows) {
+        expect(raw).toStartWith("logged by the plugin\n");
+      } else {
+        expect(stderr).toBe("logged by the plugin");
+        expect(JSON.parse(raw).diagnostics.map((it: { message: string }) => it.message)).toEqual(["reported"]);
+      }
+      expect(exitCode).toBe(1);
     },
     timeout,
   );
@@ -1176,7 +1220,7 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
           },
         },
       };`;
-      const { stdout, exitCode } = await lint(
+      const { stdout, stderr, exitCode } = await lint(
         {
           ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "counts/files": "error" } }),
           "plugin.mjs": plugin,
@@ -1192,7 +1236,12 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
         "",
         "2 problems",
       ]);
-      expect(lines.slice(4)).toEqual(["exit after 2 files"]);
+      if (isWindows) {
+        expect(lines.slice(4)).toEqual(["exit after 2 files"]);
+      } else {
+        expect(lines.slice(4)).toEqual([]);
+        expect(stderr).toBe("exit after 2 files");
+      }
       expect(exitCode).toBe(1);
     },
     timeout,

@@ -519,7 +519,12 @@ fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
             );
         }
     }
-    super::lint_command::print(&out, &summary, u8::from(!report.is_ok()))
+    super::lint_command::print(
+        bun_core::Fd::stdout(),
+        &out,
+        &summary,
+        u8::from(!report.is_ok()),
+    )
 }
 
 /// A file or snippet that's about to run.

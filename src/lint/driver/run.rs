@@ -81,8 +81,11 @@ pub struct Environment<'e> {
     pub cwd: Vec<u8>,
     pub stdout: Stream,
     pub stderr: Stream,
-    /// Width of stdout's terminal, in columns.
-    pub columns: fn() -> u16,
+    /// Where the output goes: fd 1 as it was when the process started. On Unix fd 1 itself is stderr by then, so what
+    /// a plugin prints can't get into the output.
+    pub to_stdout: bun_core::Fd,
+    /// Width of the terminal at `to_stdout`, in columns.
+    pub columns: fn(bun_core::Fd) -> u16,
     /// `Output::is_ai_agent()`
     pub is_ai_agent: bool,
     /// `Output::is_github_action()`
@@ -1558,7 +1561,7 @@ impl Run<'_> {
             color,
             links: color && to_terminal,
             width: match to_terminal {
-                true => (bun_core::output::File::from(bun_core::Fd::stdout()).winsize())
+                true => (bun_core::output::File::from(environment.to_stdout).winsize())
                     .map_or(0, |size| usize::from(size.col)),
                 false => 0,
             },

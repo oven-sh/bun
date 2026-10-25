@@ -451,7 +451,7 @@ exports.format = async (text, options) => {
 
   // The same redaction as `bun install` prints for a bunfig.toml that does not parse.
   test(
-    "shows a syntax error of bunfig.toml without repeating its text, which may be a secret",
+    "shows a configuration file that cannot be loaded once, however many requests fail on it",
     async () => {
       const token = "npm_abcdefghijklmnopqrstuvwxyz0123456789";
       using dir = tempDir("bun-fmt-lsp", {
@@ -552,6 +552,58 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
       }
       expect(counts[0]).toBeGreaterThan(0);
       expect(counts[19]).toBe(counts[0]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // A setting of the editor is not a configuration of the folder: the VMs keep their threads, whose ids are those of
+  // the tasks in /proc.
+  test.skipIf(!isLinux)(
+    "keeps the threads of a folder's VMs when the settings of the editor change",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", {
+        "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
+        "node_modules/prettier/index.cjs": `exports.resolveConfig = async () => null;
+exports.format = async (text, options) => text.replace(/ +/g, " ");
+`,
+        "node_modules/prettier-plugin-astro/package.json": '{ "name": "prettier-plugin-astro", "version": "4.0.0" }',
+        ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n',
+        "a.astro": "",
+      });
+      await using client = new Client(String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const text = "<p   >a</p>\n";
+      open(client, join(String(dir), "a.astro"), text, "astro");
+      const vmThreadIds = () => {
+        const tasks = `/proc/${client.proc.pid}/task`;
+        return readdirSync(tasks)
+          .filter(task => {
+            try {
+              return readFileSync(join(tasks, task, "comm"), "utf8").startsWith("Bun Lint JS");
+            } catch {
+              return false;
+            }
+          })
+          .sort();
+      };
+      const first = await format(client, join(String(dir), "a.astro"));
+      expect(first.error).toBeUndefined();
+      expect(applyEdits(text, first.result)).toBe("<p >a</p>\n");
+      const ids = vmThreadIds();
+      expect(ids.length).toBeGreaterThan(0);
+      for (let change = 1; change <= 5; change++) {
+        client.notify("workspace/didChangeConfiguration", { settings: { bun: { lint: { run: "onSave" } } } });
+        const formatted = await format(client, join(String(dir), "a.astro"));
+        expect(formatted.error).toBeUndefined();
+        expect(applyEdits(text, formatted.result)).toBe("<p >a</p>\n");
+        expect(vmThreadIds()).toEqual(ids);
+      }
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();

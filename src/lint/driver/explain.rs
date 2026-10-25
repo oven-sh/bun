@@ -386,7 +386,7 @@ pub(crate) fn explain(
     .concat();
     let theme = Theme {
         light: detect_light_background(),
-        columns: (environment.columns)(),
+        columns: (environment.columns)(environment.to_stdout),
         colors,
         hyperlinks,
         kitty_graphics: false,

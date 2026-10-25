@@ -615,16 +615,7 @@ type HMREvent =
 export async function replaceModules(modules: Record<Id, UnloadedModule>, sourceMapId?: SourceMapURL) {
   Object.assign(unloadedModuleRegistry, modules);
 
-  if (side === "client") {
-    emitEvent("bun:beforeUpdate", null);
-  } else {
-    // The page reloads when a listener throws. The server has no reload: it reports the error and applies the update.
-    try {
-      emitEvent("bun:beforeUpdate", null);
-    } catch (e) {
-      console.error(e);
-    }
-  }
+  emitEvent("bun:beforeUpdate", null);
 
   type ToAccept = {
     cb: HotAccept;
@@ -850,7 +841,16 @@ export function emitEvent(event: HMREvent, data: any) {
   const handlers = eventHandlers[event];
   if (!handlers) return;
   for (const handler of handlers) {
-    handler(data);
+    if (side === "client") {
+      handler(data);
+    } else {
+      // The page reloads when a listener throws. The server has no reload: it reports the error and goes on.
+      try {
+        handler(data);
+      } catch (e) {
+        console.error(e);
+      }
+    }
   }
 }
 

@@ -585,21 +585,23 @@ devTest("a server module update applies when an import.meta.hot event listener t
   framework: minimalFramework,
   files: {
     "routes/index.ts": `
-      globalThis.listenerCalls ??= 0;
+      const calls = (globalThis.hotEventCalls ??= []);
       // A listener written for Vite reads a payload. Bun passes none, so the listener throws.
       import.meta.hot.on("vite:beforeUpdate", payload => {
-        globalThis.listenerCalls++;
+        calls.push("reads the payload");
         return payload.updates.length;
       });
+      import.meta.hot.on("bun:beforeUpdate", () => calls.push("later listener"));
       export default function () {
-        return Response.json({ save: 0, listenerCalls: globalThis.listenerCalls });
+        return Response.json({ save: 0, calls });
       }
     `,
   },
   async test(dev) {
-    await dev.fetch("/").equals({ save: 0, listenerCalls: 0 });
+    await dev.fetch("/").equals({ save: 0, calls: [] });
     await dev.patch("routes/index.ts", { find: "save: 0", replace: "save: 1" });
-    await dev.fetch("/").equals({ save: 1, listenerCalls: 1 });
+    // The later listener still runs, and the response is the new one.
+    await dev.fetch("/").equals({ save: 1, calls: ["reads the payload", "later listener"] });
   },
 });
 devTest("hmr forwards every merged inotify sub-path from a directory batch", {

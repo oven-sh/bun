@@ -7247,6 +7247,58 @@ foo(class { #x = 1; });
         expect(reports).toEqual(expected);
       });
 
+      describe("what `eslint:recommended` has, which rules exist and which options they take", () => {
+        const code = `foo(class { #x = 1; });
+if (foo) { function g() {} g(); }
+let a = 1;
+a = 2;
+foo(a);
+`;
+        const invalid = (rule: string, value: string) =>
+          `Configuration for rule "${rule}" is invalid:\n\tValue ${value} should `;
+        test.each([
+          ["8.57.1", { extends: "eslint:recommended" }, ["no-inner-declarations 2:12"]],
+          ["9.39.5", { extends: "eslint:recommended" }, ["no-unused-private-class-members 1:13"]],
+          ["8.57.1", { rules: { "no-useless-assignment": "error" } }, ["no-useless-assignment 1:1"]],
+          ["9.39.5", { rules: { "no-useless-assignment": "error" } }, ["no-useless-assignment 3:5"]],
+          ["9.39.5", { rules: { "valid-jsdoc": "error" } }, ["valid-jsdoc 1:1"]],
+          [
+            "8.57.1",
+            { rules: { "no-unused-vars": ["error", { reportUsedIgnorePattern: true }] } },
+            invalid("no-unused-vars", `{"reportUsedIgnorePattern":true}`),
+          ],
+          ["9.39.5", { rules: { "no-unused-vars": ["error", { reportUsedIgnorePattern: true }] } }, []],
+          // ESLint 10 added this one.
+          [
+            "9.39.5",
+            { rules: { "max-nested-callbacks": ["error", { max: 1, checkConstructorCallCallbacks: true }] } },
+            invalid("max-nested-callbacks", `{"max":1,"checkConstructorCallCallbacks":true}`),
+          ],
+        ])("eslint %s, %j", async (version, config, expected) => {
+          const { raw, stderr, exitCode } = await lint(
+            {
+              ".eslintrc.json": JSON.stringify({
+                root: true,
+                parserOptions: { ecmaVersion: 2022 },
+                globals: { foo: "readonly" },
+                ...config,
+              }),
+              "a.js": code,
+              "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+            },
+            ["-f", "json", "a.js"],
+            { mayFail: typeof expected === "string" },
+          );
+          if (typeof expected === "string") {
+            expect(stderr).toContain(expected);
+            expect(exitCode).toBe(2);
+            return;
+          }
+          const reports = (JSON.parse(raw)[0].messages as any[]).map(it => `${it.ruleId} ${it.line}:${it.column}`);
+          expect(reports).toEqual(expected);
+        });
+      });
+
       test("with an eslint.config.js too, a rule that only suggests since ESLint 10 doesn't with ESLint 9", async () => {
         const { raw } = await lint(
           {

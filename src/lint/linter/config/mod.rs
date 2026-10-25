@@ -1596,7 +1596,9 @@ impl Config {
                 (config.processor_location).clone_from(&object.processor_location);
             }
         }
-        let eslint_8 = match (self.is_legacy).then(|| eslintrc::resolve(&mut language_options)) {
+        let resolved =
+            (self.is_legacy).then(|| eslintrc::resolve(&mut language_options, self.eslint_major));
+        let eslint_8 = match resolved {
             Some(Ok(eslint_8)) => Some(Arc::new(eslint_8)),
             Some(Err(message)) => {
                 config.error = Some(message);

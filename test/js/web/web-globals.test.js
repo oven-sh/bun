@@ -516,41 +516,6 @@ test.concurrent("prompt(), confirm() and alert() take a typed line on a terminal
   });
 });
 
-// https://github.com/oven-sh/bun/issues/5267
-test.concurrent.skipIf(isWindows)(
-  "a dialog in a readline callback puts the terminal in line mode, then back in raw mode",
-  async () => {
-    const flags = {};
-    const { shown, exitCode } = await typeOnTerminal(
-      `const rl = require("node:readline").createInterface({ input: process.stdin, output: process.stdout });
-       const ask = question => new Promise(resolve => rl.question(question, resolve));
-       const first = await ask("first?");
-       const name = prompt("name?");
-       const yes = confirm("yes?");
-       alert("alert!");
-       const second = await ask("second?");
-       rl.close();
-       ${resultThenLine(`{ first, name, yes, second }`)}`,
-      [
-        ["first?", sampleThenType(flags, "readline", "one\r")],
-        ["name?", sampleThenType(flags, "prompt", "Alice\r")],
-        ["yes?", sampleThenType(flags, "confirm", "y\r")],
-        ["alert!", sampleThenType(flags, "alert", "\r")],
-        ["second?", sampleThenType(flags, "readlineAgain", "two\r")],
-        ["DONE", "\r"],
-      ],
-    );
-    expect({ flags, result: resultOf(shown), exitCode }).toEqual({
-      flags: { readline: rawMode, prompt: lineMode, confirm: lineMode, alert: lineMode, readlineAgain: rawMode },
-      result: { first: "one", name: "Alice", yes: true, second: "two" },
-      exitCode: 0,
-    });
-    // The terminal echoes what is typed for a dialog.
-    expect(shown).toContain("name? Alice\n");
-    expect(shown).toContain("yes? [y/N] y\n");
-  },
-);
-
 // A ConPTY does not turn a typed \x03 into CTRL_C_EVENT (terminal-platform-gaps.test.ts).
 test.concurrent.skipIf(isWindows)("Ctrl+C ends a process that waits in a dialog on a raw-mode terminal", async () => {
   const { signalCode } = await typeOnTerminal(
@@ -612,8 +577,46 @@ test.concurrent("prompt() converts its default value before it writes the questi
   expect(shown).not.toContain("bad?");
 });
 
+// The next four tests load node:readline, start a Worker or start a second process. They are not
+// concurrent: a debug build takes seconds for those when many processes start at the same time.
+
+// https://github.com/oven-sh/bun/issues/5267
+test.skipIf(isWindows)(
+  "a dialog in a readline callback puts the terminal in line mode, then back in raw mode",
+  async () => {
+    const flags = {};
+    const { shown, exitCode } = await typeOnTerminal(
+      `const rl = require("node:readline").createInterface({ input: process.stdin, output: process.stdout });
+       const ask = question => new Promise(resolve => rl.question(question, resolve));
+       const first = await ask("first?");
+       const name = prompt("name?");
+       const yes = confirm("yes?");
+       alert("alert!");
+       const second = await ask("second?");
+       rl.close();
+       ${resultThenLine(`{ first, name, yes, second }`)}`,
+      [
+        ["first?", sampleThenType(flags, "readline", "one\r")],
+        ["name?", sampleThenType(flags, "prompt", "Alice\r")],
+        ["yes?", sampleThenType(flags, "confirm", "y\r")],
+        ["alert!", sampleThenType(flags, "alert", "\r")],
+        ["second?", sampleThenType(flags, "readlineAgain", "two\r")],
+        ["DONE", "\r"],
+      ],
+    );
+    expect({ flags, result: resultOf(shown), exitCode }).toEqual({
+      flags: { readline: rawMode, prompt: lineMode, confirm: lineMode, alert: lineMode, readlineAgain: rawMode },
+      result: { first: "one", name: "Alice", yes: true, second: "two" },
+      exitCode: 0,
+    });
+    // The terminal echoes what is typed for a dialog.
+    expect(shown).toContain("name? Alice\n");
+    expect(shown).toContain("yes? [y/N] y\n");
+  },
+);
+
 // Line mode belongs to the terminal, not to a thread: the last dialog that ends puts raw mode back.
-test.concurrent.skipIf(isWindows)("dialogs in a Worker and on the main thread share line mode", async () => {
+test.skipIf(isWindows)("dialogs in a Worker and on the main thread share line mode", async () => {
   const flags = {};
   const { shown, exitCode } = await typeOnTerminal(
     `process.stdin.setRawMode(true);
@@ -646,7 +649,7 @@ test.concurrent.skipIf(isWindows)("dialogs in a Worker and on the main thread sh
 
 // The owner of raw mode leaves it while a dialog of another thread holds line mode. The dialog keeps
 // line mode, and the terminal is not put back in raw mode when the dialog ends.
-test.concurrent.skipIf(isWindows)("setRawMode(false) during a dialog of a Worker is not undone", async () => {
+test.skipIf(isWindows)("setRawMode(false) during a dialog of a Worker is not undone", async () => {
   const flags = {};
   const { shown, exitCode } = await typeOnTerminal(
     `process.on("SIGUSR2", () => {
@@ -686,7 +689,7 @@ test.concurrent.skipIf(isWindows)("setRawMode(false) during a dialog of a Worker
 // `bun a.js | less`: a producer that did not change the terminal itself must not write its startup
 // termios back at exit, over the mode that `less` set (#29592). A dialog of the producer changes the
 // terminal only while it waits.
-test.concurrent.skipIf(isWindows)(
+test.skipIf(isWindows)(
   "a pipeline producer that asked a question does not write the terminal mode at exit",
   async () => {
     const flags = {};

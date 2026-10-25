@@ -4794,7 +4794,7 @@ impl<'p, 's> Checker<'p, 's> {
                 cold_path();
                 self.get_type_of_parameter(param);
                 if let Some((file, p)) = param.declaration
-                    && Self::is_typed_by_default(&self.hir(file)[p])
+                    && Self::is_typed_by_default(self.hir(file), p)
                 {
                     self.type_of_param(file, p);
                 }
@@ -4804,11 +4804,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// True if the type of `parameter` comes from checking its default.
-    fn is_typed_by_default(parameter: &Param) -> bool {
+    /// True if the type of the parameter `p` comes from checking its default, and `p` has a name. The elements of a
+    /// pattern can be asked for on their own.
+    fn is_typed_by_default(hir: &hir::File, p: ParamId) -> bool {
+        let parameter = &hir[p];
         parameter.ty.is_none()
             && parameter.default.is_some()
             && !parameter.flags.contains(Flags::REST)
+            && matches!(hir[parameter.pat].kind, PatKind::Ident(_))
     }
 
     /// `getTypeOfSymbol(sig.parameters[index])`
@@ -5180,7 +5183,7 @@ impl<'p, 's> Checker<'p, 's> {
         let name_of_declaration = (file, value_declaration.pat);
         let is_left_out = !is_asked
             && actual.is_none()
-            && Self::is_typed_by_default(value_declaration)
+            && Self::is_typed_by_default(hir, p)
             && (self.p.pat_types.get(&self.task, &name_of_declaration)).is_none();
         if !has_argument {
             self.eager.push(self.stack.len());

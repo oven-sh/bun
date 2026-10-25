@@ -9145,6 +9145,24 @@ const x01 = inc({ select: ["id"] }) satisfies typeof x01;
       expect(exitCode).toBe(1);
     });
 
+    test("a call without arguments in the default of a binding pattern finds the cycle through a later parameter", async () => {
+      using dir = project({
+        "a.ts": `function f3([{ b: p0 = p2 }] = f3().x, p2: typeof p0) { return p0; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(1,13): error TS7022: '[{ b: p0 = p2 }]' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "a.ts(1,19): error TS7022: 'p0' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "a.ts(1,24): error TS2373: Parameter 'p0' cannot reference identifier 'p2' declared after it.",
+          "a.ts(1,32): error TS2554: Expected 2 arguments, but got 0.",
+          "a.ts(1,40): error TS2502: 'p2' is referenced directly or indirectly in its own type annotation.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // tsc asks for the type of a parameter when there's an argument to compare with it. `use()` has none, so the default
     // of `f` isn't checked there, and `createStore(..)` isn't resolved a second time inside its own resolution.
     test("a call without an argument for a parameter doesn't check the default of that parameter", async () => {

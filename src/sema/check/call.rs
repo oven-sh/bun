@@ -191,15 +191,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `links.resolvedSignature = result`. The first value wins, and is returned: "it's possible
     /// that this inner resolution sets the resolvedSignature first. In such a case we ignore the
-    /// local result and reuse the correct one that was cached." That's not so for a call that no candidate accepts,
-    /// for which `resolveCall` has assigned `result` since.
+    /// local result and reuse the correct one that was cached."
     fn cache_call(
         &mut self,
         file: FileId,
         call: ExprId,
         resolved: ResolvedCall,
         stored: Stored,
-        outcome: CallOutcome,
     ) -> ResolvedCall {
         let key = (file, call);
         if self.task.file == Some(file) {
@@ -210,11 +208,6 @@ impl<'p, 's> Checker<'p, 's> {
                 self.signatures_resolved_with_errors_discarded
                     .retain(|&it| it != call);
             }
-        }
-        if outcome != CallOutcome::Chosen {
-            (self.p.call_return_types).rewrite(&self.task, key, resolved.ret, stored);
-            self.p.calls.rewrite(&self.task, key, resolved.sig, stored);
-            return resolved;
         }
         ResolvedCall {
             ret: (self.p.call_return_types).insert(&self.task, key, resolved.ret, stored),
@@ -383,26 +376,17 @@ impl<'p, 's> Checker<'p, 's> {
             if let Ok(stored) = left
                 && !self.is_in_flow_loop()
             {
-                return self.cache_call(file, call, resolved, stored, outcome);
+                return self.cache_call(file, call, resolved, stored);
             }
-            // tsc doesn't make a resolution that a request of ours alone led to (`eager`), or that ran into one.
-            if let Some(at) = in_progress_at
-                && !self.is_behind_barrier(at + 1)
+            if left.is_err()
+                && assigned_within.is_none()
+                && self.rejected_at < serial
+                && !self.is_in_flow_loop()
             {
-                let is_unresolved = resolved.ret == TypeId::UNRESOLVED
-                    || (self.types().object_flags(resolved.ret))
-                        .contains(ObjectFlags::HAS_UNRESOLVED);
-                if left.is_err()
-                    && assigned_within.is_none()
-                    && self.rejected_at < serial
-                    && !self.is_in_flow_loop()
-                    && !is_unresolved
-                {
-                    self.signatures_resolved_within.push((file, call, resolved));
-                }
-                if !is_unresolved {
-                    self.keep_context_checks_for_enclosing_resolution(file, call, at);
-                }
+                self.signatures_resolved_within.push((file, call, resolved));
+            }
+            if let Some(at) = in_progress_at {
+                self.keep_context_checks_for_enclosing_resolution(file, call, at);
             }
         } else if let Some(stored) = stored
             && !self.is_in_flow_loop()
@@ -411,7 +395,7 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(reported) = reported {
                 (self.p.call_diagnostics).insert_ref(&self.task, (file, call), reported, stored);
             }
-            return self.cache_call(file, call, resolved, stored, outcome);
+            return self.cache_call(file, call, resolved, stored);
         } else if let Some(reported) = reported
             && self.is_in_flow_loop()
         {

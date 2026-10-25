@@ -549,6 +549,8 @@ describe("Process Behavior", () => {
 describe("The question about warnings", () => {
   // A parent that reads keys (readline, a TUI) can run `bun install` with its
   // terminal still in raw mode, where Enter is a lone CR.
+  // Not on Windows: Bun.Terminal#setRawMode does nothing on a ConPTY
+  // (terminal-platform-gaps.test.ts), so the test cannot leave the terminal raw.
   it.skipIf(isWindows)("ends at Enter on a terminal left in raw mode", async () => {
     const ctx = await createTestContext();
     try {

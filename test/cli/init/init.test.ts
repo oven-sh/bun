@@ -148,6 +148,8 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   // A process that holds the terminal in raw mode (`bun repl`, a CLI with a
   // readline question or a spinner) can run `bun init` with inherited stdio.
   // Enter is a lone CR there, and Ctrl+C is a key of that process.
+  // Not on Windows: Bun.Terminal#setRawMode does nothing on a ConPTY
+  // (terminal-platform-gaps.test.ts), so the test cannot leave the terminal raw.
   test.skipIf(isWindows)("bun init text questions end at Enter on a terminal left in raw mode", async () => {
     await using temp = tempDir("bun-init-raw-terminal", {});
     const ICANON = process.platform === "linux" ? 0x2 : 0x100;

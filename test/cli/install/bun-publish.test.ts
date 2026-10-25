@@ -719,6 +719,8 @@ describe.concurrent("otp", () => {
 
   // A process that holds the terminal in raw mode can run `bun publish` with
   // inherited stdio. Enter is a lone CR there.
+  // Not on Windows: Bun.Terminal#setRawMode does nothing on a ConPTY
+  // (terminal-platform-gaps.test.ts), so the test cannot leave the terminal raw.
   test.skipIf(isWindows)("the OTP question ends at Enter on a terminal left in raw mode", async () => {
     const otp = "424242";
     using mock = mockRegistry((req, recorded) => {

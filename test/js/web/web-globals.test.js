@@ -513,6 +513,7 @@ test.concurrent("prompt(), confirm() and alert() take a typed line on a terminal
 });
 
 // Line mode is what makes a typed line: Backspace, Ctrl+W and Ctrl+D edit and end it in the terminal.
+// Not on Windows: Ctrl+W and Ctrl+D are not keys of the console, and a ConPTY has no termios to read.
 test.concurrent.skipIf(isWindows)("a dialog on a raw-mode terminal reads an edited line", async () => {
   const flags = {};
   const { shown, exitCode } = await typeOnTerminal(
@@ -566,12 +567,14 @@ test.concurrent.skipIf(isWindows)("Ctrl+C ends a process that waits in a dialog 
 
 // The test changes the termios while the script waits in alert("setup"), then types LF to end that alert.
 // A dialog adds only what a line read lacks. Echo that was turned off on a line-mode terminal stays off.
+// Not on Windows: a ConPTY has no termios to change.
 test.concurrent.skipIf(isWindows).each([
   {
     mode: "line mode without echo",
     change: terminal => (terminal.localFlags &= ~ECHO),
     keys: "hunter2\r",
     duringDialog: "ICANON ISIG",
+    answer: "hunter2",
     echoed: false,
   },
   {
@@ -579,6 +582,7 @@ test.concurrent.skipIf(isWindows).each([
     change: terminal => (terminal.localFlags &= ~(ICANON | ECHO)),
     keys: "hunter3\x7f2\r",
     duringDialog: "ICANON ISIG",
+    answer: "hunter2",
     echoed: false,
   },
   {
@@ -586,6 +590,7 @@ test.concurrent.skipIf(isWindows).each([
     change: terminal => (terminal.inputFlags &= ~ICRNL),
     keys: "hunter2\r",
     duringDialog: "ICANON ECHO ISIG",
+    answer: "hunter2",
     echoed: true,
   },
   {
@@ -596,9 +601,19 @@ test.concurrent.skipIf(isWindows).each([
     },
     keys: "hunter2\r",
     duringDialog: "ICANON ECHO ISIG",
+    answer: "hunter2",
     echoed: true,
   },
-])("a dialog on a terminal in $mode", async ({ change, keys, duringDialog, echoed }) => {
+  {
+    // Ctrl+C is a key here. The user aborts the dialog with it.
+    mode: "line mode without signals",
+    change: terminal => (terminal.localFlags &= ~ISIG),
+    keys: "hunter\x032\r",
+    duringDialog: "ICANON ECHO",
+    answer: null,
+    echoed: true,
+  },
+])("a dialog on a terminal in $mode", async ({ change, keys, duringDialog, answer, echoed }) => {
   const flags = {};
   const { shown, exitCode } = await typeOnTerminal(
     `alert("setup"); const secret = prompt("secret?"); ${alertResult(`{ secret }`)}`,
@@ -614,10 +629,11 @@ test.concurrent.skipIf(isWindows).each([
       resultStep,
     ],
   );
-  // The result shows the answer in quotes, so only the echo of the terminal shows it before a line end.
-  expect({ flags, result: resultOf(shown), echoed: shown.includes("hunter2\n"), exitCode }).toEqual({
+  // What the terminal showed between the question and the result.
+  const typed = shown.slice(shown.indexOf("secret?"), shown.indexOf("RESULT:"));
+  expect({ flags, result: resultOf(shown), echoed: typed.includes("hunter"), exitCode }).toEqual({
     flags: { duringDialog },
-    result: { secret: "hunter2" },
+    result: { secret: answer },
     echoed,
     exitCode: 0,
   });
@@ -645,6 +661,7 @@ test.concurrent("prompt() converts its default value before it writes the questi
 });
 
 // In line mode a CR LF is two lines, on a raw-mode terminal too: the second one is empty.
+// Not on Windows: this is the ICRNL rule of a termios. A console has its own rule for a typed LF.
 test.concurrent.skipIf(isWindows)("a dialog on a raw-mode terminal takes CR LF as two lines", async () => {
   const { shown, exitCode } = await typeOnTerminal(
     `process.stdin.setRawMode(true);
@@ -660,6 +677,8 @@ test.concurrent.skipIf(isWindows)("a dialog on a raw-mode terminal takes CR LF a
 // takes seconds for those when many processes start at the same time.
 
 // https://github.com/oven-sh/bun/issues/5267
+// The script waits for its last line in readline and then exits: on Windows, a console read that
+// libuv started for readline can take the line of a dialog that comes after rl.close().
 test("a dialog in a readline callback puts the terminal in line mode, then back in raw mode", async () => {
   const flags = {};
   const { shown, exitCode } = await typeOnTerminal(
@@ -670,15 +689,17 @@ test("a dialog in a readline callback puts the terminal in line mode, then back 
      const yes = confirm("yes?");
      alert("alert!");
      const second = await ask("second?");
+     console.log("RESULT:" + JSON.stringify({ first, name, yes, second }) + "DONE");
+     await ask("end?");
      rl.close();
-     ${alertResult(`{ first, name, yes, second }`)}`,
+     process.exit(0);`,
     [
       ["first?", sampleThenType(flags, "readline", "one\r")],
       ["name?", sampleThenType(flags, "prompt", "Alice\r")],
       ["yes? [y/N]", sampleThenType(flags, "confirm", "y\r")],
       ["alert! [Enter]", sampleThenType(flags, "alert", "\r")],
       ["second?", sampleThenType(flags, "readlineAgain", "two\r")],
-      resultStep,
+      ["end?", "\r"],
     ],
   );
   expect({ flags, result: resultOf(shown), exitCode }).toEqual({
@@ -688,6 +709,28 @@ test("a dialog in a readline callback puts the terminal in line mode, then back 
   });
   // The terminal echoes what is typed for a dialog. A ConPTY draws its screen in its own way.
   if (!isWindows) expect(shown).toContain("Alice\n");
+});
+
+// `bun repl` or a CLI with a readline question runs a child with inherited stdio. The terminal is
+// raw when the child starts, so its dialog makes a line, and Ctrl+C stays a key of the parent.
+test("a dialog of a child process on a terminal that its parent holds in raw mode", async () => {
+  const flags = {};
+  const child = `console.log("child got " + JSON.stringify(prompt("name?")));`;
+  const { shown, exitCode } = await typeOnTerminal(
+    `process.stdin.setRawMode(true);
+     const child = Bun.spawnSync({
+       cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+       stdio: ["inherit", "inherit", "inherit"],
+     });
+     ${alertResult(`{ childExitCode: child.exitCode }`)}`,
+    [["name?", sampleThenType(flags, "childDialog", "Alice\r")], resultStep],
+  );
+  expect({ flags, child: shown.match(/child got (.*)/)?.[1], result: resultOf(shown), exitCode }).toEqual({
+    flags: { childDialog: isWindows ? "" : "ICANON ECHO" },
+    child: '"Alice"',
+    result: { childExitCode: 0 },
+    exitCode: 0,
+  });
 });
 
 // Opens libc in a script, for the job control calls that have no JS API.
@@ -707,6 +750,7 @@ const libc = `(() => {
 
 // `bun x.js &`, then `fg`. The line editor of the shell has the terminal in raw mode while the job is
 // in the background. The job must not save that mode: it is not the mode that the job continues with.
+// Not on Windows: a console has no process groups and no job control.
 test.skipIf(isWindows)("a dialog of a background job leaves the terminal mode to the shell", async () => {
   const SIGTTOU = 22;
   const job = `${libc}.setpgid(0, 0);
@@ -755,6 +799,7 @@ test.skipIf(isWindows)("a dialog of a background job leaves the terminal mode to
 
 // `bun a.js | less`: the mode of the terminal belongs to the consumer unless the producer set it (#29592).
 // The test turns ECHO on while the producer runs, as another reader of the terminal can.
+// Not on Windows: the rule and the test are about the termios of the terminal, which a ConPTY does not have.
 test.skipIf(isWindows).each([
   {
     producer: "that set raw mode",

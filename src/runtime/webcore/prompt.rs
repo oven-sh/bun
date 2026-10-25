@@ -349,6 +349,11 @@ pub(crate) fn prompt<'a>(
         }
     }
 
+    // Ctrl+C is a key on a terminal that does not make it a signal. The user aborts with it.
+    if Output::is_stdin_tty() && bun_core::strings::contains_char(&input, 0x03) {
+        return Ok(JSValue::NULL);
+    }
+
     if !input.is_empty() && input[input.len() - 1] == b'\r' {
         input.truncate(input.len() - 1);
     }

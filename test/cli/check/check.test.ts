@@ -9074,6 +9074,62 @@ function f() { return merge(merge(f(), [1]), f()); }
       expect(exitCode).toBe(1);
     });
 
+    // The second `get` is first resolved to the end inside its own resolution. There `c` is implicitly `any`, and that's
+    // final: the check of the callback's body doesn't give it a type from the signature of the failed call.
+    test("a callback keeps the parameter types of a resolution inside the call's resolution after that resolution", async () => {
+      using dir = project({
+        "app.ts": `import type { Handler, Mw } from "./http";
+export type Route<P extends string, R> = { path: P; out: R };
+export class App<V extends object = {}, Rs extends Route<any, any> = never> {
+  get<P extends string, R>(path: P, h: Handler<V, P, R>): App<V, Rs | Route<P, R>>;
+  get<P extends string, E extends object, R>(path: P, mw: Mw<V, E>, h: Handler<Omit<V, keyof E> & E, P, R>): App<V, Rs | Route<P, R>>;
+  get(path: string, ...a: Function[]) { return this as any; }
+  use<E extends object>(mw: Mw<V, E>) { return this as unknown as App<Omit<V, keyof E> & E, Rs>; }
+}
+export function mw<V extends object, E extends object>(f: Mw<V, E>) { return f; }
+export function call<A extends App<any, any>>(a: A) { return a; }
+`,
+        "http.ts": `export class Ctx<V extends object, P extends string> {
+  constructor(public vars: V, public path: P) {}
+  get params() { return {} as { [K in P]: string }; }
+  json<T>(body: T) { return [body]; }
+}
+export type Handler<V extends object, P extends string, R> = (c: Ctx<V, P>) => R | Promise<R>;
+export type Mw<V extends object, E extends object> = (c: Ctx<V, string>) => E | Promise<E>;
+`,
+        "index.ts": `export * from "./m1";
+`,
+        "m0.ts": `import { x80 } from "./m8"; import { x91 } from "./m9"; import { x11 } from "./index";
+export const x02 = x91()
+  .get("/posts", c => x11())
+  .get("/health", x80, c => c.json({ id: c.params.id }))
+  .get("/users", x80, c => c.json(c.params.id));
+`,
+        "m1.ts": `import { call } from "./app"; import { x02 } from "./m0";
+export const x11 = async () => { const r = await call(x02); return r; };
+`,
+        "m8.ts": `import { mw } from "./app"; import { Ctx } from "./http";
+export const x80 = mw((c: Ctx<{ user: string }, string>) => ({ isAdmin: true }));
+`,
+        "m9.ts": `import { App } from "./app"; import { x80 } from "./m8";
+export const x91 = () => new App().use(x80);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").filter(line => !line.startsWith(" "))).toEqual([
+        "m0.ts(2,14): error TS7022: 'x02' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m0.ts(3,18): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+        "m0.ts(4,19): error TS2345: Argument of type 'Mw<{ user: string; }, { isAdmin: boolean; }>' is not assignable to parameter of type 'Mw<Omit<{}, \"isAdmin\"> & { isAdmin: boolean; }, { isAdmin: boolean; }>'.",
+        "m0.ts(4,24): error TS7006: Parameter 'c' implicitly has an 'any' type.",
+        "m0.ts(5,18): error TS2345: Argument of type 'Mw<{ user: string; }, { isAdmin: boolean; }>' is not assignable to parameter of type 'Mw<Omit<{}, \"isAdmin\"> & { isAdmin: boolean; }, { isAdmin: boolean; }>'.",
+        "m0.ts(5,23): error TS7006: Parameter 'c' implicitly has an 'any' type.",
+        "m1.ts(2,14): error TS7023: 'x11' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+        "m1.ts(2,40): error TS7022: 'r' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "m9.ts(2,40): error TS2345: Argument of type 'Mw<{ user: string; }, { isAdmin: boolean; }>' is not assignable to parameter of type 'Mw<{}, { isAdmin: boolean; }>'.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // tsc asks for the type of a parameter when there's an argument to compare with it. `use()` has none, so the default
     // of `f` isn't checked there, and `createStore(..)` isn't resolved a second time inside its own resolution.
     test("a call without an argument for a parameter doesn't check the default of that parameter", async () => {

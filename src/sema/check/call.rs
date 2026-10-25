@@ -390,6 +390,7 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(reported) = reported {
                 (self.p.call_diagnostics).insert_ref(&self.task, (file, call), reported, stored);
             }
+            self.publish_context_checks_kept_for(self.stack.len(), serial);
             return self.cache_call(file, call, resolved, stored);
         } else if let Some(reported) = reported
             && self.is_in_flow_loop()
@@ -435,6 +436,18 @@ impl<'p, 's> Checker<'p, 's> {
                     if hir.find_ancestor(hir.parent(hir.node(function)), is_call) == call)
             {
                 (under.0, under.1) = (enclosing, serial);
+            }
+        }
+    }
+
+    /// The resolution whose frame was `stack[at]`, with the serial number `serial`, is over and its result is stored.
+    /// What `keep_context_checks_for_enclosing_resolution` kept for it is final: nothing checks those functions again.
+    fn publish_context_checks_kept_for(&mut self, at: usize, serial: u64) {
+        for i in 0..self.context_checked_under.len() {
+            let (under, of, function, assigned) = self.context_checked_under[i];
+            if (under, of) == (at, serial) {
+                (self.p.context_checked).insert(&self.task, function, assigned, Stored::new());
+                self.context_checked_here.insert(function);
             }
         }
     }

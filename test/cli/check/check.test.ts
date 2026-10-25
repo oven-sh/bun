@@ -9282,6 +9282,26 @@ let l = st.actions; l = 1;
       expect(exitCode).toBe(1);
     });
 
+    // The parameter `c` and the property `c` are two symbols. The cycle through the parameter is found first, and gives it
+    // its type. `this.c` asks for the property, which evaluates `typeof x` again and finds `x` in progress, with the getter
+    // in between.
+    test("a parameter property is resolved apart from its parameter", async () => {
+      using dir = project({
+        "a.ts": `declare class Container<R = {}> { add<K extends string, T>(k: K, f: (d: R) => T): Container<R & { [P in K]: T }>; all(): R; }
+const x = new Container().add("a", d => new S(null!).all);
+class S { constructor(readonly c: typeof x) {} get all() { return this.c.all(); } }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        "a.ts(2,7): error TS7022: 'x' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+        "a.ts(2,36): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+        "a.ts(3,23): error TS2502: 'c' is referenced directly or indirectly in its own type annotation.",
+        "a.ts(3,52): error TS7023: 'all' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // `types.ts` is checked first. `first` and `second` are circular, and the argument of `extend` leads to `made`. The
     // resolution of `use(null!)` asks for the type of `v` once, for the argument. That leads to `made` and `use(null!)`
     // again, which asks for `v` a second time and finds the cycle.

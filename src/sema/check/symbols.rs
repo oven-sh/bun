@@ -276,11 +276,15 @@ impl<'p, 's> Checker<'p, 's> {
         let mut value_declaration = self.files().value_declaration(sym);
         // A parameter property has the type of its parameter, which is a separate query.
         if let Some((file, Decl::ParameterProperty(p))) = value_declaration {
+            let pat = self.hir(file)[p].pat;
+            let parameter = Query::Pat(file, pat);
+            if self.may_be_in_flight(parameter) && self.stack.contains(&parameter) {
+                return self.type_of_property_of_parameter_in_flight(sym, file, pat);
+            }
             let scope = self.begin_scope();
             let ty = self.type_of_param(file, p);
             // Cached here once it's cached there, because every `this.x` queries it. The cached value is copied,
             // because `ty` can be provisional while the final type is stored.
-            let pat = self.hir(file)[p].pat;
             let cached = (self.p.pat_types.get(&self.task, &(file, pat))).map(|(ty, _)| ty);
             if let (Ok(stored), Some(cached)) = (self.end_scope(scope), cached) {
                 self.p.symbol_types.insert(&self.task, sym, cached, stored);
@@ -426,6 +430,43 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Err(open) => self.cache_provisionally(Query::Symbol(sym), u64::from(ty.0), open),
         }
+        ty
+    }
+
+    /// `getTypeOfSymbol` of the property `sym` that the parameter named `pat` declares, while the type of the parameter
+    /// is being resolved. They're two symbols, so the property gets a resolution of its own, which evaluates the
+    /// declaration again, whatever the parameter has been assigned in the meantime.
+    #[cold]
+    #[inline(never)]
+    fn type_of_property_of_parameter_in_flight(
+        &mut self,
+        sym: Sym,
+        file: FileId,
+        pat: PatId,
+    ) -> TypeId {
+        let query = Query::Symbol(sym);
+        if let Some(raw) = self.provisional(query) {
+            return TypeId(raw as u32);
+        }
+        let is_entered = self.enter(query);
+        if !is_entered && !self.found_cycle {
+            return TypeId::UNRESOLVED;
+        }
+        if is_entered {
+            let ty = self.type_of_pat_uncached(file, pat);
+            match self.leave(query) {
+                _ if self.left_a_cycle => {}
+                Ok(stored) => return self.p.symbol_types.insert(&self.task, sym, ty, stored),
+                Err(open) => {
+                    self.cache_provisionally(query, u64::from(ty.0), open);
+                    return ty;
+                }
+            }
+        }
+        let ty = circularity_error_type(self.type_annotation_of_pat(file, pat));
+        let stored = self.cycle_result();
+        self.p.symbol_types.insert(&self.task, sym, ty, stored);
+        self.report_circularity_error_of_pat(query, file, pat);
         ty
     }
 

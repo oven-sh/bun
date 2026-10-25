@@ -60,8 +60,19 @@ pub struct FileReader {
     /// path; `pull_into_sink` is the drain-ack resume.
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
-    /// `pull_into_sink` is reading for whoever acked the drain: the checkpoint for what that read delivers is the caller's.
-    pub(crate) pulling_into_sink: Cell<bool>,
+    /// Decided once per sink, in `attach_sink`.
+    pub(crate) checkpoint_owner: Cell<CheckpointOwner>,
+}
+
+/// Who runs the microtask checkpoint for the JS that a delivery to the native sink enters.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum CheckpointOwner {
+    /// The sink, or nobody: it enters no JS.
+    Sink,
+    /// This reader, for a read that the event loop dispatched.
+    Reader,
+    /// Whoever acked the drain, while `pull_into_sink` reads on its stack.
+    DrainCaller,
 }
 
 impl Default for FileReader {
@@ -85,7 +96,7 @@ impl Default for FileReader {
             flowing: Cell::new(true),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
-            pulling_into_sink: Cell::new(false),
+            checkpoint_owner: Cell::new(CheckpointOwner::Reader),
         }
     }
 }
@@ -520,12 +531,19 @@ impl FileReader {
         self.detach_sink(None);
     }
 
-    /// Microtask checkpoint owed for the JS `sink` enters when the event loop, not `pull_into_sink`, dispatched the read that delivers to it.
-    fn sink_delivery_scope(
-        &self,
-        sink: SinkHandle,
-    ) -> Option<bun_jsc::event_loop_handle::EnteredEventLoop> {
-        (sink.leaves_checkpoint_to_source() && !self.pulling_into_sink.get())
+    /// Wires the native sink. This reader owes the checkpoint for its deliveries unless the sink is named here.
+    pub(crate) fn attach_sink(&self, sink: SinkHandle) {
+        self.checkpoint_owner.set(match sink {
+            // `FileSink` opens `completion_scope` where it enters JS. The fetch request body hands the bytes to the HTTP thread and enters none.
+            SinkHandle::FileSink(_) | SinkHandle::FetchRequestBody(_) => CheckpointOwner::Sink,
+            _ => CheckpointOwner::Reader,
+        });
+        self.sink.set(sink);
+    }
+
+    /// Microtask checkpoint owed for the JS the sink enters when the event loop, not `pull_into_sink`, dispatched the read that delivers to it.
+    fn sink_delivery_scope(&self) -> Option<bun_jsc::event_loop_handle::EnteredEventLoop> {
+        (self.checkpoint_owner.get() == CheckpointOwner::Reader)
             .then(|| self.event_loop.get().entered())
     }
 
@@ -576,17 +594,28 @@ impl FileReader {
             return;
         }
         if !self.reader().has_pending_read() {
-            // SAFETY: see `parent()`. The read can drop the last ref; the pin keeps `self` for the reset below.
-            let marked = (sink.leaves_checkpoint_to_source()
-                && !self.pulling_into_sink.replace(true))
-            .then(|| unsafe { RefPtr::init_ref(self.parent()) });
+            if self.checkpoint_owner.get() == CheckpointOwner::Reader {
+                return self.read_for_drain_caller();
+            }
             self.reader().unpause();
             // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
             // the raw re-entrancy-safe entry (its dispatch runs user JS).
             unsafe { IOReader::read(self.reader.get()) };
-            if marked.is_some() {
-                self.pulling_into_sink.set(false);
-            }
+        }
+    }
+
+    /// The read that `pull_into_sink` starts for a sink this reader checkpoints: it runs on the stack of whoever acked the drain, so what it delivers is theirs.
+    #[cold]
+    #[inline(never)]
+    fn read_for_drain_caller(&self) {
+        // SAFETY: see `parent()`. The read can drop the last ref; the pin keeps `self` for the reset below.
+        let _pin = unsafe { RefPtr::init_ref(self.parent()) };
+        self.checkpoint_owner.set(CheckpointOwner::DrainCaller);
+        self.reader().unpause();
+        // SAFETY: as in `pull_into_sink`.
+        unsafe { IOReader::read(self.reader.get()) };
+        if self.checkpoint_owner.get() == CheckpointOwner::DrainCaller {
+            self.checkpoint_owner.set(CheckpointOwner::Reader);
         }
     }
 
@@ -642,7 +671,11 @@ impl FileReader {
 
         let sink = *self.sink.get();
         if sink.is_some() {
-            self.write_chunk_to_sink(sink, &chunk, has_more)
+            if self.checkpoint_owner.get() == CheckpointOwner::Reader {
+                self.write_chunk_to_sink_with_checkpoints(sink, &chunk, has_more)
+            } else {
+                self.write_chunk_to_sink::<false>(sink, &chunk, has_more)
+            }
         } else if self.pending.get().state == streams::PendingState::Pending {
             // Pipes may return 0-byte reads short of EOF; keep reading.
             if chunk.is_empty() && state == ReadState::Drained {
@@ -667,10 +700,16 @@ impl FileReader {
         }
     }
 
-    fn write_chunk_to_sink(&self, sink: SinkHandle, chunk: &[u8], has_more: bool) -> bool {
+    /// `CHECKPOINTS`: this reader owes the checkpoints. The chunk gets one, and an end that comes with it gets its own.
+    fn write_chunk_to_sink<const CHECKPOINTS: bool>(
+        &self,
+        sink: SinkHandle,
+        chunk: &[u8],
+        has_more: bool,
+    ) -> bool {
         if !chunk.is_empty() {
             // Ends after the sink's answer is applied: a job may resume a sink that asked for a pause.
-            let _entered = self.sink_delivery_scope(sink);
+            let _entered = CHECKPOINTS.then(|| self.event_loop.get().entered());
             let chunk = bun_ptr::RawSlice::new(chunk);
             let wrote = sink.write(&if has_more {
                 streams::Result::Temporary(chunk)
@@ -699,11 +738,23 @@ impl FileReader {
         }
         // The chunk's jobs have run by now, ahead of the end handlers; one of them may have detached the sink.
         if !has_more && self.sink.get().is_some() {
-            let _entered = self.sink_delivery_scope(sink);
+            let _entered = CHECKPOINTS.then(|| self.event_loop.get().entered());
             self.detach_sink(None);
             sink.end(None);
         }
         has_more
+    }
+
+    /// Cold and out of line: a sink that this reader does not checkpoint pays one compare in `on_read_chunk`.
+    #[cold]
+    #[inline(never)]
+    fn write_chunk_to_sink_with_checkpoints(
+        &self,
+        sink: SinkHandle,
+        chunk: &[u8],
+        has_more: bool,
+    ) -> bool {
+        self.write_chunk_to_sink::<true>(sink, chunk, has_more)
     }
 
     /// Settles the parked JS read with `chunk` (invariant: a parked read means `buffered` was already drained into it).
@@ -799,7 +850,7 @@ impl FileReader {
         if sink.is_some() {
             self.consume_reader_buffer();
             if !self.sink_paused.get() {
-                let _entered = self.sink_delivery_scope(sink);
+                let _entered = self.sink_delivery_scope();
                 self.detach_sink(None);
                 let buffered = self.buffered.replace(Vec::new());
                 if !buffered.is_empty() {
@@ -852,7 +903,7 @@ impl FileReader {
         let sink = *self.sink.get();
         if sink.is_some() {
             let err = streams::StreamError::Error(err);
-            let _entered = self.sink_delivery_scope(sink);
+            let _entered = self.sink_delivery_scope();
             self.detach_sink(Some(&err));
             sink.end(Some(err));
         } else if self.pending.get().state == streams::PendingState::Pending {

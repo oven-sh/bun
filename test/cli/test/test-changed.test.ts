@@ -668,6 +668,18 @@ describe.concurrent("bun test --changed, a component", () => {
       ],
       // The import is below a string that has a `<script`.
       string: ["String.svelte", `<script>\n  const tag = "<script>";\n  import("./string.ts");\n</script>\n`],
+      // The open tag has a `<script` in the value of an attribute.
+      attribute: ["Attribute.svelte", `<script data-example="<script" >\n  import "./attribute.ts";\n</script>\n`],
+      // The first `<script` of the comment has no `>` before the next one, and the import is below a string that has one.
+      open: [
+        "Open.svelte",
+        `<!-- a <script or a <script> -->\n<script>\n  const tag = "<script>";\n  import "./open.ts";\n  const size = tag.length;\n</script>\n`,
+      ],
+      // The apostrophe of the first line makes pairs with the apostrophes of the script. The script is still read.
+      pairs: [
+        "Pairs.svelte",
+        `<p>A <script isn't needed here</p>\n<script>\n  import './pairs.ts'; // it's read\n  const ok = 2 > 1;\n</script>\n`,
+      ],
       // The first `<script` is in a comment, and the import of the script is below a string that has one.
       stray: [
         "Stray.svelte",
@@ -707,7 +719,7 @@ describe.concurrent("bun test --changed, a component", () => {
         { breaks: false, probe: ["macro-ran"] },
       ),
     ).toEqual({
-      status: "13 changed files, running 12/13 test files",
+      status: "16 changed files, running 15/16 test files",
       ran: names
         .filter(row => row !== "upper")
         .map(row => `${row}.test.ts`)
@@ -748,10 +760,11 @@ describe.concurrent("bun test --changed, a component", () => {
       "package.json": JSON.stringify({ name: "many-scripts", type: "module" }),
       "Values.svelte": lines("<script>x\n", 10_000),
       "Returns.svelte": lines("<script>return;\n", 6_000),
+      "Opens.svelte": lines(`<script a="\n`, 40_000),
       "many.test.ts": testFile(
         "many",
-        `import values from "./Values.svelte";\nimport returns from "./Returns.svelte";`,
-        "expect([values, returns]).toHaveLength(2);",
+        `import values from "./Values.svelte";\nimport returns from "./Returns.svelte";\nimport opens from "./Opens.svelte";`,
+        "expect([values, returns, opens]).toHaveLength(3);",
       ),
       "dep.ts": `export const dep = 1;\n`,
       "dep.test.ts": testFile("dep", `import { dep } from "./dep.ts";`, "expect(dep).toBe(1);"),

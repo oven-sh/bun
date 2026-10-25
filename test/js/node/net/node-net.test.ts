@@ -2297,6 +2297,57 @@ describe.concurrent("backpressure-paused socket does not keep the process alive"
   });
 });
 
+// The event loop registers a socket's descriptor before it initializes the socket. What a fresh block of memory holds depends
+// on the heap, hence a few counts. A sanitizer fills it with one pattern, which hides a read of it.
+it.skipIf(!isLinux || isASAN || isDebug).each([200, 288, 352])(
+  "%d sockets that start paused leave the event loop idle after their peers end",
+  async count => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const net = require("node:net");
+        const count = ${count};
+        const accepted = [];
+        const server = net.createServer({ pauseOnConnect: true }, socket => accepted.push(socket));
+        await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+        const sent = [];
+        for (let i = 0; i < count; i++) {
+          const client = net.connect(server.address().port, "127.0.0.1");
+          client.on("error", () => {});
+          sent.push(new Promise(resolve => client.end("hello", resolve)));
+        }
+        await Promise.all(sent);
+        while (accepted.length < count) await new Promise(resolve => setImmediate(resolve));
+        // A loop that spins burns every window. A garbage collection, or what is left of 200 accepts, burns a few.
+        let idle = false;
+        for (let i = 0; i < 10 && !idle; i++) {
+          const before = process.cpuUsage(), start = performance.now();
+          await new Promise(resolve => setTimeout(resolve, 200));
+          const { user, system } = process.cpuUsage(before);
+          idle = (user + system) / 1000 / (performance.now() - start) < 0.5;
+        }
+        let bytes = 0, ends = 0;
+        for (const socket of accepted) socket.on("data", chunk => (bytes += chunk.length)).on("end", () => ends++).resume();
+        while (ends < count) await new Promise(resolve => setImmediate(resolve));
+        console.log(JSON.stringify({ idle, bytes, ends }));
+        process.exit(0);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: JSON.stringify({ idle: true, bytes: count * 5, ends: count }),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 // On Windows, unix paths route through the named-pipe codepath which reports
 // failure asynchronously; this test targets the synchronous-failure branch in
 // Listener.connectInner.

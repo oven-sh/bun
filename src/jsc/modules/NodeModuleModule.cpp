@@ -278,6 +278,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::currentModuleGraph(defaultGlobalObject(globalObject)))));
 }
 
+// As Node's normalizeRequirableId: a request that is not a string names a builtin only through the `node:` prefix of its string form.
+static bool isBuiltinRequest(JSValue request, const String& requestString)
+{
+    if (!request.isString() && !requestString.startsWith("node:"_s))
+        return false;
+    // A builtin name is short, so a request whose UTF-8 form does not fit in a buffer is not one.
+    auto utf8 = UTF8View::tryCreate(requestString);
+    if (!utf8)
+        return false;
+    auto span = utf8->span();
+    return ModuleLoader__isBuiltin(span.data(), span.size());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
@@ -297,9 +310,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         JSC::JSValue optionsValue = callFrame->argument(3); // 4th argument is options
         auto& names = builtinNames(vm);
 
-        if (moduleName.isUndefinedOrNull()) {
-            JSC::throwTypeError(globalObject, scope, "Module._resolveFilename expects a string"_s);
-            return {};
+        if (!moduleName.isString()) [[unlikely]] {
+            if (moduleName.isUndefinedOrNull()) {
+                JSC::throwTypeError(globalObject, scope, "Module._resolveFilename expects a string"_s);
+                return {};
+            }
+            String requestString = moduleName.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            // Node returns the request itself when its string form names a builtin.
+            if (isBuiltinRequest(moduleName, requestString))
+                return JSValue::encode(moduleName);
+            // As Node's path.isAbsolute(request). Node skips that check when request[0] is '#' or the string form looks relative; Bun rejects those here too.
+            return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "path"_s, "string"_s, moduleName);
         }
 
         // Extract filename string from fromValue
@@ -576,6 +598,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
 
     JSValue request_value = callFrame->argument(0);
     JSValue paths_value = callFrame->argument(1);
+
+    // Node's first statement is path.isAbsolute(request): it rejects a value that is not a string and converts none.
+    if (!request_value.isString()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "path"_s, "string"_s, request_value);
 
     String request = request_value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});

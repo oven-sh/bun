@@ -306,6 +306,12 @@ it.skipIf(isWindows)("resolves an absolute specifier that is longer than a path 
   );
 });
 
+it("Bun.resolveSync takes undefined for its third argument", () => {
+  using dir = tempDir("resolve-undefined-esm", { "index.js": "" });
+  // @ts-expect-error
+  expect(Bun.resolveSync("./index.js", String(dir), undefined)).toBe(join(String(dir), "index.js"));
+});
+
 it("import override to node builtin", async () => {
   // @ts-expect-error
   expect(await import("#async_hooks")).toBeDefined();

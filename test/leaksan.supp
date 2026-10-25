@@ -95,7 +95,7 @@ leak:runtime.node.node_fs_watcher.FSWatcher.Arguments.fromJS
 leak:jsc.web_worker.create
 leak:runtime.node.zlib.NativeZlib.Context.init
 leak:JSC::intlCollatorAvailableLocales
-leak:Bun__canonicalizeIP
+leak:Bun__Bindgen__CaresJsc__canonicalizeIP
 leak:dlopen
 leak:Bun::evaluateCommonJSModuleOnce
 leak:fse_run_loop

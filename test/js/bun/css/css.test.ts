@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -16,6 +17,8 @@ import {
   ParserOptions,
   prefix_test,
 } from "./util";
+
+const { minifyTest } = cssInternals;
 
 function Some(n: number): number {
   return n;
@@ -8073,6 +8076,44 @@ describe("css tests", () => {
         `,
       { firefox: Some(120 << 16) },
     );
+
+    // The output of a build carries the vars that the build printed. A build
+    // of that output prints it unchanged, with no second pair of vars.
+    test.each([
+      [".a{color-scheme:dark}", ".a{--buncss-light: ;--buncss-dark:initial;color-scheme:dark}"],
+      [".a{color-scheme:light}", ".a{--buncss-light:initial;--buncss-dark: ;color-scheme:light}"],
+      [
+        ".a{color-scheme:light dark}",
+        ".a{--buncss-light:initial;--buncss-dark: ;color-scheme:light dark}@media (prefers-color-scheme:dark){.a{--buncss-light: ;--buncss-dark:initial}}",
+      ],
+      [
+        ".a{color-scheme:dark!important}",
+        ".a{--buncss-light: !important;--buncss-dark:initial!important;color-scheme:dark!important}",
+      ],
+      [
+        "[data-theme=dark]{color-scheme:dark;--bg:#000}",
+        "[data-theme=dark]{--buncss-light: ;--buncss-dark:initial;color-scheme:dark;--bg:#000}",
+      ],
+      [
+        ".a{color-scheme:dark;--buncss-light:keep}",
+        ".a{--buncss-light: ;--buncss-dark:initial;color-scheme:dark;--buncss-light:keep}",
+      ],
+      [
+        "@layer x{.a{color-scheme:light dark}}",
+        "@layer x{.a{--buncss-light:initial;--buncss-dark: ;color-scheme:light dark}@media (prefers-color-scheme:dark){.a{--buncss-light: ;--buncss-dark:initial}}}",
+      ],
+      [
+        ":root{color-scheme:light dark}.dark{color-scheme:dark}",
+        ":root{--buncss-light:initial;--buncss-dark: ;color-scheme:light dark}@media (prefers-color-scheme:dark){:root{--buncss-light: ;--buncss-dark:initial}}.dark{--buncss-light: ;--buncss-dark:initial;color-scheme:dark}",
+      ],
+    ])("a build of the minified output of %s prints it unchanged", (source, expected) => {
+      // The browser targets that `bun build` uses by default.
+      const targets = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+      const first = minifyTest(source, "", targets);
+      const second = minifyTest(first, "", targets);
+      const third = minifyTest(second, "", targets);
+      expect({ first, second, third }).toEqual({ first: expected, second: expected, third: expected });
+    });
   });
 
   describe("page", () => {

@@ -437,6 +437,7 @@ impl PackageJSON {
         ) {
             Ok(e) => e,
             Err(err) => {
+                crate::error::short_of_descriptors::note(err);
                 if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
                     r_log.add_error_fmt(
                         None,

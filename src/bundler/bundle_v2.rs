@@ -1918,6 +1918,24 @@ pub mod bv2_impl {
             }
             return true;
         }
+        if let _resolver::Error::Sys(_) = err {
+            // The resolver failed the resolution with an errno of its own (a file or a
+            // directory that it could not read). It has no import record, so the message that
+            // names this import is written here. The file stays failed, `report` or not.
+            bun_ast::Log::add_resolve_error_with_text_dupe(
+                log,
+                source,
+                range,
+                format_args!(
+                    "Could not resolve: \"{}\": {}",
+                    bstr::BStr::new(specifier),
+                    bstr::BStr::new(err.name())
+                ),
+                specifier,
+                kind,
+            );
+            return false;
+        }
         // Other errors are logged by the resolver before it returns Failure.
         false
     }

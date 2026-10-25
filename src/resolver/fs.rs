@@ -241,8 +241,11 @@ impl Entry {
                     store_fd,
                 ) {
                     Ok(c) => self.cache.set(c),
-                    Err(_) => {
-                        self.need_stat.store(false, Ordering::Release);
+                    Err(err) => {
+                        // A `stat` that had no free descriptor runs again on the next call.
+                        if !crate::error::short_of_descriptors::note(err) {
+                            self.need_stat.store(false, Ordering::Release);
+                        }
                         return self.cache().kind;
                     }
                 }
@@ -253,6 +256,13 @@ impl Entry {
             }
         }
         self.cache().kind
+    }
+
+    /// Whether the `stat` of this entry ran. [`kind`](Self::kind) and
+    /// [`symlink`](Self::symlink) give what `cache` holds when it did not, which happens
+    /// when there was no free descriptor for it.
+    pub(crate) fn stat_ran(&self) -> bool {
+        !self.need_stat.load(Ordering::Acquire)
     }
 
     ///
@@ -278,8 +288,10 @@ impl Entry {
                     store_fd,
                 ) {
                     Ok(c) => self.cache.set(c),
-                    Err(_) => {
-                        self.need_stat.store(false, Ordering::Release);
+                    Err(err) => {
+                        if !crate::error::short_of_descriptors::note(err) {
+                            self.need_stat.store(false, Ordering::Release);
+                        }
                         return b"";
                     }
                 }

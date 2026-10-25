@@ -4169,7 +4169,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let maybe_start = r.maybe_keys.len();
         let variance_reads = self.in_progress_variance_reads;
-        let (scope, in_place) = (self.begin_scope(), self.members_in_place_hits);
+        let scope = self.begin_scope();
         let cuts = self.comparisons_of_deeply_nested_types;
         r.push_maybe_key(key);
         let save_expanding = r.expanding;
@@ -4224,14 +4224,7 @@ impl<'p, 's> Checker<'p, 's> {
             cold_path();
             self.task.hold_back();
         }
-        let (cycles, limits) = scope.counters;
         let stored = self.end_scope(scope).ok();
-        // tsc stores the result no matter what the comparison ran into. One that got the error type from a circular
-        // type resolution is found from then on, so it doesn't ask for that type again.
-        let is_circular = stored.is_none()
-            && self.cycles != cycles
-            && self.limits == limits
-            && self.members_in_place_hits == in_place;
         let replaces = self.in_progress_variance_reads != variance_reads;
         let propagating = self.reliability;
         self.reliability |= save_reliability;
@@ -4252,9 +4245,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let is_cut = self.comparisons_of_deeply_nested_types != cuts;
                 let outer_per_task = std::mem::replace(
                     &mut self.stores_relations_per_task,
-                    is_cut && self.task.commits() || is_circular,
+                    is_cut && self.task.commits(),
                 );
-                let stored = stored.or_else(|| is_circular.then(Stored::new));
                 let keys = match result == Ternary::TRUE || result == Ternary::MAYBE {
                     true if REPORT || replaces => MaybeKeys::SucceededReplacing,
                     true => MaybeKeys::Succeeded,
@@ -4271,11 +4263,6 @@ impl<'p, 's> Checker<'p, 's> {
                 cold_path();
                 if !is_cut_short {
                     r.failed.insert(key);
-                }
-            } else if is_circular {
-                cold_path();
-                if !is_cut_short && cached.is_none() {
-                    (self.relations_of_this_task.entry(key)).or_insert(FAILED | propagating);
                 }
             } else if let Some(stored) = stored
                 && !is_cut_short
@@ -4350,7 +4337,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns the entry in `relations_of_this_task`, or else in `Program::relations`. Anything
-    /// computed from the former is also only valid for this task.
+    /// computed from the former is also only valid for this task. All of its entries are successes.
     #[inline]
     fn known_relation(&mut self, key: &Key) -> Option<u8> {
         // Another task that doesn't find the failure can cut the comparison off where this one fails.

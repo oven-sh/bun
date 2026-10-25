@@ -4434,19 +4434,20 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let ty = self.return_type_of_fn_uncached(file, func, CheckMode::empty());
         let left = self.leave(Query::Return(file, func));
-        // `getReturnTypeOfSignature`: `sig.resolvedReturnType` is assigned only if it's nil, and
-        // the caller gets that value.
-        let known = self.p.fn_return_types.get(&self.task, &(file, func));
         if self.left_a_cycle {
             let stored = self.cycle_result();
-            if known.is_none() {
-                let any = (TypeId::ANY, true);
-                (self.p.fn_return_types).insert(&self.task, (file, func), any, stored);
-            }
+            // Overwrites the value of an inner evaluation above a `resolution_start` barrier, if
+            // one was stored.
+            let any = (TypeId::ANY, true);
+            self.p
+                .fn_return_types
+                .rewrite(&self.task, (file, func), any, stored);
             self.report_circular_return_type(Some(Query::Return(file, func)), file, func);
-            return known.map_or(TypeId::ANY, |(known, _)| known);
+            return TypeId::ANY;
         }
-        if let Some((known, _)) = known {
+        // `getReturnTypeOfSignature`: `sig.resolvedReturnType` is assigned only if it's nil, and
+        // the caller gets that value.
+        if let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func)) {
             return known;
         }
         match left {
@@ -4454,14 +4455,6 @@ impl<'p, 's> Checker<'p, 's> {
                 self.p
                     .fn_return_types
                     .insert(&self.task, (file, func), (ty, false), stored);
-            }
-            // The resolution below the `resolution_start` barrier finds this result when it ends.
-            Err(_)
-                if self.stack[..self.resolution_start.min(self.stack.len())]
-                    .contains(&Query::Return(file, func)) =>
-            {
-                let stored = Stored::new();
-                (self.p.fn_return_types).insert(&self.task, (file, func), (ty, false), stored);
             }
             Err(open) => self.cache_provisionally(Query::Return(file, func), u64::from(ty.0), open),
         }

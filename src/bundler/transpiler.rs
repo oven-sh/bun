@@ -517,9 +517,10 @@ impl<'a> Transpiler<'a> {
                 .define
                 .as_ref()
                 .is_some_and(|m| {
-                    m.keys
-                        .iter()
-                        .any(|k| &**k == options::default_user_defines::node_env::KEY)
+                    m.keys.iter().any(|k| {
+                        &*crate::defines::canonical_define_key(k)
+                            == options::default_user_defines::node_env::KEY
+                    })
                 });
 
         // `parse_env_json` needs a thread-local AST store to build

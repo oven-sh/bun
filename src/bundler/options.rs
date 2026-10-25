@@ -835,7 +835,8 @@ pub(crate) fn defines_from_transform_options(
     let mut user_defines: defines::RawDefines = defines::RawDefines::default();
     user_defines.reserve(input_keys.len() + 4);
     for (i, key) in input_keys.iter().enumerate() {
-        user_defines.insert(key.as_ref(), input_values[i].clone());
+        // One spelling for each key: a later entry and the defaults below must find an earlier one
+        user_defines.insert(&defines::canonical_define_key(key), input_values[i].clone());
     }
 
     let mut environment_defines = defines::UserDefinesArray::default();

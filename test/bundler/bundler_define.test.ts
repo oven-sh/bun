@@ -145,6 +145,19 @@ const repros: Repro[] = [
     ],
   },
   {
+    name: "a bracket key is the same key as its dotted spelling",
+    defines: {
+      // Each of these keys also has a default value under its dotted spelling
+      'process.env["NODE_ENV"]': '"production"',
+      "process.env['BUN_ENV']": '"staging"',
+    },
+    cases: [
+      ["process.env.NODE_ENV", '"production"'],
+      ['process.env["NODE_ENV"]', '"production"'],
+      ["process.env.BUN_ENV", '"staging"'],
+    ],
+  },
+  {
     name: "a constant define is not substituted into an assignment target",
     defines: {
       FOO: "123",
@@ -508,6 +521,46 @@ describe("define values are symbols, not text", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("2 1\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("a define key has one spelling", () => {
+  test("the later of two spellings of one key wins", () => {
+    const wrong: string[] = [];
+    for (const object of ["a", "x", "cfg", "app", "settings", "env"]) {
+      for (const property of ["b", "mode", "url", "a-b"]) {
+        const spellings = [`${object}["${property}"]`, `${object}['${property}']`];
+        if (!property.includes("-")) spellings.push(`${object}.${property}`);
+        for (const first of spellings) {
+          for (const second of spellings) {
+            if (first === second) continue;
+            const transpiler = new Bun.Transpiler({ define: { [first]: '"first"', [second]: '"second"' } });
+            const output = transpiler.transformSync(`console.log(${first});`, "js").trim();
+            if (output !== 'console.log("second");') wrong.push(`${first} then ${second}: ${output}`);
+          }
+        }
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  test("the bracket spelling of process.env.NODE_ENV selects the JSX runtime like the dotted spelling", async () => {
+    using dir = tempDir("bundler-define-node-env", {
+      "app.jsx": `export const element = <div>{process.env.NODE_ENV}</div>;`,
+    });
+    const bundle = async (key: string) => {
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "app.jsx")],
+        define: { [key]: '"production"' },
+        packages: "external",
+      });
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+      return await result.outputs[0].text();
+    };
+    const dotted = await bundle("process.env.NODE_ENV");
+    expect(dotted).toContain("react/jsx-runtime");
+    expect(await bundle('process.env["NODE_ENV"]')).toBe(dotted);
   });
 });
 

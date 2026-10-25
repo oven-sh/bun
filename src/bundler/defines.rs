@@ -22,7 +22,7 @@ use crate::defines_table::{
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
     Define, DefineData, DefineKeyError, DotDefine, Flags, IdentifierDefine, Options, RawDefines,
-    UserDefines, UserDefinesArray, are_parts_equal, parse_define_key,
+    UserDefines, UserDefinesArray, are_parts_equal, canonical_define_key, parse_define_key,
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.

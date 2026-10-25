@@ -734,6 +734,39 @@ pub mod defines {
         Ok(parts)
     }
 
+    /// The one spelling of a define key: `process.env["NODE_ENV"]` is `process.env.NODE_ENV`. An invalid key stays as written.
+    pub fn canonical_define_key(key: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+        use std::borrow::Cow;
+
+        // A key without brackets has one spelling
+        if !strings::contains_char(key, b'[') {
+            return Cow::Borrowed(key);
+        }
+        let Ok(parts) = parse_define_key(key) else {
+            return Cow::Borrowed(key);
+        };
+
+        let mut canonical: Vec<u8> = Vec::with_capacity(key.len());
+        for (i, part) in parts.iter().enumerate() {
+            if i == 0 {
+                canonical.extend_from_slice(part);
+            } else if crate::lexer::is_identifier(part) {
+                canonical.push(b'.');
+                canonical.extend_from_slice(part);
+            } else {
+                canonical.extend_from_slice(b"[\"");
+                for &byte in part.iter() {
+                    if byte == b'"' || byte == b'\\' {
+                        canonical.push(b'\\');
+                    }
+                    canonical.push(byte);
+                }
+                canonical.extend_from_slice(b"\"]");
+            }
+        }
+        Cow::Owned(canonical)
+    }
+
     pub fn are_parts_equal(a: &[Box<[u8]>], b: &[Box<[u8]>]) -> bool {
         if a.len() != b.len() {
             return false;

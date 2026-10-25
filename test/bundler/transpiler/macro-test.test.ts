@@ -254,7 +254,7 @@ test("spreading a macro result into JSX doesn't change the other uses of its con
 // Bun replaces the macro call with its result, and the rest of the program runs as written. So each module below
 // must export what it exports when `m.ts` is imported without the macro attribute.
 describe("a macro result that is bound to a name", () => {
-  const names = "num, hello, yes, nul, undef, undefs, obj, arr, holes, keys, twice";
+  const names = "num, hello, yes, nul, undef, undefs, obj, arr, holes, keys, twice, odd";
   const macros = `
     export const num = () => 21;
     export const hello = () => "Hello";
@@ -270,6 +270,7 @@ describe("a macro result that is bound to a name", () => {
       const o = { a: 1, b: 2 };
       return { p: o, q: o };
     };
+    export const odd = () => ({ n: NaN });
   `;
 
   // Modules with the value that each must export.
@@ -292,6 +293,12 @@ describe("a macro result that is bound to a name", () => {
     [`const a = obj(); a.x = 1; export default a.x;`, 1],
     [`const l = arr(); l.push(4); export default l.length;`, 4],
     [`const c = obj(); function read() { return c.a; } c.a = 9; export default read();`, 9],
+    [`obj().a = 5; obj().a += 1; obj().b.c ||= 2; obj().a++; --obj().a; export default "loads";`, "loads"],
+    [
+      `[obj().a] = [5]; ({ k: obj().a } = { k: 1 }); for (obj().a of [1]) {} for (obj().b.c in { k: 1 }) {} export default "loads";`,
+      "loads",
+    ],
+    [`export default [delete odd().n, delete odd()["n"], delete holes().a];`, [true, true, true]],
     [`const n = num(); const s = hello(); export default [n + n, s + s.length];`, [42, "Hello5"]],
     [`export default [obj().b.c, arr()[2][0], arr().length, hello().length, num() + num()];`, [2, 3, 3, 5, 42]],
   ];

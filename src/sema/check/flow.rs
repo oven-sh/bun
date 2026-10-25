@@ -8481,8 +8481,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// again, and what the second check finds is reported too. The result only differs from the
     /// stored type after a walk that ended with an incomplete type.
     pub(super) fn check_expression_again(&mut self, file: FileId, e: ExprId) -> TypeId {
-        // Nothing is stored while a loop is analyzed.
-        if !self.is_checked_with_incomplete_walk(file, e) || !self.flow_loops.is_empty() {
+        if !self.is_checked_with_incomplete_walk(file, e) {
             return self.type_of_expr(file, e);
         }
         self.check_expression_anew(file, e)

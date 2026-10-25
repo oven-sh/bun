@@ -10725,6 +10725,35 @@ export function loopInFinally(): number { fail(); try { use(); } finally { while
       expect(exitCode).toBe(1);
     });
 
+    // The walk for `x` in the statement's check ends with an incomplete `never`, which has every property. The walk for
+    // `auto` checks `x?.v` again, in a loop, and finds the outer loop's type.
+    test("a value assigned in a loop is checked again after a walk that ended with an incomplete type", async () => {
+      using dir = project({
+        "a.ts": `declare const c: boolean;
+declare function assertS(x: unknown): asserts x is string;
+export function f() {
+  let x: string | number | undefined = 0;
+  let auto;
+  assertS(x);
+  while (c) {
+    try { } finally {
+      if (c) { while (c) { auto = x?.v; } }
+    }
+  }
+  const n: never = auto;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(9,38): error TS2339: Property 'v' does not exist on type 'never'.",
+          "a.ts(12,9): error TS2322: Type 'any' is not assignable to type 'never'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("a shared flow node in a `finally` block has the type of its first visit", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

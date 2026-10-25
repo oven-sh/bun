@@ -1064,6 +1064,363 @@ test("can't use bytecode from a different script", () => {
   expect(secondScript.runInThisContext()).toBe(4);
 });
 
+// Node's constructor writes what it found onto the new Script with [[Set]] (ContextifyScript::New in
+// node_contextify.cc), and Script.prototype has no accessor for any of it. Every expected value in this block is
+// what node v26.3.0 gives for the same expression.
+describe("the results of new Script() are own properties of the instance", () => {
+  const source = "1 + 1\n//# sourceURL=foo.js\n//# sourceMappingURL=a.map";
+  type Results = Record<string, unknown>;
+
+  // The child is killed before the test times out, so that a child that never returns is not left running.
+  const childTimeout = 20_000;
+  const testTimeout = childTimeout + 10_000;
+  async function run(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: childTimeout,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split(/\r?\n/), stderr, signalCode: proc.signalCode, exitCode };
+  }
+
+  // "name=value" for each own property, in key order. Every one is a writable, enumerable, configurable data property.
+  function results(script: object): string[] {
+    return Reflect.ownKeys(script).map(key => {
+      const { value, ...attributes } = Object.getOwnPropertyDescriptor(script, key)!;
+      expect({ key, ...attributes }).toEqual({ key, writable: true, enumerable: true, configurable: true });
+      return `${String(key)}=${Buffer.isBuffer(value) ? "Buffer" : value}`;
+    });
+  }
+
+  test("which results a Script has follows its options", () => {
+    const cachedData = new Script("1 + 1").createCachedData();
+    expect({
+      "no options": results(new Script(source)),
+      "no directives in the source": results(new Script("1 + 1")),
+      "a filename": results(new Script(source, "file.js")),
+      "produceCachedData": results(new Script(source, { produceCachedData: true })),
+      "produceCachedData: false": results(new Script(source, { produceCachedData: false })),
+      "cachedData that is accepted": results(new Script("1 + 1", { cachedData })),
+      "cachedData that is rejected": results(new Script("22 + 22", { cachedData })),
+      "cachedData and produceCachedData": results(new Script("1 + 1", { cachedData, produceCachedData: true })),
+      "a subclass": results(new (class extends Script {})(source)),
+      "Object as newTarget": results(Reflect.construct(Script, [source], Object)),
+      "directives with no value": results(new Script("1\n//# sourceURL=\n//# sourceMappingURL=")),
+      "directives with no value, a subclass": results(
+        new (class extends Script {})("1\n//# sourceURL=\n//# sourceMappingURL="),
+      ),
+    }).toEqual({
+      "no options": ["sourceURL=foo.js", "sourceMapURL=a.map"],
+      "no directives in the source": ["sourceURL=undefined", "sourceMapURL=undefined"],
+      "a filename": ["sourceURL=foo.js", "sourceMapURL=a.map"],
+      "produceCachedData": ["cachedData=Buffer", "cachedDataProduced=true", "sourceURL=foo.js", "sourceMapURL=a.map"],
+      "produceCachedData: false": ["sourceURL=foo.js", "sourceMapURL=a.map"],
+      "cachedData that is accepted": ["cachedDataRejected=false", "sourceURL=undefined", "sourceMapURL=undefined"],
+      "cachedData that is rejected": ["cachedDataRejected=true", "sourceURL=undefined", "sourceMapURL=undefined"],
+      "cachedData and produceCachedData": [
+        "cachedDataRejected=false",
+        "cachedData=Buffer",
+        "cachedDataProduced=true",
+        "sourceURL=undefined",
+        "sourceMapURL=undefined",
+      ],
+      "a subclass": ["sourceURL=foo.js", "sourceMapURL=a.map"],
+      "Object as newTarget": ["sourceURL=foo.js", "sourceMapURL=a.map"],
+      "directives with no value": ["sourceURL=undefined", "sourceMapURL=undefined"],
+      "directives with no value, a subclass": ["sourceURL=undefined", "sourceMapURL=undefined"],
+    });
+  });
+
+  test("the produced cachedData is one Buffer that another Script accepts", () => {
+    const script = new Script("1 + 1", { produceCachedData: true });
+    expect(script.cachedData).toBe(script.cachedData);
+    expect(results(new Script("1 + 1", { cachedData: script.cachedData }))[0]).toBe("cachedDataRejected=false");
+
+    // With both options and an accepted cache, the produced data is a copy of the cache.
+    const both = new Script("1 + 1", { cachedData: script.cachedData, produceCachedData: true });
+    expect(both.cachedData).not.toBe(script.cachedData);
+    expect(both.cachedData).toEqual(script.cachedData!);
+  });
+
+  test("a result can be assigned, deleted and frozen like any own property", () => {
+    const script = new Script(source) as unknown as Results;
+    script.sourceMapURL = "assigned";
+    script.cachedDataRejected = 5;
+    expect(results(script)).toEqual(["sourceURL=foo.js", "sourceMapURL=assigned", "cachedDataRejected=5"]);
+
+    expect(delete script.sourceURL).toBe(true);
+    expect("sourceURL" in script).toBe(false);
+    expect(results(script)).toEqual(["sourceMapURL=assigned", "cachedDataRejected=5"]);
+
+    const frozen = Object.freeze(new Script(source));
+    expect(() => ((frozen as unknown as Results).sourceMapURL = "no")).toThrow(TypeError);
+    expect(Object.getOwnPropertyDescriptor(frozen, "sourceMapURL")).toEqual({
+      value: "a.map",
+      writable: false,
+      enumerable: true,
+      configurable: false,
+    });
+    expect(frozen.runInThisContext()).toBe(2);
+  });
+
+  test("a result keeps its place among the keys", () => {
+    const script = new Script(source) as unknown as Results;
+    script.extra = 1;
+    expect({ ...script }).toEqual({ sourceURL: "foo.js", sourceMapURL: "a.map", extra: 1 });
+    expect(Object.values(script)).toEqual(["foo.js", "a.map", 1]);
+    expect(Object.keys(script)).toEqual(["sourceURL", "sourceMapURL", "extra"]);
+
+    delete script.sourceURL;
+    script.sourceURL = "again";
+    expect(Object.keys(script)).toEqual(["sourceMapURL", "extra", "sourceURL"]);
+  });
+
+  test("a write through a Proxy reaches the Script", () => {
+    const written = (write: (script: Results, proxy: Results) => unknown) => {
+      const script = new Script(source) as unknown as Results;
+      write(script, new Proxy(script, {}));
+      return results(script);
+    };
+    expect({
+      "proxy.sourceMapURL = value": written((script, proxy) => (proxy.sourceMapURL = "written")),
+      "Reflect.set(proxy, key, value)": written((script, proxy) => Reflect.set(proxy, "sourceURL", "written")),
+      "Reflect.set(script, key, value, proxy)": written((script, proxy) =>
+        Reflect.set(script, "sourceURL", "written", proxy),
+      ),
+      "a set trap that forwards": written(
+        script => (new Proxy<Results>(script, { set: Reflect.set }).sourceMapURL = "written"),
+      ),
+    }).toEqual({
+      "proxy.sourceMapURL = value": ["sourceURL=foo.js", "sourceMapURL=written"],
+      "Reflect.set(proxy, key, value)": ["sourceURL=written", "sourceMapURL=a.map"],
+      "Reflect.set(script, key, value, proxy)": ["sourceURL=written", "sourceMapURL=a.map"],
+      "a set trap that forwards": ["sourceURL=foo.js", "sourceMapURL=written"],
+    });
+  });
+
+  test("a Script keeps its results when its prototype changes", () => {
+    const script = new Script(source);
+    Object.setPrototypeOf(script, null);
+    expect(results(script)).toEqual(["sourceURL=foo.js", "sourceMapURL=a.map"]);
+  });
+
+  test("an accessor of a subclass receives the write of the result with its name", () => {
+    const cachedData = new Script(source).createCachedData();
+    const written: string[] = [];
+    class Observed extends Script {}
+    for (const name of ["sourceMapURL", "sourceURL", "cachedDataProduced", "cachedData", "cachedDataRejected"]) {
+      Object.defineProperty(Observed.prototype, name, {
+        set(value: unknown) {
+          written.push(`${name}=${Buffer.isBuffer(value) ? "Buffer" : value}`);
+        },
+      });
+    }
+    expect(results(new Observed(source, { cachedData, produceCachedData: true }))).toEqual([]);
+    expect(written).toEqual([
+      "cachedDataRejected=false",
+      "cachedData=Buffer",
+      "cachedDataProduced=true",
+      "sourceURL=foo.js",
+      "sourceMapURL=a.map",
+    ]);
+
+    // A getter with no setter refuses the write, so the instance gets no own property and the getter answers.
+    class ReadOnly extends Script {}
+    Object.defineProperty(ReadOnly.prototype, "sourceMapURL", { get: () => "from the getter" });
+    const readOnly = new ReadOnly(source);
+    expect(results(readOnly)).toEqual(["sourceURL=foo.js"]);
+    expect(readOnly.sourceMapURL).toBe("from the getter");
+
+    // Node drops what a setter throws and makes no further write.
+    class Throws extends Script {}
+    Object.defineProperty(Throws.prototype, "sourceURL", {
+      set() {
+        throw new Error("thrown by the sourceURL setter");
+      },
+    });
+    expect(results(new Throws(source))).toEqual([]);
+
+    // A subclass does not change what a Script of the base class gets.
+    expect(results(new Script(source))).toEqual(["sourceURL=foo.js", "sourceMapURL=a.map"]);
+  });
+
+  // [[Set]] looks at the prototype chain: an accessor or a read-only property of the same name takes the write.
+  test.concurrent(
+    "a property of Script.prototype or Object.prototype with the name of a result intercepts the write",
+    async () => {
+      const code = /*js*/ `
+        const vm = require("node:vm");
+        const source = "1\\n//# sourceURL=foo.js\\n//# sourceMappingURL=a.map";
+        function withProperty(target, name, descriptor, fn) {
+          Object.defineProperty(target, name, { ...descriptor, configurable: true });
+          try {
+            return fn();
+          } finally {
+            delete target[name];
+          }
+        }
+        for (const [where, target] of [["Script.prototype", vm.Script.prototype], ["Object.prototype", Object.prototype]]) {
+          for (const name of ["sourceURL", "sourceMapURL"]) {
+            const written = [];
+            const script = descriptor => withProperty(target, name, descriptor, () => {
+              const s = new vm.Script(source);
+              return "own " + Object.getOwnPropertyNames(s) + ", reads " + s[name];
+            });
+            const setter = { set(value) { written.push(value); }, get() { return "the getter"; } };
+            console.log(where + "." + name + " setter: " + script(setter) + ", written " + written);
+            console.log(where + "." + name + " getter only: " + script({ get() { return "the getter"; } }));
+            console.log(where + "." + name + " read-only: " + script({ value: "read-only", writable: false }));
+            console.log(where + "." + name + " writable: " + script({ value: "writable", writable: true }));
+          }
+        }
+        console.log("afterwards: own " + Object.getOwnPropertyNames(new vm.Script(source)));
+      `;
+      expect(await run(code)).toEqual({
+        stdout: [
+          "Script.prototype.sourceURL setter: own sourceMapURL, reads the getter, written foo.js",
+          "Script.prototype.sourceURL getter only: own sourceMapURL, reads the getter",
+          "Script.prototype.sourceURL read-only: own sourceMapURL, reads read-only",
+          "Script.prototype.sourceURL writable: own sourceURL,sourceMapURL, reads foo.js",
+          "Script.prototype.sourceMapURL setter: own sourceURL, reads the getter, written a.map",
+          "Script.prototype.sourceMapURL getter only: own sourceURL, reads the getter",
+          "Script.prototype.sourceMapURL read-only: own sourceURL, reads read-only",
+          "Script.prototype.sourceMapURL writable: own sourceURL,sourceMapURL, reads a.map",
+          "Object.prototype.sourceURL setter: own sourceMapURL, reads the getter, written foo.js",
+          "Object.prototype.sourceURL getter only: own sourceMapURL, reads the getter",
+          "Object.prototype.sourceURL read-only: own sourceMapURL, reads read-only",
+          "Object.prototype.sourceURL writable: own sourceURL,sourceMapURL, reads foo.js",
+          "Object.prototype.sourceMapURL setter: own sourceURL, reads the getter, written a.map",
+          "Object.prototype.sourceMapURL getter only: own sourceURL, reads the getter",
+          "Object.prototype.sourceMapURL read-only: own sourceURL, reads read-only",
+          "Object.prototype.sourceMapURL writable: own sourceURL,sourceMapURL, reads a.map",
+          "afterwards: own sourceURL,sourceMapURL",
+        ],
+        stderr: "",
+        signalCode: null,
+        exitCode: 0,
+      });
+    },
+    testTimeout,
+  );
+
+  // Each of these never returned. Script.prototype had four accessors that threw, for a receiver that is not a
+  // Script, an error whose message rendered the receiver. Rendering the receiver read the four accessors again.
+  describe.concurrent("a receiver that is not a Script", () => {
+    test(
+      "a read of each result returns",
+      async () => {
+        const code = /*js*/ `
+          const vm = require("node:vm");
+          const names = ["sourceURL", "sourceMapURL", "cachedData", "cachedDataProduced", "cachedDataRejected"];
+          const script = new vm.Script("1\\n//# sourceMappingURL=a.map", { produceCachedData: true });
+          class Sub extends vm.Script {}
+          const receivers = {
+            "Script.prototype": vm.Script.prototype,
+            "an object that inherits from Script.prototype": Object.create(vm.Script.prototype),
+            "the prototype of a subclass": Sub.prototype,
+            "an object that inherits from a Script": Object.create(script),
+            "a Proxy of a Script": new Proxy(script, {}),
+          };
+          for (const [label, receiver] of Object.entries(receivers)) {
+            console.log(label + ": " + names.map(name => (Buffer.isBuffer(receiver[name]) ? "Buffer" : String(receiver[name]))).join(" "));
+          }
+          // A data property of the prototype does not hide the result of an instance.
+          vm.Script.prototype.sourceMapURL = "from the prototype";
+          console.log("with a value on the prototype: " + new vm.Script("1").sourceMapURL + " " + vm.Script.prototype.sourceMapURL);
+        `;
+        expect(await run(code)).toEqual({
+          stdout: [
+            "Script.prototype: undefined undefined undefined undefined undefined",
+            "an object that inherits from Script.prototype: undefined undefined undefined undefined undefined",
+            "the prototype of a subclass: undefined undefined undefined undefined undefined",
+            "an object that inherits from a Script: undefined a.map Buffer true undefined",
+            "a Proxy of a Script: undefined a.map Buffer true undefined",
+            "with a value on the prototype: undefined from the prototype",
+          ],
+          stderr: "",
+          signalCode: null,
+          exitCode: 0,
+        });
+      },
+      testTimeout,
+    );
+
+    test(
+      "printing, serializing and walking Script.prototype return",
+      async () => {
+        const code = /*js*/ `
+          const vm = require("node:vm");
+          const util = require("node:util");
+          const assert = require("node:assert");
+          const p = vm.Script.prototype;
+          console.log(p);
+          console.log(typeof util.inspect(p, { getters: true }));
+          console.log(JSON.stringify(p));
+          const read = [];
+          for (const key in p) read.push(typeof p[key]);
+          console.log(read.every(type => type === "function"));
+          assert.deepStrictEqual(p, p);
+          console.log(util.isDeepStrictEqual(p, Object.create(p)));
+        `;
+        // The first lines are Script.prototype in the format of console.log.
+        const { stdout, ...rest } = await run(code);
+        expect({ stdout: stdout.slice(-4), ...rest }).toEqual({
+          stdout: ["string", "{}", "true", "false"],
+          stderr: "",
+          signalCode: null,
+          exitCode: 0,
+        });
+      },
+      testTimeout,
+    );
+
+    test(
+      "an error about Script.prototype is thrown",
+      async () => {
+        const code = /*js*/ `
+          const vm = require("node:vm");
+          const p = vm.Script.prototype;
+          const calls = {
+            "p.runInThisContext()": () => p.runInThisContext(),
+            "p.runInContext(context)": () => p.runInContext(vm.createContext({})),
+            "p.createCachedData()": () => p.createCachedData(),
+            "createContext({}, { microtaskMode: p })": () => vm.createContext({}, { microtaskMode: p }),
+            "new Script(code, { lineOffset: p })": () => new vm.Script("1", { lineOffset: p }),
+            "script.runInContext(p)": () => new vm.Script("1").runInContext(p),
+          };
+          for (const [label, call] of Object.entries(calls)) {
+            try {
+              call();
+              console.log(label + ": returned");
+            } catch (e) {
+              console.log(label + ": " + e.name + " " + e.code);
+            }
+          }
+        `;
+        // Node throws a TypeError for each call. The codes of the first three are Bun's.
+        expect(await run(code)).toEqual({
+          stdout: [
+            "p.runInThisContext(): TypeError ERR_INVALID_ARG_VALUE",
+            "p.runInContext(context): TypeError ERR_INVALID_ARG_VALUE",
+            "p.createCachedData(): TypeError ERR_INVALID_ARG_VALUE",
+            "createContext({}, { microtaskMode: p }): TypeError ERR_INVALID_ARG_VALUE",
+            "new Script(code, { lineOffset: p }): TypeError ERR_INVALID_ARG_TYPE",
+            "script.runInContext(p): TypeError ERR_INVALID_ARG_TYPE",
+          ],
+          stderr: "",
+          signalCode: null,
+          exitCode: 0,
+        });
+      },
+      testTimeout,
+    );
+  });
+});
+
 test("SourceTextModule accepts the cachedData it produced", () => {
   const source = `{ function inBlock() { return 1; } }\nexport default await Promise.resolve(inBlock);`; // module-only syntax, and a block function (strict semantics)
   const cachedData = (new SourceTextModule(source, { identifier: "m" }) as any).createCachedData();
@@ -1531,25 +1888,31 @@ test.concurrent("2 GiB of cachedData is rejected", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("doesn't produce cachedData for a source with a 2^27-character string", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+test.concurrent(
+  "doesn't produce cachedData for a source with a 2^27-character string",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const { Script } = require("node:vm");
         const script = new Script("'" + "x".repeat(2 ** 27) + "'.length", { produceCachedData: true });
-        console.log(script.cachedDataProduced, script.runInThisContext());
+        console.log(Object.keys(script).join(), script.cachedDataProduced, script.runInThisContext());
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("false 134217728\n");
-  expect(exitCode).toBe(0);
-});
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // Like Node, a Script that produced nothing has neither cachedData nor cachedDataProduced.
+    expect(stdout).toBe("sourceURL,sourceMapURL undefined 134217728\n");
+    expect(exitCode).toBe(0);
+  },
+  // A debug build takes about 7 s to compile and run a source of this size.
+  30_000,
+);
 
 describe("the file: URL origin made from a filename", () => {
   // The last filename made into a URL is kept per VM. The import() tests alternate two filenames, so every

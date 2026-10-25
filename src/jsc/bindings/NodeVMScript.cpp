@@ -4,6 +4,7 @@
 
 #include "ErrorCode.h"
 
+#include "JavaScriptCore/ButterflyInlines.h"
 #include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSWeakMap.h"
@@ -92,6 +93,83 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
     return any;
 }
 
+// Where a Script of the class structure keeps sourceURL and sourceMapURL.
+static constexpr PropertyOffset sourceURLOffset = firstOutOfLineOffset;
+static constexpr PropertyOffset sourceMapURLOffset = firstOutOfLineOffset + 1;
+
+Structure* NodeVMScript::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    Structure* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    PropertyOffset offset;
+    structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->sourceURL, 0, offset);
+    RELEASE_ASSERT(offset == sourceURLOffset);
+    structure = Structure::addPropertyTransition(vm, structure, optionNames(vm).sourceMapURL(vm), 0, offset);
+    RELEASE_ASSERT(offset == sourceMapURLOffset);
+    return structure;
+}
+
+// True when no object on the prototype chain of a new Script can intercept a [[Set]] of sourceURL or sourceMapURL.
+static bool setOnlyDefinesSourceURLs(VM& vm, Structure* classStructure)
+{
+    JSObject* prototype = classStructure->storedPrototypeObject();
+    JSObject* objectPrototype = classStructure->realm()->objectPrototype();
+    if (prototype->getPrototypeDirect() != objectPrototype)
+        return false;
+    Structure* prototypeStructure = prototype->structure();
+    if (isValidOffset(prototypeStructure->get(vm, vm.propertyNames->sourceURL)) || isValidOffset(prototypeStructure->get(vm, optionNames(vm).sourceMapURL(vm))))
+        return false;
+    return !objectPrototype->structure()->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
+}
+
+// The structure of a Script that gets all of its results from writeResults().
+static Structure* structureWithoutResults(Structure* structure)
+{
+    if (!structure->outOfLineCapacity())
+        return structure;
+    JSGlobalObject* realm = structure->realm();
+    return realm->structureCache().emptyStructureForPrototypeFromBaseStructure(realm, structure->storedPrototypeObject(), structure);
+}
+
+// Like V8, an empty `//# sourceURL=` or `//# sourceMappingURL=` directive counts as none.
+static JSValue sourceDirective(VM& vm, StringImpl* directive)
+{
+    return directive && directive->length() ? jsString(vm, String(directive)) : jsUndefined();
+}
+
+// Returns false once a write has thrown. Node drops what a setter throws and makes no further write.
+static bool setResult(JSGlobalObject* globalObject, ThrowScope& scope, NodeVMScript* script, PropertyName name, JSValue value)
+{
+    PutPropertySlot slot(script, false);
+    script->methodTable()->put(script, globalObject, name, value, slot);
+    JSC::Exception* exception = scope.exception();
+    if (!exception) [[likely]]
+        return true;
+    // JSC checks the stack before it looks for a setter. That error is not a setter's, so it stays pending.
+    auto* error = dynamicDowncast<JSC::ErrorInstance>(exception->value());
+    if (!error || !error->isStackOverflowError())
+        (void)scope.tryClearException();
+    return false;
+}
+
+// ContextifyScript::New writes these onto `this` with [[Set]], in this order: https://github.com/nodejs/node/blob/v26.3.0/src/node_contextify.cc#L1085-L1148
+static void writeResults(JSGlobalObject* globalObject, ThrowScope& scope, NodeVMScript* script, JSC::UnlinkedProgramCodeBlock* block, TriState cachedDataRejected, JSC::JSUint8Array* producedCachedData)
+{
+    VM& vm = JSC::getVM(globalObject);
+    NodeVMOptionNames& names = optionNames(vm);
+
+    if (cachedDataRejected != TriState::Indeterminate && !setResult(globalObject, scope, script, names.cachedDataRejected(vm), jsBoolean(cachedDataRejected == TriState::True)))
+        return;
+    if (producedCachedData) {
+        if (!setResult(globalObject, scope, script, names.cachedData(vm), producedCachedData))
+            return;
+        if (!setResult(globalObject, scope, script, names.cachedDataProduced(vm), jsBoolean(true)))
+            return;
+    }
+    if (!setResult(globalObject, scope, script, vm.propertyNames->sourceURL, sourceDirective(vm, block->sourceURLDirective())))
+        return;
+    setResult(globalObject, scope, script, names.sourceMapURL(vm), sourceDirective(vm, block->sourceMappingURLDirective()));
+}
+
 static EncodedJSValue
 constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newTarget = {})
 {
@@ -125,6 +203,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Structure* structure = zigGlobalObject->NodeVMScriptStructure();
+    // Node writes each result with [[Set]]. With no cache option and nothing to intercept, that only defines sourceURL and sourceMapURL.
+    bool bornWithSourceURLs = !options.cachedDataProvided && !options.produceCachedData;
     if (zigGlobalObject->NodeVMScript() != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Script cannot be invoked without 'new'"_s);
@@ -135,7 +215,11 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         RETURN_IF_EXCEPTION(scope, {});
         structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->NodeVMScriptStructure());
         RETURN_IF_EXCEPTION(scope, {});
+        bornWithSourceURLs = false;
     }
+    bornWithSourceURLs = bornWithSourceURLs && setOnlyDefinesSourceURLs(vm, structure);
+    if (!bornWithSourceURLs) [[unlikely]]
+        structure = structureWithoutResults(structure);
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
 
@@ -150,7 +234,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     // Node's vm.Script throws SyntaxError at construction; the REPL's
     // recoverable-error flow (and user code) relies on that.
     JSC::ParserError parseError;
-    if (!script->unlinkedCodeBlockFor(globalObject, parseError)) {
+    JSC::UnlinkedProgramCodeBlock* block = script->unlinkedCodeBlockFor(globalObject, parseError);
+    if (!block) {
         auto exception = parseError.toErrorObject(globalObject, script->source(), -1);
         // Building the error materializes its stack, running a user
         // Error.prepareStackTrace that may throw; Node throws the SyntaxError
@@ -171,7 +256,15 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     }
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (bornWithSourceURLs) [[likely]] {
+        script->putDirectOffset(vm, sourceURLOffset, sourceDirective(vm, block->sourceURLDirective()));
+        script->putDirectOffset(vm, sourceMapURLOffset, sourceDirective(vm, block->sourceMappingURLDirective()));
+        return JSValue::encode(script);
+    }
+
     WTF::Vector<uint8_t>& cachedData = script->cachedData();
+    TriState cachedDataRejected = TriState::Indeterminate;
+    JSC::JSUint8Array* producedCachedData = nullptr;
 
     // Like Node, reject an empty cachedData.
     if (script->options().cachedDataProvided) {
@@ -182,10 +275,23 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
             JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
             accepted = !!JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, cachedBytecode.releaseNonNull());
         }
-        script->cachedDataRejected(accepted ? TriState::False : TriState::True);
+        cachedDataRejected = accepted ? TriState::False : TriState::True;
+        // An accepted cache is the cache of this source, so produceCachedData gives a copy of it.
+        if (accepted && script->options().produceCachedData) {
+            producedCachedData = WebCore::createBuffer(script->globalObject(), cachedData.span());
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         cachedData = {};
-    } else if (script->options().produceCachedData)
-        script->cacheBytecode();
+    }
+    if (script->options().produceCachedData && !producedCachedData) {
+        if (RefPtr<JSC::CachedBytecode> bytecode = getBytecode(script->globalObject(), JSC::SourceCodeType::ProgramType, script->source())) {
+            producedCachedData = createCachedDataBuffer(script->globalObject(), bytecode->span());
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    writeResults(globalObject, scope, script, block, cachedDataRejected, producedCachedData);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(script);
 }
@@ -223,36 +329,6 @@ JSValue NodeVMScript::evaluate(JSGlobalObject* globalObject, NakedPtr<JSC::Excep
     return JSC::evaluate(globalObject, m_source, unlinkedCodeBlockFor(globalObject, ignoredError), globalObject, exception);
 }
 
-void NodeVMScript::cacheBytecode()
-{
-    m_cachedBytecode = getBytecode(globalObject(), JSC::SourceCodeType::ProgramType, m_source);
-    m_cachedDataProduced = m_cachedBytecode != nullptr;
-}
-
-JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
-{
-    auto scope = DECLARE_THROW_SCOPE(vm());
-    if (!m_options.produceCachedData) {
-        return nullptr;
-    }
-
-    if (!m_cachedBytecodeBuffer) {
-        if (!m_cachedBytecode)
-            cacheBytecode();
-        if (!m_cachedBytecode)
-            return nullptr;
-
-        m_cachedBytecodeBuffer.set(vm(), this, createCachedDataBuffer(globalObject(), m_cachedBytecode->span()));
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (!m_cachedBytecodeBuffer) {
-            return nullptr;
-        }
-    }
-
-    ASSERT(m_cachedBytecodeBuffer);
-    return m_cachedBytecodeBuffer.get();
-}
-
 DEFINE_VISIT_CHILDREN(NodeVMScript);
 
 template<typename Visitor>
@@ -261,7 +337,6 @@ void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     NodeVMScript* thisObject = uncheckedDowncast<NodeVMScript>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_cachedBytecodeBuffer);
     visitor.append(thisObject->m_unlinkedCodeBlock);
     NodeVMScriptFetcher::visitSource(visitor, thisObject->m_source);
 }
@@ -287,8 +362,16 @@ void NodeVMScriptConstructor::finishCreation(VM& vm, JSObject* prototype)
 
 NodeVMScript* NodeVMScript::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, SourceCode source, ScriptOptions options)
 {
-    NodeVMScript* ptr = new (NotNull, allocateCell<NodeVMScript>(vm)) NodeVMScript(vm, structure, WTF::move(source), WTF::move(options));
+    // Only the class structure has properties at birth. They are undefined until the constructor has the real values.
+    JSC::Butterfly* butterfly = nullptr;
+    if (structure->outOfLineCapacity()) [[likely]]
+        butterfly = JSC::Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, JSC::IndexingHeader(), 0);
+    NodeVMScript* ptr = new (NotNull, allocateCell<NodeVMScript>(vm)) NodeVMScript(vm, structure, butterfly, WTF::move(source), WTF::move(options));
     ptr->finishCreation(vm);
+    if (butterfly) [[likely]] {
+        ptr->putDirectOffset(vm, sourceURLOffset, jsUndefined());
+        ptr->putDirectOffset(vm, sourceMapURLOffset, jsUndefined());
+    }
     return ptr;
 }
 
@@ -399,76 +482,6 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
-{
-    VM& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = JSValue::decode(thisValueEncoded);
-    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
-    if (!script) [[unlikely]] {
-        return throwThisIsNotAScript(globalObject, scope, thisValue);
-    }
-
-    // Populated by the compile in the constructor (a CodeCache hit copies it over too).
-    String url = script->source().provider()->sourceMappingURLDirective();
-    if (!url) {
-        return encodedJSUndefined();
-    }
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url)));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
-{
-    VM& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = JSValue::decode(thisValueEncoded);
-    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
-    if (!script) [[unlikely]] {
-        return throwThisIsNotAScript(globalObject, scope, thisValue);
-    }
-
-    scope.assertNoExceptionExceptTermination();
-    auto* buffer = script->getBytecodeBuffer();
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!buffer) return JSValue::encode(jsUndefined());
-    return JSValue::encode(buffer);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
-{
-    VM& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = JSValue::decode(thisValueEncoded);
-    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
-    if (!script) [[unlikely]] {
-        return throwThisIsNotAScript(globalObject, scope, thisValue);
-    }
-
-    scope.assertNoExceptionExceptTermination();
-    return JSValue::encode(jsBoolean(script->cachedDataProduced()));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
-{
-    VM& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = JSValue::decode(thisValueEncoded);
-    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
-    if (!script) [[unlikely]] {
-        return throwThisIsNotAScript(globalObject, scope, thisValue);
-    }
-
-    switch (script->cachedDataRejected()) {
-    case TriState::True:
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(true)));
-    case TriState::False:
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(false)));
-    default:
-        RELEASE_AND_RETURN(scope, encodedJSUndefined());
-    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -594,10 +607,6 @@ static const struct HashTableValue scriptPrototypeTableValues[] = {
     { "runInContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInContext, 2 } },
     { "runInNewContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInNewContext, 2 } },
     { "runInThisContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInThisContext, 2 } },
-    { "sourceMapURL"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetSourceMapURL, nullptr } },
-    { "cachedData"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedData, nullptr } },
-    { "cachedDataProduced"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedDataProduced, nullptr } },
-    { "cachedDataRejected"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedDataRejected, nullptr } },
 };
 
 void NodeVMScriptPrototype::finishCreation(VM& vm)

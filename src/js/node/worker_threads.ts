@@ -297,6 +297,7 @@ function injectFakeEmitter(Class) {
 injectFakeEmitter(_MessagePort);
 
 const MessagePort = _MessagePort;
+const nativeMessagePortStart = MessagePort.prototype.start;
 
 // node's close(cb) registers cb as a one-time "close" listener before the native close.
 // closedMessagePorts lets moveMessagePortToContext report ERR_CLOSED_MESSAGE_PORT.
@@ -935,6 +936,10 @@ class Worker extends EventEmitter {
         // user-supplied value so it can't trigger env sharing on its own.
         options = { ...options, shareEnv: undefined } as NodeWorkerOptions;
       }
+      // Started before the thread, as in node: a port started later queues its first delivery behind the exit of a worker that already ended. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L383
+      nativeMessagePortStart.$call(this.#stdoutPort);
+      nativeMessagePortStart.$call(this.#stderrPort);
+      nativeMessagePortStart.$call(this.#publicPort);
       this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
       // Create the readables eagerly so the worker's writev is ack'd even when
       // worker.stdout/stderr is never touched; only captured streams ref their

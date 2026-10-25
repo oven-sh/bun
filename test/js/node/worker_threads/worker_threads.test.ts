@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -594,6 +594,160 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe(`error boom\n${JSON.stringify({ code: 42, out: "hello\nexit handler 1 true\n" })}\n`);
     expect(exitCode).toBe(0);
+  });
+
+  // A worker can print, post and end while the parent thread is still inside `new Worker()`. The fixture
+  // forces that order: it holds the parent right after the thread started until the worker has ended.
+  describe("the worker ends before `new Worker()` returns", () => {
+    const fixture = join(import.meta.dir, "parent-held-in-constructor-fixture.js");
+    // The fixture gives up with a message before the test's own timeout would hide where it stopped.
+    const env = { ...bunEnv, WORKER_HOLD_BUDGET_MS: String(isDebug ? 60_000 : 7_000) };
+    const lines = (prefix: string, count = 30) => Array.from({ length: count }, (_, i) => prefix + i + "\n").join("");
+
+    async function runHeld(cmd: string[]) {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    // What the fixture prints in "capture" mode.
+    const captured = (
+      atError: { out: string; err: string } | null,
+      atExit: { out: string; err: string },
+      code: number,
+    ) => JSON.stringify({ atError, atExit, code }) + "\n";
+    const uncaught = 'throw new Error("boom");';
+    const rejection = 'Promise.reject(new Error("boom"));';
+    const post3 = 'for (let i = 0; i < 3; i++) require("node:worker_threads").parentPort.postMessage(i);\n';
+
+    // A port that starts late queues its first delivery behind the worker's 'error'. The hold ends
+    // after the worker's 'exit' listeners, which every platform can wait for, so these run everywhere.
+    test.concurrent.each([
+      ["an uncaught exception", "stdout", uncaught],
+      ["an uncaught exception", "stderr", uncaught],
+      ["an unhandled rejection", "stdout", rejection],
+      ["an unhandled rejection", "stderr", rejection],
+    ] as const)("%s: captured %s is complete at 'error' and at 'exit'", async (_label, stream, ending) => {
+      const print = stream === "stdout" ? "console.log" : "console.error";
+      const workerSource = `for (let i = 0; i < 30; i++) ${print}("W" + i);\n${ending}`;
+      const seen = stream === "stdout" ? { out: lines("W"), err: "" } : { out: "", err: lines("W") };
+      expect(await runHeld([fixture, workerSource, "capture"])).toEqual({
+        stdout: captured(seen, seen, 1),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each([
+      [
+        "stdout",
+        "an uncaught exception",
+        `for (let i = 0; i < 30; i++) process.stdout.write("W" + i + "\\n");\n${uncaught}`,
+      ],
+      [
+        "stderr",
+        "an unhandled rejection",
+        `for (let i = 0; i < 30; i++) process.stderr.write("W" + i + "\\n");\n${rejection}`,
+      ],
+    ] as const)("auto-piped %s is complete before 'error' after %s", async (stream, _label, workerSource) => {
+      const piped = lines("W") + "[error]\n[exit 1]\n";
+      expect(await runHeld([fixture, workerSource, stream])).toEqual({
+        stdout: stream === "stdout" ? piped : "",
+        stderr: stream === "stderr" ? piped : "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("parentPort messages arrive before 'error', while the Worker is still live", async () => {
+      expect(await runHeld([fixture, post3 + uncaught, "messages"])).toEqual({
+        stdout:
+          JSON.stringify({
+            events: ["message 0 live", "message 1 live", "message 2 live", "error", "exit 1"],
+            terminated: "not called",
+          }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The hold has to sit before the listeners that `new Worker()` adds to these ports. These runs take
+    // the early start of the ports away again, so they must show the late delivery: nothing by 'error'.
+    test.concurrent.each([
+      ["captured output", 'console.log("W0");\n' + uncaught, "capture", '{"atError":{"out":"","err":""},'],
+      ["parentPort messages", post3 + uncaught, "messages", '{"events":["error",'],
+    ] as const)(
+      "without the early start, the held parent has no %s at 'error'",
+      async (_label, workerSource, mode, late) => {
+        const { stdout, stderr, exitCode } = await runHeld([fixture, workerSource, mode, "no-early-start"]);
+        expect({ stdout: stdout.slice(0, late.length), stderr, exitCode }).toEqual({
+          stdout: late,
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // A worker that ends with no 'error' loses its whole output only when its exit is queued on the
+    // parent ahead of the port's first delivery. The fixture can wait for that on Linux only
+    // (/proc/self/task). On other platforms an unfixed build passes the cases below.
+    test.concurrent.skipIf(!isLinux).each([
+      ["stdout", "process.exit(0)", 'for (let i = 0; i < 30; i++) console.log("W" + i);\nprocess.exit(0);'],
+      ["stderr", "process.exit(0)", 'for (let i = 0; i < 30; i++) console.error("W" + i);\nprocess.exit(0);'],
+      [
+        "stdout",
+        "a natural end that prints only in the worker's own 'exit' listener",
+        'process.on("exit", () => { for (let i = 0; i < 30; i++) console.log("W" + i); });',
+      ],
+    ] as const)("auto-piped %s survives %s", async (stream, _label, workerSource) => {
+      const piped = lines("W") + "[exit 0]\n";
+      expect(await runHeld([fixture, workerSource, stream])).toEqual({
+        stdout: stream === "stdout" ? piped : "",
+        stderr: stream === "stderr" ? piped : "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.skipIf(!isLinux)("captured stdout and stderr survive process.exit(0)", async () => {
+      const workerSource =
+        'for (let i = 0; i < 30; i++) { console.log("O" + i); console.error("E" + i); }\nprocess.exit(0);';
+      expect(await runHeld([fixture, workerSource, "capture"])).toEqual({
+        stdout: captured(null, { out: lines("O"), err: lines("E") }, 0),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // A write made while the worker exits is a port message of its own. 1,100 of them are more than
+    // one drain task of the port delivers (1,024), so the rest has to arrive with the port's close.
+    test.concurrent.skipIf(!isLinux)("more exit-time writes than one port drain delivers all arrive", async () => {
+      const workerSource =
+        'process.on("exit", () => { for (let i = 0; i < 1100; i++) process.stdout.write("L" + i + "\\n"); });\nprocess.exit(0);';
+      expect(await runHeld([fixture, workerSource, "capture"])).toEqual({
+        stdout: captured(null, { out: lines("L", 1100), err: "" }, 0),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.skipIf(!isLinux)("a Worker inside a Worker keeps its auto-piped stdout", async () => {
+      const workerSource = 'for (let i = 0; i < 30; i++) console.log("W" + i);\nprocess.exit(0);';
+      const parent = `new (require("node:worker_threads").Worker)(${JSON.stringify(fixture)}, { argv: ${JSON.stringify([workerSource, "stdout"])} });`;
+      expect(await runHeld(["-e", parent])).toEqual({ stdout: lines("W") + "[exit 0]\n", stderr: "", exitCode: 0 });
+    });
+
+    test.concurrent.skipIf(!isLinux)(
+      "terminate() from a 'message' listener settles after the worker's own exit",
+      async () => {
+        expect(await runHeld([fixture, post3 + "process.exit(0);", "messages", "terminate"])).toEqual({
+          stdout:
+            JSON.stringify({
+              events: ["message 0 live", "message 1 live", "message 2 live", "exit 0"],
+              terminated: "resolved 0",
+            }) + "\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
   });
 });
 

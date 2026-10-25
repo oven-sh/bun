@@ -598,16 +598,21 @@ fn has_types_with(by_extension: &[(Vec<u8>, ScriptKind)], path: &[u8]) -> bool {
 
 /// `check_before`'s `before_read` under `--watch`. Registers each file with `vm`'s file watcher
 /// before the check reads it, so a change during the check restarts the process just like a later
-/// change. This covers every file outside `node_modules`, including type-only files and
+/// change. This covers every file that is not a package's by the watcher's rule, including type-only files and
 /// configuration files. Returns `None` if there's no file watcher.
 pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<BeforeRead> {
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
-    let (watch, cwd) = (vm.watcher_for_threads()?, working_directory());
+    let ((node_modules, watch), cwd) = (vm.watcher_for_threads()?, working_directory());
     Some(Box::new(move |path| {
-        if !bun_core::strings::contains(path, b"/node_modules/") {
-            // The watcher keys files by their native path.
-            watch(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
+        let has_node_modules = bun_core::strings::contains(path, b"/node_modules/");
+        if has_node_modules && node_modules.is_whole_path() {
+            return;
+        }
+        // The watcher keys files by their native path.
+        let native = join_abs_string::<Auto>(&cwd, &[to_native(path)]);
+        if !has_node_modules || !node_modules.file_is_inside_node_modules(native) {
+            watch(native);
         }
     }))
 }

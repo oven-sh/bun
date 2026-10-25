@@ -9,6 +9,7 @@ use bun_core::ZStr;
 #[cfg(not(windows))]
 use bun_paths::SEP;
 use bun_paths::strings;
+use bun_paths::strings::NodeModulesScope;
 #[cfg(not(windows))]
 use bun_resolver::fs::PathName;
 use bun_resolver::fs::{self as Fs, FileSystem};
@@ -63,7 +64,15 @@ impl ImportWatcher {
         }
     }
 
-    /// Declines a file inside `node_modules`: the caller keeps `fd`.
+    #[inline]
+    pub fn node_modules_scope(&self) -> &NodeModulesScope {
+        match self {
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.node_modules_scope(),
+            ImportWatcher::None => &NodeModulesScope::WHOLE_PATH,
+        }
+    }
+
+    /// Declines a package file by the watcher's `node_modules_scope`: the caller keeps `fd`.
     #[inline]
     pub fn add_file<const COPY_FILE_PATH: bool>(
         &mut self,
@@ -77,7 +86,10 @@ impl ImportWatcher {
     ) -> bun_sys::Result<bun_watcher::FdOwnership> {
         match self {
             ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
-                if strings::path_is_inside_node_modules(file_path) {
+                if watcher
+                    .node_modules_scope()
+                    .file_is_inside_node_modules(file_path)
+                {
                     return Ok(bun_watcher::FdOwnership::Caller);
                 }
                 watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
@@ -726,7 +738,12 @@ where
         }));
 
         // SAFETY: see above; `watcher_top_level_dir` returns `&'static [u8]`.
-        let watcher = match Watcher::init(reloader, unsafe { (*this).watcher_top_level_dir() }) {
+        let top_level_dir = unsafe { (*this).watcher_top_level_dir() };
+        let watcher = match Watcher::init(
+            reloader,
+            top_level_dir,
+            bun_watcher::NodeModulesRule::BelowProjectRoot,
+        ) {
             Ok(w) => w,
             Err(err) => {
                 bun_core::pretty_errorln!(

@@ -12,7 +12,7 @@ test("the watcher does not search a path for the bare letters node_modules", asy
   const banned =
     /\b(?:contains|index_of|last_index_of|has_prefix|has_suffix|starts_with|ends_with)\w*\s*\((?:[^()]|\([^()]*\))*,\s*b"node_modules"\s*,?\s*\)/g;
   const hint =
-    "bun_paths::strings::path_is_inside_node_modules (the path of a file) or dir_is_or_is_inside_node_modules (the path of a directory)";
+    "the watcher's rule, Watcher::node_modules_scope(): file_is_inside_node_modules (the path of a file) or dir_is_or_is_inside_node_modules (the path of a directory)";
 
   const files = ["src/runtime/jsc_hooks.rs"];
   for (const directory of ["src/watcher", "src/jsc"]) {

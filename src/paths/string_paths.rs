@@ -443,6 +443,9 @@ pub struct NodeModulesScope {
 }
 
 impl NodeModulesScope {
+    /// Every `node_modules` component counts, wherever the project is.
+    pub const WHOLE_PATH: Self = Self { project_root: None };
+
     /// For a project that starts in `root`. Not for the macro guard: it must refuse every file of `node_modules`.
     #[inline]
     pub fn below_root(root: &'static [u8]) -> Self {
@@ -451,10 +454,21 @@ impl NodeModulesScope {
         }
     }
 
+    #[inline]
+    pub fn is_whole_path(&self) -> bool {
+        self.project_root.is_none()
+    }
+
     /// Is the file `path` a package file? A file named `node_modules` is not inside one.
     #[inline]
     pub fn file_is_inside_node_modules(&self, path: &[u8]) -> bool {
         self.is_inside_node_modules(path, false, crate::Platform::AUTO)
+    }
+
+    /// Is `dir` a package directory, or `node_modules` itself? A trailing separator is optional.
+    #[inline]
+    pub fn dir_is_or_is_inside_node_modules(&self, dir: &[u8]) -> bool {
+        self.is_inside_node_modules(dir, true, crate::Platform::AUTO)
     }
 
     /// A path without the component costs one search and no read of the scope.
@@ -521,18 +535,6 @@ fn is_inside_node_modules_of_project(
                 || node_modules_component_end(below, 0, last_component_counts, platform).is_some()
         }
     }
-}
-
-/// Is the file `path` inside a directory named `node_modules`? A file of that name is not.
-#[inline]
-pub fn path_is_inside_node_modules(path: &[u8]) -> bool {
-    node_modules_component_end(path, 0, false, crate::Platform::AUTO).is_some()
-}
-
-/// Is `dir` named `node_modules`, or inside such a directory? A trailing separator is optional.
-#[inline]
-pub fn dir_is_or_is_inside_node_modules(dir: &[u8]) -> bool {
-    node_modules_component_end(dir, 0, true, crate::Platform::AUTO).is_some()
 }
 
 /// The end of the first `node_modules` component at or after `from`. `last_component_counts` lets the end of `path` close one.
@@ -841,7 +843,7 @@ mod tests {
     #[test]
     fn node_modules_is_matched_as_a_path_component() {
         use crate::Platform::{Posix, Windows};
-        let whole_path = NodeModulesScope { project_root: None };
+        let whole_path = NodeModulesScope::WHOLE_PATH;
         // (platform, path, as the path of a file, as the path of a directory)
         let rows: &[(crate::Platform, &[u8], bool, bool)] = &[
             (Posix, b"/p/node_modules/pkg/index.js", true, true),

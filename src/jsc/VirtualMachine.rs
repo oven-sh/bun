@@ -4653,9 +4653,14 @@ impl VirtualMachine {
         }
     }
 
-    /// `add_to_watcher_if_needed`, for threads that work for this one. `None` unless watch mode is
+    /// `add_to_watcher_if_needed`, for threads that work for this one, with the watcher's rule for package files. `None` unless watch mode is
     /// enabled.
-    pub fn watcher_for_threads(&self) -> Option<impl Fn(&[u8]) + Send + Sync + 'static> {
+    pub fn watcher_for_threads(
+        &self,
+    ) -> Option<(
+        bun_paths::strings::NodeModulesScope,
+        impl Fn(&[u8]) + Send + Sync + 'static,
+    )> {
         struct Shared {
             watcher: *mut crate::hot_reloader::ImportWatcher,
             _ticket: crate::Ticket,
@@ -4666,17 +4671,20 @@ impl VirtualMachine {
         if !self.is_watcher_enabled() {
             return None;
         }
+        // SAFETY: as in `add_to_watcher_if_needed`. The scope is never written after `Watcher::init`.
+        let scope = unsafe { *(*self.bun_watcher_ptr()).node_modules_scope() };
         // One of these threads at a time has the `&mut`.
         let shared = bun_threading::Guarded::new(Shared {
             watcher: self.bun_watcher_ptr(),
             _ticket: self.ticket(),
         });
-        Some(move |path: &[u8]| {
+        let watch = move |path: &[u8]| {
             let shared = shared.lock();
             let watcher = shared.watcher;
             // SAFETY: as in `add_to_watcher_if_needed`.
             let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
-        })
+        };
+        Some((scope, watch))
     }
 
     /// `bun_resolver` holds the manager as an opaque forward-decl (it cannot

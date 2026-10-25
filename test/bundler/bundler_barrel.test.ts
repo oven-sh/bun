@@ -2162,6 +2162,357 @@ describe("bundler", () => {
     },
   });
 
+  // --- `export *` of a module whose export names are known only at run time ---
+  // A name that reaches an importer through `export * from <CommonJS>` prints
+  // as a read of the barrel's exports object (`exports_barrel.x`). The barrel
+  // fills that object with `__reExport()` when it runs, so it has to be in the
+  // bundle for every part that prints such a read, also when its package is
+  // `"sideEffects": false` and nothing else uses it.
+  // https://github.com/oven-sh/bun/issues/18008
+
+  // `module.exports = { ... }` keeps a file CommonJS at link time.
+  const commonJSLib = /* js */ `
+    const movable = 200;
+    const computed = Math.max(500, 1);
+    function get() { return module.exports.computed; }
+    module.exports = { movable, computed, get };
+  `;
+  const sideEffectFree = JSON.stringify({ name: "lib", sideEffects: false });
+
+  // The shape of the issue: the CommonJS file is in another package.
+  itBundled("barrel/ExportStarOfCommonJSNamedImport", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { CancellationTokenSource } from './lib/cancellation.ts';
+        console.log(new CancellationTokenSource().ok());
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/cancellation.ts": /* ts */ `export * from 'dep/cancellation.js';`,
+      "/node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "/node_modules/dep/cancellation.js": /* js */ `
+        "use strict";
+        Object.defineProperty(exports, "__esModule", { value: true });
+        class CancellationTokenSource { ok() { return "ok"; } }
+        exports.CancellationTokenSource = CancellationTokenSource;
+      `,
+    },
+    run: { stdout: "ok" },
+  });
+
+  itBundled("barrel/ExportStarOfCommonJSNamedImportFormatCjs", {
+    files: {
+      "/entry.js": /* js */ `
+        import { movable, computed, get } from './lib/barrel.js';
+        console.log(movable, computed, get());
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/barrel.js": /* js */ `export * from './impl.cjs';`,
+      "/lib/impl.cjs": commonJSLib,
+    },
+    format: "cjs",
+    run: { stdout: "200 500 500" },
+  });
+
+  itBundled("barrel/ExportStarOfCommonJSTwoHops", {
+    files: {
+      "/entry.js": /* js */ `
+        import { movable, computed, get } from './lib/barrel.js';
+        console.log(movable, computed, get());
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/barrel.js": /* js */ `export * from './inner.js';`,
+      "/lib/inner.js": /* js */ `export * from './impl.cjs';`,
+      "/lib/impl.cjs": commonJSLib,
+    },
+    run: { stdout: "200 500 500" },
+  });
+
+  itBundled("barrel/ExportStarOfCommonJSNamespaceMember", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './lib/barrel.js';
+        console.log(ns.movable, ns.computed, ns.get());
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/barrel.js": /* js */ `export * from './impl.cjs';`,
+      "/lib/impl.cjs": commonJSLib,
+    },
+    run: { stdout: "200 500 500" },
+  });
+
+  // The read is in a function, and a second `export *` binds statically.
+  itBundled("barrel/ExportStarOfCommonJSBesideStaticExportStar", {
+    files: {
+      "/entry.js": /* js */ `
+        import { fromEsm, movable } from './lib/barrel.js';
+        function read() { return fromEsm + " " + movable; }
+        console.log(read());
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/barrel.js": /* js */ `
+        export * from './impl.cjs';
+        export * from './esm.js';
+      `,
+      "/lib/impl.cjs": commonJSLib,
+      "/lib/esm.js": /* js */ `export const fromEsm = "esm";`,
+    },
+    run: { stdout: "esm 200" },
+  });
+
+  // Another file re-exports the names by name.
+  itBundled("barrel/ExportStarOfCommonJSNamedReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { movable, computed, get } from './lib/top.js';
+        console.log(movable, computed, get());
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/top.js": /* js */ `export { movable, computed, get } from './barrel.js';`,
+      "/lib/barrel.js": /* js */ `export * from './impl.cjs';`,
+      "/lib/impl.cjs": commonJSLib,
+    },
+    run: { stdout: "200 500 500" },
+  });
+
+  // The getters of the re-exporting file's namespace object read the barrel.
+  itBundled("barrel/ExportStarOfCommonJSNamespaceOfReExporter", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as top from './lib/top.js';
+        const captured = top;
+        console.log(captured.movable, captured.computed, captured.get());
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/top.js": /* js */ `export { movable, computed, get } from './barrel.js';`,
+      "/lib/barrel.js": /* js */ `export * from './impl.cjs';`,
+      "/lib/impl.cjs": commonJSLib,
+    },
+    run: { stdout: "200 500 500" },
+  });
+
+  // The same getters, in the namespace object of a third file.
+  itBundled("barrel/ExportStarOfCommonJSNamespaceAboveReExporter", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as outer from './lib/outer.js';
+        const captured = outer;
+        console.log(captured.movable, captured.computed, captured.get());
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/outer.js": /* js */ `export * from './top.js';`,
+      "/lib/top.js": /* js */ `export { movable, computed, get } from './barrel.js';`,
+      "/lib/barrel.js": /* js */ `export * from './impl.cjs';`,
+      "/lib/impl.cjs": commonJSLib,
+    },
+    run: { stdout: "200 500 500" },
+  });
+
+  // `X.movable` binds to the export `movable` of the file behind `X`.
+  itBundled("barrel/ExportStarOfCommonJSMemberOfReExportedNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import { X } from './lib/outer.js';
+        console.log(X.movable, X.computed, X.get());
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/outer.js": /* js */ `export * as X from './top.js';`,
+      "/lib/top.js": /* js */ `export { movable, computed, get } from './barrel.js';`,
+      "/lib/barrel.js": /* js */ `export * from './impl.cjs';`,
+      "/lib/impl.cjs": commonJSLib,
+    },
+    run: { stdout: "200 500 500" },
+  });
+
+  // An entry point that re-exports the names prints `var export_x = exports_barrel.x`.
+  itBundled("barrel/ExportStarOfCommonJSEntryPointReExport", {
+    files: {
+      "/entry.js": /* js */ `export { movable, computed, get } from './lib/barrel.js';`,
+      "/lib/package.json": sideEffectFree,
+      "/lib/barrel.js": /* js */ `export * from './impl.cjs';`,
+      "/lib/impl.cjs": commonJSLib,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { movable, computed, get } from './out.js';
+        console.log(movable, computed, get());
+      `,
+    },
+    run: { file: "/test.js", stdout: "200 500 500" },
+  });
+
+  itBundled("barrel/ExportStarOfCommonJSEntryPointReExportFormatCjs", {
+    files: {
+      "/entry.js": /* js */ `export { movable, computed, get } from './lib/barrel.js';`,
+      "/lib/package.json": sideEffectFree,
+      "/lib/barrel.js": /* js */ `export * from './impl.cjs';`,
+      "/lib/impl.cjs": commonJSLib,
+    },
+    format: "cjs",
+    runtimeFiles: {
+      "/test.cjs": /* js */ `
+        const { movable, computed, get } = require('./out.js');
+        console.log(movable, computed, get());
+      `,
+    },
+    run: { file: "/test.cjs", stdout: "200 500 500" },
+  });
+
+  // `exports.x = ...` can bind statically, but `import()` keeps the file CommonJS.
+  itBundled("barrel/ExportStarOfCommonJSKeptByDynamicImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { movable, computed, get } from './lib/barrel.js';
+        console.log(movable, computed, get());
+        const impl = await import('./lib/impl.cjs');
+        console.log(impl.movable, impl.computed);
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/barrel.js": /* js */ `export * from './impl.cjs';`,
+      "/lib/impl.cjs": /* js */ `
+        exports.movable = 200;
+        exports.computed = Math.max(500, 1);
+        exports.get = function () { return exports.computed; };
+      `,
+    },
+    run: { stdout: "200 500 500\n200 500" },
+  });
+
+  // `import()` makes the JSON file a CommonJS module too.
+  itBundled("barrel/ExportStarOfJsonKeptByDynamicImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { movable, computed } from './lib/barrel.js';
+        console.log(movable, computed);
+        const data = await import('./lib/data.json');
+        console.log(data.default.movable);
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/barrel.js": /* js */ `export * from './data.json';`,
+      "/lib/data.json": `{ "movable": 200, "computed": 500 }`,
+    },
+    run: { stdout: "200 500\n200" },
+  });
+
+  // With ES module output the statement of an external `export *` still
+  // needs https://github.com/oven-sh/bun/pull/41220.
+  itBundled("barrel/ExportStarOfExternalFormatCjs", {
+    files: {
+      "/entry.js": /* js */ `
+        import { basename, isAbsolute } from './lib/barrel.js';
+        console.log(basename("/a/b.txt"), isAbsolute("/a"));
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/barrel.js": /* js */ `export * from 'node:path';`,
+    },
+    format: "cjs",
+    target: "bun",
+    run: { stdout: "b.txt true" },
+  });
+
+  // Every entry point that reads through the barrel loads it: it goes to a
+  // chunk that both load, and `b.js` does not run `a.js`.
+  itBundled("barrel/ExportStarOfCommonJSSplitting", {
+    files: {
+      "/a.js": /* js */ `
+        import { movable } from './lib/barrel.js';
+        console.log("a", movable);
+      `,
+      "/b.js": /* js */ `
+        import { computed, get } from './lib/barrel.js';
+        console.log("b", computed, get());
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/barrel.js": /* js */ `export * from './impl.cjs';`,
+      "/lib/impl.cjs": commonJSLib,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a 200" },
+      { file: "/out/b.js", stdout: "b 500 500" },
+    ],
+  });
+
+  // `a.js` keeps the barrel for its namespace object. `b.js` only reads a name.
+  itBundled("barrel/ExportStarOfCommonJSSplittingBarrelUsedByOtherEntry", {
+    files: {
+      "/a.js": /* js */ `
+        import * as ns from './lib/barrel.js';
+        const captured = ns;
+        console.log("a", captured.movable);
+      `,
+      "/b.js": /* js */ `
+        import { computed, get } from './lib/barrel.js';
+        console.log("b", computed, get());
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/barrel.js": /* js */ `export * from './impl.cjs';`,
+      "/lib/impl.cjs": commonJSLib,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a 200" },
+      { file: "/out/b.js", stdout: "b 500 500" },
+    ],
+  });
+
+  // A name that binds statically does not keep the barrel or the CommonJS
+  // file, also when the same statement names a run-time name nobody reads.
+  for (const [id, names] of [
+    ["StaticNameOnly", "fromEsm"],
+    ["UnreadRunTimeName", "fromEsm, movable"],
+  ]) {
+    itBundled(`barrel/ExportStarOfCommonJS${id}StaysTreeShaken`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { ${names} } from './lib/barrel.js';
+          console.log(fromEsm);
+        `,
+        "/lib/package.json": sideEffectFree,
+        "/lib/barrel.js": /* js */ `
+          export * from './impl.cjs';
+          export * from './esm.js';
+        `,
+        "/lib/impl.cjs": /* js */ `
+          console.log("impl.cjs ran");
+          module.exports = { movable: 200 };
+        `,
+        "/lib/esm.js": /* js */ `export const fromEsm = "esm";`,
+      },
+      run: { stdout: "esm" },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("exports_barrel");
+        api.expectFile("/out.js").not.toContain("impl.cjs ran");
+      },
+    });
+  }
+
+  // Here the reader is the file with `export * from <CommonJS>`. It reads a
+  // lazily loaded ES module through a barrel of ES modules only, and the
+  // barrel still calls `init_lazy()` before that read.
+  itBundled("barrel/ExportStarOfCommonJSInReaderOfLazyModule", {
+    files: {
+      "/entry.js": /* js */ `import './reader.js';`,
+      "/reader.js": /* js */ `
+        export * from './other.cjs';
+        import { x } from './lib/barrel.js';
+        console.log("x", x);
+        const lazy = await import('./lib/lazy.js');
+        console.log("lazy.x", lazy.x);
+      `,
+      "/other.cjs": /* js */ `module.exports = { z: 1 };`,
+      "/lib/package.json": sideEffectFree,
+      "/lib/barrel.js": /* js */ `export * from './lazy.js';`,
+      "/lib/lazy.js": /* js */ `export const x = Math.max(42, 1);`,
+    },
+    run: { stdout: "x 42\nlazy.x 42" },
+  });
+
   // --- Entry points are never barrels ---
   // An entry point's exports are the public interface of the build. Nothing
   // imports an entry point, so a deferred record would never be un-deferred

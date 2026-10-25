@@ -1,10 +1,11 @@
 // Log.to_js (used by Bun.Transpiler().transform/transformSync when rejecting
-// with parse errors, and by the module loader via process_fetch_log) builds
-// an AggregateError by allocating one BuildMessage JS cell per log entry. The
-// Rust port collected those cells in a heap Vec<JSValue>, which the
-// conservative GC scan does not see, so an earlier cell could be swept while
-// allocating a later one and the AggregateError would reference a zapped
-// StructureID.
+// with parse errors) builds an AggregateError by allocating one BuildMessage JS
+// cell per log entry. Each cell goes into the `errors` array as soon as it
+// exists, and that array is what keeps it alive while the later ones are
+// allocated. The Rust port once collected the cells in a heap Vec<JSValue>,
+// which the conservative GC scan does not see, so an earlier cell could be
+// swept while allocating a later one and the AggregateError would reference a
+// zapped StructureID.
 //
 // useZombieMode scribbles 0xbadbeef0 over swept cells so the dangling access
 // manifests deterministically; collectContinuously races the collector against
@@ -19,7 +20,7 @@ for (let i = 0; i < 20; i++) {
   let err;
   try { t.transformSync(src); } catch (e) { err = e; }
   if (!(err instanceof AggregateError)) throw new Error("not AggregateError: " + err);
-  if (err.errors.length !== 256) throw new Error("wrong count: " + err.errors.length);
+  if (err.errors.length !== 300) throw new Error("wrong count: " + err.errors.length);
   for (const m of err.errors) {
     const msg = m.message;
     if (msg !== 'Expected ";" but found "b"') {

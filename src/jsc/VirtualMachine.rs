@@ -3806,23 +3806,17 @@ pub fn process_fetch_log(
             msg_to_js(msg)
         }
 
-        _ => {
-            // On-stack array: the conservative GC stack scan is the only
-            // thing keeping these wrappers alive until
-            // `create_aggregate_error` stores them. A heap `Vec` is invisible
-            // to that scan, so a GC triggered by a later `create` could sweep
-            // the earlier cells and free their native
-            // `BuildMessage`/`ResolveMessage` out from under us.
-            let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
-            let len = log.msgs.len().min(errors_stack.len());
-            for (i, msg) in log.msgs.drain(..len).enumerate() {
-                errors_stack[i] = msg_to_js(msg);
-            }
-
-            take(global_this.create_aggregate_error(
-                &errors_stack[..len],
-                format_args!("{len} errors building \"{specifier}\""),
-            ))
+        len => {
+            // The array roots each wrapper while the later ones are allocated.
+            let errors = JSValue::create_array_from_iter(global_this, log.msgs.drain(..), |msg| {
+                Ok(msg_to_js(msg))
+            });
+            take(errors.and_then(|errors| {
+                global_this.create_aggregate_error_with_array(
+                    errors,
+                    format_args!("{len} errors building \"{specifier}\""),
+                )
+            }))
         }
     }
 }

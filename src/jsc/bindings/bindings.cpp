@@ -3700,37 +3700,6 @@ CPP_DECL void JSC__JSValue__push(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObje
     array->push(arg1, value2);
 }
 
-JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObject* globalObject,
-    const JSValue* errors, size_t errors_count,
-    const BunString* arg3)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    WTF::String message = arg3->toWTFString();
-    JSC::JSValue cause = JSC::jsUndefined();
-    JSC::JSArray* array = nullptr;
-    {
-        JSC::ObjectInitializationScope initializationScope(vm);
-        if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-                 initializationScope, nullptr,
-                 globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                 errors_count))) {
-
-            for (size_t i = 0; i < errors_count; ++i) {
-                array->initializeIndexWithoutBarrier(initializationScope, i, errors[i]);
-            }
-        }
-    }
-    if (!array) {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
-
-    JSC::Structure* errorStructure = globalObject->errorStructure(JSC::ErrorType::AggregateError);
-
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::createAggregateError(vm, errorStructure, array, message, cause, nullptr, JSC::TypeNothing, false)));
-}
 JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGlobalObject* global, JSC::JSArray* array, const BunString* message, JSValue cause)
 {
     auto& vm = JSC::getVM(global);

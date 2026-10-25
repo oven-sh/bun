@@ -863,19 +863,6 @@ impl JSGlobalObject {
         self.throw(format_args!("{} {}", bstr::BStr::new(err.name()), fmt))
     }
 
-    pub fn create_aggregate_error(
-        &self,
-        errors: &[JSValue],
-        message: Arguments<'_>,
-    ) -> JsResult<JSValue> {
-        let message = BunString::create_format(message);
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; `errors.as_ptr()`/`len()` describe
-        // a valid stack-rooted slice; `message` borrow outlives the call.
-        crate::from_js_host_call(self, || unsafe {
-            JSC__JSGlobalObject__createAggregateError(self, errors.as_ptr(), errors.len(), &message)
-        })
-    }
-
     pub fn create_aggregate_error_with_array(
         &self,
         error_array: JSValue,
@@ -1413,12 +1400,6 @@ unsafe extern "C" {
         second: JSValue,
     );
 
-    fn JSC__JSGlobalObject__createAggregateError(
-        global: &JSGlobalObject,
-        errors: *const JSValue,
-        len: usize,
-        message: &BunString,
-    ) -> JSValue;
     safe fn JSC__JSGlobalObject__createAggregateErrorWithArray(
         global: &JSGlobalObject,
         error_array: JSValue,

@@ -1273,23 +1273,10 @@ impl LogJsc for bun_ast::Log {
         global: &JSGlobalObject,
         message: core::fmt::Arguments<'_>,
     ) -> JsResult<JSValue> {
-        let msgs = &self.msgs;
-        // Cap at 256 — the consumer's stack buffer holds at most 256 JSValues.
-        let count = msgs.len().min(256);
-        match count {
-            0 => Ok(JSValue::UNDEFINED),
-            1 => msg_to_js(&msgs[0], global),
-            _ => {
-                // On-stack array: conservative GC stack scan keeps these
-                // JSValues alive until `create_aggregate_error` stores them;
-                // a heap `Vec` is invisible to the scan, so a GC triggered by
-                // a later `msg_to_js` could sweep the earlier wrappers.
-                let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
-                for (i, msg) in msgs[0..count].iter().enumerate() {
-                    errors_stack[i] = msg_to_js(msg, global)?;
-                }
-                global.create_aggregate_error(&errors_stack[..count], message)
-            }
+        match self.msgs.as_slice() {
+            [] => Ok(JSValue::UNDEFINED),
+            [msg] => msg_to_js(msg, global),
+            _ => self.to_js_aggregate_error(global, message),
         }
     }
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {

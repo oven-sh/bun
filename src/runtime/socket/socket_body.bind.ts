@@ -153,8 +153,6 @@ export const socketFaultInjectionAvailable = b.fn({
 });
 export const namedPipeLiveCount = b.fn({ returns: b.usize, rustPath: testing("named_pipe_live_count") });
 export const upgradedDuplexLiveCount = b.fn({ returns: b.usize, rustPath: testing("upgraded_duplex_live_count") });
-/** Temporary. */
-export const tlsCloseCounts = b.fn({ returns: b.array(b.i32), rustPath: testing("tls_close_counts") });
 /** `count` is truncated and clamped to an `i32`. */
 export const sweepSocketTimers = b.fn({
   ...js,

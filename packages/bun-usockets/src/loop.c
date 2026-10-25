@@ -670,8 +670,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     return;
                 }
 
-                /* If we have no failed write or if we shut down, then stop polling for more writable. A spilled close_notify still has to leave. */
-                if (!s->flags.last_write_failed || (us_socket_is_shut_down(s) && !s->ssl_spilled)) {
+                /* If we have no failed write or if we shut down, then stop polling for more writable */
+                if (!s->flags.last_write_failed || us_socket_is_shut_down(s)) {
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
                 } else {
                     #ifdef LIBUS_USE_KQUEUE
@@ -991,7 +991,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
                 if (us_socket_is_shut_down(s)) {
                     /* We got FIN back after sending it */
-                    if (s->ssl) us_internal_ssl_close_ends_by(s, US_SSL_COUNT_PEER_FIN); /* Temporary */
                     if (s->send_rejected && unsent_is_lost) {
                         /* This owner reads nothing until the lost bytes drain: left open for what is queued, its hangup would fire for ever. */
                         s = us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);

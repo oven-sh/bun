@@ -2109,18 +2109,6 @@ int us_ssl_renegotiate(SSL *ssl) {
   return SSL_renegotiate(ssl);
 }
 
-/* Temporary, see internal.h. */
-int us_internal_ssl_close_counts[US_SSL_COUNTS];
-static struct us_socket_t *ssl_close_ending;
-static int ssl_close_ending_by;
-void us_internal_ssl_close_ends_by(struct us_socket_t *s, int count) {
-  ssl_close_ending = s;
-  ssl_close_ending_by = count;
-}
-static int ssl_close_is_counted(struct us_socket_t *s) {
-  return s->ssl && (SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN) && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN;
-}
-
 /* Returns 1 if shutdown is complete (or impossible) and the TCP socket may be
  * closed; 0 if we sent close_notify but must wait for the peer's. */
 static int ssl_handle_shutdown(struct us_socket_t *s) {
@@ -2144,17 +2132,12 @@ static int ssl_handle_shutdown(struct us_socket_t *s) {
       s->ssl_fatal_error = 1;
       return 1;
     }
-    if (ret != 1 && s->ssl_spilled) us_internal_ssl_close_counts[US_SSL_COUNT_WAITED_FOR_KERNEL]++; /* Temporary */
-    /* A close_notify that the kernel refused is spilled, and the writable event sends it. */
-    return ret == 1;
+    /* The kernel refused the close_notify, and SSL_SENT_SHUTDOWN (is_shut_down) ends the writable
+     * poll that would drain it: close now without it, the peer still observes the FIN. Node parks
+     * the alert in its stream write queue (crypto_tls.cc DoShutdown). */
+    return ret == 1 || s->ssl_spilled;
   }
   return 1;
-}
-
-/* A graceful close has sealed its close_notify and waits for the peer's. Its owner let go. */
-static int ssl_close_waits_for_peer(struct us_socket_t *s) {
-  return (SSL_get_shutdown(s_ssl(s)) & (SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN)) == SSL_SENT_SHUTDOWN &&
-         us_internal_socket_can_raw_write(s) && !s->ssl_shutdown_after_spill && !s->ssl_fatal_error;
 }
 
 /* Seconds a close waits for the peer to take the spill (at most one flush unit, so 13 KB/s), then for its close_notify: Bun.serve's default idleTimeout. */
@@ -2173,9 +2156,6 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     s->ssl_pending_close_code = (unsigned char) code;
     return s;
   }
-  /* A second graceful close leaves the first one waiting, with its deadline. */
-  if (code == LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN && !reason && !ssl_gone(s) && ssl_close_waits_for_peer(s)) return s;
-  if (ssl_close_ending != s && ssl_close_is_counted(s)) us_internal_ssl_close_ends_by(s, US_SSL_COUNT_CLOSED_AGAIN); /* Temporary */
   {
     /* Ciphertext batched in this dispatch and still held (the handshake's
      * final flight, a fatal alert sealed by a failing SSL_read) goes to the
@@ -2359,11 +2339,6 @@ struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client
 }
 
 struct us_socket_t *us_internal_ssl_on_close(struct us_socket_t *s, int code, void *reason) {
-  /* Temporary */
-  if (ssl_close_is_counted(s)) {
-    us_internal_ssl_close_counts[code > 2 ? US_SSL_COUNT_ERROR : ssl_close_ending == s ? ssl_close_ending_by : US_SSL_COUNT_OTHER]++;
-  }
-  if (ssl_close_ending == s) ssl_close_ending = NULL;
   ssl_set_loop_data(s);
   struct us_socket_t *ret = us_dispatch_close(s, code, reason);
   /* Free SSL after on_close so user code can still inspect ALPN / cert. */
@@ -2417,7 +2392,6 @@ static struct us_socket_t *ssl_retry_parked_write(struct us_socket_t *s) {
 }
 
 struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
-  us_internal_ssl_close_ends_by(s, US_SSL_COUNT_PEER_FIN); /* Temporary */
   ssl_set_loop_data(s);
   if (ssl_wants_eof_dispatch(s)) {
     /* Raw TCP FIN under TLS: the peer's write side is gone, so no
@@ -2471,12 +2445,12 @@ static struct us_socket_t *ssl_close_if_fatal(struct us_socket_t *s) {
 }
 
 struct us_socket_t *us_internal_ssl_on_timeout(struct us_socket_t *s) {
-  us_internal_ssl_close_ends_by(s, US_SSL_COUNT_DEADLINE); /* Temporary */
   if (s->ssl_close_after_spill) {
     ssl_release_spill(s->group->loop, s);
     return us_internal_socket_close_raw(s, s->ssl_pending_close_code, NULL);
   }
-  if (ssl_close_waits_for_peer(s)) {
+  /* close_notify without the FIN: the spill drained, and the graceful close now waits for the peer's reply. */
+  if ((SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN) && us_internal_socket_can_raw_write(s)) {
     return us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
   }
   return us_dispatch_timeout(s);
@@ -2512,8 +2486,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   if (!ssl_drain_spill(loop_ssl_data, s) || s->send_rejected) return s;
   if (s->ssl_shutdown_after_spill) {
     s->ssl_shutdown_after_spill = 0;
-    if (SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN) us_internal_socket_raw_shutdown(s);
-    else us_internal_ssl_shutdown(s);
+    us_internal_ssl_shutdown(s);
     if (ssl_gone(s)) return s;
   }
   if (s->ssl_close_after_spill) {
@@ -2707,7 +2680,6 @@ restart:
           if (us_internal_ssl_is_shut_down(s)) ERR_clear_error();
           return ssl_fail_established_session(s, loop_ssl_data, read);
         } else if (err == SSL_ERROR_ZERO_RETURN) {
-          us_internal_ssl_close_ends_by(s, US_SSL_COUNT_PEER_CLOSE_NOTIFY); /* Temporary */
           /* The close_notify can share a read with the peer's Finished: the owner hears of the handshake before the close below. */
           s = ssl_report_finished_handshake(s, loop_ssl_data, 0);
           if (!s) return NULL;
@@ -3059,9 +3031,8 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
      * prepends any pending TLS 1.3 NewSessionTicket flight to the alert, so
      * tickets are still delivered) and owns the error handling. */
     ssl_handle_shutdown(s);
-    /* The FIN follows a close_notify that waits for the kernel, from the writable event. */
-    if (s->ssl_spilled) s->ssl_shutdown_after_spill = 1;
-    else us_internal_socket_raw_shutdown(s);
+    ssl_release_spill(s->group->loop, s);
+    us_internal_socket_raw_shutdown(s);
     return;
   }
 

@@ -748,8 +748,6 @@ export const socketFaultInjection = {
 
 /** Runs the uSockets timeout sweep of this thread's loop `count` times. The loop runs one every 4 seconds. */
 export const sweepSocketTimers = $bindgen("socket_body.bind.ts", "sweepSocketTimers");
-/** Temporary: close_notifies that waited for the kernel, then what ended the graceful TLS closes that waited for the peer's. */
-export const tlsCloseCounts: () => number[] = $bindgen("socket_body.bind.ts", "tlsCloseCounts");
 
 export const namedPipeInternals = {
   /**

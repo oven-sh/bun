@@ -1,5 +1,6 @@
 use bun_collections::VecExt;
 use std::io::Write as _;
+use std::time::{Duration, Instant};
 
 use crate::Error;
 use bun_alloc::AllocError;
@@ -115,18 +116,127 @@ type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
 pub(crate) struct PublishCommand;
 
-/// A thread that is blocked reading stdin cannot be stopped. When `--recursive` needs another
-/// login, it reuses the thread that is still waiting for ENTER instead of starting a second one.
-struct WebLogin {
-    /// The URL that pressing ENTER opens. `None` once the login has finished.
-    auth_url: Option<&'static [u8]>,
-    waits_for_enter: bool,
+/// Where a web login looks for the ENTER that opens its page.
+#[cfg(unix)]
+enum EnterOffer {
+    /// A second, non-blocking open of the terminal that stdin is.
+    Terminal(File),
+    /// stdin itself: not a terminal, or a terminal that cannot be opened a second time.
+    Stdin,
 }
 
-static WEB_LOGIN: bun_core::Mutex<WebLogin> = bun_core::Mutex::new(WebLogin {
-    auth_url: None,
-    waits_for_enter: false,
-});
+#[cfg(unix)]
+enum Waited {
+    Enter,
+    Nothing,
+    EndOfInput,
+}
+
+#[cfg(unix)]
+impl EnterOffer {
+    fn new() -> Option<Self> {
+        if !Output::is_stdin_tty() {
+            return Some(Self::Stdin);
+        }
+        let reopened = crate::webcore::file_reader::open_as_nonblocking_tty(
+            Fd::stdin().native(),
+            bun_sys::O::RDONLY,
+        );
+        let offer = if reopened >= 0 {
+            // Not fd 0: its read blocks when another reader of the terminal takes the line first.
+            Self::Terminal(File::from_fd(Fd::from_native(reopened)))
+        } else {
+            Self::Stdin
+        };
+        // macOS cannot poll every terminal device (/dev/tty), and ENTER cannot be seen there.
+        (offer.readable_within(Duration::ZERO).is_some()).then_some(offer)
+    }
+
+    fn fd(&self) -> Fd {
+        match self {
+            Self::Terminal(terminal) => terminal.handle(),
+            Self::Stdin => Fd::stdin(),
+        }
+    }
+
+    /// `None`: the input cannot be watched, or it ended.
+    fn readable_within(&self, timeout: Duration) -> Option<bool> {
+        let mut polled = [bun_sys::posix::PollFd {
+            fd: self.fd().native(),
+            events: bun_sys::posix::POLL_IN,
+            revents: 0,
+        }];
+        let timeout =
+            core::ffi::c_int::try_from(timeout.as_millis()).unwrap_or(core::ffi::c_int::MAX);
+        match bun_sys::posix::poll(&mut polled, timeout) {
+            Ok(0) => Some(false),
+            Ok(_) if polled[0].revents & bun_sys::posix::POLL_IN != 0 => Some(true),
+            _ => None,
+        }
+    }
+
+    fn wait(&self, deadline: Instant) -> Waited {
+        let mut line = [0u8; 1024];
+        // A terminal gives one line to a read. A pipe is read byte by byte, up to the line end.
+        let block = match self {
+            Self::Terminal(_) => line.len(),
+            Self::Stdin => 1,
+        };
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.readable_within(left) {
+                Some(true) => {}
+                Some(false) => return Waited::Nothing,
+                None => return Waited::EndOfInput,
+            }
+            match bun_sys::read(self.fd(), &mut line[..block]) {
+                Ok(0) => return Waited::EndOfInput,
+                Ok(len) if strings::contains_char(&line[..len], b'\n') => return Waited::Enter,
+                Ok(_) if left.is_zero() => return Waited::Nothing,
+                Ok(_) => {}
+                // Another reader of the terminal took the line first.
+                Err(err) if err.is_retry() => return Waited::Nothing,
+                Err(_) => return Waited::EndOfInput,
+            }
+        }
+    }
+
+    /// Whether ENTER is pressed before `deadline`. It ends the offer, and so does the end of input.
+    fn pressed_before(offer: &mut Option<Self>, deadline: Instant) -> bool {
+        let Some(source) = offer else {
+            return false;
+        };
+        let waited = source.wait(deadline);
+        if !matches!(waited, Waited::Nothing) {
+            *offer = None;
+        }
+        matches!(waited, Waited::Enter)
+    }
+
+    /// A line that was typed on the terminal during the last request answered the offer.
+    fn take_late_enter(&self) {
+        if matches!(self, Self::Terminal(_)) {
+            let _ = self.wait(Instant::now());
+        }
+    }
+}
+
+/// Windows makes no offer: `start`, its opener, is not a program that can be spawned (#26231).
+#[cfg(not(unix))]
+enum EnterOffer {}
+
+#[cfg(not(unix))]
+impl EnterOffer {
+    fn new() -> Option<Self> {
+        None
+    }
+
+    fn pressed_before(_: &mut Option<Self>, _: Instant) -> bool {
+        false
+    }
+
+    fn take_late_enter(&self) {}
+}
 
 /// What `bun publish` sends. The scripts are `None` when publishing a tarball, which doesn't run
 /// any.
@@ -880,33 +990,15 @@ impl PublishCommand {
         Ok(true)
     }
 
-    fn press_enter_to_open_in_browser() {
-        // This prevents backspace from deleting the entire line
-        #[cfg(windows)]
-        let _stdin_mode =
-            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-                unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-                ..Default::default()
+    /// On a thread: `xdg-open` can stay until the browser is closed.
+    fn open_in_browser(auth_url: &[u8]) {
+        let auth_url = auth_url.to_vec();
+        let _ = std::thread::Builder::new()
+            .name("WebLoginOpener".into())
+            .stack_size(256 * 1024)
+            .spawn(move || {
+                let _ = bun_core::spawn_sync_inherit(&[open::OPENER, auth_url.as_slice()]);
             });
-
-        // This runs on its own thread, and `Output::buffered_stdin()` is for the main thread only.
-        let mut input = [0u8; 1024];
-        loop {
-            match bun_sys::read(Fd::stdin(), &mut input) {
-                Ok(0) | Err(_) => return,
-                Ok(len) if strings::contains_char(&input[..len], b'\n') => break,
-                Ok(_) => continue,
-            }
-        }
-
-        let auth_url = {
-            let mut login = WEB_LOGIN.lock();
-            login.waits_for_enter = false;
-            login.auth_url.take()
-        };
-        if let Some(auth_url) = auth_url {
-            let _ = bun_core::spawn_sync_inherit(&[open::OPENER, auth_url]);
-        }
     }
 
     fn get_otp(
@@ -931,8 +1023,6 @@ impl PublishCommand {
             let Some(auth_url_str) = json.get_string_cloned(&bump, b"authUrl")? else {
                 break 'try_web;
             };
-            // The thread that opens it outlives `bump`.
-            let auth_url_str: &'static [u8] = cli_dupe(auth_url_str);
             let auth_url = URL::parse(auth_url_str);
             let shown_auth_url = bun_fmt::escape_control_chars(auth_url_str).to_string();
             // ENTER only opens a URL that the box shows exactly as it is, with nothing escaped.
@@ -952,7 +1042,12 @@ impl PublishCommand {
                 break 'try_web;
             }
 
-            if auth_url_is_web {
+            let mut enter_offer = if auth_url_is_web {
+                EnterOffer::new()
+            } else {
+                None
+            };
+            if enter_offer.is_some() {
                 bun_core::prettyln!(
                     "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
                 );
@@ -981,24 +1076,6 @@ impl PublishCommand {
             ));
             Output::flush();
 
-            // on another thread because pressing enter is not required
-            if auth_url_is_web {
-                let mut login = WEB_LOGIN.lock();
-                login.auth_url = Some(auth_url_str);
-                if !std::mem::replace(&mut login.waits_for_enter, true)
-                    && std::thread::Builder::new()
-                        .spawn(Self::press_enter_to_open_in_browser)
-                        .is_err()
-                {
-                    Output::err(
-                        "ThreadSpawn",
-                        "failed to spawn thread for opening auth url",
-                        (),
-                    );
-                    Global::crash();
-                }
-            }
-
             let auth_headers = Self::construct_publish_headers(manager, registry, None, None)?;
 
             loop {
@@ -1022,10 +1099,17 @@ impl PublishCommand {
                                 strings::parse_int::<u32>(trimmed, 10).ok()
                             })
                             .map_or(500, |seconds| u64::from(seconds) * 1000);
-                        std::thread::sleep(std::time::Duration::from_millis(milliseconds));
+                        let retry_at = Instant::now() + Duration::from_millis(milliseconds);
+                        // ENTER is awaited here, so no reader of stdin outlives the login.
+                        if EnterOffer::pressed_before(&mut enter_offer, retry_at) {
+                            Self::open_in_browser(auth_url_str);
+                        }
+                        std::thread::sleep(retry_at.saturating_duration_since(Instant::now()));
                     }
                     200 => {
-                        WEB_LOGIN.lock().auth_url = None;
+                        if let Some(offer) = enter_offer.take() {
+                            offer.take_late_enter();
+                        }
 
                         let done_bump = bun_alloc::Arena::new();
                         let otp_done_source =

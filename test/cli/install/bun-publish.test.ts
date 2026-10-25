@@ -51,6 +51,85 @@ export async function publish(
   return { out, err, exitCode };
 }
 
+/** Polls until `condition` holds. The timeout of the test is the deadline. */
+async function until(condition: () => boolean) {
+  while (!condition()) await Bun.sleep(1);
+}
+
+/**
+ * Resolves once the main thread of the process `pid` waits between two requests to a done url: it is in poll(2),
+ * where a web login looks for ENTER, or in a sleep. Linux only, by the numbers of these system calls on x64 or arm64.
+ */
+function untilWaitingToRetry(pid: number) {
+  const waits = process.arch === "arm64" ? /^(73|101|115) / : /^(7|35|230|271) /;
+  return until(() => waits.test(readFileSync(`/proc/${pid}/task/${pid}/syscall`, "utf8")));
+}
+
+/**
+ * `cmd` (by default `bun publish` with `args`) on a terminal: its stdin, stdout and stderr are one PTY. On Windows,
+ * ConPTY redraws the output of the process, so only what is printed on one line can be waited for there.
+ */
+function publishOnTerminal(env: any, cwd: string, args: string[] = [], cmd = [bunExe(), "publish", ...args]) {
+  const decoder = new TextDecoder();
+  // as the terminal has it: a "\n" of the process is "\r\n" here
+  let raw = "";
+  let waiting: { text: string; from: number; resolve: () => void; reject: (error: Error) => void }[] = [];
+  const closed = Promise.withResolvers<void>();
+  const printed = () => (isWindows ? Bun.stripANSI(raw) : raw);
+  const proc = spawn({
+    cmd,
+    cwd,
+    env,
+    terminal: {
+      cols: 200,
+      rows: 50,
+      data(_, chunk) {
+        raw += decoder.decode(chunk, { stream: true });
+        const found = waiting.filter(({ text, from }) => printed().includes(text, from));
+        waiting = waiting.filter(entry => !found.includes(entry));
+        for (const { resolve } of found) resolve();
+      },
+      // The terminal is closed once the process has exited and the rest of its output was delivered.
+      exit() {
+        for (const { text, reject } of waiting) {
+          reject(new Error(`the terminal closed before it printed ${JSON.stringify(text)}:\n${raw}`));
+        }
+        closed.resolve();
+      },
+    },
+  });
+  const printedFrom = (text: string, from: number) => {
+    if (printed().includes(text, from)) return Promise.resolve();
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    waiting.push({ text, from, resolve, reject });
+    return promise;
+  };
+  return {
+    pid: proc.pid,
+    /** Resolves once the process has printed `text`. */
+    printed: (text: string) => printedFrom(text.replaceAll("\n", "\r\n"), 0),
+    /** Types `keys`, with "\r" for ENTER. */
+    write: (keys: string) => void proc.terminal!.write(keys),
+    /**
+     * Types `keys` and waits for their echo. The terminal echoes a key when its line discipline has taken it, so
+     * after this a reader of the terminal finds the typed lines. The echo of ENTER alone is only a line end: to
+     * tell it from the output of the process, wait for what the process printed last before you type. Not Windows.
+     */
+    type(keys: string) {
+      const from = raw.length;
+      proc.terminal!.write(keys);
+      return printedFrom(keys.replaceAll("\r", "\r\n"), from);
+    },
+    /** The output with "\n" line ends, and the exit code. */
+    async exited() {
+      const [exitCode] = await Promise.all([proc.exited, closed.promise]);
+      raw += decoder.decode();
+      return { output: printed().replaceAll("\r\n", "\n"), exitCode };
+    },
+    [Symbol.asyncDispose]: () => proc[Symbol.asyncDispose](),
+  };
+}
+
 /**
  * A directory with `package.json` and the auth bunfig for `registry`. A checkout that ran these tests against
  * verdaccio may still have the package in the fixture directory, so the registry is told to forget it first.
@@ -230,6 +309,25 @@ async function expectPublishedManifest(
   return tarball;
 }
 
+/** The answer of a web login's done url while the login is not complete. bun asks again at once. */
+const notDoneYet = () => new Response("{}", { status: 202, headers: { "retry-after": "0" } });
+
+/**
+ * An `xdg-open`, which is what Linux opens a page with, and the environment that has it first on PATH. It records
+ * the url it was given, one line for each time it ran. macOS opens a page with the absolute `/usr/bin/open`, which a
+ * test cannot replace, so the tests in which ENTER opens a page are for Linux.
+ */
+function fakeOpener() {
+  const dir = tempDir("publish-opener", { "xdg-open": `#!/bin/sh\necho "$1" >> "$OPENED"\n` });
+  chmodSync(join(dir, "xdg-open"), 0o755);
+  const log = join(dir, "opened.txt");
+  return {
+    env: { ...env, OPENED: log, PATH: [String(dir), env.PATH ?? ""].join(delimiter) },
+    opened: () => (existsSync(log) ? readFileSync(log, "utf8") : ""),
+    [Symbol.dispose]: () => dir[Symbol.dispose](),
+  };
+}
+
 describe.concurrent("otp", () => {
   /**
    * The registry for the OTP tests. The first PUT is answered with a 401 that asks for a one-time password, the
@@ -245,9 +343,11 @@ describe.concurrent("otp", () => {
     npmNotice?: boolean;
     /** add `x-local-cache`, which tells bun to ignore `npm-notice` */
     xLocalCache?: boolean;
+    /** runs for every request to the done url. What it returns is the answer, and without one the token is */
+    done?: () => Response | void | Promise<Response | void>;
   }) {
     const { otp, setAuthHeader = true, otpFail = false, npmNotice = false, xLocalCache = false } = opts;
-    return mockRegistry((req, recorded, mock) => {
+    return mockRegistry(async (req, recorded, mock) => {
       if (req.method === "PUT") {
         if (recorded.otp === otp) {
           if (otpFail) {
@@ -273,12 +373,37 @@ describe.concurrent("otp", () => {
         );
       }
       if (recorded.pathname === "/done") {
-        return Response.json({ token: otp });
+        return (await opts.done?.()) ?? Response.json({ token: otp });
       }
       // `/auth` is shown to the user. `bun publish` must never request it.
       return new Response(`unexpected request: ${req.method} ${recorded.pathname}`, { status: 500 });
     });
   }
+
+  // A web login offers to open its page on ENTER. Windows makes no offer, because `start`, its opener, is not a
+  // program that can be spawned. This gives the output of Windows the heading of the other platforms.
+  const withOffer = (out: string) =>
+    isWindows
+      ? out.replace(
+          "\nAuthenticate your account at:\n",
+          "\nAuthenticate your account at (press ENTER to open in browser):\n",
+        )
+      : out;
+
+  /**
+   * Presses ENTER while bun waits for the answer of the done url. The box around the auth url is the last thing bun
+   * printed before it asked, so the line end that follows the box is the echo of ENTER.
+   */
+  async function enterDuringRequest(terminal: ReturnType<typeof publishOnTerminal>, mock: MockRegistry) {
+    const authUrl = `http://localhost:${mock.port}/auth`;
+    const border = `|${Buffer.alloc(authUrl.length + 2, "-")}|`;
+    await terminal.printed(`${border}\n| ${authUrl} |\n${border}\n`);
+    await terminal.type("\r");
+  }
+
+  /** A `postpublish` script for `sh` that asks a question and saves the line it reads from stdin as the answer. */
+  const question = "Push the tag? ";
+  const askScript = `printf '${question}' && read -r answer && echo "$answer" > answer.txt`;
 
   test.each([
     ["", { setAuthHeader: true }],
@@ -291,7 +416,7 @@ describe.concurrent("otp", () => {
 
     const { out, err, exitCode } = await publish(env, String(dir));
     expect(err).toBe("");
-    expect(normalizePublishOutput(out, mock.port)).toMatchInlineSnapshot(`
+    expect(normalizePublishOutput(withOffer(out), mock.port)).toMatchInlineSnapshot(`
       "bun publish <version> (<revision>)
 
       packed 97B package.json
@@ -333,7 +458,7 @@ describe.concurrent("otp", () => {
     });
 
     const { out, err, exitCode } = await publish(env, String(dir));
-    expect(normalizePublishOutput(out, mock.port)).toMatchInlineSnapshot(`
+    expect(normalizePublishOutput(withOffer(out), mock.port)).toMatchInlineSnapshot(`
       "bun publish <version> (<revision>)
 
       packed 97B package.json
@@ -548,6 +673,249 @@ describe.concurrent("otp", () => {
     30_000,
   );
 
+  // Between two requests to the done url, bun waits as long as the registry asks. That wait is the wait for ENTER.
+  test.skipIf(!isLinux)(
+    "ENTER pressed while bun waits for the next request to the done url opens the page",
+    async () => {
+      const otp = "otp-13";
+      using opener = fakeOpener();
+      // A second request within the test means that the wait of 30 seconds was not kept.
+      const wait30 = () => new Response("{}", { status: 202, headers: { "retry-after": "30" } });
+      using mock = otpRegistry({ otp, done: wait30 });
+      using dir = tempDir("publish-web-login-enter-in-wait", {
+        "package.json": JSON.stringify({ name: "otp-pkg-13", version: "1.3.0" }),
+        "bunfig.toml": mockBunfig(mock),
+      });
+
+      await using terminal = publishOnTerminal(opener.env, String(dir));
+      await untilWaitingToRetry(terminal.pid);
+      terminal.write("\r");
+      await until(() => opener.opened() !== "");
+
+      expect(opener.opened()).toBe(`http://localhost:${mock.port}/auth\n`);
+      expect(mock.requests.filter(r => r.pathname === "/done")).toHaveLength(1);
+    },
+  );
+
+  // While bun waits for the answer of the done url, it does not look at the terminal. It does when the answer is in.
+  test.skipIf(!isLinux)("ENTER pressed during a request to the done url opens the page after the answer", async () => {
+    const otp = "otp-11";
+    let polls = 0;
+    using opener = fakeOpener();
+    using mock = otpRegistry({
+      otp,
+      async done() {
+        if (++polls === 1) await enterDuringRequest(terminal, mock);
+        if (opener.opened() === "") return notDoneYet();
+      },
+    });
+    using dir = tempDir("publish-web-login-enter-in-flight", {
+      "package.json": JSON.stringify({ name: "otp-pkg-11", version: "1.1.1" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    await using terminal = publishOnTerminal(opener.env, String(dir));
+    const { output, exitCode } = await terminal.exited();
+
+    expect(output).toContain("\n + otp-pkg-11@1.1.1\n");
+    expect(opener.opened()).toBe(`http://localhost:${mock.port}/auth\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // When the token arrives, the login is over and there is nothing left to open. The ENTER was still an answer to the
+  // offer, so whatever reads the terminal next must not get it as an empty line.
+  test.skipIf(isWindows)(
+    "ENTER pressed during the request that returns the token opens nothing and is not left for the postpublish script",
+    async () => {
+      const otp = "otp-10";
+      using opener = fakeOpener();
+      using mock = otpRegistry({ otp, done: () => enterDuringRequest(terminal, mock) });
+      using dir = tempDir("publish-web-login-late-enter", {
+        "package.json": JSON.stringify({ name: "otp-pkg-10", version: "1.0.0", scripts: { postpublish: askScript } }),
+        "bunfig.toml": mockBunfig(mock),
+      });
+
+      await using terminal = publishOnTerminal(opener.env, String(dir));
+      await terminal.printed(question);
+      await terminal.type("first\rsecond\r");
+      const { exitCode } = await terminal.exited();
+
+      expect(opener.opened()).toBe("");
+      expect(await file(join(dir, "answer.txt")).text()).toBe("first\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The login is over when the done url hands out the token. From then on, nothing of the login reads the terminal.
+  test.skipIf(isWindows)(
+    "after a web login on a terminal, a question of the postpublish script gets the first line that is typed",
+    async () => {
+      const otp = "otp-9";
+      using mock = otpRegistry({ otp });
+      using dir = tempDir("publish-web-login-question", {
+        "package.json": JSON.stringify({ name: "otp-pkg-9", version: "9.9.9", scripts: { postpublish: askScript } }),
+        "bunfig.toml": mockBunfig(mock),
+      });
+
+      await using terminal = publishOnTerminal(env, String(dir));
+      await terminal.printed(question);
+      await terminal.type("first\rsecond\r");
+      const { output, exitCode } = await terminal.exited();
+
+      expect(output).toContain("\nAuthenticate your account at (press ENTER to open in browser):\n");
+      expect(await file(join(dir, "answer.txt")).text()).toBe("first\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // `dd` reads the terminal before bun does, so it gets the typed line. A read of bun that waited for the next line
+  // would stop the login. It is a race that a wrong build loses in about 6 of 10 runs, hence the five runs.
+  test.skipIf(!isLinux).each([1, 2, 3, 4, 5])(
+    "a line that another reader of the terminal takes first does not stall the login (run %d)",
+    async () => {
+      const otp = "otp-15";
+      using opener = fakeOpener();
+      using other = tempDir("publish-web-login-other-reader", {});
+      const taken = join(other, "taken.txt");
+      const hasLine = () => existsSync(taken) && readFileSync(taken, "utf8") !== "";
+      // Without `retry-after`, bun waits half a second. The login lasts until the other reader has the line.
+      using mock = otpRegistry({ otp, done: () => (hasLine() ? undefined : new Response("{}", { status: 202 })) });
+      using dir = tempDir("publish-web-login-second-reader", {
+        "package.json": JSON.stringify({ name: "otp-pkg-15", version: "1.5.0" }),
+        "bunfig.toml": mockBunfig(mock),
+      });
+
+      // fd 3 keeps the terminal for `dd`: `sh` gives a command that it starts with `&` /dev/null as stdin.
+      const withReader = `exec 3<&0; dd bs=1024 count=1 <&3 >"$1" 2>/dev/null & exec "$0" publish 3<&-`;
+      await using terminal = publishOnTerminal(opener.env, String(dir), [], ["sh", "-c", withReader, bunExe(), taken]);
+      await untilWaitingToRetry(terminal.pid);
+      terminal.write("\r");
+      const { output, exitCode } = await terminal.exited();
+
+      expect(output).toContain("\n + otp-pkg-15@1.5.0\n");
+      expect(readFileSync(taken, "utf8")).toBe("\n");
+      expect(opener.opened()).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // ENTER is a line end on stdin, whatever stdin is. Of a pipe, bun takes the bytes up to that line end and no more.
+  test.skipIf(!isLinux)(
+    "a line end on a piped stdin opens the page, and the rest of the pipe reaches the postpublish script",
+    async () => {
+      const otp = "otp-8";
+      using opener = fakeOpener();
+      // The login lasts until ENTER has opened the page.
+      using mock = otpRegistry({ otp, done: () => (opener.opened() === "" ? notDoneYet() : undefined) });
+      using dir = tempDir("publish-web-login-piped-enter", {
+        "package.json": JSON.stringify({
+          name: "otp-pkg-8",
+          version: "8.8.8",
+          scripts: { postpublish: `${bunExe()} save-stdin.js` },
+        }),
+        "bunfig.toml": mockBunfig(mock),
+        "save-stdin.js": `const fs = require("fs"); fs.writeFileSync("stdin.txt", fs.readFileSync(0));`,
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "publish"],
+        cwd: String(dir),
+        stdin: Buffer.from("\nfor the script\n"),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: opener.env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(err).toBe(`$ ${bunExe()} save-stdin.js\n`);
+      expect(out).toContain("\n + otp-pkg-8@8.8.8\n");
+      expect(opener.opened()).toBe(`http://localhost:${mock.port}/auth\n`);
+      expect(await file(join(dir, "stdin.txt")).text()).toBe("for the script\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // bun looks for ENTER only while it waits for the next request to the done url. Here it never has to wait.
+  test("a web login that the done url completes at once reads nothing of a piped stdin", async () => {
+    const otp = "otp-16";
+    using opener = fakeOpener();
+    using mock = otpRegistry({ otp });
+    using dir = tempDir("publish-web-login-piped", {
+      "package.json": JSON.stringify({
+        name: "otp-pkg-16",
+        version: "1.6.0",
+        scripts: { postpublish: `${bunExe()} save-stdin.js` },
+      }),
+      "bunfig.toml": mockBunfig(mock),
+      "save-stdin.js": `const fs = require("fs"); fs.writeFileSync("stdin.txt", fs.readFileSync(0));`,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "publish"],
+      cwd: String(dir),
+      stdin: Buffer.from("for the script\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: opener.env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toBe(`$ ${bunExe()} save-stdin.js\n`);
+    expect(out).toContain("\n + otp-pkg-16@1.6.0\n");
+    expect(opener.opened()).toBe("");
+    expect(await file(join(dir, "stdin.txt")).text()).toBe("for the script\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The done url says how long to wait before the next request. Without `retry-after` it is half a second.
+  test.each([
+    ["a second for `retry-after: 1`", { "retry-after": "1" }, 1000],
+    ["half a second without `retry-after`", {}, 500],
+  ] as const)("a web login waits %s before it asks the done url again", async (_, headers, milliseconds) => {
+    const otp = "otp-14";
+    const askedAt: number[] = [];
+    using mock = otpRegistry({
+      otp,
+      done() {
+        askedAt.push(performance.now());
+        if (askedAt.length === 1) return new Response("{}", { status: 202, headers });
+      },
+    });
+    using dir = tempDir("publish-web-login-wait", {
+      "package.json": JSON.stringify({ name: "otp-pkg-14", version: "1.4.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    const { err, exitCode } = await publish(env, String(dir));
+    expect(err).toBe("");
+    expect(askedAt).toHaveLength(2);
+    expect(askedAt[1] - askedAt[0]).toBeGreaterThanOrEqual(milliseconds);
+    expect(exitCode).toBe(0);
+  });
+
+  // The offer does not depend on what stdout is.
+  test.skipIf(isWindows)("ENTER is offered on a terminal when stdout is redirected", async () => {
+    const otp = "otp-12";
+    using mock = otpRegistry({ otp });
+    using dir = tempDir("publish-web-login-stdout-file", {
+      "package.json": JSON.stringify({ name: "otp-pkg-12", version: "1.2.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+    using stdout = tempDir("publish-web-login-stdout", {});
+
+    const redirected = ["sh", "-c", `exec "$0" publish > "$1"`, bunExe(), join(stdout, "stdout.txt")];
+    await using terminal = publishOnTerminal(env, String(dir), [], redirected);
+    const { output, exitCode } = await terminal.exited();
+
+    expect(output).toBe("");
+    const authUrl = `http://localhost:${mock.port}/auth`;
+    const border = `|${Buffer.alloc(authUrl.length + 2, "-")}|`;
+    expect(await file(join(stdout, "stdout.txt")).text()).toEndWith(
+      `\nAuthenticate your account at (press ENTER to open in browser):\n${border}\n| ${authUrl} |\n${border}\n\n + otp-pkg-12@1.2.0\n`,
+    );
+    expect(exitCode).toBe(0);
+  });
+
   // Situation: user has 2FA enabled account with faceid sign-in.
   // They run `bun publish` with --auth-type=legacy, prompting them
   // to enter their OTP. Because they have faceid sign-in, they don't
@@ -566,7 +934,7 @@ describe.concurrent("otp", () => {
 
     const { out, err, exitCode } = await publish(env, String(dir));
     expect(err).toBe(shouldIgnoreNotice ? "" : `\nnote: visit http://localhost:${mock.port}/auth to login\n`);
-    expect(normalizePublishOutput(out, mock.port)).toMatchInlineSnapshot(`
+    expect(normalizePublishOutput(withOffer(out), mock.port)).toMatchInlineSnapshot(`
       "bun publish <version> (<revision>)
 
       packed 97B package.json
@@ -612,7 +980,7 @@ describe.concurrent("otp", () => {
       String(dir),
     );
     expect(err).toBe("");
-    expect(normalizePublishOutput(out, mock.port)).toMatchInlineSnapshot(`
+    expect(normalizePublishOutput(withOffer(out), mock.port)).toMatchInlineSnapshot(`
       "bun publish <version> (<revision>)
 
       packed 97B package.json
@@ -4091,6 +4459,74 @@ describe.concurrent("--recursive and --filter", () => {
     expect(opened()).toBe(`http://localhost:${mock.port}/auth/rec-c\n`);
     expect(published(out)).toEqual([" + rec-a@1.0.0", " + rec-b@1.0.0", " + rec-c@1.0.0"]);
     expect(exitCode).toBe(0);
+  });
+
+  describe("a one-time password question after a web login", () => {
+    const otp = "424242";
+
+    // rec-a is logged in through its done url, which hands out the token at once. rec-b is then asked for a one-time
+    // password, which is a question on stdin. rec-c needs neither.
+    function loginThenQuestion() {
+      return mockRegistry((req, { pathname, otp: sent }, mock) => {
+        const url = `http://localhost:${mock.port}`;
+        const challenge = { status: 401, headers: { "www-authenticate": "OTP" } };
+        if (req.method === "GET") {
+          if (pathname === "/done/rec-a") return Response.json({ token: "from-the-done-url" });
+          return new Response("not found", { status: 404 });
+        }
+        if (pathname === "/rec-a" && sent === null) {
+          return Response.json({ authUrl: `${url}/auth`, doneUrl: `${url}/done/rec-a` }, challenge);
+        }
+        if (pathname === "/rec-b" && sent === null) return Response.json({}, challenge);
+        if (pathname === "/rec-b" && sent !== otp) return Response.json({ error: "wrong otp" }, { status: 401 });
+        return new Response("OK");
+      });
+    }
+    const puts = (mock: MockRegistry) => mock.requests.filter(r => r.method === "PUT").map(r => [r.pathname, r.otp]);
+    const allPublished = [
+      ["/rec-a", null],
+      ["/rec-a", "from-the-done-url"],
+      ["/rec-b", null],
+      ["/rec-b", otp],
+      ["/rec-c", null],
+    ];
+
+    test("gets the first line that is typed on a terminal", async () => {
+      using mock = loginThenQuestion();
+      using dir = workspace(mock);
+
+      await using terminal = publishOnTerminal(env, String(dir), ["-r"]);
+      await terminal.printed("Enter OTP:");
+      terminal.write(`${otp}\r999999\r`);
+      const { output, exitCode } = await terminal.exited();
+
+      expect(puts(mock)).toEqual(allPublished);
+      // ConPTY redraws the output of the process.
+      if (!isWindows) expect(published(output)).toEqual([" + rec-a@1.0.0", " + rec-b@1.0.0", " + rec-c@1.0.0"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // The login of rec-a does not have to wait for its done url, so it does not look for ENTER on the pipe.
+    test("gets the line of a piped stdin", async () => {
+      using mock = loginThenQuestion();
+      using opener = fakeOpener();
+      using dir = workspace(mock);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "publish", "-r"],
+        cwd: String(dir),
+        stdin: Buffer.from(`${otp}\n`),
+        stdout: "pipe",
+        stderr: "ignore",
+        env: opener.env,
+      });
+      const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+      expect(puts(mock)).toEqual(allPublished);
+      expect(opener.opened()).toBe("");
+      expect(published(out)).toEqual([" + rec-a@1.0.0", " + rec-b@1.0.0", " + rec-c@1.0.0"]);
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

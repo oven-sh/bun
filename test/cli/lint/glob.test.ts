@@ -909,7 +909,7 @@ describe("ignore patterns for the installed ESLint, from another directory than 
   async function sent(version: string, args: string[], { name = "pkg", config: at = ".", cwd = name, more = {} } = {}) {
     using dir = tempDir("bun-lint-glob", {
       ...eslintAt(version),
-      [join(at, "eslint.config.mjs")]: config,
+      [`${at}/eslint.config.mjs`]: config,
       ...Object.fromEntries(
         ["keep", "dist/keep", "dist/x", "src/y"].map(it => [`${name}/${it}.vue`, "<template />\n"]),
       ),

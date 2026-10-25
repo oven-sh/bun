@@ -178,7 +178,12 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
       for (const block of readFileSync(defaultFile, "utf8").match(
         /-----BEGIN CERTIFICATE-----[^]*?-----END CERTIFICATE-----/g,
       ) ?? []) {
-        const fp = fingerprint(block);
+        let fp;
+        try {
+          fp = fingerprint(block);
+        } catch {
+          break; // a block that does not decode ends the file for the loader too
+        }
         if (!expected.includes(fp)) expected.push(fp);
       }
     }
@@ -186,10 +191,14 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
   });
 
   // A bind mount in a private user and mount namespace replaces a system directory for one process tree. Skipped
-  // where unprivileged user namespaces are disabled, like in most containers.
+  // where unprivileged user namespaces or mounts in them are disabled, like in most containers.
   const canBindMount =
     Bun.which("unshare") !== null &&
-    Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+    Bun.spawnSync({
+      cmd: ["unshare", "-Urm", "/bin/sh", "-c", 'mount --bind "$1" "$1"', "sh", "/etc"],
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exitCode === 0;
 
   describe.concurrent.skipIf(!canBindMount)("in a private mount namespace", () => {
     const keys = join(import.meta.dir, "../test/fixtures/keys");

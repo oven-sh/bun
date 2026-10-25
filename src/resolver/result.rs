@@ -41,7 +41,8 @@ pub(crate) struct PathPairIter<'a> {
 }
 
 impl<'a> PathPairIter<'a> {
-    pub(crate) fn next(&mut self) -> Option<&mut Path> {
+    /// The next path that is not disabled, after its place in the pair.
+    pub(crate) fn next(&mut self) -> Option<(usize, &mut Path)> {
         if let Some(path_) = self.next_() {
             let p: *mut Path = path_;
             // SAFETY: `p` is the exclusive `&mut Path` just returned by `next_()`,
@@ -52,7 +53,7 @@ impl<'a> PathPairIter<'a> {
                 if (*p).is_disabled {
                     return self.next();
                 }
-                return Some(&mut *p);
+                return Some((usize::from(self.index) - 1, &mut *p));
             }
         }
         None
@@ -85,6 +86,14 @@ impl PathPair {
 // `result.primary_side_effects_data = loader.side_effects()` type-checks.
 use bun_ast::SideEffects;
 
+/// The directory a path of a match was found in, by the path the resolver walked to it.
+#[derive(Clone, Copy)]
+pub(crate) enum WalkedDir {
+    Dir(DirInfoRef),
+    /// The directory of a file, whose path is relative to the directory given.
+    FileUnder(DirInfoRef, &'static [u8]),
+}
+
 pub struct Result {
     pub path_pair: PathPair,
 
@@ -103,6 +112,9 @@ pub struct Result {
     pub file_fd: FD,
     pub import_kind: ast::ImportKind,
 
+    /// The directory each path of `path_pair` was found in, as walked. `None`: the path's own.
+    pub walked_dirs: [Option<DirInfoRef>; 2],
+
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 6 separate bool fields caused ~42+ bytes of padding waste.
     pub flags: ResultFlags,
@@ -119,6 +131,7 @@ impl Default for Result {
             dirname_fd: FD::INVALID,
             file_fd: FD::INVALID,
             import_kind: ast::ImportKind::Stmt,
+            walked_dirs: [None; 2],
             flags: ResultFlags::default(),
         }
     }
@@ -369,6 +382,7 @@ pub struct MatchResult {
     pub(crate) is_node_module: bool,
     pub(crate) package_json: Option<*const PackageJSON>,
     pub(crate) dir_info: Option<DirInfoRef>,
+    pub(crate) walked_dirs: [Option<WalkedDir>; 2],
     pub(crate) module_type: options::ModuleType,
     pub(crate) is_external: bool,
 }
@@ -382,6 +396,7 @@ impl Default for MatchResult {
             is_node_module: false,
             package_json: None,
             dir_info: None,
+            walked_dirs: [None; 2],
             module_type: options::ModuleType::Unknown,
             is_external: false,
         }
@@ -443,4 +458,6 @@ pub struct LoadResult {
     pub(crate) path: &'static [u8],
     pub(crate) dirname_fd: FD,
     pub(crate) file_fd: FD,
+    /// The directory was walked by another path than its listing is named by: through a link.
+    pub(crate) via_link: bool,
 }

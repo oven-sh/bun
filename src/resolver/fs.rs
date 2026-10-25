@@ -162,13 +162,6 @@ impl Entry {
         self.cache.set(c);
     }
 
-    #[inline(always)]
-    pub(crate) fn set_cache_symlink(&self, symlink: Interned) {
-        let mut c = self.cache.get();
-        c.symlink = symlink;
-        self.cache.set(c);
-    }
-
     #[inline]
     pub fn base(&self) -> &[u8] {
         self.base_.slice()

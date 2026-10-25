@@ -270,7 +270,7 @@ use crate::options;
 use crate::result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
     MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
-    ResultUnion,
+    ResultUnion, WalkedDir,
 };
 use crate::standalone_module_graph::StandaloneModuleGraph;
 use bun_alloc as allocators;
@@ -1457,10 +1457,7 @@ impl<'a> Resolver<'a> {
                 if result.path_pair.primary.namespace() != b"node"
                     && !result.flags.is_standalone_module()
                 {
-                    if let Err(err) = self.finalize_result(&mut result, kind) {
-                        self.extension_order = original_order;
-                        return ResultUnion::Failure(err);
-                    }
+                    self.finalize_result(&mut result, kind);
                 }
 
                 let _ = self.flush_debug_logs(FlushMode::Success);
@@ -1568,22 +1565,20 @@ impl<'a> Resolver<'a> {
         self.resolve(source_dir, import_path, kind)
     }
 
-    pub(crate) fn finalize_result(
-        &mut self,
-        result: &mut Result,
-        kind: ast::ImportKind,
-    ) -> crate::CrateResult<()> {
+    pub(crate) fn finalize_result(&mut self, result: &mut Result, kind: ast::ImportKind) {
         if result.flags.is_external() {
-            return Ok(());
+            return;
         }
 
         let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
         let mut is_primary = true;
-        while let Some(path) = iter.next() {
+        while let Some((slot, path)) = iter.next() {
             let name = path.name();
             let primary = core::mem::take(&mut is_primary);
-            let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
+            let Some(dir) =
+                result.walked_dirs[slot].or_else(|| self.read_dir_info(name.dir).ok().flatten())
+            else {
                 continue;
             };
 
@@ -1659,79 +1654,21 @@ impl<'a> Resolver<'a> {
                         ));
                     }
                 } else if !dir.abs_real_path.is_empty()
-                    // When the directory is a symlink, we don't need to call getFdPath.
-                    && let mut buf = bun_paths::path_buffer_pool::get()
-                    && let Some(out_len) =
-                        ::bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-                            ::bun_paths::platform::Loose,
-                        >(
-                            self.fs_ref().top_level_dir(),
-                            &mut buf[..],
-                            &[dir.abs_real_path, query.entry().base()],
-                        )
-                        .map(|joined| joined.len())
+                    && let Some(real) = Self::entry_abs_path(query.entry())
                 {
-                    let store_fd = self.store_fd;
-
-                    if !query.entry().cache().fd.is_valid() && store_fd {
-                        let span = bun_core::ZStr::from_buf(&buf[..], out_len);
-                        // I/O errors propagate so `resolveAndAutoInstall` can
-                        // return them as `Result.Union.failure` — never
-                        // panic on EACCES/EMFILE/ELOOP here.
-                        let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
-                            .map_err(Into::<crate::Error>::into)?;
-                        {
-                            // Every cached-`Entry` rewrite takes the per-entry mutex.
-                            let _entry_guard = query.entry().mutex.lock_guard();
-                            query.entry().set_cache_fd(file);
+                    // Behind a link, `dir` lists the real directory, so the entry's path is real.
+                    if core::ptr::eq(real.as_ptr(), path.text.as_ptr()) {
+                        path.is_symlink = true;
+                    } else {
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "Resolved symlink \"{}\" to \"{}\"",
+                                bstr::BStr::new(real),
+                                bstr::BStr::new(path.text())
+                            ));
                         }
-                        Fs::FileSystem::set_max_fd(file.native());
+                        path.set_realpath(real);
                     }
-
-                    // NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
-                    // the closure captures only Copy values — keeps `self` and
-                    // `query.entry` reborrowable across the guard's lifetime.
-                    let need_close = self.fs_ref().fs.need_to_close_files();
-                    // ARENA — Entry lives in the BSSMap singleton; guard runs before
-                    // the slot is reused (resolver mutex held). Capture as `BackRef`
-                    // (Copy, Deref) so the closure stays Copy-only while the read is
-                    // a safe `BackRef::get()` instead of a raw-ptr deref.
-                    let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
-                        core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
-                    );
-                    scopeguard::defer! {
-                        if need_close {
-                            let e = entry_ref.get();
-                            // Every cached-`Entry` rewrite takes the per-entry mutex.
-                            let _entry_guard = e.mutex.lock_guard();
-                            let fd = e.cache().fd;
-                            if fd.is_valid() {
-                                fd.close();
-                                e.set_cache_fd(FD::INVALID);
-                            }
-                        }
-                    }
-
-                    let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
-                    if let Some(debug) = self.debug_logs.as_mut() {
-                        debug.add_note_fmt(format_args!(
-                            "Resolved symlink \"{}\" to \"{}\"",
-                            bstr::BStr::new(symlink),
-                            bstr::BStr::new(path.text())
-                        ));
-                    }
-                    {
-                        // Every cached-`Entry` rewrite takes the per-entry mutex.
-                        let _entry_guard = query.entry().mutex.lock_guard();
-                        query
-                            .entry()
-                            .set_cache_symlink(Interned::from_static(symlink));
-                    }
-                    if !result.file_fd.is_valid() && store_fd {
-                        result.file_fd = query.entry().cache().fd;
-                    }
-
-                    path.set_realpath(symlink);
                 }
             }
         }
@@ -1744,7 +1681,6 @@ impl<'a> Resolver<'a> {
         }
 
         result.module_type = module_type;
-        Ok(())
     }
 
     pub(crate) fn resolve_without_symlinks(
@@ -1823,6 +1759,7 @@ impl<'a> Resolver<'a> {
                                 dirname_fd: res.dirname_fd,
                                 file_fd: res.file_fd,
                                 jsx: tsconfig.merge_jsx(self.opts.jsx.clone()),
+                                walked_dirs: self.walked_dir_infos(res.walked_dirs),
                                 ..Default::default()
                             });
                         }
@@ -1872,6 +1809,7 @@ impl<'a> Resolver<'a> {
                     package_json: entry.package_json,
                     file_fd: entry.file_fd,
                     jsx: self.opts.jsx.clone(),
+                    walked_dirs: self.walked_dir_infos(entry.walked_dirs),
                     ..Default::default()
                 });
             }
@@ -2176,6 +2114,7 @@ impl<'a> Resolver<'a> {
                                 jsx: self.opts.jsx.clone(),
                                 module_type: match_result.module_type,
                                 flags,
+                                walked_dirs: self.walked_dir_infos(match_result.walked_dirs),
                                 ..Default::default()
                             });
                         }
@@ -2216,6 +2155,7 @@ impl<'a> Resolver<'a> {
                 dirname_fd: res.dirname_fd,
                 package_json: res.package_json,
                 jsx: self.opts.jsx.clone(),
+                walked_dirs: self.walked_dir_infos(res.walked_dirs),
                 ..Default::default()
             })
         } else {
@@ -2359,6 +2299,7 @@ impl<'a> Resolver<'a> {
                 result.dirname_fd = res.dirname_fd;
                 result.file_fd = res.file_fd;
                 result.package_json = res.package_json;
+                result.walked_dirs = self.walked_dir_infos(res.walked_dirs);
                 result.flags.set_is_from_node_modules(
                     result.flags.is_from_node_modules() || res.is_node_module,
                 );
@@ -2376,7 +2317,7 @@ impl<'a> Resolver<'a> {
                 }
 
                 if res.package_json.is_some() && self.care_about_browser_field {
-                    let base_dir_info = match res.dir_info {
+                    let base_dir_info = match res.dir_info.or(result.walked_dirs[0]) {
                         Some(d) => d,
                         None => match self.read_dir_info(result.path_pair.primary.name().dir) {
                             Ok(Some(d)) => d,
@@ -2399,6 +2340,7 @@ impl<'a> Resolver<'a> {
                                 result.path_pair.primary.is_disabled = true;
                                 result.path_pair.primary =
                                     Fs::Path::init_with_namespace(remap, b"file");
+                                result.walked_dirs[0] = None;
                             } else {
                                 let mut remapped = MatchResult::default();
                                 if self
@@ -2415,6 +2357,8 @@ impl<'a> Resolver<'a> {
                                     result.dirname_fd = remapped.dirname_fd;
                                     result.file_fd = remapped.file_fd;
                                     result.package_json = remapped.package_json;
+                                    result.walked_dirs =
+                                        self.walked_dir_infos(remapped.walked_dirs);
                                     result.module_type = remapped.module_type;
 
                                     // Potentially rewrite the import path if it's external that
@@ -2842,6 +2786,7 @@ impl<'a> Resolver<'a> {
                                             .is_node_module(),
                                             package_json: Some(std::ptr::from_ref(package_json)),
                                             dir_info: Some(dir_info),
+                                            walked_dirs: [Some(WalkedDir::Dir(pkg_dir_info)), None],
                                             ..Default::default()
                                         };
                                         return MatchStatus::Success;
@@ -3354,6 +3299,7 @@ impl<'a> Resolver<'a> {
                                                 .is_node_module(),
                                             package_json: Some(std::ptr::from_ref(package_json)),
                                             dir_info: Some(dir_info),
+                                            walked_dirs: [Some(WalkedDir::Dir(pkg_dir_info)), None],
                                             ..Default::default()
                                         };
                                         return MatchStatus::Success;
@@ -3879,6 +3825,7 @@ impl<'a> Resolver<'a> {
                     dirname_fd,
                     file_fd: entry_query.entry().cache().fd,
                     dir_info: Some(resolved_dir_info),
+                    walked_dirs: [Some(WalkedDir::Dir(resolved_dir_info)), None],
                     is_node_module: true,
                     package_json: Some(
                         resolved_dir_info
@@ -4037,6 +3984,7 @@ impl<'a> Resolver<'a> {
             dirname_fd,
             file_fd: query.entry().cache().fd,
             dir_info: Some(resolved_dir_info),
+            walked_dirs: [Some(WalkedDir::Dir(resolved_dir_info)), None],
             is_node_module: true,
             package_json: Some(
                 resolved_dir_info
@@ -5290,7 +5238,7 @@ impl<'a> Resolver<'a> {
         // may return `dir_info` itself (self-browser-scope),
         // which would alias a live `&mut`.
         dir_info: DirInfoRef,
-        _field_rel_path: &[u8],
+        _field_rel_path: &'static [u8],
         field: &[u8],
         extension_order: options::ExtOrder,
         out: &mut MatchResult,
@@ -5322,6 +5270,8 @@ impl<'a> Resolver<'a> {
         else {
             dec_ret!(MatchStatus::NotFound);
         };
+        // `field_abs_path` as parts that outlive its buffer: `path` is the directory of `dir_info`.
+        let (mut walked_under, mut walked_file) = (dir_info, field_rel_path);
 
         if self.care_about_browser_field {
             // Potentially remap using the "browser" field
@@ -5358,6 +5308,7 @@ impl<'a> Resolver<'a> {
                             Some(remapped) => remapped,
                             None => dec_ret!(MatchStatus::NotFound),
                         };
+                        (walked_under, walked_file) = (browser_scope, remap);
                     }
                 }
             }
@@ -5365,6 +5316,9 @@ impl<'a> Resolver<'a> {
 
         // Is this a file?
         if let Some(result) = self.load_as_file(field_abs_path, extension_order) {
+            let walked_dir = result
+                .via_link
+                .then_some(WalkedDir::FileUnder(walked_under, walked_file));
             if let Some(package_json) = dir_info.package_json() {
                 *out = MatchResult {
                     path_pair: PathPair {
@@ -5373,6 +5327,7 @@ impl<'a> Resolver<'a> {
                     },
                     package_json: Some(std::ptr::from_ref(package_json)),
                     dirname_fd: result.dirname_fd,
+                    walked_dirs: [walked_dir, None],
                     ..Default::default()
                 };
                 dec_ret!(MatchStatus::Success);
@@ -5384,6 +5339,7 @@ impl<'a> Resolver<'a> {
                     secondary: None,
                 },
                 dirname_fd: result.dirname_fd,
+                walked_dirs: [walked_dir, None],
                 ..Default::default()
             };
             dec_ret!(MatchStatus::Success);
@@ -5515,6 +5471,7 @@ impl<'a> Resolver<'a> {
                         },
                         package_json: Some(std::ptr::from_ref(package_json)),
                         dirname_fd,
+                        walked_dirs: [Some(WalkedDir::Dir(dir_info)), None],
                         ..Default::default()
                     };
                     return MatchStatus::Success;
@@ -5526,6 +5483,7 @@ impl<'a> Resolver<'a> {
                         secondary: None,
                     },
                     dirname_fd,
+                    walked_dirs: [Some(WalkedDir::Dir(dir_info)), None],
                     ..Default::default()
                 };
                 return MatchStatus::Success;
@@ -5616,12 +5574,16 @@ impl<'a> Resolver<'a> {
                         // Is this a file
                         if let Some(file_result) = self.load_as_file(remapped_abs, extension_order)
                         {
+                            let walked_dir = file_result
+                                .via_link
+                                .then_some(WalkedDir::FileUnder(browser_scope, remap));
                             *out = MatchResult {
                                 dirname_fd: file_result.dirname_fd,
                                 path_pair: PathPair {
                                     primary: Path::init(file_result.path),
                                     secondary: None,
                                 },
+                                walked_dirs: [walked_dir, None],
                                 ..Default::default()
                             };
                             return MatchStatus::Success;
@@ -5646,6 +5608,31 @@ impl<'a> Resolver<'a> {
         self.load_as_index(dir_info, extension_order, out)
     }
 
+    /// The package.json of the package folder of `path`, the one below its last node_modules/.
+    fn node_module_package_json(&mut self, path: &[u8]) -> Option<*const PackageJSON> {
+        let nm_seg = const_format::concatcp!("node_modules", SEP_STR).as_bytes();
+        let node_modules_folder_offset = strings::last_index_of(path, nm_seg)? + nm_seg.len();
+        // Determine the package name by looking at the next separator
+        let package_name_length =
+            strings::index_of_char(&path[node_modules_folder_offset..], SEP)? as usize;
+        let package_dir = &path[0..node_modules_folder_offset + package_name_length];
+        let package_dir_info = self.dir_info_cached(package_dir).ok()??;
+        package_dir_info.package_json().map(std::ptr::from_ref)
+    }
+
+    /// The `DirInfo` of each directory a match was found in, looked up once the match is kept.
+    fn walked_dir_infos(&mut self, walked: [Option<WalkedDir>; 2]) -> [Option<DirInfoRef>; 2] {
+        walked.map(|walked_dir| match walked_dir? {
+            WalkedDir::Dir(dir) => Some(dir),
+            WalkedDir::FileUnder(dir, file) => {
+                let file = self
+                    .fs_ref()
+                    .abs_buf_checked(&[dir.abs_path, file], bufs!(field_abs_path))?;
+                self.read_dir_info(Dirname::dirname(file)).ok().flatten()
+            }
+        })
+    }
+
     pub(crate) fn load_as_file_or_directory(
         &mut self,
         path: &[u8],
@@ -5656,33 +5643,18 @@ impl<'a> Resolver<'a> {
 
         // Is this a file?
         if let Some(file) = self.load_as_file(path, extension_order) {
-            // Determine the package folder by looking at the last node_modules/ folder in the path
-            let nm_seg = const_format::concatcp!("node_modules", SEP_STR).as_bytes();
-            if let Some(last_node_modules_folder) = strings::last_index_of(file.path, nm_seg) {
-                let node_modules_folder_offset = last_node_modules_folder + nm_seg.len();
-                // Determine the package name by looking at the next separator
-                if let Some(package_name_length) =
-                    strings::index_of_char(&file.path[node_modules_folder_offset..], SEP)
-                {
-                    if let Ok(Some(package_dir_info)) = self.dir_info_cached(
-                        &file.path[0..node_modules_folder_offset + package_name_length as usize],
-                    ) {
-                        if let Some(package_json) = package_dir_info.package_json() {
-                            *out = MatchResult {
-                                path_pair: PathPair {
-                                    primary: Path::init(file.path),
-                                    secondary: None,
-                                },
-                                dirname_fd: file.dirname_fd,
-                                package_json: Some(std::ptr::from_ref(package_json)),
-                                file_fd: file.file_fd,
-                                ..Default::default()
-                            };
-                            return MatchStatus::Success;
-                        }
-                    }
-                }
-            }
+            let walked_dir = if file.via_link {
+                self.read_dir_info(Dirname::dirname(path)).ok().flatten()
+            } else {
+                None
+            };
+            // The package of a file found through a link is the one that the path walked names.
+            let package_json = match walked_dir {
+                Some(dir) => with_path_as_walked(&dir, file.path, |walked| {
+                    self.node_module_package_json(walked)
+                }),
+                None => self.node_module_package_json(file.path),
+            };
 
             debug_assert!(bun_paths::is_absolute(file.path));
 
@@ -5692,7 +5664,9 @@ impl<'a> Resolver<'a> {
                     secondary: None,
                 },
                 dirname_fd: file.dirname_fd,
+                package_json,
                 file_fd: file.file_fd,
+                walked_dirs: [walked_dir.map(WalkedDir::Dir), None],
                 ..Default::default()
             };
             return MatchStatus::Success;
@@ -5865,6 +5839,10 @@ impl<'a> Resolver<'a> {
                                     dirname_fd: out.dirname_fd,
                                     package_json,
                                     file_fd: auto_main_result.file_fd,
+                                    walked_dirs: [
+                                        out.walked_dirs[0],
+                                        auto_main_result.walked_dirs[0],
+                                    ],
                                     ..Default::default()
                                 };
                                 dec_ret!(MatchStatus::Success);
@@ -5995,6 +5973,7 @@ impl<'a> Resolver<'a> {
                     path: abs_path,
                     dirname_fd: plain_dirname_fd,
                     file_fd: query.entry().cache().fd,
+                    via_link: !listing_is_named(query.entry().dir, dir_path),
                 }));
             }
         }
@@ -6069,6 +6048,7 @@ impl<'a> Resolver<'a> {
                                 path: abs_path,
                                 dirname_fd: ts_dirname_fd,
                                 file_fd: query.entry().cache().fd,
+                                via_link: !listing_is_named(query.entry().dir, dir_path),
                             }));
                         }
                     }
@@ -6241,6 +6221,7 @@ impl<'a> Resolver<'a> {
                     path: Self::entry_abs_path(query.entry())?,
                     dirname_fd,
                     file_fd: query.entry().cache().fd,
+                    via_link: !listing_is_named(query.entry().dir, Dirname::dirname(path)),
                 });
             }
         }

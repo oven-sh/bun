@@ -402,7 +402,6 @@ impl super::Program<'_> {
     ///
     /// Applies only to a diagnostic in the file the query is about. A task for that file or an earlier one logs such a
     /// diagnostic, so a winner like that has logged it if there was anything to log. A task for a later file doesn't.
-    /// Nor does a winner whose walk through a loop of that file ended with another type than the loser's.
     pub(super) fn drop_diagnostics_of_losers(
         &self,
         reported: &mut Logged,
@@ -417,7 +416,6 @@ impl super::Program<'_> {
                     rank <= Some(self.files.rank_of_file(diagnostic.file))
                 };
                 q.syntax() == Some(diagnostic.file)
-                    && !self.commits.has_loop_of_another_task(diagnostic.file)
                     && winner.is_some_and(|commit| !is_own(commit) && has_logged_it(commit))
             })
         });

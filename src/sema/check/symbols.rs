@@ -5966,9 +5966,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.save_deferred_diagnostics = false;
         self.reported.retain(|it| !it.is_placeholder());
-        let checked = self.task.file;
-        self.non_existent_properties
-            .retain(|node, _| Some(node.0) != checked);
+        self.non_existent_properties.clear();
     }
 
     /// Calls `callback` and returns it as the diagnostic, or a placeholder if it reports nothing.

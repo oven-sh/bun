@@ -1550,8 +1550,8 @@ pub struct Checker<'p, 's> {
     flow_invocation_count: u64,
     /// Where `add_diagnostic` stores a diagnostic it discards.
     discarded: Option<sink::Reported>,
-    /// `NodeCheckFlagsTypeChecked` on the name of a property access, until the end of the check of its
-    /// file: `true` if its 2339 has been created, `false` if only the callback that exists may
+    /// `NodeCheckFlagsTypeChecked` on the name of a property access, until the end of the file being
+    /// checked: `true` if its 2339 has been created, `false` if only the callback that exists may
     /// create it.
     non_existent_properties: FxHashMap<(FileId, ExprId), bool>,
     /// The calls in the file being checked whose `links.resolvedSignature` was assigned at

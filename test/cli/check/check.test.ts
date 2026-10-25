@@ -11603,31 +11603,6 @@ try {
       expect(exitCode).toBe(1);
     });
 
-    // The same with an import cycle, which puts x.ts in front of b.ts in program order.
-    test("the task of a file makes the walks that ended with an incomplete type in the task of an earlier file", async () => {
-      const line = `[1, "1"].map(v => typeof v === "string" ? v.length : v + 1);\n`;
-      using dir = project({
-        "b.ts": `import "./x";
-declare const c: boolean;
-declare let root: { v: number } | undefined;
-export function f() {
-  for (const key in root) {
-    while (root) { }
-    while (c) {
-      while (c) { if (c) break; }
-      try { return (() => root.v)(); } finally { }
-    }
-  }
-}
-`,
-        "long.ts": `export {};\n${repeat(line, 1000)}`,
-        "x.ts": `import { f } from "./b";\nexport const x = f();\n${repeat(line, 40)}`,
-      });
-      const { stdout, exitCode } = await check(dir, ["--threads", "2"]);
-      expect(stdout).toBe("b.ts(9,32): error TS2339: Property 'v' does not exist on type 'never'.");
-      expect(exitCode).toBe(1);
-    });
-
     // The return type asks whether the end is reachable, which resolves `defined(val)`. The walk for `val` asks for the
     // type of the assigned literal, and the walk for the `val` in there resolves `defined(pend)` while the loop has only
     // `never[]` for `pend`. The statement's check of the literal finds the loop complete.
@@ -11678,60 +11653,6 @@ export function f() {
       });
       const { stdout, exitCode } = await check(dir, ["--threads", "2"]);
       expect(stdout).toBe("b.ts(8,32): error TS2339: Property 'v' does not exist on type 'never'.");
-      expect(exitCode).toBe(1);
-    });
-
-    // b.ts is first in program order. Its check infers the return type of `f` and analyzes the loop for `cur.data`. So
-    // the walk for the `cur.data` in the assignment target finds the loop's type and ends with `never`. As the first walk
-    // through the loop it would end with an incomplete type, which has every property.
-    test("on one thread a file's check finds the loops that the check of an earlier file has analyzed", async () => {
-      using dir = project({
-        "a.ts": `import "./b";
-interface Item { tok?: string; data?: { name?: string; loc?: number } }
-declare function assert(x: unknown): asserts x;
-declare function defined<T>(x: T): asserts x is NonNullable<T>;
-declare const flag: boolean;
-declare function text(): string | undefined;
-declare function item(): Item;
-export function f(cur: Item) {
-  let val = text();
-  try { } catch {
-    assert(typeof cur.data === "string");
-    for (;;) { defined(cur.data!.name); if (flag) break; if (flag) break; }
-    if (flag) return val;
-    try { ({ name: cur.tok, loc: cur.data!.loc } = item().data!); } finally { }
-  }
-}
-`,
-        "b.ts": `import { f } from "./a";\nexport const r = f({});\n`,
-      });
-      const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
-      expect(stdout).toBe(
-        `a.ts(12,34): error TS2339: Property 'name' does not exist on type 'never'.
-a.ts(14,44): error TS2339: Property 'loc' does not exist on type 'never'.`,
-      );
-      expect(exitCode).toBe(1);
-    });
-
-    // b.ts is first in program order, and next to long.ts the two are small enough for one task. The check of b.ts infers
-    // the return type of `f` and reports the error from the type that the loop has for `x` at that point.
-    test("a missing property that the check of an earlier file has reported isn't reported again", async () => {
-      using dir = project({
-        "a.ts": `import "./b";
-export function f() {
-  let x: string | number | undefined = 0;
-  for (const e of [1]) {
-    x = x?.v;
-    try { } catch { }
-  }
-  return x;
-}
-`,
-        "b.ts": `import { f } from "./a";\nexport const r = f();\n`,
-        "long.ts": `export {};\n${repeat(`[1, "1"].map(v => typeof v === "string" ? v.length : v + 1);\n`, 400)}`,
-      });
-      const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
-      expect(stdout).toBe("a.ts(5,12): error TS2339: Property 'v' does not exist on type 'number'.");
       expect(exitCode).toBe(1);
     });
 

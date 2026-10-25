@@ -228,9 +228,6 @@ pub(super) struct FlowMemo {
     /// The expressions whose stored type follows from a walk that ended with an incomplete type.
     /// See `check_expression_again`.
     checked_with_incomplete_walk: crate::util::FxHashSet<(FileId, ExprId)>,
-    /// The files with an entry in `flow_loop_cache` or `checked_with_incomplete_walk` that was made during the check of
-    /// another file. See `Checker::has_walked_loops_of_later_files` and `View::hides`.
-    walked_from_other_files: crate::util::FxHashSet<FileId>,
     /// `c.flowTypeCache` outside of every `checkExpressionCached` and every back edge, which lives as long as the
     /// checker. Only what a second check could compute differently is in it.
     flow_types_outside_resolutions: FxHashMap<(FileId, ExprId), TypeId>,
@@ -7043,9 +7040,6 @@ impl<'p, 's> Checker<'p, 's> {
                             None => cached.push((walk.reference.clone(), result.ty)),
                         }
                         self.flow_memo.flow_loop_cached_at = self.work;
-                        if self.task.file != Some(file) {
-                            self.flow_memo.walked_from_other_files.insert(file);
-                        }
                     }
                     break result.ty;
                 }
@@ -8568,28 +8562,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub(super) fn note_checked_with_incomplete_walk(&mut self, file: FileId, e: ExprId) {
         let checked = &mut self.flow_memo.checked_with_incomplete_walk;
+        // The next check may report an error, and a task that finds the stored type doesn't know that there's one.
         if checked.insert((file, e)) && self.task.file != Some(file) {
-            self.flow_memo.walked_from_other_files.insert(file);
+            self.note_error_in(file);
         }
-    }
-
-    /// See `FlowMemo::walked_from_other_files`.
-    pub(super) fn files_walked_from_other_files(&self) -> impl Iterator<Item = FileId> {
-        self.flow_memo.walked_from_other_files.iter().copied()
-    }
-
-    /// True if this checker has analyzed a loop in a file that's checked after the one it has just checked. tsc's check
-    /// of that file finds the loop in `flowLoopCache`, so its walks end with other types than the first walk. A new
-    /// checker would find the types that this one has stored, and not the loops.
-    pub fn has_walked_loops_of_later_files(&mut self) -> bool {
-        let Some(checked) = self.task.file else {
-            return false;
-        };
-        let files = self.files();
-        let last = files.rank_of_file(checked);
-        let walked = &mut self.flow_memo.walked_from_other_files;
-        walked.retain(|&file| files.rank_of_file(file) > last);
-        !walked.is_empty()
     }
 
     pub(super) fn is_checked_with_incomplete_walk(&self, file: FileId, e: ExprId) -> bool {

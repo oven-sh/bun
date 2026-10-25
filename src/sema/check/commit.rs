@@ -65,13 +65,9 @@
 //!   there and this task would still report it (`View::hides`). A task only moves forward in program order, so it
 //!   never finds such entries of its own. This covers the entries under nodes, not those under records. Only an error
 //!   found by a commit in the task's snapshot of the file counts, so the file doesn't change under a statement or
-//!   during a visit because of this either.
-//! - **A file's own task analyzes its loops itself.** What a control flow walk ends with depends on `flowLoopCache`, and
-//!   after a walk that ended with an incomplete type the next check of the expression walks again and may report an
-//!   error (`Checker::check_expression_again`). Both belong to the task that made the walks. A task that finds the types
-//!   that followed from them makes fewer walks than any single checker. So once a task has analyzed a loop of another
-//!   file, that file's own task ignores what other tasks have stored under the file (`View::hides`), and what it
-//!   reports there counts even where its entry loses the race.
+//!   during a visit because of this either. A control flow walk that ended with an incomplete type counts as an error:
+//!   the next check of the expression may report one, and what it finds depends on `flowLoopCache`, which belongs to
+//!   the task that made the walk (`Checker::check_expression_again`).
 //! - **A comparison during which a type was inferred from the body of a function expression or of a method or an
 //!   accessor of an object literal never leaves the task** (`relations_of_this_task`). It's stored under two types, so
 //!   a task would find it that doesn't see the inferred type, which is stored under a node: its snapshot of that file
@@ -132,8 +128,6 @@ pub(super) struct Commits<'s> {
     /// Indexed by file: the number of the first commit by a task that was checking another file and found an error while
     /// evaluating something about this file. 0 if there's none. See `View::hides`.
     first_with_error: &'s [AtomicU32],
-    /// The same for a task that analyzed a loop of this file.
-    first_with_loop: &'s [AtomicU32],
     /// `tables_written_immediately`
     immediate_tables: u128,
 }
@@ -191,7 +185,6 @@ impl<'s> Commits<'s> {
             cycle_commits: Guarded::default(),
             ranks_of_files: &[],
             first_with_error: &[],
-            first_with_loop: &[],
             immediate_tables: tables_written_immediately(),
         }
     }
@@ -205,16 +198,9 @@ impl<'s> Commits<'s> {
 
     /// `ranks` is `Files::rank_of_file`, indexed by file. Without this call, no task hides anything. See `View::hides`.
     pub(super) fn for_files(mut self, ranks: &'s [u32], arena: &'s Arena) -> Commits<'s> {
-        let none = || ranks.iter().map(|_| AtomicU32::new(0));
-        (self.ranks_of_files, self.first_with_error) = (ranks, arena.alloc_slice_fill_iter(none()));
-        self.first_with_loop = arena.alloc_slice_fill_iter(none());
+        let none = ranks.iter().map(|_| AtomicU32::new(0));
+        (self.ranks_of_files, self.first_with_error) = (ranks, arena.alloc_slice_fill_iter(none));
         self
-    }
-
-    /// True if a task that was checking another file has analyzed a loop of `file` and committed.
-    pub(super) fn has_loop_of_another_task(&self, file: FileId) -> bool {
-        let first = self.first_with_loop.get(file.idx());
-        first.is_some_and(|it| it.load(Ordering::Relaxed) != 0)
     }
 
     /// Returns the highest `Files::rank_of_file` of the files that the task of `commit` was checking.
@@ -228,7 +214,6 @@ impl<'s> Commits<'s> {
             numbers: self.numbers,
             ranks_of_files: self.ranks_of_files,
             first_with_error: self.first_with_error,
-            first_with_loop: self.first_with_loop,
             rank: Cell::new(0),
             file_snapshots: vec![Cell::new(0); files].into_boxed_slice(),
             touched: RefCell::default(),
@@ -304,7 +289,6 @@ pub(crate) struct View<'s> {
     /// See `Commits`.
     ranks_of_files: &'s [u32],
     first_with_error: &'s [AtomicU32],
-    first_with_loop: &'s [AtomicU32],
     /// `ranks_of_files[pinned]`
     rank: Cell<u32>,
     /// Indexed by file: one more than the number of the last commit the task sees there, or 0 if the task hasn't looked
@@ -388,21 +372,11 @@ impl View<'_> {
     ///
     /// An error that a commit after `snapshot` found doesn't count. The task has already looked at the file, and an
     /// entry it found there must not vanish, nor the entries that were stored together with it.
-    ///
-    /// The task that visits `file` ignores what every other task stored under it, once one of them has analyzed a loop
-    /// there. See the top of this file.
     #[inline]
     pub(crate) fn hides(&self, file: FileId, snapshot: u32, commit: u32) -> bool {
         let first = self.first_with_error.get(file.idx());
         let first = first.map_or(0, |it| it.load(Ordering::Relaxed));
         first != 0 && first <= snapshot && self.hides_a_later_commit(file, commit)
-            || self.is_pinned(file) && self.hides_loops_of_others(file, snapshot, commit)
-    }
-
-    fn hides_loops_of_others(&self, file: FileId, snapshot: u32, commit: u32) -> bool {
-        let first = self.first_with_loop.get(file.idx());
-        let first = first.map_or(0, |it| it.load(Ordering::Relaxed));
-        first != 0 && first <= snapshot && !self.is_own(commit)
     }
 
     #[cold]
@@ -841,13 +815,6 @@ impl<'s> Checker<'_, 's> {
         // Set before the commit stores, so a task that sees this commit also sees these.
         for file in self.files_with_errors.drain() {
             if let Some(first) = p.commits.first_with_error.get(file.idx())
-                && first.load(Ordering::Relaxed) == 0
-            {
-                first.store(number, Ordering::Relaxed);
-            }
-        }
-        for file in self.files_walked_from_other_files() {
-            if let Some(first) = p.commits.first_with_loop.get(file.idx())
                 && first.load(Ordering::Relaxed) == 0
             {
                 first.store(number, Ordering::Relaxed);

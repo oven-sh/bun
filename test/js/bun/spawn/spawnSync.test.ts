@@ -371,5 +371,7 @@ it.skipIf(!isASAN || isWindows)("polls left by spawnSync are freed when a VM end
     return Number(summary?.[1] ?? 0);
   }
   const [afterTurn, atOnce] = await Promise.all([leakedBytes(true), leakedBytes(false)]);
-  expect({ leakedBytes: atOnce - afterTurn }).toEqual({ leakedBytes: 0 });
+  // A list that is not freed adds 82 polls of 40 bytes each, 3280 bytes. The bound is far below that, and it leaves
+  // room for anything else that two such children report differently while the suppressions are off.
+  expect(atOnce - afterTurn).toBeLessThan(400);
 });

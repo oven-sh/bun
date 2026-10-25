@@ -215,7 +215,12 @@ async function withTerminalRepl(
     resize: (cols: number) => void;
     allOutput: () => string;
   }) => Promise<void>,
-  options: { env?: Record<string, string | undefined>; cols?: number } = {},
+  options: {
+    env?: Record<string, string | undefined>;
+    cols?: number;
+    /** The REPL gets the pty as its controlling terminal: a Ctrl+C that the pty makes a signal reaches it. */
+    controlling?: boolean;
+  } = {},
 ) {
   const received: string[] = [];
   const cols = options.cols ?? 120;
@@ -227,7 +232,7 @@ async function withTerminalRepl(
 
   // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
   using home = tempDir("repl-home", {});
-  await using terminal = new Bun.Terminal({
+  const terminalOptions: Bun.TerminalOptions = {
     cols,
     rows,
     data(_term, data) {
@@ -238,11 +243,13 @@ async function withTerminalRepl(
         resolveWaiter = null;
       }
     },
-  });
+  };
+  // Only a pty that the spawn creates becomes the controlling terminal of the child.
+  await using ownTerminal = options.controlling ? undefined : new Bun.Terminal(terminalOptions);
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "repl"],
-    terminal,
+    terminal: ownTerminal ?? terminalOptions,
     env: {
       ...bunEnv,
       TERM: "xterm-256color",
@@ -251,6 +258,7 @@ async function withTerminalRepl(
       USERPROFILE: String(home),
     },
   });
+  const terminal = ownTerminal ?? proc.terminal!;
 
   const send = (text: string) => terminal.write(text);
 
@@ -325,7 +333,7 @@ async function withTerminalRepl(
   // Clean exit. Ctrl+A then Ctrl+K first discards whatever the test left on
   // the line, wherever the cursor is, so `.exit` is not appended to it (which
   // would leave the REPL running until the test times out).
-  if (proc.exitCode === null) {
+  if (proc.exitCode === null && proc.signalCode === null) {
     send("\x01\x0b.exit\n");
     await proc.exited;
   }
@@ -1859,6 +1867,38 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       send("6 * 7\n");
       await waitFor("42");
     });
+  });
+
+  // Ctrl+C is a signal while a dialog waits. The SIGINT action that the process starts with puts the
+  // terminal back. A promise wait replaces that action for the time of the wait, and so does a listener.
+  test.each([
+    ["in the first input", undefined],
+    ["after an await", "await 7"],
+    [
+      "after an await that removed a SIGINT listener",
+      "await (h => (process.on('SIGINT', h), Bun.sleep(1).then(() => (process.off('SIGINT', h), 7))))(() => {})",
+    ],
+  ])("Ctrl+C at a dialog ends the REPL and puts the terminal back (%s)", async (_, earlier) => {
+    const termiosOf = (terminal: Bun.Terminal) => ({ input: terminal.inputFlags, local: terminal.localFlags });
+    // A new pty has the termios that the pty of the REPL started with.
+    await using fresh = new Bun.Terminal({ cols: 120, rows: 40 });
+    await withTerminalRepl(
+      async ({ terminal, proc, send, waitFor }) => {
+        if (earlier) {
+          send(earlier + "\n");
+          await waitFor(/\n\s*7\b/);
+        }
+        send("prompt('name?')\n");
+        await waitFor("name? ");
+        send("\x03");
+        await proc.exited;
+        expect({ signalCode: proc.signalCode, termios: termiosOf(terminal) }).toEqual({
+          signalCode: "SIGINT",
+          termios: termiosOf(fresh),
+        });
+      },
+      { controlling: true },
+    );
   });
 });
 

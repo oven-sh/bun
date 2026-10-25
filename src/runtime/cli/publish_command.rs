@@ -1068,7 +1068,9 @@ impl PublishCommand {
             "\nThis operation requires a one-time password.\nEnter OTP: ",
             b"",
         ) {
-            Ok(v) => Ok(v.into()),
+            Ok(Some(v)) => Ok(v.into()),
+            // The user cancelled with Ctrl+C as a key. End as Ctrl+C as a signal ends a process.
+            Ok(None) => bun_spawn::ctrl_c::exit_like_child(),
             Err(crate::Error::Alloc(_)) => Err(AllocError),
             Err(e) => {
                 Output::err(e, "failed to read OTP input", ());

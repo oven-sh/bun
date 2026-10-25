@@ -712,7 +712,8 @@ test("a dialog in a readline callback puts the terminal in line mode, then back 
 });
 
 // `bun repl` or a CLI with a readline question runs a child with inherited stdio. The terminal is
-// raw when the child starts, so its dialog makes a line, and Ctrl+C stays a key of the parent.
+// raw when the child starts, so its dialog makes a line. On POSIX, Ctrl+C stays a key of the parent.
+// A Windows console has no such line: see the next test. There Ctrl+C signals each process of the console.
 test("a dialog of a child process on a terminal that its parent holds in raw mode", async () => {
   const flags = {};
   const child = `console.log("child got " + JSON.stringify(prompt("name?")));`;
@@ -725,12 +726,35 @@ test("a dialog of a child process on a terminal that its parent holds in raw mod
      ${alertResult(`{ childExitCode: child.exitCode }`)}`,
     [["name?", sampleThenType(flags, "childDialog", "Alice\r")], resultStep],
   );
-  expect({ flags, child: shown.match(/child got (.*)/)?.[1], result: resultOf(shown), exitCode }).toEqual({
+  expect({ flags, child: shown.match(/child got ("[^"]*")/)?.[1], result: resultOf(shown), exitCode }).toEqual({
     flags: { childDialog: isWindows ? "" : "ICANON ECHO" },
     child: '"Alice"',
     result: { childExitCode: 0 },
     exitCode: 0,
   });
+});
+
+// `Console.TreatControlCAsInput` of .NET leaves a console like this. Without ENABLE_PROCESSED_INPUT the
+// console ends a typed line with a lone CR, and Backspace is a character of the line.
+test.skipIf(!isWindows)("a dialog on a console in line mode that takes Ctrl+C as input", async () => {
+  const { shown, exitCode } = await typeOnTerminal(
+    `const { dlopen, ptr } = require("bun:ffi");
+     const kernel32 = dlopen("kernel32.dll", {
+       GetStdHandle: { args: ["i32"], returns: "ptr" },
+       GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
+       SetConsoleMode: { args: ["ptr", "u32"], returns: "i32" },
+     }).symbols;
+     const STD_INPUT_HANDLE = -10, ENABLE_PROCESSED_INPUT = 0x1, ENABLE_LINE_INPUT = 0x2, ENABLE_ECHO_INPUT = 0x4;
+     const stdin = kernel32.GetStdHandle(STD_INPUT_HANDLE);
+     const mode = new Uint32Array(1);
+     if (!kernel32.GetConsoleMode(stdin, ptr(mode))) throw new Error("GetConsoleMode failed");
+     const lineMode = (mode[0] | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT) & ~ENABLE_PROCESSED_INPUT;
+     if (!kernel32.SetConsoleMode(stdin, lineMode)) throw new Error("SetConsoleMode failed");
+     const name = prompt("name?");
+     ${alertResult(`{ name }`)}`,
+    [["name?", "Alice\r"], resultStep],
+  );
+  expect({ result: resultOf(shown), exitCode }).toEqual({ result: { name: "Alice" }, exitCode: 0 });
 });
 
 // Opens libc in a script, for the job control calls that have no JS API.

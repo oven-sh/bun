@@ -477,12 +477,6 @@ pub mod windows_stdio {
     /// snapshot locally and `.set()`s it; `restore()` reads via `.get()`. Both
     /// sides are fully safe (cell-get reduction).
     static CONSOLE_MODE: crate::Once<[Option<u32>; 3]> = crate::Once::new();
-
-    /// The console mode that stdin had when the process started. `None` when stdin is not a console.
-    pub(crate) fn startup_stdin_mode() -> Option<u32> {
-        CONSOLE_MODE.get().and_then(|modes| modes[0])
-    }
-
     static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);

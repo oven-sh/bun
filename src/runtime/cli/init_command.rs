@@ -30,7 +30,8 @@ trait RadioChoice: Copy + Sized {
 pub(crate) struct InitCommand;
 
 impl InitCommand {
-    pub(crate) fn prompt(label: &'static str, default: &[u8]) -> Result<Vec<u8>, Error> {
+    /// Asks for one line. `None` when the user cancels with Ctrl+C.
+    pub(crate) fn prompt(label: &'static str, default: &[u8]) -> Result<Option<Vec<u8>>, Error> {
         let _line_mode = bun_core::tty::LineModeGuard::stdin();
         #[allow(clippy::disallowed_methods)]
         // label is a runtime parameter that may contain <tag> markup
@@ -46,7 +47,7 @@ impl InitCommand {
 
         // Ctrl+C is a key, as in the menu, when the raw mode of the terminal belongs to a parent process.
         if strings::contains_char(&input, 0x03) {
-            return Err(crate::Error::Core(bun_core::Error::EndOfStream));
+            return Ok(None);
         }
 
         if strings::ends_with_char(&input, b'\r') {
@@ -54,11 +55,11 @@ impl InitCommand {
         }
         if !input.is_empty() {
             // Callers that need a C string can push a NUL themselves.
-            Ok(input)
+            Ok(Some(input))
         } else {
             input.clear();
             input.extend_from_slice(default);
-            Ok(input)
+            Ok(Some(input))
         }
     }
 
@@ -579,15 +580,18 @@ impl InitCommand {
                         template = Template::TypescriptLibrary;
                         fields.name = match Self::prompt("<r><cyan>package name<r> ", &fields.name)
                         {
-                            Ok(v) => v,
-                            Err(crate::Error::Core(bun_core::Error::EndOfStream)) => return Ok(()),
+                            Ok(Some(v)) => v,
+                            Ok(None) | Err(crate::Error::Core(bun_core::Error::EndOfStream)) => {
+                                return Ok(());
+                            }
                             Err(e) => return Err(e),
                         };
                         fields.name = Self::normalize_package_name(&fields.name)?;
                         fields.entry_point =
                             match Self::prompt("<r><cyan>entry point<r> ", &fields.entry_point) {
-                                Ok(v) => v,
-                                Err(crate::Error::Core(bun_core::Error::EndOfStream)) => {
+                                Ok(Some(v)) => v,
+                                Ok(None)
+                                | Err(crate::Error::Core(bun_core::Error::EndOfStream)) => {
                                     return Ok(());
                                 }
                                 Err(e) => return Err(e),

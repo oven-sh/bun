@@ -155,10 +155,9 @@ mod stdin_line_mode {
         let mut line = found & !w::ENABLE_VIRTUAL_TERMINAL_INPUT;
         if found & w::ENABLE_LINE_INPUT == 0 {
             line |= w::ENABLE_LINE_INPUT | w::ENABLE_ECHO_INPUT;
-            // Ctrl+C signals every process of the console, so it stays a key on a console that was raw at startup.
-            line |= crate::output::windows_stdio::startup_stdin_mode().unwrap_or(0)
-                & w::ENABLE_PROCESSED_INPUT;
         }
+        // This makes Ctrl+C a signal for the whole console, but without it Enter gives a lone CR and Backspace is a character.
+        line |= w::ENABLE_PROCESSED_INPUT;
         (line != found && w::SetConsoleMode(stdin, line) != 0).then_some(found)
     }
 

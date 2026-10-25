@@ -767,6 +767,63 @@ describe.concurrent("otp", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  // Ctrl+C is a key on a terminal that a parent process holds in raw mode. It cancels the question:
+  // `bun publish` ends as SIGINT ends a process, and it writes no error message.
+  // Not on Windows: a line of the console needs ENABLE_PROCESSED_INPUT, and with it Ctrl+C is never a key.
+  test.skipIf(isWindows)("Ctrl+C cancels the OTP question under a parent that holds the terminal raw", async () => {
+    using mock = mockRegistry(req =>
+      req.method === "PUT"
+        ? new Response("{}", { status: 401, headers: { "www-authenticate": "OTP" } })
+        : new Response("unexpected url", { status: 500 }),
+    );
+    using dir = tempDir("publish-otp-cancel", {
+      "package.json": JSON.stringify({ name: "otp-pkg-11", version: "11.11.11" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+    const parent = `process.stdin.setRawMode(true);
+      const { exitCode, signalCode } = Bun.spawnSync({
+        cmd: [process.execPath, "publish"],
+        stdio: ["inherit", "inherit", "inherit"],
+      });
+      console.log("RESULT:" + JSON.stringify({ exitCode, signalCode }) + "DONE");`;
+
+    let output = "";
+    const decoder = new TextDecoder();
+    const question = Promise.withResolvers<void>();
+    // The spawn reads a terminal of its own to the end before `exited` resolves, so `output` is complete then.
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", parent],
+      cwd: String(dir),
+      env,
+      terminal: {
+        cols: 200,
+        rows: 50,
+        data(_, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("Enter OTP: ")) question.resolve();
+        },
+      },
+    });
+    // Fail with the output if the parent exits before the question.
+    const exitedEarly = proc.exited.then(code => {
+      throw new Error(`exited before the question (code ${code}):\n${output}`);
+    });
+    exitedEarly.catch(() => {});
+
+    await Promise.race([question.promise, exitedEarly]);
+    proc.terminal!.write("\x03\r");
+
+    const exitCode = await proc.exited;
+    // What the terminal shows between the question and the result of the parent, without CR.
+    const [, typed, publish] = output.replaceAll("\r", "").match(/Enter OTP: ([^]*)RESULT:(.*)DONE/) ?? [];
+    expect({ requests: mock.requests, typed, publish: publish && JSON.parse(publish), exitCode }).toEqual({
+      requests: [request("PUT", "/otp-pkg-11")],
+      typed: "^C\n",
+      publish: { exitCode: null, signalCode: "SIGINT" },
+      exitCode: 0,
+    });
+  });
 });
 
 // npm prints the header of every response that has no `x-local-cache`.

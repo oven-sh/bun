@@ -5,7 +5,7 @@ use super::infer::{Inference, Parts};
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::symbols::IterationUse;
 use super::*;
-use crate::bind::{Decl, FnOwner, Parent, PatParent};
+use crate::bind::{Decl, FnOwner, PackedParent, Parent, PatParent};
 use crate::util::SharedSort;
 use smallvec::SmallVec;
 
@@ -78,18 +78,36 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Same for a direct child of `parent`.
     pub fn enclosing_fn(&self, file: FileId, mut parent: Parent) -> Option<FnId> {
+        // As in `enclosing_scope_of_expr`. In a chain like `a, b, ..` or `if .. else if ..`, each part's distance from
+        // the function is the length of the rest of the chain.
+        const UNCACHED_STEPS: usize = 32;
         let bound = self.bound(file);
-        loop {
+        let (mut steps, mut passed) = (0, Vec::new());
+        let function = loop {
+            steps += 1;
+            if steps > UNCACHED_STEPS {
+                cold_path();
+                let key = (file, PackedParent::from(parent));
+                if let Some(&known) = self.enclosing_fns.borrow().get(&key) {
+                    break known;
+                }
+                passed.push(key);
+            }
             parent = match parent {
                 // FOR SPEED: most steps are these two.
                 Parent::Expr(e) if e.is_some() => bound.parent_of_expr(e),
                 Parent::Stmt(s) if s.is_some() => bound.parent_of_stmt(s),
-                Parent::FnBody(f) => return Some(f),
-                Parent::ParamDefault(p) => return Some(bound.param_fn[p.idx()]),
-                Parent::None | Parent::File => return None,
+                Parent::FnBody(f) => break Some(f),
+                Parent::ParamDefault(p) => break Some(bound.param_fn[p.idx()]),
+                Parent::None | Parent::File => break None,
                 _ => self.parent_of_node(file, parent),
             };
+        };
+        if !passed.is_empty() {
+            let mut known = self.enclosing_fns.borrow_mut();
+            known.extend(passed.into_iter().map(|key| (key, function)));
         }
+        function
     }
 
     /// Resolves the calls that determine the parameter types of the functions enclosing `e`,

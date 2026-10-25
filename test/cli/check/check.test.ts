@@ -7638,6 +7638,20 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
+    // Each operand looks for the function around it, and its distance from there is the length of the rest of the chain.
+    // So do the statements of a long `if .. else if ..` chain. Nothing here nests: the chain is handled in loops.
+    test("reports TS2563 for a long chain of `&&` in an argument", async () => {
+      const chain = `x${repeat(" && x", isDebug || isASAN ? 30_000 : 300_000)}`;
+      using dir = project({
+        "a.ts": `declare function f<T>(x: T): T;\ndeclare const x: number;\nexport const r = f(${chain});\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        "a.ts(1,1): error TS2563: The containing function or module body is too large for control flow analysis.",
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // A query about an argument first resolves the enclosing calls, and walks out to the outermost one call by call.
     test("doesn't crash on 5,500 generic calls nested as each other's argument", async () => {
       using dir = project({

@@ -823,7 +823,7 @@ macro_rules! packed {
         }
 
         $(#[$packed_doc])*
-        #[derive(Copy, Clone, PartialEq, Eq, Default)]
+        #[derive(Copy, Clone, PartialEq, Eq, Hash, Default)]
         pub struct $packed(u32);
 
         const _: () = {

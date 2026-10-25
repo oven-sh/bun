@@ -967,6 +967,7 @@ impl<'s> Program<'s> {
             deepest_stack: std::cell::Cell::new(0),
             ran_out_of_stack: std::cell::Cell::new(false),
             scopes_inside_exprs: Default::default(),
+            enclosing_fns: Default::default(),
             spread_indices_of_many: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: None,
@@ -1817,6 +1818,8 @@ pub struct Checker<'p, 's> {
     ran_out_of_stack: std::cell::Cell<bool>,
     /// `enclosing_scope_of_expr` for the contents of these expressions.
     scopes_inside_exprs: std::cell::RefCell<FxHashMap<(FileId, ExprId), crate::bind::ScopeId>>,
+    /// `enclosing_fn` of these parents.
+    enclosing_fns: std::cell::RefCell<FxHashMap<(FileId, crate::bind::PackedParent), Option<FnId>>>,
     /// `spread_indices` of the array literals and the calls with many elements or arguments.
     spread_indices_of_many: FxHashMap<(FileId, ExprId), Option<(usize, usize)>>,
     /// How often the native stack ran low, or a result of `relations_cut_short` or `variances_cut_short` was read.

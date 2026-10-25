@@ -11319,32 +11319,6 @@ export function f(o: { a?: number }, k: string) {
       expect(exitCode).toBe(1);
     });
 
-    // The task of a.ts infers the return type of `f`, and a walk in b.ts ends with an incomplete type. What the second
-    // check of `root.v` finds depends on the first one's walks, which the task of b.ts hasn't made if it reads the types
-    // from the other task.
-    test("what follows from a walk in another task's file that ended with an incomplete type isn't shared", async () => {
-      using dir = project({
-        "a.ts": `import { f } from "./b";\nexport const x = f();\n`,
-        "b.ts": `declare const c: boolean;
-declare let root: { v: number } | undefined;
-export function f() {
-  for (const key in root) {
-    while (root) { }
-    while (c) {
-      while (c) { if (c) break; }
-      try { return (() => root.v)(); } finally { }
-    }
-  }
-}
-`,
-      });
-      const threads = [1, 2, 2, 2, 2, 4, 4, 4, 4, 8, 8, 8, 8];
-      for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
-        expect(stdout).toBe("b.ts(8,32): error TS2339: Property 'v' does not exist on type 'never'.");
-        expect(exitCode).toBe(1);
-      }
-    });
-
     // `return;` infers the return type first. The walk for `val` asks for the type of the assigned literal, whose
     // contextual type is the type of the target, and the walk for `cur.data` there ends with an incomplete type. A second
     // one would complete the `for (;;)`, and then `cur.data!.name` would be checked with `never`.

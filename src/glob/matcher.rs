@@ -3877,8 +3877,7 @@ impl Parsed {
                 0x80.. => i += usize::from(strings::wtf8_byte_sequence_length(ch)) - 1,
                 b'[' if i < no_class_from => match class_shape(glob, i) {
                     Some((end, may_be_separator)) => {
-                        // With the same check in `ascii_class`, `AsciiClass::is_regular` and `Layout::read`, this sends such a
-                        // class the slow way. No answer depends on the four.
+                        // Only sends such a class the slow way, as in `ascii_class`, `AsciiClass::is_regular` and `Layout::read`.
                         is_regular &= glob[i + 1] != b'(';
                         has_separator_class |= may_be_separator;
                         i = end - 1;

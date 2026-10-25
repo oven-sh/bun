@@ -1791,8 +1791,10 @@ describe.each(["hoisted", "isolated"] as const)("bun install counts a link to a 
     expect((await lockedAndInstalled(ctx)).locked).toEqual(["m", "n", "n/m", "o", "o/m"]);
 
     await setMemberVersion(ctx, "m", "2.0.0");
-    // The hoisted linker also links the workspace at the root, so it reports the removal on a second line.
-    expect(await runInstall(ctx)).toMatch(/\n(?:1 package removed|Removed: 1)$/);
+    // The hoisted linker also links the workspace at the root, so it reports the removal below the installed count.
+    const summary =
+      linker === "hoisted" ? "+ m@workspace:packages/m\n\n1 package installed\nRemoved: 1" : "1 package removed";
+    expect(await runInstall(ctx)).toBe(`bun install <version> (<revision>)\n\n${summary}`);
     expect((await lockedAndInstalled(ctx)).locked).toEqual(["m", "n", "o"]);
   });
 

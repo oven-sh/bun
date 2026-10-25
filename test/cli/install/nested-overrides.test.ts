@@ -1493,8 +1493,9 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("linker=%s", linker =
     );
     const { summary } = await installOk(dir, "--linker", linker);
     expect(await lockedEntries(dir)).toEqual(before.filter(entry => !removed.includes(entry)));
-    // The isolated linker links the dependents again, so it reports the removal on a second line.
-    expect(summary).toMatch(new RegExp(`^${removed.length} packages? removed$|\\nRemoved: ${removed.length}$`));
+    // The isolated linker links each dependent again, so it reports the removal below the installed count.
+    const count = `${removed.length} ${removed.length === 1 ? "package" : "packages"}`;
+    expect(summary).toBe(linker === "hoisted" ? `${count} removed` : `${count} installed\nRemoved: ${removed.length}`);
     await installNoChanges(dir, "--linker", linker);
   });
 

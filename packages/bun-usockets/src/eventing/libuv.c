@@ -115,8 +115,6 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
            us_socket_get_error(sock) != 0 ||
            us_internal_libuv_peer_reset_probe(us_poll_fd(wp)))) {
         error = 1;
-      } else if (sock->flags.is_paused && sock->fin_ends_pause && !sock->read_eof) {
-        eof = 1;
       } else {
         uv_poll_start(p, us_poll_events(wp) | UV_PRIORITIZED, poll_cb);
       }

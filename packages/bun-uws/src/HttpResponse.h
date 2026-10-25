@@ -553,7 +553,6 @@ public:
 
     /* Ends the socket's time as an HTTP connection and destructs its HttpResponseData. The caller gives the ext its next owner at once. */
     Leftovers leaveHttp() {
-        ((us_socket_t *) this)->fin_ends_pause = 0;
         /* Not internalEnd(): Connection: close, HTTP/1.0 and close-when-idle describe the HTTP connection, not the socket's next owner. */
         auto* responseData = getHttpResponseData();
 

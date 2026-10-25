@@ -7191,12 +7191,11 @@ it("keeps serving after a handler throws a deeply nested request body", async ()
   expect(exitCode).toBe(1);
 });
 
-// Bun.serve stops reading a connection while requests wait behind a response. A client that has left can send no more,
-// so its stream is read to the end, where its leaving shows.
+// Requests that arrive behind a response wait for it. A client that goes away meanwhile must not leave anything behind.
 describe.each([
   ["http", false],
   ["https", true],
-] as const)("a client that goes away while Bun.serve isn't reading (%s)", (_protocol, secure) => {
+] as const)("a client that goes away with requests behind a response (%s)", (_protocol, secure) => {
   const turns = async (count: number) => {
     for (let turn = 0; turn < count; turn++) await new Promise(resolve => setImmediate(resolve));
   };
@@ -7222,35 +7221,83 @@ describe.each([
   const behind = Buffer.alloc(512 * 1024, "b");
   const pipelined = `POST /behind HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${behind.length}\r\n\r\n`;
 
-  it("releases a request that others wait behind, and runs none of them", async () => {
-    const held = Promise.withResolvers<(response: Response) => void>();
+  // The larger one is more than the kernel's buffers take.
+  it.each([behind.length, 16 * 1024 * 1024])(
+    "releases a request that isn't answered yet with %d bytes behind it, and runs none of them",
+    async size => {
+      const held = Promise.withResolvers<(response: Response) => void>();
+      const aborted = Promise.withResolvers<void>();
+      let ranBehind = 0;
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls: secure ? tls : undefined,
+        fetch(req, server) {
+          if (new URL(req.url).pathname === "/behind") return (ranBehind++, new Response("behind"));
+          server.timeout(req, 0);
+          req.signal.addEventListener("abort", () => aborted.resolve());
+          return new Promise<Response>(held.resolve);
+        },
+      });
+      const client = await connectTo(server);
+      try {
+        client.write("GET /held HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        client.write(`POST /behind HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${size}\r\n\r\n`);
+        client.write(Buffer.alloc(size, "b"));
+        const answer = await held.promise;
+        await turns(200);
+        client.destroy();
+        await aborted.promise;
+        answer(new Response("late"));
+        expect({ pendingRequests: await released(server), ranBehind }).toEqual({ pendingRequests: 0, ranBehind: 0 });
+      } finally {
+        client.destroy();
+      }
+    },
+  );
+
+  it.each([
+    ["never answers", "GET /behind HTTP/1.1\r\nHost: localhost\r\n\r\n"],
+    [
+      "waits for the rest of its body",
+      `POST /behind HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1000\r\n\r\n${Buffer.alloc(500, "b")}`,
+    ],
+  ])("releases a request that %s and starts after its client ended its side", async (_label, second) => {
+    const payload = Buffer.alloc(8 * 1024 * 1024, "r");
     const aborted = Promise.withResolvers<void>();
-    let ranBehind = 0;
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
       tls: secure ? tls : undefined,
-      fetch(req, server) {
-        if (new URL(req.url).pathname === "/behind") return (ranBehind++, new Response("behind"));
+      async fetch(req, server) {
         server.timeout(req, 0);
+        if (new URL(req.url).pathname !== "/behind") return new Response(payload);
         req.signal.addEventListener("abort", () => aborted.resolve());
-        return new Promise<Response>(held.resolve);
+        await req.text().catch(() => {});
+        return new Promise<Response>(() => {});
       },
     });
     const client = await connectTo(server);
     try {
-      await send(client, "GET /held HTTP/1.1\r\nHost: localhost\r\n\r\n", pipelined, behind);
-      const answer = await held.promise;
+      // Not read yet, so the first response is still on its way when the client's FIN arrives.
+      client.pause();
+      await send(client, "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n", second);
       client.end();
+      await turns(50);
+      let received = 0;
+      client.on("data", chunk => void (received += chunk.length));
+      await once(client.resume(), "close");
       await aborted.promise;
-      answer(new Response("late"));
-      expect({ pendingRequests: await released(server), ranBehind }).toEqual({ pendingRequests: 0, ranBehind: 0 });
+      expect({ wholeFirstResponse: received >= payload.length, pendingRequests: await released(server) }).toEqual({
+        wholeFirstResponse: true,
+        pendingRequests: 0,
+      });
     } finally {
       client.destroy();
     }
   });
 
-  // It also stops reading while a request body is unread. That pause stays, so the end of the stream waits behind the body.
+  // Bun.serve stops reading while a request body is unread, so the end of the stream waits behind the body.
   it("answers a client that sent its whole body and ended its side, when the handler reads it late", async () => {
     const body = Buffer.alloc(2 * 1024 * 1024, "b");
     const sent = Promise.withResolvers<void>();

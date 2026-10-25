@@ -248,6 +248,18 @@ private:
         return s;
     }
 
+    /* The application still owes the response, or the rest of a body that it streams. */
+    static bool isResponseUndetermined(uint32_t state) {
+        return (state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
+            && !(state & (HttpResponseData<SSL>::HTTP_END_CALLED | HttpResponseData<SSL>::HTTP_FIXED_LENGTH_FILE_BODY));
+    }
+
+    /* No close_notify, which says that the stream is whole, over a response that isn't finished or isn't sent. The second close drops what TLS still holds. */
+    static us_socket_t *closeOverUnfinishedResponse(us_socket_t *s) {
+        us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+        return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+    }
+
     /* Closes a socket that JavaScript destroyed during its parse. The bit goes first: a TLS socket with spilled ciphertext defers its own close, and a second close would drop the spill. */
     static void closeDestroyedNodeHttpSocket(us_socket_t *s, HttpResponseData<SSL> *httpResponseData) {
         httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE;
@@ -872,10 +884,12 @@ private:
                 if (!httpResponseData->parkedRequestBytes.isEmpty()) [[unlikely]] {
                     /* Keep reading until a read's worth is parked, so the peer's FIN still reaches onEnd and aborts the pending response. */
                     if (httpResponseData->parkedRequestBytes.size() >= LIBUS_RECV_BUFFER_LENGTH) {
+                        /* Nothing would end a pause behind a response that may never come. */
+                        if (isResponseUndetermined(httpResponseData->state)) {
+                            return closeOverUnfinishedResponse(s);
+                        }
                         /* This pause lifts when the response ahead has drained, and after a hangup it never does. */
                         s->hangup_closes_unsent = 1;
-                        /* It only bounds memory, so the peer's FIN ends it and reaches onEnd all the same. */
-                        s->fin_ends_pause = 1;
                         ((HttpResponse<SSL> *) s)->pauseReads(HttpResponseData<SSL>::READ_PAUSE_PARKED);
                     }
                     if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
@@ -1094,7 +1108,6 @@ private:
             || !reinterpret_cast<AsyncSocket<SSL> *>(s)->hasFullyDrained()) {
             return s;
         }
-        s->fin_ends_pause = 0;
         reinterpret_cast<HttpResponse<SSL> *>(s)->resumeReads(HttpResponseData<SSL>::READ_PAUSE_PARKED);
         /* us_socket_resume() closes a socket that the kernel doesn't take back. */
         if (us_socket_is_closed(s)) {
@@ -1110,6 +1123,10 @@ private:
         us_socket_t *returned = onData<false>(s, replayed.mutableSpan().data() + start, (int) length);
         if (!us_socket_is_closed(s) && us_socket_kind(s) == socketKind()) {
             httpResponseData->replayedRequestBytes = nullptr;
+            /* The peer's FIN came during the response ahead. It ends these requests like ones that it finds on arrival. */
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN) {
+                return onEnd<false>(s);
+            }
         }
         return returned;
     }
@@ -1201,8 +1218,7 @@ private:
              * onAborted / request.signal fires on client disconnect. */
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
             uint32_t state = httpResponseData->state;
-            bool determinedTail = (state & (HttpResponseData<SSL>::HTTP_END_CALLED | HttpResponseData<SSL>::HTTP_FIXED_LENGTH_FILE_BODY))
-                && (state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
+            bool determinedTail = (state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) && !isResponseUndetermined(state);
             bool doneButBuffered = !(state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
                 && !asyncSocket->hasFullyDrained();
             if (determinedTail || doneButBuffered) {
@@ -1230,10 +1246,8 @@ private:
             httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);
         }
         asyncSocket->uncork();
-        /* No close_notify, which says that the stream is whole, over a response that isn't finished or isn't sent. */
         if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || !asyncSocket->hasFullyDrained()) {
-            us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
-            return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+            return closeOverUnfinishedResponse(s);
         }
         return us_socket_close_now(s);
     }

@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tls as certs, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const skip = !fault.available() || isWindows;
@@ -237,8 +237,9 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
   });
 });
 
-// A resume changes the poll's registration, and the kernel can refuse that. The socket is closed from the loop.
-describe.skipIf(skip)("Bun.serve: resuming a request socket fails in the kernel", () => {
+// The dispatcher removes a paused socket from the epoll set when its peer hangs up, so resuming it
+// is a new EPOLL_CTL_ADD that can fail. kqueue and libuv never do that.
+describe.skipIf(skip || !isLinux)("Bun.serve: resuming a request socket fails in the kernel", () => {
   const ping = "HTTP/1.1 200 OK, pong";
   const bodyFails = [`before: ${ping}`, "abort", "body: rejected AbortError", `after: ${ping}`, "done"];
 
@@ -246,7 +247,6 @@ describe.skipIf(skip)("Bun.serve: resuming a request socket fails in the kernel"
     ["body-buffered", bodyFails],
     ["body-stream", bodyFails],
     ["response-ends", [`before: ${ping}`, `after: ${ping}`, "done"]],
-    ["client-ends", [`before: ${ping}`, "abort", `after: ${ping}`, "done"]],
   ])("%s", async (mode, expected) => {
     using dir = tempDir("serve-resume-fault", {});
     await using proc = Bun.spawn({

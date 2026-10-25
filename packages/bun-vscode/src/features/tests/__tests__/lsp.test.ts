@@ -501,6 +501,184 @@ describe("registerLanguageServer", () => {
     expect(createClient).toHaveBeenCalledTimes(1);
   });
 
+  describe("version gate", () => {
+    test("exports MIN_BUN_VERSION as 1.4.5", async () => {
+      const lsp = await loadLsp();
+      expect(lsp.MIN_BUN_VERSION).toBe("1.4.5");
+    });
+
+    test("does not start on Bun 1.4.3 and logs the too-old line once", async () => {
+      const lsp = await loadLsp();
+      const { clients, context, createClient, probeVersion } = makeHarness({ version: "1.4.3" });
+      lsp.registerLanguageServer(context, { createClient, probeVersion });
+
+      await open(doc(`${WITH_MARKER}/index.ts`));
+
+      expect(createClient).not.toHaveBeenCalled();
+      expect(clients).toHaveLength(0);
+      expect(getOutputLines("Bun")).toEqual([
+        "Bun 1.4.3 does not have bun fmt --lsp; the Bun language server needs Bun 1.4.5 or later",
+      ]);
+      expect(vscodeMockState.messages).toHaveLength(0);
+
+      await open(doc(`${WITH_MARKER}/second.ts`));
+      await open(doc(`${OTHER_WITH_MARKER}/third.ts`));
+
+      expect(createClient).not.toHaveBeenCalled();
+      expect(probeVersion).toHaveBeenCalledTimes(1);
+      expect(getOutputLines("Bun")).toHaveLength(1);
+    });
+
+    test("treats output without a version number as too old", async () => {
+      const lsp = await loadLsp();
+      const { clients, context, createClient, probeVersion } = makeHarness({ version: "not a version" });
+      lsp.registerLanguageServer(context, { createClient, probeVersion });
+
+      await open(doc(`${WITH_MARKER}/index.ts`));
+
+      expect(clients).toHaveLength(0);
+      const lines = getOutputLines("Bun");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("not a version");
+      expect(lines[0]).toContain(lsp.MIN_BUN_VERSION);
+      expect(vscodeMockState.messages).toHaveLength(0);
+    });
+
+    test.each(["1.4.5", "1.4.5-canary.1", "1.4.5-canary.1+abcdef12", "1.5.0", "2.0.0"])(
+      "starts one client on Bun %s",
+      async version => {
+        const lsp = await loadLsp();
+        const { clients, context, createClient, probeVersion } = makeHarness({ version });
+        lsp.registerLanguageServer(context, { createClient, probeVersion });
+
+        await open(doc(`${WITH_MARKER}/index.ts`));
+
+        expect(probeVersion).toHaveBeenCalledTimes(1);
+        expect(probeVersion).toHaveBeenCalledWith("bun");
+        expect(createClient).toHaveBeenCalledTimes(1);
+        expect(clients).toHaveLength(1);
+        expect(clients[0].spec.args).toEqual(["fmt", "--no-script", "--lsp"]);
+        expect(clients[0].started).toBe(1);
+        expect(getOutputLines("Bun")).toHaveLength(0);
+        expect(vscodeMockState.messages).toHaveLength(0);
+      },
+    );
+
+    test("probes the bun.runtime command, not the default", async () => {
+      setConfiguration("bun.runtime", "  /opt/bun/bin/bun  ");
+      const lsp = await loadLsp();
+      const { clients, context, createClient, probeVersion } = makeHarness();
+      lsp.registerLanguageServer(context, { createClient, probeVersion });
+
+      await open(doc(`${WITH_MARKER}/index.ts`));
+
+      expect(probeVersion).toHaveBeenCalledTimes(1);
+      expect(probeVersion).toHaveBeenCalledWith("/opt/bun/bin/bun");
+      expect(clients).toHaveLength(1);
+    });
+
+    test("logs one line and creates no client when the probe rejects", async () => {
+      const lsp = await loadLsp();
+      const { clients, context, createClient, probeVersion } = makeHarness({
+        version: () => Promise.reject(new Error("spawn bun ENOENT")),
+      });
+      lsp.registerLanguageServer(context, { createClient, probeVersion });
+
+      await open(doc(`${WITH_MARKER}/index.ts`));
+
+      expect(createClient).not.toHaveBeenCalled();
+      expect(clients).toHaveLength(0);
+      expect(getOutputLines("Bun")).toEqual(["Failed to start the Bun language server: spawn bun ENOENT"]);
+      expect(vscodeMockState.messages).toHaveLength(0);
+
+      await open(doc(`${WITH_MARKER}/second.ts`));
+
+      expect(createClient).not.toHaveBeenCalled();
+      expect(probeVersion).toHaveBeenCalledTimes(1);
+      expect(getOutputLines("Bun")).toHaveLength(1);
+    });
+
+    test("probes once per runtime value across document opens and lsp.enable toggles", async () => {
+      let fail = true;
+      const lsp = await loadLsp();
+      const { clients, context, createClient, probeVersion } = makeHarness({
+        startError: () => (fail ? new Error("spawn bun ENOENT") : undefined),
+      });
+      lsp.registerLanguageServer(context, { createClient, probeVersion });
+
+      await open(doc(`${WITH_MARKER}/index.ts`));
+      await open(doc(`${WITH_MARKER}/second.ts`));
+      await open(doc(`${OTHER_WITH_MARKER}/third.ts`));
+
+      expect(clients).toHaveLength(1);
+      expect(probeVersion).toHaveBeenCalledTimes(1);
+
+      // Turning bun.lsp.enable off and on clears `failed` and starts again with the
+      // same runtime, so the cached probe result is reused.
+      fail = false;
+      setConfiguration("bun.lsp.enable", false);
+      await fireConfigurationChange(["bun.lsp.enable"]);
+      setConfiguration("bun.lsp.enable", true);
+      await fireConfigurationChange(["bun.lsp.enable"]);
+      await settle();
+
+      expect(clients).toHaveLength(2);
+      expect(clients[1].started).toBe(1);
+      expect(probeVersion).toHaveBeenCalledTimes(1);
+    });
+
+    test("probes again with the new command when bun.runtime changes", async () => {
+      const lsp = await loadLsp();
+      const { clients, context, createClient, probeVersion } = makeHarness();
+      lsp.registerLanguageServer(context, { createClient, probeVersion });
+
+      await open(doc(`${WITH_MARKER}/index.ts`));
+      expect(clients).toHaveLength(1);
+      expect(probeVersion).toHaveBeenCalledTimes(1);
+      expect(probeVersion).toHaveBeenLastCalledWith("bun");
+
+      setConfiguration("bun.runtime", "/opt/bun");
+      await fireConfigurationChange(["bun.runtime"]);
+      await settle();
+
+      expect(probeVersion).toHaveBeenCalledTimes(2);
+      expect(probeVersion).toHaveBeenLastCalledWith("/opt/bun");
+      expect(clients).toHaveLength(2);
+      expect(clients[1].spec.command).toBe("/opt/bun");
+      expect(clients[1].started).toBe(1);
+    });
+
+    test("starts once bun.runtime points at a new enough Bun", async () => {
+      const versions = new Map([
+        ["bun", "1.4.3"],
+        ["/opt/bun", "1.4.5"],
+      ]);
+      let runtime = "bun";
+      const lsp = await loadLsp();
+      const { clients, context, createClient, probeVersion } = makeHarness({
+        version: async () => versions.get(runtime)!,
+      });
+      lsp.registerLanguageServer(context, { createClient, probeVersion });
+
+      await open(doc(`${WITH_MARKER}/index.ts`));
+      expect(clients).toHaveLength(0);
+      expect(getOutputLines("Bun")).toHaveLength(1);
+      expect(getOutputLines("Bun")[0]).toContain("1.4.3");
+
+      runtime = "/opt/bun";
+      setConfiguration("bun.runtime", runtime);
+      await fireConfigurationChange(["bun.runtime"]);
+      await settle();
+
+      expect(probeVersion).toHaveBeenCalledTimes(2);
+      expect(probeVersion).toHaveBeenLastCalledWith("/opt/bun");
+      expect(clients).toHaveLength(1);
+      expect(clients[0].spec.command).toBe("/opt/bun");
+      expect(clients[0].started).toBe(1);
+      expect(getOutputLines("Bun")).toHaveLength(1);
+    });
+  });
+
   test("constructs the real LanguageClient over stdio without a --stdio flag by default", async () => {
     setConfiguration("bun.lint.enable", false);
     setConfiguration("bun.lint.run", "onSave");

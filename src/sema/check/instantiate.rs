@@ -541,16 +541,23 @@ impl<'p, 's> Checker<'p, 's> {
             false
         });
         pairs.retain(|pair| pair.0 != pair.1 && !own.contains(&pair.0));
-        let mapper = match pairs.is_empty() {
-            true => self.mapper_of_no_type_parameters(t),
-            false => self.types().mapper(pairs),
-        };
+        let mapper = self.function_mapper(t, pairs);
         (self.instantiate(t, mapper), mapper)
     }
 
-    /// A tsgo function mapper, for a `ty` whose type parameters it maps to themselves. It isn't
-    /// nil, so `instantiateType` walks `ty` and replaces what has
-    /// `ObjectFlags::HAS_OTHER_INSTANTIATION`. Only type parameters are looked up in a mapper, so
+    /// A mapper that tsgo has as a function, for `ty`: `pairs` is what it maps among the type
+    /// parameters `ty` mentions. It's never nil, so `instantiateType` walks `ty` even if `pairs` is
+    /// empty.
+    pub(super) fn function_mapper(&self, ty: TypeId, pairs: Vec<(TypeId, TypeId)>) -> MapperId {
+        match pairs.is_empty() {
+            true => self.mapper_of_no_type_parameters(ty),
+            false => self.types().mapper(pairs),
+        }
+    }
+
+    /// `function_mapper` with no pairs. The walk replaces what has
+    /// `ObjectFlags::HAS_OTHER_INSTANTIATION`, and nothing else, so a `ty` without it is returned
+    /// unchanged through the identity mapper. Only type parameters are looked up in a mapper, so
     /// the pair maps nothing.
     pub(super) fn mapper_of_no_type_parameters(&self, ty: TypeId) -> MapperId {
         let flags = self.types().object_flags(ty);

@@ -12484,10 +12484,46 @@ type Loop<T> = T extends any ? Loop<[T]> : never;
 declare const loop: Loop<S>;
 export { loop };
 `,
+        // \`isNonGenericTopLevelType\`: a union or an intersection that a non-generic alias at the top
+        // level of a file names could contain no type variables, whatever its members, so tsgo
+        // never instantiates it. The issue's \`type Row = Item & { id: string }\`.
+        "e.ts": `type FieldOf<S extends string> = S extends [infer A] ? never : { name: S };
+type PSF<F extends { name: string }> = { [K in F["name"]]: number };
+type Item = PSF<FieldOf<"id">>;
+type Copy<T> = { [K in keyof T]: T[K] };
+type S = Copy<Item>;
+type SU = S | undefined;
+type SI = S & { z?: 1 };
+${web("(x: T) => any")}
+declare const u: ColumnDef<{}, SU>;
+declare const i: ColumnDef<{}, SI>;
+export { u, i };
+`,
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toBe("d.ts(6,32): error TS2589: Type instantiation is excessively deep and possibly infinite.");
       expect(exitCode).toBe(1);
+    });
+
+    test("computes the constraint of a distributive conditional type behind an alias whose check type mentions only unconstrained type parameters", async () => {
+      // `getRestrictiveInstantiation` of the aliased conditional type is another instance of it, without
+      // the alias, so `getConstraintOfDistributiveConditionalType` computes the constraint.
+      using dir = project({
+        "bar.ts": `export type Foo<T> = T extends string ? 1 : 2;
+export type Bar<U> = Foo<U & { a: 1 }>;
+export type Keep<T> = T extends 2 ? T : never;
+`,
+        "a.ts": `import type { Bar, Keep } from "./bar";
+export function g<U>(x: Bar<U>, k: Keep<Bar<U>>) {
+  const z: 2 = k;
+  const y: 2 = x;
+  return [z, y];
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
     });
 
     test("computes keyof of a mapped type with an `as` clause again after the intersection it reads is reduced", async () => {

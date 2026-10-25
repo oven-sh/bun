@@ -1384,6 +1384,10 @@ pub struct Provenance<'s> {
     /// `ObjectFlags::HAS_OTHER_INSTANTIATION`, if `alias` has no type arguments and isn't declared at
     /// the top level of a file (`isNonGenericTopLevelType`).
     pub has_other_instantiation: bool,
+    /// `isNonGenericTopLevelType`: `alias` has no type parameters and is declared at the top level
+    /// of a file. `couldContainTypeVariables` is false for such a union or intersection, whatever
+    /// its members, so `instantiateType` returns it unchanged.
+    pub is_non_generic_top_level: bool,
 }
 
 /// `getTypeInstantiationKey`, for `ObjectType.instantiations` of a mapped type.
@@ -1613,6 +1617,7 @@ pub struct ProvenanceKey<'a> {
     pub is_array_literal: bool,
     pub is_array_pattern: bool,
     pub has_other_instantiation: bool,
+    pub is_non_generic_top_level: bool,
 }
 
 impl ProvenanceKey<'_> {
@@ -1624,6 +1629,7 @@ impl ProvenanceKey<'_> {
             && !self.is_array_literal
             && !self.is_array_pattern
             && !self.has_other_instantiation
+            && !self.is_non_generic_top_level
     }
 
     fn is(self, provenance: &Provenance) -> bool {
@@ -1648,6 +1654,7 @@ impl ProvenanceKey<'_> {
             && self.is_array_literal == provenance.is_array_literal
             && self.is_array_pattern == provenance.is_array_pattern
             && self.has_other_instantiation == provenance.has_other_instantiation
+            && self.is_non_generic_top_level == provenance.is_non_generic_top_level
     }
 
     /// Same result as `Follow::is_bound` on the `Provenance` for this key.
@@ -1691,6 +1698,7 @@ impl ProvenanceKey<'_> {
             is_array_literal: self.is_array_literal,
             is_array_pattern: self.is_array_pattern,
             has_other_instantiation: self.has_other_instantiation,
+            is_non_generic_top_level: self.is_non_generic_top_level,
         }
     }
 }
@@ -3748,6 +3756,9 @@ impl<'p, 's> Types<'p, 's> {
             if provenance.has_other_instantiation {
                 flags |= ObjectFlags::HAS_OTHER_INSTANTIATION;
             }
+            if is_union_or_intersection && provenance.is_non_generic_top_level {
+                flags.remove(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES);
+            }
             if provenance.alias.is_some() && matches!(data, TypeData::Cond { .. }) {
                 flags |= ObjectFlags::HAS_OTHER_INSTANTIATION;
             }
@@ -4684,7 +4695,8 @@ follow_struct!(Provenance<'_> {
     stored_under,
     is_array_literal,
     is_array_pattern,
-    has_other_instantiation
+    has_other_instantiation,
+    is_non_generic_top_level
 });
 follow_struct!(InstantiationKey {
     type_arguments,
@@ -4952,7 +4964,8 @@ clone_in_struct!(Provenance {
     stored_under,
     is_array_literal,
     is_array_pattern,
-    has_other_instantiation
+    has_other_instantiation,
+    is_non_generic_top_level
 });
 clone_in_enum!(UnionOrigin {
     None,
@@ -5143,6 +5156,7 @@ fn visit_type_as_content<V: Hashing>(created: &OwnedTypeKey, content: &mut V) {
             is_array_literal,
             is_array_pattern,
             has_other_instantiation,
+            is_non_generic_top_level,
         } = &**provenance;
         alias.visit(content);
         match origin {
@@ -5157,6 +5171,7 @@ fn visit_type_as_content<V: Hashing>(created: &OwnedTypeKey, content: &mut V) {
         is_array_literal.visit(content);
         is_array_pattern.visit(content);
         has_other_instantiation.visit(content);
+        is_non_generic_top_level.visit(content);
     }
 }
 
@@ -5464,6 +5479,7 @@ mod tests {
             is_array_literal: false,
             is_array_pattern: false,
             has_other_instantiation: false,
+            is_non_generic_top_level: false,
         };
         let under = InstantiationKey {
             type_arguments: MapperId::IDENTITY,

@@ -3165,10 +3165,7 @@ impl<'p, 's> Checker<'p, 's> {
                 pairs.push((n.params[i], inferred));
             }
         }
-        if pairs.is_empty() {
-            return self.mapper_of_no_type_parameters(ty);
-        }
-        self.types().mapper(pairs)
+        self.function_mapper(ty, pairs)
     }
 
     /// `context.mapper`, for what `ty` mentions (`InferenceTypeMapper.Map`).
@@ -3189,10 +3186,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             pairs.push((n.params[i], self.get_inferred_type(n, i, true)));
         }
-        if pairs.is_empty() {
-            return self.mapper_of_no_type_parameters(ty);
-        }
-        self.types().mapper(pairs)
+        self.function_mapper(ty, pairs)
     }
 
     /// `inferFromIntraExpressionSites`

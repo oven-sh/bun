@@ -645,6 +645,11 @@ impl QuicSession {
     pub(super) fn is_server(&self) -> bool {
         self.is_server.get()
     }
+    /// Returns true if lsquic frames this session's streams as HTTP/3.
+    pub(super) fn is_http(&self) -> bool {
+        self.endpoint_ref()
+            .is_some_and(|ep| ep.is_http(self.is_server.get()))
+    }
     pub(super) fn push_event(&self, event: SessionEvent) {
         self.events.with_mut(|e| e.push(event));
     }
@@ -1037,13 +1042,7 @@ impl QuicSession {
                 // Already closing: the CONNECTION_CLOSE precedes this
                 // stream's packet and a closing endpoint discards new
                 // streams (RFC 9000 s10.2.1). Raw QUIC only.
-                if remote
-                    && self.with_state(|st| st.graceful_close == 1)
-                    && !self
-                        .endpoint_ref()
-                        .map(|ep| ep.is_http(self.is_server.get()))
-                        .unwrap_or(false)
-                {
+                if remote && self.with_state(|st| st.graceful_close == 1) && !self.is_http() {
                     stream.suppress_announce();
                     stream.close_raw_silently();
                     return Ok(());
@@ -1898,11 +1897,7 @@ impl QuicSession {
     }
 
     fn apply_graceful_close(&self, app: bool, code: u64, reason: Vec<u8>) {
-        let is_http = self
-            .endpoint_ref()
-            .map(|ep| ep.is_http(self.is_server.get()))
-            .unwrap_or(false);
-        if is_http && !app && code == 0 && self.has_opened_stream() {
+        if self.is_http() && !app && code == 0 && self.has_opened_stream() {
             // RFC 9114 §5.2. lsquic can't send a GOAWAY until the handshake creates the
             // control stream. An opened stream proves the handshake finished.
             if let Some(c) = self.conn() {
@@ -2119,10 +2114,7 @@ impl QuicSession {
         };
         // HTTP/3: the peer must have advertised SETTINGS_H3_DATAGRAM
         // (RFC 9297 §2.1.1); otherwise not sent (0n).
-        let is_http = self
-            .endpoint_ref()
-            .is_some_and(|ep| ep.is_http(self.is_server.get()));
-        if is_http && self.conn().and_then(|c| c.peer_h3_datagram()) == Some(false) {
+        if self.is_http() && self.conn().and_then(|c| c.peer_h3_datagram()) == Some(false) {
             return JSValue::from_uint64_no_truncate(global, 0);
         }
         // Oversized for the negotiated budget: not sent (Node returns 0n).

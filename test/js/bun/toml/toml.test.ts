@@ -717,15 +717,37 @@ describe("robustness", () => {
     // n * n / 2 ** 33 pairs have the same one: 10 pairs among 300,000 keys.
     // A key must not be taken for the other one of its pair, neither when it
     // is inserted (the first document) nor when a dotted key looks it up
-    // (the second). A debug build parses fewer keys, to stay fast.
-    test("tells keys with the same hash apart", () => {
+    // (the second). A debug build parses fewer keys, to stay fast. A parser
+    // that scans each table needs minutes for these documents, so a child
+    // parses them and is killed if it does not finish.
+    test("tells keys with the same hash apart", async () => {
       const n = isDebug ? 40_000 : 300_000;
-      for (const after of [" = 1\n", ".x = 1\n"]) {
-        expect(syntaxError(numbered(n, "k", after) + "k0 = 1").message).toBe(
-          "TOML Parse error: Cannot redefine key 'k0'",
-        );
-      }
-    });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `for (const after of [" = 1\\n", ".x = 1\\n"]) {
+             try {
+               Bun.TOML.parse("k" + [...Array(${n}).keys()].join(after + "k") + after + "k0 = 1");
+               console.log("parsed");
+             } catch (error) {
+               console.log(error.message);
+             }
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+        timeout: 20_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "TOML Parse error: Cannot redefine key 'k0'\n".repeat(2),
+        exitCode: 0,
+        signalCode: null,
+      });
+    }, 30_000);
 
     // Each key of a table used to be compared with every key before it, and
     // so was each header and dotted key that went through the table. For

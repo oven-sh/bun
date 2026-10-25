@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
+import { X509Certificate } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
@@ -1765,4 +1766,164 @@ it("a server that ends the TLS handshake with close_notify and stays connected f
     e => e.code,
   );
   expect(outcome).toBe("ECONNRESET");
+});
+
+describe.concurrent("tls.checkServerIdentity gets the verified chain", () => {
+  // CN=localhost, issued by NodeJS-Test-Intermediate-CA, issued by the fake
+  // StartCom root. The server sends the leaf and the intermediate; the client
+  // trusts the root only.
+  const keys = join(import.meta.dir, "../../node/test/fixtures/keys");
+  const leaf = readFileSync(join(keys, "leaf-from-intermediate-cert.pem"), "utf8");
+  const intermediate = readFileSync(join(keys, "intermediate-ca.pem"), "utf8");
+  const root = readFileSync(join(keys, "fake-startcom-root-cert.pem"), "utf8");
+  const key = readFileSync(join(keys, "leaf-from-intermediate-key.pem"), "utf8");
+  const names = ["localhost", "NodeJS-Test-Intermediate-CA", "StartCom Certification Authority"];
+
+  // Every certificate, leaf first, until the chain repeats (the root links to itself).
+  function walk(cert: tls.DetailedPeerCertificate) {
+    const chain: string[] = [];
+    const seen = new Set<tls.DetailedPeerCertificate>();
+    let last = cert;
+    for (let c: tls.DetailedPeerCertificate | undefined = cert; c && !seen.has(c); c = c.issuerCertificate) {
+      seen.add(c);
+      chain.push(c.subject.CN as string);
+      last = c;
+    }
+    return { chain, rootFingerprint: last.fingerprint256, rootIsItsOwnIssuer: last.issuerCertificate === last };
+  }
+
+  function serve(cert = leaf + intermediate) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: { cert, key },
+      fetch: () => new Response("ok"),
+    });
+  }
+
+  it("links each certificate to its issuer up to the trust anchor, which links to itself", async () => {
+    using server = serve();
+    const seen: unknown[] = [];
+    const body = await fetch(`https://127.0.0.1:${server.port}/`, {
+      tls: {
+        ca: root,
+        checkServerIdentity(hostname, cert) {
+          seen.push({ hostname, ...walk(cert) });
+          return undefined;
+        },
+      },
+    }).then(r => r.text());
+    expect({ body, seen }).toEqual({
+      body: "ok",
+      seen: [
+        {
+          hostname: "127.0.0.1",
+          chain: names,
+          rootFingerprint: new X509Certificate(root).fingerprint256,
+          rootIsItsOwnIssuer: true,
+        },
+      ],
+    });
+  });
+
+  // Like Node, the chain follows issuance, not the order the server sent, and
+  // a certificate that issued nothing in it is left out.
+  it.each([
+    ["the root before the intermediate", leaf + root + intermediate],
+    ["an unrelated certificate at the end", leaf + intermediate + validTls.cert],
+  ])("follows issuance when the server sends %s", async (_, cert) => {
+    using server = serve(cert);
+    const seen: unknown[] = [];
+    const body = await fetch(`https://127.0.0.1:${server.port}/`, {
+      tls: {
+        ca: root,
+        checkServerIdentity(_hostname, cert) {
+          seen.push(walk(cert));
+          return undefined;
+        },
+      },
+    }).then(r => r.text());
+    expect({ body, seen }).toEqual({
+      body: "ok",
+      seen: [{ chain: names, rootFingerprint: new X509Certificate(root).fingerprint256, rootIsItsOwnIssuer: true }],
+    });
+  });
+
+  it("a callback that refuses a distrusted intermediate fails the request", async () => {
+    using server = serve();
+    const distrusted = new X509Certificate(intermediate).fingerprint256;
+    const outcome = await fetch(`https://127.0.0.1:${server.port}/`, {
+      tls: {
+        ca: root,
+        checkServerIdentity(_hostname, cert) {
+          for (let c = cert; c; c = c.issuerCertificate) {
+            if (c.fingerprint256 === distrusted) return new Error("chain contains the distrusted intermediate");
+            if (c.issuerCertificate === c) break;
+          }
+          return undefined;
+        },
+      },
+    }).then(
+      r => r.status,
+      e => e.message,
+    );
+    expect(outcome).toBe("chain contains the distrusted intermediate");
+  });
+
+  it("Bun.FetchSession passes the same chain", async () => {
+    using server = serve();
+    const chains: string[][] = [];
+    using session = new Bun.FetchSession({
+      tls: {
+        ca: root,
+        checkServerIdentity(_hostname, cert) {
+          chains.push(walk(cert).chain);
+          return undefined;
+        },
+      },
+    });
+    const body = await fetch(`https://127.0.0.1:${server.port}/`, { session }).then(r => r.text());
+    expect({ body, chains }).toEqual({ body: "ok", chains: [names] });
+  });
+
+  // Without `ca`, the root comes from the default trust store, here extended
+  // through NODE_EXTRA_CA_CERTS.
+  it("finds the trust anchor in the default store", async () => {
+    using server = serve();
+    using dir = tempDir("extra-ca", { "root.pem": root });
+    const script = `
+      const seen = [];
+      const response = await fetch(process.env.SERVER, {
+        tls: {
+          checkServerIdentity(hostname, cert) {
+            const chain = [];
+            let last = cert;
+            for (let c = cert; c && !chain.includes(c.subject.CN); c = c.issuerCertificate) {
+              chain.push(c.subject.CN);
+              last = c;
+            }
+            seen.push({ hostname, chain, rootIsItsOwnIssuer: last.issuerCertificate === last });
+            return undefined;
+          },
+        },
+      });
+      console.log(JSON.stringify({ body: await response.text(), seen }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        SERVER: `https://127.0.0.1:${server.port}/`,
+        NODE_EXTRA_CA_CERTS: join(String(dir), "root.pem"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout ? JSON.parse(stdout) : stderr).toEqual({
+      body: "ok",
+      seen: [{ hostname: "127.0.0.1", chain: names, rootIsItsOwnIssuer: true }],
+    });
+    expect(exitCode).toBe(0);
+  });
 });

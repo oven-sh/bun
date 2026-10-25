@@ -1981,14 +1981,16 @@ interface BunFetchRequestInitTLS extends Bun.TLSOptions {
    * function on a {@link Bun.FetchSession}.
    *
    * @param hostname - The hostname of the server
-   * @param cert - The certificate of the server
+   * @param cert - The certificate of the server, as `tls.connect()` passes
+   * it: each certificate links to its issuer through `issuerCertificate`, up
+   * to the trust anchor
    * @returns An error if the server is unauthorized, otherwise undefined. Any
    * other truthy value also fails the request, and a `Promise` is one: the
    * function cannot be `async`. Every falsy value approves the certificate, as
    * in Node, so `false` does not reject it. For that reason the type allows
    * only `undefined` and `Error`.
    */
-  checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
+  checkServerIdentity?: (hostname: string, cert: import("node:tls").DetailedPeerCertificate) => Error | undefined;
 }
 
 /**

@@ -5027,10 +5027,10 @@ declare module "bun" {
        * With `rejectUnauthorized: false` it still runs when the certificate
        * chain verified, but its result is not enforced.
        * @param hostname - The name the certificate is verified against: `serverName` if set, else the URL host
-       * @param cert - The leaf certificate of the server, as in `fetch()`. Unlike in `tls.connect()`, it has no `issuerCertificate`
+       * @param cert - The server's certificate, as `tls.connect()` passes it: each certificate links to its issuer through `issuerCertificate`, up to the trust anchor
        * @returns An error if the server is unauthorized, otherwise undefined
        */
-      checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
+      checkServerIdentity?: (hostname: string, cert: import("node:tls").DetailedPeerCertificate) => Error | undefined;
     };
   };
 

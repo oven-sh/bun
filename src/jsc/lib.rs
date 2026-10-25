@@ -395,6 +395,8 @@ pub use self::zig_stack_frame_position::ZigStackFramePosition;
 
 #[path = "GarbageCollectionController.rs"]
 pub mod garbage_collection_controller;
+#[path = "TlsServerIdentity.rs"]
+pub mod tls_server_identity;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `#[no_mangle]` export modules — compiled so the C++ side links against the

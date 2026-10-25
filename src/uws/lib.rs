@@ -132,6 +132,9 @@ unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
 
 pub use bun_uws_sys::LIBUS_SOCKET_DESCRIPTOR;
 
+pub mod tls_peer_chain;
+pub use tls_peer_chain::PeerCertificateChain;
+
 mod c {
     unsafe extern "C" {
         // safe: no args; returns a process-static NUL-terminated cipher list.

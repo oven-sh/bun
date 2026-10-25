@@ -2,7 +2,6 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, String as BunString};
 use bun_event_loop::{
@@ -25,7 +24,6 @@ use bun_sys::FdExt;
 use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
 
-use crate::api::bun_x509 as X509;
 use crate::generated_bindgen::fetch_tasklet::{
     Bun__FetchTasklet__onRejectRequestStream, Bun__FetchTasklet__onResolveRequestStream,
 };
@@ -43,8 +41,6 @@ use bun_jsc::AbortSignalRef;
 // ConcurrentTask callbacks at the tier-3 layer.
 
 use http::signals::BODY_HIGH_WATER_MARK;
-
-use boringssl::c::{X509_free, d2i_X509};
 
 // ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop
 // but the impl lives next to the type (cycle-break).
@@ -1060,10 +1056,10 @@ impl FetchTasklet {
         // first progress update carries only the certificate (no metadata, no
         // failure) and would otherwise be dropped, leaving the socket parked
         // until the idle timeout.
-        if let Some(certificate_info) = self.result.certificate_info.take() {
+        if let Some(mut certificate_info) = self.result.certificate_info.take() {
             // With `rejectUnauthorized: false` the callback still runs, like
             // Node's, but its verdict is not enforced.
-            let verdict = self.run_check_server_identity(&certificate_info);
+            let verdict = self.run_check_server_identity(&mut certificate_info);
             if self.reject_unauthorized && !self.enforce_server_identity_verdict(verdict) {
                 bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: aborted due certError");
                 drop(certificate_info);
@@ -1214,35 +1210,19 @@ impl FetchTasklet {
     /// certificate to show it.
     fn run_check_server_identity(
         &mut self,
-        certificate_info: &CertificateInfo,
+        certificate_info: &mut CertificateInfo,
     ) -> Result<(), Option<JSValue>> {
         let Some(check_server_identity) = self.check_server_identity_callback() else {
             return Err(None);
         };
         check_server_identity.ensure_still_alive();
-        if certificate_info.cert.is_empty() {
-            return Err(None);
-        }
-        let cert = &certificate_info.cert;
-        let mut cert_ptr = cert.as_ptr();
-        // SAFETY: cert is a valid DER buffer; d2i_X509 reads up to cert.len() bytes
-        let x509 = unsafe {
-            d2i_X509(
-                core::ptr::null_mut(),
-                &raw mut cert_ptr,
-                core::ffi::c_long::try_from(cert.len()).expect("int cast"),
-            )
-        };
-        if x509.is_null() {
-            return Err(None);
-        }
         let global_object = self.global_this;
-        // SAFETY: `x` is the non-null `X509*` returned by `d2i_X509` above; this
-        // guard is its sole owner and frees it exactly once on scope exit.
-        let _x509_guard = scopeguard::guard(x509, |x| unsafe { X509_free(x) });
-        // SAFETY: x509 is non-null, freshly parsed; freed by guard above.
-        let js_cert = X509::to_js(unsafe { &mut *x509 }, &global_object)
-            .map_err(|e| Some(global_object.take_exception(e)))?;
+        let js_cert =
+            jsc::tls_server_identity::chain_to_js(&mut certificate_info.chain, &global_object)
+                .map_err(|e| Some(global_object.take_exception(e)))?;
+        if js_cert.is_undefined() {
+            return Err(None);
+        }
         let js_hostname: JSValue =
             bun_string_jsc::create_utf8_for_js(&global_object, &certificate_info.hostname)
                 .map_err(|e| Some(global_object.take_exception(e)))?;

@@ -3,14 +3,8 @@
 use crate::jsc::{
     EventLoopSqlExt as _, JSGlobalObject, JSValue, JsResult, VirtualMachine, bun_string_jsc,
 };
-use bun_boringssl_sys::X509;
 use bun_jsc::ErrorCode;
-use bun_uws::AnySocket;
-
-unsafe extern "C" {
-    // Also declared in `bun_runtime::api::bun::x509`, which is above this crate.
-    safe fn Bun__X509__toJSLegacyEncoding(cert: &mut X509, global: &JSGlobalObject) -> JSValue;
-}
+use bun_uws::{AnySocket, PeerCertificateChain};
 
 pub(crate) fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSValue>> {
     if !tls.is_object() {
@@ -46,10 +40,11 @@ fn verdict(
     let AnySocket::SocketTls(tls) = socket else {
         return Ok(Some(no_verdict(global)));
     };
-    let Some(cert) = tls.ssl_mut().and_then(|ssl| ssl.peer_leaf_certificate()) else {
+    let Some(mut chain) = tls.ssl_mut().and_then(PeerCertificateChain::collect) else {
         return Ok(Some(no_verdict(global)));
     };
-    let cert = bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(cert, global))?;
+    let cert = bun_jsc::tls_server_identity::chain_to_js(&mut chain, global)?;
+    drop(chain);
     let hostname = bun_string_jsc::create_utf8_for_js(global, hostname)?;
     let result = callback.call(global, JSValue::UNDEFINED, &[hostname, cert])?;
     if callback.call_may_have_been_dropped(global) {

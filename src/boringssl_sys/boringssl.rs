@@ -1003,6 +1003,27 @@ unsafe extern "C" {
         protos_len: usize,
     ) -> c_int;
     pub fn SSL_CTX_get_cert_store(ctx: *const SSL_CTX) -> *mut X509_STORE;
+    pub fn SSL_is_server(ssl: *const SSL) -> c_int;
+    pub fn X509_up_ref(x509: *mut X509) -> c_int;
+    pub fn X509_STORE_free(store: *mut X509_STORE);
+    // X509_STORE_CTX lifecycle for issuer lookups; `new` allocates, `init`
+    // borrows the store, `free` releases.
+    pub fn X509_STORE_CTX_new() -> *mut X509_STORE_CTX;
+    pub fn X509_STORE_CTX_init(
+        ctx: *mut X509_STORE_CTX,
+        store: *mut X509_STORE,
+        x509: *mut X509,
+        chain: *mut struct_stack_st_X509,
+    ) -> c_int;
+    pub fn X509_STORE_CTX_free(ctx: *mut X509_STORE_CTX);
+    /// Writes a +1 X509 reference to `*issuer` on success (> 0).
+    pub fn X509_STORE_CTX_get1_issuer(
+        issuer: *mut *mut X509,
+        ctx: *mut X509_STORE_CTX,
+        x: *mut X509,
+    ) -> c_int;
+    /// Returns `X509_V_OK` (0) when `issuer` could have issued `subject`.
+    pub fn X509_check_issued(issuer: *mut X509, subject: *mut X509) -> c_int;
     pub fn SSL_CTX_add0_chain_cert(ctx: *mut SSL_CTX, x509: *mut X509) -> c_int;
     pub fn SSL_CTX_clear_chain_certs(ctx: *mut SSL_CTX) -> c_int;
     pub fn PEM_read_bio_X509_AUX(

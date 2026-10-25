@@ -1313,19 +1313,19 @@ describe("@types/bun integration test", () => {
         },
         {
           code: 2769,
-          line: "fetch.ts:25:32",
+          line: "fetch.ts:28:32",
           message:
             "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is not assignable to type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is not assignable to type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is not assignable to type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
         },
         {
           code: 2769,
-          line: "fetch.ts:33:32",
+          line: "fetch.ts:36:32",
           message:
             "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is not assignable to type 'BodyInit | null | undefined'.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is not assignable to type 'BodyInit | null | undefined'.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is not assignable to type 'BodyInit | null | undefined'.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
         },
         {
           code: 2769,
-          line: "fetch.ts:168:34",
+          line: "fetch.ts:171:34",
           message:
             "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'SharedArrayBuffer' is not assignable to type 'BodyInit | null | undefined'.\nType 'SharedArrayBuffer' is missing the following properties from type 'ArrayBuffer': resizable, resize, detached, transfer, transferToFixedLength\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nType 'SharedArrayBuffer' is not assignable to type 'BodyInit | null | undefined'.\nType 'SharedArrayBuffer' is missing the following properties from type 'ArrayBuffer': resizable, resize, detached, transfer, transferToFixedLength\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'SharedArrayBuffer' is not assignable to type 'BodyInit | null | undefined'.\nType 'SharedArrayBuffer' is missing the following properties from type 'ArrayBuffer': resizable, resize, detached, transfer, transferToFixedLength",
         },
@@ -1450,57 +1450,57 @@ describe("@types/bun integration test", () => {
         },
         {
           code: 2551,
-          line: "websocket.ts:206:17",
+          line: "websocket.ts:207:17",
           message: "Property 'URL' does not exist on type 'WebSocket'. Did you mean 'url'?",
         },
         {
           code: 2322,
-          line: "websocket.ts:210:3",
+          line: "websocket.ts:211:3",
           message: "Type '\"nodebuffer\"' is not assignable to type 'BinaryType'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:256:6",
+          line: "websocket.ts:257:6",
           message: "Property 'ping' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:259:6",
+          line: "websocket.ts:260:6",
           message: "Property 'ping' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:263:6",
+          line: "websocket.ts:264:6",
           message: "Property 'ping' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:267:6",
+          line: "websocket.ts:268:6",
           message: "Property 'ping' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:270:6",
+          line: "websocket.ts:271:6",
           message: "Property 'pong' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:273:6",
+          line: "websocket.ts:274:6",
           message: "Property 'pong' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:277:6",
+          line: "websocket.ts:278:6",
           message: "Property 'pong' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:281:6",
+          line: "websocket.ts:282:6",
           message: "Property 'pong' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:284:6",
+          line: "websocket.ts:285:6",
           message: "Property 'terminate' does not exist on type 'WebSocket'.",
         },
         {

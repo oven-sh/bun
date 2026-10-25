@@ -279,7 +279,9 @@ declare module "bun" {
        * not call it with `rejectUnauthorized: false`.
        *
        * @param hostname `serverName`, or else the host that Bun connects to
-       * @param cert The server's certificate. It has no `issuerCertificate`.
+       * @param cert The server's certificate, as in `node:tls`: each
+       * certificate links to its issuer through `issuerCertificate`, up to
+       * the trust anchor.
        * @returns `undefined` to accept the certificate. A returned or thrown
        * `Error` fails the connection with that error. The function must be
        * synchronous: a promise fails the connection too.
@@ -295,7 +297,7 @@ declare module "bun" {
        * });
        * ```
        */
-      checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]> | undefined;
+      checkServerIdentity?: (hostname: string, cert: import("node:tls").DetailedPeerCertificate) => Error | undefined | undefined;
     }
 
     /**

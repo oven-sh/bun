@@ -180,6 +180,7 @@ new Bun.SQL({
     serverName: "db.example.com",
     checkServerIdentity(hostname, cert) {
       expectType(hostname).is<string>();
+      expectType(cert.issuerCertificate).is<import("node:tls").DetailedPeerCertificate>();
       return cert.fingerprint256 === "AA" ? undefined : new Error("certificate pin mismatch");
     },
   },

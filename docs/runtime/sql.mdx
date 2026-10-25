@@ -1351,7 +1351,7 @@ const sql = new SQL("postgres://user:password@db.example.com/mydb", {
 ```
 
 - Bun calls it once for each connection, after the certificate chain verified and before it sends the user name or the password.
-- `hostname` is `tls.serverName`, or else the host that Bun connects to. `cert` is the server's certificate in the form that `node:tls` uses.
+- `hostname` is `tls.serverName`, or else the host that Bun connects to. `cert` is the server's certificate in the form that `node:tls` uses: each certificate links to its issuer through `issuerCertificate`, up to the trust anchor.
 - The function must be synchronous. A promise fails the connection with `ERR_INVALID_RETURN_VALUE`.
 - To keep the host name check, call `checkServerIdentity(hostname, cert)` from `node:tls` inside the function.
 - Bun does not call it with `rejectUnauthorized: false`.

@@ -30,6 +30,15 @@ const agent1 = {
 };
 // The harness certificate: CN=server-bun, SAN localhost / 127.0.0.1 / ::1, self-signed.
 const localhost = { key: localhostTls.key, cert: localhostTls.cert, ca: localhostTls.cert };
+// CN=localhost, issued by NodeJS-Test-Intermediate-CA, issued by the fake StartCom root. The server sends
+// the leaf and the intermediate; the client trusts the root only.
+const keys = path.join(import.meta.dirname, "..", "node", "test", "fixtures", "keys");
+const intermediate = new X509Certificate(fs.readFileSync(path.join(keys, "intermediate-ca.pem"), "utf8"));
+const chained = {
+  key: fs.readFileSync(path.join(keys, "leaf-from-intermediate-key.pem"), "utf8"),
+  cert: fs.readFileSync(path.join(keys, "leaf-from-intermediate-cert.pem"), "utf8") + intermediate.toString(),
+  ca: fs.readFileSync(path.join(keys, "fake-startcom-root-cert.pem"), "utf8"),
+};
 
 type ServerCert = { key: string; cert: string };
 type MockServer = {
@@ -138,6 +147,57 @@ describe.concurrent.each([
       expect(err).toBe(pin);
       const expected = new X509Certificate(localhost.cert);
       expect(calls).toEqual([["127.0.0.1", "server-bun", expected.fingerprint256, expected.raw]]);
+      expect(await server.bytesInsideTls).toBe(0);
+    });
+  });
+
+  test("gets the verified chain: each certificate links to its issuer up to the trust anchor, which links to itself", async () => {
+    await withServer(chained, async server => {
+      const seen: unknown[] = [];
+      const result = await connect(server.url, {
+        ca: chained.ca,
+        checkServerIdentity: (hostname: string, cert: tls.DetailedPeerCertificate) => {
+          const chain: string[] = [];
+          let last = cert;
+          for (
+            let c: tls.DetailedPeerCertificate | undefined = cert;
+            c && !chain.includes(c.subject.CN as string);
+            c = c.issuerCertificate
+          ) {
+            chain.push(c.subject.CN as string);
+            last = c;
+          }
+          seen.push({ hostname, chain, rootIsItsOwnIssuer: last.issuerCertificate === last });
+          return undefined;
+        },
+      });
+      expect({ result, seen }).toEqual({
+        result: "CONNECTED",
+        seen: [
+          {
+            hostname: "127.0.0.1",
+            chain: ["localhost", "NodeJS-Test-Intermediate-CA", "StartCom Certification Authority"],
+            rootIsItsOwnIssuer: true,
+          },
+        ],
+      });
+    });
+  });
+
+  test("a callback that refuses a distrusted intermediate fails the connection before anything is sent", async () => {
+    await withServer(chained, async server => {
+      const distrusted = new Error("chain contains the distrusted intermediate");
+      const err = await connect(server.url, {
+        ca: chained.ca,
+        checkServerIdentity: (_hostname: string, cert: tls.DetailedPeerCertificate) => {
+          for (let c = cert; c; c = c.issuerCertificate) {
+            if (c.fingerprint256 === intermediate.fingerprint256) return distrusted;
+            if (c.issuerCertificate === c) break;
+          }
+          return undefined;
+        },
+      });
+      expect(err).toBe(distrusted);
       expect(await server.bytesInsideTls).toBe(0);
     });
   });

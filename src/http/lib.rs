@@ -1808,36 +1808,29 @@ impl<'a> HTTPClient<'a> {
                     // target would reject the proxy's certificate.
                     let is_proxy_certificate = allow_proxy_url && self.http_proxy.is_some();
                     if !is_proxy_certificate && self.signals.get(signals::Field::CertErrors) {
-                        // clone the relevant data
-                        // SAFETY: x509 is a live *mut X509 borrowed from cert_chain; null out-ptr requests size-only
-                        let cert_size =
-                            unsafe { boringssl::c::i2d_X509(x509, core::ptr::null_mut()) };
-                        let mut cert = vec![0u8; usize::try_from(cert_size).expect("int cast")]
-                            .into_boxed_slice();
-                        let mut cert_ptr = cert.as_mut_ptr();
-                        // SAFETY: x509 is live; cert_ptr points at a writable buffer of cert_size bytes
-                        let result_size =
-                            unsafe { boringssl::c::i2d_X509(x509, &raw mut cert_ptr) };
-                        debug_assert!(result_size == cert_size);
+                        // The chain holds its own references, so the JS
+                        // thread can read it after this socket is gone.
+                        // `None` cannot happen here: the leaf above is in it.
+                        if let Some(chain) = uws::PeerCertificateChain::collect(ssl) {
+                            self.state.certificate_info = Some(CertificateInfo {
+                                chain,
+                                hostname: Box::<[u8]>::from(hostname),
+                            });
 
-                        self.state.certificate_info = Some(CertificateInfo {
-                            cert,
-                            hostname: Box::<[u8]>::from(hostname),
-                        });
+                            // Park the connection until the JS-side
+                            // `checkServerIdentity` callback approves this
+                            // certificate (gates `on_writable`/`on_data`; see the
+                            // flag's doc comment). The JS thread resumes via
+                            // `HTTPThread::schedule_cert_check_resume` on success,
+                            // or schedules a shutdown on failure.
+                            self.state.flags.is_waiting_for_cert_check = true;
 
-                        // Park the connection until the JS-side
-                        // `checkServerIdentity` callback approves this
-                        // certificate (gates `on_writable`/`on_data`; see the
-                        // flag's doc comment). The JS thread resumes via
-                        // `HTTPThread::schedule_cert_check_resume` on success,
-                        // or schedules a shutdown on failure.
-                        self.state.flags.is_waiting_for_cert_check = true;
-
-                        // we inform the user that the cert is invalid
-                        let ctx = self.get_ssl_ctx::<IS_SSL>();
-                        self.progress_update::<IS_SSL>(ctx, socket);
-                        // continue until we are aborted or not
-                        return true;
+                            // we inform the user that the cert is invalid
+                            let ctx = self.get_ssl_ctx::<IS_SSL>();
+                            self.progress_update::<IS_SSL>(ctx, socket);
+                            // continue until we are aborted or not
+                            return true;
+                        }
                     } else if !enforce {
                         return true;
                     } else {

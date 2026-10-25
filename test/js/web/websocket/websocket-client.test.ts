@@ -6,6 +6,7 @@ import { bunEnv, bunExe, nodeExe, tls as tlsCerts } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, X509Certificate } from "node:crypto";
 import { once } from "node:events";
+import fs from "node:fs";
 import net, { type AddressInfo, createServer } from "node:net";
 import * as path from "node:path";
 import tls from "node:tls";
@@ -1900,6 +1901,86 @@ describe("WebSocket TLS server identity", () => {
         sni: ["localhost"],
       });
       expect(await server.receivedInTotal()).toBe("");
+    });
+
+    describe.concurrent("gets the verified chain", () => {
+      // CN=localhost, issued by NodeJS-Test-Intermediate-CA, issued by the
+      // fake StartCom root. The server sends the leaf and the intermediate;
+      // the client trusts the root only.
+      const keys = path.join(import.meta.dir, "../../node/test/fixtures/keys");
+      const intermediate = new X509Certificate(fs.readFileSync(path.join(keys, "intermediate-ca.pem"), "utf8"));
+      const chain = {
+        cert: fs.readFileSync(path.join(keys, "leaf-from-intermediate-cert.pem"), "utf8") + intermediate.toString(),
+        key: fs.readFileSync(path.join(keys, "leaf-from-intermediate-key.pem"), "utf8"),
+      };
+      const root = fs.readFileSync(path.join(keys, "fake-startcom-root-cert.pem"), "utf8");
+
+      // Every certificate, leaf first, until the chain repeats (the root links to itself).
+      function walk(cert: tls.DetailedPeerCertificate) {
+        const names: string[] = [];
+        const seen = new Set<tls.DetailedPeerCertificate>();
+        for (let c: tls.DetailedPeerCertificate | undefined = cert; c && !seen.has(c); c = c.issuerCertificate) {
+          seen.add(c);
+          names.push(c.subject.CN as string);
+        }
+        return names;
+      }
+
+      function serve() {
+        return Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          tls: chain,
+          fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("no", { status: 400 })),
+          websocket: { open: ws => ws.close(1000), message() {} },
+        });
+      }
+
+      it("links each certificate to its issuer up to the trust anchor, which links to itself", async () => {
+        using server = serve();
+        const seen: unknown[] = [];
+        const ws = new WebSocket(`wss://127.0.0.1:${server.port}/`, {
+          tls: {
+            ca: root,
+            checkServerIdentity(hostname: string, cert: tls.DetailedPeerCertificate) {
+              let last = cert;
+              while (last.issuerCertificate && last.issuerCertificate !== last) last = last.issuerCertificate;
+              seen.push({ hostname, chain: walk(cert), rootFingerprint: last.fingerprint256 });
+              return undefined;
+            },
+          },
+        });
+        expect({ events: await clientEvents(ws), seen }).toEqual({
+          events: opened,
+          seen: [
+            {
+              hostname: "127.0.0.1",
+              chain: ["localhost", "NodeJS-Test-Intermediate-CA", "StartCom Certification Authority"],
+              rootFingerprint: new X509Certificate(root).fingerprint256,
+            },
+          ],
+        });
+      });
+
+      it("a callback that refuses a distrusted intermediate fails the connection", async () => {
+        using server = serve();
+        const url = `wss://127.0.0.1:${server.port}/`;
+        const ws = new WebSocket(url, {
+          tls: {
+            ca: root,
+            checkServerIdentity(_hostname: string, cert: tls.DetailedPeerCertificate) {
+              for (let c = cert; c; c = c.issuerCertificate) {
+                if (c.fingerprint256 === intermediate.fingerprint256) {
+                  return new Error("chain contains the distrusted intermediate");
+                }
+                if (c.issuerCertificate === c) break;
+              }
+              return undefined;
+            },
+          },
+        });
+        expect(await clientEvents(ws)).toEqual(tlsFailed(url));
+      });
     });
   });
 

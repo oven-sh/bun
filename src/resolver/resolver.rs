@@ -2481,11 +2481,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// Bust the directory cache for the given path, which may end in a separator.
-    ///
-    /// The directory's listing stays cached and is read again by the next
-    /// resolve that reaches it by any path, and the `DirInfo` of each of those
-    /// paths is unmapped. Returns false when nothing was cached or the listing
-    /// was not read since its last bust: callers retry a failed resolve on true.
+    /// Every path to the directory is busted. False when nothing was cached since its last bust.
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);

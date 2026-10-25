@@ -710,11 +710,9 @@ pub mod fs {
     use bun_sys::Fd;
     use bun_threading::Mutex;
 
-    /// The generation every resolver starts at, and the one to read a
-    /// directory with outside a resolver.
+    /// The generation every resolver starts at, and the one to read a directory with outside one.
     pub const GENERATION_BASE: Generation = 1;
-    /// Below every resolver's generation: the next read of a `DirEntry`
-    /// stamped with it, under any key of the listing, refills it in place.
+    /// Below every resolver's generation: the next read of a `DirEntry` stamped with it refills it.
     pub const GENERATION_STALE: Generation = 0;
 
     // `StringOrTinyString::init*_append_if_needed` needs an `Appender`; route the
@@ -1335,15 +1333,7 @@ pub mod fs {
             Ok(unsafe { &mut *out })
         }
 
-        /// Busts what is cached for the directory `file_path`, which can be any
-        /// key of its listing.
-        ///
-        /// A listing stays mapped: it is stamped [`GENERATION_STALE`], and the
-        /// next read under any of its keys refills it in place. A read error or
-        /// a not-found is unmapped. `unmap_dir_info` gets the hash of
-        /// `file_path` and of every key of the listing, whose `DirInfo` was
-        /// built from it. Returns whether a listing that was not stale or a key
-        /// without a listing was cached for `file_path`.
+        /// A listing stays mapped, stamped stale; `unmap_dir_info` gets each of its key hashes.
         pub(crate) fn bust_entries_cache(
             &mut self,
             file_path: &[u8],
@@ -1355,8 +1345,7 @@ pub mod fs {
             // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
             // invariant. No caller already holds it (no re-entry from
             // `read_directory`/`dir_info_cached_maybe_log`).
-            // A resolver fills a listing and puts the `DirInfo` built from it
-            // in one section of this lock, so it finds both busted or neither.
+            // `DirInfo` is put under this lock too, so a resolver sees both busted or neither.
             let _g = self.entries_mutex.lock_guard();
             unmap_dir_info(EntriesMap::key_hash(file_path));
             if let Some(EntriesOption::Entries(listing)) = self.entries.get(file_path) {

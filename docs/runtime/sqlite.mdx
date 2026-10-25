@@ -443,13 +443,13 @@ import { Database } from "bun:sqlite";
 // setup
 const query = db.query("SELECT $param;");
 
-console.log(query.toString()); // => "SELECT NULL"
+console.log(query.toString()); // => "SELECT NULL;"
 
 query.run(42);
-console.log(query.toString()); // => "SELECT 42"
+console.log(query.toString()); // => "SELECT 42;"
 
 query.run(365);
-console.log(query.toString()); // => "SELECT 365"
+console.log(query.toString()); // => "SELECT 365;"
 ```
 
 Internally, this calls [`sqlite3_expanded_sql`](https://www.sqlite.org/capi3ref.html#sqlite3_expanded_sql). The parameters are expanded using the most recently bound values.

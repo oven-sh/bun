@@ -283,6 +283,34 @@ describe("bundler", () => {
       },
     });
 
+    itBundled("jsx/PreserveUnicodeTextWithAsciiLowBytes", {
+      files: {
+        "/in.tsx": `
+          console.log(JSON.stringify([
+            <div title="ĦĢħļľŻŽ😦😢😧😼😾🙻🙽">ĦĢħļľŻŽ😦😢😧😼😾🙻🙽</div>,
+            <div title="&quot;Ģħ">&#x126;&#x13C;&#x13E;&#x17B;&#x17D;</div>,
+            <div title="'Ģħ">&#x1F626;&#x1F63C;&#x1F63E;&#x1F67B;&#x1F67D;</div>,
+          ]));
+        `,
+      },
+      jsx: { runtime: "preserve" },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain('<div title="ĦĢħļľŻŽ😦😢😧😼😾🙻🙽">ĦĢħļľŻŽ😦😢😧😼😾🙻🙽</div>');
+        expect(out).toContain(`<div title='"Ģħ'>ĦļľŻŽ</div>`);
+        expect(out).toContain(`<div title="'Ģħ">😦😼😾🙻🙽</div>`);
+        const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h", charset: "utf8" });
+        api.writeFile("/out.js", `const h = (type, props, ...children) => ({ type, props, children });\n${code}`);
+      },
+      run: {
+        stdout: JSON.stringify([
+          { type: "div", props: { title: "ĦĢħļľŻŽ😦😢😧😼😾🙻🙽" }, children: ["ĦĢħļľŻŽ😦😢😧😼😾🙻🙽"] },
+          { type: "div", props: { title: '"Ģħ' }, children: ["ĦļľŻŽ"] },
+          { type: "div", props: { title: "'Ģħ" }, children: ["😦😼😾🙻🙽"] },
+        ]),
+      },
+    });
+
     itBundled("jsx/PreserveCommaExpressions", {
       files: {
         "/in.tsx": `

@@ -144,6 +144,8 @@ js/node/tls/node-tls-cert.test.ts
 js/node/tls/node-tls-context.test.ts
 js/node/tls/node-tls-namedpipes.test.ts
 js/node/tls/renegotiation.test.ts
+# Writes the current user's Disallowed certificate store on Windows for the span of the test.
+js/node/tls/test-use-system-ca.test.ts
 js/node/tty.test.ts
 js/node/util/bun-inspect.test.ts
 js/node/util/mime-api.test.ts

@@ -1,5 +1,6 @@
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
+#include <algorithm>
 #include <mutex>
 #include <string.h>
 #include <string_view>
@@ -361,6 +362,19 @@ extern "C" X509_STORE *us_get_shared_default_ca_store() {
   return shared;
 }
 
+// SHA-256 of the certificate as BoringSSL encodes it again, which is what X509_digest hashes at verify time. A
+// certificate whose wire bytes BoringSSL accepts but does not keep (a non-minimal BER length on the signature) hashes
+// the same on both sides that way. False when the bytes are not a certificate BoringSSL parses.
+bool us_x509_der_digest(const uint8_t *der, size_t len, us_sha256_digest &digest) {
+  const uint8_t *data = der;
+  X509 *cert = d2i_X509(NULL, &data, len);
+  if (cert == NULL) return false;
+  unsigned int digest_len = 0;
+  bool ok = X509_digest(cert, EVP_sha256(), digest.data(), &digest_len) && digest_len == digest.size();
+  X509_free(cert);
+  return ok;
+}
+
 extern "C" const char *us_get_default_ciphers() {
   return DEFAULT_CIPHER_LIST;
 }
@@ -381,6 +395,30 @@ struct RawCertificate {
 // Defined in root_certs_windows.cpp - loads raw certificate data
 extern void us_load_system_certificates_windows_raw(
     std::vector<RawCertificate>& raw_certs);
+extern void us_load_system_disallowed_certificates_windows_raw(
+    std::vector<RawCertificate>& raw_certs);
+
+const std::vector<us_sha256_digest> *us_system_distrusted_certs() {
+  if (us_ca_store() != us_ca_store_t::system) {
+    return nullptr;
+  }
+  static std::vector<us_sha256_digest> distrusted;
+  static std::once_flag once;
+  std::call_once(once, []() {
+    std::vector<RawCertificate> raw_certs;
+    us_load_system_disallowed_certificates_windows_raw(raw_certs);
+    distrusted.reserve(raw_certs.size());
+    for (const auto& raw_cert : raw_certs) {
+      us_sha256_digest digest;
+      if (us_x509_der_digest(raw_cert.data.data(), raw_cert.data.size(), digest)) {
+        distrusted.push_back(digest);
+      }
+    }
+    std::sort(distrusted.begin(), distrusted.end());
+    distrusted.erase(std::unique(distrusted.begin(), distrusted.end()), distrusted.end());
+  });
+  return &distrusted;
+}
 
 // Convert raw Windows certificates to OpenSSL X509 format
 void us_load_system_certificates_windows(STACK_OF(X509) **system_certs) {
@@ -404,6 +442,10 @@ void us_load_system_certificates_windows(STACK_OF(X509) **system_certs) {
 }
 
 #else
+const std::vector<us_sha256_digest> *us_system_distrusted_certs() {
+  return nullptr;
+}
+
 // Linux, FreeBSD and other non-Apple Unix: src/runtime/socket/system_certs.rs
 extern "C" X509_LAZY_CERT_SET *us_load_system_certificates_posix();
 #endif

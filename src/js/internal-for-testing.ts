@@ -24,6 +24,19 @@ export const addBlockedSPKIForTesting: (hash: ArrayBufferView) => void = $newCpp
 );
 export const clearBlockedSPKIsForTesting: () => void = $newCppFunction("NodeTLS.cpp", "clearBlockedSPKIsForTesting", 0);
 
+// Process-wide additions to the certificates the OS distrusts (Windows' Disallowed stores, blocked_spkis.cpp). `der` is
+// a DER certificate. Unlike the OS list, these apply whether or not the OS trust store is in use.
+export const addDistrustedCertificateForTesting: (der: ArrayBufferView) => void = $newCppFunction(
+  "NodeTLS.cpp",
+  "addDistrustedCertificateForTesting",
+  1,
+);
+export const clearDistrustedCertificatesForTesting: () => void = $newCppFunction(
+  "NodeTLS.cpp",
+  "clearDistrustedCertificatesForTesting",
+  0,
+);
+
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.
 export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) => bigint = $newCppFunction(

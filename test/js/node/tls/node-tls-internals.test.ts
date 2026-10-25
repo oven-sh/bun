@@ -1,4 +1,10 @@
-import { addBlockedSPKIForTesting, canonicalizeIP, clearBlockedSPKIsForTesting } from "bun:internal-for-testing";
+import {
+  addBlockedSPKIForTesting,
+  addDistrustedCertificateForTesting,
+  canonicalizeIP,
+  clearBlockedSPKIsForTesting,
+  clearDistrustedCertificatesForTesting,
+} from "bun:internal-for-testing";
 import { createTest } from "node-harness";
 import { createHash, X509Certificate } from "node:crypto";
 import { once } from "node:events";
@@ -338,5 +344,138 @@ describe("blocked public keys", () => {
       using server = serve();
       expect(await get(server.url)).toBe("CERT_REVOKED");
     });
+  });
+});
+
+// The certificates the OS distrusts (on Windows, the Disallowed stores) are refused at any position of a chain, whatever
+// trusts them. The list is read when the OS trust store is in use; the hook adds to it on every platform.
+describe("certificates the system distrusts", () => {
+  const readKey = (name: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", name), "utf8");
+  const der = (pem: string) => new X509Certificate(pem).raw;
+
+  const rootCert = readKey("ca1-cert.pem");
+  const intermediateCert = readKey("ca3-cert.pem");
+  const leafKey = readKey("agent6-key.pem");
+  const leafChain = readKey("agent6-cert.pem");
+  const unrelatedCert = readKey("ca2-cert.pem");
+
+  const servers: Server[] = [];
+  const clients: TLSSocket[] = [];
+  afterEach(() => {
+    clearDistrustedCertificatesForTesting();
+    for (const client of clients.splice(0)) client.destroy();
+    for (const server of servers.splice(0)) server.close();
+  });
+
+  async function listen(options: TlsOptions) {
+    const server = createServer(options, socket => socket.resume());
+    servers.push(server);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return server;
+  }
+
+  function connectTo(server: Server, options: ConnectionOptions) {
+    const { promise, resolve } = Promise.withResolvers<object>();
+    const client = connect({
+      host: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      checkServerIdentity: () => undefined,
+      ...options,
+    });
+    clients.push(client);
+    client.once("error", err => resolve({ error: (err as NodeJS.ErrnoException).code }));
+    client.once("secureConnect", () =>
+      resolve({ authorized: client.authorized, authorizationError: client.authorizationError }),
+    );
+    client.once("close", () => resolve({ closed: true }));
+    return promise;
+  }
+
+  const server = () => listen({ key: leafKey, cert: leafChain });
+
+  test("nothing distrusted: the chain is accepted", async () => {
+    expect(await connectTo(await server(), { ca: rootCert })).toEqual({ authorized: true, authorizationError: null });
+  });
+
+  test("a distrusted root is rejected even when `ca` trusts it", async () => {
+    addDistrustedCertificateForTesting(der(rootCert));
+    expect(await connectTo(await server(), { ca: rootCert })).toEqual({ error: "CERT_REVOKED" });
+  });
+
+  test("a distrusted intermediate is rejected", async () => {
+    addDistrustedCertificateForTesting(der(intermediateCert));
+    expect(await connectTo(await server(), { ca: rootCert })).toEqual({ error: "CERT_REVOKED" });
+  });
+
+  test("a distrusted leaf is rejected", async () => {
+    addDistrustedCertificateForTesting(der(leafChain));
+    expect(await connectTo(await server(), { ca: rootCert })).toEqual({ error: "CERT_REVOKED" });
+  });
+
+  test("rejectUnauthorized: false reports CERT_REVOKED", async () => {
+    addDistrustedCertificateForTesting(der(rootCert));
+    expect(await connectTo(await server(), { ca: rootCert, rejectUnauthorized: false })).toEqual({
+      authorized: false,
+      authorizationError: "CERT_REVOKED",
+    });
+  });
+
+  test("a distrusted certificate the peer sent but did not need is ignored", async () => {
+    addDistrustedCertificateForTesting(der(unrelatedCert));
+    const listening = await listen({ key: leafKey, cert: `${leafChain}\n${unrelatedCert}` });
+    expect(await connectTo(listening, { ca: rootCert })).toEqual({ authorized: true, authorizationError: null });
+  });
+
+  test("clearing the list accepts the chain again", async () => {
+    addDistrustedCertificateForTesting(der(rootCert));
+    clearDistrustedCertificatesForTesting();
+    expect(await connectTo(await server(), { ca: rootCert })).toEqual({ authorized: true, authorizationError: null });
+  });
+
+  test("the hook validates its argument", () => {
+    // @ts-expect-error
+    expect(() => addDistrustedCertificateForTesting("not a buffer")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() => addDistrustedCertificateForTesting(Buffer.from("not a certificate"))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+
+  // BoringSSL accepts a non-minimal BER length on the signature of a certificate but encodes it again minimally, so the
+  // bytes a store holds and the bytes a verified chain holds can differ. Both sides hash the encoding BoringSSL keeps.
+  test("a distrusted certificate is matched by what BoringSSL parsed, not by its wire bytes", async () => {
+    const wire = der(rootCert);
+    // The signature is the last element of the outer SEQUENCE. Each fixture is 256 to 65535 bytes, so the outer header
+    // is `30 82 hi lo`, and an RSA signature is long enough for the length form `82 hi lo` too.
+    const end = (at: number) => at + 2 + (wire[at + 1] & 0x80 ? wire[at + 1] & 0x7f : 0) + length(at);
+    const length = (at: number) => (wire[at + 1] & 0x80 ? wire.readUIntBE(at + 2, wire[at + 1] & 0x7f) : wire[at + 1]);
+    const signature = end(end(4));
+    expect([wire[0], wire[1], wire[signature], wire[signature + 1]]).toEqual([0x30, 0x82, 0x03, 0x82]);
+    const padded = Buffer.concat([
+      wire.subarray(0, signature + 1),
+      Buffer.from([0x83, 0x00]),
+      wire.subarray(signature + 2),
+    ]);
+    padded.writeUInt16BE(wire.readUInt16BE(2) + 1, 2);
+    expect(new X509Certificate(padded).fingerprint256).toBe(new X509Certificate(wire).fingerprint256);
+    expect(createHash("sha256").update(padded).digest("hex")).not.toBe(createHash("sha256").update(wire).digest("hex"));
+
+    addDistrustedCertificateForTesting(padded);
+    expect(await connectTo(await server(), { ca: rootCert })).toEqual({ error: "CERT_REVOKED" });
+  });
+
+  test("fetch rejects a distrusted root", async () => {
+    addDistrustedCertificateForTesting(der(rootCert));
+    using listening = Bun.serve({
+      port: 0,
+      tls: { key: leafKey, cert: leafChain },
+      fetch: () => new Response("reached"),
+    });
+    const result = await fetch(listening.url, { tls: { ca: rootCert, checkServerIdentity: () => undefined } }).then(
+      res => res.text(),
+      err => err.code,
+    );
+    expect(result).toBe("CERT_REVOKED");
   });
 });

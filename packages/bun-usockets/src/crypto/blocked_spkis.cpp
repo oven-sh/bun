@@ -1,10 +1,12 @@
-// The public keys no peer's chain may hold. us_x509_verify_chain (openssl.c) asks after every chain it verifies.
+// The public keys no peer's chain may hold, and the certificates the OS distrusts. us_x509_verify_chain (openssl.c)
+// asks after every chain it verifies.
 #include "./root_certs_header.h"
+#include <algorithm>
 #include <array>
 #include <string.h>
 #include <vector>
 
-using us_spki_hash = std::array<uint8_t, SHA256_DIGEST_LENGTH>;
+using us_spki_hash = us_sha256_digest;
 
 // SHA-256 of each key's DER SubjectPublicKeyInfo. Above each entry: fingerprint and subject of a certificate carrying it.
 // https://github.com/nodejs/node/blob/d9a3f3d150f7959f2d448d9a61aa11f5a75aa2b3/src/crypto/crypto_context.cc#L1399-L1440
@@ -79,11 +81,54 @@ static int us_x509_stack_blocked_key_error(const STACK_OF(X509) *certs) {
   return X509_V_OK;
 }
 
+// Same rule as us_blocked_spkis_for_testing.
+static std::vector<us_sha256_digest> us_distrusted_certs_for_testing;
+
+// Whether a certificate is one the OS distrusts (Windows' Disallowed stores), by the SHA-256 of its DER as BoringSSL
+// encodes it again, at any position of the chain. Chromium matches the exact certificate the same way.
+static int us_x509_distrusted_cert_error(X509 *cert, const std::vector<us_sha256_digest> *distrusted) {
+  us_sha256_digest digest;
+  unsigned int digest_len = 0;
+  if (!X509_digest(cert, EVP_sha256(), digest.data(), &digest_len) || digest_len != digest.size()) {
+    return X509_V_ERR_UNSPECIFIED;
+  }
+  if (distrusted != nullptr && std::binary_search(distrusted->begin(), distrusted->end(), digest)) {
+    return X509_V_ERR_CERT_REVOKED;
+  }
+  for (const us_sha256_digest &entry : us_distrusted_certs_for_testing) {
+    if (digest == entry) return X509_V_ERR_CERT_REVOKED;
+  }
+  return X509_V_OK;
+}
+
+static int us_x509_stack_distrusted_cert_error(const STACK_OF(X509) *certs, const std::vector<us_sha256_digest> *distrusted) {
+  for (size_t i = 0; i < sk_X509_num(certs); i++) {
+    int error = us_x509_distrusted_cert_error(sk_X509_value(certs, i), distrusted);
+    if (error != X509_V_OK) return error;
+  }
+  return X509_V_OK;
+}
+
 // A chain that did not verify may stop short of the blocked key, so there everything the peer sent is looked at too.
-int us_x509_store_ctx_blocked_key_error(X509_STORE_CTX *ctx) {
+static int us_x509_store_ctx_blocked_key_error(X509_STORE_CTX *ctx) {
   int error = us_x509_stack_blocked_key_error(X509_STORE_CTX_get0_chain(ctx));
   if (error != X509_V_OK || X509_STORE_CTX_get_error(ctx) == X509_V_OK) return error;
   return us_x509_stack_blocked_key_error(X509_STORE_CTX_get0_untrusted(ctx));
+}
+
+// The OS list is null when the OS trust store is not in use, so then a chain is not hashed at all.
+static int us_x509_store_ctx_distrusted_cert_error(X509_STORE_CTX *ctx) {
+  const std::vector<us_sha256_digest> *distrusted = us_system_distrusted_certs();
+  if ((distrusted == nullptr || distrusted->empty()) && us_distrusted_certs_for_testing.empty()) return X509_V_OK;
+  int error = us_x509_stack_distrusted_cert_error(X509_STORE_CTX_get0_chain(ctx), distrusted);
+  if (error != X509_V_OK || X509_STORE_CTX_get_error(ctx) == X509_V_OK) return error;
+  return us_x509_stack_distrusted_cert_error(X509_STORE_CTX_get0_untrusted(ctx), distrusted);
+}
+
+int us_x509_store_ctx_distrust_error(X509_STORE_CTX *ctx) {
+  int error = us_x509_store_ctx_blocked_key_error(ctx);
+  if (error != X509_V_OK) return error;
+  return us_x509_store_ctx_distrusted_cert_error(ctx);
 }
 
 void us_add_blocked_spki_for_testing(const uint8_t *hash) {
@@ -94,4 +139,15 @@ void us_add_blocked_spki_for_testing(const uint8_t *hash) {
 
 void us_clear_blocked_spkis_for_testing() {
   us_blocked_spkis_for_testing.clear();
+}
+
+int us_add_distrusted_cert_for_testing(const uint8_t *der, size_t len) {
+  us_sha256_digest digest;
+  if (!us_x509_der_digest(der, len, digest)) return 0;
+  us_distrusted_certs_for_testing.push_back(digest);
+  return 1;
+}
+
+void us_clear_distrusted_certs_for_testing() {
+  us_distrusted_certs_for_testing.clear();
 }

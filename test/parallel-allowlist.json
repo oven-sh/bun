@@ -489,6 +489,7 @@
     "js/node/tls/node-tls-namedpipes.test.ts",
     "js/node/tls/node-tls-server.test.ts",
     "js/node/tls/renegotiation.test.ts",
+    "js/node/tls/test-use-system-ca.test.ts",
     "js/node/util/bun-inspect.test.ts",
     "js/node/util/mime-api.test.ts",
     "js/node/util/util.test.js",

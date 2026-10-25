@@ -3016,6 +3016,25 @@ describe("a package in node_modules", () => {
   });
 
   // `bun install` makes a dot directory a workspace only if the pattern spells out its `.`.
+  it.concurrent.each(["packages/.x", "packages/.*"])(
+    "is found in a root whose workspaces pattern %j spells out the `.` of a dot directory",
+    async pattern => {
+      using box = sandbox(undefined, {
+        cwd: {
+          "package.json": JSON.stringify({ name: "root", workspaces: [pattern] }),
+          "packages/.x/package.json": JSON.stringify({ name: "member" }),
+        },
+      });
+      addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
+
+      expect(await box.run(["--no-install", "@corp/cli"], { cwd: join(box.cwd, "packages", ".x") })).toMatchObject({
+        stdout: "corp of @corp/cli 1.0.0\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
   it.concurrent.each(["packages/*", "packages/[.(]x", "packages/[(.]x"])(
     "is not looked for in a root whose workspaces pattern %j leaves out a dot directory",
     async pattern => {

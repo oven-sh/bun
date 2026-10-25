@@ -841,8 +841,6 @@ pub mod store {
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,
         pub request_payer: bool,
-        /// The `x-amz-tagging` value of a write, encoded as `k=v&k2=v2`.
-        pub tagging: Option<Box<[u8]>>,
         /// The string headers that the file gives each write. A file that gives none shares its client's.
         pub header_defaults: Option<std::sync::Arc<bun_s3_signing::PutHeaderDefaults>>,
     }
@@ -860,7 +858,6 @@ pub mod store {
                     .as_ref()
                     .map(|c| c.estimated_size())
                     .unwrap_or(0)
-                + self.tagging.as_ref().map_or(0, |t| t.len())
                 + self
                     .header_defaults
                     .as_deref()
@@ -896,7 +893,6 @@ pub mod store {
                 acl: None,
                 storage_class: None,
                 request_payer: false,
-                tagging: None,
                 header_defaults: None,
             }
         }
@@ -914,7 +910,7 @@ pub mod store {
                 acl: self.acl,
                 storage_class: self.storage_class,
                 request_payer: self.request_payer,
-                tagging: self.tagging.as_deref(),
+                tagging: defaults.and_then(|d| d.tagging.as_deref()),
             }
         }
     }

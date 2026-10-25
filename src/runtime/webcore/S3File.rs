@@ -234,7 +234,6 @@ fn finish_s3_blob(
     s3.acl = aws_options.acl;
     s3.storage_class = aws_options.storage_class;
     s3.request_payer = aws_options.request_payer;
-    s3.tagging = aws_options.tagging.take();
     s3.header_defaults = bun_s3_signing::PutHeaderDefaults::merged(aws_options);
 
     let blob = Blob::init_with_store(store, global);

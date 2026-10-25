@@ -257,7 +257,6 @@ impl S3Ext for S3 {
             acl: self.acl,
             storage_class: self.storage_class,
             request_payer: self.request_payer,
-            tagging: self.tagging.as_deref(),
             headers: self.header_defaults.as_ref(),
         }
     }

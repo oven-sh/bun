@@ -85,7 +85,6 @@ pub(crate) struct S3Defaults<'a> {
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
-    pub tagging: Option<&'a [u8]>,
     /// The string headers of a write. A presign takes none.
     pub headers: Option<&'a Arc<PutHeaderDefaults>>,
 }
@@ -103,7 +102,6 @@ pub(crate) fn get_credentials_with_options(
         acl,
         storage_class,
         request_payer,
-        tagging,
         headers,
     } = defaults;
     // get ENV config
@@ -116,7 +114,6 @@ pub(crate) fn get_credentials_with_options(
         acl,
         storage_class,
         request_payer,
-        tagging: tagging.map(Box::<[u8]>::from),
         inherited: headers.cloned(),
         ..Default::default()
     };
@@ -310,7 +307,7 @@ fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }
 
-/// Sets `tagging` from `opts.tagging`, a record (URL-encoded here) or a string. Empty clears it.
+/// Sets `tagging` from `opts.tagging`, a record (URL-encoded here) or a string. An empty value stays, to hide a default.
 fn get_tagging(
     opts: JSValue,
     global: &JSGlobalObject,
@@ -332,7 +329,7 @@ fn get_tagging(
                  printable ASCII without spaces. Pass a record to have Bun encode the tags"
             )));
         }
-        *tagging = (!bytes.is_empty()).then(|| Box::<[u8]>::from(bytes));
+        *tagging = Some(Box::<[u8]>::from(bytes));
         return Ok(());
     }
     let Some(object) = value.get_object() else {
@@ -365,7 +362,7 @@ fn get_tagging(
         encoded.push(b'=');
         push_uri_encoded(&mut encoded, tag_value.slice());
     }
-    *tagging = (!encoded.is_empty()).then(|| encoded.into_boxed_slice());
+    *tagging = Some(encoded.into_boxed_slice());
     Ok(())
 }
 

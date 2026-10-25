@@ -191,7 +191,7 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
     Bun.which("unshare") !== null &&
     Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
 
-  describe.skipIf(!canBindMount)("in a private mount namespace", () => {
+  describe.concurrent.skipIf(!canBindMount)("in a private mount namespace", () => {
     const keys = join(import.meta.dir, "../test/fixtures/keys");
     const ca1 = join(keys, "ca1-cert.pem");
 

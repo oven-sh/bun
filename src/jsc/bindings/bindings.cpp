@@ -4166,10 +4166,6 @@ bool JSC__JSValue__isException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1)
 {
     return JSC::JSValue::decode(JSValue0).isBigInt();
 }
-[[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isBigInt32(JSC::EncodedJSValue JSValue0)
-{
-    return JSC::JSValue::decode(JSValue0).isBigInt32();
-}
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isLiveCell(JSC::EncodedJSValue JSValue0)
 {
@@ -4339,44 +4335,17 @@ JSC::EncodedJSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0)
     return static_cast<int64_t>(value.asDouble());
 }
 
-uint8_t JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue1)
+uint8_t JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1)
 {
     JSValue v1 = JSValue::decode(JSValue0);
     JSValue v2 = JSValue::decode(JSValue1);
-    ASSERT(v1.isHeapBigInt() || v1.isBigInt32());
-
-#if USE(BIGINT32)
-    if (v1.isBigInt32()) {
-        int32_t v1Int = v1.bigInt32AsInt32();
-        if (v2.isHeapBigInt()) {
-            return static_cast<uint8_t>(JSBigInt::compare(v1Int, v2.asHeapBigInt()));
-        } else if (v2.isBigInt32()) {
-            return static_cast<uint8_t>(JSBigInt::compare(v1Int, v2.bigInt32AsInt32()));
-        }
-
-        double v2Double = v2.asNumber();
-        if (v1Int == v2Double) {
-            return static_cast<uint8_t>(JSBigInt::ComparisonResult::Equal);
-        }
-        if (v1Int < v2Double) {
-            return static_cast<uint8_t>(JSBigInt::ComparisonResult::LessThan);
-        }
-
-        return static_cast<uint8_t>(JSBigInt::ComparisonResult::GreaterThan);
-    }
-#endif
+    ASSERT(v1.isHeapBigInt());
 
     if (v1.isHeapBigInt()) {
         JSBigInt* v1BigInt = v1.asHeapBigInt();
         if (v2.isHeapBigInt()) {
             return static_cast<uint8_t>(JSBigInt::compare(v1BigInt, v2.asHeapBigInt()));
         }
-
-#if USE(BIGINT32)
-        if (v2.isBigInt32()) {
-            return static_cast<uint8_t>(JSBigInt::compare(v1BigInt, v2.toInt32(globalObject)));
-        }
-#endif
 
         return static_cast<uint8_t>(JSBigInt::compareToDouble(v1BigInt, v2.asNumber()));
     }
@@ -4943,6 +4912,33 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
 
 #pragma mark - JSC::VM
 
+// A mitigation, not an exact fix: zeroes a fixed amount of dead stack between the heap iteration and the collection in
+// JSC__VM__runGC. Zeroing dead stack cannot free anything live; the worst it can do is not help.
+//
+// What it is for: deleteAllUnlinkedCodeBlocks() stops the allocators to iterate the heap, and prologues under
+// MarkedBlock::Handle::stopAllocating() spill a register holding a free list's sentinel (the address of the first cell
+// allocated from its last interval, plus 1). The collector's frames are then built over those words without writing
+// every slot, and the conservative scan covers those frames, so that one cell, dead or not, survives the collection.
+// Nothing leaks (the next collection frees it), but a test that expects Bun.gc(true) to collect an object it just
+// dropped fails: node-sqlite.test.ts did on x64 ASAN. It has not been seen in a release build.
+//
+// The sizes: only the stack between JSC__VM__runGC and callWithCurrentThreadState(), where the collector captures the
+// stack, is scanned. Measured on x64, that is 0.6 KB in a release build and 1.8 KB under ASAN; the sizes below are a
+// few times that and nothing derives them from the collector's frames. If such a test fails again after the collector's
+// call path grows, measure again. The fix without a constant is to capture the stack before
+// deleteAllUnlinkedCodeBlocks() and have the collection use that capture as its conservative roots.
+static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
+{
+#if ASAN_ENABLED || ASSERT_ENABLED
+    constexpr size_t size = 16 * 1024;
+#else
+    constexpr size_t size = 2 * 1024;
+#endif
+    volatile char dead[size];
+    for (size_t i = 0; i < size; ++i)
+        dead[i] = 0;
+}
+
 size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
@@ -4960,12 +4956,15 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 
     if (sync) {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
+        // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
+        clearStackBelowCaller();
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
         malloc_zone_pressure_relief(nullptr, 0);
 #endif
     } else {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
+        clearStackBelowCaller();
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }
 
@@ -5157,9 +5156,6 @@ enum class BuiltinNamesMap : uint8_t {
     toString,
     redirect,
     inspectCustom,
-    highWaterMark,
-    path,
-    stream,
     asyncIterator,
     name,
     message,
@@ -5211,15 +5207,6 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::inspectCustom: {
         return clientData->builtinNames().inspectCustomPublicName();
-    }
-    case BuiltinNamesMap::highWaterMark: {
-        return clientData->builtinNames().highWaterMarkPublicName();
-    }
-    case BuiltinNamesMap::path: {
-        return clientData->builtinNames().pathPublicName();
-    }
-    case BuiltinNamesMap::stream: {
-        return clientData->builtinNames().streamPublicName();
     }
     case BuiltinNamesMap::asyncIterator: {
         return vm.propertyNames->asyncIteratorSymbol;
@@ -6697,13 +6684,13 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::E
     return;
 }
 
-CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject)
+CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int JSC__JSGlobalObject__getCallerLineNumber(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::LineColumn lineColumn;
     String sourceURL;
 
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+    JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         if (Zig::isImplementationVisibilityPrivate(visitor))
             return WTF::IterationStatus::Continue;
 

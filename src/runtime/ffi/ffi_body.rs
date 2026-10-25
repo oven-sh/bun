@@ -13,11 +13,11 @@ use crate::napi;
 use bun_collections::StringArrayHashMap;
 use bun_core::{EncodedSlice, ZStr};
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
-use bun_jsc::bindgen::{JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, CallFrame, EncodedSliceJsc, ErrorCode, JSGlobalObject, JSObject,
-    JSPropertyIterator, JSValue, JsCell, JsClass, JsError, JsResult, SystemError,
+    self as jsc, EncodedSliceJsc, ErrorCode, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
+    JsCell, JsClass, JsError, JsResult, SystemError,
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
@@ -967,12 +967,8 @@ impl StringArray {
 // ─── FFI host functions ─────────────────────────────────────────────────────
 
 impl FFI {
-    // No `#[bun_jsc::host_fn]` here — the `Free` shim it emits is a bare
-    // `bun_ffi_cc(__g, __f)` call, which doesn't resolve inside `impl FFI`.
-    pub(crate) fn bun_ffi_cc(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn cc<'a>(cx: &mut JsScope<'a>, options: JsLocal<'a>) -> JsResult<JSValue> {
+        let global_this = cx.global();
         if !global_this.bun_vm().allow_ffi_cc() {
             return Err(global_this
                 .err(
@@ -988,14 +984,12 @@ impl FFI {
                 "bun:ffi cc() is not available in this build (TinyCC is disabled)"
             )));
         }
-        let arguments = callframe.arguments();
-        if arguments.is_empty() || !arguments[0].is_object() {
+        let object = options.to_js();
+        if !object.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
 
         // Step 1. compile the user's code
-
-        let object = arguments[0];
 
         let mut compile_c = CompileC::default();
 
@@ -1236,23 +1230,22 @@ impl FFI {
         Ok(js_object)
     }
 
-    pub(crate) fn close_jsc_callback(
-        _global_this: &JSGlobalObject,
-        callback: JSValue,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn close_callback(callback: JsLocal<'_>) {
         unsafe extern "C" {
             fn Bun__JSCFFICallbackClose(callback: JSValue);
         }
         // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (jsDynamicCast) before use.
-        unsafe { Bun__JSCFFICallbackClose(callback) };
-        Ok(JSValue::UNDEFINED)
+        unsafe { Bun__JSCFFICallbackClose(callback.to_js()) };
     }
 
-    pub(crate) fn callback(
-        global_this: &JSGlobalObject,
-        interface: JSValue,
-        js_callback: JSValue,
+    pub(crate) fn callback<'a>(
+        cx: &mut JsScope<'a>,
+        options: JsLocal<'a>,
+        callback: JsLocal<'a>,
     ) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        let interface = options.to_js();
+        let js_callback = callback.to_js();
         jsc::mark_binding();
         if !interface.is_object() {
             return Ok(global_this.to_invalid_arguments(format_args!("Expected object")));
@@ -1364,15 +1357,15 @@ impl FFI {
         bun_string_jsc::create_utf8_for_js(global, text)
     }
 
-    pub(crate) fn print(
-        global: &JSGlobalObject,
-        object: JSValue,
-        is_callback_val: Option<JSValue>,
+    pub(crate) fn view_source<'a>(
+        cx: &mut JsScope<'a>,
+        symbols: JsLocal<'a>,
+        is_callback: bool,
     ) -> JsResult<JSValue> {
-        if let Some(is_callback) = is_callback_val {
-            if is_callback.to_boolean() {
-                return Self::print_callback(global, object);
-            }
+        let global = cx.global();
+        let object = symbols.to_js();
+        if is_callback {
+            return Self::print_callback(global, object);
         }
 
         if object.is_empty_or_undefined_or_null() {
@@ -1417,14 +1410,18 @@ fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
 }
 
 impl FFI {
-    pub(crate) fn open(
-        global: &JSGlobalObject,
-        name_str: &bun_core::String,
-        object_value: JSValue,
+    pub(crate) fn dlopen<'a>(
+        cx: &mut JsScope<'a>,
+        name: Option<&[u8]>,
+        symbols: JsLocal<'a>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let Some(name_slice) = name else {
+            return Err(global.throw_invalid_arguments(format_args!("Expected string")));
+        };
+        let object_value = symbols.to_js();
         jsc::mark_binding();
         let vm = jsc::VirtualMachineRef::get();
-        let name_slice = name_str.to_utf8();
 
         if object_value.is_empty_or_undefined_or_null() {
             return Ok(invalid_options_arg(global));
@@ -1454,7 +1451,7 @@ impl FFI {
             // `crate::jsc_hooks` — same crate, so a direct call.
             let _ = vm;
             if let Some(len) = crate::jsc_hooks::resolve_embedded_file_to_buf(
-                name_slice.slice(),
+                name_slice,
                 ext,
                 &mut filepath_buf[..],
             ) {
@@ -1466,7 +1463,7 @@ impl FFI {
                 break 'brk &filepath_buf[0..len];
             }
 
-            break 'brk name_slice.slice();
+            break 'brk name_slice;
         };
 
         if name.is_empty() {
@@ -1590,10 +1587,12 @@ impl FFI {
         Ok(js_object)
     }
 
-    pub(crate) fn link_symbols(
-        global: &JSGlobalObject,
-        object_value: JSValue,
+    pub(crate) fn link_symbols<'a>(
+        cx: &mut JsScope<'a>,
+        symbols: JsLocal<'a>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let object_value = symbols.to_js();
         jsc::mark_binding();
 
         if object_value.is_empty_or_undefined_or_null() {
@@ -1669,11 +1668,13 @@ impl FFI {
         Ok(js_object)
     }
 
-    pub(crate) fn create_cfunction(
-        global: &JSGlobalObject,
-        options: JSValue,
-        name_value: Option<JSValue>,
+    pub(crate) fn cfunction<'a>(
+        cx: &mut JsScope<'a>,
+        options: JsLocal<'a>,
+        name: Option<bun_core::String>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let options = options.to_js();
         jsc::mark_binding();
 
         if options.is_empty_or_undefined_or_null() || !options.is_object() {
@@ -1691,10 +1692,7 @@ impl FFI {
             )));
         };
 
-        let name = match name_value {
-            Some(value) if value.is_string() => value.to_bun_string(global)?,
-            _ => bun_core::String::static_("CFunction"),
-        };
+        let name = name.unwrap_or_else(|| bun_core::String::static_("CFunction"));
         if let Some(err) = function.reject_napi_types_error(global) {
             return Ok(err);
         }
@@ -2627,16 +2625,6 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
     int64_to_jsvalue: exposed_to_ffi::INT64_TO_JSVALUE,
     uint64_to_jsvalue: exposed_to_ffi::UINT64_TO_JSVALUE,
 };
-
-// ─── exports ────────────────────────────────────────────────────────────────
-
-/// `Bun__FFI__cc` — module-level re-export of `FFI::bun_ffi_cc`, so the
-/// `js2native` codegen can resolve it as `crate::ffi::ffi::bun__ffi__cc`.
-#[allow(non_snake_case)]
-#[inline]
-pub(crate) fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    FFI::bun_ffi_cc(global, callframe)
-}
 
 fn make_napi_env_if_needed<'a>(
     functions: impl IntoIterator<Item = &'a Function>,

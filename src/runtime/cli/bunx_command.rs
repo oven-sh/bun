@@ -167,6 +167,7 @@ impl Options {
 
         let mut opts = Options::default();
         opts.passthrough_list.reserve_exact(argv.len());
+        let mut ca_store_flags: Vec<&[u8]> = Vec::new();
 
         // `BUN_OPTIONS` applies to every command, so flags in it that bunx doesn't know are meant
         // for something else.
@@ -258,6 +259,8 @@ impl Options {
                 } else if positional == b"--help" || positional == b"-h" {
                     crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
                     Global::exit(0);
+                } else if Global::is_ca_store_flag(positional) {
+                    ca_store_flags.push(positional);
                 } else if positional == b"--" || is_from_bun_options(argv[i]) {
                 } else if let Some(value_is_next_arg) = CommandLineArguments::bunx_skips_flag(
                     positional,
@@ -282,6 +285,8 @@ impl Options {
 
             i += 1;
         }
+
+        Global::set_ca_store_from_flags(|flag| ca_store_flags.contains(&flag));
 
         let maybe_package_name = maybe_package_name.filter(|name| !name.is_empty());
         if let Some(specified_package) = opts.specified_package {
@@ -1295,6 +1300,7 @@ impl BunxCommand {
         if opts.ignore_scripts {
             args.push(b"--ignore-scripts");
         }
+        args.extend(Global::ca_store_flag().map(|flag| flag.as_bytes()));
         args.extend(flags_with_value.iter().map(Vec::as_slice));
 
         bun_output::scoped_log!(

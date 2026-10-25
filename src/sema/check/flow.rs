@@ -228,6 +228,9 @@ pub(super) struct FlowMemo {
     /// The expressions whose stored type follows from a walk that ended with an incomplete type.
     /// See `check_expression_again`.
     checked_with_incomplete_walk: crate::util::FxHashSet<(FileId, ExprId)>,
+    /// `c.flowTypeCache` outside of every `checkExpressionCached` and every back edge, which lives as long as the
+    /// checker. Only what a second check could compute differently is in it.
+    flow_types_outside_resolutions: FxHashMap<(FileId, ExprId), TypeId>,
 }
 
 /// Not in tsgo. The rows of a file's flow graph. A row is a chain of assignments, declarations,
@@ -7311,11 +7314,20 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getTypeOfExpression` where no loop that's being analyzed is visible. The check of `e`'s statement checks `e`
     /// again, but until the `checkExpressionCached` around this call ends, which is where the innermost resolution
-    /// ends, the next call finds the type in `flowTypeCache`. It makes no second walk, which would fill `flowLoopCache`
-    /// with more than tsc has there.
+    /// ends, the next call finds the type in `flowTypeCache`. Without one around it, every later call does. It makes no
+    /// second walk, which would fill `flowLoopCache` with more than tsc has there, and could end with another type.
     fn get_type_of_expression_outside_loops(&mut self, file: FileId, e: ExprId) -> TypeId {
+        let kept = &self.flow_memo.flow_types_outside_resolutions;
+        if !kept.is_empty()
+            && let Some(&cached) = kept.get(&(file, e))
+            && self.is_outside_resolutions_and_loops()
+        {
+            return cached;
+        }
         let mut types = FxHashMap::default();
-        if !self.flow_type_caches_of_resolutions.is_empty() {
+        if !self.flow_type_caches_of_resolutions.is_empty()
+            && !self.is_outside_resolutions_and_loops()
+        {
             cold_path();
             let owner = self.innermost_resolution();
             self.drop_flow_type_caches_from(owner.map_or(0, |owner| owner.at + 1));
@@ -7340,16 +7352,21 @@ impl<'p, 's> Checker<'p, 's> {
         self.flow_type_cache_depth = depth;
         self.flow_loops = loops;
         let mut types = std::mem::replace(&mut self.flow_type_cache, outer);
-        if self.flow_invocation_count != start && self.cached_type_of_expr(file, e).is_none() {
+        if self.flow_invocation_count != start
+            && (self.cached_type_of_expr(file, e).is_none()
+                || self.is_checked_with_incomplete_walk(file, e))
+        {
             types.insert((file, e), ty);
         }
-        if !types.is_empty()
-            && let Some(owner) = self.innermost_resolution()
-        {
+        if !types.is_empty() {
             cold_path();
-            self.drop_flow_type_caches_from(owner.at);
-            let cache = FlowTypeCacheOfResolution { owner, types };
-            self.flow_type_caches_of_resolutions.push(cache);
+            if self.is_outside_resolutions_and_loops() {
+                (self.flow_memo.flow_types_outside_resolutions).extend(types);
+            } else if let Some(owner) = self.innermost_resolution() {
+                self.drop_flow_type_caches_from(owner.at);
+                let cache = FlowTypeCacheOfResolution { owner, types };
+                self.flow_type_caches_of_resolutions.push(cache);
+            }
         }
         ty
     }
@@ -7362,6 +7379,16 @@ impl<'p, 's> Checker<'p, 's> {
             frame.is_none_or(|frame| frame.serial != it.owner.serial)
         };
         while (self.flow_type_caches_of_resolutions.pop_if(is_over)).is_some() {}
+    }
+
+    /// True if neither a `checkExpressionCached` nor the traversal of a back edge is in progress. A resolution has called
+    /// `checkExpressionCached` if an expression's check is in progress above it. A function's contextual signature, for
+    /// one, is requested before that.
+    fn is_outside_resolutions_and_loops(&self) -> bool {
+        let is_expression = |q: &Query| matches!(q, Query::Expr(..));
+        let cached = self.stack.iter().rposition(is_expression).unwrap_or(0);
+        let mut below = self.stack[..cached].iter();
+        self.flow_loops.is_empty() && !below.any(|&q| self.is_resolution(q))
     }
 
     /// The innermost frame that `is_resolution`.

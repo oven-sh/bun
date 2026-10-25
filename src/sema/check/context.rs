@@ -574,34 +574,41 @@ impl<'p, 's> Checker<'p, 's> {
     /// object literal that's an assignment target. `Some(true)` means the pattern has names that
     /// are only known at run time (`ObjectFlagsObjectLiteralPatternWithComputedProperties`).
     pub(super) fn pattern_of_type(&mut self, ty: TypeId) -> Option<bool> {
-        match *self.data(ty) {
+        let (file, e) = match *self.data(ty) {
             TypeData::Synth(ref shape) => match shape.literal {
-                Literalness::Pattern => Some(false),
-                Literalness::PatternWithComputedNames => Some(true),
-                _ => None,
+                Literalness::Pattern => return Some(false),
+                Literalness::PatternWithComputedNames => return Some(true),
+                // `object_literal_with_shape`
+                Literalness::Literal | Literalness::Partial => {
+                    let (file, _, e) = shape.symbol_declared_at?;
+                    (file, e)
+                }
+                _ => return None,
             },
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(file, e, ..),
                 ..
-            } if self.is_assignment_target(file, e) => {
-                let hir = self.hir(file);
-                let ExprKind::Object(props) = hir[e].kind else {
-                    return None;
-                };
-                let keys = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
-                let mut has_computed_names = false;
-                for p in props.iter() {
-                    if let PropKey::Computed(k) = hir[p].key
-                        && self.member_name(file, hir[p].key).is_none()
-                    {
-                        let key = self.type_of_expr(file, k);
-                        has_computed_names |= self.is_assignable(key, keys);
-                    }
-                }
-                Some(has_computed_names)
-            }
-            _ => None,
+            } => (file, e),
+            _ => return None,
+        };
+        if e.is_none() || !self.is_assignment_target(file, e) {
+            return None;
         }
+        let hir = self.hir(file);
+        let ExprKind::Object(props) = hir[e].kind else {
+            return None;
+        };
+        let keys = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
+        let mut has_computed_names = false;
+        for p in props.iter() {
+            if let PropKey::Computed(k) = hir[p].key
+                && self.member_name(file, hir[p].key).is_none()
+            {
+                let key = self.type_of_expr(file, k);
+                has_computed_names |= self.is_assignable(key, keys);
+            }
+        }
+        Some(has_computed_names)
     }
 
     /// `patternForType[t] != nil`

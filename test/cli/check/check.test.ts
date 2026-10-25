@@ -11429,6 +11429,82 @@ export function f(cur: Item) {
       expect(exitCode).toBe(1);
     });
 
+    // The contextual type of the assigned value is the type of the target, and the walk for `cur.data.loc` there ends with
+    // an incomplete type, which has every property. In a.ts the walk for the condition of the `while` asks for the type
+    // of `[1]` again, in b.ts the error message asks for the return type of the function. A walk for the target at that
+    // point would end with `never`.
+    test("the type of an assignment's target is computed once for the assigned value's contextual type", async () => {
+      const program = (
+        target: string,
+        value: string,
+      ) => `interface Item { data?: { loc?: { col?: number; f?: (x: number) => void } }; parent?: Item }
+declare function make(): Item;
+declare function defined<T>(x: T): asserts x is NonNullable<T>;
+declare const c: boolean;
+declare const LOC: "loc";
+declare let key: string;
+declare let last: number;
+let cur: Item = make();
+cur.data!.loc = undefined;
+defined(cur.data[LOC]);
+for (key in {}) { }
+if (c) { }
+try {
+  for (last of [1]) { }
+} finally {
+  cur.data.loc.${target} = ${value};
+}
+block: {
+  if (c) break block;
+  cur = cur.parent ?? make();
+}
+while (cur.data?.loc?.${target}) { }
+export {};
+`;
+      using dir = project({ "a.ts": program("col", "[1]"), "b.ts": program("f", "x => { }") });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(10,9): error TS18048: 'cur.data' is possibly 'undefined'.",
+          "a.ts(16,3): error TS18048: 'cur.data' is possibly 'undefined'.",
+          "a.ts(16,3): error TS2322: Type 'number[]' is not assignable to type 'never'.",
+          "b.ts(10,9): error TS18048: 'cur.data' is possibly 'undefined'.",
+          "b.ts(16,3): error TS18048: 'cur.data' is possibly 'undefined'.",
+          "b.ts(16,3): error TS2322: Type '(x: any) => void' is not assignable to type 'never'.",
+          "b.ts(16,20): error TS7006: Parameter 'x' implicitly has an 'any' type.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    // The walk for the default `val` ends with an incomplete type, so the target's type isn't the one that's stored.
+    test("the type of a destructuring target that's computed once is still a pattern's type", async () => {
+      using dir = project({
+        "a.ts": `declare function defined<T>(x: T): asserts x is NonNullable<T>;
+declare function text(): string | number | undefined;
+declare const c: boolean;
+declare const items: number[];
+let val = text();
+try {
+  try {
+    for (;;) { if (c) break; }
+    defined(val);
+  } finally {
+    for (const x of items) { if (c) break; }
+  }
+} catch {
+  try { } finally { ({ loc: val } = { loc: 1 }); }
+}
+({ a: val = val } = { a: val, b: 1 });
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        "a.ts(16,31): error TS2353: Object literal may only specify known properties, and 'b' does not exist in type '{ a?: NonNullable<string | number | undefined>; }'.",
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("a shared flow node in a `finally` block has the type of its first visit", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

@@ -848,6 +848,7 @@ impl<'s> Program<'s> {
             mapped_props_reentered_through_members: Vec::new(),
             serialization_level: 0,
             flow_type_cache: Default::default(),
+            flow_type_cache_owner: None,
             flow_type_cache_depth: usize::MAX,
             flow_invocation_count: 0,
             discarded: None,
@@ -1518,8 +1519,10 @@ pub struct Checker<'p, 's> {
     /// `c.serializationLevel`: how many `TypeToString` calls are in progress, counting those whose
     /// resolutions are made eagerly.
     serialization_level: u32,
-    /// `c.flowTypeCache`, for the loop back edge being traversed.
+    /// `c.flowTypeCache`
     flow_type_cache: FxHashMap<(FileId, ExprId), TypeId>,
+    /// `innermost_resolution()` when the first entry was added while no back edge was traversed.
+    flow_type_cache_owner: Option<u64>,
     /// `stack.len()` when that traversal began, or `usize::MAX` if no back edge is being traversed.
     flow_type_cache_depth: usize,
     /// `c.flowInvocationCount`

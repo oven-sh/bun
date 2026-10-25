@@ -7298,17 +7298,12 @@ impl<'p, 's> Checker<'p, 's> {
         AtAssignment::Type(self.assignment_reduced_type(declared, assigned))
     }
 
-    /// `getTypeOfExpression`. `flowTypeCache` is only ported for the traversal of a loop back edge
-    /// and for `type_of_expr_outside_loops`, where it holds what the shared expression cache
-    /// doesn't store (`taint_from`). Everywhere else the shared cache stores every cacheable
-    /// result.
+    /// `getTypeOfExpression`. `flowTypeCache` holds what the shared expression cache doesn't store
+    /// (`taint_from`).
     pub(super) fn get_type_of_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
         let depth = self.flow_type_cache_depth;
-        // The check of `e`'s statement checks `e` again.
         if depth == usize::MAX {
-            return self.outside_flow_loops(|c| {
-                c.type_of_declaration_initializer_ex(file, e, Some(CheckMode::TYPE_ONLY))
-            });
+            return self.get_type_of_expression_outside_loops(file, e);
         }
         // `checkExpressionCached` computes with an empty cache, so a type resolution entered since
         // the traversal began hides this one.
@@ -7326,6 +7321,45 @@ impl<'p, 's> Checker<'p, 's> {
             self.flow_type_cache.insert((file, e), ty);
         }
         ty
+    }
+
+    /// `getTypeOfExpression` while no loop is analyzed. The check of `e`'s statement checks `e` again, but until the
+    /// `checkExpressionCached` around this call ends, which is where the innermost resolution ends, the next call finds
+    /// the type in `flowTypeCache`. It makes no second walk, which would fill `flowLoopCache` with more than tsc has
+    /// there.
+    fn get_type_of_expression_outside_loops(&mut self, file: FileId, e: ExprId) -> TypeId {
+        if !self.flow_type_cache.is_empty() {
+            cold_path();
+            if self.flow_type_cache_owner != self.innermost_resolution() {
+                self.flow_type_cache.clear();
+            } else if let Some(&cached) = self.flow_type_cache.get(&(file, e)) {
+                return cached;
+            }
+        }
+        let is_first = self.flow_type_cache.is_empty();
+        let loops = std::mem::take(&mut self.flow_loops);
+        self.flow_type_cache_depth = self.stack.len();
+        let start = self.flow_invocation_count;
+        let ty = self.type_of_declaration_initializer_ex(file, e, Some(CheckMode::TYPE_ONLY));
+        self.flow_type_cache_depth = usize::MAX;
+        self.flow_loops = loops;
+        if self.flow_invocation_count != start && self.cached_type_of_expr(file, e).is_none() {
+            self.flow_type_cache.insert((file, e), ty);
+        }
+        if is_first && !self.flow_type_cache.is_empty() {
+            cold_path();
+            self.flow_type_cache_owner = self.innermost_resolution();
+            if self.flow_type_cache_owner.is_none() {
+                self.flow_type_cache.clear();
+            }
+        }
+        ty
+    }
+
+    /// The serial of the innermost frame that `is_resolution`.
+    fn innermost_resolution(&self) -> Option<u64> {
+        let at = self.stack.iter().rposition(|&q| self.is_resolution(q))?;
+        Some(self.frames[at].serial)
     }
 
     /// `getInitialOrAssignedType`
@@ -8546,6 +8580,7 @@ impl<'p, 's> Checker<'p, 's> {
         let level = self.inference_contexts.len();
         let level = std::mem::replace(&mut self.context_free_level, level);
         let depth = self.flow_type_cache_depth;
+        let cache = std::mem::take(&mut self.flow_type_cache);
         if self.flow_loops.is_empty() {
             self.flow_type_cache_depth = usize::MAX;
         }
@@ -8553,6 +8588,7 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = self.check_expression_ex(file, e, CheckMode::empty());
         self.check_expression(file, e);
         self.end_recheck(outer);
+        self.flow_type_cache = cache;
         self.flow_type_cache_depth = depth;
         self.context_free_level = level;
         self.restore_rechecked(found_outside);

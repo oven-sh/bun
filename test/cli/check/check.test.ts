@@ -11201,6 +11201,40 @@ export function f() {
       }
     });
 
+    // `return;` infers the return type first. The walk for `val` asks for the type of the assigned literal, whose
+    // contextual type is the type of the target, and the walk for `cur.data` there ends with an incomplete type. A second
+    // one would complete the `for (;;)`, and then `cur.data!.name` would be checked with `never`.
+    test("the type of an assignment's target is computed once while a return type is inferred", async () => {
+      using dir = project({
+        "a.ts": `interface Item { key: string; tok?: number; data?: { name?: string; loc?: number } }
+declare function assert(x: unknown): asserts x;
+declare const c: boolean;
+declare function text(): string | undefined;
+export function f(cur: Item) {
+  let val = text();
+  assert(typeof cur.data === "string");
+  try {
+    try {
+      for (cur.key in {}) { }
+      if (c) return;
+    } finally { }
+  } catch {
+    for (;;) {
+      assert(typeof cur?.tok === "string");
+      assert(typeof cur.data!.name === "string");
+      if (c) break;
+    }
+  }
+  ({ name: val, loc: cur.data!.loc } = { name: text(), loc: 1 });
+  return val;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe("a.ts(20,32): error TS2339: Property 'loc' does not exist on type 'never'.");
+      expect(exitCode).toBe(1);
+    });
+
     test("a shared flow node in a `finally` block has the type of its first visit", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

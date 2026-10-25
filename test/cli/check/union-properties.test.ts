@@ -4967,8 +4967,8 @@ test.concurrent.skipIf(!tsc)(
 
 // A theme's style rules: an indexed access by a type parameter into an interface of `count` props types, each an
 // intersection, intersected with `Record<string, unknown>` and with object types that share none, one or all of their
-// names. One of the props types has its own `ownerState` and `theme`. Nothing is assigned from `Rules<.., A>` to
-// `Rules<.., B>`: tsc 7.1 finds that `Rules` doesn't depend on `Theme`, so it accepts that, and `bun check` doesn't.
+// names. One of the props types has its own `ownerState` and `theme`. tsc 7.1 accepts `Rules<.., A>` for `Rules<.., B>`:
+// it measures `Theme` as contravariant, because it cuts off the comparison of `Partial` of the props as deeply nested.
 const themed = (count: number) => `
 interface Common { className?: string; style?: { color?: string }; children?: unknown }
 interface Html { id?: string; kind?: string; title?: string; hidden?: boolean; className?: string }
@@ -4988,9 +4988,15 @@ class Private { private kind = "k0" as const }
 class Protected { protected kind = "k0" as const }
 declare const first: Components<A>;
 declare const second: Components<A>;
+declare const third: Components<B>;
 const spread = { ...first, ...second };
+const mixed = { ...first, ...third };
 const c0: Components<A> = spread;
+const c1: Components<B> = spread;
+const c2: Components<A> = mixed;
+const c3: Components<B> = mixed;
 const r0: Rules<"root", "C0", A> = null! as Rules<"root", "C0", B>;
+const r1: Rules<"root", "C0", B> = null! as Rules<"root", "C0", A>;
 const r2: Rules<"root", "C0", A> = null! as Rules<"root", "C1", A>;
 const r3: Rules<"root", keyof List, A> = null! as Rules<"root", "C1", A>;
 const r4: Rules<"root", "C1", A> = null! as Rules<"root", keyof List, A>;
@@ -5008,10 +5014,12 @@ const e8: Rules<"root", "C0", A, Protected> = null! as Rules<"root", "C0", A>;
 const e9: Rules<"root", keyof List, A, Private> = null! as Rules<"root", keyof List, A, Protected>;
 function generic<N extends keyof List, M extends N, T, U extends T>() {
   const g0: Rules<"root", N, T> = null! as Rules<"root", N, U>;
+  const g1: Rules<"root", N, U> = null! as Rules<"root", N, T>;
   const g2: Rules<"root", N, T> = null! as Rules<"root", M, T>;
   const g3: Rules<"root", M, T> = null! as Rules<"root", N, T>;
   const g4: Rules<"root", N, T> = null! as Rules<"root", keyof List, T>;
   const g5: Rules<"root", keyof List, T> = null! as Rules<"root", N, T>;
+  const g6: Rules<"root", N, T, { kind: "k0" }> = null! as Rules<"root", N, T>;
   const g7: Rules<"root", N, T> = null! as Rules<"root", N, T, { kind: "k0" }>;
   const g8: Rules<"root", N, T, Private> = null! as Rules<"root", N, T, Protected>;
   const p0: { theme: T } & { kind: string } = null! as List[N] & Record<string, unknown> & { theme: T };
@@ -5041,7 +5049,7 @@ test.concurrent.skipIf(!tsc)("matches tsc on a theme's style rules for 3, 8 and 
     about.flatMap(it => /^\w+\.ts\((\d+),/.exec(it)?.[1] ?? []),
   );
   expect(withErrors).toEqual(
-    sizes.map(() => "22 23 24 25 26 28 29 30 34 35 37 39 40 41 42 43 44 45 47 48 50 51 53".split(" ")),
+    sizes.map(() => "25 27 29 30 31 32 34 35 36 40 41 43 45 47 48 49 50 52 53 55 56 58 59 61".split(" ")),
   );
   for (const lines of ours) expect(byFile(lines)).toEqual(byFile(theirs));
 });

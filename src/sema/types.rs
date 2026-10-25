@@ -3836,13 +3836,40 @@ impl<'p, 's> Types<'p, 's> {
         id
     }
 
-    /// Compares `a.id` with `b.id` for `isDeeplyNestedType`, which treats a higher id as a sign of a newer instantiation,
-    /// one caused by recursion. Only the heights are compared. The instantiations of a recursion
-    /// that steps from one literal type to the next all have the same height, and comparing their hashes would count
-    /// only about half of them. The caller orders two types with the same height.
+    /// One more than the greatest height of any type the key of `id` mentions. For `isDeeplyNestedType`, which treats a
+    /// higher id as a sign of a newer instantiation, one caused by recursion. The instantiations of a recursion that
+    /// steps from one literal type to the next all have the same height, and comparing their hashes would count only
+    /// about half of them. The caller orders two types with the same height.
     #[inline]
-    pub fn nesting_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        self.rank(a).height.cmp(&self.rank(b).height)
+    pub fn height(&self, id: TypeId) -> u32 {
+        self.rank(id).height
+    }
+
+    /// Calls `follow` with `whole` and with every type its key mentions, directly or through the types it mentions.
+    /// What a type mentions is skipped if `follow` returns false for it.
+    pub fn for_each_mentioned(&self, whole: TypeId, follow: impl FnMut(TypeId) -> bool) {
+        let mut mentioned = Mentioned {
+            types: *self,
+            follow,
+            unvisited: SmallVec::new(),
+        };
+        mentioned.ty(whole);
+        while let Some(next) = mentioned.unvisited.pop() {
+            // As in `rank_on_first_use`: an id that's reserved but not used yet has no record.
+            if self
+                .own
+                .summaries
+                .get_layered(next.0)
+                .flags
+                .load(Ordering::Relaxed)
+                == 0
+            {
+                continue;
+            }
+            let (data, provenance) = &self.record(next).created;
+            data.visit(&mut mentioned);
+            provenance.visit(&mut mentioned);
+        }
     }
 
     #[inline]
@@ -5341,6 +5368,37 @@ impl Visitor for Ranking<'_, '_> {
     }
 }
 
+/// See `Types::for_each_mentioned`.
+struct Mentioned<'p, 's, F> {
+    types: Types<'p, 's>,
+    follow: F,
+    unvisited: SmallVec<[TypeId; 16]>,
+}
+
+impl<F: FnMut(TypeId) -> bool> Visitor for Mentioned<'_, '_, F> {
+    #[inline]
+    fn atom(&mut self, _: Atom) {}
+    fn components(&mut self, id: ComponentsId) {
+        self.types.components(id).visit(self);
+    }
+    fn mapper(&mut self, id: MapperId) {
+        self.types.mapping(id).visit(self);
+    }
+    fn sig(&mut self, id: SigId) {
+        self.types.sig(id).visit(self);
+    }
+    #[inline]
+    fn ty(&mut self, id: TypeId) {
+        if (self.follow)(id) {
+            self.unvisited.push(id);
+        }
+    }
+    #[inline]
+    fn file(&mut self, _: FileId) {}
+    #[inline]
+    fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
+}
+
 /// One item of a type's written-out key, for `Types::compare_contents`.
 enum KeyItem {
     Word(u64),
@@ -5675,11 +5733,10 @@ mod tests {
         ] {
             assert!(types.content_order(part, whole).is_lt());
             assert!(types.content_order(whole, part).is_gt());
-            assert!(types.nesting_order(whole, part).is_gt());
-            assert!(types.nesting_order(part, whole).is_lt());
+            assert!(types.height(whole) > types.height(part));
         }
         // Same height.
-        assert!(types.nesting_order(keyof_string, keyof_number).is_eq());
+        assert_eq!(types.height(keyof_string), types.height(keyof_number));
         assert!(types.content_order(outer, outer).is_eq());
     }
 

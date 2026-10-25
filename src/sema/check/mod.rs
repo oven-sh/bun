@@ -1026,6 +1026,7 @@ impl<'s> Program<'s> {
             any_signature_reads: 0,
             any_signature_read_at: 0,
             flow_loops: Vec::new(),
+            reverse_mapped_first_levels: relate::FirstLevels::default(),
             reverse_mapped_source_stack: Vec::new(),
             reverse_mapped_target_stack: Vec::new(),
             reverse_expanding: 0,
@@ -1944,9 +1945,10 @@ pub struct Checker<'p, 's> {
         usize,
     )>,
     /// The types for which a reverse mapped type inference is in progress, each with its push number. See
-    /// `is_at_least_as_new`.
+    /// `has_newer_instantiations`.
     reverse_mapped_source_stack: Vec<(TypeId, u32)>,
     reverse_mapped_target_stack: Vec<(TypeId, u32)>,
+    reverse_mapped_first_levels: relate::FirstLevels,
     reverse_expanding: u8,
     flow_memo: flow::FlowMemo,
     /// `deferredNodes` of the file being checked, an ordered set.

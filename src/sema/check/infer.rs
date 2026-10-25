@@ -5,6 +5,7 @@
 //! `backticks` at the top of a function's doc comment is its name there. Not ported: what the
 //! language service blocks, and the arity a spread argument implies for `[...T, ...U]`.
 
+use super::relate::FirstLevels;
 use super::*;
 use crate::bind::{Decl, ScopeKind};
 use smallvec::{SmallVec, smallvec};
@@ -87,9 +88,10 @@ pub(super) struct Inference {
     visited: SmallVec<[(InferenceKey, i32); 4]>,
     /// The index of each key in `visited`, once there are `VISITED_INDEX_FROM` of them.
     visited_index: FxHashMap<InferenceKey, u32>,
-    /// Each type with its push number. See `is_at_least_as_new`.
+    /// Each type with its push number. See `has_newer_instantiations`.
     source_stack: SmallVec<[(TypeId, u32); 8]>,
     target_stack: SmallVec<[(TypeId, u32); 8]>,
+    first_levels: FirstLevels,
     expanding: u8,
     /// The parameter type an inference started from.
     original_target: TypeId,
@@ -138,6 +140,7 @@ impl Inference {
             inference_priority: PRIORITY_MAX,
             visited: SmallVec::new(),
             visited_index: FxHashMap::default(),
+            first_levels: FirstLevels::default(),
             source_stack: SmallVec::new(),
             target_stack: SmallVec::new(),
             expanding: 0,
@@ -180,6 +183,8 @@ impl Inference {
             visited_index,
             source_stack,
             target_stack,
+            // It checks itself against the stacks.
+            first_levels: _,
             expanding,
             original_target,
             any_default,
@@ -754,10 +759,15 @@ impl<'p, 's> Checker<'p, 's> {
         let push = 2 * n.source_stack.len() as u32;
         n.source_stack.push((source, push + 1));
         n.target_stack.push((target, push));
-        if self.is_deeply_nested_type(source, [&n.source_stack, &n.target_stack], true, 2) {
+        let stacks: [&[_]; 2] = [&n.source_stack, &n.target_stack];
+        if n.expanding & 1 == 0
+            && self.is_deeply_nested_type(source, stacks, &mut n.first_levels, true, 2)
+        {
             n.expanding |= 1;
         }
-        if self.is_deeply_nested_type(target, [&n.source_stack, &n.target_stack], false, 2) {
+        if n.expanding & 2 == 0
+            && self.is_deeply_nested_type(target, stacks, &mut n.first_levels, false, 2)
+        {
             cold_path();
             n.expanding |= 2;
         }
@@ -2467,20 +2477,22 @@ impl<'p, 's> Checker<'p, 's> {
         self.reverse_mapped_source_stack.push((source, push + 1));
         self.reverse_mapped_target_stack.push((target, push));
         let saved = self.reverse_expanding;
-        let (sources, targets) = (
+        let (sources, targets, mut first_levels) = (
             std::mem::take(&mut self.reverse_mapped_source_stack),
             std::mem::take(&mut self.reverse_mapped_target_stack),
+            std::mem::take(&mut self.reverse_mapped_first_levels),
         );
-        if self.is_deeply_nested_type(source, [&sources, &targets], true, 2) {
+        if self.is_deeply_nested_type(source, [&sources, &targets], &mut first_levels, true, 2) {
             self.reverse_expanding |= 1;
         }
-        if self.is_deeply_nested_type(target, [&sources, &targets], false, 2) {
+        if self.is_deeply_nested_type(target, [&sources, &targets], &mut first_levels, false, 2) {
             self.reverse_expanding |= 2;
         }
         (
             self.reverse_mapped_source_stack,
             self.reverse_mapped_target_stack,
-        ) = (sources, targets);
+            self.reverse_mapped_first_levels,
+        ) = (sources, targets, first_levels);
         let before = self.interruptions();
         let result = if self.reverse_expanding != 3 {
             // `inferReverseMappedTypeWorker`: `T[P]` is what is inferred.

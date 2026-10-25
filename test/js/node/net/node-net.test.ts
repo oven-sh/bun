@@ -2315,8 +2315,7 @@ it.skipIf(!isLinux || isASAN || isDebug).each([200, 288, 352])(
         const sent = [];
         for (let i = 0; i < count; i++) {
           const client = net.connect(server.address().port, "127.0.0.1");
-          client.on("error", () => {});
-          sent.push(new Promise(resolve => client.end("hello", resolve)));
+          sent.push(new Promise((resolve, reject) => client.on("error", reject).end("hello", resolve)));
         }
         await Promise.all(sent);
         while (accepted.length < count) await new Promise(resolve => setImmediate(resolve));

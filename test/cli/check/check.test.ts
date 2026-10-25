@@ -8845,6 +8845,40 @@ export const d1 = compose((x: number) => d0(1), y => { let a5 = { v: d0(1) }; co
       expect(exitCode).toBe(1);
     });
 
+    // m4.ts is checked first. `x41` is resolved a second time inside its first resolution, on the way around the cycle of
+    // `x30` and `x80`, where `x30` is `any` and `v` has no contextual type. That result stays, and so does the error.
+    test("what was reported on the way to a type that a resolution inside the first one assigned stays too", async () => {
+      using dir = project({
+        "lib.ts": `export declare class S<O> { o: O; transform<U>(f: (v: O) => U): S<U>; extend<E>(e: E): S<E>; }
+export declare function lazy<T>(f: () => T): S<T>;
+export declare function obj<T>(s: T): S<T>;
+`,
+        "m3.ts": `import { obj, lazy } from "./lib";
+import { x80 } from "./m8";
+export const x30 = obj({ meta: lazy(() => x80) });
+`,
+        "m4.ts": `import { x30 } from "./m3";
+export const x41 = [x30.transform(v => 1)];
+`,
+        "m8.ts": `import { x30 } from "./m3";
+import { x41 } from "./m4";
+export const x80 = x30.extend({ self: x41 });
+`,
+      });
+      const circular =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      for (const threads of ["1", "8"]) {
+        const { stdout, exitCode } = await check(dir, ["--threads", threads]);
+        expect(stdout.split("\n")).toEqual([
+          `m3.ts(3,14): error TS7022: 'x30' implicitly has type 'any' ${circular}`,
+          "m3.ts(3,37): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "m4.ts(2,35): error TS7006: Parameter 'v' implicitly has an 'any' type.",
+          `m8.ts(3,14): error TS7022: 'x80' implicitly has type 'any' ${circular}`,
+        ]);
+        expect(exitCode).toBe(1);
+      }
+    });
+
     // b.ts is checked first. The call of `router` is resolved a second time inside its first resolution, without
     // constraint checks, so there it succeeds. The outer resolution fails, and `resolveCall` assigns the signature of a
     // failed call before it reports, so `one` is a `Router<Def>` for the outer call of `merge`.

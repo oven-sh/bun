@@ -422,7 +422,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .symbol_types
                     .insert(&self.task, sym, ty, Stored::new());
                 self.note_result(Query::Symbol(sym));
-                self.store_results_below_first_result();
+                self.store_results_below_first_result(Query::Symbol(sym));
             }
             Err(open) => self.cache_provisionally(Query::Symbol(sym), u64::from(ty.0), open),
         }
@@ -431,11 +431,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Call after storing a result for which `is_first_result_above_barrier`. tsc has also assigned the types of the
     /// variables and the return types that were resolved on the way to it, and nothing asks for them again from there.
-    /// The same holds for them: their frames only inherited that they're non-cacheable.
-    fn store_results_below_first_result(&mut self) {
+    /// The same is true of them: their frames only inherited that they're non-cacheable. What was reported on the way
+    /// isn't reported again either, so it belongs to `first`, the query of that result.
+    fn store_results_below_first_result(&mut self, first: Query) {
         let Some(frame) = self.left_frame.take() else {
             return;
         };
+        let reported_from = (frame.reported_from as usize).min(self.reported.len());
+        self.log_reported_of(first, reported_from);
         let is_below = |entry: &Provisional| {
             entry.own_serial > frame.serial && entry.from == u32::MAX && entry.event_bits == 0
         };
@@ -2608,7 +2611,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let stored = Stored::new();
                 (self.p.pat_types).insert(&self.task, (file, pat), (ty, false), stored);
                 self.note_result(query);
-                self.store_results_below_first_result();
+                self.store_results_below_first_result(query);
             }
             Err(open) => self.cache_provisionally(query, u64::from(ty.0), open),
         }
@@ -4518,7 +4521,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let stored = Stored::new();
                 (self.p.fn_return_types).insert(&self.task, (file, func), (ty, false), stored);
                 self.note_result(Query::Return(file, func));
-                self.store_results_below_first_result();
+                self.store_results_below_first_result(Query::Return(file, func));
             }
             Err(open) => self.cache_provisionally(Query::Return(file, func), u64::from(ty.0), open),
         }

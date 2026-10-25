@@ -220,7 +220,7 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
-// A `const` initialized with a macro result is inlined at each use, so every use shares one AST object.
+// `x` is one object. The props of each element are a copy of its properties, and `children` goes to the copy.
 test("spreading a macro result into JSX doesn't change the other uses of its const", async () => {
   using dir = tempDir("macro-jsx-spread-run", {
     "m.ts": `export function m() {\n  return { a: 1, b: [2] };\n}\n`,
@@ -231,7 +231,7 @@ test("spreading a macro result into JSX doesn't change the other uses of its con
       `const before = x;`,
       `const child = <div {...x}>kid</div>;`,
       `const spread = <div {...x} />;`,
-      `console.log(JSON.stringify([before, child, spread, x]));`,
+      `console.log(JSON.stringify([before, child, spread, x, before === x, child.b === x.b, spread.b === x.b]));`,
       ``,
     ].join("\n"),
   });
@@ -246,7 +246,7 @@ test("spreading a macro result into JSX doesn't change the other uses of its con
   expect(stderr).toBe("");
   // Debug builds print "[macro] call <name>" to stdout before the script's own output.
   expect(stdout.trim().split("\n").pop()).toBe(
-    `[{"a":1,"b":[2]},{"a":1,"b":[2],"children":"kid"},{"a":1,"b":[2]},{"a":1,"b":[2]}]`,
+    `[{"a":1,"b":[2]},{"a":1,"b":[2],"children":"kid"},{"a":1,"b":[2]},{"a":1,"b":[2]},true,true,true]`,
   );
   expect(exitCode).toBe(0);
 });
@@ -288,6 +288,10 @@ describe("a macro result that is bound to a name", () => {
     [`const { list: [first], list } = obj(); export default [first, list];`, [1, [1, 2]]],
     [`const { list, list: [first] } = obj(); export default [first, list];`, [1, [1, 2]]],
     [`const { q, q: { a } } = twice(); export default [a, q];`, [1, { a: 1, b: 2 }]],
+    [`const a = obj(); export default a === a;`, true],
+    [`const a = obj(); a.x = 1; export default a.x;`, 1],
+    [`const l = arr(); l.push(4); export default l.length;`, 4],
+    [`const c = obj(); function read() { return c.a; } c.a = 9; export default read();`, 9],
     [`const n = num(); const s = hello(); export default [n + n, s + s.length];`, [42, "Hello5"]],
     [`export default [obj().b.c, arr()[2][0], arr().length, hello().length, num() + num()];`, [2, 3, 3, 5, 42]],
   ];
@@ -295,11 +299,8 @@ describe("a macro result that is bound to a name", () => {
   // Modules from cross products of the declaration kind, the value and the use. No exported value is stored for
   // them: the plain import is the oracle.
   const generated: string[] = [];
-  // A read of a `const` that holds a macro object or array is a new copy of the object (#7196). A module that
-  // can tell the copy from the object does not run for `const`.
-  const copied = (kind: string, seesCopy: boolean) => kind === "const" && seesCopy;
+  const add = (body: string) => generated.push(body);
   for (const kind of ["const", "let", "var"]) {
-    const add = (body: string, seesCopy = false) => copied(kind, seesCopy) || generated.push(body);
     for (const value of ["num", "hello", "yes", "nul", "undef", "obj", "arr"]) {
       const x = `${kind} x = ${value}();`;
       add(`${x} export default [x, typeof x];`);
@@ -318,18 +319,18 @@ describe("a macro result that is bound to a name", () => {
     add(`${o} export default [x.a, x.b.c, x.list[1], x.list.length, Object.keys(x), "a" in x];`);
     add(`${o} const { a, b: { c } } = x; export default [a, c];`);
     add(`${o} export default JSON.stringify({ ...x, extra: 1 });`);
-    add(`${o} export default x === x;`, true);
-    add(`${o} x.a = 9; x.b.c = 8; x.list.push(3); delete x.list; export default x;`, true);
-    add(`${o} const y = x; y.added = true; export default [y === x, x.added];`, true);
-    add(`${o} export default new Map([[x, "found"]]).get(x);`, true);
+    add(`${o} export default x === x;`);
+    add(`${o} x.a = 9; x.b.c = 8; x.list.push(3); delete x.list; export default x;`);
+    add(`${o} const y = x; y.added = true; export default [y === x, x.added];`);
+    add(`${o} export default new Map([[x, "found"]]).get(x);`);
 
     const a = `${kind} x = arr();`;
     add(`${a} export default [x[0], x[1], x[2][0], x.length, x.map(v => typeof v), x.includes("two")];`);
     add(`${a} const [first, , [third]] = x; export default [first, third];`);
     add(`${a} export default [...x, ...x].length;`);
-    add(`${a} x.push(4); x[0] = 0; export default [x, x.length];`, true);
-    add(`${a} const y = x; y.length = 1; export default [y === x, x];`, true);
-    add(`${a} export default new Set([x]).has(x);`, true);
+    add(`${a} x.push(4); x[0] = 0; export default [x, x.length];`);
+    add(`${a} const y = x; y.length = 1; export default [y === x, x];`);
+    add(`${a} export default new Set([x]).has(x);`);
 
     add(`${kind} { a, b: { c }, list: [first, second] } = obj(); export default [a, c, first, second];`);
     add(
@@ -340,7 +341,7 @@ describe("a macro result that is bound to a name", () => {
     add(`${kind} [p, q, [r]] = arr(); export default [p, q, r];`);
     add(`${kind} [p = 0, , [t] = [], u = "u"] = arr(); export default [p, t, u];`);
     add(`${kind} [head, ...tail] = arr(); export default [head, tail];`);
-    add(`${kind} { b, list } = obj(); b.c = 9; list.push(3); export default [b, list, b === b];`, true);
+    add(`${kind} { b, list } = obj(); b.c = 9; list.push(3); export default [b, list, b === b];`);
     if (kind === "const") continue;
     add(`${kind} { a, b } = obj(); a = 5; b = null; export default [a, b];`);
     add(`${kind} [p, q] = arr(); p += 1; [q] = ["target"]; export default [p, q];`);
@@ -503,37 +504,103 @@ describe("a macro result that is bound to a name", () => {
     expect(await out("import-let")).toContain(`import(page)`);
   });
 
-  // A macro argument is evaluated at build time. The program can assign to a `let` before the call, so only a
-  // `const` has a build-time value. A `let` that holds a macro result does not hide the `const` below it.
-  test.concurrent("a macro argument can name a const primitive and cannot name a let", async () => {
-    const from = `import { num, hello, id, greet } from "./m.ts" with { type: "macro" };\n`;
-    using dir = tempDir("macro-bound-argument", {
-      "m.ts": `
+  // A macro argument is evaluated at build time. The program can assign to a `let`, and can change an object or
+  // an array that a name holds, before the call. So only a `const` primitive and a macro call have a build-time
+  // value. A `let` that holds a macro result does not hide the `const` below it.
+  test.concurrent(
+    "a macro argument can name a const primitive and cannot name a let, an object or an array",
+    async () => {
+      const from = `import { num, hello, obj, arr, id, greet } from "./m.ts" with { type: "macro" };\n`;
+      using dir = tempDir("macro-bound-argument", {
+        "m.ts": `
         export const num = () => 21;
         export const hello = () => "Hello";
+        export const obj = () => ({ a: 1 });
+        export const arr = () => [1, 2];
         export const id = (x: any) => x;
         export const greet = (name: string) => "hello " + name;
       `,
-      "const.ts":
-        from +
-        `let counter = num();\nconst name = "world";\nconst h = hello();\nconsole.log(greet(name), id(h), counter);`,
-      "let.ts": from + `let h = hello();\nconsole.log(id(h));`,
-    });
-    async function run(file: string) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), file],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
+        "const.ts":
+          from +
+          `let counter = num();\nconst name = "world";\nconst h = hello();\nconsole.log(greet(name), id(h), counter);`,
+        "call.ts": from + `console.log(JSON.stringify([id(obj()), id(arr()), id({ o: obj(), n: num() })]));`,
+        "let.ts": from + `let h = hello();\nconsole.log(id(h));`,
+        "object.ts": from + `const o = obj();\nconsole.log(id(o));`,
+        "array.ts": from + `const l = arr();\nconsole.log(id(l));`,
+        "property.ts": from + `const o = obj();\nconsole.log(id(o.a));`,
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
-    }
-    expect(await run("const.ts")).toEqual({ lastLine: "hello world Hello 21", stderr: "", exitCode: 0 });
-    const rejected = await run("let.ts");
-    expect(rejected.stderr).toContain(`"Cannot convert identifier to JS. Try a statically-known value" error in macro`);
-    expect(rejected.exitCode).toBe(1);
+      async function run(file: string) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), file],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
+      }
+      const [named, called, ...rejected] = await Promise.all(
+        ["const.ts", "call.ts", "let.ts", "object.ts", "array.ts", "property.ts"].map(run),
+      );
+      expect(named).toEqual({ lastLine: "hello world Hello 21", stderr: "", exitCode: 0 });
+      expect(called).toEqual({ lastLine: `[{"a":1},[1,2],{"o":{"a":1},"n":21}]`, stderr: "", exitCode: 0 });
+      for (const { stderr, exitCode } of rejected) {
+        expect(stderr).toContain(" error in macro");
+        expect(exitCode).toBe(1);
+      }
+    },
+  );
+
+  // The example of docs/bundler/macros.mdx, with a macro that does not fetch. The pattern gives the inliner two
+  // strings, so the branch that cannot run is removed.
+  test.concurrent("the example in the docs builds without its dead branch", async () => {
+    const page = await Bun.file(path.join(import.meta.dir, "../../../docs/bundler/macros.mdx")).text();
+    const input = page.match(/```jsx input\n([^]*?)```/)![1];
+    expect(input).toContain(`extractMetaTags("https://example.com")`);
+    expect(input).toContain("throw new Error");
+    using dir = tempDir("macro-bound-docs", {
+      "meta.ts": `
+        export const extractMetaTags = (url: string) => ({
+          title: "Example Domain",
+          viewport: "width=device-width, initial-scale=1",
+          generator: "not read by the page",
+        });
+      `,
+      "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => ({ type, props });\n`,
+      "node_modules/react/jsx-runtime.js": `export const jsx = (type, props) => ({ type, props });\nexport const jsxs = jsx;\n`,
+      "head.jsx": input,
+      // The same page with the object bound to a name. It is one value at run time, with each property.
+      "bound.jsx": `
+        import { extractMetaTags } from "./meta.ts" with { type: "macro" };
+        export const Head = () => {
+          const headTags = extractMetaTags("https://example.com");
+          if (headTags.title !== "Example Domain") {
+            throw new Error("Expected title to be 'Example Domain'");
+          }
+          return <title>{headTags.title}</title>;
+        };
+      `,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "./head.jsx", "./bound.jsx", "--target=bun", "--minify-syntax", "--outdir=out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ buildErr, buildExit }).toEqual({ buildErr: "", buildExit: 0 });
+    const out = (name: string) => Bun.file(path.join(String(dir), "out", name + ".js")).text();
+
+    const head = await out("head");
+    expect(head).toContain(`children: "Example Domain"`);
+    expect(head).not.toContain("throw");
+    expect(head).not.toContain("not read by the page");
+    const bound = await out("bound");
+    expect(bound).toContain("throw");
+    expect(bound).toContain("children: headTags.title");
+    expect(bound).toContain("not read by the page");
   });
 
   // The pattern still tells which properties the program can read, for a `let` too.

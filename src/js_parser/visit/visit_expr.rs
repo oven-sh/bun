@@ -542,7 +542,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         spread_object = Some(*inner);
                     }
                     let mut props: G::PropertyList = match spread_object {
-                        // Another expression can reference the same spread object (e.g. a macro result), so copy its list.
+                        // The spread object can be a `define` value that was not cloned, so copy its list.
                         Some(object) => {
                             let mut props = G::PropertyList::init_capacity(
                                 object.properties.len() + usize::from(!e_.children.is_empty()),

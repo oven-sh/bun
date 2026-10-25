@@ -5,15 +5,17 @@
 
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <wtf/HashMap.h>
+#include <wtf/Locker.h>
 #include <wtf/Vector.h>
 #include <optional>
 
 // Rust, in src/shared_struct_jsc/shared_struct_classes.rs. A `block` is a `const SharedBlock*`: the view owns one strong count of it.
 extern "C" {
-// The JSValue of slot `index`, or empty with an exception pending.
-JSC::EncodedJSValue Bun__SharedBlock__load(const void* block, size_t index, JSC::JSGlobalObject*);
-// False with an exception pending when `value` cannot be shared.
-bool Bun__SharedBlock__store(const void* block, size_t index, JSC::JSGlobalObject*, JSC::EncodedJSValue value);
+// The JSValue of slot `index`, or empty with an exception pending. `*key` gets the address of the object the slot holds, or null for a
+// primitive. When that address is `cachedKey`, the result is `cached` and nothing is built.
+JSC::EncodedJSValue Bun__SharedBlock__load(const void* block, size_t index, JSC::JSGlobalObject*, const void* cachedKey, JSC::EncodedJSValue cached, const void** key);
+// False with an exception pending when `value` cannot be shared. `*key` gets the address of the object that was stored, or null for a primitive.
+bool Bun__SharedBlock__store(const void* block, size_t index, JSC::JSGlobalObject*, JSC::EncodedJSValue value, const void** key);
 void Bun__SharedBlock__release(const void* block);
 size_t Bun__SharedBlock__length(const void* block);
 bool Bun__SharedBlock__isStruct(const void* block);
@@ -24,7 +26,8 @@ void Bun__SharedBlock__fieldName(const void* block, size_t index, const char16_t
 namespace Bun {
 
 // A JS object that is a thin view over a `SharedBlock`. Every worker that holds the block has its own view; reads and writes
-// go to the block's atomic slots and nowhere else, so there is nothing to copy and nothing for the GC to trace.
+// go to the block's atomic slots and nowhere else, so there is nothing to copy. The one thing the GC traces is a cache of the last
+// wrapper object (a view, Mutex or Condition) that each slot was given or handed out, so that `a.x = b; a.x === b` and `s.x === s.x`.
 //
 // A slot is a writable, enumerable, non-configurable data property. A view has a null prototype and is not extensible.
 class JSSharedView : public JSC::JSDestructibleObject {
@@ -44,20 +47,37 @@ public:
         return &vm.destructibleObjectSpace();
     }
 
+    DECLARE_VISIT_CHILDREN;
+
     const void* block() const { return m_block; }
+
+    // Slot `index` as a JS value, or empty with an exception pending. An object that is still what the slot holds comes from the cache.
+    JSC::JSValue load(JSC::JSGlobalObject*, size_t index);
+    // False with an exception pending when `value` cannot be shared.
+    bool store(JSC::JSGlobalObject*, size_t index, JSC::JSValue value);
 
 protected:
     JSSharedView(JSC::VM& vm, JSC::Structure* structure, const void* block)
         : Base(vm, structure)
         , m_block(block)
     {
+        WTF::Locker locker { cellLock() };
+        m_cache.grow(Bun__SharedBlock__length(block));
     }
     ~JSSharedView() { Bun__SharedBlock__release(m_block); }
 
     // `Object.defineProperty` on a slot: the only change a script can make is its value.
     bool redefineSlot(JSC::JSGlobalObject*, size_t index, const JSC::PropertyDescriptor&, bool shouldThrow);
 
+    // The wrapper that slot `index` last gave out or took in, and the address of the object behind it. The address is checked on every
+    // read, because another thread may have changed the slot. The size is fixed at construction, which the GC relies on.
+    struct SlotCache {
+        JSC::WriteBarrier<JSC::JSObject> wrapper;
+        const void* key { nullptr };
+    };
+
     const void* const m_block;
+    WTF::Vector<SlotCache> m_cache;
 };
 
 // `new SharedStruct(["a", "b"])`: one slot for each name, found by the identifier of the property.

@@ -27,19 +27,76 @@ static constexpr unsigned slotAttributes = static_cast<unsigned>(PropertyAttribu
 static constexpr unsigned lengthAttributes = static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
 // Reads slot `index` into `slot`. `in` and VM inquiries must not run the read, which can allocate.
-static bool loadSlot(JSObject* object, const void* block, size_t index, JSGlobalObject* globalObject, PropertySlot& slot)
+static bool loadSlot(JSSharedView* object, size_t index, JSGlobalObject* globalObject, PropertySlot& slot)
 {
     if (slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty
         || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) {
         slot.setValue(object, slotAttributes, jsUndefined());
         return true;
     }
-    JSValue value = JSValue::decode(Bun__SharedBlock__load(block, index, globalObject));
+    JSValue value = object->load(globalObject, index);
     if (!value) {
         // An exception is pending.
         return false;
     }
     slot.setValue(object, slotAttributes, value);
+    return true;
+}
+
+template<typename Visitor>
+void JSSharedView::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    // A view has no ClassInfo of its own, so this cannot check it.
+    auto* thisObject = static_cast<JSSharedView*>(cell);
+    Base::visitChildren(thisObject, visitor);
+    // The constructor sizes the cache under this lock, and a collection can find the cell before the constructor is done.
+    WTF::Locker locker { thisObject->cellLock() };
+    for (auto& entry : thisObject->m_cache)
+        visitor.append(entry.wrapper);
+}
+
+DEFINE_VISIT_CHILDREN(JSSharedView);
+
+JSValue JSSharedView::load(JSGlobalObject* globalObject, size_t index)
+{
+    VM& vm = getVM(globalObject);
+    SlotCache& entry = m_cache[index];
+    const void* key = nullptr;
+    // Rust hands back the cached wrapper when the slot still holds the object behind it.
+    JSValue value = JSValue::decode(Bun__SharedBlock__load(m_block, index, globalObject, entry.key, JSValue::encode(JSValue(entry.wrapper.get())), &key));
+    if (!value) {
+        // An exception is pending.
+        return {};
+    }
+    JSObject* object = key ? value.getObject() : nullptr;
+    if (object) {
+        if (object != entry.wrapper.get())
+            entry.wrapper.set(vm, this, object);
+        entry.key = key;
+    } else {
+        entry.wrapper.clear();
+        entry.key = nullptr;
+    }
+    return value;
+}
+
+bool JSSharedView::store(JSGlobalObject* globalObject, size_t index, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    const void* key = nullptr;
+    if (!Bun__SharedBlock__store(m_block, index, globalObject, JSValue::encode(value), &key)) {
+        // An exception is pending.
+        return false;
+    }
+    SlotCache& entry = m_cache[index];
+    JSObject* object = key ? value.getObject() : nullptr;
+    if (object) {
+        entry.wrapper.set(vm, this, object);
+        entry.key = key;
+    } else {
+        entry.wrapper.clear();
+        entry.key = nullptr;
+    }
     return true;
 }
 
@@ -57,7 +114,7 @@ bool JSSharedView::redefineSlot(JSGlobalObject* globalObject, size_t index, cons
     }
     if (!descriptor.value())
         return true;
-    return Bun__SharedBlock__store(m_block, index, globalObject, JSValue::encode(descriptor.value()));
+    return store(globalObject, index, descriptor.value());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,7 +161,7 @@ bool JSSharedStruct::getOwnPropertySlot(JSObject* object, JSGlobalObject* global
 {
     auto* self = uncheckedDowncast<JSSharedStruct>(object);
     if (auto index = self->slotOf(propertyName))
-        return loadSlot(self, self->m_block, *index, globalObject, slot);
+        return loadSlot(self, *index, globalObject, slot);
     return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
 }
 
@@ -114,7 +171,7 @@ bool JSSharedStruct::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
     // A write through an object that inherits from this one is that object's own.
     if (slot.thisValue() == cell) {
         if (auto index = self->slotOf(propertyName))
-            return Bun__SharedBlock__store(self->m_block, *index, globalObject, JSValue::encode(value));
+            return self->store(globalObject, *index, value);
     }
     // Not extensible: this refuses a name that is not a field, as it does for any frozen-shaped object.
     return Base::put(cell, globalObject, propertyName, value, slot);
@@ -168,7 +225,7 @@ bool JSSharedArray::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* 
 {
     auto* self = uncheckedDowncast<JSSharedArray>(object);
     if (index < self->m_length)
-        return loadSlot(self, self->m_block, index, globalObject, slot);
+        return loadSlot(self, index, globalObject, slot);
     return Base::getOwnPropertySlotByIndex(object, globalObject, index, slot);
 }
 
@@ -189,7 +246,7 @@ bool JSSharedArray::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsig
 {
     auto* self = uncheckedDowncast<JSSharedArray>(cell);
     if (index < self->m_length)
-        return Bun__SharedBlock__store(self->m_block, index, globalObject, JSValue::encode(value));
+        return self->store(globalObject, index, value);
     // Not extensible: this refuses an index past the end.
     return Base::putByIndex(cell, globalObject, index, value, shouldThrow);
 }

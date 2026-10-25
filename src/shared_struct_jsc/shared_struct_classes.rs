@@ -290,20 +290,45 @@ pub unsafe extern "C" fn Bun__SharedBlock__fieldName(
     }
 }
 
+/// The address of the object that `value` refers to, which is what a cached wrapper is checked against; null for a primitive.
+fn identity_of(value: &Value) -> *const c_void {
+    match value {
+        Value::Struct(block) => Arc::as_ptr(block).cast(),
+        Value::Mutex(mutex) => Arc::as_ptr(mutex).cast(),
+        Value::Condition(condition) => Arc::as_ptr(condition).cast(),
+        _ => core::ptr::null(),
+    }
+}
+
+/// Slot `index` as a JS value. `*key` is set to the address of the object the slot holds, or null for a primitive; when that
+/// is `cached_key`, the result is `cached`, the wrapper C++ made for that object, instead of a new one.
+///
 /// # Safety
-/// `block` is live, `index` is below its length, and `global` is live.
+/// `block` is live, `index` is below its length, `global` is live, and `key` is valid for a write.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__SharedBlock__load(
     block: *const c_void,
     index: usize,
     global: *mut JSGlobalObject,
+    cached_key: *const c_void,
+    cached: JSValue,
+    key: *mut *const c_void,
 ) -> JSValue {
     // SAFETY: forwarded.
     let (block, global) = unsafe { (block_ref(block), &*global) };
     // A plain `obj.field` read is unordered.
-    to_js_host_call(global, || to_js(global, block.load_relaxed(index)))
+    let value = block.load_relaxed(index);
+    let identity = identity_of(&value);
+    // SAFETY: forwarded.
+    unsafe { *key = identity };
+    if !identity.is_null() && identity == cached_key {
+        return cached;
+    }
+    to_js_host_call(global, || to_js(global, value))
 }
 
+/// `*key` is set as for [`Bun__SharedBlock__load`], to the address of the object that was stored.
+///
 /// # Safety
 /// As [`Bun__SharedBlock__load`].
 #[unsafe(no_mangle)]
@@ -312,6 +337,7 @@ pub unsafe extern "C" fn Bun__SharedBlock__store(
     index: usize,
     global: *mut JSGlobalObject,
     value: JSValue,
+    key: *mut *const c_void,
 ) -> bool {
     // SAFETY: forwarded.
     let (block, global) = unsafe { (block_ref(block), &*global) };
@@ -319,6 +345,8 @@ pub unsafe extern "C" fn Bun__SharedBlock__store(
         Ok(value) => {
             // A plain `obj.field = value` write is unordered.
             block.store_relaxed(index, &value);
+            // SAFETY: forwarded.
+            unsafe { *key = identity_of(&value) };
             true
         }
         // An exception is pending.

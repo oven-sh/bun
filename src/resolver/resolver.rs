@@ -1669,7 +1669,8 @@ impl<'a> Resolver<'a> {
             if let Some(query) = dir.get_entry(self.generation, name.filename) {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
-                let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                let known = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                let symlink_path = known.unwrap_or(b"");
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -1686,7 +1687,7 @@ impl<'a> Resolver<'a> {
                 // A link whose `stat` had no free descriptor was not followed. Its real path
                 // is not known, and is not taken to be below the real path of the directory.
                 } else if !dir.abs_real_path.is_empty()
-                    && query.entry().stat_ran()
+                    && known.is_some()
                     // When the directory is a symlink, we don't need to call getFdPath.
                     && let mut buf = bun_paths::path_buffer_pool::get()
                     && let Some(out_len) =
@@ -6463,7 +6464,8 @@ impl<'a> Resolver<'a> {
 
                         // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
                         // rewrite inside `symlink()` is serialized on `Entry.mutex`.
-                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
+                        let known = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
+                        let mut symlink = known.unwrap_or(b"");
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6476,9 +6478,9 @@ impl<'a> Resolver<'a> {
                                 logs.add_note(buf);
                             }
                             info.abs_real_path = symlink;
-                        // A link that was not followed has a real path that is not known. It
-                        // is not taken to be below the real path of the parent.
-                        } else if entry.stat_ran()
+                        // A link whose `stat` had no free descriptor was not followed. Its real
+                        // path is not known, and is not taken to be below that of the parent.
+                        } else if known.is_some()
                             && !parent_.abs_real_path.is_empty()
                             && let Some(joined) = self.fs_ref().abs_buf_checked(
                                 &[parent_.abs_real_path, base],

@@ -53,6 +53,13 @@ pub enum Args<'a> {
     Format(&'a [&'a [u8]]),
 }
 
+/// The command whose work an error belongs to.
+#[derive(Copy, Clone)]
+enum Half {
+    Lint,
+    Format,
+}
+
 /// The engine of one workspace folder while its configurations stay as they are. Its realms run on threads of their
 /// own.
 pub trait Realms: Engine + Send {
@@ -375,13 +382,21 @@ impl<'s> Server<'s> {
         self.out.notify(method, params);
     }
 
-    /// Puts an error before the user.
-    fn show_error(&self, message: &[u8]) {
-        let command: &[u8] = match self.features().lint {
-            true => b"bun lint: ",
-            false => b"bun fmt: ",
+    /// Puts an error of `half` before the user, under the name of its command.
+    fn show_error(&self, half: Half, message: &[u8]) {
+        let command: &[u8] = match half {
+            Half::Lint => b"bun lint: ",
+            Half::Format => b"bun fmt: ",
         };
         self.tell("window/showMessage", 1, &[command, message].concat());
+    }
+
+    /// The half that the command that started the server is.
+    fn half(&self) -> Half {
+        match self.args {
+            Args::Lint(_) => Half::Lint,
+            Args::Format(_) => Half::Format,
+        }
     }
 
     /// Ends the process with `code`, once the engines have ended their threads.
@@ -551,7 +566,7 @@ impl<'s> Server<'s> {
         };
         let options = self.features().lint.then(|| self.lint_options_of(root));
         if let Some(Err(why)) = &options {
-            worker.tell_once(why.clone(), |why| self.show_error(why));
+            worker.tell_once(why.clone(), |why| self.show_error(Half::Lint, why));
         }
         let all = |session: Option<&Session>| {
             let mut job = first;
@@ -567,7 +582,7 @@ impl<'s> Server<'s> {
             Some(Ok(options)) => session::with_session(&options, environment, |session| {
                 let refusal = session.refusal();
                 if let Some(refusal) = &refusal {
-                    self.show_error(refusal);
+                    self.show_error(Half::Lint, refusal);
                 }
                 all(refusal.is_none().then_some(session))
             }),
@@ -626,7 +641,7 @@ impl Worker<'_, '_> {
         match linted {
             Ok(result) => Some(result),
             Err(Fatal(why)) => {
-                self.tell_once(why, |why| server.show_error(why));
+                self.tell_once(why, |why| server.show_error(Half::Lint, why));
                 None
             }
         }
@@ -771,7 +786,7 @@ impl Worker<'_, '_> {
         let mut options = match server.format_options_of(self.root) {
             Ok(options) => options,
             Err(why) => {
-                self.tell_once(why, |why| server.show_error(why));
+                self.tell_once(why, |why| server.show_error(Half::Format, why));
                 return None;
             }
         };
@@ -860,7 +875,7 @@ impl<'d> Desk<'d, '_, '_> {
             server.work(&of_thread)
         });
         if spawned.is_err() {
-            server.show_error(b"Could not start a thread");
+            server.show_error(server.half(), b"Could not start a thread");
             return None;
         }
         self.roots.push(Arc::clone(&root));

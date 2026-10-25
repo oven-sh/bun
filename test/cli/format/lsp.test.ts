@@ -418,6 +418,37 @@ exports.format = async (text, options) => {
     timeout,
   );
 
+  // The prefix names the half that failed, not the command that started the server: `bun fmt --lsp` lints too where
+  // the build has `bun lint`, and a `[fmt]` that `bun lint` would accept is still an error of `bun fmt`.
+  test(
+    "shows a bunfig.toml that bun fmt cannot use as an error of bun fmt, once",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", { "bunfig.toml": "[fmt]\nsem = false\n", "a.js": "" });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      open(client, join(String(dir), "a.js"), "a  ;\n");
+      const shown = client.notification(it => it.method === "window/showMessage");
+      const first = await format(client, join(String(dir), "a.js"));
+      expect(first.error).toBeUndefined();
+      expect(first.result).toBeNull();
+      expect((await shown).params).toEqual({
+        type: 1,
+        message: expect.stringMatching(/^bun fmt: Cannot use bunfig\.toml:2:1: Unknown key "sem" in \[fmt\]/),
+      });
+      expect((await format(client, join(String(dir), "a.js"))).result).toBeNull();
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      const messages = client.received.filter(it => it.method === "window/showMessage").map(it => it.params.message);
+      expect(messages.filter(it => it.startsWith("bun fmt: "))).toHaveLength(1);
+      expect(messages.filter(it => it.startsWith("bun lint: "))).toEqual([]);
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test(
     "refuses a second initialize, and answers a cancelled request with RequestCancelled",
     async () => {

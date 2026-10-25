@@ -1606,7 +1606,7 @@ impl<'a> Resolver<'a> {
                 );
 
                 result.primary_side_effects_data =
-                    primary_side_effects(&existing.side_effects, path.text());
+                    primary_side_effects(&existing.side_effects, &dir, path.text());
 
                 if existing.name.is_empty() || self.care_about_bin_folder {
                     result.package_json = None;
@@ -1620,7 +1620,7 @@ impl<'a> Resolver<'a> {
             if needs_side_effects {
                 if let Some(package_json) = Result::deref_package_json(result.package_json) {
                     result.primary_side_effects_data =
-                        primary_side_effects(&package_json.side_effects, path.text());
+                        primary_side_effects(&package_json.side_effects, &dir, path.text());
                 }
             }
 
@@ -2384,12 +2384,17 @@ impl<'a> Resolver<'a> {
                         },
                     };
                     if let Some(browser_scope) = base_dir_info.get_enclosing_browser_scope() {
-                        if let Some(remap) = self
-                            .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
-                                &browser_scope,
-                                result.path_pair.primary.text(),
-                            )
-                        {
+                        let remap = with_path_as_walked(
+                            &base_dir_info,
+                            result.path_pair.primary.text(),
+                            |walked| {
+                                self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
+                                    &browser_scope,
+                                    walked,
+                                )
+                            },
+                        );
+                        if let Some(remap) = remap {
                             if remap.is_empty() {
                                 result.path_pair.primary.is_disabled = true;
                                 result.path_pair.primary =
@@ -6822,16 +6827,44 @@ impl<'b> BrowserMapPath<'b> {
     }
 }
 
+/// `path` may come by `dir.abs_real_path`; "sideEffects" and "browser" keys go by `dir.abs_path`.
+fn with_path_as_walked<R>(dir: &DirInfo::DirInfo, path: &[u8], f: impl FnOnce(&[u8]) -> R) -> R {
+    if !dir.abs_real_path.is_empty() {
+        let file = bun_paths::basename(path);
+        if !file.is_empty() && file.len() < path.len() && path.ends_with(file) {
+            let parent = strings::trim_right(&path[..path.len() - file.len()], &[SEP]);
+            if parent == strings::trim_right(dir.abs_real_path, &[SEP]) {
+                let walked = strings::trim_right(dir.abs_path, &[SEP]);
+                let len = walked.len() + 1 + file.len();
+                let mut buf = bun_paths::path_buffer_pool::get();
+                if len <= buf.len() {
+                    buf[..walked.len()].copy_from_slice(walked);
+                    buf[walked.len()] = SEP;
+                    buf[walked.len() + 1..len].copy_from_slice(file);
+                    return f(&buf[..len]);
+                }
+            }
+        }
+    }
+    f(path)
+}
+
 fn primary_side_effects(
     side_effects: &crate::package_json::SideEffects,
+    dir: &DirInfo::DirInfo,
     path: &[u8],
 ) -> SideEffects {
-    if side_effects.has_side_effects(path) {
-        SideEffects::HasSideEffects
-    } else if matches!(side_effects, crate::package_json::SideEffects::False) {
-        SideEffects::NoSideEffectsPackageJson
-    } else {
-        SideEffects::NoSideEffectsPackageJsonArray
+    use crate::package_json::SideEffects as PJSideEffects;
+    match side_effects {
+        PJSideEffects::Unspecified => SideEffects::HasSideEffects,
+        PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
+        listed => {
+            if with_path_as_walked(dir, path, |walked| listed.has_side_effects(walked)) {
+                SideEffects::HasSideEffects
+            } else {
+                SideEffects::NoSideEffectsPackageJsonArray
+            }
+        }
     }
 }
 

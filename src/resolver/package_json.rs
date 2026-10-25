@@ -245,6 +245,7 @@ pub struct MixedPatterns {
 }
 
 impl SideEffects {
+    /// `path` is the file as it was walked to. The patterns are below the path this was read by.
     pub(crate) fn has_side_effects(&self, path: &[u8]) -> bool {
         match self {
             SideEffects::Unspecified => true,

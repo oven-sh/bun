@@ -4689,7 +4689,10 @@ fn check_named_files(
                 let upcoming = next();
                 // A task caches what it evaluated about other files, and a file's own check must not hit what a later
                 // file's check evaluated. So a task only moves forward in program order.
-                let is_last = upcoming.is_none_or(|it| it < index) || spent >= task_cost;
+                // A single thread checks the files in tsc's order, so it can also have tsc's `flowLoopCache`.
+                let is_replaced = spent >= task_cost
+                    && !(workers == 1 && checker.has_walked_loops_of_later_files());
+                let is_last = upcoming.is_none_or(|it| it < index) || is_replaced;
                 if !checker.commit_after_file(is_last) {
                     if let Some(progress) = request.progress {
                         progress.checked.fetch_sub(1, Ordering::Relaxed);

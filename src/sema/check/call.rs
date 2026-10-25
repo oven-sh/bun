@@ -394,8 +394,9 @@ impl<'p, 's> Checker<'p, 's> {
         resolved
     }
 
-    /// `NodeCheckFlagsContextChecked` and the parameter types of the functions in `call` stay as a resolution of `call`
-    /// left them that ran inside the resolution at `stack[enclosing]`, so that one doesn't assign them again.
+    /// `NodeCheckFlagsContextChecked` and the parameter types of the functions among the arguments of `call` stay as a
+    /// resolution of `call` left them that ran inside the resolution at `stack[enclosing]`, so that one doesn't assign
+    /// them again.
     fn keep_context_checks_for_enclosing_resolution(
         &mut self,
         file: FileId,
@@ -405,10 +406,13 @@ impl<'p, 's> Checker<'p, 's> {
         if self.context_checked_under.is_empty() {
             return;
         }
-        let range = self.start_of(file, call)..self.end_of_expr(file, call);
-        let (hir, serial) = (self.hir(file), self.frames[enclosing].serial);
+        let (bound, serial) = (self.bound(file), self.frames[enclosing].serial);
         for under in &mut self.context_checked_under {
-            if under.0 > enclosing && under.2.0 == file && range.contains(&hir[under.2.1].start) {
+            if under.0 > enclosing
+                && under.2.0 == file
+                && matches!(bound.fns[under.2.1.idx()].owner, FnOwner::Expr(argument)
+                    if bound.parent_of_expr(argument) == Parent::Expr(call))
+            {
                 (under.0, under.1) = (enclosing, serial);
             }
         }

@@ -3800,9 +3800,12 @@ impl<'p, 's> Checker<'p, 's> {
         self.mark_tainted_by_pattern_from(from);
     }
 
-    /// If the innermost expressions are part of an argument of the call that's being resolved, and not of another call
-    /// in it, no type is stored for them, as in `note_members_in_place_read_above`.
-    fn note_argument_is_checked_again(&mut self) {
+    /// The innermost expressions are being checked with a type of a variable or property that later requests don't get.
+    /// No type is stored for them, as in `note_members_in_place_read_above`, if tsc checks them again:
+    /// - They're part of an argument of the call that's being resolved, and not of another call in it. That's only for
+    ///   a variable (`is_variable`).
+    /// - They're part of the callee that `getQuickTypeOfExpression` checks. It doesn't resolve the call.
+    fn note_checked_again_with_assigned_type(&mut self, is_variable: bool) {
         let is_part = |&q: &Query| match q {
             Query::Expr(file, e) => !matches!(
                 self.hir(file)[e].kind,
@@ -3814,12 +3817,15 @@ impl<'p, 's> Checker<'p, 's> {
             Query::LiteralProp(..) => true,
             _ => false,
         };
-        if let Some(call) = self.stack.iter().rposition(|q| !is_part(q))
-            && let Query::Call(file, e) = self.stack[call]
-            && let ExprKind::Call(c) | ExprKind::New(c) = self.hir(file)[e].kind
-            && self.stack.get(call + 1) != Some(&Query::Expr(file, self.hir(file)[c].callee))
-        {
-            self.note_members_in_place_read_above(call + 1);
+        let Some(at) = self.stack.iter().rposition(|q| !is_part(q)) else {
+            return;
+        };
+        let is_argument = is_variable
+            && matches!(self.stack[at], Query::Call(file, e)
+                if matches!(self.hir(file)[e].kind, ExprKind::Call(c) | ExprKind::New(c)
+                    if self.stack.get(at + 1) != Some(&Query::Expr(file, self.hir(file)[c].callee))));
+        if is_argument || self.frames[at].is_quick_type {
+            self.note_members_in_place_read_above(at + 1);
         }
     }
 

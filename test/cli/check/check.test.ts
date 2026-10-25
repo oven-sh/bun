@@ -9186,6 +9186,28 @@ const c0 = num(c1());
       expect(exitCode).toBe(1);
     });
 
+    // The type of `x50` is the return type of `pick`, from `getQuickTypeOfExpression`, which checks the callee and doesn't
+    // resolve the call. `held` is `any` by the time the call is resolved, so it's an untyped call.
+    test("the callee of a call in an initializer is checked again with the type that a property got inside the cycle", async () => {
+      using dir = project({
+        "a.ts": `declare function obj<S>(s: S): { pick(k: keyof S): S };
+const x50 = new X72().held.pick("id");
+class X72 { constructor(public dep = x50) {} held = obj({ email: X72.shared.dep }); static shared = new X72(); }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(2,7): error TS7022: 'x50' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "a.ts(2,17): error TS2449: Class 'X72' used before its declaration.",
+          "a.ts(3,25): error TS7022: 'dep' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "a.ts(3,46): error TS7022: 'held' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "a.ts(3,70): error TS2729: Property 'shared' is used before its initialization.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // tsc asks for the type of a parameter when there's an argument to compare with it. `use()` has none, so the default
     // of `f` isn't checked there, and `createStore(..)` isn't resolved a second time inside its own resolution.
     test("a call without an argument for a parameter doesn't check the default of that parameter", async () => {

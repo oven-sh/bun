@@ -337,15 +337,17 @@ it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number us
 // the list, and past the pool's 128 slots a poll is a heap allocation that only the list names. The pool was freed
 // with the VM and the list was not: 40 bytes for each of those polls, which only LeakSanitizer sees.
 it.skipIf(!isASAN || isWindows)("polls left by spawnSync are freed when a VM ends before its loop turns", async () => {
-  // The bytes LeakSanitizer reports for a VM that ends in the task that made `calls` piped spawnSync calls.
-  async function leakedBytes(calls: number) {
+  // The bytes LeakSanitizer reports for a VM that makes 70 piped spawnSync calls in one task, which leave 82 polls on
+  // the heap, and then ends: at once, or after its loop has turned and emptied the list.
+  async function leakedBytes(loopTurnsFirst: boolean) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        setImmediate(() => {
-          for (let i = 0; i < ${calls}; i++) Bun.spawnSync({ cmd: ["true"], stdio: ["ignore", "pipe", "pipe"] });
+        setImmediate(async () => {
+          for (let i = 0; i < 70; i++) Bun.spawnSync({ cmd: ["true"], stdio: ["ignore", "pipe", "pipe"] });
+          if (${loopTurnsFirst}) await new Promise(resolve => setImmediate(resolve));
           console.log("ok");
           process.exit(0);
         });
@@ -355,7 +357,7 @@ it.skipIf(!isASAN || isWindows)("polls left by spawnSync are freed when a VM end
         ...bunEnv,
         BUN_DESTRUCT_VM_ON_EXIT: "1",
         // symbolize=0 keeps a child that leaks fast. It also turns the suppressions off, which is fine: the two
-        // runs below are compared, so what a process leaks once cancels out.
+        // children do the same work, so what such a process leaks apart from these polls cancels out.
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "symbolize=0"].filter(Boolean).join(":"),
       },
       stdout: "pipe",
@@ -368,7 +370,6 @@ it.skipIf(!isASAN || isWindows)("polls left by spawnSync are freed when a VM end
     expect(stdout).toBe("ok\n");
     return Number(summary?.[1] ?? 0);
   }
-  // One call stays inside the pool. 70 calls leave 82 polls on the heap.
-  const [one, many] = await Promise.all([leakedBytes(1), leakedBytes(70)]);
-  expect({ leakedBytes: many - one }).toEqual({ leakedBytes: 0 });
+  const [afterTurn, atOnce] = await Promise.all([leakedBytes(true), leakedBytes(false)]);
+  expect({ leakedBytes: atOnce - afterTurn }).toEqual({ leakedBytes: 0 });
 });

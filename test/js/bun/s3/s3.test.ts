@@ -1515,6 +1515,76 @@ describe("s3-server", () => {
   });
 });
 
+// What the JSDoc of the S3File signature of Bun.write() in bun-types says about `options`.
+describe.concurrent("Bun.write(S3File, input, options)", () => {
+  const client = new S3Client(localCredentials);
+  const MiB = 1024 * 1024;
+
+  it("applies an option of the call to that write only", async () => {
+    const key = `${randomUUIDv7()}.txt`;
+    const url = `${localServer.url}/${localCredentials.bucket}/${key}`;
+    const file = client.file(key, { acl: "private" });
+
+    expect(await Bun.write(file, "first", { acl: "public-read", contentDisposition: "attachment" })).toBe(5);
+    const first = await fetch(url);
+    expect({
+      status: first.status,
+      disposition: first.headers.get("content-disposition"),
+      body: await first.text(),
+    }).toEqual({ status: 200, disposition: "attachment", body: "first" });
+
+    // The file keeps its own options: the next write is private again and has no disposition.
+    expect(await Bun.write(file, "second")).toBe(6);
+    const denied = await fetch(url);
+    await denied.text();
+    const second = await fetch(file.presign());
+    expect({
+      anonymous: denied.status,
+      status: second.status,
+      disposition: second.headers.get("content-disposition"),
+      body: await second.text(),
+    }).toEqual({ anonymous: 403, status: 200, disposition: null, body: "second" });
+  });
+
+  it("does not apply a type of the call", async () => {
+    const typed = client.file(randomUUIDv7(), { type: "text/x-file" });
+    await Bun.write(typed, "x", { type: "text/x-call" });
+    const byExtension = client.file(`${randomUUIDv7()}.json`);
+    await Bun.write(byExtension, "{}", { type: "text/x-call" });
+
+    expect({ typed: (await typed.stat()).type, byExtension: (await byExtension.stat()).type }).toEqual({
+      typed: "text/x-file",
+      byExtension: "application/json;charset=utf-8",
+    });
+  });
+
+  it("applies partSize of the call to a stream input, not to a BunFile input", async () => {
+    using dir = tempDir("s3-write-part-size", {});
+    // One byte more than the default part size of 5 MiB: two parts, or one with a part size of 6 MiB.
+    const bytes = Buffer.alloc(5 * MiB + 1, "a");
+    const input = path.join(String(dir), "input.bin");
+    await Bun.write(input, bytes);
+
+    const fromStream = client.file(randomUUIDv7());
+    await Bun.write(fromStream, new Blob([bytes]).stream(), { partSize: 6 * MiB });
+    const fromFile = client.file(randomUUIDv7());
+    await Bun.write(fromFile, Bun.file(input), { partSize: 6 * MiB });
+    const ofDestination = client.file(randomUUIDv7(), { partSize: 6 * MiB });
+    await Bun.write(ofDestination, Bun.file(input));
+
+    // The ETag of a multipart upload ends with the number of its parts.
+    expect({
+      fromStream: (await fromStream.stat()).etag,
+      fromFile: (await fromFile.stat()).etag,
+      ofDestination: (await ofDestination.stat()).etag,
+    }).toEqual({
+      fromStream: expect.not.stringContaining("-"),
+      fromFile: expect.stringMatching(/-2"$/),
+      ofDestination: expect.not.stringContaining("-"),
+    });
+  });
+});
+
 describe.concurrent("s3 missing credentials", () => {
   async function assertMissingCredentials(fn: () => Promise<any>) {
     try {
@@ -2102,9 +2172,8 @@ describe("s3 upload stream body error", () => {
         virtualHostedStyle: false,
       });
       const upstream = await fetch(\`http://127.0.0.1:\${server.port}/big\`);
-      // S3Client.write() does not accept a bare ReadableStream; passing the Response
-      // routes BodyValue::Locked -> upload_stream(), which matches the native
-      // ByteStream -> NetworkSink fast-path this test exercises.
+      // Passing the Response routes BodyValue::Locked -> upload_stream(), which is
+      // the native ByteStream -> NetworkSink fast-path this test exercises.
       await client.write("obj", upstream);
       server.stop(true);
       console.log(JSON.stringify({ received, totalBytes }));

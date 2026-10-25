@@ -2220,6 +2220,46 @@ declare module "bun" {
   ): Promise<number>;
 
   /**
+   * Upload `input` to an {@link S3File}.
+   *
+   * `options` applies to this write only: `destination` keeps its own options.
+   * An option that is set replaces the same option of `destination`, with two
+   * exceptions:
+   *
+   * - `type` is not applied. The content type comes from `destination`: its
+   *   `type` when one is set, or else the extension of its key.
+   * - `partSize`, `queueSize` and `retry` are applied to a stream `input`. For
+   *   a `BunFile` or an `S3File` `input`, those of `destination` are used.
+   *
+   * @param destination The S3 file to write to
+   * @param input The data to upload
+   * @param options S3 options for this write
+   *
+   * @returns A promise that resolves with the number of bytes written.
+   *
+   * @example
+   * ```ts
+   * const file = new Bun.S3Client({ bucket: "my-bucket" }).file("report.pdf");
+   * await Bun.write(file, pdf, { storageClass: "STANDARD_IA", contentDisposition: "attachment" });
+   * ```
+   */
+  function write(
+    destination: S3File,
+    input:
+      Blob | ArrayBufferView | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream | Response | Request,
+    options?: S3Options & {
+      /**
+       * Has no effect on an S3 upload. The value must still be a file mode from 0 to 0o777.
+       */
+      mode?: number;
+      /**
+       * Has no effect on an S3 upload.
+       */
+      createPath?: boolean;
+    },
+  ): Promise<number>;
+
+  /**
    * Use the fastest syscalls available to copy from `input` into `destination`.
    *
    * If `destination` exists, it must be a regular file or symlink to a file.

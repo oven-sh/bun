@@ -2484,10 +2484,10 @@ pub(crate) mod __gated_printer {
                     return None;
                 }
 
-                match c as u8 {
-                    b'&' => return None,
-                    b'"' => double = false,
-                    b'\'' => single = false,
+                match c {
+                    0x26 => return None,
+                    0x22 => double = false,
+                    0x27 => single = false,
                     _ => {}
                 }
             }
@@ -2512,10 +2512,10 @@ pub(crate) mod __gated_printer {
                     return None;
                 }
 
-                match c as u8 {
-                    b'&' => return None,
-                    b'"' => double = false,
-                    b'\'' => single = false,
+                match c {
+                    0x26 => return None,
+                    0x22 => double = false,
+                    0x27 => single = false,
                     _ => {}
                 }
             }
@@ -2539,8 +2539,8 @@ pub(crate) mod __gated_printer {
                     return false;
                 }
 
-                match c as u8 {
-                    b'&' | b'<' | b'>' | b'{' | b'}' => return false,
+                match c {
+                    0x26 | 0x3C | 0x3E | 0x7B | 0x7D => return false,
                     _ => {}
                 }
             }
@@ -2557,8 +2557,8 @@ pub(crate) mod __gated_printer {
                     return false;
                 }
 
-                match c as u8 {
-                    b'&' | b'<' | b'>' | b'{' | b'}' => return false,
+                match c {
+                    0x26 | 0x3C | 0x3E | 0x7B | 0x7D => return false,
                     _ => {}
                 }
             }

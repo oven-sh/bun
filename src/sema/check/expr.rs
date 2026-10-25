@@ -593,11 +593,15 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => false,
             }
             || !self.is_checked_by_check_expression_cached(file, e)
-            // tsc caches a `return` statement's expression without its parentheses, so the walk checks it again.
-            || is_parenthesized(self.hir(file), e)
             || (self.types().object_flags(ty)).contains(ObjectFlags::HAS_UNRESOLVED)
         {
             return;
+        }
+        // tsc caches a `return` statement's expression without its parentheses, so the walk checks it again. The errors
+        // of this visit stay reported.
+        if is_parenthesized(self.hir(file), e) {
+            let from = returned.reported_from as usize;
+            return self.log_reported_of(self.stack[self.stack.len() - 2], from);
         }
         if let Some(returned) = self.frames.last_mut() {
             returned.tainted = false;

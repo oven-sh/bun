@@ -888,8 +888,13 @@ impl Checker<'_, '_> {
     /// Logs the diagnostics reported from index `from` on, so they survive whatever the frames in progress do with
     /// theirs. See `Query::ExprInFlowLoop`.
     pub(super) fn log_reported_in_flow_loop(&mut self, from: usize, file: FileId, e: ExprId) {
+        self.log_reported_of(Query::ExprInFlowLoop(file, e), from);
+    }
+
+    /// Logs the diagnostics reported from index `from` on as belonging to the entry that `owner` stores.
+    pub(super) fn log_reported_of(&mut self, owner: Query, from: usize) {
         for diagnostic in self.reported.split_off(from) {
-            self.log_diagnostic(Some(Query::ExprInFlowLoop(file, e)), diagnostic);
+            self.log_diagnostic(Some(owner), diagnostic);
         }
     }
 

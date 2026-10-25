@@ -15031,6 +15031,51 @@ export const c = define({
       expect(exitCode).toBe(1);
     });
 
+    // `getReturnTypeFromBody` checks the expression inside the parentheses while the call is resolved, when `this` is
+    // only the object literal. The `return` statement checks it again, when `this` has the state too. What either check
+    // finds is reported.
+    test("reports the errors of both checks of a parenthesized returned expression", async () => {
+      using dir = project({
+        "cycle.ts": `declare function store<S, G>(o: { state: () => S; getters: G & ThisType<Readonly<S> & G> }): void;
+declare const flag: boolean;
+store({
+  state: () => ({ s0: [1], s1: null }),
+  getters: {
+    get g1() { return [1].map(u => this.g3()); },
+    g3() { return (flag ? [this.s1, this.g1] : this.s0); },
+  },
+});
+export {};
+`,
+        "twice.ts": `type Values<G> = { readonly [K in keyof G]: G[K] extends (...a: any[]) => any ? ReturnType<G[K]> : G[K] };
+declare function store<S, G extends Record<string, unknown>>(o: { state: () => S; view: G & ThisType<S & Values<G>> }): void;
+declare function pick<T, K extends keyof T>(o: T, k: K): T[K];
+store({
+  state: () => ({ on: false }),
+  view: {
+    one() { return 1; },
+    get twice() { return (this.on * 2); },
+    get picked() { return pick(this, "one"); },
+  },
+});
+export {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      const circular =
+        "implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.";
+      expect(stdout.split("\n")).toEqual([
+        `cycle.ts(6,9): error TS7023: 'g1' ${circular}`,
+        `cycle.ts(6,31): error TS7024: Function ${circular}`,
+        `cycle.ts(7,5): error TS7023: 'g3' ${circular}`,
+        "cycle.ts(7,33): error TS2339: Property 's1' does not exist on type '{ readonly g1: any; g3(): any; }'.",
+        "cycle.ts(7,53): error TS2339: Property 's0' does not exist on type '{ readonly g1: any; g3(): any; }'.",
+        "twice.ts(8,27): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+        "twice.ts(8,32): error TS2339: Property 'on' does not exist on type '{ one(): 1; readonly twice: number; readonly picked: () => 1; }'.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS7022 and TS7023 when `return f()` checks the callee while another resolution is in progress", async () => {
       using dir = project({
         "a.ts": `export function p1() { const a = (x = (b() as any)) => x; function b() { return a(); } }

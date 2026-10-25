@@ -82,7 +82,9 @@ const second = value => Object.assign(new String("y"), {
     return value;
   },
 });
+const eight = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const results = [];
+const check = (name, [got, want]) => results.push(name + "=" + (got === want ? "OK" : "MISMATCH"));
 for (const ns of ["posix", "win32"]) {
   const p = path[ns];
   const cases = {
@@ -92,11 +94,13 @@ for (const ns of ["posix", "win32"]) {
     basename: () => [p.basename(first(), second("_")), p.basename(long, "_")],
   };
   for (const [name, fn] of Object.entries(cases)) {
-    for (let r = 0; r < 3; r++) {
-      const [got, want] = fn();
-      results.push(ns + "." + name + "[" + r + "]=" + (got === want ? "OK" : "MISMATCH"));
-    }
+    for (let r = 0; r < 3; r++) check(ns + "." + name + "[" + r + "]", fn());
   }
+  // A function that reads one argument still stringifies the String object after it.
+  check(ns + ".dirname", [p.dirname(first(), second("_")), p.dirname(long)]);
+  check(ns + ".parse", [JSON.stringify(p.parse(first(), second("_"))), JSON.stringify(p.parse(long))]);
+  // The ninth and later arguments are past the inline storage of the buffer that roots them.
+  check(ns + ".join, ten arguments", [p.join(...eight, first(), second("tail")), p.join(...eight, long, "tail")]);
 }
 console.log(results.join("\\n"));`,
     ],
@@ -108,11 +112,90 @@ console.log(results.join("\\n"));`,
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const expected = [];
-  for (const ns of ["posix", "win32"])
+  for (const ns of ["posix", "win32"]) {
     for (const name of ["join", "resolve", "relative", "basename"])
       for (let r = 0; r < 3; r++) expected.push(`${ns}.${name}[${r}]=OK`);
+    for (const name of ["dirname", "parse", "join, ten arguments"]) expected.push(`${ns}.${name}=OK`);
+  }
   expect({ lines: stdout.trim().split("\n"), stderr }).toEqual({ lines: expected, stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+test("String-object arguments are stringified in argument order", () => {
+  const calls = [];
+  const stringObject = value =>
+    Object.assign(new String("unused"), {
+      [Symbol.toPrimitive]() {
+        calls.push(value);
+        return value;
+      },
+    });
+  for (const [p, sep] of [
+    [path.posix, "/"],
+    [path.win32, "\\"],
+  ]) {
+    calls.length = 0;
+    expect(p.join(stringObject("a"), "b", stringObject("c"))).toBe(`a${sep}b${sep}c`);
+    // format() reads only pathObject.
+    expect(p.format({ base: "b" }, stringObject("unused"))).toBe("b");
+    expect(calls).toEqual(["a", "c"]);
+  }
+});
+
+describe("functions with a fixed number of operands, called with 65536 or more arguments", () => {
+  const surplus = new Array(65535).fill("");
+  const expected = {
+    posix: {
+      basename: "b.txt",
+      dirname: "/a",
+      extname: ".txt",
+      isAbsolute: true,
+      normalize: "/b",
+      parse: { root: "/", dir: "/a", base: "b.txt", ext: ".txt", name: "b" },
+      format: "/a/b.txt",
+      toNamespacedPath: "C:\\a\\b",
+      basenameWithExt: "b",
+      relative: "../c",
+      stringObjectFirst: "b",
+      stringObjectLast: "b.txt",
+    },
+    win32: {
+      basename: "b.txt",
+      dirname: "/a",
+      extname: ".txt",
+      isAbsolute: true,
+      normalize: "\\b",
+      parse: { root: "/", dir: "/a", base: "b.txt", ext: ".txt", name: "b" },
+      format: "/a\\b.txt",
+      toNamespacedPath: "\\\\?\\C:\\a\\b",
+      basenameWithExt: "b",
+      relative: "..\\c",
+      stringObjectFirst: "b",
+      stringObjectLast: "b.txt",
+    },
+  };
+  for (const ns of ["posix", "win32"]) {
+    test(ns, () => {
+      const p = path[ns];
+      expect({
+        // 65536 arguments
+        basename: p.basename("/a/b.txt", ...surplus),
+        dirname: p.dirname("/a/b", ...surplus),
+        extname: p.extname("/a/b.txt", ...surplus),
+        isAbsolute: p.isAbsolute("/a", ...surplus),
+        normalize: p.normalize("/a/../b", ...surplus),
+        parse: p.parse("/a/b.txt", ...surplus),
+        format: p.format({ dir: "/a", base: "b.txt" }, ...surplus),
+        toNamespacedPath: p.toNamespacedPath("C:\\a\\b", ...surplus),
+        // 65537 arguments
+        basenameWithExt: p.basename("/a/b.txt", ".txt", ...surplus),
+        relative: p.relative("/a/b", "/a/c", ...surplus),
+        // 65537 and 65536 arguments, one of them a String object
+        stringObjectFirst: p.basename(new String("/a/b.txt"), ".txt", ...surplus),
+        stringObjectLast: p.basename("/a/b.txt", ...surplus.slice(1), new String("x")),
+      }).toEqual(expected[ns]);
+    });
+  }
 });
 
 test.if(isWindows)("Bun.which skips PATH segments longer than the Windows wide-path buffer", async () => {

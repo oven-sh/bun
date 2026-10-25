@@ -28,33 +28,52 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 using namespace JSC;
 
-using PathFunction = JSC::EncodedJSValue (*SYSV_ABI)(JSGlobalObject*, bool, EncodedJSValue*, uint16_t len);
+using PathFunction = JSC::EncodedJSValue (*SYSV_ABI)(JSGlobalObject*, bool, EncodedJSValue*, size_t len);
+
+static ALWAYS_INLINE bool isStringObject(JSValue value)
+{
+    if (!value.isCell())
+        return false;
+    const JSC::JSType type = value.asCell()->type();
+    return type == JSC::StringObjectType || type == JSC::DerivedStringObjectType;
+}
+
+// A String object can run user JS (Symbol.toPrimitive / toString) when
+// stringified; do it here so the resulting JSString is rooted in `args`
+// before the native side borrows characters from any argument.
+static NEVER_INLINE JSC::EncodedJSValue callWithStringObjectsStringified(JSGlobalObject* globalObject, JSC::CallFrame* callFrame, bool isWindows, PathFunction function)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    MarkedArgumentBuffer args;
+    for (unsigned i = 0, size = callFrame->argumentCount(); i < size; ++i) {
+        JSValue arg = callFrame->uncheckedArgument(i);
+        if (isStringObject(arg)) {
+            arg = arg.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        args.append(arg);
+    }
+    if (args.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, function(globalObject, isWindows, args.data(), args.size()));
+}
 
 template<bool isWindows, PathFunction Function>
 static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    MarkedArgumentBufferWithSize<8> args = MarkedArgumentBufferWithSize<8>();
-    for (unsigned i = 0, size = callFrame->argumentCount(); i < size; ++i) {
-        JSValue arg = callFrame->argument(i);
-        // A String object can run user JS (Symbol.toPrimitive / toString) when
-        // stringified; do it here so the resulting JSString is rooted in `args`
-        // before the native side borrows characters from any argument.
-        if (Function != Bun__Path__format && Function != Bun__Path__toNamespacedPath) {
-            if (arg.isCell()) {
-                const JSC::JSType type = arg.asCell()->type();
-                if (type == JSC::StringObjectType || type == JSC::DerivedStringObjectType) {
-                    arg = arg.toString(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                }
-            }
+    // The call frame holds the arguments until this function returns, so the
+    // native side reads them in place. Only a String object needs the copy.
+    JSC::ArgList args(callFrame);
+    if (Function != Bun__Path__format && Function != Bun__Path__toNamespacedPath) {
+        for (size_t i = 0, size = args.size(); i < size; ++i) {
+            if (isStringObject(args.at(i))) [[unlikely]]
+                return callWithStringObjectsStringified(globalObject, callFrame, isWindows, Function);
         }
-        args.append(arg);
     }
-    const auto result = Function(globalObject, isWindows, args.data(), args.size());
-    RETURN_IF_EXCEPTION(scope, {});
-    return result;
+    return Function(globalObject, isWindows, args.data(), args.size());
 }
 
 #define DEFINE_PATH_FUNCTION(jsFunctionName, Function, isWindows)               \

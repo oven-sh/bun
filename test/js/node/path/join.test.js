@@ -145,4 +145,21 @@ describe("path.join", () => {
 
     assert.strictEqual(failures.length, 0, failures.join(""));
   });
+
+  describe("with 65536 or more arguments", () => {
+    const empty = new Array(65535).fill("");
+    for (const [name, join, sep] of [
+      ["posix", path.posix.join, "/"],
+      ["win32", path.win32.join, "\\"],
+    ]) {
+      test(name, () => {
+        // 65537 arguments. join() skips the empty strings.
+        assert.strictEqual(join("x", ...empty, "y"), `x${sep}y`);
+        // 65536 and 65537 arguments with an invalid one in front.
+        assert.throws(() => join(123, ...empty), { code: "ERR_INVALID_ARG_TYPE" });
+        assert.throws(() => join("a", 123, ...empty), { code: "ERR_INVALID_ARG_TYPE" });
+        assert.throws(() => Reflect.apply(join, undefined, [123, ...empty]), { code: "ERR_INVALID_ARG_TYPE" });
+      });
+    }
+  });
 });

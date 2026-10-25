@@ -348,6 +348,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             let raw = crate::table::Packed::pack(resolved);
             self.cache_provisionally(Query::Call(file, call), raw, open);
+            self.errors_of_provisional_call = None;
         }
         let is_tainted_by_patterns_only = !self.contextual_binding_patterns.is_empty()
             && self.taints == self.taints_before_patterns;
@@ -409,6 +410,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let (key, stored) = ((file, call), Stored::new());
                 (self.p.diagnostics_of_re_resolved_calls)
                     .insert_ref(&self.task, key, reported, stored);
+            } else {
+                self.errors_of_provisional_call = Some((file, call, reported));
             }
         }
         resolved

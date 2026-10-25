@@ -618,10 +618,14 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 let reported = self.take_reported_from(from);
                 let signature = self.provisional(Query::Call(file, e));
+                let call_errors = self.errors_of_provisional_call.take();
                 self.initializers_checked_inside
                     .push(super::InitializerCheckedInside {
                         quick_type_frame: at,
                         signature: signature.map(crate::table::Packed::unpack),
+                        call_errors: call_errors
+                            .filter(|it| (it.0, it.1) == (file, e))
+                            .map(|it| it.2),
                         reported,
                     });
             }

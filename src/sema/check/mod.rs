@@ -179,6 +179,8 @@ struct InitializerCheckedInside {
     quick_type_frame: usize,
     /// `links.resolvedSignature`, if it's a call.
     signature: Option<call::ResolvedCall>,
+    /// What `resolveCall` reported for that signature.
+    call_errors: Option<Vec<Reported>>,
     reported: Vec<Reported>,
 }
 
@@ -1071,6 +1073,7 @@ impl<'s> Program<'s> {
             checked_with_contextual_type: Vec::new(),
             contextual_signatures_at_check: Vec::new(),
             call_resolution_errors: None,
+            errors_of_provisional_call: None,
             is_call_re_resolved: false,
             untyped_call_resolved_again: None,
             assigned_parameters: Vec::new(),
@@ -2081,6 +2084,8 @@ pub struct Checker<'p, 's> {
     /// The diagnostics `resolveCall` has just reported. `resolved_signature` takes them, and stores
     /// them only together with the entry of `calls`.
     call_resolution_errors: Option<Vec<Reported>>,
+    /// The errors of the last call whose signature `resolved_signature` only cached provisionally.
+    errors_of_provisional_call: Option<(FileId, ExprId, Vec<Reported>)>,
     /// True if the call that `resolve_signature` is resolving was already being resolved.
     is_call_re_resolved: bool,
     /// The call whose arguments `resolveUntypedCall` is checking, if the call was already being

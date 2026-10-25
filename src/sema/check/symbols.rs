@@ -2885,6 +2885,14 @@ impl<'p, 's> Checker<'p, 's> {
                     Ok(stored) => {
                         (self.p.expr_types).rewrite(&self.task, (file, e), TypeId::ANY, stored);
                         if let Some(signature) = checked_inside.signature {
+                            if let Some(reported) = checked_inside.call_errors {
+                                (self.p.call_diagnostics).insert_ref(
+                                    &self.task,
+                                    (file, e),
+                                    reported,
+                                    stored,
+                                );
+                            }
                             self.cache_call(file, e, signature, stored);
                         }
                     }

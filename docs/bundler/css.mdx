@@ -676,9 +676,13 @@ When a target browser has no range syntax (Chrome before 104, Safari before 16.4
 }
 ```
 
-The `min-` and `max-` prefixes are inclusive. When a query is one exclusive bound (`<` or `>`), Bun writes it as the negation of the opposite inclusive bound. The bound stays exclusive, and Bun adds nothing to its value.
+The `min-` and `max-` prefixes are inclusive. When a query is one exclusive bound (`<` or `>`), Bun writes it as the negation of the opposite inclusive bound. The bound stays exclusive, and Bun adds nothing to its value. Two kinds of bound have another form. An integer bound moves to the next integer: `(color > 2)` becomes `(min-color: 3)`. A `resolution` bound moves by a small step.
 
-Browsers without range syntax negate only a whole query. When a query combines an exclusive bound with a media type or another condition, Bun moves the value by a small step instead. For example, `screen and (width < 768px)` becomes `screen and (max-width: 767.98px)`.
+Browsers without range syntax negate only a whole query. When a query combines an exclusive bound with a media type or another condition, Bun moves a length by `.02px` instead. For example, `screen and (width < 768px)` becomes `screen and (max-width: 767.98px)`. This form is an approximation:
+
+- A viewport width between `767.98px` and `768px` is on the wrong side of the bound.
+- Safari 14 reads a media length as an integer, so `screen and (width > 768px)` also applies at `768px` there.
+- A length of `10000px` or more and an `env()` value get no step.
 
 ### Shorthands
 

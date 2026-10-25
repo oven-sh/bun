@@ -6336,6 +6336,24 @@ describe("css tests", () => {
       const rule = (prelude: string) => `@media ${prelude} {\n  a {\n    color: red;\n  }\n}\n`;
       const lower = (query: string) => prefixTest(`@media ${query} { a { color: red } }`, "", safari14);
 
+      // The syntax in a printed query list that a browser without range syntax skips.
+      const needsMediaQueries4 = (prelude: string) =>
+        (
+          [
+            [/[<>=]/, "a range"],
+            [/\bnot\s*\(/, "`not (..)`"],
+            [/\)\s+or\s+\(/, "`or`"],
+          ] as const
+        )
+          .filter(([syntax]) => syntax.test(prelude))
+          .map(([, name]) => name);
+
+      // `query` prints as `expected` for Safari 14, and Safari 14 has the syntax for it.
+      const expectLowered = (query: string, expected: string) => {
+        expect(lower(query)).toBe(rule(expected));
+        expect(needsMediaQueries4(expected)).toEqual([]);
+      };
+
       describe("a query that is one bound", () => {
         test.each([
           ...[768, 1024, 1280].flatMap(px => [
@@ -6352,18 +6370,15 @@ describe("css tests", () => {
           ["(width < calc(1000px + 2em))", "not all and (min-width: calc(1000px + 2em))"],
           ["(width < env(safe-area-inset-left))", "not all and (min-width: env(safe-area-inset-left))"],
           ["(aspect-ratio > 1920/1080)", "not all and (max-aspect-ratio: 1920 / 1080)"],
-          ["(-webkit-device-pixel-ratio > 2)", "not all and (-webkit-max-device-pixel-ratio: 2)"],
-          // Chrome before 110 rejects a ratio that is a single number.
           ["(aspect-ratio < 1)", "not all and (min-aspect-ratio: 1 / 1)"],
+          ["(-webkit-device-pixel-ratio > 2)", "not all and (-webkit-max-device-pixel-ratio: 2)"],
           // `only` changes nothing in a browser that reads media queries.
           ["only all and (width < 768px)", "not all and (min-width: 768px)"],
           ["all and (width < 768px)", "not all and (min-width: 768px)"],
           // An integer has an inclusive neighbour.
           ["(color > 2)", "(min-color: 3)"],
           ["(color < 2)", "(max-color: 1)"],
-        ])("%s", (query, expected) => {
-          expect(lower(query)).toBe(rule(expected));
-        });
+        ])("%s", expectLowered);
 
         // The step past the last integer used to overflow, which aborts a debug build, so
         // this runs in a child process.
@@ -6403,14 +6418,13 @@ for (const query of ["(color > 2147483647)", "(color < -2147483648)"])
           ["not (min-width: 48rem)", "not all and (min-width: 48rem)"],
           ["not (width = 600px)", "not all and (width: 600px)"],
           ["not (color > 2)", "not all and (min-color: 3)"],
+          ["not (aspect-ratio >= 1)", "not all and (min-aspect-ratio: 1 / 1)"],
           ["not (hover)", "not all and (hover)"],
           ["not (hover: hover)", "not all and (hover: hover)"],
           ["not (prefers-reduced-motion: reduce)", "not all and (prefers-reduced-motion: reduce)"],
           ["not (100px <= width <= 200px)", "not all and (min-width: 100px) and (max-width: 200px)"],
           ["not (100px < width < 200px)", "not all and (min-width: 100.02px) and (max-width: 199.98px)"],
-        ])("%s", (query, expected) => {
-          expect(lower(query)).toBe(rule(expected));
-        });
+        ])("%s", expectLowered);
       });
 
       test.each([
@@ -6422,9 +6436,7 @@ for (const query of ["(color > 2147483647)", "(color < -2147483648)"])
         ],
         ["not (width >= 48rem), (hover)", "not all and (min-width: 48rem), (hover)"],
         ["print, screen and (width < 1024px)", "print, screen and (max-width: 1023.98px)"],
-      ])("each query of a list: %s", (query, expected) => {
-        expect(lower(query)).toBe(rule(expected));
-      });
+      ])("each query of a list: %s", expectLowered);
 
       // No whole query to negate. Blink gives a `min-`/`max-` length 1/64px of slack, so
       // the step is .02px: `(max-width: 1023.999px)` holds at 1024px there.
@@ -6441,27 +6453,63 @@ for (const query of ["(color > 2147483647)", "(color < -2147483648)"])
           ["(640px <= width < 1024px)", "(min-width: 640px) and (max-width: 1023.98px)"],
           ["(100px < width < 200px)", "(min-width: 100.02px) and (max-width: 199.98px)"],
           ["(1 < color < 8) and (width < 1024px)", "(min-color: 2) and (max-color: 7) and (max-width: 1023.98px)"],
-          ["(hover) or (width < 1024px)", "(hover) or (max-width: 1023.98px)"],
-          ["not ((width < 1024px) and (hover))", "not ((max-width: 1023.98px) and (hover))"],
+          // Chromium before 104 rejects a `calc()` with two units.
           ["screen and (width < 64rem)", "screen and (max-width: calc(64rem - .02px))"],
           ["screen and (height > 50vh)", "screen and (min-height: calc(50vh + .02px))"],
-          // Only a length has that slack.
+          // The printer keeps 6 digits of a number.
+          ["screen and (width < 10000px)", "screen and (max-width: 9999.98px)"],
+          ["screen and (width < 10001px)", "screen and (max-width: 10001px)"],
           ["screen and (resolution > 2dppx)", "screen and (min-resolution: 2.001dppx)"],
-          ["screen and (aspect-ratio > 16/9)", "screen and (min-aspect-ratio: 16.001 / 9)"],
-        ])("%s", (query, expected) => {
-          expect(lower(query)).toBe(rule(expected));
+        ])("%s", expectLowered);
+      });
+
+      // Chrome before 110 and Safari before 16.4 read a ratio only as two integers.
+      describe("a ratio in a `min-`/`max-` feature has two integer terms", () => {
+        test.each([
+          ["(min-aspect-ratio: 2/1)", "(min-aspect-ratio: 2 / 1)"],
+          ["(aspect-ratio >= 1)", "(min-aspect-ratio: 1 / 1)"],
+          ["(1/1 <= aspect-ratio <= 16/9)", "(min-aspect-ratio: 1 / 1) and (max-aspect-ratio: 16 / 9)"],
+          ["screen and (aspect-ratio > 16/9)", "screen and (min-aspect-ratio: 16001 / 9000)"],
+          ["screen and (aspect-ratio < 16/9)", "screen and (max-aspect-ratio: 15999 / 9000)"],
+          ["(4/3 <= aspect-ratio < 16/9)", "(min-aspect-ratio: 4 / 3) and (max-aspect-ratio: 15999 / 9000)"],
+          ["screen and (aspect-ratio > 1)", "screen and (min-aspect-ratio: 10001 / 10000)"],
+          ["screen and (aspect-ratio > 1920/1080)", "screen and (min-aspect-ratio: 19201 / 10800)"],
+          ["screen and (aspect-ratio > 192000/108000)", "screen and (min-aspect-ratio: 192001 / 108000)"],
+        ])("%s", expectLowered);
+
+        test("a term that is not an integer keeps the .001 step", () => {
+          expect(lower("screen and (aspect-ratio > 1.5/1)")).toBe(rule("screen and (min-aspect-ratio: 1.501 / 1)"));
         });
       });
 
-      // Safari before 16 never matches a `resolution` feature, so `not all and` one would
-      // always match there.
+      // Safari before 16 reads a `resolution` feature and never matches it. With `not all
+      // and` added or taken away, such a query goes from never to always there, or back.
       test.each([
         ["(resolution > 2dppx)", "(min-resolution: 2.001dppx)"],
-        ["not (resolution >= 2dppx)", "not (min-resolution: 2dppx)"],
-        ["not (resolution: 2dppx)", "not (resolution: 2dppx)"],
-        ["not (resolution > 2dppx)", "(max-resolution: 2dppx)"],
-      ])("a `resolution` feature gets no `not all and`: %s", (query, expected) => {
+        ["(resolution < 2dppx)", "(max-resolution: 1.999dppx)"],
+        ["not all and (resolution > 2dppx)", "not all and (min-resolution: 2.001dppx)"],
+        ["not all and (resolution < 2dppx)", "not all and (max-resolution: 1.999dppx)"],
+        ["not all and (min-resolution: .001dpcm)", "not all and (min-resolution: .001dpcm)"],
+      ])("a `resolution` query keeps its `not all and`, or its lack of one: %s", expectLowered);
+
+      test("`not (..)` of a strict `resolution` bound has no `not` to write", () => {
+        expectLowered("not (resolution > 2dppx)", "(max-resolution: 2dppx)");
+      });
+
+      // One old-syntax query cannot state these, or this lowering does not try to. They
+      // print with Media Queries 4 syntax, and a browser without range syntax skips them.
+      test.each([
+        ["(hover) or (width < 1024px)", "(hover) or (max-width: 1023.98px)", ["`or`"]],
+        ["not ((width < 1024px) and (hover))", "not ((max-width: 1023.98px) and (hover))", ["`not (..)`"]],
+        ["not ((hover: hover) and (pointer: fine))", "not ((hover: hover) and (pointer: fine))", ["`not (..)`"]],
+        ["screen and (not (width > 1024px))", "screen and not (min-width: 1024.02px)", ["`not (..)`"]],
+        ["screen and not (hover)", "screen and not (hover)", ["`not (..)`"]],
+        ["not all and not (hover)", "not all and not (hover)", ["`not (..)`"]],
+        ["not (resolution >= 2dppx)", "not (min-resolution: 2dppx)", ["`not (..)`"]],
+        ["not (resolution: 2dppx)", "not (resolution: 2dppx)", ["`not (..)`"]],
+      ] as [string, string, string[]][])("a query that still needs Media Queries 4: %s", (query, expected, syntax) => {
         expect(lower(query)).toBe(rule(expected));
+        expect(needsMediaQueries4(expected)).toEqual(syntax);
       });
 
       describe("any other query prints as before", () => {
@@ -6473,16 +6521,10 @@ for (const query of ["(color > 2147483647)", "(color < -2147483648)"])
           ],
           ["not all and (min-width: 100px)", "not all and (min-width: 100px)"],
           ["not screen and (min-width: 100px)", "not screen and (min-width: 100px)"],
-          ["(min-aspect-ratio: 2/1)", "(min-aspect-ratio: 2)"],
-          ["(aspect-ratio >= 1)", "(min-aspect-ratio: 1)"],
           ["(width = 1024px)", "(width: 1024px)"],
           ["not all and (hover)", "not all and (hover)"],
-          ["not all and not (hover)", "not all and not (hover)"],
-          ["screen and not (hover)", "screen and not (hover)"],
-          ["not ((hover: hover) and (pointer: fine))", "not ((hover: hover) and (pointer: fine))"],
-        ])("%s", (query, expected) => {
-          expect(lower(query)).toBe(rule(expected));
-        });
+          ["(aspect-ratio: 16/9)", "(aspect-ratio: 16 / 9)"],
+        ])("%s", expectLowered);
       });
 
       describe("targets with range syntax", () => {
@@ -6495,6 +6537,7 @@ for (const query of ["(color > 2147483647)", "(color < -2147483648)"])
           ["not (width < 1024px)", { chrome: 104 << 16 }, "not (width < 1024px)"],
           ["not (width >= 48rem)", { chrome: 104 << 16 }, "not (width >= 48rem)"],
           ["not (hover)", { chrome: 104 << 16 }, "not (hover)"],
+          ["(aspect-ratio >= 1)", { chrome: 104 << 16 }, "(aspect-ratio >= 1)"],
         ] as [string, Browsers | undefined, string][])("%s %j", (query, targets, expected) => {
           expect(prefixTest(`@media ${query} { a { color: red } }`, "", targets)).toBe(rule(expected));
         });

@@ -2144,10 +2144,10 @@ c {
     outfile: "/out.css",
   });
 
-  // The default browser targets have no range syntax (Chrome 80, Safari 14). A default
-  // build keeps a strict bound strict: `(width < 1024px)` and `(width >= 1024px)` never
-  // both match at 1024px. A query that is one strict bound is a negation, with the value
-  // as written. A strict bound beside another part steps .02px past its value.
+  // The default browser targets have no range syntax (Chrome 80, Safari 14). A query
+  // that is one strict bound prints as a negation with the value as written, so
+  // `(width < 1024px)` and `(width >= 1024px)` never both match at 1024px. A strict
+  // bound beside another part steps .02px past its value.
   for (const backend of ["cli", "api"] as const) {
     itBundled(`css/MediaRangeStrictBound/${backend}`, {
       backend,

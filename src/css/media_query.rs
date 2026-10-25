@@ -1103,6 +1103,8 @@ impl MediaFeatureValue {
             // Blink gives a `min-`/`max-` length 1/64px of slack, so a smaller step is
             // inclusive there: `(max-width: 1023.999px)` holds at 1024px.
             // https://github.com/chromium/chromium/blob/103.0.5060.134/third_party/blink/renderer/core/css/media_query_evaluator.cc#L269-L285
+            // Safari 14 reads a media length as an integer, so the step up does nothing
+            // there: https://bugs.webkit.org/show_bug.cgi?id=224097
             MediaFeatureValue::Length(len) => {
                 MediaFeatureValue::Length(len.add(Length::px(sign * 0.02)))
             }
@@ -1112,7 +1114,7 @@ impl MediaFeatureValue {
             }
             MediaFeatureValue::Boolean(v) => MediaFeatureValue::Boolean(v),
             MediaFeatureValue::Resolution(res) => MediaFeatureValue::Resolution(res.add_f32(other)),
-            MediaFeatureValue::Ratio(ratio) => MediaFeatureValue::Ratio(ratio.add_f32(other)),
+            MediaFeatureValue::Ratio(ratio) => MediaFeatureValue::Ratio(ratio.step(sign)),
             MediaFeatureValue::Ident(id) => MediaFeatureValue::Ident(id),
             // env() values pass through unchanged — the calc-lattice add
             // (wrapping the env() reference in a calc() to apply the
@@ -1253,10 +1255,10 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
         _ => None,
     };
 
-    if let Some(val) = adjusted {
-        val.to_css(dest)?;
-    } else {
-        value.to_css(dest)?;
+    match adjusted.as_ref().unwrap_or(value) {
+        // Chrome before 110 and Safari before 16.4 read a ratio only as two integers.
+        MediaFeatureValue::Ratio(ratio) => ratio.to_css_both_terms(dest)?,
+        value => value.to_css(dest)?,
     }
 
     dest.write_char(b')')
@@ -1265,11 +1267,12 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 /// A query that is one feature of media type `all`, with or without a `not`: the whole
 /// of `(width < V)`, `not (hover)` or `not all and (width < V)`.
 struct LoneFeature<'a> {
-    /// The `MediaCondition::Feature` that holds `feature`.
+    /// The `MediaCondition::Feature` of the query.
     condition: &'a MediaCondition,
-    feature: &'a MediaFeature,
-    /// The query says that the feature does not hold.
-    negated: bool,
+    /// The query starts with `not all and`.
+    not_all: bool,
+    /// The feature is inside `not (..)`, which needs the same browsers as range syntax.
+    written_not: bool,
 }
 
 impl MediaQuery {
@@ -1295,20 +1298,20 @@ impl MediaQuery {
         }
         Some(LoneFeature {
             condition,
-            feature,
-            negated: not_all || written_not,
+            not_all,
+            written_not,
         })
     }
 }
 
 impl MediaFeature {
-    /// For `(name < V)` and `(name > V)`: the name and the value, with the prefix of the
-    /// inclusive feature that the bound negates. `(width < V)` is "not `(min-width: V)`".
+    /// For `(name < V)` and `(name > V)`: the name and the value, with the inclusive
+    /// comparison that the bound negates. `(width < V)` is "not `(width >= V)`".
     #[inline]
     fn strict_bound(
         &self,
     ) -> Option<(
-        &'static str,
+        MediaFeatureComparison,
         &MediaFeatureName<MediaFeatureId>,
         &MediaFeatureValue,
     )> {
@@ -1321,8 +1324,8 @@ impl MediaFeature {
             return None;
         };
         let negates = match operator {
-            MediaFeatureComparison::LessThan => "min-",
-            MediaFeatureComparison::GreaterThan => "max-",
+            MediaFeatureComparison::LessThan => MediaFeatureComparison::GreaterThanEqual,
+            MediaFeatureComparison::GreaterThan => MediaFeatureComparison::LessThanEqual,
             _ => return None,
         };
         // An integer has an inclusive neighbour: `(color > 2)` is `(min-color: 3)`.
@@ -1340,9 +1343,8 @@ impl LoneFeature<'_> {
     /// lightningcss prints `(width < V)` as `not (min-width: V)`. Browsers without range
     /// syntax also reject `not (..)` inside a condition (both came in Chrome 104 and
     /// Safari 16.4) and negate only a whole query, `not all and (min-width: V)`:
-    /// https://github.com/parcel-bundler/lightningcss/issues/1361. So a strict bound
-    /// beside a media type or another condition has no exact form in one query, and
-    /// `write_min_max` steps past its value.
+    /// https://github.com/parcel-bundler/lightningcss/issues/1361. Any other strict
+    /// bound steps past its value in `write_min_max`.
     ///
     /// Returns whether it wrote the query.
     #[cold]
@@ -1356,35 +1358,34 @@ impl LoneFeature<'_> {
         {
             return Ok(false);
         }
-        let strict = self.feature.strict_bound();
+        let MediaCondition::Feature(feature) = self.condition else {
+            return Ok(false);
+        };
+        let strict = feature.strict_bound();
         // `not (width < V)` is `(min-width: V)`.
-        let not = self.negated != strict.is_some();
+        let not = (self.not_all || self.written_not) != strict.is_some();
         let (QueryFeature::Plain { name, .. }
         | QueryFeature::Boolean { name }
         | QueryFeature::Range { name, .. }
-        | QueryFeature::Interval { name, .. }) = self.feature;
-        // Safari before 16 never matches a `resolution` feature, so `not all and` one
-        // would always match there.
-        if not && matches!(name, MediaFeatureName::Standard(MediaFeatureId::Resolution)) {
+        | QueryFeature::Interval { name, .. }) = &**feature;
+        // Safari before 16 reads a `resolution` feature and never matches it. A query
+        // that gains or loses `not all and` goes from never to always there, or back.
+        if not != self.not_all
+            && matches!(name, MediaFeatureName::Standard(MediaFeatureId::Resolution))
+        {
             return Ok(false);
         }
         if not {
             dest.write_str("not all and ")?;
         }
         let Some((negates, name, value)) = strict else {
+            // The condition printer is the one caller of `QueryFeature::to_css`, and
+            // a second caller here takes that function out of line for every query.
             self.condition.to_css(dest)?;
             return Ok(true);
         };
         dest.write_char(b'(')?;
-        name.to_css_with_prefix(negates, dest)?;
-        dest.delim(b':', false)?;
-        match value {
-            // Chrome before 110 rejects a ratio that is a single number, and a query
-            // with a rejected feature is `not all`, negated or not.
-            MediaFeatureValue::Ratio(ratio) => ratio.to_css_both_terms(dest)?,
-            _ => value.to_css(dest)?,
-        }
-        dest.write_char(b')')?;
+        write_min_max(negates, name, value, dest)?;
         Ok(true)
     }
 }

@@ -1847,7 +1847,11 @@ describe("Bun.ModuleGraph — CommonJS surface per graph", () => {
       const run = (transpileOffThread: boolean) =>
         runBun(["main.mjs"], {
           cwd: String(d),
-          env: { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: transpileOffThread ? undefined : "1" },
+          env: {
+            BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: transpileOffThread ? undefined : "1",
+            // With the Node compile cache enabled, each transpile is synchronous.
+            NODE_COMPILE_CACHE: undefined,
+          },
         });
       const [offThread, synchronous] = await Promise.all([run(true), run(false)]);
       const one = { imports: ["ERR_INVALID_STATE"], after: [] };

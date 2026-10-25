@@ -9856,6 +9856,7 @@ import type { x50 } from "./index";
         "app.ts(11,40): error TS2554: Expected 0 arguments, but got 1.",
         "app.ts(15,91): error TS2370: A rest parameter must be of an array type.",
         "app.ts(15,97): error TS2536: Type '\"p\"' cannot be used to index type 'Fn<Client<A>[K]>'.",
+        "index.ts(6,23): error TS2303: Circular definition of import alias 'x71'.",
         "m0.ts(8,23): error TS2345: Argument of type '(c: Ctx<object, string, unknown>) => void' is not assignable to parameter of type 'Mw<object, object>'.",
         "  Type 'void' is not assignable to type 'object | Promise<object>'.",
         "m2.ts(4,40): error TS2339: Property 'again' does not exist on type 'void'.",
@@ -16717,7 +16718,6 @@ export const x91 = get(() => ({ extra: x50 }), c => c.get("user"));
       expect(stdout.split("\n")).toEqual([
         `m5.ts(3,14): error TS7022: 'x50' implicitly has type 'any' ${own}`,
         `m7.ts(3,14): error TS7022: 'x70A' implicitly has type 'any' ${own}`,
-        `m7.ts(4,14): error TS7022: 'x71' implicitly has type 'any' ${own}`,
         `m9.ts(4,59): error TS2345: Argument of type '"user"' is not assignable to parameter of type '"extra"'.`,
       ]);
       expect(exitCode).toBe(1);

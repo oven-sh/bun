@@ -1216,3 +1216,55 @@ pub(crate) fn schedule_barrel_deferred_imports(
 
     Ok(newly_scheduled)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SourcesByPath;
+
+    fn sources(paths: &[&'static [u8]]) -> Vec<bun_ast::Source> {
+        paths
+            .iter()
+            .map(|&text| {
+                let mut source = bun_ast::Source::default();
+                source.path.text = text;
+                source
+            })
+            .collect()
+    }
+
+    fn others(index: &SourcesByPath, sources: &[bun_ast::Source], of: u32) -> Vec<u32> {
+        index
+            .others_with_path(sources, sources[of as usize].path.text, of)
+            .collect()
+    }
+
+    #[test]
+    fn sources_by_path_finds_the_other_indices_of_a_path() {
+        let mut index = SourcesByPath::default();
+        let mut all = sources(&[b"/p/a.js", b"/p/b.js"]);
+        index.index_new_sources(&all).unwrap();
+        assert_eq!(others(&index, &all, 0), [0u32; 0]);
+
+        all.extend(sources(&[b"/p/a.js", b"/p/c.js", b"/p/a.js"]));
+        index.index_new_sources(&all).unwrap();
+        assert_eq!(others(&index, &all, 4), [2, 0]);
+        assert_eq!(others(&index, &all, 2), [4, 0]);
+        assert_eq!(others(&index, &all, 0), [4, 2]);
+        assert_eq!(others(&index, &all, 1), [0u32; 0]);
+        assert_eq!(others(&index, &all, 3), [0u32; 0]);
+    }
+
+    #[test]
+    fn sources_by_path_keeps_two_paths_with_one_hash_apart() {
+        // A 16-byte chunk that starts with wyhash's secret word zeroes the state: the next word is lost.
+        const A: &[u8] = b"\xdb\x28\xb4\xa0\xd1\x7e\x03\xe7AAAAAAAA/node_modules/lib/index.js";
+        const B: &[u8] = b"\xdb\x28\xb4\xa0\xd1\x7e\x03\xe7BBBBBBBB/node_modules/lib/index.js";
+        assert_eq!(bun_wyhash::hash(A), bun_wyhash::hash(B));
+
+        let all = sources(&[A, B, A]);
+        let mut index = SourcesByPath::default();
+        index.index_new_sources(&all).unwrap();
+        assert_eq!(others(&index, &all, 2), [0]);
+        assert_eq!(others(&index, &all, 1), [0u32; 0]);
+    }
+}

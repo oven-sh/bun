@@ -8562,6 +8562,15 @@ describe("css tests", () => {
     );
   });
 
+  // A missing channel (`none`) is NaN. Two colors with `none` in the same
+  // channel are equal, so shorthands and rules merge.
+  describe("a color with a missing channel equals itself", () => {
+    minify_test(".a { border: 1px solid oklch(10% 0 none) }", ".a{border:1px solid oklch(10% 0 none)}");
+    minify_test(".b { color: lab(none 0 0) } .c { color: lab(none 0 0) }", ".b,.c{color:lab(none 0 0)}");
+    minify_test(".b { --c: oklch(98.5% 0 none) } .c { --c: oklch(98.5% 0 none) }", ".b,.c{--c:oklch(98.5% 0 none)}");
+    minify_test(".b { color: lab(none 0 0) } .c { color: lab(0 0 0) }", ".b{color:lab(none 0 0)}.c{color:lab(0 0 0)}");
+  });
+
   describe("page", () => {
     minify_test("@page { margin: 1em }", "@page{margin:1em}");
     minify_test("@page :left { margin: 1em }", "@page:left{margin:1em}");

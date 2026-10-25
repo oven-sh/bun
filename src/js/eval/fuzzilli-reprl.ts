@@ -1,5 +1,5 @@
 // Comprehensive REPRL wrapper for Bun fuzzing with all runtime APIs exposed
-// test/js/bun/util/fuzzilli-reprl-execve.fixture.ts evaluates this file as it is, so it has to stay plain
+// test/js/bun/util/fuzzilli-reprl.fixture.ts evaluates this file as it is, so it has to stay plain
 // JavaScript: no type syntax.
 // Based on workerd's approach to maximize fuzzing coverage
 // https://bun.com/docs/runtime
@@ -17,7 +17,17 @@ globalThis.__filename = "/fuzzilli.js";
 
 // process.execve replaces the process image on success, which kills the REPRL
 // child, so fuzzed scripts must not be able to reach the real implementation.
-Object.assign(process, { execve() {} });
+// process.kill delivers a real signal: aimed at this pid it kills the REPRL
+// child, and aimed at pid 0 or -1 it kills the fuzzer and every other REPRL
+// child in the process group. process.kill validates its arguments in C++ and
+// then calls process._kill to deliver the signal, so replacing _kill keeps the
+// validation and drops only the syscall.
+Object.assign(process, {
+  execve() {},
+  _kill() {
+    return 0;
+  },
+});
 
 // ============================================================================
 // REPRL Protocol Loop

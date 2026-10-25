@@ -1,9 +1,8 @@
 // Drives the fuzzilli REPRL loop with in-process mocks for the control/data
 // FDs so the real src/js/eval/fuzzilli-reprl.ts source can be exercised in a
-// normal (non-fuzzilli) build. Feeds a payload that calls process.execve with
-// a nonexistent path: the real implementation prints an error and aborts the
-// process (SIGABRT) when exec fails, so the REPRL wrapper must stub it out
-// before running fuzzed scripts.
+// normal (non-fuzzilli) build. The payload comes from argv. Each payload calls
+// an API that ends the process outside of normal exception handling, so the
+// REPRL wrapper must stub that API out before it runs fuzzed scripts.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -12,10 +11,7 @@ const REPRL_CRFD = 100;
 const REPRL_CWFD = 101;
 const REPRL_DRFD = 102;
 
-const payloads = [
-  Buffer.from(`process.execve("fuzzilli-reprl-execve-does-not-exist", []);`, "utf8"),
-  Buffer.from(`globalThis.stillAlive = true;`, "utf8"),
-];
+const payloads = [Buffer.from(process.argv[2], "utf8"), Buffer.from(`globalThis.stillAlive = true;`, "utf8")];
 
 // Script the control-read pipe (fd 100): HELO handshake, then one exec cycle
 // per payload (each followed by the 8-byte length), then EOF.
@@ -77,6 +73,6 @@ const reprlSource = fs.readFileSync(
 );
 (0, eval)(reprlSource);
 
-const liveAfterExecve = (globalThis as any).stillAlive === true;
-realWriteSync.call(fs, 1, `STATUS_WRITES=${statusWrites} LIVE=${liveAfterExecve}\n`);
-process.exit(statusWrites === 2 && liveAfterExecve ? 0 : 1);
+const liveAfterPayload = (globalThis as any).stillAlive === true;
+realWriteSync.call(fs, 1, `STATUS_WRITES=${statusWrites} LIVE=${liveAfterPayload}\n`);
+process.exit(statusWrites === 2 && liveAfterPayload ? 0 : 1);

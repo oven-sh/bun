@@ -502,8 +502,13 @@ describe("registerLanguageServer", () => {
   });
 
   test("constructs the real LanguageClient over stdio without a --stdio flag by default", async () => {
-    setConfiguration("bun.lint", { rules: { "no-debugger": "error" } });
-    setConfiguration("bun.format", { indentWidth: 4 });
+    setConfiguration("bun.lint.enable", false);
+    setConfiguration("bun.lint.run", "onSave");
+    setConfiguration("bun.format.enable", true);
+    // Other bun.* keys must neither reach initializationOptions nor be synced.
+    setConfiguration("bun.runtime", "bun");
+    setConfiguration("bun.lint.rules", { "no-debugger": "error" });
+    setConfiguration("bun.format.indentWidth", 4);
     const lsp = await loadLsp();
     const { context, probeVersion } = makeHarness();
     lsp.registerLanguageServer(context, { probeVersion });
@@ -521,13 +526,12 @@ describe("registerLanguageServer", () => {
     expect(client.serverOptions.options.cwd).toBe(WITH_MARKER);
     expect(client.clientOptions.documentSelector).toContainEqual({ scheme: "file", language: "typescript" });
     expect(client.clientOptions.initializationOptions).toEqual({
-      lint: { rules: { "no-debugger": "error" } },
-      format: { indentWidth: 4 },
+      lint: { enable: false, run: "onSave" },
+      format: { enable: true },
     });
-    expect(client.clientOptions.synchronize.configurationSection).toBe("bun");
+    expect(client.clientOptions.synchronize.configurationSection).toEqual(["bun.lint", "bun.format"]);
     expect(client.clientOptions.outputChannel.name).toBe("Bun");
     expect(client.clientOptions.initializationFailedHandler(new Error("boom"))).toBe(false);
-    expect(client.clientOptions.errorHandler.closed()).toMatchObject({ action: 1, handled: true });
     expect(client.clientOptions.revealOutputChannelOn).toBe(4);
     expect(client.clientOptions.errorHandler.error(new Error("boom"), undefined, 1)).toMatchObject({
       action: 1,
@@ -536,6 +540,36 @@ describe("registerLanguageServer", () => {
     client.error("couldn't create connection to server.", new Error("boom"), "force");
     expect(client.errors).toEqual([{ message: "couldn't create connection to server.", showNotification: false }]);
     expect(vscodeMockState.messages).toHaveLength(0);
+    expect(getOutputLines("Bun")).toHaveLength(0);
+
+    // errorHandler.closed is what vscode-languageclient calls after a Running server exits.
+    expect(client.clientOptions.errorHandler.closed()).toMatchObject({ action: 1, handled: true });
+    const lines = getOutputLines("Bun");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("exited");
+    expect(vscodeMockState.messages).toHaveLength(0);
+
+    await open(doc(`${WITH_MARKER}/second.ts`));
+    expect(FakeLanguageClient.instances).toHaveLength(2);
+    expect(FakeLanguageClient.instances[1].started).toBe(1);
+    expect(getOutputLines("Bun")).toHaveLength(1);
+  });
+
+  test("sends the default lint and format settings when none are configured", async () => {
+    const lsp = await loadLsp();
+    const { context, probeVersion } = makeHarness();
+    lsp.registerLanguageServer(context, { probeVersion });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+
+    expect(FakeLanguageClient.instances).toHaveLength(1);
+    const [client] = FakeLanguageClient.instances;
+    expect(client.started).toBe(1);
+    expect(client.clientOptions.initializationOptions).toEqual({
+      lint: { enable: true, run: "onType" },
+      format: { enable: true },
+    });
+    expect(client.clientOptions.synchronize.configurationSection).toEqual(["bun.lint", "bun.format"]);
   });
 });
 

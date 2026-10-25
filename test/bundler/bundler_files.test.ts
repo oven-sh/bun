@@ -833,9 +833,9 @@ describe("bundler files option", () => {
       const [manifest, ...extra] = manifestsIn(await outputText(result, "server.js"));
       expect(extra).toBeEmpty();
       expect(manifest.index).toMatch(/page\.html$/);
-      // A `files` key has "/" separators on Windows, where the root has "\\". `input` is
-      // then the whole key.
-      const input = isWindows ? expect.stringMatching(/(^|\/)page\.html$/) : "page.html";
+      // A `files` key has "/" separators on Windows, where the root has "\\". The path code
+      // finds no common root for the two forms, so `input` is the whole key.
+      const input = isWindows ? `${dir}/page.html`.replaceAll("\\", "/") : "page.html";
       const byLoader = manifest.files.toSorted((a, b) => a.loader.localeCompare(b.loader));
       expect(byLoader.map(f => [f.input, f.loader])).toEqual([
         [input, "css"],

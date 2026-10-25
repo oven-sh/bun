@@ -1269,8 +1269,12 @@ impl<'d> Desk<'d, '_, '_> {
                     return;
                 }
                 *server.settings.lock() = after;
-                // The configurations of the folders are as they were: their engines go on.
-                self.lint_all();
+                // The configurations of the folders are as they were: their engines go on. A session is made only
+                // while linting is on, so a folder's thread starts over when that changes.
+                match after.lints == before.lints {
+                    true => self.lint_all(),
+                    false => self.look_again(),
+                }
             }
             b"workspace/didChangeWorkspaceFolders" => {
                 let list = |key: &str| {

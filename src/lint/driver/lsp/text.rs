@@ -171,3 +171,127 @@ pub(crate) fn apply_changes(
     }
     Some(text)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Encoding, Lines, Position, apply_changes, range_to_json};
+    use crate::lsp::rpc::{object, text};
+
+    /// `a😀b;\r\ncéd\n`: a character of four bytes and two code units, then one of two bytes and one unit.
+    const TEXT: &[u8] = b"a\xF0\x9F\x98\x80b;\r\nc\xC3\xA9d\n";
+
+    const fn at(line: u32, character: u32) -> Position {
+        Position { line, character }
+    }
+
+    /// Every offset that starts a character or a line break, with the end of the text.
+    fn boundaries() -> Vec<usize> {
+        let is_start = |it: usize| match TEXT.get(it.wrapping_sub(1)..=it) {
+            Some(b"\r\n") => false,
+            _ => TEXT[it] & 0xC0 != 0x80,
+        };
+        (0..=TEXT.len())
+            .filter(|&it| it == TEXT.len() || is_start(it))
+            .collect()
+    }
+
+    #[test]
+    fn positions_count_utf16_code_units() {
+        let lines = Lines::new(TEXT, Encoding::Utf16);
+        assert_eq!(lines.position(0), at(0, 0));
+        assert_eq!(lines.position(1), at(0, 1));
+        assert_eq!(lines.position(5), at(0, 3));
+        assert_eq!(lines.position(6), at(0, 4));
+        assert_eq!(lines.position(7), at(0, 5));
+        assert_eq!(lines.position(9), at(1, 0));
+        assert_eq!(lines.position(12), at(1, 2));
+        assert_eq!(lines.position(13), at(1, 3));
+        assert_eq!(lines.position(TEXT.len()), at(2, 0));
+        assert_eq!(lines.position(TEXT.len() + 5), at(2, 0));
+    }
+
+    #[test]
+    fn positions_count_bytes() {
+        let lines = Lines::new(TEXT, Encoding::Utf8);
+        assert_eq!(lines.position(1), at(0, 1));
+        assert_eq!(lines.position(5), at(0, 5));
+        assert_eq!(lines.position(7), at(0, 7));
+        assert_eq!(lines.position(9), at(1, 0));
+        assert_eq!(lines.position(12), at(1, 3));
+        assert_eq!(lines.position(TEXT.len()), at(2, 0));
+    }
+
+    #[test]
+    fn offsets_round_trip_in_any_order() {
+        for encoding in [Encoding::Utf8, Encoding::Utf16] {
+            let lines = Lines::new(TEXT, encoding);
+            let forward = boundaries();
+            let backward = forward.iter().rev().copied().collect::<Vec<_>>();
+            let mixed = [6, 1, 13, 10, 5, 0, 12, 9, 7, 14];
+            for offset in forward.iter().chain(&backward).chain(&mixed) {
+                let position = lines.position(*offset);
+                assert_eq!(lines.offset(position), *offset, "{encoding:?} at {offset}");
+            }
+        }
+    }
+
+    #[test]
+    fn offsets_inside_a_character_are_its_start() {
+        let lines = Lines::new(TEXT, Encoding::Utf16);
+        assert_eq!(lines.offset(at(0, 2)), 1);
+        assert_eq!(lines.offset(at(0, 3)), 5);
+        let lines = Lines::new(TEXT, Encoding::Utf8);
+        assert_eq!(lines.offset(at(0, 2)), 1);
+        assert_eq!(lines.offset(at(0, 4)), 1);
+        assert_eq!(lines.offset(at(0, 5)), 5);
+        assert_eq!(lines.offset(at(1, 2)), 10);
+        assert_eq!(lines.offset(at(1, 3)), 12);
+    }
+
+    #[test]
+    fn offsets_past_a_line_are_its_end() {
+        for encoding in [Encoding::Utf8, Encoding::Utf16] {
+            let lines = Lines::new(TEXT, encoding);
+            assert_eq!(lines.offset(at(0, 99)), 7, "{encoding:?}");
+            assert_eq!(lines.offset(at(1, 99)), 13, "{encoding:?}");
+            assert_eq!(lines.offset(at(2, 0)), TEXT.len(), "{encoding:?}");
+            assert_eq!(lines.offset(at(9, 9)), TEXT.len(), "{encoding:?}");
+            assert_eq!(lines.line(0), (0, 7), "{encoding:?}");
+            assert_eq!(lines.line(1), (9, 13), "{encoding:?}");
+            assert_eq!(lines.line_break(), b"\r\n", "{encoding:?}");
+        }
+    }
+
+    #[test]
+    fn ascii_text_is_counted_in_bytes_under_either_encoding() {
+        let text = b"ab;\ncd;\n";
+        let lines = Lines::new(text, Encoding::Utf16);
+        assert_eq!(lines.position(6), at(1, 2));
+        assert_eq!(lines.offset(at(1, 2)), 6);
+        assert_eq!(lines.line_break(), b"\n");
+    }
+
+    #[test]
+    fn changes_are_applied_in_the_negotiated_encoding() {
+        let before = b"a\xF0\x9F\x98\x80b;\n";
+        let change = |start: u32, end: u32| {
+            object([
+                ("range", range_to_json((at(0, start), at(0, end)))),
+                ("text", text(b"xy")),
+            ])
+        };
+        let expected = b"a\xF0\x9F\x98\x80xy;\n".to_vec();
+        assert_eq!(
+            apply_changes(before.to_vec(), &[change(3, 4)], Encoding::Utf16),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            apply_changes(before.to_vec(), &[change(5, 6)], Encoding::Utf8),
+            Some(expected)
+        );
+        assert_eq!(
+            apply_changes(before.to_vec(), &[text(b"no")], Encoding::Utf8),
+            None
+        );
+    }
+}

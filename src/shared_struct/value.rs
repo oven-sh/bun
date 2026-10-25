@@ -49,14 +49,33 @@ fn is_boxed(bits: u64) -> bool {
     bits & 0xfff8_0000_0000_0000 == QNAN && (bits >> TAG_SHIFT) & TAG_MASK != 0
 }
 
-/// A pointer that a slot owned and that a concurrent reader may still be about to use.
-#[allow(dead_code, reason = "each variant is only held until it drops")]
-enum Retired {
-    String(Box<Arc<[u16]>>),
-    BigInt(Box<Arc<str>>),
-    Struct(Arc<SharedBlock>),
-    Mutex(Arc<Mutex>),
-    Condition(Arc<Condition>),
+/// One strong count that a slot owned, held at its address until it is released on drop. It
+/// is only made by [`own`], which pairs the address with the function that frees that kind.
+struct Retired {
+    addr: usize,
+    free: unsafe fn(usize),
+}
+
+impl Drop for Retired {
+    fn drop(&mut self) {
+        // SAFETY: `own` paired `free` with the allocation at `addr` and handed over its count,
+        // and this is the only place the count is released.
+        unsafe { (self.free)(self.addr) }
+    }
+}
+
+/// # Safety
+/// `addr` is the `Box::into_raw` pointer of a `Box<T>`.
+unsafe fn free_box<T>(addr: usize) {
+    // SAFETY: per the contract.
+    drop(unsafe { Box::from_raw(addr as *mut T) });
+}
+
+/// # Safety
+/// `addr` is the `Arc::into_raw` pointer of an `Arc<T>`, and the caller gives up that count.
+unsafe fn free_arc<T>(addr: usize) {
+    // SAFETY: per the contract.
+    drop(unsafe { Arc::from_raw(addr as *const T) });
 }
 
 /// The 48-bit datum for a thin pointer.
@@ -117,18 +136,15 @@ unsafe fn own(bits: u64) -> Option<Retired> {
         return None;
     }
     let addr = (bits & DATUM_MASK) as usize;
-    // SAFETY: per the contract, `addr` is the pointer `encode_owned` made for this tag, and its
-    // count belongs to the caller now.
-    unsafe {
-        match (bits >> TAG_SHIFT) & TAG_MASK {
-            TAG_STRING => Some(Retired::String(Box::from_raw(addr as *mut Arc<[u16]>))),
-            TAG_BIGINT => Some(Retired::BigInt(Box::from_raw(addr as *mut Arc<str>))),
-            TAG_STRUCT => Some(Retired::Struct(Arc::from_raw(addr as *const SharedBlock))),
-            TAG_MUTEX => Some(Retired::Mutex(Arc::from_raw(addr as *const Mutex))),
-            TAG_CONDITION => Some(Retired::Condition(Arc::from_raw(addr as *const Condition))),
-            _ => None,
-        }
-    }
+    let free: unsafe fn(usize) = match (bits >> TAG_SHIFT) & TAG_MASK {
+        TAG_STRING => free_box::<Arc<[u16]>>,
+        TAG_BIGINT => free_box::<Arc<str>>,
+        TAG_STRUCT => free_arc::<SharedBlock>,
+        TAG_MUTEX => free_arc::<Mutex>,
+        TAG_CONDITION => free_arc::<Condition>,
+        _ => return None,
+    };
+    Some(Retired { addr, free })
 }
 
 /// Frees bits that were never stored in a slot, so no reader can have seen them.

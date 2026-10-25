@@ -762,7 +762,9 @@ describe.skipIf(!isLinux)("crontab entry for paths that are not UTF-8", () => {
 // plist of a job belongs in $HOME/Library/LaunchAgents, and in no directory with another name.
 // These need no login session: neither reaches a launchctl call whose result matters.
 describe.skipIf(!isMacOS)("$HOME that is not UTF-8 (macOS)", () => {
-  const title = "test-home-bytes";
+  // `launchctl bootout` and `Bun.cron.remove()` act on the label. Each test has a label of its own,
+  // so that neither reaches a job of a user or of another run.
+  const uniqueTitle = () => `test-home-bytes-${Bun.randomUUIDv7()}`;
   // When $HOME goes through `{}`, U+FFFD takes the place of the byte.
   const otherHome = "home-\uFFFD";
 
@@ -782,6 +784,7 @@ describe.skipIf(!isMacOS)("$HOME that is not UTF-8 (macOS)", () => {
   test("Bun.cron() does not make a LaunchAgents directory under another name", async () => {
     using dir = tempDir("bun-cron-home-bytes", { "job.ts": `export default { scheduled() {} };` });
     const root = String(dir);
+    const title = uniqueTitle();
     try {
       const result = await withHome(
         root,
@@ -809,6 +812,7 @@ describe.skipIf(!isMacOS)("$HOME that is not UTF-8 (macOS)", () => {
   });
 
   test("Bun.cron.remove() does not delete the plist of a directory with another name", async () => {
+    const title = uniqueTitle();
     const plist = `${otherHome}/Library/LaunchAgents/bun.cron.${title}.plist`;
     using dir = tempDir("bun-cron-home-bytes", { [plist]: "<plist/>" });
     const root = String(dir);

@@ -279,7 +279,12 @@ impl Checker<'_, '_> {
         }
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate. Only the second depends
         // on whether the file is checked.
-        self.report_hir_diagnostics(file, &[DiagnosticKind::Parse, DiagnosticKind::Js]);
+        let since_7_1 = DiagnosticKind::ParseSince71;
+        let parse = match hir.diagnostics.iter().any(|d| d.kind == since_7_1) {
+            true => since_7_1,
+            false => DiagnosticKind::Parse,
+        };
+        self.report_hir_diagnostics(file, &[parse, DiagnosticKind::Js]);
         // `ParseResult` and `parseContentMappedFile` add these to the file's parse errors.
         if let Some(mapped) = self.files().module(file).content_mapped {
             let external = mapped.diagnostics.iter();

@@ -279,7 +279,8 @@ describe("source map remapping of the printed stack", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { dir: String(dir), out: JSON.parse(stdout), stderr, exitCode };
+    // The JSON is the last line of stdout.
+    return { dir: String(dir), out: JSON.parse(stdout.trimEnd().split("\n").at(-1)), stdout, stderr, exitCode };
   }
 
   // A prebuilt file whose map names a source that is neither on disk nor in
@@ -415,7 +416,7 @@ describe("source map remapping of the printed stack", () => {
       // Line 2 -> orig.ts:1:5, line 3 -> orig.ts:2:5.
       mappings: ";;AAAI;AACA",
     };
-    const { dir, out, stderr, exitCode } = await run({
+    const { dir, out, stdout, stderr, exitCode } = await run({
       "rel.js": [
         "// @bun @bun-cjs",
         "(function(exports, require, module, __filename, __dirname) {",
@@ -435,6 +436,7 @@ describe("source map remapping of the printed stack", () => {
         "}",
         "const out = { inspect: Bun.inspect(thrown()), stack: thrown().stack };",
         'process.on("exit", () => console.log(JSON.stringify({ ...out, reloads })));',
+        "console.log(thrown());",
         "console.error(thrown());",
         "throw thrown();",
       ].join("\n"),
@@ -445,12 +447,14 @@ describe("source map remapping of the printed stack", () => {
     expect({
       reloads: out.reloads,
       inspect: frames(out.inspect, dir, files),
+      consoleLog: frames(stdout, dir, files),
       consoleErrorThenUncaught: frames(stderr, dir, files),
       stack: frames(out.stack, dir, files),
     }).toEqual({
-      // Bun.inspect, console.error and the uncaught error. Reading `stack` does not read `cause`.
-      reloads: 3,
+      // Bun.inspect, console.log, console.error and the uncaught error. Reading `stack` does not read `cause`.
+      reloads: 4,
       inspect: expected,
+      consoleLog: expected,
       consoleErrorThenUncaught: [...expected, ...expected],
       stack: expected,
     });

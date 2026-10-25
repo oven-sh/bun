@@ -35,7 +35,9 @@ use crate::webcore::headers_ref::any_blob_content_type_opt;
 use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::s3::client as s3;
-use crate::webcore::{Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response};
+use crate::webcore::{
+    Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
+};
 use crate::webcore::{blob, readable_stream, response};
 use bun_core::{String as BunString, Tag as BunStringTag};
 use bun_http::http_request_body::StreamFraming;

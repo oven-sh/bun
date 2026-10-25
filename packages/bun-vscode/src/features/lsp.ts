@@ -54,11 +54,15 @@ class QuietLanguageClient extends LanguageClient {
 
 function defaultCreateClient(server: ServerSpec): LanguageClientLike {
   const bun = vscode.workspace.getConfiguration("bun");
-  const initializationOptions: Record<string, unknown> = {};
-  for (const key of ["lint", "format"]) {
-    const value = bun.get(key);
-    if (value !== undefined) initializationOptions[key] = value;
-  }
+  const initializationOptions = {
+    lint: {
+      enable: bun.get<boolean>("lint.enable", true),
+      run: bun.get<string>("lint.run", "onType"),
+    },
+    format: {
+      enable: bun.get<boolean>("format.enable", true),
+    },
+  };
   return new QuietLanguageClient(
     "bun",
     "Bun",
@@ -75,7 +79,7 @@ function defaultCreateClient(server: ServerSpec): LanguageClientLike {
         { scheme: "untitled", language },
       ]),
       initializationOptions,
-      synchronize: { configurationSection: "bun" },
+      synchronize: { configurationSection: ["bun.lint", "bun.format"] },
       outputChannel: getOutput(),
       revealOutputChannelOn: RevealOutputChannelOn.Never,
       initializationFailedHandler: () => false,

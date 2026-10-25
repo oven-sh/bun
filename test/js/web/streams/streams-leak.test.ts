@@ -82,11 +82,14 @@ test.skipIf(isWindows)("abandoned Bun.file().stream() reader does not leak its f
     import fs from "node:fs";
     const p = process.env.BIG_BIN;
     const fdc = () => fs.readdirSync(process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd").length;
+    const zero = fs.openSync("/dev/zero", "r");
     const shapes = {
       getReader: async () => { Bun.file(p).stream().getReader(); },
       read: async () => { const r = Bun.file(p).stream().getReader(); await r.read(); },
       releaseLock: async () => { const r = Bun.file(p).stream().getReader(); await r.read(); r.releaseLock(); },
       response: async () => { const r = new Response(Bun.file(p)).body.getReader(); await r.read(); },
+      // A blocking fd of a device that pread() reads: the event loop never watches its copy of the fd.
+      deviceFd: async () => { const r = Bun.file(zero).stream().getReader(); await r.read(); },
     };
     const f0 = fdc();
     for (const fn of Object.values(shapes)) {
@@ -104,7 +107,7 @@ test.skipIf(isWindows)("abandoned Bun.file().stream() reader does not leak its f
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const { f0, fend } = JSON.parse(stdout);
-  // 120 readers were acquired (4 shapes x 30 each); before the fix ~120 fds
+  // 150 readers were acquired (5 shapes x 30 each); before the fix their fds
   // stayed open even after a full-GC storm. Allow a small slack for any GC
   // nondeterminism, but require the vast majority to have been reclaimed.
   expect(fend).toBeLessThan(f0 + 20);

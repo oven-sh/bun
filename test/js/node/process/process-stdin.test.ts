@@ -1,6 +1,8 @@
+import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { exec } from "node:child_process";
+import { closeSync, constants, openSync } from "node:fs";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -665,4 +667,47 @@ test("process.stdin over an anonymous pipe delivers each byte exactly once", asy
   const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
   expect(stdout).toBe(`${total} ${expected}`);
   expect(err).toBeNull();
+});
+
+// stdin of a job that outlives its terminal: isatty() fails for the slave of a pty whose master is closed,
+// pread() of it is refused with ESPIPE, and a read of it ends at once. Node ends stdin too. The stream asks the
+// kernel about pread() on Linux only.
+test.skipIf(!isLinux)("stdin is a terminal that hung up: 'end' with no data", async () => {
+  const libc = dlopen(libcPathForDlopen(), {
+    posix_openpt: { args: ["int"], returns: "int" },
+    grantpt: { args: ["int"], returns: "int" },
+    unlockpt: { args: ["int"], returns: "int" },
+    ptsname: { args: ["int"], returns: "cstring" },
+  });
+  const master = libc.symbols.posix_openpt(constants.O_RDWR | constants.O_NOCTTY);
+  expect(master).toBeGreaterThan(2);
+  expect([libc.symbols.grantpt(master), libc.symbols.unlockpt(master)]).toEqual([0, 0]);
+  const slave = openSync(libc.symbols.ptsname(master).toString(), constants.O_RDWR | constants.O_NOCTTY);
+  libc.close();
+  closeSync(master);
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let bytes = 0;
+        process.stdin.on("data", chunk => (bytes += chunk.length));
+        process.stdin.on("end", () => console.log("end after", bytes));
+        process.stdin.on("error", err => {
+          console.log(err.code + " from " + err.syscall);
+          process.exit(1);
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdin: slave,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "end after 0\n", stderr: "", exitCode: 0 });
+  } finally {
+    closeSync(slave);
+  }
 });

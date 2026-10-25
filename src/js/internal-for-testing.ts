@@ -15,6 +15,9 @@ export const escapePowershell = (code: string) => fmtBinding(code, "escape-power
 
 export const canonicalizeIP = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
 
+// internal/debugger's server is plain TCP. Tests reach the TLS, unix socket and ended-response connections through this.
+export const requestLocalAddress = $bindgen("server_body.bind.ts", "requestLocalAddress");
+
 // Process-wide additions to the public keys no certificate chain may hold (blocked_spkis.cpp). `hash` is the SHA-256 of
 // a DER SubjectPublicKeyInfo.
 export const addBlockedSPKIForTesting: (hash: ArrayBufferView) => void = $newCppFunction(

@@ -185,6 +185,11 @@ impl AnyRequestContext {
         dispatch!(self, None, |_T, ctx| ctx.get_remote_socket_info())
     }
 
+    /// See `uws::AnyResponse::local_address`. `None` too when no connection carries the request.
+    pub(crate) fn local_address(self, buf: &mut [u8]) -> Option<&[u8]> {
+        dispatch!(self, None, |_T, ctx| ctx.local_address(buf))
+    }
+
     pub(crate) fn detach_request(self) {
         dispatch!(self, (), |_T, ctx| {
             ctx.req.set(None);

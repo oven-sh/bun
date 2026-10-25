@@ -1198,6 +1198,13 @@ pub(crate) fn on_reject_plugins(
     unsafe { &mut *context }.handle_on_reject(cx.global(), error_js.to_js());
 }
 
+/// `requestLocalAddress(request)`: the local IP address of the HTTP/1 connection that still carries `request`.
+pub(crate) fn request_local_address(request: Option<&Request>) -> Option<BunString> {
+    let mut address = [0u8; 16];
+    let address = request?.request_context.local_address(&mut address)?;
+    Some(SocketAddress::init(address, 0).ok()?.fmt_presentation())
+}
+
 /// The `options` argument of `server.upgrade(request, options)`. Each property is read once.
 struct UpgradeOptions {
     data: JSValue,

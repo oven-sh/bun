@@ -1,9 +1,11 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
+import { requestLocalAddress } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
   bunRun,
+  isLinux,
   isWindows,
   normalizeBunSnapshot,
   rejectUnauthorizedScope,
@@ -163,6 +165,72 @@ describe.concurrent("Server", () => {
     });
     await closed;
     expect(events).toEqual(["server.open"]);
+  });
+
+  // The read behind the node:inspector target list for a request without a Host header. That server is
+  // plain TCP, so the other kinds of connection are reached here.
+  test.each([
+    ["an HTTP server", false],
+    ["an HTTPS server", true],
+  ])("requestLocalAddress() is the local address of the connection on %s", async (_label, isTLS) => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: isTLS ? tls : undefined,
+      fetch: request => Response.json(requestLocalAddress(request)),
+    });
+    const response = await fetch(server.url, { tls: { rejectUnauthorized: false } });
+    expect(await response.json()).toBe("127.0.0.1");
+  });
+
+  // The listener, the local end and the peer each have a different address here: a wildcard listener,
+  // and on Linux every address in 127.0.0.0/8 is a local address.
+  test.each([
+    ["0.0.0.0", "127.0.0.1", "127.0.0.1"],
+    ...(isLinux ? [["0.0.0.0", "127.0.0.2", "127.0.0.2"]] : []),
+    ["::", "[::1]", "::1"],
+    ["::", "127.0.0.1", "::ffff:127.0.0.1"],
+  ])("requestLocalAddress() on a %s listener reached through %s", async (hostname, target, expected) => {
+    using server = Bun.serve({ port: 0, hostname, fetch: request => Response.json(requestLocalAddress(request)) });
+    const response = await fetch(`http://${target}:${server.port}/`);
+    expect(await response.json()).toBe(expected);
+  });
+
+  test("requestLocalAddress() is null when no IP connection carries the request", async () => {
+    expect([new Request("http://localhost/"), {}, undefined].map(value => requestLocalAddress(value))).toEqual([
+      null,
+      null,
+      null,
+    ]);
+
+    using dir = tempDir("request-local-address", {});
+    const unix = path.join(String(dir), "unix.sock");
+    using _server = Bun.serve({ unix, fetch: request => Response.json(requestLocalAddress(request)) });
+    const response = await fetch("http://localhost/", { unix });
+    expect(await response.json()).toBeNull();
+  });
+
+  // Like requestIP(): a sink that has ended the response no longer owns the socket, which can then go away.
+  test("requestLocalAddress() is null once a direct stream has ended the response", async () => {
+    const { promise, resolve } = Promise.withResolvers<Record<string, string | null>>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: request =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            pull(controller) {
+              controller.write("seed");
+              const beforeEnd = requestLocalAddress(request);
+              controller.end();
+              resolve({ beforeEnd, afterEnd: requestLocalAddress(request) });
+            },
+          }),
+        ),
+    });
+    expect(await (await fetch(server.url)).text()).toBe("seed");
+    expect(await promise).toEqual({ beforeEnd: "127.0.0.1", afterEnd: null });
   });
 
   test("should not allow Bun.serve without first argument being a object", () => {

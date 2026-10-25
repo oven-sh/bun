@@ -461,14 +461,14 @@ class Debugger {
   }
 
   // Node-shaped /json/list payload describing the single debuggable target.
-  // `host` is the request's Host header: a client reaching the server through a
+  // `authority` is the request's Host header: a client reaching the server through a
   // tunnel or port-forward needs URLs for the address it actually connected to,
   // not the bind address, matching Node's discovery endpoints. Disallowed Host
   // values are rejected in #fetch before this is called.
-  #nodeInspectorTargets(host: string | null): unknown[] {
-    const { hostname, port, pathname } = this.#url!;
+  #nodeInspectorTargets(authority: string): unknown[] {
+    const { pathname } = this.#url!;
     const id = pathname.slice(1);
-    const wsAddress = `${host || `${hostname}:${port}`}${pathname}`;
+    const wsAddress = `${authority}${pathname}`;
     return [
       {
         description: "bun instance",
@@ -526,7 +526,9 @@ class Debugger {
         // to find the WebSocket URL. Only served for node:inspector servers; the
         // Bun-protocol inspector has no CDP-speaking clients to discover it.
         if (this.#nodeInspector) {
-          return Response.json(this.#nodeInspectorTargets(headers.get("Host")));
+          return Response.json(
+            this.#nodeInspectorTargets(headers.get("Host") || localAuthority(request, this.#url!.port)),
+          );
         }
         break;
     }
@@ -723,6 +725,15 @@ async function connectToUnixServer(
   });
 
   return socket;
+}
+
+let lazyRequestLocalAddress: $Bindgen.Exports["server_body.bind.ts"]["requestLocalAddress"] | undefined;
+// Without a Host, Node names the accepted socket: https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket_server.cc#L361-L365
+function localAuthority(request: Request, port: string): string {
+  lazyRequestLocalAddress ??= $bindgen("server_body.bind.ts", "requestLocalAddress");
+  // Node's GetHost() is "" when it cannot read the address: https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket.cc#L676-L695
+  const address = lazyRequestLocalAddress(request) ?? "";
+  return `${address.includes(":") ? `[${address}]` : address}:${port}`;
 }
 
 function versionInfo(): unknown {

@@ -856,6 +856,16 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.get_remote_socket_info())
     }
 
+    /// The local IP address of an HTTP/1 connection in `buf`, as `getsockname()` gives it: no bytes for a unix socket.
+    pub fn local_address<'a>(self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
+        let socket = match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).downcast_socket(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).downcast_socket(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => return None,
+        };
+        us_socket_t::opaque_mut(socket).local_address(buf).ok()
+    }
+
     pub fn flush_headers(self, flush_immediately: bool) {
         any_dispatch!(self, |r| r.flush_headers(flush_immediately))
     }

@@ -533,7 +533,7 @@ impl SocketAddress {
         self._presentation.get()
     }
 
-    fn fmt_presentation(&self) -> BunString {
+    pub(crate) fn fmt_presentation(&self) -> BunString {
         let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
         let formatted = self._addr.fmt(&mut buf);
         let presentation = crate::webcore::encoding::to_bun_string(

@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, nodeExe, tempDir } from "harness";
 import inspector from "node:inspector";
+import net from "node:net";
 import { rawRequest, requestWithUnusableHosts, unusableHosts, upgradeHeaders } from "../../../cli/inspect/raw-http";
 
 test("inspector.url()", () => {
@@ -301,42 +302,57 @@ test("inspector.close() followed by inspector.open() starts a new server", async
   expect(summary.finalUrl).toBeNull();
 });
 
+/**
+ * Starts `runtime` with a script that opens the inspector on `bindHost` and prints its URL. The child lives
+ * until its stdin ends, so it cannot outlive a test process that was killed.
+ */
+function spawnInspector(bindHost: string, runtime = bunExe()) {
+  return Bun.spawn({
+    cmd: [
+      runtime,
+      "-e",
+      `const inspector = require("node:inspector");
+       inspector.open(0, ${JSON.stringify(bindHost)}, false);
+       console.log(inspector.url());
+       process.stdin.on("data", () => {});
+       process.stdin.on("end", () => process.exit(0));`,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+}
+
+/** The URL that a child of `spawnInspector` printed. */
+async function inspectorUrl(proc: ReturnType<typeof spawnInspector>) {
+  const decoder = new TextDecoder();
+  let line = "";
+  for await (const chunk of proc.stdout) {
+    line += decoder.decode(chunk);
+    if (line.includes("\n")) break;
+  }
+  const url = line.trim();
+  // A failed inspector.open() prints "undefined".
+  expect(url).toMatch(/^ws:\/\/\S+:\d+\/[0-9a-f-]{36}$/);
+  return new URL(url);
+}
+
 // GET /json/version, GET /json/list and the WebSocket upgrade answer a request
 // that has no Host header, or an empty one, as Node does (IsAllowedHost):
 // https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket.cc#L642-L646
 // A Host that Bun.serve could not build request.url from is answered 400.
 test("inspector.open() answers a request without a Host header and refuses an unusable Host", async () => {
-  // The child prints the inspector URL and then waits. The end of this scope stops it.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const inspector = require("node:inspector");
-       inspector.open(0, "127.0.0.1", false);
-       console.log(inspector.url());
-       setInterval(() => {}, 1 << 30);`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-
-  const decoder = new TextDecoder();
-  let url = "";
-  for await (const chunk of proc.stdout) {
-    url += decoder.decode(chunk);
-    if (url.includes("\n")) break;
-  }
-  url = url.trim();
-  expect(url).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/[0-9a-f-]{36}$/);
-
-  const { host, port, pathname } = new URL(url);
+  await using proc = spawnInspector("127.0.0.1");
+  const { href: url, hostname, host, port, pathname } = await inspectorUrl(proc);
+  expect(hostname).toBe("127.0.0.1");
   const address = { port: Number(port), host: "127.0.0.1" };
   const version = {
     status: "HTTP/1.1 200 OK",
     body: { "Browser": expect.stringContaining("Bun/"), "Protocol-Version": "1.1" },
   };
-  // Without a Host header, the target list names the address the server is bound to.
+  // Without a Host header, the target list names the local address of the connection.
+  // On a 127.0.0.1 bind that is the address the server is bound to.
   const list = {
     status: "HTTP/1.1 200 OK",
     body: [
@@ -389,6 +405,122 @@ test("inspector.open() answers a request without a Host header and refuses an un
   expect(await rawRequest(address, `GET ${pathname} HTTP/1.1`, ["Host: ", ...upgradeHeaders])).toEqual(
     switchingProtocols,
   );
+});
+
+// Without a Host header, GET /json and GET /json/list name the local address of the
+// connection that carries the request (getsockname), as Node does since nodejs/node#11755:
+// https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket_server.cc#L361-L365
+// https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket.cc#L676-L695
+// The same rows run against Node.js when it is installed. The test process is the client of both.
+describe.concurrent.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("inspector.open() names the local address of the connection when a request has no Host (%s)", (runtime, exe) => {
+  const ok = runtime === "bun" ? "HTTP/1.1 200 OK" : "HTTP/1.0 200 OK";
+
+  /** The target list that names `authority` in its three URLs. */
+  function listNaming(authority: string, pathname: string) {
+    const frontend = `?experiments=true&v8only=true&ws=${authority}${pathname}`;
+    return {
+      status: ok,
+      body: [
+        expect.objectContaining({
+          webSocketDebuggerUrl: `ws://${authority}${pathname}`,
+          devtoolsFrontendUrl: `devtools://devtools/bundled/js_app.html${frontend}`,
+          devtoolsFrontendUrlCompat: `devtools://devtools/bundled/inspector.html${frontend}`,
+        }),
+      ],
+    };
+  }
+
+  // The one debugger in this file that listens on every interface, for as few requests as show that
+  // the list does not name the listener: 0.0.0.0 is no address for a client.
+  test.skipIf(!exe)("on a 0.0.0.0 bind", async () => {
+    await using proc = spawnInspector("0.0.0.0", exe!);
+    const { hostname, port, pathname } = await inspectorUrl(proc);
+    expect(hostname).toBe("0.0.0.0");
+
+    // Every address in 127.0.0.0/8 is a local address on Linux, so two connections can have different ones there.
+    for (const host of isLinux ? ["127.0.0.1", "127.0.0.2"] : ["127.0.0.1"]) {
+      expect(await rawRequest({ host, port: Number(port) }, "GET /json/list HTTP/1.0")).toEqual(
+        listNaming(`${host}:${port}`, pathname),
+      );
+    }
+  });
+
+  test.skipIf(!exe)("on a localhost bind", async () => {
+    await using proc = spawnInspector("localhost", exe!);
+    const { hostname, port, pathname } = await inspectorUrl(proc);
+    expect(hostname).toBe("localhost");
+
+    // Not by name: a lookup of `localhost` can leave out the address family that the server listens on (#38818).
+    let host = "";
+    for (const candidate of ["::1", "127.0.0.1"]) {
+      const { promise, resolve } = Promise.withResolvers<boolean>();
+      const socket = net.connect({ host: candidate, port: Number(port) }, () => resolve(true));
+      socket.on("error", () => resolve(false));
+      const connected = await promise;
+      socket.destroy();
+      if (connected) {
+        host = candidate;
+        break;
+      }
+    }
+    expect(host).not.toBe("");
+
+    const address = { host, port: Number(port) };
+    const authority = `${host.includes(":") ? `[${host}]` : host}:${port}`;
+    const named = listNaming(authority, pathname);
+    expect({
+      list: await rawRequest(address, "GET /json/list HTTP/1.0"),
+      json: await rawRequest(address, "GET /json HTTP/1.0"),
+      emptyHost: await rawRequest(address, "GET /json/list HTTP/1.1", ["Host: ", "Connection: close"]),
+      noHostLine: await rawRequest(address, "GET /json/list HTTP/1.1", ["Connection: close"]),
+      withHost: await rawRequest(address, "GET /json/list HTTP/1.1", [`Host: localhost:${port}`, "Connection: close"]),
+    }).toEqual({
+      list: named,
+      json: named,
+      emptyHost: named,
+      // Node answers an HTTP/1.1 request that has no Host line like the three above. In Bun the
+      // HTTP parser answers 400 before the inspector sees the request (RFC 9112 section 3.2).
+      noHostLine: runtime === "bun" ? { status: "HTTP/1.1 400 Bad Request", body: "" } : named,
+      withHost: listNaming(`localhost:${port}`, pathname),
+    });
+
+    // Each request decides for itself: on one connection a Host is reflected, and a request without one is not.
+    const withHost = ["GET /json/list HTTP/1.1", `Host: localhost:${port}`, "", ""].join("\r\n");
+    const withoutHost = ["GET /json/list HTTP/1.1", "Host: ", "", ""].join("\r\n");
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    let responses = "";
+    const urls = () => Array.from(responses.matchAll(/"webSocketDebuggerUrl":\s*"([^"]*)"/g), match => match[1]);
+    const socket = net.connect(address, () => socket.write(withHost + withoutHost + withHost));
+    socket.on("data", chunk => {
+      responses += chunk;
+      if (urls().length === 3) socket.destroy();
+    });
+    socket.on("error", reject);
+    socket.on("close", () => resolve(urls()));
+    expect(await promise).toEqual([
+      `ws://localhost:${port}${pathname}`,
+      `ws://${authority}${pathname}`,
+      `ws://localhost:${port}${pathname}`,
+    ]);
+  });
+
+  // Not gated on isIPv6(): an IPv4-mapped bind needs an AF_INET6 socket, not an IPv6 address.
+  test.skipIf(!exe)("on a ::ffff:127.0.0.1 bind", async () => {
+    await using proc = spawnInspector("::ffff:127.0.0.1", exe!);
+    const { port, pathname } = await inspectorUrl(proc);
+
+    // Node prints the IPv4-mapped address of the socket like this. A URL would write [::ffff:7f00:1].
+    const address = { host: "127.0.0.1", port: Number(port) };
+    const named = listNaming(`[::ffff:127.0.0.1]:${port}`, pathname);
+    expect({
+      list: await rawRequest(address, "GET /json/list HTTP/1.0"),
+      json: await rawRequest(address, "GET /json HTTP/1.0"),
+      emptyHost: await rawRequest(address, "GET /json/list HTTP/1.1", ["Host: ", "Connection: close"]),
+    }).toEqual({ list: named, json: named, emptyHost: named });
+  });
 });
 
 // A failed inspector.open() (port already in use) must print Node's diagnostic

@@ -4425,6 +4425,11 @@ where
         })
     }
 
+    /// See `uws::AnyResponse::local_address`.
+    pub(crate) fn local_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
+        self.live_resp()?.local_address(buf)
+    }
+
     pub(crate) fn set_timeout(&self, seconds: c_uint) -> bool {
         if let Some(resp) = self.live_resp() {
             // SAFETY: FFI handle

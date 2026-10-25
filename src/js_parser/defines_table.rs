@@ -12,8 +12,6 @@
 //! Note that membership in this list says nothing about whether calling any of
 //! these functions has any side effects. It only says something about
 //! referencing these function without calling them.
-//!
-//! An identifier tagged `Other` is a browser API: only a parse with `PureGlobals::All` assumes it.
 
 use crate as js_ast;
 use crate::defines;
@@ -273,6 +271,7 @@ pub(crate) enum PureGlobalIdentifierValue {
     Infinity,
     StrictUndefined,
     Universal,
+    /// A browser API: only a parse with `PureGlobals::All` assumes it.
     Other,
 }
 

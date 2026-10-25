@@ -1137,7 +1137,8 @@ pub mod bv2_impl {
                         return None;
                     }
                     if bun_paths::is_absolute_loose(entry_point) {
-                        return self.file(entry_point);
+                        // The disk resolver finds the file of a `./` key, and the parse task reads the key. That route has the settings of the file.
+                        return (self.file(entry_point)).filter(|(_, file)| file.absolute);
                     }
                     if let Some(found) = self.file_spelled(entry_point) {
                         return Some(found);
@@ -1451,7 +1452,7 @@ pub mod bv2_impl {
                 }
 
                 #[test]
-                fn an_entry_point_names_a_key_by_its_text_or_by_the_path_of_its_file() {
+                fn an_entry_point_names_a_key_by_its_text() {
                     let files = files(&[
                         ("./src/entry.ts", ""),
                         ("worker.js", ""),
@@ -1463,7 +1464,8 @@ pub mod bv2_impl {
                         found.map(|(path, _)| text(path))
                     };
                     assert_eq!(entry("./src/entry.ts"), Some("/proj/src/entry.ts"));
-                    assert_eq!(entry("/proj/src/entry.ts"), Some("/proj/src/entry.ts"));
+                    // The absolute path of a `./` key is for the disk resolver.
+                    assert_eq!(entry("/proj/src/entry.ts"), None);
                     assert_eq!(entry("worker.js"), Some("worker.js"));
                     assert_eq!(entry("/abs/entry.ts"), Some("/abs/entry.ts"));
                     assert_eq!(entry("/abs/missing.ts"), None);

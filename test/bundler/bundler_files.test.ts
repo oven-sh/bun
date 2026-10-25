@@ -958,7 +958,7 @@ describe("bundler files option", () => {
 
     // No file of these builds is on disk. The entry imports the other key as "./lib.js".
     buildsIn(
-      "an entry point names a key by its text or by the absolute path of its file",
+      "an entry point names a key by its text",
       { "proj/keep": "", "with-src/src/keep": "" },
       ["entry in memory", "lib in memory"],
       `(() => {
@@ -971,8 +971,9 @@ describe("bundler files option", () => {
         });
         return {
           "./entry.js": build("./entry.js", "./entry.js"),
-          absolute: build(abs("entry.js"), "./entry.js"),
+          "absolute, absolute key": build(abs("entry.js"), abs("entry.js")),
           // Any other entry point is for the disk resolver, with a "./" key and with an absolute key.
+          absolute: build(abs("entry.js"), "./entry.js"),
           "entry.js": build("entry.js", "./entry.js"),
           "entry.js, absolute key": build("entry.js", abs("entry.js")),
           "./entry.js, absolute key": build("./entry.js", abs("entry.js")),
@@ -996,7 +997,12 @@ describe("bundler files option", () => {
         });
         expect(report).toEqual({
           "./entry.js": inMemory,
-          absolute: inMemory,
+          "absolute, absolute key": inMemory,
+          absolute: {
+            logs: [expect.stringMatching(/^BuildMessage: ModuleNotFound resolving ".+entry\.js" \(entry point\)$/)],
+            outputs: [],
+            found: [],
+          },
           "entry.js": notFound("entry.js"),
           "entry.js, absolute key": notFound("entry.js"),
           "./entry.js, absolute key": notFound("./entry.js"),
@@ -1468,8 +1474,8 @@ describe("bundler files option", () => {
     );
 
     // The output of a "./" key has the directory and the name of its path from the cwd, like the
-    // key text gave it on Bun 1.4. No directory of these keys is on disk. The first five builds
-    // import the key by its text, and give the output of Bun 1.4.
+    // key text gave it on Bun 1.4. No directory of these keys is on disk. The builds import the
+    // key by its text, and give the output of Bun 1.4.
     buildsIn(
       "the output of a ./ key is at its path from the cwd",
       { "src/keep": "", "packages/app/keep": "" },
@@ -1489,10 +1495,6 @@ describe("bundler files option", () => {
           "a key above the cwd, inside root": build("./entry.ts", "../lazy/mod.ts", { root: "..", chdir: "packages/app" }),
           "a key above the cwd": build("./entry.ts", "../lazy/mod.ts", { chdir: "packages/app" }),
           "a key outside root": build("./src/entry.ts", "./gen/lazy/mod.ts", { root: "./src" }),
-          "an entry point that is the absolute path of the key": {
-            ...build("./virtual/entry.ts", "./lazy/mod.ts"),
-            entrypoints: [abs("virtual/entry.ts")],
-          },
         };
       })()`,
       report => {
@@ -1503,7 +1505,6 @@ describe("bundler files option", () => {
           "a key above the cwd, inside root": at("out/app/entry.js", "out/app/lazy/mod-chunk.js"),
           "a key above the cwd": at("out/entry.js", "out/lazy/mod-chunk.js"),
           "a key outside root": at("out/_.._/gen/lazy/mod-chunk.js", "out/entry.js"),
-          "an entry point that is the absolute path of the key": at("out/lazy/mod-chunk.js", "out/virtual/entry.js"),
         });
       },
     );

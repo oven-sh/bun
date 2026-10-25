@@ -130,6 +130,57 @@ test("namespace import", () => {
   expect(macros.escape()).toBe("\\\f\n\r\t\v\0'\"`$\x00\x0B\x0C");
 });
 
+// A macro call passes no `this`, so a fold leaves `m.fn` as the callee without `(0, m.fn)`.
+test.concurrent("a fold that leaves a member of a namespace import as the callee runs the macro", async () => {
+  const header = `import * as m from "./macro.ts" with { type: "macro" };\nconst g = () => 1;\n`;
+  const folded = [
+    "(true && m.fn)",
+    "(false || m.fn)",
+    "(null ?? m.fn)",
+    "(true ? m.fn : 0)",
+    "(false ? 0 : m.fn)",
+    "([] ? m.fn : 0)",
+    "(typeof g ? m.fn : 0)",
+    "(({}).p ??= m.fn)",
+    "(({}).p ||= m.fn)",
+    "((() => g()) && m.fn)",
+  ];
+  // The comma is folded under --minify-syntax only.
+  const foldedWhenMinified = ["(0, m.fn)", "(/* @__PURE__ */ g(), m.fn)"];
+  using dir = tempDir("macro-behind-fold", {
+    "macro.ts": `export function fn() {\n  return "ran";\n}\n`,
+    "folded.mjs": header + `console.log(${folded.map(callee => callee + "()").join(", ")});\n`,
+    "comma.mjs": header + `console.log(${foldedWhenMinified.map(callee => callee + "()").join(", ")});\n`,
+    "tag.mjs": header + "console.log((true && m.fn)`x`);\n",
+  });
+  const build = async (...args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds print "[macro] call fn" to stdout first, so only the last line is compared.
+    return { lastLine: stdout.trim().split("\n").at(-1), stderr, exitCode };
+  };
+  const [plain, minified, tag] = await Promise.all([
+    build("folded.mjs"),
+    build("--minify-syntax", "comma.mjs"),
+    build("tag.mjs"),
+  ]);
+
+  const ran = (count: number) => `console.log(${Array(count).fill('"ran"').join(", ")});`;
+  expect(plain).toMatchObject({ lastLine: ran(folded.length), exitCode: 0 });
+  expect(minified).toMatchObject({ lastLine: ran(foldedWhenMinified.length), exitCode: 0 });
+  // A macro is not a tag, and the build says so instead of leaving `m` for run time.
+  expect(tag).toMatchObject({
+    stderr: expect.stringContaining("template literal macro invocations are not supported"),
+    exitCode: 1,
+  });
+});
+
 // test("template string ascii", () => {
 //   expect(identity(`A${""}`)).toBe("A");
 // });

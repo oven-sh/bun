@@ -235,7 +235,7 @@ impl BinaryExpressionVisitor {
                     match simplified_left.filter(|left| !left.is_empty()) {
                         Some(simplified_left) => e_.left = simplified_left,
                         // A callee or a tag keeps the comma in place, so that "this" stays unbound.
-                        None if is_callee_or_tag && e_.right.has_value_for_this_in_call() => {
+                        None if is_callee_or_tag && p.has_value_for_this_in_call(&e_.right) => {
                             e_.left = Expr {
                                 data: prefill::data::ZERO,
                                 loc: e_.left.loc,

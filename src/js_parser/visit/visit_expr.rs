@@ -685,7 +685,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
             );
             debug_assert!(
-                !(was_wrapper && tag.has_value_for_this_in_call()),
+                !(was_wrapper && p.has_value_for_this_in_call(tag)),
                 "a fold left a bare property access as the tag of a template"
             );
         }
@@ -1587,12 +1587,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_callee_or_tag: bool,
         zero_loc: bun_ast::Loc,
     ) -> Expr {
-        if is_callee_or_tag && operand.has_value_for_this_in_call() {
+        if is_callee_or_tag && self.has_value_for_this_in_call(&operand) {
             return self
                 .new_expr(E::Number::new(0.0), zero_loc)
                 .join_with_comma(operand);
         }
         operand
+    }
+
+    /// Does `expr()` pass a `this`? A property access does, but a call of a macro member passes none.
+    pub(crate) fn has_value_for_this_in_call(&self, expr: &Expr) -> bool {
+        match &expr.data {
+            Data::EDot(dot) => !matches!(
+                &dot.target.data,
+                Data::EIdentifier(id) if Self::ALLOW_MACROS && self.macro_.refs.contains_key(&id.ref_)
+            ),
+            Data::EIndex(_) => true,
+            _ => false,
+        }
     }
 
     /// A node that a fold can replace by its operand `x`: `(0, x)`, `a && x`, `a ?? x`, `a ? x : y`.
@@ -1953,7 +1965,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
         );
         debug_assert!(
-            !(target_was_wrapper && e_.target.has_value_for_this_in_call()),
+            !(target_was_wrapper && p.has_value_for_this_in_call(&e_.target)),
             "a fold left a bare property access as the target of a call"
         );
 

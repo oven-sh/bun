@@ -114,6 +114,11 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
     while (group->iterator) {
         struct us_socket_t *s = group->iterator;
         group->iterator = s->next;
+        /* Its owner ended this one, and only the peer's close_notify is awaited: the wait is over, and the kernel goes on delivering what it took. */
+        if (!thread_ends && s->ssl && us_internal_ssl_close_waits_for_peer(s)) {
+            us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+            continue;
+        }
         /* No close_notify from a thread that ends, whose answer nothing would read, nor after a write that fell short: the owner may hold the rest. */
         us_socket_close(s, thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : s->ssl && s->flags.last_write_failed ? LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         /* A TLS socket may have *deferred* that: us_internal_ssl_close with

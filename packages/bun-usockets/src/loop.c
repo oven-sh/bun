@@ -670,8 +670,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     return;
                 }
 
-                /* If we have no failed write or if we shut down, then stop polling for more writable */
-                if (!s->flags.last_write_failed || us_socket_is_shut_down(s)) {
+                /* If we have no failed write or if we shut down, then stop polling for more writable. A spilled close_notify still has to leave. */
+                if (!s->flags.last_write_failed || (us_socket_is_shut_down(s) && !s->ssl_spilled)) {
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
                 } else {
                     #ifdef LIBUS_USE_KQUEUE

@@ -471,13 +471,21 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(await git(root, "show", "HEAD:b.js")).toBe(after[command]);
     expect(await git(root, "status", "--porcelain")).toBe("");
     // `git commit <path>` builds the commit from a temporary index, and keeps the real index locked. What the hook
-    // stages has to reach both, or the real index keeps the text from before the hook.
+    // stages has to reach both, or the real index keeps the text from before the hook. What is staged of a file the
+    // commit doesn't name is only in the real index, and stays as it is.
     write(root, "a.js", before);
     await git(root, "add", "a.js");
+    write(root, "b.js", before);
+    await git(root, "add", "b.js");
+    const unstaged = before + "export const unstaged = 1;\n";
+    write(root, "b.js", unstaged);
     await git(root, "commit", "-q", "-m", "a path", "a.js");
     expect(await git(root, "show", "HEAD:a.js")).toBe(after[command]);
     expect(await git(root, "show", ":a.js")).toBe(after[command]);
-    expect(await git(root, "status", "--porcelain")).toBe("");
+    expect(await git(root, "show", "HEAD:b.js")).toBe(after[command]);
+    expect(await git(root, "show", ":b.js")).toBe(before);
+    expect(read(root, "b.js")).toBe(unstaged);
+    expect(await git(root, "status", "--porcelain")).toBe("MM b.js\n");
   });
 
   test.skipIf(isWindows)(

@@ -487,7 +487,9 @@ impl<'e> Files<'e> {
         }
         const UPDATE_INDEX: [&[u8]; 3] = [b"update-index", b"-z", b"--stdin"];
         let mut finished = self.git(&UPDATE_INDEX, &input)?;
-        if finished.is_ok && let Some(lock) = self.real_index_lock() {
+        if finished.is_ok
+            && let Some(lock) = self.real_index_lock()
+        {
             let lock = paths::to_native(lock);
             let variables: [(&[u8], &[u8]); 1] = [(b"GIT_INDEX_FILE", &lock)];
             finished = self.git_with(&UPDATE_INDEX, &input, &variables)?;
@@ -508,8 +510,9 @@ impl<'e> Files<'e> {
     /// stages is only kept if it's staged into the real index's lock file too.
     ///
     /// `None` for every other index: a plain `git commit` names the real index, and `git commit -a` names its lock.
-    /// `GIT_INDEX_FILE=other git commit <path>` locks `other.lock` instead, which the hook can't tell from the
-    /// temporary index, so `index.lock` doesn't exist then.
+    /// `GIT_INDEX_FILE=other git commit <path>` locks `other.lock` instead. The hook can't tell that from a commit
+    /// of the real index, so the only guard is that `index.lock` exists and is written: a git command that another
+    /// process runs at the same time holds an empty one while it works.
     fn real_index_lock(&self) -> Option<Vec<u8>> {
         let index = bun_core::getenv_z(&bun_core::ZBox::from_bytes(b"GIT_INDEX_FILE"))?;
         let name = paths::file_name(index);
@@ -518,7 +521,7 @@ impl<'e> Files<'e> {
         }
         let index = paths::resolve(&self.environment.cwd, &paths::from_native(index));
         let lock = paths::join(paths::dirname(&index), b"index.lock");
-        fs::is_file(&lock).then_some(lock)
+        matches!(fs::kind_and_size(&lock), Some((fs::Kind::File, size)) if size > 0).then_some(lock)
     }
 }
 

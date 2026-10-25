@@ -78,6 +78,44 @@ describe("shared struct", () => {
     expect(Atomics.load(c, "n")).toBe(3);
   });
 
+  test("Atomics.load and exchange keep the identity of a nested shared struct", () => {
+    shared struct Node {
+      child;
+    }
+    const parent = new Node();
+    const child = new Node();
+    const other = new Node();
+    parent.child = child;
+    expect(Atomics.load(parent, "child")).toBe(child);
+    expect(Atomics.load(parent, "child")).toBe(Atomics.load(parent, "child"));
+    expect(Atomics.load(parent, "child")).toBe(parent.child);
+    expect(Atomics.exchange(parent, "child", other)).toBe(child);
+    expect(parent.child).toBe(other);
+    expect(Atomics.exchange(parent, "child", child)).toBe(other);
+    expect(Atomics.compareExchange(parent, "child", child, other)).toBe(child);
+    expect(Atomics.load(parent, "child")).toBe(other);
+    expect(parent.child).toBe(other);
+    Atomics.store(parent, "child", child);
+    expect(parent.child).toBe(child);
+  });
+
+  test("Atomics.compareExchange accepts an expected value that cannot be shared", () => {
+    shared struct Counter {
+      n;
+    }
+    const c = new Counter();
+    c.n = 1;
+    const plain = {};
+    expect(Atomics.compareExchange(c, "n", plain, 2)).toBe(1);
+    expect(c.n).toBe(1);
+    expect(Atomics.compareExchange(c, "n", () => {}, 2)).toBe(1);
+    expect(Atomics.compareExchange(c, "n", Symbol("s"), 2)).toBe(1);
+    expect(c.n).toBe(1);
+    // The replacement still has to be shareable.
+    expect(() => Atomics.compareExchange(c, "n", 1, plain)).toThrow(TypeError);
+    expect(c.n).toBe(1);
+  });
+
   test("Atomics still works on typed arrays", () => {
     const ia = new Int32Array(new SharedArrayBuffer(8));
     Atomics.store(ia, 0, 7);

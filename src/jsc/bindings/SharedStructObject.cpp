@@ -57,6 +57,25 @@ void JSSharedView::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSSharedView);
 
+void JSSharedView::remember(VM& vm, size_t index, const void* key, JSObject* object)
+{
+    SlotCache& entry = m_cache[index];
+    if (key && object) {
+        if (object != entry.wrapper.get())
+            entry.wrapper.set(vm, this, object);
+        entry.key = key;
+    } else {
+        entry.wrapper.clear();
+        entry.key = nullptr;
+    }
+}
+
+JSObject* JSSharedView::cachedWrapper(size_t index, const void* key) const
+{
+    const SlotCache& entry = m_cache[index];
+    return key && entry.key == key ? entry.wrapper.get() : nullptr;
+}
+
 JSValue JSSharedView::load(JSGlobalObject* globalObject, size_t index)
 {
     VM& vm = getVM(globalObject);
@@ -68,15 +87,7 @@ JSValue JSSharedView::load(JSGlobalObject* globalObject, size_t index)
         // An exception is pending.
         return {};
     }
-    JSObject* object = key ? value.getObject() : nullptr;
-    if (object) {
-        if (object != entry.wrapper.get())
-            entry.wrapper.set(vm, this, object);
-        entry.key = key;
-    } else {
-        entry.wrapper.clear();
-        entry.key = nullptr;
-    }
+    remember(vm, index, key, key ? value.getObject() : nullptr);
     return value;
 }
 
@@ -88,15 +99,7 @@ bool JSSharedView::store(JSGlobalObject* globalObject, size_t index, JSValue val
         // An exception is pending.
         return false;
     }
-    SlotCache& entry = m_cache[index];
-    JSObject* object = key ? value.getObject() : nullptr;
-    if (object) {
-        entry.wrapper.set(vm, this, object);
-        entry.key = key;
-    } else {
-        entry.wrapper.clear();
-        entry.key = nullptr;
-    }
+    remember(vm, index, key, key ? value.getObject() : nullptr);
     return true;
 }
 
@@ -364,6 +367,32 @@ JSC::EncodedJSValue Bun__SharedBlock__wrap(JSC::JSGlobalObject* globalObject, co
         view = Bun::JSSharedArray::create(vm, globalObject, block);
     view->methodTable()->preventExtensions(view, globalObject);
     return JSC::JSValue::encode(view);
+}
+
+static Bun::JSSharedView* sharedViewOf(JSC::JSValue value)
+{
+    if (auto* view = dynamicDowncast<Bun::JSSharedStruct>(value))
+        return view;
+    if (auto* view = dynamicDowncast<Bun::JSSharedArray>(value))
+        return view;
+    return nullptr;
+}
+
+// The wrapper that slot `index` of the view `encoded` last gave out or took in, if it is the one for the object at `key`; else empty.
+// `index` is below the length of the view's block.
+JSC::EncodedJSValue Bun__SharedView__cachedWrapper(JSC::EncodedJSValue encoded, size_t index, const void* key)
+{
+    auto* view = sharedViewOf(JSC::JSValue::decode(encoded));
+    if (!view)
+        return JSC::JSValue::encode(JSC::JSValue());
+    return JSC::JSValue::encode(JSC::JSValue(view->cachedWrapper(index, key)));
+}
+
+// Records that slot `index` of the view `encoded` now holds the object at `key`, whose wrapper is `wrapper`. A null `key` clears the entry.
+void Bun__SharedView__remember(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encoded, size_t index, const void* key, JSC::EncodedJSValue wrapper)
+{
+    if (auto* view = sharedViewOf(JSC::JSValue::decode(encoded)))
+        view->remember(globalObject->vm(), index, key, JSC::JSValue::decode(wrapper).getObject());
 }
 
 // The block of a SharedStruct or SharedArray view, or null for any other value.

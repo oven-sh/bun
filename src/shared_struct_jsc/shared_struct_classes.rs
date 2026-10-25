@@ -26,6 +26,16 @@ unsafe extern "C" {
     safe fn Bun__SharedBlock__fromJS(value: JSValue) -> *const c_void;
     /// A new view of `block`. It takes over a strong count of `block`.
     fn Bun__SharedBlock__wrap(global: &JSGlobalObject, block: *const c_void) -> JSValue;
+    /// The wrapper that slot `index` of the view `view` last gave out or took in, if it is the one for the object at `key`; else empty.
+    fn Bun__SharedView__cachedWrapper(view: JSValue, index: usize, key: *const c_void) -> JSValue;
+    /// Records that slot `index` of `view` holds the object at `key`, whose wrapper is `wrapper`; a null `key` clears the entry.
+    fn Bun__SharedView__remember(
+        global: &JSGlobalObject,
+        view: JSValue,
+        index: usize,
+        key: *const c_void,
+        wrapper: JSValue,
+    );
     safe fn Bun__SharedStruct__createConstructors(
         global: &JSGlobalObject,
         mutex: JSValue,
@@ -465,6 +475,37 @@ fn slot_of(
     }
 }
 
+/// `value`, which slot `index` of `view` held, as a JS value: the wrapper the view cached for that object, so that
+/// `Atomics.load(parent, "child") === parent.child`.
+fn to_js_from_slot(
+    global: &JSGlobalObject,
+    view: JSValue,
+    index: usize,
+    value: Value,
+) -> JsResult<JSValue> {
+    let identity = identity_of(&value);
+    if !identity.is_null() {
+        // SAFETY: `view` is the live view that `slot_of` found `index` in.
+        let cached = unsafe { Bun__SharedView__cachedWrapper(view, index, identity) };
+        if !cached.is_empty() {
+            return Ok(cached);
+        }
+    }
+    to_js(global, value)
+}
+
+/// Records for `view` that slot `index` now holds `value`, which `wrapper` is the JS value of.
+fn remember_slot(
+    global: &JSGlobalObject,
+    view: JSValue,
+    index: usize,
+    value: &Value,
+    wrapper: JSValue,
+) {
+    // SAFETY: `view` is the live view that `slot_of` found `index` in, and `wrapper` is the object behind `value`.
+    unsafe { Bun__SharedView__remember(global, view, index, identity_of(value), wrapper) };
+}
+
 pub(crate) fn atomic_load(
     cx: &mut JsScope<'_>,
     target: JsLocal<'_>,
@@ -472,7 +513,13 @@ pub(crate) fn atomic_load(
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let (block, index) = slot_of(global, target.to_js(), key.to_js())?;
-    to_js(global, block.load(index))
+    let value = block.load(index);
+    let identity = identity_of(&value);
+    let result = to_js_from_slot(global, target.to_js(), index, value)?;
+    // A wrapper that was just made is cached too, as a plain read does.
+    // SAFETY: as in `remember_slot`; `result` is the wrapper of the object at `identity`, or `identity` is null.
+    unsafe { Bun__SharedView__remember(global, target.to_js(), index, identity, result) };
+    Ok(result)
 }
 
 /// Returns `value`, as `Atomics.store` does.
@@ -484,7 +531,9 @@ pub(crate) fn atomic_store(
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let (block, index) = slot_of(global, target.to_js(), key.to_js())?;
-    block.store(index, &to_shared(global, value.to_js())?);
+    let stored = to_shared(global, value.to_js())?;
+    block.store(index, &stored);
+    remember_slot(global, target.to_js(), index, &stored, value.to_js());
     Ok(value.to_js())
 }
 
@@ -496,13 +545,16 @@ pub(crate) fn atomic_exchange(
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let (block, index) = slot_of(global, target.to_js(), key.to_js())?;
-    to_js(
-        global,
-        block.exchange(index, &to_shared(global, value.to_js())?),
-    )
+    let stored = to_shared(global, value.to_js())?;
+    let old = block.exchange(index, &stored);
+    // The old value's wrapper comes from the cache before the cache takes the new one.
+    let result = to_js_from_slot(global, target.to_js(), index, old)?;
+    remember_slot(global, target.to_js(), index, &stored, value.to_js());
+    Ok(result)
 }
 
-/// Returns the value the slot held, whether or not it was replaced.
+/// Returns the value the slot held, whether or not it was replaced. Only `replacement` has to be shareable: an `expected`
+/// that is not can never equal what a slot holds, so it leaves the slot unchanged.
 pub(crate) fn atomic_compare_exchange(
     cx: &mut JsScope<'_>,
     target: JsLocal<'_>,
@@ -512,10 +564,18 @@ pub(crate) fn atomic_compare_exchange(
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let (block, index) = slot_of(global, target.to_js(), key.to_js())?;
-    let expected = to_shared(global, expected.to_js())?;
-    let replacement = to_shared(global, replacement.to_js())?;
-    to_js(
-        global,
-        block.compare_exchange(index, &expected, &replacement),
-    )
+    let expected = to_value(global, expected.to_js())?;
+    let stored = to_shared(global, replacement.to_js())?;
+    let old = match expected {
+        Some(expected) => block.compare_exchange(index, &expected, &stored),
+        None => block.load(index),
+    };
+    // The old value's wrapper comes from the cache before the cache takes the replacement.
+    let result = to_js_from_slot(global, target.to_js(), index, old)?;
+    let identity = identity_of(&stored);
+    // The cache entry for an object is checked on every read, so recording the replacement is right whenever the slot holds it.
+    if !identity.is_null() && identity_of(&block.load(index)) == identity {
+        remember_slot(global, target.to_js(), index, &stored, replacement.to_js());
+    }
+    Ok(result)
 }

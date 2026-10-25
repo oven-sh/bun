@@ -55,6 +55,10 @@ public:
     JSC::JSValue load(JSC::JSGlobalObject*, size_t index);
     // False with an exception pending when `value` cannot be shared.
     bool store(JSC::JSGlobalObject*, size_t index, JSC::JSValue value);
+    // Records that slot `index` holds the object at `key`, whose wrapper is `object`; a null `key` or `object` clears the entry.
+    void remember(JSC::VM&, size_t index, const void* key, JSC::JSObject* object);
+    // The wrapper of the object at `key` if slot `index` last gave it out or took it in, else null.
+    JSC::JSObject* cachedWrapper(size_t index, const void* key) const;
 
 protected:
     JSSharedView(JSC::VM& vm, JSC::Structure* structure, const void* block)

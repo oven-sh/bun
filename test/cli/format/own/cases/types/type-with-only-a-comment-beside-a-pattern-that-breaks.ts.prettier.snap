@@ -1,0 +1,59 @@
+------------------
+{ printWidth: 80 }
+------------------
+function O1({
+  a,
+  b, // c
+}: {
+  /* t */
+}) {}
+function O2({
+  a,
+  b, // c
+}: {
+  /* t */
+}) {}
+function O3({ a, b /* c */ }: {/* t */}) {}
+function O4({
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccccccccccccccc,
+}: {
+  /* t */
+}) {}
+function O5({
+  a,
+  b, // c
+}: {}) {}
+function O6({ a: { b } }: {/* t */}) {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function O1({
+  a,
+  b, // c
+}: {
+  /* t */
+}) {}
+function O2({
+  a,
+  b, // c
+}: {
+  /* t */
+}) {}
+function O3({ a, b /* c */ }: {/* t */}) {}
+function O4({
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccccccccccccccc,
+}: {
+  /* t */
+}) {}
+function O5({
+  a,
+  b, // c
+}: {}) {}
+function O6({ a: { b } }: {/* t */}) {}
+
+===================== End =====================

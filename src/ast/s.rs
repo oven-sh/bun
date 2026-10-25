@@ -129,6 +129,8 @@ pub struct If {
     pub test: ExprNodeIndex,
     pub yes: StmtNodeIndex,
     pub no: Option<StmtNodeIndex>,
+    /// Where the `else` of `no` is. `Loc::EMPTY` in an `if` that the parser did not make.
+    pub else_loc: crate::Loc,
 }
 
 pub struct For {
@@ -241,11 +243,7 @@ pub struct Local {
     pub kind: Kind,         // = Kind::KVar
     pub decls: G::DeclList, // = .{}
     pub is_export: bool,    // = false
-    /// The TypeScript compiler doesn't generate code for "import foo = bar"
-    /// statements where the import is never used.
-    pub was_ts_import_equals: bool, // = false
-
-    pub was_commonjs_export: bool, // = false
+    pub origin: LocalOrigin,
 }
 
 impl Default for Local {
@@ -254,8 +252,7 @@ impl Default for Local {
             kind: Kind::default(),
             decls: bun_alloc::AstAlloc::vec(),
             is_export: false,
-            was_ts_import_equals: false,
-            was_commonjs_export: false,
+            origin: LocalOrigin::Normal,
         }
     }
 }
@@ -271,7 +268,28 @@ impl Local {
         }
         self.kind == other.kind
             && self.is_export == other.is_export
-            && self.was_commonjs_export == other.was_commonjs_export
+            && self.origin.is_commonjs_export() == other.origin.is_commonjs_export()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum LocalOrigin {
+    #[default]
+    Normal,
+    /// From TS `import x = ...`; dropped if unused (matches tsc).
+    TsImportEquals,
+    /// From rewritten `exports.x = ...`.
+    CommonJsExport,
+}
+
+impl LocalOrigin {
+    #[inline]
+    pub fn is_ts_import_equals(self) -> bool {
+        matches!(self, Self::TsImportEquals)
+    }
+    #[inline]
+    pub fn is_commonjs_export(self) -> bool {
+        matches!(self, Self::CommonJsExport)
     }
 }
 

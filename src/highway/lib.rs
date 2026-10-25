@@ -4,12 +4,47 @@
 unsafe extern "C" {
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
 
+    fn highway_last_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
+
+    fn highway_index_of_not_char(haystack: *const u8, haystack_len: usize, value: u8) -> usize;
+
+    fn highway_count_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
+
+    fn highway_line_starts(text: *const u8, text_len: usize, out: *mut u32) -> usize;
+
+    #[cfg(not(miri))]
     fn highway_memmem(
         haystack: *const u8,
         haystack_len: usize,
         needle: *const u8,
         needle_len: usize,
     ) -> *const u8;
+
+    // These three return `usize::MAX` for not-found (the empty needle matches at
+    // 0 / `haystack_len` respectively).
+    #[cfg(not(miri))]
+    fn highway_memrmem(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: *const u8,
+        needle_len: usize,
+    ) -> usize;
+
+    #[cfg(not(miri))]
+    fn highway_memmem16(
+        haystack: *const u16,
+        haystack_len: usize,
+        needle: *const u16,
+        needle_len: usize,
+    ) -> usize;
+
+    #[cfg(not(miri))]
+    fn highway_memrmem16(
+        haystack: *const u16,
+        haystack_len: usize,
+        needle: *const u16,
+        needle_len: usize,
+    ) -> usize;
 
     fn highway_index_of_interesting_character_in_string_literal(
         text: *const u8,
@@ -21,6 +56,10 @@ unsafe extern "C" {
         text: *const u8,
         text_len: usize,
     ) -> usize;
+
+    fn highway_scanner_run_stops(text: *const u8, text_len: usize, out: *mut u8, plane_len: usize);
+
+    fn highway_odd_blocks(text: *const u8, text_len: usize, out: *mut u64);
 
     fn highway_index_of_newline_or_non_ascii(haystack: *const u8, haystack_len: usize) -> usize;
 
@@ -43,6 +82,13 @@ unsafe extern "C" {
     ) -> usize;
 
     fn highway_index_of_any_char(
+        text: *const u8,
+        text_len: usize,
+        chars: *const u8,
+        chars_len: usize,
+    ) -> usize;
+
+    fn highway_last_index_of_any_char(
         text: *const u8,
         text_len: usize,
         chars: *const u8,
@@ -102,33 +148,164 @@ unsafe extern "C" {
         inout_state: *mut u64,
         out_flags: *mut u32,
     ) -> usize;
+
+    fn highway_xml_index_chunk(
+        input: *const u8,
+        len: usize,
+        base_offset: usize,
+        out_indices: *mut u32,
+        inout_state: *mut u64,
+    ) -> usize;
+
+    fn highway_xml_index16_chunk(
+        input: *const u16,
+        len: usize,
+        base_offset: usize,
+        out_indices: *mut u32,
+        inout_state: *mut u64,
+    ) -> usize;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
-// ptr/len shims around the `extern "C"` highway_* dispatch stubs; inlining
+// ptr/len shims around the `extern "C"` highway_* dispatch stubs (plus, for the
+// single-byte scans, a <16-byte scalar prologue — see `SCALAR_CUTOFF`); inlining
 // them puts the FFI call directly at the hot lexer/printer call site so that
 // (a) the Rust-side frame disappears unconditionally, and (b) cross-language
-// LTO (`--profile=btg`, crossLangLto=true) can fold the C dispatch shim
+// LTO (release builds with `lto`) can fold the C dispatch shim
 // straight into the caller. Without this the profile shows the C shim as a
 // distinct hot leaf (e.g. `highway_index_of_newline_or_non_ascii` self-samples
 // in lint/create-vue benches).
 
+/// Below the narrowest vector the kernels dispatch to (16 lanes: NEON, SSE4)
+/// they do at most one (masked) vector op or just their scalar tail, so for
+/// haystacks this short the FFI hop plus the dispatch-table call dominates —
+/// do those bytes inline. Also keeps cold call sites from dragging an FFI
+/// call into a caller's hot loop (see `pop_last_segment_t` in node/path.rs).
+const SCALAR_CUTOFF: usize = 16;
+
+/// Miri cannot call foreign functions, and the workspace denies std's search
+/// methods everywhere else, so under Miri (`bun run rust:miri`) the search
+/// wrappers below take their scalar path at every length. Kernels with no
+/// scalar form here (hashing, hex, sourcemaps, lexer scans) stay FFI-only:
+/// reaching one from a Miri-tested crate is a loud, immediate error.
+#[inline(always)]
+fn scalar_only(len: usize) -> bool {
+    cfg!(miri) || len < SCALAR_CUTOFF
+}
+
+/// Scalar substring search for Miri. Callers have already handled the empty
+/// needle and `haystack.len() < needle.len()`.
+#[cfg(miri)]
+fn scalar_memmem<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
+    (0..=haystack.len() - needle.len()).find(|&i| haystack[i..i + needle.len()] == *needle)
+}
+
+/// Reverse [`scalar_memmem`]: start index of the last occurrence.
+#[cfg(miri)]
+fn scalar_memrmem<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
+    (0..=haystack.len() - needle.len())
+        .rev()
+        .find(|&i| haystack[i..i + needle.len()] == *needle)
+}
+
+/// The single-byte kernels return `haystack_len` for "not found".
+#[inline(always)]
+fn found_at(result: usize, haystack_len: usize) -> Option<usize> {
+    if result == haystack_len {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+/// The `mem*mem*` kernels return `usize::MAX` for "not found".
+#[cfg(not(miri))]
+#[inline(always)]
+fn match_at(result: usize) -> Option<usize> {
+    if result == usize::MAX {
+        None
+    } else {
+        Some(result)
+    }
+}
+
 #[inline(always)]
 pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
-    if haystack.is_empty() {
-        return None;
+    if scalar_only(haystack.len()) {
+        return haystack.iter().position(|&b| b == needle);
     }
-
     // SAFETY: haystack.ptr/len are a valid readable range.
     let result = unsafe { highway_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| haystack[i] == needle));
+    found
+}
 
-    if result == haystack.len() {
-        return None;
+/// [`index_of_char`] of bytes that another thread may be writing. The byte found can have changed by the time this returns.
+///
+/// # Safety
+/// `len` bytes at `haystack` are readable.
+#[inline(always)]
+pub unsafe fn index_of_char_raw(haystack: *const u8, len: usize, needle: u8) -> Option<usize> {
+    // SAFETY: the caller's.
+    found_at(unsafe { highway_index_of_char(haystack, len, needle) }, len)
+}
+
+#[inline(always)]
+pub fn last_index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
+    if scalar_only(haystack.len()) {
+        return haystack.iter().rposition(|&b| b == needle);
     }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    let result = unsafe { highway_last_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| haystack[i] == needle));
+    found
+}
 
-    debug_assert!(haystack[result] == needle);
+/// Index of the first byte that is not `value` (i.e. the length of the leading
+/// run of `value`), or `None` if every byte is `value`.
+#[inline(always)]
+pub fn index_of_not_char(haystack: &[u8], value: u8) -> Option<usize> {
+    if scalar_only(haystack.len()) {
+        return haystack.iter().position(|&b| b != value);
+    }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    let result = unsafe { highway_index_of_not_char(haystack.as_ptr(), haystack.len(), value) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| haystack[i] != value));
+    found
+}
 
-    Some(result)
+#[inline(always)]
+pub fn count_char(haystack: &[u8], needle: u8) -> usize {
+    if scalar_only(haystack.len()) {
+        return haystack.iter().filter(|&&b| b == needle).count();
+    }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    unsafe { highway_count_char(haystack.as_ptr(), haystack.len(), needle) }
+}
+
+/// Where the lines of `text` start when only `\n` ends a line: 0, then the offset of the byte after
+/// each `\n`.
+pub fn line_starts(text: &[u8]) -> Vec<u32> {
+    assert!(u32::try_from(text.len()).is_ok());
+    let count = count_char(text, b'\n');
+    let mut starts = Vec::with_capacity(1 + count);
+    starts.push(0);
+    if scalar_only(text.len()) {
+        let newlines = text.iter().enumerate().filter(|it| *it.1 == b'\n');
+        starts.extend(newlines.map(|it| it.0 as u32 + 1));
+        return starts;
+    }
+    let spare = starts.spare_capacity_mut();
+    // SAFETY: `text` is readable, and the kernel writes one offset per `\n`: `spare` has room for `count`.
+    let written =
+        unsafe { highway_line_starts(text.as_ptr(), text.len(), spare.as_mut_ptr().cast::<u32>()) };
+    assert_eq!(written, count);
+    // SAFETY: the kernel has written that many after the first.
+    unsafe { starts.set_len(1 + written) };
+    starts
 }
 
 #[inline(always)]
@@ -139,20 +316,118 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if haystack.len() < needle.len() {
         return None;
     }
-    // SAFETY: both (ptr,len) pairs are valid readable ranges.
-    let p = unsafe {
-        highway_memmem(
-            haystack.as_ptr(),
-            haystack.len(),
-            needle.as_ptr(),
-            needle.len(),
-        )
-    };
-    if p.is_null() {
-        None
-    } else {
-        // SAFETY: highway_memmem returns a pointer within `haystack` on success.
-        Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
+    #[cfg(miri)]
+    {
+        scalar_memmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges.
+        let p = unsafe {
+            highway_memmem(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+            )
+        };
+        if p.is_null() {
+            None
+        } else {
+            // SAFETY: highway_memmem returns a pointer within `haystack` on success.
+            Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
+        }
+    }
+}
+
+/// Start index of the last occurrence of `needle` in `haystack`. An empty
+/// needle matches at `haystack.len()`.
+#[inline(always)]
+pub fn memrmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(haystack.len());
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    #[cfg(miri)]
+    {
+        scalar_memrmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges.
+        let result = unsafe {
+            highway_memrmem(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+            )
+        };
+        let found = match_at(result);
+        debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+        found
+    }
+}
+
+#[inline(always)]
+pub fn memmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    #[cfg(miri)]
+    {
+        scalar_memmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges (`&[u16]` is 2-byte aligned).
+        let result = unsafe {
+            highway_memmem16(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+            )
+        };
+        let found = match_at(result);
+        debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+        found
+    }
+}
+
+/// Start index of the last occurrence of `needle`. An empty needle matches at
+/// `haystack.len()`.
+#[inline(always)]
+pub fn memrmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(haystack.len());
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    #[cfg(miri)]
+    {
+        scalar_memrmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges (`&[u16]` is 2-byte aligned).
+        let result = unsafe {
+            highway_memrmem16(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+            )
+        };
+        let found = match_at(result);
+        debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+        found
     }
 }
 
@@ -214,6 +489,139 @@ pub fn index_of_interesting_character_in_multiline_comment(slice: &[u8]) -> Opti
     }
 
     Some(result)
+}
+
+/// Buffer for [`ScannerStops`]. Keep one per thread so the allocation is reused from file to file.
+#[derive(Default)]
+pub struct ScannerStopsBuffer {
+    /// As long as the longest text so far needs: the kernel writes all that is read, so nothing
+    /// is cleared from one text to the next.
+    planes: Vec<u8>,
+    /// The address and the length of the text that `planes` is filled for.
+    filled_for: Option<(usize, usize)>,
+}
+
+/// Where runs of bytes end in a JavaScript or TypeScript source. One kernel call finds them for the
+/// whole text, so a scanner gets the length of a name or a string from a load and a bit scan
+/// instead of a call per token.
+#[derive(Copy, Clone)]
+pub struct ScannerStops<'a> {
+    /// Everything but ASCII letters, digits, `_` and `$`.
+    pub after_name: Stops<'a>,
+    /// Everything but tabs and spaces.
+    pub after_blanks: Stops<'a>,
+    /// `"`, `'`, `` ` ``, `$`, `\`, control characters, and everything that isn't ASCII.
+    pub in_string: Stops<'a>,
+}
+
+impl ScannerStopsBuffer {
+    /// 8 bytes more than the kernel writes, so that `Stops::window` can load a whole word at any
+    /// position. They are set, like all bits past the end: a run ends with the text.
+    fn plane_len(text: &[u8]) -> usize {
+        text.len().div_ceil(64) * 8 + 8
+    }
+
+    /// The stops of `text`.
+    pub fn find(&mut self, text: &[u8]) -> ScannerStops<'_> {
+        self.fill(text);
+        self.filled(text)
+    }
+
+    /// The stops of `text`, which may be the text of the last call. The caller has held on to that
+    /// text since, or has called [`ScannerStopsBuffer::forget`]: another text can get the same address.
+    pub fn find_again(&mut self, text: &[u8]) -> ScannerStops<'_> {
+        if self.filled_for != Some((text.as_ptr().addr(), text.len())) {
+            self.fill(text);
+        }
+        #[cfg(debug_assertions)]
+        {
+            let found = self.planes.clone();
+            self.fill(text);
+            assert!(found == self.planes, "the text has changed");
+        }
+        self.filled(text)
+    }
+
+    /// The text of the last call is no longer held on to.
+    pub fn forget(&mut self) {
+        self.filled_for = None;
+    }
+
+    fn fill(&mut self, text: &[u8]) {
+        let plane_len = Self::plane_len(text);
+        if self.planes.len() < 3 * plane_len {
+            self.planes.resize(3 * plane_len, 0);
+        }
+        for plane in self.planes[..3 * plane_len].chunks_exact_mut(plane_len) {
+            plane[plane_len - 8..].fill(0xFF);
+        }
+        // SAFETY: `text` is readable, and the kernel writes `plane_len - 8` bytes to each of the three planes.
+        unsafe {
+            highway_scanner_run_stops(
+                text.as_ptr(),
+                text.len(),
+                self.planes.as_mut_ptr(),
+                plane_len,
+            );
+        }
+        self.filled_for = Some((text.as_ptr().addr(), text.len()));
+    }
+
+    fn filled(&self, text: &[u8]) -> ScannerStops<'_> {
+        let plane_len = Self::plane_len(text);
+        let (after_name, rest) = self.planes.split_at(plane_len);
+        let (after_blanks, rest) = rest.split_at(plane_len);
+        ScannerStops {
+            after_name: Stops(after_name),
+            after_blanks: Stops(after_blanks),
+            in_string: Stops(&rest[..plane_len]),
+        }
+    }
+}
+
+/// One bit per byte of a text, lowest bit first. A set bit is a byte that ends a run.
+#[derive(Copy, Clone)]
+pub struct Stops<'a>(&'a [u8]);
+
+impl Stops<'_> {
+    /// The bits from `pos` on. The upper 7 may be zeros that were shifted in.
+    #[inline(always)]
+    fn window(self, pos: usize) -> u64 {
+        let at = pos >> 3;
+        match self.0.get(at..at + 8) {
+            Some(bits) => u64::from_le_bytes(bits.try_into().unwrap_or_default()) >> (pos & 7),
+            None => 1,
+        }
+    }
+
+    /// How many bytes there are from `pos` to the next stop. Exact below 57; anything higher only
+    /// says that there are at least 57.
+    #[inline(always)]
+    pub fn run(self, pos: usize) -> u32 {
+        self.window(pos).trailing_zeros()
+    }
+
+    /// The first stop at or after `pos`. The end of the text is one.
+    #[inline(always)]
+    pub fn next(self, mut pos: usize) -> usize {
+        loop {
+            let window = self.window(pos);
+            if window != 0 {
+                return pos + window.trailing_zeros() as usize;
+            }
+            pos += 56;
+        }
+    }
+}
+
+/// Fills `out` with one bit for every 64 bytes of `text`, the lowest bit of the first word first:
+/// whether one of them is anything but a printable character of ASCII other than the backslash, a
+/// tab, a line feed or a carriage return. The bits past the end of the text are clear.
+pub fn odd_blocks(text: &[u8], out: &mut Vec<u64>) {
+    out.clear();
+    out.resize(text.len().div_ceil(64 * 64), 0);
+    // SAFETY: `text` is readable, and the kernel writes a word for every 64 blocks of 64 bytes, whole or not.
+    unsafe { highway_odd_blocks(text.as_ptr(), text.len(), out.as_mut_ptr()) };
 }
 
 #[inline(always)]
@@ -294,8 +702,12 @@ pub fn index_of_needs_escape_for_javascript_string(slice: &[u8], quote_char: u8)
 
 #[inline(always)]
 pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
-    if haystack.is_empty() || chars.is_empty() {
+    if chars.is_empty() {
         return None;
+    }
+    debug_assert!(chars.len() >= 2 && chars.len() <= 16);
+    if scalar_only(haystack.len()) {
+        return haystack.iter().position(|b| chars.contains(b));
     }
 
     // SAFETY: haystack and chars ptr/len are valid readable ranges.
@@ -327,6 +739,32 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     }
 
     Some(result)
+}
+
+/// `chars.len()` must be in 2..=16 (single-byte callers use [`last_index_of_char`]).
+#[inline(always)]
+pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
+    if chars.is_empty() {
+        return None;
+    }
+    debug_assert!(chars.len() >= 2 && chars.len() <= 16);
+    if scalar_only(haystack.len()) {
+        return haystack.iter().rposition(|b| chars.contains(b));
+    }
+
+    // SAFETY: haystack and chars ptr/len are valid readable ranges.
+    let result = unsafe {
+        highway_last_index_of_any_char(
+            haystack.as_ptr(),
+            haystack.len(),
+            chars.as_ptr(),
+            chars.len(),
+        )
+    };
+
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| chars.contains(&haystack[i])));
+    found
 }
 
 // `&[u16]` requires
@@ -395,8 +833,9 @@ pub fn decode_hex(src: &[u8], dst: &mut [u8]) -> usize {
     written
 }
 
-/// UTF-16 variant of [`decode_hex`]. Code units above 0xFF are treated as
-/// invalid characters (they stop decoding), never truncated to a byte.
+/// UTF-16 variant of [`decode_hex`]. Each code unit is decoded by its low
+/// byte, as Node's `Buffer` hex decoder does: U+FF41 decodes as `'A'`, and a
+/// unit whose low byte is not a hex digit stops decoding.
 #[inline(always)]
 pub fn decode_hex_u16(src: &[u16], dst: &mut [u8]) -> usize {
     let pairs = (src.len() / 2).min(dst.len());
@@ -641,6 +1080,48 @@ pub fn json_structural_index_chunk(
         )
     };
     (n, flags)
+}
+
+/// XML structural index (stage 1) for one chunk of a document.
+#[inline(always)]
+pub fn xml_structural_index_chunk(
+    chunk: &[u8],
+    base_offset: usize,
+    out: &mut [core::mem::MaybeUninit<u32>],
+    state: &mut [u64; 3],
+) -> usize {
+    assert!(out.len() >= chunk.len() + 64);
+    // SAFETY: `out` has room for one index per byte plus a full trailing block (asserted above).
+    unsafe {
+        highway_xml_index_chunk(
+            chunk.as_ptr(),
+            chunk.len(),
+            base_offset,
+            out.as_mut_ptr().cast::<u32>(),
+            state.as_mut_ptr(),
+        )
+    }
+}
+
+/// [`xml_structural_index_chunk`] over UTF-16 code units (positions in units).
+#[inline(always)]
+pub fn xml_structural_index16_chunk(
+    chunk: &[u16],
+    base_offset: usize,
+    out: &mut [core::mem::MaybeUninit<u32>],
+    state: &mut [u64; 3],
+) -> usize {
+    assert!(out.len() >= chunk.len() + 64);
+    // SAFETY: `out` has room for one index per unit plus a full trailing block (asserted above).
+    unsafe {
+        highway_xml_index16_chunk(
+            chunk.as_ptr(),
+            chunk.len(),
+            base_offset,
+            out.as_mut_ptr().cast::<u32>(),
+            state.as_mut_ptr(),
+        )
+    }
 }
 
 /// Raw output column pointers for [`parse_mappings`]. Each points to `cap`

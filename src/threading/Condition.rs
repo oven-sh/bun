@@ -114,7 +114,7 @@ impl Condition {
     ///
     /// Given `timed_wait()` can be interrupted spuriously, the blocking condition should be checked continuously
     /// irrespective of any notifications from `signal()` or `broadcast()`.
-    pub fn timed_wait(&self, mutex: &Mutex, timeout_ns: u64) -> Result<(), TimeoutError> {
+    pub(crate) fn timed_wait(&self, mutex: &Mutex, timeout_ns: u64) -> Result<(), TimeoutError> {
         self.impl_.wait(mutex, Some(timeout_ns))
     }
 

@@ -19,7 +19,7 @@ use crate::{
 // (see /tmp/todo-fix/complex/mk04-repair.md; also TransformHandler below).
 #[derive(Clone, PartialEq, Default)]
 pub struct TransformList {
-    pub v: Vec<Transform>,
+    pub(crate) v: Vec<Transform>,
 }
 
 // Split out of the parse/to_css `impl TransformList` below —
@@ -579,33 +579,33 @@ impl Transform {
 /// A 2D matrix.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Matrix<T> {
-    pub a: T,
-    pub b: T,
-    pub c: T,
-    pub d: T,
-    pub e: T,
-    pub f: T,
+    pub(crate) a: T,
+    pub(crate) b: T,
+    pub(crate) c: T,
+    pub(crate) d: T,
+    pub(crate) e: T,
+    pub(crate) f: T,
 }
 
 /// A 3D matrix.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Matrix3d<T> {
-    pub m11: T,
-    pub m12: T,
-    pub m13: T,
-    pub m14: T,
-    pub m21: T,
-    pub m22: T,
-    pub m23: T,
-    pub m24: T,
-    pub m31: T,
-    pub m32: T,
-    pub m33: T,
-    pub m34: T,
-    pub m41: T,
-    pub m42: T,
-    pub m43: T,
-    pub m44: T,
+    pub(crate) m11: T,
+    pub(crate) m12: T,
+    pub(crate) m13: T,
+    pub(crate) m14: T,
+    pub(crate) m21: T,
+    pub(crate) m22: T,
+    pub(crate) m23: T,
+    pub(crate) m24: T,
+    pub(crate) m31: T,
+    pub(crate) m32: T,
+    pub(crate) m33: T,
+    pub(crate) m34: T,
+    pub(crate) m41: T,
+    pub(crate) m42: T,
+    pub(crate) m43: T,
+    pub(crate) m44: T,
 }
 
 /// A value for the [transform-style](https://drafts.csswg.org/css-transforms-2/#transform-style-property) property.
@@ -724,21 +724,6 @@ impl Translate {
 // Split out of the parse/to_css `impl Translate` above — these don't depend
 // on Parser/Printer surface and are needed by `TransformHandler`.
 impl Translate {
-    pub(crate) fn to_transform(&self, _bump: &Bump) -> Transform {
-        match self {
-            Translate::None => Transform::Translate3d {
-                x: LengthPercentage::zero(),
-                y: LengthPercentage::zero(),
-                z: Length::zero(),
-            },
-            Translate::Xyz { x, y, z } => Transform::Translate3d {
-                x: x.clone(),
-                y: y.clone(),
-                z: *z,
-            },
-        }
-    }
-
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // `LengthPercentage` is `Clone`-via-derive; a plain clone suffices.
         self.clone()
@@ -749,13 +734,13 @@ impl Translate {
 #[derive(Copy, Clone, PartialEq)]
 pub struct Rotate {
     /// Rotation around the x axis.
-    pub x: f32,
+    pub(crate) x: f32,
     /// Rotation around the y axis.
-    pub y: f32,
+    pub(crate) y: f32,
     /// Rotation around the z axis.
-    pub z: f32,
+    pub(crate) z: f32,
     /// The angle of rotation.
-    pub angle: Angle,
+    pub(crate) angle: Angle,
 }
 
 impl Rotate {
@@ -844,16 +829,6 @@ impl Rotate {
 // Split out of the parse/to_css `impl Rotate` above — needed by
 // `TransformHandler`.
 impl Rotate {
-    /// Converts the rotation to a transform function.
-    pub(crate) fn to_transform(&self, _bump: &Bump) -> Transform {
-        Transform::Rotate3d {
-            x: self.x,
-            y: self.y,
-            z: self.z,
-            angle: self.angle,
-        }
-    }
-
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         *self
     }
@@ -928,21 +903,6 @@ impl Scale {
 // Split out of the parse/to_css `impl Scale` above — needed by
 // `TransformHandler`.
 impl Scale {
-    pub(crate) fn to_transform(&self, _bump: &Bump) -> Transform {
-        match self {
-            Scale::None => Transform::Scale3d {
-                x: NumberOrPercentage::Number(1.0),
-                y: NumberOrPercentage::Number(1.0),
-                z: NumberOrPercentage::Number(1.0),
-            },
-            Scale::Xyz { x, y, z } => Transform::Scale3d {
-                x: x.clone(),
-                y: y.clone(),
-                z: z.clone(),
-            },
-        }
-    }
-
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         self.clone()
     }
@@ -963,11 +923,11 @@ crate::css_eql_partialeq!(
 // work (see /tmp/todo-fix/complex/mk04-repair.md).
 #[derive(Default)]
 pub struct TransformHandler {
-    pub transform: Option<(TransformList, VendorPrefix)>,
-    pub translate: Option<Translate>,
-    pub rotate: Option<Rotate>,
-    pub scale: Option<Scale>,
-    pub has_any: bool,
+    pub(crate) transform: Option<(TransformList, VendorPrefix)>,
+    pub(crate) translate: Option<Translate>,
+    pub(crate) rotate: Option<Rotate>,
+    pub(crate) scale: Option<Scale>,
+    pub(crate) has_any: bool,
 }
 
 // `context.arena` does not exist on PropertyHandlerContext; the arena is
@@ -983,12 +943,10 @@ impl TransformHandler {
         // Rust cannot index struct fields by string at runtime; use a macro to paste the ident.
         macro_rules! individual_property {
             ($field:ident, $val:expr) => {{
-                if let Some(transform) = &mut self.transform {
-                    transform.0.v.push($val.to_transform(bump));
-                } else {
-                    self.$field = Some($val.deep_clone(bump));
-                    self.has_any = true;
-                }
+                // Individual transforms cascade independently of `transform`. Keep them
+                // separate so declaration order cannot change their composition or resets.
+                self.$field = Some($val.deep_clone(bump));
+                self.has_any = true;
             }};
         }
 
@@ -1017,10 +975,6 @@ impl TransformHandler {
                     self.transform = Some((transform_val.deep_clone(bump), vp));
                     self.has_any = true;
                 }
-
-                self.translate = None;
-                self.rotate = None;
-                self.scale = None;
             }
             Property::Translate(val) => individual_property!(translate, val),
             Property::Rotate(val) => individual_property!(rotate, val),

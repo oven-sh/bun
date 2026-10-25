@@ -8,7 +8,9 @@ OBJ       := $(ROOT)/build/$(PROFILE)/obj/vendor
 VENDOR    := $(ROOT)/vendor
 
 CC        ?= clang
+# LSXPACK_MAX_STRLEN: as in scripts/build/deps/lshpack.ts, which built the objects.
 CFLAGS    := -std=c11 -O3 -g -Wall -Wextra -Wno-unused-parameter \
+             -DLSXPACK_MAX_STRLEN=UINT32_MAX \
              -I$(VENDOR)/lsquic/include \
              -I$(VENDOR)/hdrhistogram/include \
              -I$(VENDOR)/boringssl/include

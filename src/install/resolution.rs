@@ -11,42 +11,55 @@ use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
 
 use crate::dependency::{self, TagExt as _};
-use crate::repository::{Repository, RepositoryExt as _};
+use crate::repository::{Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::versioned_url::VersionedURLType;
 
 pub type Resolution = ResolutionType<u64>;
 
 impl Resolution {
-    /// True when this resolution can satisfy `version`: npm ranges by
+    /// True when this resolution can satisfy `dep_version`: npm ranges by
     /// semver, git/github by exact repo equality. Any other kind pairing
     /// (workspace, folder, tarball, dist-tag, …) never satisfies. This is
     /// the comparison the resolver's deferred-peer phase uses to bind peer
     /// edges against already-resolved packages.
-    pub fn satisfies_dependency_version(
+    pub(crate) fn satisfies_dependency_version(
         &self,
-        version: &dependency::Version,
-        version_buf: &[u8],
+        dep_version: &dependency::Version,
+        dep_version_buf: &[u8],
         resolution_buf: &[u8],
     ) -> bool {
-        if self.tag == Tag::Npm && version.tag == dependency::VersionTag::Npm {
-            return version.npm().version.satisfies(
+        if self.tag == Tag::Npm && dep_version.tag == dependency::VersionTag::Npm {
+            return dep_version.npm().version.satisfies(
                 self.npm().version,
-                version_buf,
+                dep_version_buf,
                 resolution_buf,
             );
         }
 
-        if self.tag == Tag::Git && version.tag == dependency::VersionTag::Git {
-            return self.git().eql(version.git(), resolution_buf, version_buf);
+        if self.tag == Tag::Git && dep_version.tag == dependency::VersionTag::Git {
+            return self
+                .git()
+                .eql(dep_version.git(), resolution_buf, dep_version_buf);
         }
 
-        if self.tag == Tag::Github && version.tag == dependency::VersionTag::Github {
+        if self.tag == Tag::Github && dep_version.tag == dependency::VersionTag::Github {
             return self
                 .github()
-                .eql(version.github(), resolution_buf, version_buf);
+                .eql(dep_version.github(), resolution_buf, dep_version_buf);
         }
 
         false
+    }
+
+    /// Returns which of a dependency's two names the entries of `trustedDependencies` are matched
+    /// against.
+    #[inline]
+    pub fn trusted_name<T>(&self, by_alias: T, by_pkg_name: T) -> T {
+        if self.tag == Tag::Npm {
+            by_pkg_name
+        } else {
+            by_alias
+        }
     }
 }
 
@@ -54,8 +67,8 @@ impl Resolution {
 #[derive(Clone, Copy)]
 pub struct ResolutionType<SemverInt: VersionInt> {
     pub tag: Tag,
-    pub _padding: [u8; 7],
-    pub value: Value<SemverInt>,
+    pub(crate) _padding: [u8; 7],
+    pub(crate) value: Value<SemverInt>,
 }
 
 /// Compat alias for the stub-era flat `npm` field type. Identical layout to
@@ -94,20 +107,9 @@ pub enum TaggedValue<SemverInt: VersionInt> {
 }
 
 impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
-    /// Const-evaluable zeroed sentinel. Mirrors `Default::default()` but usable
-    /// in `const` / `static` position (e.g. dummy `&'static Resolution` returns).
-    /// Only the tag/padding are guaranteed zero — the union payload is the
-    /// `uninitialized` variant, which is the only field a `Tag::Uninitialized`
-    /// reader may legally access.
-    pub const ZEROED: Self = Self {
-        tag: Tag::Uninitialized,
-        _padding: [0; 7],
-        value: Value { uninitialized: () },
-    };
-
     /// Construct from a tagged value, e.g. `Resolution::init(TaggedValue::Npm(...))`.
     #[inline]
-    pub fn init(value: TaggedValue<SemverInt>) -> Self {
+    pub(crate) fn init(value: TaggedValue<SemverInt>) -> Self {
         Self {
             tag: value.tag(),
             _padding: [0; 7],
@@ -117,13 +119,13 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
 
     /// Convenience constructor for a root resolution.
     #[inline]
-    pub fn init_root() -> Self {
+    pub(crate) fn init_root() -> Self {
         Self::init(TaggedValue::Root)
     }
 
     /// Convenience constructor for a symlink resolution.
     #[inline]
-    pub fn init_symlink(s: String) -> Self {
+    pub(crate) fn init_symlink(s: String) -> Self {
         Self::init(TaggedValue::Symlink(s))
     }
 
@@ -145,18 +147,18 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     }
     /// `git` or `github` payload — they share the [`Repository`] shape.
     #[inline]
-    pub fn repository(&self) -> &Repository {
+    pub(crate) fn repository(&self) -> &Repository {
         debug_assert!(self.tag == Tag::Git || self.tag == Tag::Github);
         // SAFETY: `git` and `github` occupy the same union slot type
         // (`Repository`); tag asserted to be one of the two.
         unsafe { &(*core::ptr::from_ref(&self.value)).git }
     }
 
-    pub fn can_enqueue_install_task(&self) -> bool {
+    pub(crate) fn can_enqueue_install_task(&self) -> bool {
         self.tag.can_enqueue_install_task()
     }
 
-    pub fn from_text_lockfile(
+    pub(crate) fn from_text_lockfile(
         res_str: &[u8],
         string_buf: &mut StringBuf,
     ) -> Result<Self, FromTextLockfileError> {
@@ -249,7 +251,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub fn from_pnpm_lockfile(
+    pub(crate) fn from_pnpm_lockfile(
         res_str: &[u8],
         string_buf: &mut StringBuf,
     ) -> Result<Resolution, FromPnpmLockfileError> {
@@ -273,11 +275,18 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
             };
             let committish = &tar_committish[tar_end + 1..];
+            if !is_safe_resolved_tag(committish) {
+                return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
+            }
+            let committish = string_buf.append(committish)?;
 
             return Ok(Resolution::init(TaggedValue::Github(Repository {
                 owner: string_buf.append(user)?,
                 repo: string_buf.append(repo)?,
-                committish: string_buf.append(committish)?,
+                committish,
+                // `resolved` names the cache folder. As in the package-lock.json migration, it is
+                // the full commit hash.
+                resolved: committish,
                 ..Default::default()
             })));
         }
@@ -346,7 +355,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub fn order(&self, rhs: &Self, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order(&self, rhs: &Self, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         if self.tag != rhs.tag {
             return self.tag.0.cmp(&rhs.tag.0);
         }
@@ -373,7 +382,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub fn count<B>(&self, buf: &[u8], builder: &mut B)
+    pub(crate) fn count<B>(&self, buf: &[u8], builder: &mut B)
     where
         B: StringBuilderLike,
     {
@@ -393,7 +402,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone` now
     /// that `ResolutionType: Clone + Copy`.
-    pub fn clone_into<B>(&self, buf: &[u8], builder: &mut B) -> Self
+    pub(crate) fn clone_into<B>(&self, buf: &[u8], builder: &mut B) -> Self
     where
         B: StringBuilderLike,
     {
@@ -430,7 +439,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub fn copy(&self) -> Self {
+    pub(crate) fn copy(&self) -> Self {
         match self.tag {
             Tag::Npm => Self::init(TaggedValue::Npm(*self.npm())),
             Tag::LocalTarball => Self::init(TaggedValue::LocalTarball(*self.local_tarball())),
@@ -468,21 +477,24 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub fn fmt_url<'a>(&'a self, string_bytes: &'a [u8]) -> URLFormatter<'a, SemverInt> {
+    pub(crate) fn fmt_url<'a>(&'a self, string_bytes: &'a [u8]) -> URLFormatter<'a, SemverInt> {
         URLFormatter {
             resolution: self,
             buf: string_bytes,
         }
     }
 
-    pub fn fmt_for_debug<'a>(&'a self, string_bytes: &'a [u8]) -> DebugFormatter<'a, SemverInt> {
+    pub(crate) fn fmt_for_debug<'a>(
+        &'a self,
+        string_bytes: &'a [u8],
+    ) -> DebugFormatter<'a, SemverInt> {
         DebugFormatter {
             resolution: self,
             buf: string_bytes,
         }
     }
 
-    pub fn eql(&self, rhs: &Self, lhs_string_buf: &[u8], rhs_string_buf: &[u8]) -> bool {
+    pub(crate) fn eql(&self, rhs: &Self, lhs_string_buf: &[u8], rhs_string_buf: &[u8]) -> bool {
         if self.tag != rhs.tag {
             return false;
         }
@@ -546,7 +558,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverIn
                 write!(
                     writer,
                     "{}",
-                    res.remote_tarball().fmt_store_path(string_buf)
+                    fmt_store_url(res.remote_tarball().slice(string_buf))
                 )
             }
             Tag::Folder => write!(writer, "{}", res.folder().fmt_store_path(string_buf)),
@@ -569,6 +581,80 @@ impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverIn
             }
             _ => Ok(()),
         }
+    }
+}
+
+/// Store path of a tarball or repository URL. The store path becomes a
+/// directory name (realpaths, stack traces, `bun pm` output), so the userinfo
+/// and the query string, which is where credentials go, are left out of it;
+/// when either was present, the hash of the complete URL takes their place so
+/// that URLs differing only in those parts still get separate entries:
+/// `https://user:token@host/pkg.tgz?token=x` becomes
+/// `https+++host+pkg.tgz+<16 hex>`. A URL without either part is spelled out
+/// unchanged.
+pub(crate) struct StoreURLFormatter<'a> {
+    url: &'a [u8],
+}
+
+pub(crate) fn fmt_store_url(url: &[u8]) -> StoreURLFormatter<'_> {
+    StoreURLFormatter { url }
+}
+
+/// Returns `(authority_start, host_start, query_start)`. The userinfo is
+/// `authority_start..host_start`.
+fn url_credential_offsets(url: &[u8]) -> (usize, usize, usize) {
+    // RFC 3986: the authority ends at the first `/`, `?` or `#`, and the userinfo ends at the
+    // authority's last `@`.
+    let authority_start = match strings::index_of_char_usize(url, b':') {
+        Some(colon) if url[colon + 1..].starts_with(b"//") => colon + b"://".len(),
+        _ => 0,
+    };
+    let authority_end = strings::index_of_any(&url[authority_start..], b"/?#")
+        .map_or(url.len(), |i| authority_start + i);
+    let host_start = strings::last_index_of_char(&url[authority_start..authority_end], b'@')
+        .map_or(authority_start, |at| authority_start + at + 1);
+    let query_start = strings::index_of_char_usize(&url[host_start..], b'?')
+        .map_or(url.len(), |i| host_start + i);
+    (authority_start, host_start, query_start)
+}
+
+/// Appends a `scheme://` URL without its userinfo and query string. The `#fragment` is kept.
+pub(crate) fn append_without_url_credentials(out: &mut Vec<u8>, specifier: &[u8]) {
+    let (authority_start, host_start, query_start) = url_credential_offsets(specifier);
+    if authority_start == 0 {
+        out.extend_from_slice(specifier);
+        return;
+    }
+    out.extend_from_slice(&specifier[..authority_start]);
+    out.extend_from_slice(&specifier[host_start..query_start]);
+    let query = &specifier[query_start..];
+    if let Some(fragment) = strings::index_of_char_usize(query, b'#') {
+        out.extend_from_slice(&query[fragment..]);
+    }
+}
+
+/// Keeps the query string, because a registry may sign its tarball URLs.
+pub(crate) fn append_without_url_userinfo(out: &mut Vec<u8>, url: &[u8]) {
+    let (authority_start, host_start, _) = url_credential_offsets(url);
+    out.extend_from_slice(&url[..authority_start]);
+    out.extend_from_slice(&url[if authority_start == 0 { 0 } else { host_start }..]);
+}
+
+impl fmt::Display for StoreURLFormatter<'_> {
+    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let url = self.url;
+        let (authority_start, host_start, query_start) = url_credential_offsets(url);
+
+        write!(
+            writer,
+            "{}{}",
+            semver::string::fmt_store_path(&url[..authority_start]),
+            semver::string::fmt_store_path(&url[host_start..query_start]),
+        )?;
+        if host_start != authority_start || query_start != url.len() {
+            write!(writer, "+{:016x}", bun_wyhash::hash(url))?;
+        }
+        Ok(())
     }
 }
 
@@ -681,7 +767,7 @@ impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
     /// See [`URLFormatter::write_to`] for rationale — `Display` is lossy on
     /// non-UTF-8 path bytes; this writes the lockfile string-buffer slices
     /// verbatim via `write_all`.
-    pub fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
+    pub(crate) fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: bun_core::io::Write + ?Sized,
     {
@@ -876,7 +962,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for DebugFormatter<'a, SemverInt> {
 pub type Value<SemverInt> = bun_install_types::resolver_hooks::ResolutionValue<SemverInt>;
 
 #[inline]
-pub(crate) fn value_zero<SemverInt: VersionInt>() -> Value<SemverInt> {
+fn value_zero<SemverInt: VersionInt>() -> Value<SemverInt> {
     // SAFETY: all-zero is a valid Value — every variant is POD with a valid
     // all-zero representation (Semver String, Repository, VersionedURLType are
     // all #[repr(C)] with no NonNull/NonZero fields).
@@ -884,7 +970,7 @@ pub(crate) fn value_zero<SemverInt: VersionInt>() -> Value<SemverInt> {
 }
 
 /// To avoid undefined memory between union values, we must zero initialize the union first.
-pub(crate) fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -> Value<SemverInt> {
+fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -> Value<SemverInt> {
     let mut value = value_zero::<SemverInt>();
     match field {
         TaggedValue::Uninitialized => value.uninitialized = (),
@@ -911,31 +997,24 @@ pub(crate) fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -
 #[derive(Clone, Copy, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
 pub struct Tag(pub u8);
 
-impl Default for Tag {
-    #[inline]
-    fn default() -> Self {
-        Tag::Uninitialized
-    }
-}
-
 #[allow(non_upper_case_globals)]
 impl Tag {
-    pub const Uninitialized: Tag = Tag(0);
+    pub(crate) const Uninitialized: Tag = Tag(0);
     pub const Root: Tag = Tag(1);
     pub const Npm: Tag = Tag(2);
     pub const Folder: Tag = Tag(4);
 
-    pub const LocalTarball: Tag = Tag(8);
+    pub(crate) const LocalTarball: Tag = Tag(8);
 
-    pub const Github: Tag = Tag(16);
+    pub(crate) const Github: Tag = Tag(16);
 
-    pub const Git: Tag = Tag(32);
+    pub(crate) const Git: Tag = Tag(32);
 
     pub const Symlink: Tag = Tag(64);
 
     pub const Workspace: Tag = Tag(72);
 
-    pub const RemoteTarball: Tag = Tag(80);
+    pub(crate) const RemoteTarball: Tag = Tag(80);
 
     // This is a placeholder for now.
     // But the intent is to eventually support URL imports at the package manager level.
@@ -954,15 +1033,45 @@ impl Tag {
     // This is similar to how Go does it, except it wouldn't clone the whole repo.
     // There are more efficient ways to do this, e.g. generate a .bun file just for all URL imports.
     // There are questions of determinism, but perhaps that's what Integrity would do.
-    pub const SingleFileModule: Tag = Tag(100);
+    pub(crate) const SingleFileModule: Tag = Tag(100);
 }
 
 impl Tag {
-    pub fn is_git(self) -> bool {
+    pub(crate) fn is_git(self) -> bool {
         self == Tag::Git || self == Tag::Github
     }
 
-    pub fn can_enqueue_install_task(self) -> bool {
+    /// The root, a workspace, or a `file:` folder package: a package.json on
+    /// disk rather than content fetched from a registry, git host, or tarball.
+    /// These get `local_package_features`.
+    pub(crate) fn is_local_package(self) -> bool {
+        self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
+    }
+
+    /// The path or URL can serve different bytes tomorrow, so it's cached under the integrity that
+    /// bun.lock records.
+    pub(crate) fn is_tarball(self) -> bool {
+        self == Tag::LocalTarball || self == Tag::RemoteTarball
+    }
+
+    /// `Uninitialized` only exists before a package is appended, and nothing produces
+    /// `SingleFileModule`.
+    pub(crate) fn belongs_in_lockfile(self) -> bool {
+        matches!(
+            self,
+            Tag::Root
+                | Tag::Npm
+                | Tag::Folder
+                | Tag::LocalTarball
+                | Tag::Github
+                | Tag::Git
+                | Tag::Symlink
+                | Tag::Workspace
+                | Tag::RemoteTarball
+        )
+    }
+
+    pub(crate) fn can_enqueue_install_task(self) -> bool {
         self == Tag::Npm
             || self == Tag::LocalTarball
             || self == Tag::RemoteTarball
@@ -972,7 +1081,7 @@ impl Tag {
 
     /// Returns the snake_case tag name, or `None` for an unnamed
     /// (non-exhaustive) value.
-    pub fn name(self) -> Option<&'static str> {
+    pub(crate) fn name(self) -> Option<&'static str> {
         Some(match self {
             Tag::Uninitialized => "uninitialized",
             Tag::Root => "root",
@@ -996,8 +1105,6 @@ pub enum FromTextLockfileError {
     OutOfMemory,
     #[error("unexpected resolution")]
     UnexpectedResolution,
-    #[error("invalid semver")]
-    InvalidSemver,
 }
 
 bun_core::oom_from_alloc!(FromTextLockfileError);

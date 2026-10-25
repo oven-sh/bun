@@ -2195,8 +2195,9 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     /// Shared prelude of `get_or_put` / `get` / `remove`; the trimmed slice itself
     /// is never needed by callers, only the hash. `#[inline(always)]` + the
     /// const-generic branch fold to identical codegen at each monomorphization.
+    /// Equals `Result::hash` for the key, in every map with this `REMOVE_TRAILING_SLASHES`.
     #[inline(always)]
-    fn key_hash(denormalized_key: &[u8]) -> u64 {
+    pub fn key_hash(denormalized_key: &[u8]) -> u64 {
         let key = if REMOVE_TRAILING_SLASHES {
             trim_right(denormalized_key, SEP_STR.as_bytes())
         } else {
@@ -2306,11 +2307,32 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         Ok(ret)
     }
 
+    /// Maps `key_hash` to the slot `put` assigned to `index`, replacing what `key_hash` mapped to.
+    pub fn alias(&mut self, key_hash: u64, index: IndexType) {
+        let _guard = self.mutex.lock();
+        let used = if index.is_overflow() {
+            self.overflow_list.len()
+        } else {
+            u32::from(self.backing_buf_used)
+        };
+        assert!(
+            index.index() < used,
+            "alias to unassigned slot {} (overflow: {}, used: {used})",
+            index.index(),
+            index.is_overflow(),
+        );
+        self.index.insert(key_hash, index);
+    }
+
+    /// Returns true if `key_hash` was mapped, whether to a slot, `NOT_FOUND` or `UNASSIGNED`.
+    pub fn remove_hash(&mut self, key_hash: u64) -> bool {
+        let _guard = self.mutex.lock();
+        self.index.remove(&key_hash).is_some()
+    }
+
     /// Returns true if the entry was removed.
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
-        let _guard = self.mutex.lock();
-        let _key = Self::key_hash(denormalized_key);
-        self.index.remove(&_key).is_some()
+        self.remove_hash(Self::key_hash(denormalized_key))
     }
 }
 

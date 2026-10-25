@@ -885,7 +885,17 @@ pub mod fs {
             self.inner().mark_not_found(result)
         }
         pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
-            self.inner().remove(key)
+            self.remove_hash(Self::key_hash(key))
+        }
+        pub(crate) fn remove_hash(&mut self, key_hash: u64) -> bool {
+            self.inner().remove_hash(key_hash)
+        }
+        pub fn alias(&mut self, key_hash: u64, index: bun_alloc::IndexType) {
+            self.inner().alias(key_hash, index)
+        }
+        /// Also the hash of `key` in `dir_info::HashMap`, which trims and hashes the same way.
+        pub(crate) fn key_hash(key: &[u8]) -> u64 {
+            EntriesOptionMap::key_hash(key)
         }
     }
 

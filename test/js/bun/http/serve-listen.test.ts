@@ -381,6 +381,7 @@ describe.skipIf(isWindows)("Bun.serve({ fd })", () => {
 
     test("a WebSocket", async () => {
       await using child = await inheritListener({ fixture, kind: "tcp" });
+      expect(child.ready).toMatchObject({ port: child.port, newSockets: 0 });
       expect(await child.echo("hello")).toBe("echo hello");
     });
 
@@ -506,13 +507,29 @@ describe.skipIf(isWindows)("Bun.serve({ fd })", () => {
     });
   });
 
+  // Reads the address that a child prints, before a request. A child that serves on another socket keeps
+  // the inherited socket open, so a request to that socket waits with no answer.
+  function reader(stdout: ReadableStream<Uint8Array>) {
+    const chunks = stdout.pipeThrough(new TextDecoderStream()).getReader();
+    let seen = "";
+    return async (pattern: RegExp) => {
+      for (;;) {
+        const match = pattern.exec(seen);
+        if (match) return match;
+        const { value, done } = await chunks.read();
+        if (done) throw new Error("the child exited. stdout: " + JSON.stringify(seen));
+        seen += value;
+      }
+    };
+  }
+
   // The second run finds the server of the first run by its `fd` and reloads
   // it. A second listen on the descriptor would fail.
   test("a --hot reload keeps the adopted socket", async () => {
-    // The answer names the version of the file, because one change of the file can reload it more than once.
+    // Each line and each answer names the version of the file, because one change of the file can reload it more than once.
     const source = (version: string) => `
-      Bun.serve({ fd: 3, fetch: () => new Response("${version}") });
-      console.log("${version}");
+      const server = Bun.serve({ fd: 3, fetch: () => new Response("${version}") });
+      console.log("${version} on port " + server.port);
     `;
     using dir = tempDir("fd-hot", { "server.ts": source("first") });
     const donor = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
@@ -524,26 +541,17 @@ describe.skipIf(isWindows)("Bun.serve({ fd })", () => {
       stdio: ["ignore", "pipe", "inherit", donor.fd],
     });
     donor.stop(true);
+    const printed = reader(child.stdout);
 
-    const lines = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
-    let seen = "";
-    async function untilLine(line: string) {
-      while (!seen.includes(line + "\n")) {
-        const { value, done } = await lines.read();
-        if (done) throw new Error("the child exited. stdout: " + JSON.stringify(seen));
-        seen += value;
-      }
-    }
-
-    await untilLine("first");
+    expect((await printed(/^first on port (\d+)\n/m))[1]).toBe(String(port));
     expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("first");
 
     writeFileSync(join(String(dir), "server.ts"), source("second"));
-    await untilLine("second");
+    expect((await printed(/^second on port (\d+)\n/m))[1]).toBe(String(port));
     expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("second");
   });
 
-  // `bun run` starts the entry point that exports a server.
+  // `bun run` starts the entry point that exports a server, and prints the address of that server.
   test("export default { fd, fetch }", async () => {
     using dir = tempDir("fd-default", {
       "server.ts": `export default { fd: 3, fetch: () => new Response("default export") };`,
@@ -554,10 +562,12 @@ describe.skipIf(isWindows)("Bun.serve({ fd })", () => {
       cmd: [bunExe(), "server.ts"],
       cwd: String(dir),
       env: bunEnv,
-      stdio: ["ignore", "ignore", "inherit", donor.fd],
+      stdio: ["ignore", "pipe", "inherit", donor.fd],
     });
     donor.stop(true);
-    // The connection waits in the backlog until the child listens.
+    const printed = reader(child.stdout);
+
+    expect((await printed(/server: (\S+)\n/))[1]).toBe(`http://127.0.0.1:${port}`);
     expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("default export");
   });
 });

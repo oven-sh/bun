@@ -2434,8 +2434,9 @@ describe("bundler", () => {
     ...printsRead("exports_barrel.movable"),
   });
 
-  // The target of `export *` is not in the bundle. With ES module output the
-  // kept statement still needs https://github.com/oven-sh/bun/pull/41220.
+  // The target of `export *` is not in the bundle: it is external, or a
+  // browser build disables it. With ES module output the kept statement still
+  // needs https://github.com/oven-sh/bun/pull/41220.
   itBundled("barrel/ExportStarOfExternalFormatCjs", {
     files: {
       "/entry.js": /* js */ `
@@ -2449,6 +2450,26 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: "b.txt true" },
     ...printsRead("exports_barrel.basename"),
+  });
+
+  itBundled("barrel/ExportStarOfDisabledFormatCjs", {
+    files: {
+      "/entry.js": /* js */ `
+        import { nodeOnly, web } from './lib/barrel.js';
+        console.log(web, typeof nodeOnly);
+      `,
+      "/lib/package.json": JSON.stringify({ name: "lib", sideEffects: false, browser: { "./node.js": false } }),
+      "/lib/barrel.js": /* js */ `
+        export * from './node.js';
+        export * from './web.js';
+      `,
+      "/lib/node.js": /* js */ `export const nodeOnly = "node";`,
+      "/lib/web.js": /* js */ `export const web = "web";`,
+    },
+    format: "cjs",
+    target: "browser",
+    run: { stdout: "web undefined" },
+    ...printsRead("exports_barrel.nodeOnly"),
   });
 
   // Every entry point that reads through the barrel loads it: it goes to a

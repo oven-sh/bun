@@ -1,0 +1,13 @@
+describe("a", () => {
+	it("b", () => {
+		expect(withoutLeadingSlashes("/	/	/some/longer/path")).toMatchSnapshot(`"/x"`);
+		expect(withoutLeadingSlashes("/ / /some/longer/path")).toMatchSnapshot(`"/x"`);
+	});
+});
+function c() {
+	const prompt = `The answers of the workers:
+			${answers
+				.map((answer, index) => `Part ${index + 1}: ${answer}`)
+				.join("\n\n")}
+			Please sum them up.`;
+}

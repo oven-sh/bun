@@ -174,7 +174,10 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     if (!globalObject)
         return;
 
-    JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
+    // A WebAssembly GC object doesn't have a realm.
+    JSGlobalObject* lexicalGlobalObject = jsFunction->realmMayBeNull();
+    if (!lexicalGlobalObject)
+        return;
 
     JSValue handleEventFunction = jsFunction;
 

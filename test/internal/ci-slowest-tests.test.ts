@@ -9,7 +9,7 @@ const gray = (s: string) => `\x1b[90m${s}\x1b[0m`;
 
 describe("scripts/ci-slowest-tests.ts parseLog", () => {
   test("does not charge the parallel-safe phase to the last serial test", () => {
-    // runner.node.mjs prints serial headers via startGroup (`--- [N/M] path`)
+    // runner.node.ts prints serial headers via startGroup (`--- [N/M] path`)
     // and parallel-safe headers via plain console.log (`[N/M] path`). A regex
     // that insists on `--- ` treats the first parallel header as invisible and
     // the last serial test swallows the whole phase (79.5s observed for a
@@ -120,7 +120,7 @@ describe("scripts/ci-slowest-tests.ts parseLog", () => {
   });
 
   test("ignores stray `--- ` lines that are test output, not group headers", () => {
-    // pipeTestStdout in runner.node.mjs sanitises `--- ` in streamed test
+    // pipeTestStdout in runner.node.ts sanitises `--- ` in streamed test
     // output, but a chunk boundary can split the token and the coordinator/
     // retry-preview paths write raw. Seen in build #86086: a `bun patch` diff
     // inside `test/cli/install/bun-patch.test.ts`'s span and `--- ps ---`
@@ -146,7 +146,7 @@ describe("scripts/ci-slowest-tests.ts parseLog", () => {
 
 describe("phase-header boundary", () => {
   // Both log parsers share this allowlist (scripts/ci-log-phase.mjs); if
-  // runner.node.mjs grows a new phase between the serial tests and the next
+  // runner.node.ts grows a new phase between the serial tests and the next
   // `[N/M]` header, add it there and here.
   test.each([
     [true, `--- napi prebuild: 3 addon(s), 23.9s`],

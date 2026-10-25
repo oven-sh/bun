@@ -51,7 +51,7 @@ pub struct KnownHelpers {
     binding_names: FxHashSet<Atom>,
 }
 
-fn find_by_key<K: Ord, V>(sorted: &[(K, V)], key: K) -> Option<&V> {
+fn find_by_key<K: Ord + Copy, V>(sorted: &[(K, V)], key: K) -> Option<&V> {
     let at = sorted.binary_search_by(|entry| entry.0.cmp(&key));
     at.ok().map(|at| &sorted[at].1)
 }

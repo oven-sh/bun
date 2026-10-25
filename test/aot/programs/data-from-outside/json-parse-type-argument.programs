@@ -20,7 +20,7 @@ interface «1» {
 function say(label: string, parse: (text: string) => unknown, text: string): void {
   let said = "";
   try {
-    said = JSON.stringify(parse(text)) === JSON.stringify(JSON.parse(text)) ? "what JSON.parse gives" : "DIFFERENT";
+    said = JSON.stringify(parse(text)) === JSON.stringify(globalThis.JSON.parse(text)) ? "what JSON.parse gives" : "DIFFERENT";
   } catch (error: any) {
     said = error.name;
   }
@@ -38,7 +38,7 @@ const texts: string[] = [
 ];
 //// json-parse-type-argument-refuses-a-large-text-in-workers-that-are-ended.ts
 // The first JSON.parse<T> of a Worker reads a large text that compiled code does not accept to the end: its first or its last row is refused, or every name has to match a pattern. Each Worker is ended from outside at another moment of that first call: the main thread has made the text and timed a parse of it without a type, and the moments lie within three times as long.
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 
 type Row = { id: number; name: string; tags: string[]; inner: { a: number; b?: string } };
 type Named = { id: number; name: string & Schema.Pattern<"^name [0-9]+$"> };
@@ -78,7 +78,7 @@ if (Bun.isMainThread) {
     let once = Infinity;
     for (let turn = 0; turn < 3; turn++) {
       const began = performance.now();
-      JSON.parse(text);
+      globalThis.JSON.parse(text);
       once = Math.min(once, performance.now() - began);
     }
     for (let round = 0; round < rounds; round++) {
@@ -103,7 +103,7 @@ if (Bun.isMainThread) {
 }
 //// json-parse-type-argument-result-is-what-json-parse-gives.ts
 // JSON.parse<T>(text) returns, in every way a program can observe, what JSON.parse(text) returns. T only adds the throw.
-interface Address { street: string; city: string; zip?: string }
+import { JSON } from "bun"; interface Address { street: string; city: string; zip?: string }
 interface User {
   id: number;
   name: string;
@@ -158,7 +158,7 @@ const users = [
 ];
 for (const text of users) {
   const typed = JSON.parse<User>(text);
-  console.log(show(typed) === show(JSON.parse(text)), JSON.stringify(typed) === JSON.stringify(JSON.parse(text)), show(typed));
+  console.log(show(typed) === show(globalThis.JSON.parse(text)), JSON.stringify(typed) === JSON.stringify(globalThis.JSON.parse(text)), show(typed));
   console.log(typed.id, typed.name, typed.nickname, typed.tags.length, typed.address.city, typed.address.zip, typed.boss?.name);
 }
 const drawings = [
@@ -169,7 +169,7 @@ const drawings = [
 ];
 for (const text of drawings) {
   const typed = JSON.parse<Drawing>(text);
-  console.log(show(typed) === show(JSON.parse(text)), show(typed));
+  console.log(show(typed) === show(globalThis.JSON.parse(text)), show(typed));
   let sum = 0;
   for (const shape of typed.shapes) sum += shape.kind === "circle" ? shape.radius : shape.side;
   console.log(sum, typed.size[0] + typed.size[1]);
@@ -180,7 +180,7 @@ for (const text of ["1", "-0", "1.5e3", '"text"', "true", "null", "[1,2]", '["a"
   try { results.push(show(JSON.parse<string>(text))); } catch { results.push("-"); }
   try { results.push(show(JSON.parse<boolean | null>(text))); } catch { results.push("-"); }
   try { results.push(show(JSON.parse<number[]>(text))); } catch { results.push("-"); }
-  console.log(text, show(JSON.parse(text)), results.filter(result => result !== "-").every(result => result === show(JSON.parse(text))));
+  console.log(text, show(globalThis.JSON.parse(text)), results.filter(result => result !== "-").every(result => result === show(globalThis.JSON.parse(text))));
 }
 const kept = JSON.parse<User>(users[4]) as User & { extra: number; more: { x: unknown[] } };
 kept.id += 1;
@@ -192,7 +192,7 @@ console.log(JSON.stringify(JSON.parse<User>(users[5]), null, 1));
 console.log(JSON.stringify({ ...JSON.parse<User>(users[4]) }), JSON.stringify(Object.entries(JSON.parse<User>(users[3]))));
 //// json-parse-type-argument-tags-that-are-no-texts.ts
 // Unions told apart by numbers, booleans, null and a mix of them: the tag in every spelling, in every place, twice, missing, of another kind: JSON.parse<T> gives what JSON.parse gives, or refuses it.
-const plainParse: (text: string) => any = JSON.parse;
+import { JSON } from "bun"; const plainParse: (text: string) => any = globalThis.JSON.parse;
 
 ////= show
 
@@ -261,7 +261,7 @@ for (const [label, name, parse] of roads) {
 // Template literal types are validated as TypeScript itself matches a string literal against them.
 // For every pair of a type and a string, what JSON.parse<T>() says at run time is compared with what the type checker says of `"text" extends T`:
 // the checker's answers are the literal types 1 and 0 of a tuple, read back from the `expected` of the issues that a tuple of 2s gets.
-let pairs = 0, accepted = 0, disagreements = 0;
+import { JSON } from "bun"; let pairs = 0, accepted = 0, disagreements = 0;
 ////= lines-4	accepts	parse	boolean	true	false
 function issuesOf(parse: () => unknown): { expected: string }[] {
   try {
@@ -378,7 +378,7 @@ const summaryOf = (row: Row): string => row.id.toUpperCase() + row.color.length;
 console.log(summaryOf(JSON.parse<Row>('{"id":"a-b-c-d-e","parent":null,"color":"rgb:x","sizes":[]}')));
 //// json-parse-type-argument-texts-broken-far-below-take-linear-time.ts
 // JSON.parse<T> of texts that are no JSON at their deepest place, or that nest past the end of the stack: the error is JSON.parse's, and no level of the text is read again for each level around it, so each answer comes within a second.
-type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+import { JSON } from "bun"; type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 type Chain = { extra: unknown; next: Chain | null };
 type Link = { name: string; next?: Link };
 type Rows = { rows: Rows[] };
@@ -410,7 +410,7 @@ for (const [label, parse, text] of kinds) {
 }
 //// json-parse-type-argument-texts-from-every-source.ts
 // The text comes from buffers, decoders, files, responses, streams and other makers of strings, whole and in slices: JSON.parse<T> gives what JSON.parse gives.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { JSON } from "bun"; import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -433,7 +433,7 @@ function check(text: string): void {
       typed = error.name + ": " + error.message;
     }
     try {
-      plain = JSON.stringify((JSON.parse as (text: string) => unknown)(given));
+      plain = JSON.stringify((globalThis.JSON.parse as (text: string) => unknown)(given));
     } catch (error: any) {
       plain = error.name + ": " + error.message;
     }
@@ -460,8 +460,8 @@ for (const [label, text] of [["ASCII", ascii], ["Latin-1", latin], ["16-bit", wi
     await new Response(text).text(),
     await new Blob([bytes]).text(),
     await Bun.readableStreamToText(new Blob([bytes]).stream()),
-    JSON.stringify(JSON.parse(text)),
-    JSON.parse(JSON.stringify(text)),
+    JSON.stringify(globalThis.JSON.parse(text)),
+    globalThis.JSON.parse(JSON.stringify(text)),
     text.normalize(),
     text.toWellFormed(),
     text.split("").join(""),
@@ -484,7 +484,7 @@ for (const [label, text] of [["ASCII", ascii], ["Latin-1", latin], ["16-bit", wi
 rmSync(folder, { recursive: true, force: true });
 //// json-parse-type-argument-thousands-of-kinds-below-a-holder.ts
 // A holder with undeclared keys of its own holds up to 66,000 items that each have an undeclared key of their own name: more kinds of object than the parser and the writer remember, met while the holder is being parsed and written.
-interface Item { id: number }
+import { JSON } from "bun"; interface Item { id: number }
 interface Holder { first: number; items: Item[]; last: string }
 let serial = 0;
 const host: any = globalThis;
@@ -506,7 +506,7 @@ for (const count of [10, 255, 256, 257, 4095, 4096, 4097, 16383, 16384, 16385, 2
 ////= lines-6	Second
 ////= lines-6	Third
 
-const texts = [
+import { JSON } from "bun"; const texts = [
   '{"name":"a"}',
   '{"name":"b","inner":{"name":"c"}}',
   '{"inner":{"name":"d"},"name":"e"}',
@@ -524,7 +524,7 @@ for (let round = 0; round < 2; round++) {
 }
 //// json-parse-type-argument-throws-on-a-misfit.ts
 // JSON.parse<T>(text) throws a TypeError with `issues` when the text is JSON and not a T, and the SyntaxError of JSON.parse(text) when it is not JSON.
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 interface Item { sku: string & Schema.MaxLength<4>; quantity: number & Schema.Int & Schema.Min<1> & Schema.Max<99>; note?: string }
 interface Order { id: number; items: Item[] & Schema.MinItems<1>; to: { name: string; city: string }; kind: "gift" | "plain"; coupon: string | null }
 type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
@@ -573,7 +573,7 @@ attempt("a reviver makes it misfit", () => JSON.parse<{ a: number }>('{"a":1}', 
 for (const text of ["", "{", '{"id":7', '{"id":7,}', "[1,]", "nul", '{"id":7} x', "{'id':7}", '{"id":07}', '"\n"', "﻿{}"]) {
   let plain = "";
   try {
-    JSON.parse(text);
+    globalThis.JSON.parse(text);
   } catch (error: any) {
     plain = error.name + ": " + error.message;
   }
@@ -587,7 +587,7 @@ for (const text of ["", "{", '{"id":7', '{"id":7,}', "[1,]", "nul", '{"id":7} x'
 }
 //// json-parse-type-argument-undeclared-keys-in-every-place.ts
 // Undeclared keys stand before, between and behind the declared ones, once and many times over. The result is what JSON.parse(text) gives.
-interface Point { x: number; y: number; label?: string }
+import { JSON } from "bun"; interface Point { x: number; y: number; label?: string }
 interface Segment { id: number; from: Point; to: Point; note?: string; tags: string[] }
 interface Named { id: number; name: string }
 interface Numbered { id: number }
@@ -613,7 +613,7 @@ function check(label: string, texts: string[], parse: (text: string) => unknown,
   for (let round = 0; round < 3; round++) {
     for (const text of texts) {
       const typed = attempt(parse, text, then);
-      const plain = attempt(JSON.parse, text, then);
+      const plain = attempt(globalThis.JSON.parse, text, then);
       if (typed !== plain && different++ < 3) console.log(label + " DIFFERS on " + text + "\n  " + typed + "\n  " + plain);
     }
   }
@@ -650,7 +650,7 @@ check("names written with escapes", ['{"x":1,"y":2,"\\u0061":3}', '{"\\u0078":1,
 check("twice", ['{"x":1,"y":2,"o":1,"o":2}', '{"o":1,"x":1,"o":2,"y":2}', '{"x":1,"x":3,"y":2,"o":1}', '{"x":1,"o":1,"y":2,"x":3}', '{"o":1,"p":2,"o":3,"x":1,"y":2,"p":4}', '{"x":1,"y":2,"label":"a","o":1,"label":"b"}', '{"x":"no","o":1,"x":1,"y":2}', '{"x":1,"y":2,"o":{"a":1,"a":2}}'], point);
 
 const spaced = ['{"x":1,"y":2,"o":3}', '{"o":[1,2],"x":1,"p":{"a":1},"y":2}', '{"x":1,"label":"l","o":1,"p":2,"y":2,"q":3}'];
-check("with whitespace", spaced.flatMap(text => [JSON.stringify(JSON.parse(text), null, 2), JSON.stringify(JSON.parse(text), null, "\t"), text.replaceAll(":", " : ").replaceAll(",", " ,\r\n "), " " + text + "\n"]), point);
+check("with whitespace", spaced.flatMap(text => [JSON.stringify(globalThis.JSON.parse(text), null, 2), JSON.stringify(globalThis.JSON.parse(text), null, "\t"), text.replaceAll(":", " : ").replaceAll(",", " ,\r\n "), " " + text + "\n"]), point);
 check("in 16-bit text", spaced.map(text => text.replace("}", ',"wide":"日本","Ω":1}')), point);
 check("what is no JSON", ['{"x":1,"y":2,"o":}', '{"x":1,"y":2,"o"}', '{"x":1,"y":2,"o":1,}', '{"x":1,"y":2,o:1}', '{"x":1,"y":2,"o":1', '{"x":1,"y":2,"o":[1,}', '{"x":1,"y":2,"o":01}', '{"x":1,"y":2,"o":"a\nb"}', '{"x":1,"y":2,"o":tru}', '{"x":1,"y":2,"o":1 "p":2}', '{"x":1,"y":2,"o":1}}', '{"x":1,"y":2,"o' ], point);
 
@@ -713,11 +713,11 @@ for (let i = 0; i < 3000; i++) {
   kept.push(JSON.parse<Point>(text));
 }
 let changed = 0;
-for (let i = 0; i < kept.length; i++) changed += Number(show(kept[i]) !== show(JSON.parse(texts[i])));
+for (let i = 0; i < kept.length; i++) changed += Number(show(kept[i]) !== show(globalThis.JSON.parse(texts[i])));
 console.log("kept for a while: " + kept.length + " objects, " + changed + " differ");
 //// json-parse-type-argument-unions-that-contain-themselves.ts
 // A union that contains itself: the arms are told apart by a constant member of any kind, wherever it stands, and no nested value is parsed twice: a text of sixty levels would otherwise take longer than the sun has left.
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 type ByNumber = { below: ByNumber | null; k: 1 } | { below: ByNumber | null; k: 2 };
 type ByBoolean = { below: ByBoolean | null; k: true } | { below: ByBoolean | null; k: false };
 type ByNull = { below: ByNull | null; k: null } | { below: ByNull | null; k: 1 };
@@ -749,7 +749,7 @@ for (const levels of [1, 2, 3, 20, 40, 60, 63, 64, 65, 66, 200]) {
   say("tags of four kinds, no arm has it " + levels, text => JSON.parse<Mixed>(text), nested(levels, ',"k":true}'));
   for (const tail of [',"k":null}', ',"k":"one"}', ',"k":2}', ',"k":false}']) {
     say("tags of four kinds, read by the engine and converted " + tail + " " + levels, text => JSON.parse<Mixed>(text), nested(levels, tail).replace("below", "\\u0062elow"));
-    say("tags of four kinds, validated and converted " + tail + " " + levels, text => validate<Mixed>(JSON.parse(text)), nested(levels, tail));
+    say("tags of four kinds, validated and converted " + tail + " " + levels, text => validate<Mixed>(globalThis.JSON.parse(text)), nested(levels, tail));
   }
   say("a text or null, read by the engine and converted " + levels, text => JSON.parse<TextOrNull>(text), nested(levels, ',"k":null}').replace("below", "\\u0062elow"));
 }
@@ -758,7 +758,7 @@ function tree(levels: number): string {
 }
 for (const levels of [1, 2, 6, 10]) {
   say("a tree of two branches " + levels, text => JSON.parse<Wide>(text), tree(levels));
-  say("a tree of two branches, validated and converted " + levels, text => validate<Wide>(JSON.parse(text)), tree(levels));
+  say("a tree of two branches, validated and converted " + levels, text => validate<Wide>(globalThis.JSON.parse(text)), tree(levels));
 }
 
 type Flat = { value: number; unit: string } | { error: string; code: number } | { value: string };
@@ -771,7 +771,7 @@ for (const text of ["[]", "[1,2]", '["a"]', '[1,"a"]', "[true,[1]]", '[true,["a"
 for (const text of ['{"kind":1,"parts":[1]}', '{"kind":2,"parts":["a"]}', '{"kind":1,"parts":["a"]}', '{"parts":["a"],"kind":1}', '{"kind":3,"parts":{"any":[1]}}', '{"kind":3}', '{"kind":"1","parts":[1]}', '{"parts":[1]}']) say("the arm that the tag names refuses " + text, given => JSON.parse<Tagged>(given), text);
 //// json-parse-type-argument-unsure-refusals.ts
 // JSON.parse<T>: a union goes on to its next arm only after a sure refusal. Repeated keys, undeclared members, defaults and the order of keys never change which arm is taken, what is refused or how long it takes.
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 
 function shown(parse: () => unknown): string {
   try {
@@ -824,14 +824,14 @@ for (let node: Nested | undefined = JSON.parse<Nested>(text); node; node = node.
 console.log("keys out of order at every level:", levels);
 //// json-parse-type-argument-what-an-outer-object-stands-on-is-replaced.ts
 // Something is emptied, grown or replaced while an outer object of the same parse still stands on it.
-interface Node { id: number; below: Node | null; name: string }
+import { JSON } from "bun"; interface Node { id: number; below: Node | null; name: string }
 interface Item { id: number }
 interface Holder { first: number; items: Item[]; last: string }
 let different = 0;
 let compared = 0;
 function check<T>(parse: (text: string) => T, text: string): void {
   compared++;
-  const [typed, plain] = [parse(text), JSON.parse(text)];
+  const [typed, plain] = [parse(text), globalThis.JSON.parse(text)];
   if (JSON.stringify(Object.keys(typed as object)) !== JSON.stringify(Object.keys(plain)) || JSON.stringify(typed) !== JSON.stringify(plain)) different++;
 }
 const others = (prefix: string, count: number, value: (at: number) => string) => Array.from({ length: count }, (_, at) => `"${prefix}${at}":${value(at)}`);
@@ -850,20 +850,20 @@ for (const count of [10, 300, 5000, 16383, 16384, 16385, 17000, 34000]) {
   for (let round = 0; round < 2; round++) {
     compared++;
     const holder = JSON.parse<Holder>(text);
-    if (Object.keys(holder).join() !== "a,first,b,items,c,last,d" || holder.items.length !== count || Object.keys(holder.items[count - 1]).join() !== Object.keys(JSON.parse(items[count - 1])).join()) different++;
+    if (Object.keys(holder).join() !== "a,first,b,items,c,last,d" || holder.items.length !== count || Object.keys(holder.items[count - 1]).join() !== Object.keys(globalThis.JSON.parse(items[count - 1])).join()) different++;
   }
 }
 console.log(compared + " compared, " + different + " differ");
 //// json-parse-type-argument-what-is-learned-while-an-outer-object-is-open.ts
 // While an outer object is still being parsed, with undeclared keys of its own in front of and behind the member, the objects inside it change what the parser has learned: the first object of the same type that spills, and more orders of keys than are remembered. Nothing is written: the keys and values are walked.
-interface Self { name: string; inner?: Self; list?: Self[] }
+import { JSON } from "bun"; interface Self { name: string; inner?: Self; list?: Self[] }
 interface Item { id: number }
 interface Holder { first: number; items: Item[]; last: string }
 interface Other1 { name: string; inner?: Other1 }
 interface Other2 { name: string; inner?: Other2 }
 interface Other3 { name: string; inner?: Other3 }
 
-const plainParse: (text: string) => any = JSON.parse;
+const plainParse: (text: string) => any = globalThis.JSON.parse;
 function walk(value: any): string {
   if (Array.isArray(value)) {
     let said = "[";
@@ -900,8 +900,8 @@ for (const count of [10, 4096, 16383, 16384, 16385, 20000, 40000]) {
 }
 //// json-parse-type-argument-what-is-no-text.ts
 // What is handed to JSON.parse<T> is no string: JSON.parse converts it to one first.
-type Point = { x: number; y: number };
-const plainParse: (text: any) => any = JSON.parse;
+import { JSON } from "bun"; type Point = { x: number; y: number };
+const plainParse: (text: any) => any = globalThis.JSON.parse;
 ////= say-3	=== "TypeError" && error.issues ? "refused" : error.name + ": " + error.message
 let calls = 0;
 const given: [string, () => any][] = [
@@ -934,7 +934,7 @@ for (const [label, make] of given) {
 console.log("toString was called " + calls + " times");
 //// json-parse-union-uncertain-tag.ts
 // JSON.parse<T>(text) takes the arm that JSON.parse's own value of the tag selects, also where the text repeats the tag or has it after a value too deep to skip.
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 type A = { kind: "a"; x: number };
 type B = { kind: "b"; x: string; n: number & Schema.Default<1> };
 type Named = { v: { kind: "a" } | { kind: "b" }; d: number & Schema.Default<1> } | { v: unknown };
@@ -947,7 +947,7 @@ const deep: any = JSON.parse<Deep>('{"t":' + '{"next":'.repeat(70) + "null" + "}
 console.log("the tag after seventy levels", Object.keys(deep).join(), deep.n);
 //// json-parse-untagged-recursive-union.ts
 // Arms without a tag that share a recursive member and differ after it: no nested value is parsed once per arm, so sixty levels end.
-type List = { next: List | null; a: number } | { next: List | null; b: number };
+import { JSON } from "bun"; type List = { next: List | null; a: number } | { next: List | null; b: number };
 type Pair = { a: Pair | null; b: 1 } | { a: Pair | null; c: 2 };
 function nested(head: string, levels: number, tail: string): string {
   return head.repeat(levels) + "null" + tail.repeat(levels);

@@ -143,7 +143,7 @@ bun test/aot/generated/unsound-types.ts /tmp/programs --count=1000 && bun test/a
 
 ## Texts parsed by generated types (`texts-for-generated-types.ts`)
 
-A tool of its own, beside `run.ts`. It draws TypeScript types, writes one program that parses by each of them with `JSON.parse<T>(text)` and `validate<T>(value)`, builds
+A tool of its own, beside `run.ts`. It draws TypeScript types, writes one program that parses by each of them with `JSON.parse<T>(text)` (`JSON` from `"bun"`) and `validate<T>(value)`, builds
 it, and lets it run. The program makes its own texts for as long as it is given: texts that are a `T`, nearly a `T`, JSON of another shape, nearly JSON, spelled and held
 in many ways. It needs no second run to compare with: a parser and a checker written in the program, one character and one node at a time, say what each call has to answer.
 For every type it also holds a function that reads each member through the type and a twin with the same body whose parameter is `any`; both print the same, also for

@@ -111,5 +111,5 @@ true true
 [{"path":["to"],"code":"unrecognized_keys","expected":"Symbol(other)","received":"object","message":"must not have key Symbol(other)"},{"path":["to"],"code":"unrecognized_keys","expected":"Symbol(mark)","received":"object","message":"must not have key Symbol(mark)"}]
 written in place, open: {x:1,y:2}
 written in place, closed: TypeError: value must not have key Symbol(mark)
-from a reviver, open: {x:1,Symbol(mark):revived}
+from a reviver, open: x
 from a reviver, closed: TypeError: value must not have key Symbol(mark)

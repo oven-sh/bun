@@ -88,7 +88,7 @@ conditional | const picked = rows.length > 1 ? rows[1]! : rows[0]!; console.log(
 JSON.stringify | console.log(JSON.stringify(rows[0]!), JSON.stringify(rows));
 JSON round trip with as | const again = JSON.parse(JSON.stringify(rows[0]!)) as Row; console.log(again.name); | opens
 JSON round trip with an annotation | const parsed: Row = JSON.parse(JSON.stringify(rows[0]!)); console.log(parsed.name); | opens
-JSON.parse with a type argument | const valid = JSON.parse<Row>(JSON.stringify(rows[0]!)); console.log(valid.name, label(valid)); | opens
+JSON.parse with a type argument | import { JSON } from "bun"; const valid = JSON.parse<Row>(JSON.stringify(rows[0]!)); console.log(valid.name, label(valid)); | opens
 structuredClone | const clone = structuredClone(rows[0]!); console.log(clone.name, label(clone));
 setTimeout | setTimeout(() => console.log(rows[0]!.name), 0);
 setTimeout with an argument | setTimeout(row => console.log(row.name), 0, rows[0]!);

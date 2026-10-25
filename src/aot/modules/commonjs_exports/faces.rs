@@ -76,7 +76,7 @@ pub(in crate::modules) fn collect_seen_namespaces(
     tables: &ExportTables,
     imports: &[FileImports],
 ) -> Vec<FileId> {
-    let mut seen = tables.commonjs_namespace_loads.to_vec();
+    let mut seen = tables.commonjs_namespace_loads.clone();
     for file_imports in imports {
         let bindings = file_imports.bindings.iter();
         let namespaces = bindings.filter_map(|&(_, binding)| match binding {
@@ -192,7 +192,7 @@ impl Faces {
     ) -> Faces {
         let (scans, modules) = (input.scans, input.modules);
         let mut faces = Faces {
-            written_imports: tables.commonjs_imports.to_vec(),
+            written_imports: tables.commonjs_imports.clone(),
             imported_variables: collect_members_of_namespaces(modules, imports),
             seen_namespaces: collect_seen_namespaces(modules, tables, imports),
             ..Faces::default()

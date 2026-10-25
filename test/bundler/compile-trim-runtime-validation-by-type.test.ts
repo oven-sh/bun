@@ -6,7 +6,7 @@ import { spawned, unsupported } from "../aot/run-programs";
 import { canTrim } from "./compile-trim-features";
 
 const program = `
-  import { validate } from "bun:bundle";
+  import { JSON } from "bun"; import { validate } from "bun:bundle";
   import { join } from "node:path";
   type Point = { x: number };
   const parsePoint = (text: string) => JSON.parse<Point>(text);
@@ -47,7 +47,7 @@ const validating = {
   "imported-json-under-another-name.ts": `import { JSON as Codec } from "bun";\nconst check = (value: unknown) => Codec.parse<{ a: number }>(Codec.stringify(value));${fitAndMisfit}export { said };`,
   "json-of-the-bun-object.ts": `const check = (value: unknown) => Bun.JSON.parse<{ a: number }>(JSON.stringify(value));${fitAndMisfit}export { said };`,
   "json-of-the-imported-module.ts": `import * as runtime from "bun";\nconst check = (value: unknown) => runtime.JSON.parse<{ a: number }>(JSON.stringify(value));${fitAndMisfit}export { said };`,
-  "required.cts": `const check = (value: unknown) => JSON.parse<{ a: number }>(JSON.stringify(value));${fitAndMisfit}module.exports = { said };`,
+  "required.cts": `const check = (value: unknown) => Bun.JSON.parse<{ a: number }>(JSON.stringify(value));${fitAndMisfit}module.exports = { said };`,
 };
 
 const boundToSomethingElse = {

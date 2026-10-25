@@ -44,7 +44,7 @@ const worlds: Record<string, Record<string, string>> = {
 
 const validates = `
 import type { Schema } from "bun";
-import { JSON as Codec } from "bun";
+import { JSON, JSON as Codec } from "bun";
 import { validate } from "bun:bundle";
 interface User {
   id: number & Schema.Int & Schema.Min<1>;
@@ -115,7 +115,7 @@ for (const [world, files] of Object.entries(worlds)) {
   test.todo(`with ${world}: what Bun brings along is in no list of files`, async () => {
     for (const flag of ["--listFiles", "--explainFiles", "--traceResolution"]) {
       const { stdout, exitCode } = await check(
-        { ...files, "a.ts": `export const a = JSON.parse<{ a: number }>("{}");\n` },
+        { ...files, "a.ts": `import { JSON } from "bun"; export const a = JSON.parse<{ a: number }>("{}");\n` },
         flag,
       );
       expect({ flag, broughtAlong: stdout.filter(line => line.includes("$bun")), exitCode }).toEqual({
@@ -165,7 +165,7 @@ test("a global Bun that the project declares is the project's", async () => {
 test.todo("the rules of bun lint that need types see the type that is written, not any", async () => {
   using dir = tempDir("lint-validation-by-type", {
     ...worlds["no types of Bun"],
-    "a.ts": `interface User {\n  name: string;\n}\nexport function nameIn(text: string) {\n  const user = JSON.parse<User>(text);\n  return user.name;\n}\n`,
+    "a.ts": `import { JSON } from "bun"; interface User {\n  name: string;\n}\nexport function nameIn(text: string) {\n  const user = JSON.parse<User>(text);\n  return user.name;\n}\n`,
   });
   const rules = ["no-unsafe-assignment", "no-unsafe-member-access", "no-unsafe-return"].flatMap(rule => [
     "--rule",

@@ -7,7 +7,7 @@ import { run } from "../harness/run";
 import { test } from "../supported";
 
 const program = `
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 
 interface Point {
   x: number & Schema.Int & Schema.Min<0>;
@@ -32,7 +32,7 @@ console.log(shown(() => JSON.parse<Point>('{"x":-1,"y":"2"}')));
 console.log(shown(() => JSON.parse<Point>('{"x":3}')));
 console.log(shown(() => JSON.parse<Point>('{"x":3')));
 console.log(shown(() => JSON.parse<Named>('{"name":"ab","at":{"x":1,"y":2}}')), shown(() => JSON.parse<Named>('{"name":"a","at":{"x":1,"y":2}}')));
-console.log(shown(() => JSON.parse('{"x":-1}')), shown(() => JSON.parse('{"x":-1}') as Point));
+console.log(shown(() => globalThis.JSON.parse('{"x":-1}')), shown(() => globalThis.JSON.parse('{"x":-1}') as Point));
 `;
 
 const expected = `{"x":1,"y":2.5,"z":"kept"}

@@ -95,7 +95,7 @@ const cases: Record<string, Case> = {
 const address = config.host + ":" + config.port;
 console.log(address);
 `,
-    after: `interface Config {
+    after: `import { JSON } from "bun"; interface Config {
   host: string;
   port: number;
 }
@@ -112,7 +112,9 @@ console.log(address);
     types: ["Item"],
     at: `for (const item of JSON.parse('[{"sku":"B-2","price":10}]')) items.push(item);`,
     before: itemProgram(`for (const item of JSON.parse('[{"sku":"B-2","price":10}]')) items.push(item);`),
-    after: itemProgram(`for (const item of JSON.parse<Item[]>('[{"sku":"B-2","price":10}]')) items.push(item);`),
+    after:
+      `import { JSON } from "bun"; ` +
+      itemProgram(`for (const item of JSON.parse<Item[]>('[{"sku":"B-2","price":10}]')) items.push(item);`),
     notYet: "JSON.parse<Item[]>(text) does not remove the entry",
   },
   "an object is passed to code from new Function()": {

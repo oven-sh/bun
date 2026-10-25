@@ -99,12 +99,12 @@ console.log(bad.name, typeof bad.name, bad.count, bad.kind, Object.keys(bad).joi
 export {};
 //// a-refused-value-under-handlers-that-look-at-the-error-and-handlers-that-do-not.ts
 // A handler that never looks at what it catches may be given nothing. Every other way out of a refusal carries the whole error.
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 import { validate } from "bun:bundle";
 
 type Line = { sku: string & Schema.MinLength<1>; quantity: number & Schema.Int & Schema.Min<1> };
 
-const wrong: unknown = JSON.parse('{"sku":"a","quantity":0}');
+const wrong: unknown = globalThis.JSON.parse('{"sku":"a","quantity":0}');
 const wrongText = '{"sku":"","quantity":1}';
 const brokenText = '{"sku":"","quantity":1';
 
@@ -267,7 +267,7 @@ const runs: [string, () => unknown][] = [
   ["in a getter", () => ({ get line() { return check(wrong); } }).line],
   ["in a constructor", () => new (class { line = check(wrong); })()],
   ["in a generator", () => [...generate(wrong)]],
-  ["in a reviver", () => JSON.parse("[1]", () => check(wrong))],
+  ["in a reviver", () => globalThis.JSON.parse("[1]", () => check(wrong))],
   ["in toString", () => String({ toString: () => check(wrong).sku })],
 ];
 
@@ -1479,7 +1479,7 @@ function attempt(label: string, f: () => unknown) { try { console.log(label + ":
 for (const kind of [Kind.OrEquals, Kind.Plus, Kind.AndEquals] as BinaryOperator[]) attempt("kind " + kind, () => { const node: Node = createBinary(createToken(kind)); return isLogicalAssignment(node) ? transform(node) : "no" })
 export {};
 //// clone-as-fallback.ts
-type Point = { a: number; b: string };
+import { JSON } from "bun"; type Point = { a: number; b: string };
 
 const show = (object: object) => {
   const keys = Object.keys(object);

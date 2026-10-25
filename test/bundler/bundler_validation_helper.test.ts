@@ -37,7 +37,7 @@ const declaresTheNames =
 
 const user = `export interface User { id: number }\n`;
 const parses = (label: string) =>
-  `import { validate } from "bun:bundle";
+  `import { JSON } from "bun"; import { validate } from "bun:bundle";
 import type { User } from "./user";
 try {
   console.log("${label}", JSON.parse<User>('{"id":1}').id, validate<User>({ id: 2 }).id);

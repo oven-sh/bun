@@ -8,7 +8,7 @@ function messageOf(text: string): string {
 }
 //// validate-conversions-into-unions-whose-arms-could-both-take-the-value.ts
 // Conversions of plain objects into unions whose arms could both take them: large trees, long lists, parts that are shared, cycles, accessors that throw in the middle, and accessors that start another validation or parse of the same types in the middle of the first.
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 type Mixed = { below: Mixed | null; k: "one" } | { below: Mixed | null; k: 2 } | { below: Mixed | null; k: false } | { below: Mixed | null; k: null };
 type Forked = { left: Forked | null; right: Forked | null; k: "one" } | { left: Forked | null; right: Forked | null; k: null };
 type Listed = { items: Listed[]; k: "one" } | { items: Listed[]; k: null };
@@ -244,7 +244,7 @@ made.inner.x = 9;
 console.log(inner.x);
 //// validate-of-parts-that-change-between-two-visits.ts
 // A part that is held twice is changed by an accessor between the two visits of a validation that remembers what it has found: whatever validate<T> returns must still fit T when it is written and parsed again by T. Each place is read when the validation comes to it, so the second place holds the part as the accessor left it: 84 of the 720 values still fit (Kinds 48, Deep 0, Lists 36).
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 type Kinds = { below: Kinds | null; also?: Kinds | null; k: number } | { below: Kinds | null; also?: Kinds | null; k: string };
 type Deep = { below: Deep | null; also?: Deep | null; x: { k: 1 } } | { below: Deep | null; also?: Deep | null; x: { k: 2 } };
 type Lists = { items: Lists[]; k: number[] } | { items: Lists[]; k: string[] };
@@ -353,7 +353,7 @@ const kept = validate<Nested>(explicit);
 console.log("present and undefined", Object.keys(kept).join(), "inner" in kept, kept.inner);
 //// validate-random-graphs-with-shared-parts.ts
 // Fuzzes validate<T> with a fixed seed on random object graphs in which the same object or array is reachable by several paths. The result must equal the result for the same value copied out as a tree, must never merge two different objects, and must never contain an object of the argument where T describes it. The argument stays unchanged and each getter is read once per copy. Typed code then reads every field of the result. Some graphs contain a cycle (a RangeError) and some have getters that return something else on each read. With keepsSharing set, an object or array that is shared under one type must stay shared, and graphs that would be astronomically large as trees are made too.
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 
 const seed: number = 1;
 const rounds: number = 300;
@@ -985,7 +985,7 @@ fifth.q.x = 6;
 console.log("after stores into the copies", JSON.stringify([untagged, tagged, list, both]));
 //// validated-beside-unvalidated-parse.ts
 // `JSON.parse<T>(text)` validates: text that is no T throws. The same text behind `as T`, an annotation or a typed body is not validated and nothing throws: whatever was parsed passes, it stays what it was, and a field of another kind is read as what it is, as in plain Bun.
-interface User { id: number; name: string }
+import { JSON } from "bun"; interface User { id: number; name: string }
 const misfit = '{"id":"seven","name":"Ada"}';
 const list = '[{"id":1,"name":"a"},{"id":"two","name":"b"},{"id":3,"name":"c"}]';
 function idOf(user: User) { return user.id; }
@@ -996,16 +996,16 @@ function attempt(label: string, f: () => unknown) {
 
 attempt("JSON.parse<User>, text that fits", () => JSON.parse<User>('{"id":7,"name":"Ada"}').id);
 attempt("JSON.parse<User>, text that does not fit", () => JSON.parse<User>(misfit).name);
-attempt("as User, the cast", () => typeof (JSON.parse(misfit) as User));
-attempt("as User, a field that fits", () => nameOf(JSON.parse(misfit) as User));
-attempt("as User, the field that does not fit", () => idOf(JSON.parse(misfit) as User));
-attempt("an annotated variable, a field that fits", () => { const user: User = JSON.parse(misfit); return nameOf(user); });
-attempt("the same field read through any", () => JSON.parse(misfit).id);
+attempt("as User, the cast", () => typeof (globalThis.JSON.parse(misfit) as User));
+attempt("as User, a field that fits", () => nameOf(globalThis.JSON.parse(misfit) as User));
+attempt("as User, the field that does not fit", () => idOf(globalThis.JSON.parse(misfit) as User));
+attempt("an annotated variable, a field that fits", () => { const user: User = globalThis.JSON.parse(misfit); return nameOf(user); });
+attempt("the same field read through any", () => globalThis.JSON.parse(misfit).id);
 attempt("User[], each element by itself", () => {
-  const users: User[] = JSON.parse(list);
+  const users: User[] = globalThis.JSON.parse(list);
   return users.map(user => { try { return idOf(user); } catch (e) { return (e as Error).constructor.name; } }).join();
 });
-attempt("as User, a number", () => JSON.parse("5") as User);
+attempt("as User, a number", () => globalThis.JSON.parse("5") as User);
 const body: User = await new Response(misfit).json();
 attempt("a body, a field that fits", () => nameOf(body));
 attempt("a body, the field that does not fit", () => idOf(body));
@@ -1243,7 +1243,7 @@ worker.on("message", (line: string) => console.log(line, "| main thread again:",
 //// validation-in-a-file-that-is-not-type-checked.ts
 // @ts-nocheck
 // A file that begins with @ts-nocheck is compiled without its types. JSON.parse<T> and validate<T> in it validate all the same.
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 
 type Point = { x: number; y: number };
 type Shape = { kind: "circle"; radius: number } | { kind: "box"; corners: [Point, Point]; label?: string };
@@ -1266,12 +1266,12 @@ for (const text of ['{"x":1,"y":2}', '{"y":2,"x":1,"z":3}', '{"x":"s","y":2}', '
 for (const value of [{ x: 1, y: 2 }, { x: "s", y: 2 }, { x: 1 }, [1, 2], null, undefined, 5, { x: 1, y: 2, more: [1] }]) attempt("validate<Point> of " + JSON.stringify(value), () => validate<Point>(value));
 for (const text of ['{"kind":"circle","radius":1}', '{"kind":"circle","radius":"1"}', '{"kind":"box","corners":[{"x":0,"y":0},{"x":1,"y":1}]}', '{"kind":"box","corners":[{"x":0,"y":0}]}', '{"kind":"box","corners":[{"x":0,"y":0},{"x":1,"y":null}],"label":"l"}', '{"kind":"line"}']) {
   attempt("JSON.parse<Shape> of " + text, () => JSON.parse<Shape>(text));
-  attempt("validate<Shape> of " + text, () => validate<Shape>(JSON.parse(text)));
+  attempt("validate<Shape> of " + text, () => validate<Shape>(globalThis.JSON.parse(text)));
 }
 console.log(typeof wrong);
 //// validation-in-functions-called-with-mismatched-arguments.ts
 // A function with annotated parameters is called, through untyped code, with arguments that do not match them. Whatever is passed gets in, a number for an object too, and JSON.parse<T> and validate<T> in the body, and in the functions nested in it, validate all the same: the only TypeErrors are theirs, with issues.
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 
 type Point = { x: number; y: number };
 type Options = { strict: boolean; name: string };
@@ -1298,7 +1298,7 @@ const arrow = (text: string, options: Options): unknown => {
   return [point, point.x + point.y, typeof options];
 };
 function validating(text: string, options: Options): unknown {
-  const point = validate<Point>(JSON.parse(text));
+  const point = validate<Point>(globalThis.JSON.parse(text));
   return [point, point.x + point.y, typeof options];
 }
 function nesting(options: Options): (text: string) => unknown {
@@ -1455,7 +1455,7 @@ show("validate<unknown>", validate<unknown>(plain.parse(text)));
 console.log("Object.prototype is clean:", ({} as any).isAdmin === undefined);
 //// validation-leaves-the-last-match-of-the-program-in-RegExp.ts
 // RegExp.$1, RegExp.lastMatch and their like tell of the last match of the program. Validating a value, refusing one and reading the error change none of them.
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 import { validate } from "bun:bundle";
 
 interface Named {
@@ -1503,7 +1503,7 @@ function createValid(): any {
 
 // What the parser makes is an ordinary object. What a literal of the program makes need not be.
 function parsed(value: unknown): any {
-  return JSON.parse(JSON.stringify(value));
+  return globalThis.JSON.parse(JSON.stringify(value));
 }
 
 function wide(value: any): any {
@@ -1612,7 +1612,7 @@ console.log(RegExp.input, RegExp.$1);
 console.log(lines, "looks,", wrong, "wrong");
 //// validation-of-names-and-texts-with-half-a-surrogate-pair.ts
 // A declared key, a constant text, a part of a template and a pattern that hold half a surrogate pair: compiled and interpreted validators know them alike.
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 import type { Schema } from "bun";
 
 type Key = { "\udfaa": number; "a\ud800": string };
@@ -1629,20 +1629,20 @@ function outcome(run: () => unknown): string {
 }
 
 for (const text of ['{"\\uDFAA":0,"a\\ud800":"x"}', '{"\\uDFAB":0,"a\\ud800":"x"}', '{"\\uFFFD":0,"a\\uFFFD":"x"}', '{"\\uDFAA":"0","a\\ud800":1}']) {
-  console.log(outcome(() => JSON.parse<Key>(text)), outcome(() => validate<Key>(JSON.parse(text))));
+  console.log(outcome(() => JSON.parse<Key>(text)), outcome(() => validate<Key>(globalThis.JSON.parse(text))));
 }
 for (const text of ['{"k":"\\ud800"}', '{"k":"a\\udc00b"}', '{"k":"\\ud83d\\ude00"}', '{"k":"\\ufffd"}', '{"k":"\\ud801"}', '{"k":"\\ud83d"}']) {
-  console.log(outcome(() => JSON.parse<Text>(text)), outcome(() => validate<Text>(JSON.parse(text))));
+  console.log(outcome(() => JSON.parse<Text>(text)), outcome(() => validate<Text>(globalThis.JSON.parse(text))));
 }
 for (const text of ['{"k":"\\ud83d5"}', '{"k":"\\ufffd5"}', '{"k":"\\ud83dx"}']) {
-  console.log(outcome(() => JSON.parse<Template>(text)), outcome(() => validate<Template>(JSON.parse(text))));
+  console.log(outcome(() => JSON.parse<Template>(text)), outcome(() => validate<Template>(globalThis.JSON.parse(text))));
 }
 for (const text of ['{"k":"\\udc00\\udc00"}', '{"k":"\\ufffd"}', '{"k":""}']) {
-  console.log(outcome(() => JSON.parse<Pattern>(text)), outcome(() => validate<Pattern>(JSON.parse(text))));
+  console.log(outcome(() => JSON.parse<Pattern>(text)), outcome(() => validate<Pattern>(globalThis.JSON.parse(text))));
 }
 //// validation-of-recursive-unions-remembers-within-one-call.ts
 // A union that contains itself and whose arms no constant tells apart: one validation remembers what it found out about an object; the next one knows nothing of it.
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 import type { Schema } from "bun";
 
 type Tree = { below: Tree | null; k: number } | { below: Tree | null; k: string };
@@ -1717,7 +1717,7 @@ console.log(outcome(() => JSON.parse<Tree>(JSON.stringify(nest(4, null, "s")), (
 console.log(outcome(() => JSON.parse<Tree>(JSON.stringify(nest(4, null, "s")), (key, value) => (key === "k" ? null : value))));
 
 for (const text of ['[[[null,2],2],2]', '[[[null,2],1],"end"]', '[[[null,3],1],2]', '[[["end",[null,1]],2],[null,2],"end"]', '[[[null,2],2],{}]']) {
-  console.log(outcome(() => JSON.parse<Lists>(text)), outcome(() => validate<Lists>(JSON.parse(text))));
+  console.log(outcome(() => JSON.parse<Lists>(text)), outcome(() => validate<Lists>(globalThis.JSON.parse(text))));
 }
 
 for (const text of [
@@ -1726,11 +1726,11 @@ for (const text of [
   '{"kind":"a","below":{"kind":"c","below":null}}',
   '{"kind":"a","below":{"kind":"b","below":{"below":{"below":{"below":7,"other":1},"other":1},"other":1}},"other":2}',
 ]) {
-  console.log(outcome(() => JSON.parse<Partly>(text)), outcome(() => validate<Partly>(JSON.parse(text))));
+  console.log(outcome(() => JSON.parse<Partly>(text)), outcome(() => validate<Partly>(globalThis.JSON.parse(text))));
 }
 //// validators-record-where-they-fail.ts
 // A value that a compiled validator refuses is walked by the routine that all types share. The issues are the same wherever in the value the validator stopped.
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 interface Item { sku: string & Schema.MinLength<2>; quantity: number & Schema.Int & Schema.Min<1> & Schema.Max<9>; note?: string }
 interface Customer { id: number & Schema.Int; name: string; address: { street: string; zip: string & Schema.MinLength<5> } }
 interface Order { customer: Customer; items: Item[] & Schema.MinItems<1> & Schema.MaxItems<4>; rows: Item[][]; coupon?: string; total: number }
@@ -1745,8 +1745,8 @@ function attempt(parse: () => unknown): string {
   }
 }
 const one = '{"sku":"ab","quantity":2}';
-const item = (): any => JSON.parse(one);
-const order = (): any => JSON.parse(`{"customer":{"id":1,"name":"n","address":{"street":"s","zip":"12345"}},"items":[${one},${one},${one}],"rows":[[${one}],[${one},${one}]],"total":3}`);
+const item = (): any => globalThis.JSON.parse(one);
+const order = (): any => globalThis.JSON.parse(`{"customer":{"id":1,"name":"n","address":{"street":"s","zip":"12345"}},"items":[${one},${one},${one}],"rows":[[${one}],[${one},${one}]],"total":3}`);
 const changes: ((value: any) => void)[] = [
   () => {},
   value => { value.customer = 1; },
@@ -1770,7 +1770,7 @@ for (const change of changes) {
   console.log(attempt(() => JSON.parse<Order>(JSON.stringify(value))));
 }
 for (const text of ['{"inner":{"a":1,"b":"b"},"last":true}', '{"inner":{"a":1,"b":"b","c":1},"last":1}', '{"inner":{"a":"1","b":"b","c":1},"last":true,"more":1}', '{"inner":[],"last":true,"more":1}', "[]"]) console.log(attempt(() => JSON.parse<Sealed>(text)));
-const mixed = (): any => JSON.parse(`{"pair":[${one},1],"byName":{"x":${one}},"either":${one},"many":[${one},"s"],"tail":${one}}`);
+const mixed = (): any => globalThis.JSON.parse(`{"pair":[${one},1],"byName":{"x":${one}},"either":${one},"many":[${one},"s"],"tail":${one}}`);
 for (const change of [() => {}, (value: any) => { value.pair[0].sku = 1; }, (value: any) => { value.byName.x.quantity = 0; value.tail.sku = "a"; }, (value: any) => { value.either.sku = 1; }, (value: any) => { value.either = null; value.many[0].quantity = 0; }, (value: any) => { value.tail = undefined; }]) {
   const value = mixed();
   change(value);

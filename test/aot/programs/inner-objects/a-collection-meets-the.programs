@@ -359,7 +359,7 @@ console.log(answer);
 //// objects-with-every-kind-of-slot-are-made-around-calls-that-collect.ts
 // Each field of these objects is of another kind: booleans, whole numbers, fractions, one of a few texts, texts, objects, anything, each also optional. An object or a short list in a field is made first,
 // and what fills the fields behind it splits texts, joins lists and parses, so collections fall between the two. The objects come from literals, constructors, class fields, spreads and JSON.parse<T>().
-type Color = "red" | "green" | "blue";
+import { JSON } from "bun"; type Color = "red" | "green" | "blue";
 interface Inner { count: number; text: string }
 interface Wide {
   inner: Inner;

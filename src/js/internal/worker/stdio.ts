@@ -12,7 +12,7 @@
 const kFlushSync = Symbol("kFlushSync");
 
 interface PortReadable extends $Node.Readable {
-  endFromOwner?(receiveMessageOnPort: (port: MessagePort) => { message: Uint8Array[] | null } | undefined): void;
+  endFromOwner?(receiveMessageOnPort: (port: unknown) => unknown): void;
 }
 
 interface PortWritable extends $Node.Writable {
@@ -69,9 +69,9 @@ function makePortReadable(port: MessagePort, incrementsPortRef: boolean) {
   // wrote and the port still holds comes first (node's kOnExit drains its port).
   stream.endFromOwner = function (receiveMessageOnPort) {
     try {
-      let entry;
+      let entry: unknown;
       while (ended === false && (entry = receiveMessageOnPort(port)) !== undefined) {
-        onMessage({ data: entry.message });
+        onMessage({ data: (entry as { message: Uint8Array[] | null }).message });
       }
     } finally {
       if (ended === false) {

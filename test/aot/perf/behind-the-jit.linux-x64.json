@@ -157,6 +157,7 @@
   "everyday-data-and-control/process-env-read": 5.97,
   "everyday-data-and-control/two-values-are-compared-again-and-again": 3.16,
   "everyday-data-and-control/typed-array-set": 2.26,
+  "everyday-data-and-control/uint8-array-fill-by-index": 1.46,
   "everyday-data-and-control/uint8-array-made": 1.83,
   "everyday-data-and-control/uint8-array-sum": 1.6,
   "everyday-data-and-control/while-loop": 1.26,

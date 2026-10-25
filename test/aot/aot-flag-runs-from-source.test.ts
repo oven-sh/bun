@@ -74,6 +74,7 @@ describe("which code runs", () => {
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
       "main.ts":
+        `import { JSON } from "bun"; ` +
         declarations +
         `try { console.log(JSON.parse<{ n: number }>('{"n":"1"}')); } catch (error) { console.log((error as Error).name); }`,
     });

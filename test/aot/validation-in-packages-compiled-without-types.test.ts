@@ -20,7 +20,7 @@ for (const text of ['{"x":1,"y":2}', '{"x":"s","y":2}', '{"x":1}', "[1,2]", "nul
 }
 `;
 const index = `
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 export type Point = { x: number; y: number };
 export function load(text: string): Point { return JSON.parse<Point>(text); }
 export function check(value: unknown): Point { return validate<Point>(value); }

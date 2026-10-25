@@ -8,7 +8,7 @@ one line of JSON for each server, route and build. Every response is compared wi
 `koa-typed`, `express-typed` and `fastify-typed` are those servers once more, with the full types of their packages installed as `node_modules/@oven/full-types-<name>`.
 
 `bun-validated`, `hono-validated` and `express-validated` take the order of the route `post` and check it against a type in place of a zod schema (`../app/validated.ts`): `validate<Order>(await request.json())`
-and `JSON.parse<Order>(await request.text())`. Only an `--aot` build has those, so they are programs of their own, and columns beside zod:
+and `JSON.parse<Order>(await request.text())` (`JSON` from `"bun"`). Only an `--aot` build has those, so they are programs of their own, and columns beside zod:
 
     python3 test/aot/servers/measure/measure.py --servers bun,hono,express --routes post,post-refused --column zod=<bun>:--aot --column hand=<bun>:--aot#hand \
         --column validate=<bun>:--aot@*-validated#validated --column parse=<bun>:--aot@*-validated#parsed --column jit-zod=<bun> --column released-zod=<released bun> --cores 0-15 --out rows.jsonl

@@ -1099,8 +1099,8 @@ console.log((plain as any).inherited, typeof (plain as any).hello, plain.a, Obje
 try { Object.setPrototypeOf(plain, null); console.log("no prototype: no error") } catch (e) { console.log("no prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
 console.log(Object.getPrototypeOf(plain) === Object.prototype, plain.a, "toString" in plain)
 //// typeof-json-parse-types-the-parameters.ts
-// `JSON.parse<T>` is the compiler's addition to `JSON.parse`. A function expression under `typeof JSON.parse` gets its parameter types as it does without it.
-export const parse: typeof JSON.parse = (text, reviver) => JSON.parse(text, reviver);
+// `JSON.parse<T>` is the parse of the `JSON` that "bun" exports. A function expression under `typeof globalThis.JSON.parse` gets its parameter types beside it as it does without it.
+import { JSON } from "bun"; export const parse: typeof globalThis.JSON.parse = (text, reviver) => globalThis.JSON.parse(text, reviver);
 
 console.log(parse("[1]"));
 console.log(parse('{"a":1,"b":2}', (key, value) => (key === "a" ? undefined : value)));

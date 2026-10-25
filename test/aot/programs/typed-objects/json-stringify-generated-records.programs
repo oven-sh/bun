@@ -2403,7 +2403,7 @@ measure("in records in a list", () => JSON.stringify(pages));
 measure("lists in a list", () => JSON.stringify(lists));
 //// json-stringify-long-names-after-short-ones.ts
 // Objects with undeclared keys whose names and values are long are written after short ones of the same fields, alone, under a holder and in arrays: the writer's plans and its buffer.
-type Point = { x: number; y: number };
+import { JSON } from "bun"; type Point = { x: number; y: number };
 type Named = { id: number; name: string; tags: string[] };
 let different = 0;
 let texts = 0;
@@ -2413,7 +2413,7 @@ function check(value: unknown, text: string): void {
   if (JSON.stringify(value) !== text) different++;
 }
 for (const character of ["k", "\u00e9", "\u65e5", "\\n", '\\"']) {
-  const raw = JSON.parse('"' + character + '"');
+  const raw = globalThis.JSON.parse('"' + character + '"');
   const short = '{"x":1,"y":2,"s":1}';
   const shortValue = JSON.parse<Point>(short);
   for (const length of lengths) {
@@ -2421,7 +2421,7 @@ for (const character of ["k", "\u00e9", "\u65e5", "\\n", '\\"']) {
     const name = character.repeat(length);
     for (const text of ['{"x":1,"y":2,"' + name + '":1}', '{"' + name + '":"' + name + '","x":1,"y":2}', '{"x":1,"' + name + '":[1],"y":2,"' + name + 'b":{"' + name + '":null}}']) {
       const value = JSON.parse<Point>(text);
-      const written = JSON.stringify(JSON.parse(text));
+      const written = JSON.stringify(globalThis.JSON.parse(text));
       for (let round = 0; round < 4; round++) {
         check(shortValue, short);
         check(value, written);
@@ -2431,7 +2431,7 @@ for (const character of ["k", "\u00e9", "\u65e5", "\\n", '\\"']) {
     }
     const named = '{"id":' + length + ',"name":"' + name + '","tags":["' + name + '","t"],"' + name + '":"' + name + '"}';
     const value = JSON.parse<Named>(named);
-    const written = JSON.stringify(JSON.parse(named));
+    const written = JSON.stringify(globalThis.JSON.parse(named));
     for (let round = 0; round < 4; round++) check(value, written);
     if (value.name.length !== raw.length * length) different++;
   }
@@ -2570,7 +2570,7 @@ const responses = [Response.json(new BoundBetween()), Response.json(new Holder()
 for (const response of responses) console.log("response", await response.text());
 //// json-stringify-more-kinds-of-objects-than-the-writer-remembers.ts
 // The typed writer remembers how to write each kind of object with undeclared keys, up to a number of kinds. An object is being written while the objects below it bring more kinds than that: what the writer stands on may not be thrown away under it.
-interface Item { id: number }
+import { JSON } from "bun"; interface Item { id: number }
 interface Holder { first: number; items: Item[]; last: string }
 function textOf(count: number, from: number): string {
   const items: string[] = [];

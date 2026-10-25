@@ -1792,7 +1792,7 @@ show("many times over", () => {
 });
 //// json-stringify-code-that-runs-inside-a-write.ts
 // While a typed object with undeclared keys is being written, a toJSON method or an accessor of a value below it runs code that writes tens of thousands of other kinds of object, parses, collects, and changes the object that is being written.
-interface Item { id: number }
+import { JSON } from "bun"; interface Item { id: number }
 interface Holder { first: number; items: Item[]; last: string }
 const host: any = globalThis;
 const collect: () => void = host.Bun ? () => host.Bun.gc(true) : host.gc;
@@ -1920,11 +1920,11 @@ measure("of classes that extend Date", () => JSON.stringify(subclass));
 measure("a date by itself", () => JSON.stringify(usual.createdAt));
 //// json-stringify-deep-values-that-were-parsed-by-a-type.ts
 // Deep values that JSON.parse<T> made are written, validated, cloned and compared with what plain objects give.
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 type Tree = { kids: Tree[] };
 type Chain = { next: Chain | null; name: string };
 type Deep = Deep[];
-const plainParse: (text: string) => any = JSON.parse;
+const plainParse: (text: string) => any = globalThis.JSON.parse;
 function say(run: () => unknown): string {
   try {
     const value = run();

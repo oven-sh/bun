@@ -103,10 +103,10 @@ console.log("name" in user, Object.keys(user).join());
 ////= lines-2	user.name.length
 ////= lines-2	user.tags.length
 //// a-number-is-parsed-by-type.ts
-console.log(JSON.parse<number>("2.5"));
+import { JSON } from "bun"; console.log(JSON.parse<number>("2.5"));
 //// a-number-member-of-a-result-parsed-by-type-is-added-to.ts
 ////= lines-4	Line	count	number
-const line = JSON.parse<Line>('{"count":2.5}');
+import { JSON } from "bun"; const line = JSON.parse<Line>('{"count":2.5}');
 console.log(0 + line.count);
 //// a-text-arrives-for-a-number-member-of-an-annotated-variable.ts
 ////= lines	User	id	number	name	string
@@ -148,7 +148,7 @@ try {
 }
 console.log(fromNull === null, typeof fromNull);
 //// an-object-that-a-reviver-returns-twice-is-one-object-after-a-parse-by-type.ts
-interface Order {
+import { JSON } from "bun"; interface Order {
   lines: { count: number }[];
 }
 const shared = { count: 5 };
@@ -513,7 +513,7 @@ for (const text of ["0", "1", "2", "-0", "0.5", '"0"', '"Red"', "null", "[0]", "
   });
 }
 //// json-parse-by-type-fills-in-defaults-for-missing-members.ts
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 
 ////= show-2
 
@@ -549,7 +549,7 @@ for (const text of ['{"name":"a"}', '{"name":"b","port":1}', '{"host":"h","name"
 //// json-parse-by-type-refuses-a-wrong-kind-for-each-kind-of-member.ts
 ////= show-3
 
-enum Color {
+import { JSON } from "bun"; enum Color {
   Red,
   Green,
 }
@@ -587,7 +587,7 @@ for (const [label, accepted, parse] of rows) {
 
 ////= lines-4	Sized	length	number
 ////= lines-4	First	0	number
-type Table = Record<string, number>;
+import { JSON } from "bun"; type Table = Record<string, number>;
 
 expect("value", "an object with a length", () => JSON.parse<Sized>('{"length":2}'));
 expect("TypeError", "a list where a length is declared", () => JSON.parse<Sized>("[1,2]"));
@@ -617,7 +617,7 @@ expect("TypeError", "a list of objects holds null", () => JSON.parse<{ a: number
 //// json-parse-by-type-refuses-missing-members-and-values-that-are-no-objects.ts
 ////= show-3
 
-interface User {
+import { JSON } from "bun"; interface User {
   id: number;
   name: string;
   extra?: boolean;
@@ -646,7 +646,7 @@ expect("value", "members named like inherited ones", () => JSON.parse<Named>('{"
 expect("TypeError", "members named like inherited ones are missing", () => JSON.parse<Named>("{}"));
 expect("TypeError", "one of them is missing", () => JSON.parse<Named>('{"toString":"s"}'));
 //// json-parse-by-type-refuses-numbers-at-the-edge-of-schema-bounds.ts
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 
 ////= show-3
 
@@ -675,7 +675,7 @@ rows("a quantity", text => JSON.parse<Quantity>(text), ["1", "1000", "1e3", "999
 rows("a quantity in a member", text => JSON.parse<{ q: Quantity }>('{"q":' + text + "}"), ["1", "1000"], ["0", "1001", "1.5", "null", '"1"']);
 rows("quantities in a list", text => JSON.parse<Quantity[]>("[1," + text + ",1000]"), ["2"], ["0", "1001", "2.5"]);
 //// json-parse-by-type-refuses-numbers-that-are-not-finite-and-int32-out-of-range.ts
-import type { int32 } from "bun";
+import { JSON } from "bun"; import type { int32 } from "bun";
 
 ////= show-3
 
@@ -697,7 +697,7 @@ for (const spelling of ["0.5", "-0.5", "1.5", "2147483648", "-2147483649", "2147
 }
 expect("TypeError", "int32 is missing", () => JSON.parse<Cell>("{}"));
 //// json-parse-by-type-refuses-texts-and-lists-at-the-edge-of-schema-bounds.ts
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 
 ////= show-3
 
@@ -730,7 +730,7 @@ rows("a date in a member", text => JSON.parse<{ at: string & Schema.Format<"date
 //// json-parse-by-type-refuses-tuples-of-another-length.ts
 ////= show-3
 
-type Pair = [number, string];
+import { JSON } from "bun"; type Pair = [number, string];
 
 expect("value", "a pair", () => JSON.parse<Pair>('[1,"a"]'));
 expect("TypeError", "empty", () => JSON.parse<Pair>("[]"));
@@ -749,7 +749,7 @@ expect("TypeError", "very long", () => JSON.parse<[number, number]>("[" + "1,".r
 //// json-parse-by-type-refuses-unknown-tags-and-mixed-variants.ts
 ////= show-3
 
-type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
+import { JSON } from "bun"; type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
 type Result = { ok: true; value: number } | { ok: false; error: string };
 type Level = { level: 1; a: string } | { level: 2; b: string };
 
@@ -780,7 +780,7 @@ expect("value", "level 2", () => JSON.parse<Level>('{"b":"b","level":2}'));
 //// json-parse-by-type-refuses-values-outside-enums-and-literals.ts
 ////= show-3
 
-enum Color {
+import { JSON } from "bun"; enum Color {
   Red,
   Green,
   Blue = 5,
@@ -810,7 +810,7 @@ for (const text of ['"id-15"', '"id--1.5"', '"id-1e3"', '"id-0x10"']) expect("va
 ////= show-3
 
 ////= lines	Item	id	number	name	string
-const good = '{"id":1,"name":"n"}';
+import { JSON } from "bun"; const good = '{"id":1,"name":"n"}';
 
 expect("value", "a reviver that changes nothing", () => JSON.parse<Item>(good, (_, value) => value));
 expect("TypeError", "a number becomes a text", () => JSON.parse<Item>(good, (key, value) => (key === "id" ? String(value) : value)));
@@ -837,7 +837,7 @@ expect("SyntaxError", "broken text never reaches the reviver", () => JSON.parse<
 
 ////= lines	Pair	a	number	b	string
 
-expect("value", "the last one fits", () => JSON.parse<Pair>('{"a":"x","b":"b","a":1}'));
+import { JSON } from "bun"; expect("value", "the last one fits", () => JSON.parse<Pair>('{"a":"x","b":"b","a":1}'));
 expect("TypeError", "the last one is a text", () => JSON.parse<Pair>('{"a":1,"b":"b","a":"x"}'));
 expect("TypeError", "the last one is null", () => JSON.parse<Pair>('{"a":1,"a":null,"b":"b"}'));
 expect("TypeError", "the last one is an object", () => JSON.parse<Pair>('{"a":1,"b":"b","a":{"a":1}}'));
@@ -850,7 +850,7 @@ expect("TypeError", "an optional member", () => JSON.parse<{ o?: number }>('{"o"
 expect("TypeError", "in a table", () => JSON.parse<Record<string, number>>('{"k":1,"k":"x"}'));
 expect("value", "in a table, the last one fits", () => JSON.parse<Record<string, number>>('{"k":"x","k":1}'));
 //// json-parse-by-type-strict-types-refuse-undeclared-keys.ts
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 
 ////= show-3
 
@@ -882,7 +882,7 @@ expect("TypeError", "strict throughout: more keys outside", () => JSON.parse<Dee
 //// json-parse-by-type-takes-its-arguments-from-a-list.ts
 ////= Point
 
-function outcome(run: () => Point): string {
+import { JSON } from "bun"; function outcome(run: () => Point): string {
   try {
     const p = run();
     return "value " + (p.x + p.y);
@@ -973,7 +973,7 @@ console.log(JSON.stringify(item));
 //// parsed-by-type-a-reviver-runs-before-the-check.ts
 ////= show-2
 
-interface Order {
+import { JSON } from "bun"; interface Order {
   id: number;
   note: string;
   lines: { count: number }[];
@@ -1035,7 +1035,7 @@ attempt("a reviver that throws", () =>
 ////= show-2
 
 ////= lines	Pair	a	number	b	string
-interface Nest {
+import { JSON } from "bun"; interface Nest {
   inner: { x: number };
   list: number[];
 }
@@ -1075,7 +1075,7 @@ attempt("a thousand times", () => {
 //// parsed-by-type-enums-and-literal-types.ts
 ////= show-2
 
-enum Color {
+import { JSON } from "bun"; enum Color {
   Red,
   Green,
   Blue = 5,
@@ -1129,7 +1129,7 @@ attempt("as keys", () => {
 //// parsed-by-type-honest.ts
 ////= show-2
 
-interface Line {
+import { JSON } from "bun"; interface Line {
   sku: string;
   count: number;
   price: number;
@@ -1169,7 +1169,7 @@ attempt("one order", () => {
 //// parsed-by-type-keys-in-another-order-and-extra-keys-stay-as-written.ts
 ////= show-2
 
-interface User {
+import { JSON } from "bun"; interface User {
   id: number;
   name: string;
   active: boolean;
@@ -1221,7 +1221,7 @@ for (const text of texts) {
 ////= show-2
 
 ////= lines-4	Plain	id	number
-interface Named {
+import { JSON } from "bun"; interface Named {
   constructor: string;
   toString: number;
   valueOf: boolean;
@@ -1275,7 +1275,7 @@ attempt("copies of an object with its own __proto__", () => {
 //// parsed-by-type-keys-that-look-like-numbers.ts
 ////= show-2
 
-interface Indexed {
+import { JSON } from "bun"; interface Indexed {
   0: string;
   1: string;
   name: string;
@@ -1330,7 +1330,7 @@ attempt("a sparse table", () => {
 //// parsed-by-type-long-strings-and-many-elements.ts
 ////= show-2
 
-interface Page {
+import { JSON } from "bun"; interface Page {
   text: string;
   items: { id: number; tag: string }[];
 }
@@ -1377,7 +1377,7 @@ attempt("much white space", () => {
   return page;
 });
 //// parsed-by-type-negative-zero-in-an-int32-member.ts
-import type { int32 } from "bun";
+import { JSON } from "bun"; import type { int32 } from "bun";
 
 ////= show-2
 
@@ -1412,7 +1412,7 @@ attempt("other spellings of integers", () => ["1.0", "1e2", "100e-2", "214748364
 //// parsed-by-type-nested-a-few-hundred-levels-deep.ts
 ////= show-2
 
-interface Tree {
+import { JSON } from "bun"; interface Tree {
   value: number;
   children: Tree[];
 }
@@ -1467,7 +1467,7 @@ attempt("a wide tree", () => {
 //// parsed-by-type-nesting-of-a-million-levels-gives-the-value-or-a-range-error.ts
 ////= show-2
 
-type Nest = Nest[];
+import { JSON } from "bun"; type Nest = Nest[];
 interface Chain {
   next: Chain | null;
 }
@@ -1504,7 +1504,7 @@ for (const depth of [10_000, 100_000, 1_000_000]) {
 
 ////= lines-4	Reading	n	number
 
-function uses(reading: Reading): unknown[] {
+import { JSON } from "bun"; function uses(reading: Reading): unknown[] {
   const n = reading.n;
   return [n, typeof n, n + 1, n * 2, n | 0, n >>> 0, 1 / n, n === Math.floor(n), Number.isSafeInteger(n), String(n), JSON.stringify(reading)];
 }
@@ -1537,7 +1537,7 @@ attempt("integers and then negative zero", () => {
 //// parsed-by-type-optional-null-and-absent-members.ts
 ////= show-2
 
-interface Profile {
+import { JSON } from "bun"; interface Profile {
   name: string;
   age?: number;
   nick: string | null;
@@ -1602,7 +1602,7 @@ attempt("mapped types", () => {
 ////= show-2
 
 ////= Point
-class Dot implements Point {
+import { JSON } from "bun"; class Dot implements Point {
   constructor(
     public x: number,
     public y: number,
@@ -1648,7 +1648,7 @@ attempt("honest again", () => [norm({ x: 3, y: 4 }), norm(new Dot(3, 4)), keys(n
 //// parsed-by-type-results-are-changed-afterwards.ts
 ////= show-2
 
-interface Account {
+import { JSON } from "bun"; interface Account {
   id: number;
   owner: string;
   limits: { daily: number };
@@ -1749,7 +1749,7 @@ attempt("honest again", () => look(fresh()));
 
 ////= lines	Note	title	string	body	string
 
-function codes(text: string): string {
+import { JSON } from "bun"; function codes(text: string): string {
   const parts: string[] = [];
   for (let i = 0; i < text.length; i++) parts.push(text.charCodeAt(i).toString(16));
   return parts.join(" ");
@@ -1785,7 +1785,7 @@ attempt("a text in 16 bits", () => {
 //// parsed-by-type-text-cut-at-every-position-is-a-syntax-error.ts
 ////= show-2
 
-interface Item {
+import { JSON } from "bun"; interface Item {
   id: number;
   name: string;
   tags: string[];
@@ -1853,7 +1853,7 @@ for (const text of broken) attempt(JSON.stringify(text), () => classOf(() => JSO
 //// parsed-by-type-text-that-is-both-mistyped-and-broken-is-a-syntax-error.ts
 ////= show-2
 
-interface Item {
+import { JSON } from "bun"; interface Item {
   id: number;
   name: string;
   list: number[];
@@ -1893,7 +1893,7 @@ attempt("mistyped far before the break", () => {
 //// parsed-by-type-tuples-records-and-nested-lists.ts
 ////= show-2
 
-type Pair = [number, string];
+import { JSON } from "bun"; type Pair = [number, string];
 type Grid = number[][];
 type Rows = { cells: [number, number]; label: string }[];
 type Table = Record<string, { count: number }>;
@@ -1956,7 +1956,7 @@ attempt("read-only lists", () => {
 //// parsed-by-type-unions-and-tags-in-any-place.ts
 ////= show-2
 
-type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number } | { kind: "label"; text: string; size?: number };
+import { JSON } from "bun"; type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number } | { kind: "label"; text: string; size?: number };
 type Result = { ok: true; value: number } | { ok: false; error: string };
 type Loose = number | string | null | number[] | { n: number };
 type Versioned = { version: 1; name: string } | { version: 2; name: { first: string } };
@@ -2013,7 +2013,7 @@ for (const text of ["1", "-0", '"text"', "null", "[]", "[1,2]", '{"n":1}', '{"n"
 for (const text of ['{"version":1,"name":"a"}', '{"name":{"first":"b"},"version":2}', '{"version":1.0,"name":"c"}', '{"version":2e0,"name":{"first":"d","last":"e"}}']) attempt(text, () => nameOf(JSON.parse<Versioned>(text)));
 //// products-of-members-parsed-by-type-are-summed-in-a-loop.ts
 ////= lines	Line	count	number	price	number
-function total(lines: Line[]): number {
+import { JSON } from "bun"; function total(lines: Line[]): number {
   let sum = 0;
   for (const line of lines) sum += line.count * line.price;
   return sum;

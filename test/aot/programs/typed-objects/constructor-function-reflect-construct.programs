@@ -471,7 +471,7 @@ function checkFieldsStoredLater(): void {
 checkFieldsStoredLater();
 //// copies-of-thousands-of-kinds-of-typed-object.ts
 // Typed objects with undeclared keys of thousands of kinds are cloned, spread, assigned, frozen, listed and compared: every road that copies or lists a typed object, past the caps of what those roads remember.
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 interface Item { id: number }
 interface Holder { first: number; items: Item[]; last: string }
 let serial = 0;

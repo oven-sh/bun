@@ -302,7 +302,11 @@ pub(super) trait FindsValidatedResults<'c, 'p: 'c, 's: 'p>:
                     && nodes.iter().any(has_default) =>
             {
                 let written = self.find_type_text(call, None);
-                self.report_at(call, Code::TypedParseReviverWithDefault, &[written.as_slice()]);
+                self.report_at(
+                    call,
+                    Code::TypedParseReviverWithDefault,
+                    &[written.as_slice()],
+                );
                 return None;
             }
             Ok(nodes) => self.add_expected_result(call, ty, nodes.to_vec()),

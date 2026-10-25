@@ -74,7 +74,7 @@ try {
 attempt("written in place, open", () => validate<Point>({ x: 1, [mark]: "kept", y: 2 }));
 attempt("written in place, closed", () => validate<Closed>({ x: 1, [mark]: "kept", y: 2 }));
 
-// What a reviver returns is handed on as it is, if the type takes it.
+// What a reviver returns is judged alike.
 const marking = (key: string, value: any): any => (key === "" ? Object.assign(value, { [mark]: "revived" }) : value);
-attempt("from a reviver, open", () => JSON.parse<Point>('{"x":1}', marking));
+attempt("from a reviver, open", () => Object.keys(JSON.parse<Point>('{"x":1}', marking)).join());
 attempt("from a reviver, closed", () => JSON.parse<Closed>('{"x":1}', marking));

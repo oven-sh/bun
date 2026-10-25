@@ -19,7 +19,7 @@ The first six are the test types of the [TechEmpower Framework Benchmarks](https
 is the same to the byte. In the fortunes page only the spelling of the escapes differs.
 
 `by-type/` holds two modules of the shop once more: the order and the carrier's answer are validated from their declared types, with
-`JSON.parse<Order>()` and `JSON.parse<RatesAnswer>()`, in place of zod. Laid over `app/` they make a second program that answers
+`JSON.parse<Order>()` and `JSON.parse<RatesAnswer>()` (`JSON` from `"bun"`), in place of zod. Laid over `app/` they make a second program that answers
 the same. It needs `--aot` (`bun build --compile --aot` or `bun run --aot`).
 
 ## The test

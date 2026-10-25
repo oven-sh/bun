@@ -18,7 +18,7 @@ ${many(members, at => `  p${at}?: { a${at}: number };`)}
 `;
 
 // A reviver hands the same object back twice, so what comes out of the parse is an object of the program: one object under two indexes, and a store through either is seen through the other.
-const textOf = (members: number, withReviver: boolean) => `${order(members)}
+const textOf = (members: number, withReviver: boolean) => `import { JSON } from "bun";${order(members)}
 const shared = { count: 5 };
 const order = JSON.parse<Order>('{"lines":[{"count":1},{"count":2}],"p0":{"a0":3}}'${withReviver ? `, (key, value) => (key === "0" || key === "1" ? shared : value)` : ""});
 console.log(order.lines[0] === order.lines[1], order.lines[0] === shared, order.p0?.a0);
@@ -73,7 +73,7 @@ function use(order: Order): void {
 
 // What a program prints does not depend on the count. Plain Bun validates nothing and has no validate(), so the judge is the same program with a type of eight.
 const kinds: Record<string, (count: number) => string> = {
-  "a parse, and texts that it refuses": count => `${show}${order(count)}${use}
+  "a parse, and texts that it refuses": count => `import { JSON } from "bun";${show}${order(count)}${use}
 use(JSON.parse<Order>(${good}));
 attempt("a text for a number", () => JSON.parse<Order>('{"lines":[{"count":"1"}]}'));
 attempt("a text for a number further in", () => JSON.parse<Order>('{"lines":[],"p1":{"a1":"x"}}'));
@@ -83,7 +83,7 @@ attempt("no JSON", () => JSON.parse<Order>('{"lines":'));
 attempt("more members", () => JSON.parse<Order>('{"other":[1,{"x":2}],"lines":[]}'));
 attempt("a reviver that answers a text", () => JSON.parse<Order>(${good}, (key, value) => (key === "a0" ? "x" : value)));
 `,
-  "a parse in a loop": count => `${order(count)}
+  "a parse in a loop": count => `import { JSON } from "bun";${order(count)}
 let sum = 0;
 for (let at = 0; at < 2000; at++) {
   const order = JSON.parse<Order>('{"lines":[{"count":' + at + '}],"p0":{"a0":1},"p1":{"a1":2}}');
@@ -126,7 +126,7 @@ const annotated: Order = await new Response(${good}).json();
 use(annotated);
 use((await Response.json(JSON.parse(${good})).json()) as Order);
 `,
-  "a chain of types": count => `${show}${many(count, at => `interface N${at} { v: number; next?: N${at + 1} }`)}
+  "a chain of types": count => `import { JSON } from "bun";${show}${many(count, at => `interface N${at} { v: number; next?: N${at + 1} }`)}
 interface N${count} { v: number }
 const head = JSON.parse<N0>('{"v":0,"next":{"v":1,"next":{"v":2,"next":{"v":3}}}}');
 console.log(head.v + head.next!.v + head.next!.next!.v + head.next!.next!.next!.v, head.next!.next!.next!.next);
@@ -134,7 +134,7 @@ head.next!.next!.v = 40;
 console.log(JSON.stringify(head));
 attempt("wrong at depth 3", () => JSON.parse<N0>('{"v":0,"next":{"v":1,"next":{"v":2,"next":{"v":"3"}}}}'));
 `,
-  "a union by a tag": count => `import { validate } from "bun:bundle";
+  "a union by a tag": count => `import { JSON } from "bun"; import { validate } from "bun:bundle";
 ${show}type Shape =
 ${many(count, at => `  | { kind: "k${at}"; a${at}: number }`)};
 for (const shapes of [JSON.parse<Shape[]>('[{"kind":"k0","a0":1},{"kind":"k1","a1":2},{"kind":"k0","a0":3}]'), validate<Shape[]>([{ kind: "k0", a0: 1 }, { kind: "k1", a1: 2 }, { kind: "k0", a0: 3 }])]) {
@@ -149,7 +149,7 @@ attempt("an unknown tag", () => JSON.parse<Shape[]>('[{"kind":"nothing","a0":1}]
 attempt("the member of another arm", () => JSON.parse<Shape[]>('[{"kind":"k1","a0":1}]'));
 attempt("an unknown tag in a value", () => validate<Shape[]>([{ kind: "nothing", a0: 1 }]));
 `,
-  "a tuple": count => `${show}type Row = [${many(count, at => `{ a${at}: number }`, ", ")}];
+  "a tuple": count => `import { JSON } from "bun";${show}type Row = [${many(count, at => `{ a${at}: number }`, ", ")}];
 const text = "[" + Array.from({ length: ${count} }, (_, at) => '{"a' + at + '":' + (at < 2 ? at + 1 : 0) + "}").join() + "]";
 const row = JSON.parse<Row>(text);
 console.log(row.length === ${count}, row[0].a0 + row[1].a1, row[2].a2);
@@ -158,7 +158,7 @@ console.log(JSON.stringify(row.slice(0, 3)));
 attempt("a text in the second", () => JSON.parse<Row>(text.replace('"a1":2', '"a1":"2"')));
 attempt("too short", () => (JSON.parse<Row>('[{"a0":1}]') as unknown[]).length);
 `,
-  "a type that reaches itself": count => `${show}interface Tree {
+  "a type that reaches itself": count => `import { JSON } from "bun";${show}interface Tree {
   kids: Tree[];
 ${many(count, at => `  p${at}?: { a${at}: number; up?: Tree };`)}
 }
@@ -168,13 +168,13 @@ tree.kids[0].p0!.up!.kids.push(tree.kids[0]);
 console.log(tree.kids[0].p0!.up!.kids[0] === tree.kids[0]);
 attempt("wrong far in", () => JSON.parse<Tree>('{"kids":[{"kids":[],"p0":{"a0":1,"up":{"kids":[1]}}}]}'));
 `,
-  "values under any name": count => `${show}${order(count)}
+  "values under any name": count => `import { JSON } from "bun";${show}${order(count)}
 type Book = { [name: string]: Order };
 const book = JSON.parse<Book>('{"first":{"lines":[{"count":1}],"p0":{"a0":2}},"second":{"lines":[]}}');
 console.log(Object.keys(book).join(), book.first.lines[0].count + book.first.p0!.a0, book.second.lines.length, book.third);
 attempt("wrong under a name", () => JSON.parse<Book>('{"first":{"lines":[{"count":"1"}]}}'));
 `,
-  "lists of as many types": count => `${show}interface Lists {
+  "lists of as many types": count => `import { JSON } from "bun";${show}interface Lists {
 ${many(count, at => `  p${at}?: { a${at}: number }[];`)}
 }
 const lists = JSON.parse<Lists>('{"p0":[{"a0":1},{"a0":2}],"p1":[]}');
@@ -183,14 +183,14 @@ lists.p1!.push({ a1: 4 });
 console.log(JSON.stringify(lists));
 attempt("wrong in a list", () => JSON.parse<Lists>('{"p1":[{"a1":null}]}'));
 `,
-  "as many types, each with a call of its own": count => `import { validate } from "bun:bundle";
+  "as many types, each with a call of its own": count => `import { JSON } from "bun"; import { validate } from "bun:bundle";
 ${many(count, at => `interface T${at} { a${at}: number; inner: { b${at}: number } }`)}
 let sum = 0;
 ${many(count, at => `sum += JSON.parse<T${at}>('{"a${at}":1,"inner":{"b${at}":1}}').inner.b${at} + validate<T${at}>({ a${at}: 1, inner: { b${at}: 1 } }).a${at};`)}
 console.log(sum === ${2 * count});
 `,
   // The objects that the small type's parser makes are known one by one. Those of the same type that come out of the large one's are changed here in every way.
-  "an object type that a small type reaches too": count => `interface Inner { x: number; y: number }
+  "an object type that a small type reaches too": count => `import { JSON } from "bun"; interface Inner { x: number; y: number }
 interface Small { inner: Inner }
 interface Large {
   inner: Inner;
@@ -208,7 +208,7 @@ let total = 0;
 for (let at = 0; at < 2000; at++) total += sumOf(JSON.parse<Small>('{"inner":{"x":1,"y":2}}').inner) + sumOf(JSON.parse<Large>('{"inner":{"x":1.5,"y":2}}').inner);
 console.log(total);
 `,
-  "a field of a class, and a generic function": count => `${order(count)}
+  "a field of a class, and a generic function": count => `import { JSON } from "bun";${order(count)}
 class Holder {
   order: Order;
   constructor(text: string) { this.order = JSON.parse<Order>(text); }
@@ -219,7 +219,7 @@ function first<T>(list: T[]): T { return list[0]; }
 const orders = JSON.parse<Order[]>('[' + ${good} + ']');
 console.log(first(orders).lines[1].count, first<Order>(orders).p0!.a0, orders.length);
 `,
-  "a parse in a worker": count => `import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+  "a parse in a worker": count => `import { JSON } from "bun"; import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 ${order(count)}
 function sumOf(text: string): number {
   const order = JSON.parse<Order>(text);

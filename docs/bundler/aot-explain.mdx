@@ -191,6 +191,8 @@ aot: unknown-code: unknown-object at main.ts:7:25, 1 access, 1 untyped operator,
 Here is the fix.
 
 ```ts main.ts icon="/icons/typescript.svg"
+import { JSON } from "bun"; // [!code highlight]
+
 interface Item {
   sku: string;
   price: number;
@@ -377,12 +379,14 @@ Split the function or the type to get under it. [`Compiler limits hit`](#after-t
 Every access the object can reach needs a shape check first. The entry points to where the object comes from.
 
 ```ts
+import { JSON } from "bun"; // [!code ++]
+
 const saved: any = JSON.parse(text); // [!code --]
 const saved = JSON.parse<Item>(text); // [!code ++]
 items.push(saved);
 ```
 
-`JSON.parse<Item>(text)` checks the data while it parses, and creates the objects with the fixed layout of `Item`. For a value that isn't JSON text, `validate<Item>(value)`, imported from `"bun:bundle"`, checks it and returns a typed copy. [Validate data by its type](/bundler/validate) has the details.
+`JSON.parse<Item>(text)`, with `JSON` imported from `"bun"`, checks the data while it parses, and creates the objects with the fixed layout of `Item`. For a value that isn't JSON text, `validate<Item>(value)`, imported from `"bun:bundle"`, checks it and returns a typed copy. [Validate data by its type](/bundler/validate) has the details.
 
 If you want your own checks and your own error messages, take the value as `unknown`, narrow it, and build the object yourself. The compiler then sees every `Config` being created. The reads from the untyped value are lookups by name, but they happen once, at the edge of your program.
 
@@ -538,6 +542,8 @@ Call the function directly, or narrow the result.
 > The array, Map or Set this value is read from may contain values of other types.
 
 ```ts
+import { JSON } from "bun"; // [!code ++]
+
 const items: Item[] = [];
 items.push(JSON.parse(line)); // [!code --]
 items.push(JSON.parse<Item>(line)); // [!code ++]
@@ -884,6 +890,8 @@ Narrow the value, or compile the typed source of the package. [Publish a library
 > The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).
 
 ```ts
+import { JSON } from "bun"; // [!code ++]
+
 const order: Order = await response.json(); // [!code --]
 const order = JSON.parse<Order>(await response.text()); // [!code ++]
 ```

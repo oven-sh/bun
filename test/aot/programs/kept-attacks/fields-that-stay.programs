@@ -269,7 +269,7 @@ console.log(JSON.stringify(make()), make().describe(), make() instanceof Animal)
 // `JSON.parse<T>(text)` in a .ts file builds an object of type T: the rule holds for it as for a literal. Plain Bun does every operation.
 // Columns: kinds types. Elsewhere: not compared (under fields and wide the deletes, redefinitions and prototypes throw as stored, and the stores of another kind are done).
 ////= attempt-2
-interface Config { host: string; port: number; note?: string }
+import { JSON } from "bun"; interface Config { host: string; port: number; note?: string }
 const text = '{"host":"h","port":1,"note":"n"}';
 const make = (): any => JSON.parse<Config>(text);
 attempt("delete of a required property", () => delete make().host);
@@ -279,7 +279,7 @@ attempt("another prototype", () => { Object.setPrototypeOf(make(), {}); return "
 attempt("a store of another kind", () => { const o = make(); o.port = "text"; return o.port; });
 attempt("a store of the declared kind", () => { const o = make(); o.port = 2; return JSON.stringify(o); });
 attempt("a new property", () => { const o = make(); o.extra = true; return JSON.stringify(o); });
-const untyped = JSON.parse(text);
+const untyped = globalThis.JSON.parse(text);
 attempt("without a type, delete", () => delete untyped.host);
 attempt("without a type, a store", () => { untyped.port = "text"; return JSON.stringify(untyped); });
 //// fields-that-stay/stable-fields-adding-properties.ts

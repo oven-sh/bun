@@ -501,7 +501,7 @@ out.push(writeNested(reordered), writeNested(reordered));
 console.log(out.map(String).join("\n"));
 //// json-stringify-typed-objects-with-undeclared-keys.ts
 // A typed object that carries undeclared keys is written as a plain object of the same content is.
-interface Point { x: number; y: number; label?: string }
+import { JSON } from "bun"; interface Point { x: number; y: number; label?: string }
 interface Segment { id: number; from: Point; to: Point; points: Point[]; note: string | null }
 
 let different = 0;
@@ -533,12 +533,12 @@ function check(label: string, typed: unknown, plain: unknown): void {
 
 const points = ['{"x":1,"y":2}', '{"x":1,"y":2,"o":3}', '{"o":"first","x":1,"p":[1,{"q":null}],"y":2,"label":"l","r":{"s":{"t":true}}}', '{"x":1.5,"y":-0,"o":1e21,"p":-1e-7,"q":123456789012}', '{"x":1,"y":2,"a\\"b":1,"c\\nd":2,"é":3,"日本":4,"":5,"😀":"😀"}', '{"x":1,"y":2,"o":"a\\"b\\n\\u0001é日本"}', '{"x":1,"y":2,"0":"zero","7":"seven","o":1}', '{"x":1,"y":2,"__proto__":{"a":1},"constructor":1}', '{"x":1,"y":2,"toJSON":1}', '{"x":1,"y":2,"o":{"toJSON":2}}', "{" + Array.from({ length: 90 }, (_, at) => `"k${at}":${at}`).join(",") + ',"x":1,"y":2}'];
 for (const text of points) {
-  for (let round = 0; round < 3; round++) check(text, JSON.parse<Point>(text), JSON.parse(text));
+  for (let round = 0; round < 3; round++) check(text, JSON.parse<Point>(text), globalThis.JSON.parse(text));
 }
 for (const from of points.slice(0, 6)) {
   for (const to of points.slice(0, 6)) {
     const text = `{"a":1,"id":1,"from":${from},"b":${to},"to":${to},"points":[${from},${to}],"note":null,"c":[${from}]}`;
-    check(text, JSON.parse<Segment>(text), JSON.parse(text));
+    check(text, JSON.parse<Segment>(text), globalThis.JSON.parse(text));
   }
 }
 
@@ -566,7 +566,7 @@ const changes: [string, (value: any) => void][] = [
 ];
 for (const [label, change] of changes) {
   for (const text of ['{"x":1,"y":2,"o":3}', '{"n":0,"x":1,"o":3,"label":"l","y":2,"p":4}']) {
-    const [typed, plain] = [JSON.parse<Point>(text), JSON.parse(text)];
+    const [typed, plain] = [JSON.parse<Point>(text), globalThis.JSON.parse(text)];
     change(typed);
     change(plain);
     check(label, typed, plain);
@@ -575,7 +575,7 @@ for (const [label, change] of changes) {
 console.log(total + " texts, " + different + " differ");
 //// json-stringify-typed-objects-with-undeclared-keys-stay-compiled.ts
 // The typed writer writes a typed object's undeclared keys itself, below another object and at the top: the engine's own writer is not asked.
-declare const aotRuntimeCounters: () => string;
+import { JSON } from "bun"; declare const aotRuntimeCounters: () => string;
 const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
 declare const aotOperationCount: undefined | ((name: string) => number);
 interface Point { x: number; y: number; label?: string }

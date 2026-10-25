@@ -51,7 +51,7 @@ export function everydayIdioms(foundAtRunTime = false) {
   return idioms;
 }
 
-/** Each as TypeScript into `typed`, beside what writeTypedIdioms() has put there, and as the same text without its types into `untyped`, beside what writeUntypedIdioms() has. */
+/** Each as TypeScript into `typed`, beside what writeTypedIdioms() has put there, and as the same text without its types into `untyped`, beside what writeUntypedIdioms() has. A text without types has no type to parse by: there `JSON` is the global one. */
 export function writeEverydayIdioms(typed: string, untyped: string, foundAtRunTime = false) {
   const transpiler = new Bun.Transpiler({ loader: "ts", target: "bun", deadCodeElimination: false, inline: false });
   const idioms = everydayIdioms(foundAtRunTime);
@@ -59,7 +59,10 @@ export function writeEverydayIdioms(typed: string, untyped: string, foundAtRunTi
     mkdirSync(dirname(join(typed, name)), { recursive: true });
     mkdirSync(dirname(join(untyped, name)), { recursive: true });
     writeFileSync(join(typed, name + ".ts"), text);
-    writeFileSync(join(untyped, name + ".js"), transpiler.transformSync(text));
+    writeFileSync(
+      join(untyped, name + ".js"),
+      transpiler.transformSync(text.replace('import { JSON } from "bun"; ', "")),
+    );
   }
   return idioms.map(idiom => idiom.name);
 }

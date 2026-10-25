@@ -2353,6 +2353,42 @@ describe("css tests", () => {
     );
   });
 
+  describe("border-image", () => {
+    // Chrome 80 has no `dvh`. The earlier declaration is the value for it.
+    prefix_test(
+      ".a { border-image: url(x.png) 30 / 1vh; border-image: url(x.png) 30 / 1dvh }",
+      '.a { border-image: url("x.png") 30 / 1vh; border-image: url("x.png") 30 / 1dvh; }',
+      { chrome: 80 << 16 },
+    );
+    prefix_test(
+      ".a { border-image: linear-gradient(red, blue) 30 / 1vh; border-image: linear-gradient(red, blue) 30 / 1dvh }",
+      ".a { border-image: linear-gradient(red, #00f) 30 / 1vh; border-image: linear-gradient(red, #00f) 30 / 1dvh; }",
+      { chrome: 80 << 16 },
+    );
+    prefix_test(
+      ".a { border-image-source: url(x.png); border-image-width: 1vh; border-image-width: 1dvh }",
+      '.a { border-image-source: url("x.png"); border-image-width: 1vh; border-image-width: 1dvh; }',
+      { chrome: 80 << 16 },
+    );
+
+    // Chrome 80 supports the later value, so it replaces the earlier one.
+    prefix_test(
+      ".a { border-image: url(x.png) 30 / 1px; border-image: url(x.png) 30 / 2px }",
+      '.a { border-image: url("x.png") 30 / 2px; }',
+      { chrome: 80 << 16 },
+    );
+    prefix_test(
+      ".a { border-image: url(x.png) 30 / 1px; border-image: url(y.png) 30 / 1px }",
+      '.a { border-image: url("y.png") 30 / 1px; }',
+      { chrome: 80 << 16 },
+    );
+    prefix_test(
+      ".a { border-image: url(x.png) 3 / 3; border-image-outset: 0; border-image-outset: 2 }",
+      '.a { border-image: url("x.png") 3 / 3 / 2; }',
+      { chrome: 80 << 16 },
+    );
+  });
+
   describe("box-shadow", () => {
     minify_test(
       ".foo { box-shadow: 64px 64px 12px 40px rgba(0,0,0,0.4) }",

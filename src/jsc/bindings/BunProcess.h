@@ -146,6 +146,9 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
+// What `bun fuzzilli` does before it runs a fuzzed script. For bun:internal-for-testing.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionEnterFuzzilliREPRLForTesting);
+
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);
 

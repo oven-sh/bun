@@ -4,6 +4,7 @@
 // the status the wrapper reports for each exec cycle: 0 when the script
 // returned, 1 << 8 when it threw.
 
+import { enterFuzzilliREPRL } from "bun:internal-for-testing";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -66,6 +67,9 @@ const realWriteSync = fs.writeSync;
 
 (globalThis as any).resetCoverage = () => {};
 (globalThis as any).require = require;
+
+// `bun fuzzilli` does this before it boots the wrapper.
+enterFuzzilliREPRL();
 
 const reprlSource = fs.readFileSync(
   path.join(import.meta.dir, "..", "..", "..", "..", "src", "js", "eval", "fuzzilli-reprl.ts"),

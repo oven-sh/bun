@@ -15,16 +15,6 @@ globalThis.require = require;
 globalThis.__dirname = "/";
 globalThis.__filename = "/fuzzilli.js";
 
-// process.execve replaces the process image on success, which kills the REPRL
-// child, so fuzzed scripts must not be able to reach the real implementation.
-// Nor may they send a signal: process.kill delivers it through process._kill.
-Object.assign(process, {
-  execve() {},
-  _kill() {
-    return 0;
-  },
-});
-
 // ============================================================================
 // REPRL Protocol Loop
 // ============================================================================

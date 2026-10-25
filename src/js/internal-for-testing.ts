@@ -804,6 +804,14 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
+// What `bun fuzzilli` does before it runs a fuzzed script: from then on process.abort, process.execve and
+// process._kill do nothing, in every global of the process.
+export const enterFuzzilliREPRL: () => void = $newCppFunction(
+  "BunProcess.cpp",
+  "jsFunctionEnterFuzzilliREPRLForTesting",
+  0,
+);
+
 // `parallelism` threads each spawn `iterations` no-op threads through bun's own pthread_create,
 // writing every failure to `fd`. Returns the first failing errno, or with `detach` 0 as soon as
 // every loop runs; a detached loop also writes to `fd` when it runs out of iterations.

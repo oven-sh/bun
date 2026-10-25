@@ -1201,6 +1201,23 @@ ${keepAlive}`,
     });
   });
 
+  // Bun starts in a folder of the package: the project is the package, not
+  // the start folder. Not on Windows: that watcher takes no file outside the
+  // folder bun starts in, whatever the project is (#9547).
+  it.skipIf(isWindows)("--watch started below the package folder reloads a file beside the start folder", async () => {
+    using dir = tempDir("watch-project", {
+      "node_modules/my-pkg": {
+        "src/main.js": `import { v } from "../lib/util.js";\nconsole.log("run", v);\n${keepAlive}`,
+        "lib/util.js": util(1),
+      },
+    });
+    await using _ = watchers;
+    const project = join(String(dir), "node_modules/my-pkg");
+    const { stdout } = start(join(project, "src"), ["--watch", "--no-clear-screen", "main.js"]);
+    await stdout.waitFor("run 1");
+    await editUntil(stdout, "run 2", () => Bun.write(join(project, "lib/util.js"), util(2)));
+  });
+
   // The physical path of a package of the isolated linker. The test file is
   // loaded like an import, so it was not watched either.
   it("test --watch runs again after an edit to an import and to the test file", async () => {
@@ -1219,8 +1236,7 @@ ${keepAlive}`,
   // `--check` offers the watcher each file that the type checker reads, by
   // the same rule. `imported.ts` has the error, so only the type checker has
   // read it. The declarations of the package are written first. The project
-  // has no lib files, which keeps the check fast. Bun starts below the
-  // package folder here: the project is the package, not the start folder.
+  // has no lib files, which keeps the check fast.
   it("--watch --check checks again after an edit to an import, and watches no package", async () => {
     const imported = (n: string) => `import type { T } from "typed";\nexport const n: T = ${n};\n`;
     const types = "export type T = number;\n";
@@ -1236,7 +1252,7 @@ ${keepAlive}`,
           globals.join("") +
           "declare var console: { log(...args: unknown[]): void };\n" +
           "declare function setInterval(fn: () => void, ms: number): unknown;\n",
-        "src/main.ts": `import { n } from "../lib/imported";\nconsole.log("run", n);\n${keepAlive}`,
+        "main.ts": `import { n } from "./lib/imported";\nconsole.log("run", n);\n${keepAlive}`,
         "lib/imported.ts": imported(`"1"`),
         "node_modules/typed/package.json": JSON.stringify({ name: "typed", types: "./types.d.ts" }),
         "node_modules/typed/types.d.ts": types,
@@ -1246,7 +1262,7 @@ ${keepAlive}`,
     const project = join(String(dir), "node_modules/my-pkg");
     const trace = join(String(dir), "trace.jsonl");
     const args = ["--watch", "--check", "--no-clear-screen", "main.ts"];
-    const { proc, stdout } = start(join(project, "src"), args, { trace, stderr: "pipe" });
+    const { proc, stdout } = start(project, args, { trace, stderr: "pipe" });
     await streamWaiter(proc.stderr).waitFor("TS2322");
     await editUntil(stdout, "run 1", async () => {
       await Bun.write(join(project, "node_modules/typed/types.d.ts"), types);

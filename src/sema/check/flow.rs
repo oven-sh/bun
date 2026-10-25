@@ -199,6 +199,7 @@ pub(super) struct FlowMemo {
     /// Indexed by flow node of the file `reachable_like_of`. See `is_reachable_worker`.
     reachable_like: Vec<FlowId>,
     reachable_like_of: Option<FileId>,
+    rows: Rows,
     /// The subjects of each test in the file `tests_of`, indexed by the test's flow node.
     tests: Vec<TestSubjects>,
     tests_of: Option<FileId>,
@@ -227,6 +228,64 @@ pub(super) struct FlowMemo {
     /// The expressions whose stored type follows from a walk that ended with an incomplete type.
     /// See `check_expression_again`.
     checked_with_incomplete_walk: crate::util::FxHashSet<(FileId, ExprId)>,
+}
+
+/// Not in tsgo. The rows of a file's flow graph. A row is a chain of assignments, declarations,
+/// array mutations and call statements, each the first such successor of the one before it. A walk
+/// steps through a row without a new `getTypeAtFlowNode` invocation, and only a few of the nodes
+/// can affect it. See `Checker::skip_unaffected_row`.
+#[derive(Default)]
+struct Rows {
+    file: Option<FileId>,
+    /// Indexed by flow node: the first node of its row, or `NONE` if it's in none.
+    row_of: Vec<FlowId>,
+    /// Sorted.
+    assignments: Vec<RowAssignment>,
+    /// Sorted.
+    calls: Vec<RowCall>,
+    /// For each entry `i` of `calls` that's idle: the entries from this index up to `i` are idle.
+    idle_from: Vec<u32>,
+}
+
+/// An assignment or a declaration in a row, and the references it can affect.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct RowAssignment {
+    row: u32,
+    /// The `root_key` of the target's root, or 0 for every root.
+    root: u32,
+    /// A hash of the names in the target (`with_name`), or `ANY_ACCESS`.
+    path: u32,
+    node: u32,
+}
+
+impl RowAssignment {
+    /// The target is the root.
+    const NO_PATH: u32 = 0;
+    /// `root[i]`: compared with every access, but never with just a name or `this`.
+    const ANY_ACCESS: u32 = u32::MAX;
+    /// Not an assignment: a node whose type a walk keeps in `sharedFlows`.
+    const SHARED: u32 = u32::MAX - 1;
+
+    /// `path` for a target with one more name. Two paths may get the same value.
+    fn with_name(path: u32, name: Atom) -> u32 {
+        let hash = (path ^ name.0).wrapping_mul(0x9e37_79b1).rotate_left(15);
+        hash.clamp(1, RowAssignment::SHARED - 1)
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct RowCall {
+    row: u32,
+    node: u32,
+}
+
+impl Rows {
+    /// The last node of `row` up to `node` with this `root` and `path`.
+    fn last_assignment(&self, upto: RowAssignment) -> Option<u32> {
+        let after = self.assignments.partition_point(|a| *a <= upto);
+        let last = self.assignments[..after].last()?;
+        ((last.row, last.root, last.path) == (upto.row, upto.root, upto.path)).then_some(last.node)
+    }
 }
 
 /// `FlowLoopKey`, without the reference.
@@ -279,6 +338,27 @@ impl FlowMemo {
     fn is_in_finally_block(&self, flow: FlowId) -> bool {
         let mut blocks = self.finally_blocks.iter();
         blocks.any(|&(label, reduce)| label < flow.0 && flow.0 < reduce)
+    }
+
+    /// The last call of a row, up to a node, that isn't idle.
+    fn last_active_call(&mut self, file: FileId, upto: RowCall) -> Option<u32> {
+        let after = self.rows.calls.partition_point(|call| *call <= upto);
+        let mut at = after;
+        let found = loop {
+            let call = match self.rows.calls[..at].last() {
+                Some(call) if call.row == upto.row => call.node,
+                _ => break None,
+            };
+            if !self.is_idle_call(file, FlowId(call)) {
+                break Some(call);
+            }
+            at = self.rows.idle_from[at - 1] as usize;
+        };
+        let mut passed = after;
+        while passed > at {
+            passed = std::mem::replace(&mut self.rows.idle_from[passed - 1], at as u32) as usize;
+        }
+        found
     }
 
     fn cached_flow_loop_type(&self, key: &FlowLoopKey, reference: &Reference) -> Option<TypeId> {
@@ -443,6 +523,8 @@ struct Walk {
     reduced: Vec<(FlowId, FlowId)>,
     /// How many back edges of loops are being followed.
     back_edges: u32,
+    /// It has passed a node with several antecedents, so it can reach a node a second time.
+    has_passed_join: bool,
     steps: u32,
     /// The number of nested `getTypeAtFlowNode` invocations that would be in progress.
     depth: u32,
@@ -451,6 +533,11 @@ struct Walk {
 }
 
 const MAX_STEPS: u32 = 2_000_000;
+
+/// After this many steps through a row, a walk looks in `Rows` for where to continue.
+const LONG_ROW: u32 = 32;
+/// After this many, it builds `Rows` for the file.
+const ROW_WORTH_INDEXING: u32 = 512;
 
 /// A key for a name or for `this`, not necessarily unique. 0 for any other root of a reference.
 fn root_key(root: Root) -> u32 {
@@ -799,6 +886,7 @@ impl Walk {
             shared_flows: SharedFlows::default(),
             reduced: Vec::new(),
             back_edges: 0,
+            has_passed_join: false,
             steps: 0,
             depth: 0,
             too_deep: false,
@@ -6382,6 +6470,218 @@ impl<'p, 's> Checker<'p, 's> {
         self.evolving_array(element)
     }
 
+    /// The references that the assignment or declaration of `target` can affect: `root` and `path`
+    /// of a `RowAssignment`. An assignment to `a.b` affects `a.b` and `a.b.c`. For any other
+    /// reference whose accesses all have a name, `type_at_assignment` returns `Unaffected` and
+    /// resolves nothing.
+    fn subject_of_assignment(&self, file: FileId, target: FlowTarget) -> Option<(u32, u32)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let declared = |pat: PatId| {
+            let symbol = bound.pat_symbol[pat.idx()].some()?;
+            Some((root_key(Root::Symbol(symbol)), RowAssignment::NO_PATH))
+        };
+        let mut at = match target {
+            FlowTarget::Var(d) => {
+                // See `is_for_in_over`.
+                let is_of_for_in = matches!(bound.var_stmt[d.idx()].some(), Some(stmt)
+                    if matches!(bound.parent_of_stmt(stmt), Parent::Stmt(owner)
+                        if matches!(hir[owner].kind, StmtKind::ForIn { .. })));
+                if is_of_for_in {
+                    return Some((0, RowAssignment::NO_PATH));
+                }
+                return declared(hir[d].pat);
+            }
+            FlowTarget::Pat(pat) => return declared(pat),
+            FlowTarget::Expr(e) => e,
+        };
+        // Outermost first.
+        let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
+        let mut has_names = true;
+        let root = loop {
+            at = match hir[at].kind {
+                ExprKind::Dot { obj, name, .. } => {
+                    names.push(name);
+                    obj
+                }
+                // `isMatchingReference` compares the names of two accesses before their objects.
+                ExprKind::Index { index, .. } if self.is_computed_key(file, index) => {
+                    return Some((0, RowAssignment::ANY_ACCESS));
+                }
+                ExprKind::Index { obj, index, .. } => {
+                    match hir[index].kind {
+                        _ if is_parenthesized(hir, index) => has_names = false,
+                        ExprKind::String(name) => names.push(name),
+                        ExprKind::Number(n) => {
+                            names.push(self.number_name(hir.numbers[n as usize]))
+                        }
+                        _ => has_names = false,
+                    }
+                    obj
+                }
+                ExprKind::Ident(name) => break self.root_of_identifier(file, at, name),
+                ExprKind::This => break Root::This,
+                _ => return Some((0, RowAssignment::NO_PATH)),
+            };
+        };
+        let path = if has_names {
+            (names.iter().rev()).fold(RowAssignment::NO_PATH, |path, &name| {
+                RowAssignment::with_name(path, name)
+            })
+        } else {
+            RowAssignment::ANY_ACCESS
+        };
+        Some((root_key(root), path))
+    }
+
+    #[inline(never)]
+    fn index_rows(&mut self, file: FileId) {
+        let bound = self.bound(file);
+        let mut rows = Rows {
+            file: Some(file),
+            row_of: vec![FlowId::NONE; bound.flow.len()],
+            ..Rows::default()
+        };
+        let mut has_successor = vec![false; bound.flow.len()];
+        // Plus one at the first node of each loop, minus one after the last.
+        let mut nesting_changes = vec![0i32; bound.flow.len() + 1];
+        for (i, &node) in bound.flow.iter().enumerate() {
+            if let Flow::Loop { start, len } = node
+                && let Some(last) = (bound.edges(start, len).iter().skip(1)).max_by_key(|e| e.0)
+                && last.idx() > i
+            {
+                nesting_changes[i] += 1;
+                nesting_changes[last.idx() + 1] -= 1;
+            }
+        }
+        let mut nesting = 0;
+        for (i, &node) in bound.flow.iter().enumerate() {
+            nesting += nesting_changes[i];
+            let at = FlowId(i as u32);
+            let (Flow::Assign { before, .. }
+            | Flow::ArrayMutation { before, .. }
+            | Flow::Call { before, .. }) = node
+            else {
+                continue;
+            };
+            let row = match rows.row_of.get(before.idx()) {
+                Some(&row)
+                    if row.is_some()
+                        && before.idx() < i
+                        && !std::mem::replace(&mut has_successor[before.idx()], true) =>
+                {
+                    row
+                }
+                _ => at,
+            };
+            rows.row_of[i] = row;
+            let (row, node_number) = (row.0, at.0);
+            if bound.is_shared(at) {
+                rows.assignments.push(RowAssignment {
+                    row,
+                    root: 0,
+                    // A walk that starts in a loop can come back to a node it passed before the
+                    // first join.
+                    path: if nesting > 0 {
+                        RowAssignment::NO_PATH
+                    } else {
+                        RowAssignment::SHARED
+                    },
+                    node: node_number,
+                });
+            }
+            match node {
+                Flow::Call { .. } => rows.calls.push(RowCall {
+                    row,
+                    node: node_number,
+                }),
+                Flow::Assign { target, .. } => {
+                    if let Some((root, path)) = self.subject_of_assignment(file, target) {
+                        rows.assignments.push(RowAssignment {
+                            row,
+                            root,
+                            path,
+                            node: node_number,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        rows.assignments.sort_unstable();
+        rows.calls.sort_unstable();
+        rows.idle_from = (0..rows.calls.len() as u32).collect();
+        self.flow_memo.rows = rows;
+    }
+
+    /// FOR SPEED. Returns the nearest node at or before `flow` in its row that can affect the walk
+    /// or at which the walk evaluates something, or else the node before the row. Each reference in
+    /// n consecutive statements like `o.a = 1` or `list.push(x)` walks back through the ones before
+    /// it. This keeps that from taking n * n steps.
+    #[inline(never)]
+    fn skip_unaffected_row(&mut self, walk: &Walk, flow: FlowId) -> FlowId {
+        let reference = &walk.reference;
+        let (file, root) = (reference.file, root_key(reference.root));
+        let has_names =
+            (reference.path.iter()).all(|step| matches!(step.name.get(), AccessedName::Some(_)));
+        // Calls are only known to be idle in the task's file. An array mutation affects an evolving
+        // array.
+        if root == 0
+            || !has_names
+            || self.task.file != Some(file)
+            || self.is_automatic_type(walk.declared)
+        {
+            return flow;
+        }
+        if self.flow_memo.rows.file != Some(file) {
+            self.index_rows(file);
+        }
+        let Some(row) = self.flow_memo.rows.row_of[flow.idx()].some() else {
+            return flow;
+        };
+        let (row_number, node) = (row.0, flow.0);
+        let upto = RowCall {
+            row: row_number,
+            node,
+        };
+        let mut last = self.flow_memo.last_active_call(file, upto);
+        let mut subjects: SmallVec<[(u32, u32); 8]> =
+            smallvec![(0, RowAssignment::NO_PATH), (root, RowAssignment::NO_PATH)];
+        // The second time a walk reaches a node, it uses the type in `sharedFlows`. What it would
+        // find by walking on can differ: it has filled `flowLoopCache` since.
+        if walk.has_passed_join || !self.flow_loops.is_empty() {
+            subjects.push((0, RowAssignment::SHARED));
+        }
+        if !reference.path.is_empty() {
+            subjects.push((0, RowAssignment::ANY_ACCESS));
+            subjects.push((root, RowAssignment::ANY_ACCESS));
+        }
+        let mut path = RowAssignment::NO_PATH;
+        for step in &reference.path {
+            if let AccessedName::Some(name) = step.name.get() {
+                path = RowAssignment::with_name(path, name);
+                subjects.push((root, path));
+            }
+        }
+        for (root, path) in subjects {
+            last = last.max(self.flow_memo.rows.last_assignment(RowAssignment {
+                row: row_number,
+                root,
+                path,
+                node,
+            }));
+        }
+        match (last, self.bound(file).flow[row.idx()]) {
+            (Some(last), _) => FlowId(last),
+            (
+                None,
+                Flow::Assign { before, .. }
+                | Flow::ArrayMutation { before, .. }
+                | Flow::Call { before, .. },
+            ) => before,
+            _ => flow,
+        }
+    }
+
     /// `getTypeAtFlowNode`
     fn flow_type(&mut self, walk: &mut Walk, start: FlowId) -> FlowType {
         if walk.too_deep {
@@ -6401,6 +6701,9 @@ impl<'p, 's> Checker<'p, 's> {
         let mut shared_flow = FlowId::NONE;
         let (depth, crossed) = (walk.depth, walk.crossed);
         let mut incomplete = false;
+        // How many assignments, array mutations and calls in a row didn't affect the walk.
+        let mut unaffected = 0;
+        let mut long_row = LONG_ROW;
         let mut ty = loop {
             walk.steps += 1;
             if walk.steps >= MAX_STEPS {
@@ -6412,6 +6715,18 @@ impl<'p, 's> Checker<'p, 's> {
                 cold_path();
                 walk.too_deep = true;
                 break TypeId::ERROR;
+            }
+            if unaffected >= long_row
+                && (unaffected >= ROW_WORTH_INDEXING || self.flow_memo.rows.file == Some(file))
+            {
+                cold_path();
+                unaffected = 0;
+                let nearest = self.skip_unaffected_row(walk, flow);
+                // Where every node has to be visited, looking for the next one is a waste.
+                if nearest == flow {
+                    long_row *= 2;
+                }
+                flow = nearest;
             }
             if bound.is_shared(flow) {
                 if let Some(known) = walk.shared_flows.get(flow) {
@@ -6460,7 +6775,7 @@ impl<'p, 's> Checker<'p, 's> {
                         AtAssignment::Antecedent(then) => {
                             pending.push((then, std::mem::take(&mut shared_flow)));
                         }
-                        AtAssignment::Unaffected => {}
+                        AtAssignment::Unaffected => unaffected += 1,
                     }
                     flow = before;
                 }
@@ -6471,6 +6786,7 @@ impl<'p, 's> Checker<'p, 's> {
                     {
                         pending.push((Pending::Mutation(expr), std::mem::take(&mut shared_flow)));
                     }
+                    unaffected += 1;
                     flow = before;
                 }
                 Flow::Cond {
@@ -6500,6 +6816,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if self.flow_memo.is_idle_call(file, flow) {
                         let (arrived_at, passed) = self.before_idle_calls(file, flow, before);
                         walk.steps = walk.steps.saturating_add(passed);
+                        unaffected += 1;
                         flow = arrived_at;
                         continue;
                     }
@@ -6520,6 +6837,7 @@ impl<'p, 's> Checker<'p, 's> {
                             _ => {}
                         }
                     }
+                    unaffected += 1;
                     flow = before;
                 }
                 Flow::Reduce {
@@ -6527,6 +6845,7 @@ impl<'p, 's> Checker<'p, 's> {
                     label,
                     instead,
                 } => {
+                    walk.has_passed_join = true;
                     walk.reduced.push((label, instead));
                     let t = self.flow_type(walk, before);
                     walk.reduced.pop();
@@ -6540,6 +6859,7 @@ impl<'p, 's> Checker<'p, 's> {
                         continue;
                     }
                     // `getTypeAtFlowBranchLabel`
+                    walk.has_passed_join = true;
                     let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
                     // The path that bypasses a `switch` when no case matched. It doesn't exist if
                     // the `switch` is exhaustive. That's only computed when it would change the
@@ -6597,6 +6917,7 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                         _ => {}
                     }
+                    walk.has_passed_join = true;
                     // `getTypeAtFlowLoopLabel`: a reference without a key has its declared type at
                     // a loop label.
                     let has_key = match walk.has_reference_key {

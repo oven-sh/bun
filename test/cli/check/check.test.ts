@@ -1903,6 +1903,46 @@ export function lastInAnObject() { ({ ...x6 } = o); }
     expect(exitCode).toBe(1);
   });
 
+  // Each reference to `list` or `o` walks back through the statements before it. None of them affects it, except the
+  // ones the probes are about. This used to be quadratic: over 8 s for each of these files in a release build.
+  test("doesn't slow down on 30,000 assignments to properties or `push` calls in a row", async () => {
+    const n = isDebug || isASAN ? 3_000 : 30_000;
+    const lines = (line: (i: number) => string) => Array.from({ length: n }, (_, i) => line(i)).join("");
+    using dir = project({
+      "pushed.ts": `const list: number[] = [];\n${lines(i => `list.push(${i});\n`)}export const probe: never = list;\n`,
+      "assigned.ts": `const o: Record<string, number | string | undefined> = {};
+${lines(i => `o.k${i} = ${i};\n`)}o.k7 = "";
+${lines(i => `o["e${i}"] = ${i};\n`)}export const first: never = o.k7;
+export const second: never = o.k8;
+export const third: never = o["e9"];
+export const fourth: never = o.none;
+`,
+      "nested.ts": `declare const c: boolean;
+const o: { a: Record<string, number | undefined>; b?: number | string } = { a: {} };
+${lines(i => `o.a.k${i} = c ? ${i} : 0;\n`)}export const first: never = o.a.k7;
+o.a = {};
+${lines(i => `o.b = ${i};\n`)}export const second: never = o.a.k7;
+export const third: never = o.b;
+`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      [
+        `assigned.ts(${2 * n + 3},14): error TS2322: Type 'string' is not assignable to type 'never'.`,
+        `assigned.ts(${2 * n + 4},14): error TS2322: Type 'number' is not assignable to type 'never'.`,
+        `assigned.ts(${2 * n + 5},14): error TS2322: Type 'number' is not assignable to type 'never'.`,
+        `assigned.ts(${2 * n + 6},14): error TS2322: Type 'string | number | undefined' is not assignable to type 'never'.`,
+        "  Type 'undefined' is not assignable to type 'never'.",
+        `nested.ts(${n + 3},14): error TS2322: Type 'number' is not assignable to type 'never'.`,
+        `nested.ts(${2 * n + 5},14): error TS2322: Type 'number | undefined' is not assignable to type 'never'.`,
+        "  Type 'undefined' is not assignable to type 'never'.",
+        `nested.ts(${2 * n + 6},14): error TS2322: Type 'number' is not assignable to type 'never'.`,
+        `pushed.ts(${n + 2},14): error TS2322: Type 'number[]' is not assignable to type 'never'.`,
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // This used to be quadratic: over 60 s for these 60,000 `paths` in a release build.
   test("doesn't slow down on a tsconfig.json with 60,000 `paths` keys", async () => {
     const n = isDebug || isASAN ? 10_000 : 60_000;

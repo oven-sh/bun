@@ -599,7 +599,8 @@ impl Checker<'_, '_> {
     /// True if this task doesn't report an error in `file` because it checks a later file. tsc never collects such an
     /// error, since it's reported after `file` was checked. If the check of `file` or of an earlier file also reaches
     /// the error, that file's own task reports it.
-    /// - An entry under a record is shared no matter which task stores it, so its errors go with it.
+    /// - An entry under a record is shared no matter which task stores it, so its errors go with it. Not if the record
+    ///   is in a cycle that `Task::close_cycle` got: no earlier file reaches that cycle, or the task is discarded.
     /// - tsc's check of a file resolves every alias the file declares. Here that happens on demand, so the first task
     ///   to resolve the alias reports.
     fn defers_to_earlier_file(&self, owner: Option<Query>, file: FileId) -> bool {
@@ -607,7 +608,10 @@ impl Checker<'_, '_> {
         self.task.file.is_some_and(is_late)
             && match owner {
                 Some(Query::AliasTarget(alias)) => is_late(alias.file),
-                Some(q) if q.syntax().is_none() => !self.is_reported_in_time(owner, file),
+                Some(q) if q.syntax().is_none() => {
+                    self.task.has_closed_cycle_with(crate::util::fx_hash(&q))
+                        || !self.is_reported_in_time(owner, file)
+                }
                 _ => true,
             }
     }

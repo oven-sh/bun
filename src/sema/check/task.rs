@@ -300,6 +300,11 @@ impl<'s> Task<'s> {
         }
     }
 
+    /// True if `member` is in a cycle that `close_cycle` got since the task's last commit.
+    pub(super) fn has_closed_cycle_with(&self, member: u64) -> bool {
+        self.cycle_members.borrow().contains(&member)
+    }
+
     /// What the task stores from now on is only published by the commit that follows the file it visits. If the task is
     /// discarded by then, the task that rechecks the file evaluates all of it again.
     pub(super) fn commit_after_file_only(&self) {

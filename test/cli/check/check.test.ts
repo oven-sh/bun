@@ -1558,6 +1558,49 @@ export type Forth = Back;
     }
   });
 
+  // The cycle goes through the return type of `pick` as `cart.ts` instantiates it, so TypeScript reports it in `lib.ts`.
+  // It only collects that error if the first file to go around the cycle isn't checked after `lib.ts`.
+  test.each([
+    ["a later file", ["lib.ts", "reader.ts", "cart.ts"], false],
+    ["an earlier file", ["reader.ts", "lib.ts", "cart.ts"], true],
+  ] as const)(
+    "reports a circular return type of an instantiated signature where tsc does, when %s gets there first",
+    async (_, files, isCollected) => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files }),
+        "lib.ts": `declare function defineStore<S, G extends Record<string, any>>(o: { state: () => S; view: G & ThisType<S & G> }): S & G;
+declare function pick<T, K extends keyof T>(o: T, k: K): T[K];
+`,
+        "cart.ts": `const cart = defineStore({
+  state: () => ({ items: [1, 2] }),
+  view: {
+    get total() { return pick(this, "items"); },
+    size() { return this.total.length; },
+  },
+});
+`,
+        "reader.ts":
+          Array.from({ length: 200 }, (_, i) => `const r${i} = [${i}, "${i}"].map(it => typeof it).join("");\n`).join(
+            "",
+          ) + "const total: never = cart.total;\n",
+      });
+      const threads = [1, 2, 2, 2, 3, 3, 3, 8, 8];
+      for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+        expect(stdout).toBe(
+          [
+            "cart.ts(4,9): error TS7023: 'total' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+            `cart.ts(4,37): error TS2345: Argument of type '"items"' is not assignable to parameter of type '"size" | "total"'.`,
+            ...(isCollected
+              ? ["lib.ts(2,58): error TS2577: Return type annotation circularly references itself."]
+              : []),
+            "reader.ts(201,7): error TS2322: Type 'any' is not assignable to type 'never'.",
+          ].join("\n"),
+        );
+        expect(exitCode).toBe(1);
+      }
+    },
+  );
+
   // https://github.com/oven-sh/bun/issues/45733, without the package. `b.ts` and `c.ts` both instantiate
   // `Folded<string[]>`, on two threads. The set of files decides how they're split across threads, so `project` isn't
   // used.

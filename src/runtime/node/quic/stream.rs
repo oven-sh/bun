@@ -142,6 +142,9 @@ pub(crate) struct QuicStream {
     inbound: JsCell<Inbound>,
     wakeup: JsCell<Option<Strong>>,
     peer_stop_sending_code: Cell<Option<u64>>,
+    /// The codes of resetStream() and stopSending() calls made before the stream opened. bind_raw() applies them.
+    reset_at_open: Cell<Option<u64>>,
+    stop_sending_at_open: Cell<Option<u64>>,
     /// `open_stream` returned before lsquic opened the stream.
     was_pending: Cell<bool>,
     wrote_to_lsquic: Cell<bool>,
@@ -192,6 +195,8 @@ impl QuicStream {
             inbound: JsCell::new(Inbound::default()),
             wakeup: JsCell::new(None),
             peer_stop_sending_code: Cell::new(None),
+            reset_at_open: Cell::new(None),
+            stop_sending_at_open: Cell::new(None),
             was_pending: Cell::new(false),
             wrote_to_lsquic: Cell::new(false),
             headers_received: Cell::new(false),
@@ -278,6 +283,15 @@ impl QuicStream {
             let _ = s.set_http_prio(urgency, incremental);
         }
         let want_write = self.send_pending_headers(s);
+        // Not on HTTP/3, where either frame would get ahead of the stream's header blocks.
+        if !self.session_ref().is_some_and(QuicSession::is_http) {
+            if let Some(code) = self.stop_sending_at_open.take() {
+                s.stop_sending(code);
+            }
+            if let Some(code) = self.reset_at_open.take() {
+                s.reset(code);
+            }
+        }
         if uni {
             if self.is_receive_only() {
                 self.with_state(|s| s.write_ended = 1);
@@ -1046,8 +1060,9 @@ impl QuicStream {
             s.reset_code = code;
         });
         self.discard_outbound();
-        if let Some(s) = self.ls() {
-            s.reset(code);
+        match self.ls() {
+            Some(s) => s.reset(code),
+            None => self.reset_at_open.set(Some(code)),
         }
         self.kick_write();
         true
@@ -1058,8 +1073,9 @@ impl QuicStream {
             return;
         }
         let code = error_code_arg(code.to_js());
-        if let Some(s) = self.ls() {
-            s.stop_sending(code);
+        match self.ls() {
+            Some(s) => s.stop_sending(code),
+            None => self.stop_sending_at_open.set(Some(code)),
         }
         self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| {

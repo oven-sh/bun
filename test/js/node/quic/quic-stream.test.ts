@@ -2534,6 +2534,50 @@ describe("pending streams", () => {
     },
   );
 
+  // The peer allows one stream and holds it, so the second one waits for stream credit.
+  test.each(["uni", "bidi"] as const)(
+    "the peer gets the resetStream() and stopSending() of a %s stream that waited for stream credit",
+    async direction => {
+      const release = Promise.withResolvers<void>();
+      const peerSaw: string[] = [];
+      await using sessions = await connected(
+        session => {
+          session.onstream = async (stream: any) => {
+            stream.closed.catch(() => {});
+            stream.onreset = (error: any) => peerSaw.push(`reset ${stream.id} ${error.errorCode}`);
+            stream.onstopsending = (error: any) => peerSaw.push(`stopSending ${stream.id} ${error.errorCode}`);
+            if (stream.id < 4n) await release.promise;
+            try {
+              await drain(stream);
+              if (stream.direction === "bidi") stream.writer.endSync();
+            } catch {}
+          };
+        },
+        { ...raw.server, transportParams: { initialMaxStreamsBidi: 1, initialMaxStreamsUni: 1 } },
+        raw.client,
+      );
+      const { client } = sessions;
+      const open = opener(client);
+      await client.opened;
+
+      await open(direction, "held");
+      const waiting = await open(direction, "never sent");
+      expect(waiting.pending).toBe(true);
+      waiting.resetStream(7n);
+      waiting.stopSending(9n);
+      // This one opens once the peer is done with the stream that was reset.
+      const next = await open(direction, "next");
+      release.resolve();
+      await Promise.race([sent(next), client.closed]).catch(() => {});
+      expect({ peerSaw: peerSaw.sort(), next: next.id }).toEqual(
+        direction === "uni"
+          ? { peerSaw: ["reset 6 7"], next: 10n }
+          : { peerSaw: ["reset 4 7", "stopSending 4 9"], next: 8n },
+      );
+    },
+    30_000,
+  );
+
   test.each([
     ["uni", "the handshake"],
     ["uni", "stream credit"],

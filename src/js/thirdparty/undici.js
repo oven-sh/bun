@@ -1096,6 +1096,7 @@ function sendWithDispatch(dispatcher, url, options, signal, redirect) {
   const fail = err => {
     signal.removeEventListener("abort", onAbort);
     body?.error(err);
+    body = undefined;
     reject(err);
   };
 
@@ -1141,6 +1142,7 @@ function sendWithDispatch(dispatcher, url, options, signal, redirect) {
         onComplete() {
           signal.removeEventListener("abort", onAbort);
           body?.close();
+          body = undefined;
         },
         onError: fail,
       },

@@ -533,9 +533,8 @@ private:
                  * dispatching pipelined requests while responses are queued (its
                  * parserOnIncoming only pauses the socket once the outgoing data
                  * backs up), so reads are paused only when this connection already
-                 * has unsent outgoing backpressure; they resume once the pipeline
-                 * drains and the backpressure flushes (startRawResponse /
-                 * onWritable). That pause is also Node's flood prevention for sync
+                 * has unsent outgoing backpressure; they resume once the
+                 * backpressure flushes (onWritable). That pause is also Node's flood prevention for sync
                  * write()+end() handlers that back up the socket: the request
                  * behind the backed-up response lands here. */
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PIPELINED_DISPATCH;

@@ -711,10 +711,9 @@ public:
         setParked(false);
     }
 
-    /* node:http: unsent response bytes and queued responses hold the reads. */
+    /* node:http: unsent response bytes hold the reads, however many responses wait behind them (Node's socketOnDrain). */
     void endFloodPauseIfDrained() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        if (Super::getBufferedAmount() == 0 && httpResponseData->nodeHttpQueuedPipelinedCount == 0) {
+        if (Super::getBufferedAmount() == 0) {
             resumeReads(HttpResponseData<SSL>::READ_PAUSE_FLOOD);
         }
     }

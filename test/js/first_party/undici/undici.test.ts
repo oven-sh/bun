@@ -1736,6 +1736,25 @@ describe("undici dispatchers", () => {
       expect(await pending).toBe(reason);
     });
 
+    it.each(["an abort", "onComplete()"])("ignores body data that the dispatcher delivers after %s", async after => {
+      let handler!: Dispatcher.DispatchHandlers;
+      class Late extends Dispatcher {
+        dispatch(_options: Dispatcher.DispatchOptions, given: Dispatcher.DispatchHandlers) {
+          handler = given;
+          handler.onConnect!(() => {});
+          handler.onHeaders!(200, [], () => {}, "OK");
+          return true;
+        }
+      }
+      const controller = new AbortController();
+      const response = await undiciFetch(`${origin}/`, { dispatcher: new Late(), signal: controller.signal });
+      handler.onData!(Buffer.from("first"));
+      if (after === "an abort") controller.abort(new Error("stop"));
+      else handler.onComplete!([]);
+      expect(handler.onData!(Buffer.from("late"))).toBe(true);
+      expect(await response.text().catch(e => e.message)).toBe(after === "an abort" ? "stop" : "first");
+    });
+
     it("rejects with the signal's reason, before and during the request", async () => {
       const dispatcher = new Forward(new Pool(origin));
       const reason = new Error("stop");

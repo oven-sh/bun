@@ -297,8 +297,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* node:http server compat: number of pipelined responses dispatched to JS
      * that have not yet become this connection's current response. While
      * non-zero, newly parsed requests keep being queued (preserving response
-     * order) and socket reads stay paused (bounding memory under a pipeline
-     * flood). */
+     * order). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
 
     /* Returns true if the response in flight is the last one on this connection. A graceful stop still answers a parked request. */

@@ -7,9 +7,10 @@ import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { createSecureServer as createHttp2SecureServer } from "node:http2";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo, Socket } from "node:net";
-import { connect } from "node:net";
+import { connect, createServer as createNetServer } from "node:net";
 import path from "node:path";
 import { duplexPair } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
@@ -1580,4 +1581,114 @@ test("writeContinue() calls its callback on a later tick", async () => {
   } finally {
     server.close();
   }
+});
+
+describe("pipelined requests behind a response that waits for the client to read", () => {
+  const keys = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+  const tlsOptions = {
+    key: readFileSync(path.join(keys, "agent1-key.pem")),
+    cert: readFileSync(path.join(keys, "agent1-cert.pem")),
+  };
+  const get = (url: string) => `GET ${url} HTTP/1.1\r\nHost: x\r\n\r\n`;
+  const kinds = ["http", "https", "emit('connection')", "http2 with allowHTTP1"] as const;
+
+  // "/first" is answered with more than the kernel takes from a client that isn't reading. Every other response stays open.
+  async function start(kind: (typeof kinds)[number]) {
+    const requests: IncomingMessage[] = [];
+    const closed: Promise<void>[] = [];
+    let onRequest: (() => void) | undefined;
+    const chunk = Buffer.alloc(1 << 20, "x");
+    // A plain listener: once() rejects at the 'error' of an aborted request.
+    const untilClose = (emitter: IncomingMessage | Socket) =>
+      new Promise<void>(resolve => void emitter.on("error", () => {}).on("close", resolve));
+    const listener = (req: IncomingMessage, res: ServerResponse) => {
+      if (requests.push(req) === 1) closed.push(untilClose(req.socket));
+      closed.push(untilClose(req));
+      if (req.url === "/first") {
+        // In several writes: Winsock takes a first send of any size whole.
+        for (let i = 0; i < 16; i++) res.write(chunk);
+        res.end();
+      }
+      onRequest?.();
+    };
+    const secure = kind === "https" || kind === "http2 with allowHTTP1";
+    const server =
+      kind === "https"
+        ? createHttpsServer(tlsOptions, listener)
+        : kind === "http2 with allowHTTP1"
+          ? createHttp2SecureServer({ ...tlsOptions, allowHTTP1: true }, listener as any)
+          : createServer(listener);
+    const listening =
+      kind === "emit('connection')" ? createNetServer(socket => server.emit("connection", socket)) : server;
+    await once(listening.listen(0, "127.0.0.1"), "listening");
+    const { port } = listening.address() as AddressInfo;
+    const client = secure
+      ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] })
+      : connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    await once(client, secure ? "secureConnect" : "connect");
+    return {
+      requests,
+      closed,
+      client,
+      listening,
+      async dispatched(count: number) {
+        while (requests.length < count) await new Promise<void>(resolve => (onRequest = resolve));
+      },
+      // Reads until the last chunk of the first response.
+      async readFirstResponse() {
+        let tail = "";
+        const { promise, resolve } = Promise.withResolvers<void>();
+        const onData = (data: Buffer) => {
+          tail = (tail + data.latin1Slice(Math.max(0, data.length - 5))).slice(-5);
+          if (tail === "0\r\n\r\n") resolve();
+        };
+        client.on("data", onData);
+        client.once("close", resolve);
+        await promise;
+        client.off("data", onData);
+        return tail;
+      },
+      [Symbol.dispose]() {
+        client.destroy();
+        for (const req of requests) req.socket.destroy();
+        listening.close();
+      },
+    };
+  }
+
+  describe.each(kinds)("%s", kind => {
+    test.each(["destroy()", "end()"])(
+      "a connection with a held pipelined response is released when the client goes away with %s",
+      async how => {
+        using connection = await start(kind);
+        const { client, listening } = connection;
+        client.write(get("/first") + get("/held") + get("/held"));
+        await connection.dispatched(3);
+        expect(await connection.readFirstResponse()).toBe("0\r\n\r\n");
+        if (how === "end()") client.resume().end();
+        else client.destroy();
+        await Promise.all(connection.closed);
+        expect(await promisify(listening.getConnections).call(listening)).toBe(0);
+        await promisify(listening.close).call(listening);
+      },
+    );
+
+    test("a request that arrives meanwhile is dispatched once the client has read, also behind a held response", async () => {
+      using connection = await start(kind);
+      const { client, requests } = connection;
+      client.write(get("/first") + get("/held"));
+      await connection.dispatched(2);
+      await promisify(client.write as (data: string, cb: (err?: Error | null) => void) => boolean).call(
+        client,
+        get("/late"),
+      );
+      // The kernel has it, so a server that still read would dispatch it in the next turn.
+      for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+      const early = requests.length;
+      expect(await connection.readFirstResponse()).toBe("0\r\n\r\n");
+      await connection.dispatched(3);
+      expect({ early, urls: requests.map(req => req.url) }).toEqual({ early: 2, urls: ["/first", "/held", "/late"] });
+    });
+  });
 });

@@ -590,9 +590,6 @@ impl<'p, 's> Checker<'p, 's> {
                 Query::Return(..) => true,
                 // `getTypeOfAccessors` calls `getReturnTypeFromBody` itself.
                 Query::LiteralProp(of, p) => self.hir(of)[p].kind == PropKind::Getter,
-                // `checkDeclarationInitializer`
-                Query::Pat(_, pat) => matches!(self.bound(file).parent_of_expr(e),
-                    crate::bind::Parent::VarInit(d) if self.hir(file)[d].pat == pat),
                 _ => false,
             }
             || !self.is_checked_by_check_expression_cached(file, e)

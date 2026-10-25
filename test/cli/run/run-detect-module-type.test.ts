@@ -431,3 +431,107 @@ describe.concurrent('package.json "type" does not apply to', () => {
     expect(withRequire).toEqual(everyScope("commonjs\n"));
   });
 });
+
+describe.concurrent("evaluation order of a file that an ES module imports", () => {
+  // Every row states Node's output. Bun runs an imported CommonJS file when
+  // its fetch settles, ahead of every ES module of the graph. So a file that
+  // the rule above makes CommonJS runs before an ES module imported ahead of
+  // it, and a file that it makes an ES module runs after a CommonJS file
+  // imported behind it. The `failing` rows pass once an imported CommonJS file
+  // runs where it is imported.
+  const format = `eval("typeof module") === "undefined" ? "module" : "commonjs"`;
+  const setState = `process.env.DSN = "set";\n`;
+  /** Prints "<file> <format> <process.env.DSN>". */
+  const readState = (file: string) => `console.log("${file}", ${format}, process.env.DSN);\n`;
+  const entry = (...files: string[]) => files.map(file => `import "./${file}";`).join("\n") + "\n";
+  const named = (type?: Format) => JSON.stringify({ name: "app", type });
+
+  const rows: { name: string; files: Record<string, string>; stdout: string; failing?: true }[] = [
+    {
+      name: 'under "type": "module", a .cjs file that calls require() runs after the ES module ahead of it',
+      files: {
+        "package.json": named("module"),
+        "entry.mjs": entry("env.js", "setup.cjs"),
+        "env.js": setState,
+        "setup.cjs": `require("sdk").init("setup.cjs", ${format});\n`,
+        "node_modules/sdk/package.json": `{ "name": "sdk", "version": "1.0.0" }`,
+        "node_modules/sdk/index.js": `exports.init = (file, format) => console.log(file, format, process.env.DSN);\n`,
+      },
+      stdout: "setup.cjs commonjs set\n",
+      failing: true,
+    },
+    {
+      name: 'under "type": "module", a .cjs file with "use strict" runs after the ES module ahead of it',
+      files: {
+        "package.json": named("module"),
+        "entry.mjs": entry("env.js", "setup.cjs"),
+        "env.js": setState,
+        "setup.cjs": `"use strict";\n${readState("setup.cjs")}`,
+      },
+      stdout: "setup.cjs commonjs set\n",
+      failing: true,
+    },
+    {
+      name: 'under "type": "module", a .cjs file with neither runs after the ES module ahead of it',
+      files: {
+        "package.json": named("module"),
+        "entry.mjs": entry("env.js", "setup.cjs"),
+        "env.js": setState,
+        "setup.cjs": readState("setup.cjs"),
+      },
+      stdout: "setup.cjs commonjs set\n",
+      failing: true,
+    },
+    {
+      name: 'with no "type", a .cjs file with neither runs after the ES module ahead of it',
+      files: {
+        "package.json": named(),
+        "entry.mjs": entry("env.mjs", "setup.cjs"),
+        "env.mjs": setState,
+        "setup.cjs": readState("setup.cjs"),
+      },
+      stdout: "setup.cjs commonjs set\n",
+      failing: true,
+    },
+    {
+      name: 'a .js file below a nameless {"type":"commonjs"} runs after the ES module ahead of it',
+      files: {
+        "package.json": named("module"),
+        "dist/cjs/package.json": packageJson.commonjs,
+        "entry.mjs": entry("env.js", "dist/cjs/lib/setup.js"),
+        "env.js": setState,
+        "dist/cjs/lib/setup.js": readState("setup.js"),
+      },
+      stdout: "setup.js commonjs set\n",
+      failing: true,
+    },
+    {
+      name: 'under "type": "commonjs", a CommonJS file runs after the .mjs file ahead of it',
+      files: {
+        "package.json": named("commonjs"),
+        "entry.mjs": entry("env.mjs", "lib.cjs"),
+        "env.mjs": setState,
+        "lib.cjs": `module.exports = {};\n${readState("lib.cjs")}`,
+      },
+      stdout: "lib.cjs commonjs set\n",
+      failing: true,
+    },
+    {
+      name: 'under "type": "commonjs", a .mjs file with neither runs after the ES module ahead of it',
+      files: {
+        "package.json": named("commonjs"),
+        "entry.mjs": entry("env.mjs", "setup.mjs"),
+        "env.mjs": `${setState}export {};\n`,
+        "setup.mjs": readState("setup.mjs"),
+      },
+      stdout: "setup.mjs module set\n",
+    },
+  ];
+
+  for (const { name, files, stdout, failing } of rows) {
+    test.failingIf(!!failing)(failing ? `known failure: ${name}` : name, async () => {
+      using dir = tempDir("module-type-order", files);
+      expect(await run(String(dir), "entry.mjs")).toEqual({ stdout, stderr: "", exitCode: 0 });
+    });
+  }
+});

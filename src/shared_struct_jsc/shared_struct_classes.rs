@@ -193,7 +193,7 @@ fn to_value(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Value>> 
             .expect("is_big_int")
             .to_string(global)?;
         Value::BigInt(Arc::from(
-            String::from_utf8_lossy(digits.to_utf8().slice()).as_ref(),
+            core::str::from_utf8(digits.to_utf8().slice()).expect("BigInt digits are ASCII"),
         ))
     } else {
         shared_of(value).expect("is_shareable")
@@ -466,7 +466,7 @@ fn slot_of(
         Some(shape) => shape.index_of(&utf16_of(&key.to_bun_string(global)?)),
         None => {
             let n = key.to_number(global)?;
-            (n.fract() == 0.0 && n >= 0.0 && n < block.len() as f64).then(|| n as usize)
+            (n.fract() == 0.0 && n >= 0.0 && n < block.len() as f64).then_some(n as usize)
         }
     };
     match index {

@@ -331,7 +331,7 @@ mod tests {
         assert!(matches!(b.load(1), Value::Condition(got) if Arc::ptr_eq(&got, &c)));
         drop((m, c));
         // The block still owns both.
-        assert!(matches!(b.load(0), Value::Mutex(got) if !got.is_locked()));
+        assert!(matches!(b.load(0), Value::Mutex(got) if got.try_lock()));
     }
 
     #[test]

@@ -9421,6 +9421,45 @@ export {};
       expect(exitCode).toBe(1);
     });
 
+    // `parts.get("zz")` is resolved inside the cycle of `log` and `app`. Its callee leads to `c`, `app`, the callback and the
+    // call again. There `parts` is circular and `any`, so the inner resolution is an untyped call. The outer one gets the
+    // type that `parts` computed and fails, and tsc reports that. Every later request finds `any`.
+    test("a call that fails after a resolution inside it succeeded reports its errors inside a cycle too", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["svc.ts", "di.ts", "parts.ts", "app.ts"] }),
+        "di.ts": `export declare class Container<R = {}> {
+  add<K extends string, T>(k: K, f: (deps: R) => T): Container<R & { [P in K]: T }>;
+  value<K extends string, T>(k: K, v: T): Container<R & { [P in K]: T }>;
+  get<K extends keyof R>(k: K): R[K];
+}
+export declare function inject<R, K extends keyof R>(c: Container<R>, k: K): R[K];
+`,
+        "app.ts": `import { Container } from "./di";
+import { log, parts } from "./parts";
+export const app = new Container().value("log", log).add("v", d => parts.get("zz"));
+`,
+        "svc.ts": `import { app } from "./app";\nexport class Service { constructor(readonly c: typeof app) {} }\n`,
+        "parts.ts": `import { Container, inject } from "./di";
+import { Service } from "./svc";
+import { app } from "./app";
+export const log = inject(app, "log");
+export const parts = new Container().value("a1", new Service(null!));
+`,
+      });
+      const own =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").sort()).toEqual([
+        `app.ts(3,14): error TS7022: 'app' implicitly has type 'any' ${own}`,
+        "app.ts(3,63): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+        `app.ts(3,78): error TS2345: Argument of type '"zz"' is not assignable to parameter of type '"a1"'.`,
+        `parts.ts(4,14): error TS7022: 'log' implicitly has type 'any' ${own}`,
+        `parts.ts(5,14): error TS7022: 'parts' implicitly has type 'any' ${own}`,
+        "svc.ts(2,36): error TS2502: 'c' is referenced directly or indirectly in its own type annotation.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // `types.ts` is checked first. `first` and `second` are circular, and the argument of `extend` leads to `made`. The
     // resolution of `use(null!)` asks for the type of `v` once, for the argument. That leads to `made` and `use(null!)`
     // again, which asks for `v` a second time and finds the cycle.

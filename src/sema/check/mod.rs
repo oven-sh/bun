@@ -465,7 +465,8 @@ pub struct Program<'s> {
     /// `contextFreeTypes` for a function.
     context_free_types: ByNode<(FileId, FnId), TypeId, buffered!(context_free_types), &'s Session>,
     /// The diagnostics `resolveCall` reported for a call the first time it was resolved again while
-    /// its resolution was in progress, with their related information.
+    /// its resolution was in progress, with their related information. Or those of the resolution in progress, if it
+    /// failed after that and its result isn't stored.
     diagnostics_of_re_resolved_calls: ByNodeIndirect<
         (FileId, ExprId),
         Vec<Reported>,

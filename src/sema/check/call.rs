@@ -318,6 +318,9 @@ impl<'p, 's> Checker<'p, 's> {
         // `getResolvedSignature`: `links.resolvedSignature != c.resolvingSignature`, "this inner
         // resolution sets the resolvedSignature first", and `result = links.resolvedSignature`. For a call that no
         // candidate accepts, `resolveCall` has assigned its own result since ("Preemptively cache the result").
+        let replaces_inner_signature = outcome != CallOutcome::Chosen
+            && !is_assigned
+            && (self.signatures_resolved_within.iter()).any(|r| r.0 == file && r.1 == call);
         if outcome != CallOutcome::Chosen && !is_assigned {
             self.signatures_resolved_within
                 .retain(|r| !(r.0 == file && r.1 == call));
@@ -393,10 +396,20 @@ impl<'p, 's> Checker<'p, 's> {
             }
             self.publish_context_checks_kept_for(self.stack.len(), serial);
             return self.cache_call(file, call, resolved, stored);
-        } else if let Some(reported) = reported
-            && self.is_in_flow_loop()
-        {
-            self.keep_call_errors_in_flow_loop(file, call, reported);
+        } else if let Some(reported) = reported {
+            if self.is_in_flow_loop() {
+                self.keep_call_errors_in_flow_loop(file, call, reported);
+            } else if replaces_inner_signature
+                && self.rejected_at < serial
+                && (self.p.diagnostics_of_re_resolved_calls)
+                    .get_ref(&self.task, &(file, call))
+                    .is_none()
+            {
+                // The next resolution starts from what the cycle left, as the inner one did, and may not fail.
+                let (key, stored) = ((file, call), Stored::new());
+                (self.p.diagnostics_of_re_resolved_calls)
+                    .insert_ref(&self.task, key, reported, stored);
+            }
         }
         resolved
     }

@@ -1,6 +1,20 @@
 import { describe, expect, test } from "bun:test";
 
 describe("SharedArray", () => {
+  test("constructor takes no argument, a length, or two or more elements", () => {
+    expect(new SharedArray().length).toBe(0);
+    expect(new SharedArray(2).length).toBe(2);
+    expect(() => new SharedArray("2" as any)).toThrow(TypeError);
+    expect(() => new SharedArray(1.5)).toThrow(TypeError);
+    expect(() => new SharedArray(Infinity)).toThrow(TypeError);
+    expect(() => new SharedArray(-1)).toThrow(RangeError);
+    const filled = new SharedArray(1, "x", 2n);
+    expect([filled.length, filled[0], filled[1], filled[2]]).toEqual([3, 1, "x", 2n]);
+    expect(new SharedArray(5, 6)[0]).toBe(5);
+    expect(() => new SharedArray(1, {} as any)).toThrow(TypeError);
+    expect(SharedArray.length).toBe(0);
+  });
+
   test("has a fixed length and holds shareable values", () => {
     const a = new SharedArray(3);
     expect(a.length).toBe(3);

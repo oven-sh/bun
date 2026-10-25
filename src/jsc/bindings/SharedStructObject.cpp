@@ -342,14 +342,33 @@ JSC_DEFINE_HOST_FUNCTION(callSharedArray, (JSGlobalObject * globalObject, CallFr
     return throwVMTypeError(globalObject, scope, "Constructor SharedArray requires 'new'"_s);
 }
 
-// `new SharedArray(length)`.
+// `new SharedArray(...values)`: no argument is an empty array, one is the length, two or more are the elements.
 JSC_DEFINE_HOST_FUNCTION(constructSharedArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    const void* block = Bun__SharedArray__newBlock(globalObject, JSValue::encode(callFrame->argument(0)));
+    unsigned argumentCount = callFrame->argumentCount();
+    JSValue length = jsNumber(argumentCount);
+    if (argumentCount == 0)
+        length = jsNumber(0);
+    else if (argumentCount == 1) {
+        length = callFrame->uncheckedArgument(0);
+        if (!length.isNumber() || !std::isfinite(length.asNumber()) || std::trunc(length.asNumber()) != length.asNumber())
+            return throwVMTypeError(globalObject, scope, "SharedArray length must be an integral Number"_s);
+        if (length.asNumber() < 0 || length.asNumber() > std::numeric_limits<uint32_t>::max())
+            return throwVMRangeError(globalObject, scope, "Invalid SharedArray length"_s);
+    }
+    const void* block = Bun__SharedArray__newBlock(globalObject, JSValue::encode(length));
     RETURN_IF_EXCEPTION(scope, {});
-    return Bun__SharedBlock__wrap(globalObject, block);
+    JSValue result = JSValue::decode(Bun__SharedBlock__wrap(globalObject, block));
+    if (argumentCount >= 2) {
+        JSObject* array = asObject(result);
+        for (unsigned i = 0; i < argumentCount; ++i) {
+            array->methodTable()->putByIndex(array, globalObject, i, callFrame->uncheckedArgument(i), true);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    return JSValue::encode(result);
 }
 
 }
@@ -413,7 +432,7 @@ JSC::EncodedJSValue Bun__SharedStruct__createConstructors(JSC::JSGlobalObject* g
     JSC::JSObject* classes = JSC::constructEmptyObject(globalObject);
     classes->putDirect(vm, JSC::Identifier::fromString(vm, "Mutex"_s), JSC::JSValue::decode(mutex));
     classes->putDirect(vm, JSC::Identifier::fromString(vm, "Condition"_s), JSC::JSValue::decode(condition));
-    classes->putDirect(vm, JSC::Identifier::fromString(vm, "SharedArray"_s), JSC::JSFunction::create(vm, globalObject, 1, "SharedArray"_s, Bun::callSharedArray, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, Bun::constructSharedArray));
+    classes->putDirect(vm, JSC::Identifier::fromString(vm, "SharedArray"_s), JSC::JSFunction::create(vm, globalObject, 0, "SharedArray"_s, Bun::callSharedArray, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, Bun::constructSharedArray));
     classes->putDirect(vm, JSC::Identifier::fromString(vm, "SharedStruct"_s), JSC::JSFunction::create(vm, globalObject, 1, "SharedStruct"_s, Bun::callSharedStruct, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, Bun::constructSharedStruct));
     return JSC::JSValue::encode(classes);
 }

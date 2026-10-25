@@ -21,7 +21,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if mentions_validate || mentions(BuiltinId::BunJSON) {
             self.report_exported_compiler_functions();
         }
-        if mentions(BuiltinId::JSONParse) || mentions(BuiltinId::BunJSONParse) {
+        if mentions(BuiltinId::BunJSONParse) {
             self.report_parsers_that_are_not_called();
         }
     }

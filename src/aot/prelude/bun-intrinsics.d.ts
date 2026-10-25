@@ -33,7 +33,12 @@ declare module "bun" {
     type DeepStrict = { readonly "bun.strict"?: "deep" };
   }
 
-  const JSON: globalThis.JSON;
+  const JSON: JSON;
+  interface JSON extends globalThis.JSON {
+    parse<T = any>(text: string, reviver?: (this: any, key: string, value: any) => any): T;
+    // TypeScript infers from the last signature, so `JSON.parse(text)` stays `any`.
+    parse(text: string, reviver?: (this: any, key: string, value: any) => any): any;
+  }
 
   global {
     export import Bun = BunModule;
@@ -48,11 +53,3 @@ declare module "bun:bundle" {
   function validate<T>(value: unknown): T;
 }
 
-interface JSON {
-  parse<T = any>(text: string, reviver?: (this: any, key: string, value: any) => any): T;
-}
-
-// Kept apart: TypeScript tries a later declaration's overloads first and infers from the last one, so `JSON.parse(text)` stays `any`.
-interface JSON {
-  parse(text: string, reviver?: (this: any, key: string, value: any) => any): any;
-}

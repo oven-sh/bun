@@ -318,14 +318,14 @@ notYet.each(["bun run", "bun build"])(
       });
       return { stderr, exitCode };
     };
-    for (const file of ["./validate.ts", "./imported.ts", "./global.ts"]) {
+    for (const file of ["./validate.ts", "./imported.ts"]) {
       expect({ file, ...(await run(file)) }).toEqual({
         file,
         stderr: expect.stringContaining("could not type-check this file, so this call can't be validated"),
         exitCode: 1,
       });
     }
-    expect((await run("./unrelated.ts")).exitCode).toBe(0);
+    for (const file of ["./global.ts", "./unrelated.ts"]) expect((await run(file)).exitCode).toBe(0);
   },
 );
 

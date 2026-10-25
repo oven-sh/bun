@@ -1,4 +1,5 @@
 // `JSON.parse<T>(text)` with the `JSON` of "bun", and `validate<T>(value)`, either validate or don't run: however the call reaches a running program, what is no `T` never comes back as one.
+// The global `JSON.parse` is TypeScript's: a type argument on it is one that the program declared, and it is erased in every way of running.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -18,7 +19,8 @@ function show(call: () => any) {
 }
 `;
 
-type Outcome = "validated" | "threw" | "refused";
+// "unchecked" only where the call itself says `any` or `unknown`, or where it isn't a call of Bun's.
+type Outcome = "validated" | "threw" | "refused" | "unchecked";
 // What each road does: [without --aot, with --aot].
 const roads: Record<string, { files: Record<string, string>; outcomes: [Outcome[], Outcome[]] }> = {};
 function road(name: string, plain: Outcome | Outcome[], compiled: Outcome | Outcome[], program: string, others = {}) {
@@ -197,6 +199,39 @@ road(
   `${imported}\n---\nshow(() => JSON.parse<{ id: number; at: Date }>(text));`,
 );
 
+const declared = `declare global {\n  interface JSON {\n    parse<T>(text: string): T;\n  }\n}\nexport {};`;
+road(
+  "the global, with a type argument that the program declared",
+  ["unchecked", "unchecked", "unchecked"],
+  ["unchecked", "unchecked", "unchecked"],
+  `${declared}\n---\nshow(() => JSON.parse<User>(text));\nshow(() => globalThis.JSON.parse<User>(text));\nshow(() => JSON.parse<Map<string, Date>>(text));`,
+);
+road(
+  "the global behind a function with a type parameter",
+  "unchecked",
+  "unchecked",
+  `${declared}\n---\nfunction load<T>(from: string): T {\n  return JSON.parse<T>(from);\n}\nshow(() => load<User>(text));`,
+);
+road(
+  "the global with its type argument, kept",
+  "unchecked",
+  "unchecked",
+  `${declared}\n---\nconst parse = JSON.parse<User>;\nshow(() => parse(text));`,
+);
+road(
+  "the global under a signature of the program's own",
+  "unchecked",
+  "unchecked",
+  `\n---\nconst parse: <T>(text: string) => T = JSON.parse;\nshow(() => parse<User>(text));`,
+);
+// Nothing but a type checker says that the global takes no type argument.
+road(
+  "the global, with a type argument that nobody declared",
+  "unchecked",
+  "refused",
+  `\n---\nshow(() => JSON.parse<User>(text));`,
+);
+
 const validates = `import { validate } from "bun:bundle";`;
 const value = `globalThis.JSON.parse(text)`;
 road("validate", "validated", "validated", `${validates}\n---\nshow(() => validate<User>(${value}));`);
@@ -205,6 +240,12 @@ road(
   "validated",
   "validated",
   `import { validate as check } from "bun:bundle";\n---\nshow(() => check<User>(${value}));`,
+);
+road(
+  "validate that asks for no check",
+  ["unchecked", "unchecked"],
+  ["unchecked", "unchecked"],
+  `${validates}\n---\nshow(() => validate<any>(${value}));\nshow(() => validate< /* whatever it is */ unknown >(${value}) as User);`,
 );
 road(
   "validate without a type argument",

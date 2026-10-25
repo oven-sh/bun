@@ -1,6 +1,6 @@
 // Text that is a T is read once by JSON.parse<T>(), whatever the order of its members, its white space and the members that T does not declare: the engine's parser and the validation behind it are for what is refused and for an escape in a key.
 // IR+ ^ .*JSONStartsWith
-declare const aotOperationCount: undefined | ((name: string) => number);
+import { JSON } from "bun"; declare const aotOperationCount: undefined | ((name: string) => number);
 interface Item { sku: string; quantity: number; note?: string }
 interface Order { id: number; items: Item[]; to: { name: string; city: string }; kind: "gift" | "plain"; coupon: string | null }
 

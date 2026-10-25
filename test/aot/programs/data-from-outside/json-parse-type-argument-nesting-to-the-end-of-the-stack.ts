@@ -1,5 +1,5 @@
 // Texts nested 100 to 1,000,000 levels deep through recursive types, through members of unknown type and through undeclared keys, at the top of the stack and near its end: JSON.parse<T> gives the value or a RangeError, nothing else, and goes on working afterwards.
-type Tree = { kids: Tree[] };
+import { JSON } from "bun"; type Tree = { kids: Tree[] };
 type Chain = { next: Chain | null };
 type Link = { name: string; next?: Link };
 type Deep = Deep[];
@@ -73,7 +73,7 @@ for (const road of roads) {
   }
 
   const cut = road.text(1_000_000).slice(0, 1_000_000);
-  if (answer(road.parse, cut) !== answer(JSON.parse, cut)) wrong++;
+  if (answer(road.parse, cut) !== answer(globalThis.JSON.parse, cut)) wrong++;
 
   const depths = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181];
   const texts = depths.map(road.text);

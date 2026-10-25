@@ -9,7 +9,7 @@
 // IR= 0 readsKept ~number = PropGet(?!.* isFallback)
 // IR= 1 readsGiven  = PropGet v\d+ name="from"(?!.* isFallback)
 // VALIDATED compiles
-interface Point { x: number; y: number }
+import { JSON } from "bun"; interface Point { x: number; y: number }
 interface Line { from: Point; to: Point; points: Point[]; name?: string }
 interface GivenPoint { x: number; y: number }
 interface GivenLine { from: GivenPoint }
@@ -35,7 +35,7 @@ function readsKept(): number {
   return total;
 }
 function readsGiven(from: string): number {
-  const line: GivenLine = JSON.parse(from);
+  const line: GivenLine = globalThis.JSON.parse(from);
   return line.from.x;
 }
 let attempts = 0;

@@ -75,8 +75,8 @@ declare module "bun:bundle" {
 
   /**
    * Validates `value` against the TypeScript type `T` and returns a copy of it typed as `T`. If `value` doesn't match,
-   * throws a `TypeError` whose `issues` property lists every mismatch. `JSON.parse<T>(text)` does the same for JSON
-   * text.
+   * throws a `TypeError` whose `issues` property lists every mismatch. `JSON.parse<T>(text)`, with `JSON` imported from
+   * `"bun"`, does the same for JSON text.
    *
    * Objects and arrays that `T` describes are copied, and `value` is never modified. The copy has the same keys in the
    * same order, including properties that `T` doesn't declare.
@@ -85,8 +85,8 @@ declare module "bun:bundle" {
    * run time. Import it by name and call it with a type argument. It can't be re-exported, assigned or passed as an
    * argument.
    *
-   * Only `bun compile`, `bun run --aot` and `bun test --aot` validate. Everywhere else, importing `validate` is an
-   * error and `JSON.parse<T>(text)` is `JSON.parse(text)`.
+   * It works in a TypeScript file that Bun runs, tests, compiles or bundles with `--target=bun`. Everywhere else,
+   * importing `validate` is an error.
    *
    * ```ts
    * import { validate } from "bun:bundle";

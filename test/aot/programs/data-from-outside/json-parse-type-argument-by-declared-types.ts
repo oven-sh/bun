@@ -1,5 +1,5 @@
 // JSON.parse<T>(text) checks what the text holds against the TypeScript type T: what it accepts, what it refuses and why, and what it returns.
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 
 interface Order {
   customer: { id: number & Schema.Int & Schema.Min<1>; name: string & Schema.MinLength<1> & Schema.MaxLength<100>; email: string & Schema.Pattern<"^[^@\\s]+@[^@\\s]+$"> };
@@ -7,7 +7,7 @@ interface Order {
   coupon?: string & Schema.MaxLength<16>;
 }
 const text = JSON.stringify({ customer: { id: 4711, name: "Zoe", email: "zoe@example.com", more: 1 }, items: [{ sku: "SKU-1", quantity: 2, unitCents: 199, more: 2 }, { sku: "SKU-2", quantity: 3, unitCents: 5 }], coupon: "TENOFF", more: 3 });
-const altered = (change: (body: any) => void): string => { const body = JSON.parse(text); change(body); return JSON.stringify(body); };
+const altered = (change: (body: any) => void): string => { const body = globalThis.JSON.parse(text); change(body); return JSON.stringify(body); };
 const listed = (issues: Schema.Issue[]): string => issues.map(issue => issue.path.join(".") + " " + issue.code + " " + issue.expected + " " + issue.received).join("; ");
 function shown(parse: () => unknown): string {
   try {
@@ -139,8 +139,8 @@ console.log(JSON.stringify(loose), Object.keys(loose).join(), loose.some + loose
 const names: string[] = []; for (const name in loose) names.push(name); console.log(names.join());
 interface Outer { inner: { kept: number; [key: string]: unknown }; plainly: { only: number } }
 console.log(JSON.stringify(JSON.parse<Outer>('{"inner":{"kept":1,"also":2},"plainly":{"only":3,"more":4},"more":5}')));
-console.log(JSON.stringify(JSON.parse('{"untouched":{"a":1}}')), JSON.parse<number>("5") + 1, JSON.parse<string | null>("null"));
-const untyped: Token = JSON.parse('{"kind":1}');
+console.log(JSON.stringify(globalThis.JSON.parse('{"untouched":{"a":1}}')), JSON.parse<number>("5") + 1, JSON.parse<string | null>("null"));
+const untyped: Token = globalThis.JSON.parse('{"kind":1}');
 console.log(JSON.stringify(untyped));
 
 type Json = string | number | boolean | null | Json[] | { [key: string]: Json };

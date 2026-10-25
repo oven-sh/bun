@@ -1,0 +1,7 @@
+a value: taken, 20 levels
+a value behind an accessor: taken, 20 levels
+a text: taken, 20 levels
+a text with a name spelled by an escape: taken, 20 levels
+a value that is wrong at its deepest place: TypeError: 1 issues, the first at a depth of 0
+a text that is wrong at its deepest place: TypeError: 1 issues, the first at a depth of 0
+a list of a hundred: taken, 20 levels

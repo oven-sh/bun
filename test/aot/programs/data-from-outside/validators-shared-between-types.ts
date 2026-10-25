@@ -3,7 +3,7 @@
 // IR- JSONStartsWith v\d+ text="\\x22street\\x22:"[\s\S]*JSONStartsWith v\d+ text="\\x22street\\x22:"
 // IR+ JSONStartsWith v\d+ text="\\x22zip\\x22:"
 // IR- JSONStartsWith v\d+ text="\\x22zip\\x22:"[\s\S]*JSONStartsWith v\d+ text="\\x22zip\\x22:"
-interface Address { street: string; zip: string }
+import { JSON } from "bun"; interface Address { street: string; zip: string }
 interface Named { name: string; nickname?: string }
 interface Person { who: Named; home: Address }
 interface Company { title: string; office: Address; branches: Address[]; owner: Named }

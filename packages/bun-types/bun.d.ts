@@ -104,8 +104,8 @@ declare module "bun" {
   }
   /**
    * `JSON` with a `parse` that validates. `stringify`, `rawJSON` and `isRawJSON` are the global's.
-   * `bun build --compile --aot`, `bun run --aot` and `bun test --aot` compile `JSON.parse<T>(text)` into a parser that
-   * validates the result against `T`. Everywhere else that call is an error, so the check is never skipped by accident.
+   * In a TypeScript file that Bun runs, tests, compiles or bundles with `--target=bun`, `JSON.parse<T>(text)` validates
+   * the result against `T`. Everywhere else that call is an error, so the check is never skipped by accident.
    *
    * `parse` itself throws a `TypeError`. Only a call that has lost its type reaches it: one without a type argument,
    * one through another name (`const { parse } = JSON`, `.then(JSON.parse)`), or one in the output of a tool that

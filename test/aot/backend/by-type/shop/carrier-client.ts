@@ -1,4 +1,4 @@
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 import type { Country, Rate } from "./types";
 
 const carrier = process.env.CARRIER_URL ?? "http://127.0.0.1:3001";

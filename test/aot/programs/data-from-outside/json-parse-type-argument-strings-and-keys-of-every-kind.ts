@@ -1,6 +1,6 @@
 // Strings and keys of every kind: escapes that are valid and not, lone surrogates written raw and escaped, control characters, keys written twice, __proto__, index keys, the empty key, in 8-bit and 16-bit text.
-import type { Schema } from "bun";
-const plainParse: (text: string) => any = JSON.parse;
+import { JSON } from "bun"; import type { Schema } from "bun";
+const plainParse: (text: string) => any = globalThis.JSON.parse;
 
 function show(value: any): string {
   if (Array.isArray(value)) return "[" + value.map(show).join(",") + "]";

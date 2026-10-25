@@ -1,9 +1,9 @@
 // `bun check` accepts the calls that `bun run` validates, JSON.parse<T>(text) and validate<T>(value), and the types of the
 // namespace `Schema`, whatever types of Bun are installed. No other call takes a type argument that its declaration does not have.
 //
-// TODO: that is the design from before the type argument of the global JSON.parse became something a project asks for
-// (`/// <reference types="bun-types/aot" />`, or `import { JSON } from "bun"`: docs/bundler/validate.mdx, "Types in your editor"). A build knows the
-// type argument by itself; `bun check` learns it from the installed types, as tsc does, and says TS2558 without them. The tests that state the old design are todo.
+// TODO: `bun check` learns the type argument of `parse` of the `JSON` of "bun" from the installed types, as tsc does (docs/bundler/validate.mdx,
+// "Types in your editor"). A build knows it by itself. The tests that ask `bun check` to know it whatever is installed are todo.
+// The global JSON.parse takes no type argument.
 import { expect, test } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -99,14 +99,14 @@ for (const [world, files] of Object.entries(worlds)) {
     },
   );
 
-  test.todo(`with ${world}: no other call takes the type argument`, async () => {
+  test.concurrent(`with ${world}: no other call takes the type argument`, async () => {
     expect(await check({ ...files, "a.ts": takesNoTypeArgument })).toMatchObject({
       stdout: [
         "a.ts(1,36): error TS2558: Expected 0 type arguments, but got 1.",
         "a.ts(2,56): error TS2558: Expected 0 type arguments, but got 1.",
         "a.ts(4,35): error TS2558: Expected 0 type arguments, but got 1.",
         "a.ts(5,31): error TS2558: Expected 0 type arguments, but got 2.",
-        "a.ts(6,14): error TS2322: Type '{ a: number; }' is not assignable to type 'string'.",
+        "a.ts(6,51): error TS2558: Expected 0 type arguments, but got 1.",
       ],
       exitCode: 1,
     });

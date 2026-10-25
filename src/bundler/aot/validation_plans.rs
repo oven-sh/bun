@@ -40,10 +40,36 @@ pub(crate) fn plan_source(
     Some(ValidationPlanSource {
         context: core::ptr::from_ref(transpiler).cast::<c_void>(),
         find: match output {
-            Output::RunsInPlace => |context, source, log| find_plans(context, source, log, true),
-            Output::Bundle => |context, source, log| find_plans(context, source, log, false),
+            Output::RunsInPlace => |context, source, log| ask_compiler(context, source, log, true),
+            Output::Bundle => |context, source, log| ask_compiler(context, source, log, false),
         },
     })
+}
+
+/// A compiled executable only includes the type checker when its program calls `Bun.build`.
+fn ask_compiler(
+    context: *const c_void,
+    source: &Source,
+    log: &mut Log,
+    runs_in_place: bool,
+) -> Option<ValidationPlans> {
+    bun_removable_features::call_removable_or!(
+        AotCompiler,
+        Throw,
+        {
+            log.add_error(
+                Some(source),
+                bun_ast::Loc::EMPTY,
+                b"This executable doesn't include the type checker, so JSON.parse<T>() from \"bun\" and validate<T>() don't work in files it loads at run time",
+            );
+            None
+        },
+        find_plans,
+        context,
+        source,
+        log,
+        runs_in_place
+    )
 }
 
 fn find_plans(

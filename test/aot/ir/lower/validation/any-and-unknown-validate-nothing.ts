@@ -3,7 +3,7 @@
 
 /// <reference path="./imports/declarations.d.ts" />
 
-export function parseAny(text: string) {
+import { JSON } from "bun"; export function parseAny(text: string) {
   return JSON.parse<any>(text);
 }
 
@@ -12,5 +12,5 @@ export function parseUnknown(text: string) {
 }
 
 export function parseBare(text: string) {
-  return JSON.parse(text);
+  return globalThis.JSON.parse(text);
 }

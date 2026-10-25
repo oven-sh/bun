@@ -1,5 +1,5 @@
 // typed-forms.ts <form> <n>: as forms.js, for objects whose types are declared: their members come, go and are listed in orders that the data chooses.
-type Ten = { a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number; h?: number; i?: number; j?: number };
+import { JSON } from "bun"; type Ten = { a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number; h?: number; i?: number; j?: number };
 type Name = keyof Ten;
 const letters: Name[] = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
 function order(number: number): Name[] {
@@ -55,14 +55,14 @@ const forms: Record<string, (n: number) => () => unknown> = {
   "members deleted in every order": form(n => everyOrder(n), lists => lists.map(names => { const made = full(); for (const name of names.slice(0, 5)) delete made[name]; return made; }).length),
   "JSON.parse<Ten>: orders, a text an object": form(n => everyOrder(n).map(textOf), texts => texts.map(text => JSON.parse<Ten>(text)).length),
   "JSON.parse<Ten[]>: orders, one text": form(n => "[" + everyOrder(n).map(textOf).join(",") + "]", text => JSON.parse<Ten[]>(text).length),
-  "JSON.parse as Ten: orders": form(n => everyOrder(n).map(textOf), texts => texts.map(text => JSON.parse(text) as Ten).reduce((sum, value) => sum + value.a! + value.j!, 0)),
+  "JSON.parse as Ten: orders": form(n => everyOrder(n).map(textOf), texts => texts.map(text => globalThis.JSON.parse(text) as Ten).reduce((sum, value) => sum + value.a! + value.j!, 0)),
   "JSON.stringify: made in every order": form(n => everyOrder(n).map(madeIn), list => list.reduce((sum, value) => sum + JSON.stringify(value).length, 0)),
   "Object.keys: made in every order": form(n => everyOrder(n).map(madeIn), list => list.reduce((sum, value) => sum + Object.keys(value).length, 0)),
   "for-in: made in every order": form(n => everyOrder(n).map(madeIn), list => list.reduce((sum, value) => { for (const key in value) sum += value[key as Name]!; return sum; }, 0)),
   "spread: made in every order": form(n => everyOrder(n).map(madeIn), list => list.map((value): Ten => ({ ...value })).length),
   "rest: made in every order": form(n => everyOrder(n).map(madeIn), list => list.map(({ a, ...rest }) => rest).length),
-  "Object.assign to a typed literal: orders from a text": form(n => everyOrder(n).map(names => JSON.parse(textOf(names)) as Ten), list => list.map(value => Object.assign(full(), value)).length),
-  "Object.assign in a constructor: orders from a text": form(n => everyOrder(n).map(names => JSON.parse(textOf(names)) as Ten), list => list.map(value => new Holder(value)).length),
+  "Object.assign to a typed literal: orders from a text": form(n => everyOrder(n).map(names => globalThis.JSON.parse(textOf(names)) as Ten), list => list.map(value => Object.assign(full(), value)).length),
+  "Object.assign in a constructor: orders from a text": form(n => everyOrder(n).map(names => globalThis.JSON.parse(textOf(names)) as Ten), list => list.map(value => new Holder(value)).length),
   "names from outside on instances: every order": form(n => everyOrder(n), lists => lists.map(names => { const made = new Point() as Point & Record<string, number>; for (const name of names) made[name] = 1; return made; }).length),
   "names from outside on instances: a new name each": form(n => Array.from({ length: n }, (_, at) => "id" + at), names => names.map(name => { const made = new Point() as Point & Record<string, number>; made[name] = 1; return made; }).length),
   "names from outside on one instance": form(n => Array.from({ length: n }, (_, at) => "id" + at), names => { const made = new Point() as Point & Record<string, number>; for (const name of names) made[name] = 1; return Object.keys(made).length; }),

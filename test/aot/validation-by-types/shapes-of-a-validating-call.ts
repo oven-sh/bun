@@ -1,4 +1,4 @@
-// Ways to write a call of `JSON.parse` with a type argument: how the callee is spelled, where the call stands, where the type
+// Ways to write a call of `parse` of the `JSON` of "bun" with a type argument: how the callee is spelled, where the call stands, where the type
 // comes from. Each is a module that defines `ask(text)`, with texts that its type refuses and texts that it takes.
 // shapes-of-a-validating-call.test.ts builds them.
 export type Shape = {
@@ -15,7 +15,7 @@ export type Shape = {
   compilerOptions?: Record<string, unknown>;
 };
 export const shapes: Shape[] = [];
-const ofBun = ["imported", "same-name", "Bun.JSON"];
+const ofBun = ["imported", "same-name", "Bun.JSON", "globalThis.Bun.JSON"];
 export const callees: {
   name: string;
   expression: (J: string) => string;
@@ -1964,19 +1964,19 @@ body(
   "the program adds a signature to the global JSON",
   J =>
     `declare global { interface JSON { parse<T>(text: string): T } }\nfunction ask(text: string): unknown { return ${J}.parse<User>(text); }`,
-  { spellings: ["global", "globalThis", "imported"] },
+  { spellings: ["imported", "Bun.JSON"] },
 );
 body(
   "the program adds a signature with another parameter name",
   J =>
     `declare global { interface JSON { parse<Out>(source: string, reviver?: (key: string, value: unknown) => unknown): Out } }\nfunction ask(text: string): unknown { return ${J}.parse<User>(text); }`,
-  { spellings: ["global", "globalThis", "imported"] },
+  { spellings: ["imported", "Bun.JSON"] },
 );
 body(
   "a declaration file adds a signature to the global JSON",
   J => `function ask(text: string): unknown { return ${J}.parse<User>(text); }`,
   {
-    spellings: ["global", "globalThis", "imported"],
+    spellings: ["imported", "Bun.JSON"],
     files: () => ({ "globals.d.ts": `interface JSON { parse<T>(text: string): T }\n` }),
   },
 );
@@ -1984,7 +1984,7 @@ body(
   "an imported file adds a signature to the global JSON",
   J => `function ask(text: string): unknown { return ${J}.parse<User>(text); }`,
   {
-    spellings: ["global", "globalThis", "imported"],
+    spellings: ["imported", "Bun.JSON"],
     imports: `import "./more";`,
     files: () => ({ "more.ts": `declare global { interface JSON { parse<T>(text: string): T } }\nexport {};\n` }),
   },
@@ -1993,7 +1993,7 @@ body(
   "a package adds a signature to the global JSON",
   J => `function ask(text: string): unknown { return ${J}.parse<User>(text); }`,
   {
-    spellings: ["global", "globalThis", "imported"],
+    spellings: ["imported", "Bun.JSON"],
     imports: `import "typed-json";`,
     files: () => ({
       "node_modules/typed-json/package.json": `{"name":"typed-json","version":"1.0.0","types":"index.d.ts","main":"index.js"}`,
@@ -2007,11 +2007,6 @@ body(
   J =>
     `declare module "bun" { interface JSON { parse<T>(text: string): T } }\nfunction ask(text: string): unknown { return ${J}.parse<User>(text); }`,
   { spellings: ["imported", "Bun.JSON"] },
-);
-body(
-  "the reference to the typings of the global",
-  J => `function ask(text: string): unknown { return ${J}.parse<User>(text); }`,
-  { top: `/// <reference types="bun-types/aot" />\n`, spellings: ["global"] },
 );
 
 // ---------------------------------------------------------------- the text is known to the build
@@ -2068,7 +2063,7 @@ call(
   "an escape in the object's name",
   () => `JS\\u004fN.parse<User>(text)`,
   () => ``,
-  { spellings: ["global", "same-name"] },
+  { spellings: ["same-name"] },
 );
 call("a comma behind the argument", J => `${J}.parse<User>(text,)`);
 call("spaces", J => `${J} . parse < User > ( text )`);

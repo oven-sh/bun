@@ -1,4 +1,4 @@
-// `bun run --aot` checks a program and then runs it from its source. Only compiled code has the checks of `JSON.parse<T>(text)` and `validate<T>(value)`,
+// `bun run --aot` checks a program and then runs it from its source. The checks of `JSON.parse<T>(text)` and `validate<T>(value)` in an executable are compiled code,
 // so a program that validates by type is compiled and run for real there too: the expected output of each program is that of the executable.
 import { expect } from "bun:test";
 import { bunExe, isASAN, isDebug, tempDir } from "harness";

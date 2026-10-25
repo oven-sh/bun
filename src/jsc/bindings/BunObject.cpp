@@ -142,7 +142,7 @@ static JSValue ensureValidatorOfPlan(JSGlobalObject* globalObject, JSObject* hol
         return known;
 
 #if ENABLE(AOT)
-    BunAOTLibraryText text = Bun__AOT__validationLibrary();
+    BunAOTLibraryText text = JSC::callRemovable<Bun::Feature::AotCompiler, JSC::RemovedFeatureStub::ReturnDefault, Bun__AOT__validationLibrary>();
 #else
     BunAOTLibraryText text { nullptr, 0 };
 #endif

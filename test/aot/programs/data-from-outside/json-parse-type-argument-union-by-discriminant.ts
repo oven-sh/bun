@@ -1,6 +1,6 @@
 // For a union of object types whose members differ in a literal property, JSON.parse<T>() reads that property once and validates the one member that can accept the value.
 // IR+ JSONFindMember v\d+ name="kind"
-interface Size { width: number; height: number }
+import { JSON } from "bun"; interface Size { width: number; height: number }
 interface Circle { size: Size; kind: "circle"; radius: number }
 interface Square { size: Size; kind: "square"; side: number }
 interface Label { size: Size; kind: "label"; text: string; bold?: boolean }

@@ -1,4 +1,4 @@
-// However a call of `JSON.parse` with a type argument is written, wherever it stands and wherever its type comes from: it
+// However a call of `parse` of the `JSON` of "bun" with a type argument is written, wherever it stands and wherever its type comes from: it
 // validates, or the build stops and names the file, or the call throws whatever the text. A text that the type refuses never
 // comes back, and a text that it takes comes back as `JSON.parse(text)` gives it.
 //
@@ -14,8 +14,7 @@ const spellings: Record<string, { imports: string; J: string }> = {
   imported: { imports: `import { JSON as Checked } from "bun";`, J: "Checked" },
   "same-name": { imports: `import { JSON } from "bun";`, J: "JSON" },
   "Bun.JSON": { imports: ``, J: "Bun.JSON" },
-  global: { imports: ``, J: "JSON" },
-  globalThis: { imports: ``, J: "globalThis.JSON" },
+  "globalThis.Bun.JSON": { imports: ``, J: "globalThis.Bun.JSON" },
 };
 const options = { strict: true, target: "esnext", module: "esnext", moduleResolution: "bundler" };
 const joinedOptions = { ...options, allowImportingTsExtensions: true, noEmit: true };
@@ -145,7 +144,7 @@ test.concurrent.each(Object.keys(spellings))(
   600_000,
 );
 
-test.concurrent.each(["imported", "global"])(
+test.concurrent.each(["imported", "Bun.JSON"])(
   "the shapes that declare something for the whole program, %s",
   async spelling => {
     for (const shape of inSpelling(shapes, spelling)) {
@@ -178,7 +177,7 @@ for (const context of contexts) {
   }
 }
 
-test.concurrent.each(["imported", "Bun.JSON", "global"])(
+test.concurrent.each(["imported", "Bun.JSON"])(
   "every callee in every place, %s",
   async spelling => {
     const { validating } = await judge(inSpelling(crossed, spelling), spelling);
@@ -186,3 +185,22 @@ test.concurrent.each(["imported", "Bun.JSON", "global"])(
   },
   900_000,
 );
+
+// The global `JSON.parse` has no type argument of Bun's. One that the program declares for itself is erased like any other type.
+test("the global JSON.parse is plain TypeScript", async () => {
+  const call = `console.log(JSON.stringify(JSON.parse<{ id: number }>('{"id":"7"}')));\n`;
+  const tsconfig = JSON.stringify({ compilerOptions: options });
+  using declared = tempDir("shapes-of-a-validating-call", {
+    "program.ts": `declare global {\n  interface JSON {\n    parse<T>(text: string): T;\n  }\n}\n${call}export {};\n`,
+    "tsconfig.json": tsconfig,
+  });
+  expect(await run([bunExe(), "run", "--aot", "./program.ts"], String(declared))).toEqual({
+    stdout: `{"id":"7"}\n`,
+    stderr: "",
+    exitCode: 0,
+  });
+  using undeclared = tempDir("shapes-of-a-validating-call", { "program.ts": call, "tsconfig.json": tsconfig });
+  const { stdout, stderr, exitCode } = await run([bunExe(), "run", "--aot", "./program.ts"], String(undeclared));
+  expect(stderr).toContain("TS2558");
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+}, 120_000);

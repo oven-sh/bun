@@ -7291,6 +7291,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
     }
 
+    /// True for `validate<any>(value)` and `validate<unknown>(value)`, which ask for no check: the call is its argument.
+    /// Neither word can be declared to mean something else. `callee` hasn't been visited yet.
+    pub(crate) fn is_validate_without_check(&mut self, callee: Expr) -> bool {
+        let js_ast::ExprData::EIdentifier(identifier) = callee.data else {
+            return false;
+        };
+        let name_end = callee.loc.start as usize + self.load_name_from_ref(identifier.ref_).len();
+        let text: &[u8] = &self.source.contents;
+        let type_arguments = skip_blanks_and_comments(text, name_end as u32) as usize;
+        if text.get(type_arguments) != Some(&b'<') {
+            return false;
+        }
+        let word = skip_blanks_and_comments(text, type_arguments as u32 + 1) as usize;
+        [&b"any"[..], b"unknown"].into_iter().any(|name| {
+            text[word..].starts_with(name)
+                && text.get(skip_blanks_and_comments(text, (word + name.len()) as u32) as usize)
+                    == Some(&b'>')
+        })
+    }
+
     /// For the callee of `validate<T>(value)`, which hasn't been visited yet: the validator of `T`.
     pub(crate) fn visit_call_of_validate(
         &mut self,

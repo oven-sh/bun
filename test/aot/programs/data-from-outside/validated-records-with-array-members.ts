@@ -1,7 +1,7 @@
 // validate<T>(value) and JSON.parse<T>(text) for a record with an array member. The array of the result is a copy that holds what was validated, a wrong element is reported with its path, and a getter that runs during the validation, or a toJSON after it, reaches the array of the caller and never the copy before it is handed out.
 // STATISTIC: ValidatorsCreated >= 3
 // STATISTIC: ParsersCreated >= 3
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 import type { Schema } from "bun";
 type Row = { id: number };
 type Page = { items: Row[]; total: number };

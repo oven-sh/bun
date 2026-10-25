@@ -1,6 +1,6 @@
 // JSON.parse<T>: a recursive arm of a union that rejects a value does not end the compiled parse. The next arm is tried, a bounded number of times at one value, so the time stays linear in the text.
 // IR+ ^ .*JSONTryRetry
-type Markup = { tag: string; children: Markup[] } | { text: string };
+import { JSON } from "bun"; type Markup = { tag: string; children: Markup[] } | { text: string };
 type Folder = { kind: string; children: Folder[] } | { name: string; items: Folder[] };
 type Shared = { below: Shared[]; a: number } | { below: Shared[]; b: number };
 type Tagged = { kind: "list"; items: Tagged[] } | { kind: "pair"; left: Tagged; right: Tagged } | { leaf: number } | { leaves: Tagged[] };

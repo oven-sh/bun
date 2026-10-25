@@ -17,7 +17,7 @@
 
 /// <reference path="./imports/declarations.d.ts" />
 
-interface Point {
+import { JSON } from "bun"; interface Point {
   x: number;
   y?: number;
 }

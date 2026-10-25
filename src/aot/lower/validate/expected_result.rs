@@ -19,9 +19,10 @@ use crate::lower::positions::{self, SiteOrigin};
 use crate::lower::{CheckerTypeId, FileLowering};
 pub(super) use crate::validation_plans::ValidatingFunction;
 
+// A type argument of the global `JSON.parse` is one that the program declared, and is erased like any other.
 pub(super) fn find_validating_function(builtin: BuiltinId) -> Option<ValidatingFunction> {
     match builtin {
-        BuiltinId::JSONParse | BuiltinId::BunJSONParse => Some(ValidatingFunction::Parse),
+        BuiltinId::BunJSONParse => Some(ValidatingFunction::Parse),
         BuiltinId::BunBundleValidate => Some(ValidatingFunction::Validate),
         _ => None,
     }
@@ -96,9 +97,12 @@ impl FileLowering<'_, '_, '_, '_> {
         let site = hir[id];
         let callee = self.skip_type_syntax(site.callee);
         let resolved = self.builtins.builtin_of_expression(callee);
-        let resolved = resolved.and_then(find_validating_function);
         let has_type_arguments = !hir.list_at(site.type_args).is_empty();
-        match resolved {
+        if resolved == Some(BuiltinId::JSONParse) && !has_type_arguments {
+            self.note_what_a_parse_may_build(call);
+            return None;
+        }
+        match resolved.and_then(find_validating_function) {
             Some(ValidatingFunction::Validate) => {
                 return self.find_validated_result(call, &site, ValidatingFunction::Validate);
             }
@@ -107,7 +111,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 return self.find_validated_result(call, &site, ValidatingFunction::Parse);
             }
             None if !has_type_arguments => return None,
-            // Whatever signature the callee is written under, what is called is `parse`.
+            // Whatever signature the callee is written under, what is called is `parse` of the `JSON` of "bun".
             Some(ValidatingFunction::Parse) => {
                 return self.find_validated_result(call, &site, ValidatingFunction::Parse);
             }

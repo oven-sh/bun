@@ -1,6 +1,6 @@
 // The member that tells the arms of a union apart may stand anywhere in the text. One dispatch finds the arm; an arm without a constant tag takes what no tagged arm takes.
 // IR+ ^ .*JSONFindMember
-declare const aotOperationCount: undefined | ((name: string) => number);
+import { JSON } from "bun"; declare const aotOperationCount: undefined | ((name: string) => number);
 interface Common { type: string; id: number }
 interface Opened extends Common { type: "opened"; by: string }
 interface Closed extends Common { type: "closed"; by: string; reason?: string }

@@ -1,5 +1,5 @@
 // A valid text is cut at every byte, from both ends, and every byte is left out, doubled, replaced and preceded by 25 others: JSON.parse<T> says what JSON.parse says, or refuses the value.
-const plainParse: (text: string) => any = JSON.parse;
+import { JSON } from "bun"; const plainParse: (text: string) => any = globalThis.JSON.parse;
 
 function show(value: any): string {
   if (Array.isArray(value)) return "[" + value.map(show).join(",") + "]";

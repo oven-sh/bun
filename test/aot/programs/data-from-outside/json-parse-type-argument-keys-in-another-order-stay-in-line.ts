@@ -1,7 +1,7 @@
 // An order of declared keys that was seen before is laid on the new object by the compiled parser itself: the engine is not called.
 // IR+ ^ .*JSONKeyOrderAppend
 // IR+ ^ .*JSONKeyOrderApply
-declare const aotOperationCount: undefined | ((name: string) => number);
+import { JSON } from "bun"; declare const aotOperationCount: undefined | ((name: string) => number);
 interface Point { x: number; y: number; label?: string }
 interface Segment { id: number; from: Point; to: Point; tags: string[] }
 interface Fourteen { k0: number; k1: number; k2: number; k3: number; k4: number; k5: number; k6: number; k7: number; k8: number; k9: number; k10: number; k11: number; k12: number; k13: number }

@@ -1,7 +1,7 @@
 // JSON.parse<T>: texts that JSON.parse reads as one value select one arm of a union, however a key is written: with an escape, twice, or between white space. The defaults show which arm it was.
 // IR+ ^ .*JSONGiveUpIfMemberRepeats
 // IR+ ^ .*JSONGiveUpIfKeyRepeats
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 
 type Counted = { n: number & Schema.Default<1> };
 type Marked = { a: unknown; d: number & Schema.Default<2> };

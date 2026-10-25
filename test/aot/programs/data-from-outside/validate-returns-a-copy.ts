@@ -1,5 +1,5 @@
 // validate<T>(value) returns a copy and never changes its argument: the objects and arrays that T describes are new, and what stands under any, unknown, object or an undeclared key is shared.
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 import type { Schema } from "bun";
 interface Inner { x: number }
 interface Item { sku: string; count: number }
@@ -20,7 +20,7 @@ const before = JSON.stringify({
   first: { undeclared: true }, id: 1, inner: { x: 1, more: [1] }, items: [{ sku: "a", count: 1 }], tags: ["t"], byName: { k: { x: 2 } }, pair: [1, { x: 3 }],
   anything: { deep: [1] }, loose: [{ x: "no number" }], thing: { x: "no number" },
 });
-const source = (): any => JSON.parse(before);
+const source = (): any => globalThis.JSON.parse(before);
 function compare(what: string, result: any, given: any): void {
   const parts: [string, (from: any) => unknown][] = [
     ["itself", from => from], ["inner", from => from.inner], ["items", from => from.items], ["items[0]", from => from.items[0]], ["tags", from => from.tags], ["byName", from => from.byName],

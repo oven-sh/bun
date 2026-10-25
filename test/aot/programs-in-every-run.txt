@@ -265,6 +265,7 @@ collector/a-field-stored-on-two-paths-behind-a-call
 collector/a-number-that-looks-like-the-header-of-an-object-in-a-frame-is-held-while-the-collector-runs
 collector/accessors-of-host-classes-are-read-while-other-accessor-functions-come-and-go
 collector/an-operation-that-throws-allocates-what-it-throws
+collector/bigint-literal-at-heap-limit
 collector/collector-runs-beside-every-kind-of-allocation
 collector/flags-kept-out-of-line-are-read-by-the-last-holder-of-their-object-in-a-loop-that-makes-texts
 collector/narrow-reference-held-across-integer-operations
@@ -348,6 +349,7 @@ data-from-outside/parsed-via-untyped-literal
 data-from-outside/sql-typed-rows
 data-from-outside/the-error-of-a-refused-value-is-read-late-changed-and-copied
 data-from-outside/two-files-ask-for-the-serializer-of-one-layout-and-every-pass-is-verified
+data-from-outside/unions-below-unions-that-no-tag-tells-apart-take-time-in-proportion
 data-from-outside/validation-compiled-and-interpreted-agree
 data-from-outside/validation-error-message-is-the-path-and-the-first-issue
 data-from-outside/validation-issues-from-shared-routine

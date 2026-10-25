@@ -40,7 +40,6 @@ const fitAndMisfit = `
 `;
 
 const validating = {
-  "json-parse.ts": `const check = (value: unknown) => JSON.parse<{ a: number }>(JSON.stringify(value));${fitAndMisfit}export { said };`,
   "validate.ts": `import { validate } from "bun:bundle";\nconst check = (value: unknown) => validate<{ a: number }>(value);${fitAndMisfit}export { said };`,
   "imported-function.ts": `import { validate as checked } from "bun:bundle";\nconst check = (value: unknown) => checked<{ a: number }>(value);${fitAndMisfit}export { said };`,
   "imported-json.ts": `import { JSON } from "bun";\nconst check = (value: unknown) => JSON.parse<{ a: number }>(JSON.stringify(value));${fitAndMisfit}export { said };`,

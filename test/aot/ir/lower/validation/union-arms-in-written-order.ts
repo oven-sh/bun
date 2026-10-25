@@ -9,7 +9,7 @@
 
 /// <reference path="./imports/declarations.d.ts" />
 
-type Sized = { a: number };
+import { JSON } from "bun"; type Sized = { a: number };
 
 export function sizedFirst(text: string) {
   return JSON.parse<Sized | Record<string, number>>(text);

@@ -1,5 +1,5 @@
 // What comes in from outside is checked against these types: a JSON body as it is parsed, what a form holds as an object.
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 import type { Schema } from "bun";
 import type { IssueState } from "./types";
 

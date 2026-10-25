@@ -1,7 +1,7 @@
 // Call sites of JSON.parse<T>() with the same type share the functions that are emitted for the type.
 // IR+ JSONStartsWith v\d+ text="\\x22height\\x22:"
 // IR- JSONStartsWith v\d+ text="\\x22height\\x22:"[\s\S]*JSONStartsWith v\d+ text="\\x22height\\x22:"
-interface Size { width: number; height: number }
+import { JSON } from "bun"; interface Size { width: number; height: number }
 interface Box { size: Size; label: string }
 
 function first(text: string): number {

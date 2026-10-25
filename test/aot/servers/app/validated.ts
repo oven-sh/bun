@@ -1,5 +1,5 @@
 // The order of ./shared.ts as a type. `bun compile` generates the checks from it, so zod is not in a program that imports this file.
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 import { validate } from "bun:bundle";
 import type { Line, Receipt } from "./shared";
 

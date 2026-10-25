@@ -1,6 +1,6 @@
 // JSON.parse<T>() on 16-bit strings: string values keep every UTF-16 code unit, and a code unit whose low byte looks like JSON syntax is not syntax.
 // IR+ ^ .*JSONStartsWith
-declare const aotOperationCount: undefined | ((name: string) => number);
+import { JSON } from "bun"; declare const aotOperationCount: undefined | ((name: string) => number);
 interface Person { name: string; tags: string[]; note: string | null; extra: unknown; counts: Record<string, number> }
 
 const escaped = (text: string): string => text.replace(/[^\x20-\x7e]/g, unit => "\\u" + unit.charCodeAt(0).toString(16).padStart(4, "0"));

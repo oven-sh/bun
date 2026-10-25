@@ -1,7 +1,7 @@
 // Writes a TypeScript program that hands values to `validate<T>(value)` and texts to `JSON.parse<T>(text)` where T is full of unions that no tag tells apart.
 //
 //   types      unions of object types without a tag: a later member says less ({}, { b?: string }, { a: unknown }, Record<string, unknown>, object), members share names with other types, some names are those that every object inherits, indices or __proto__, one member is another with a name
-//              more or less, members are alike but for the last leaf far down, two members have the same tag, a tag is optional, a union of literals or a plain string; unions of lists and tuples; all of these
+//              more or less, members are alike but for the last leaf far down, two members have the same tag, a tag is optional, a union of literals or a plain string; unions of lists and tuples; unions nested by name ten levels deep, with lists, tuples and records between the levels; all of these
 //              below lists, tuples, records, optional members and intersections, and in types that refer to themselves
 //   values     made while the program runs, from the description of the type: a sample of one member, a sample of one member with parts of another laid over it, and either of them with one place spoiled:
 //              often the last place, so that a member of the union refuses late. Where the type says `unknown` or `object`, or nothing, there are also dates, maps, functions, instances and very long empty lists
@@ -191,6 +191,37 @@ class Types {
     ])();
   }
 
+  // Unions nested by name, none refers to itself: every member of a level looks at the level below.
+  nested(name: string, declare: (name: string, d: Description) => void): Description {
+    const random = this.random;
+    const depth = random.between(2, 10), members = random.between(2, 4);
+    let level: Description = { k: "union", arms: [{ k: "object", ms: [{ key: "v", optional: false, d: { k: "number" } }] }, { k: "object", ms: [{ key: "v", optional: false, d: { k: "string" } }] }] };
+    for (let i = 0; i < depth; i++) {
+      const alias = name + "_" + i;
+      declare(alias, level);
+      const below: Description = { k: "ref", to: alias };
+      const held = random.weighted<() => Description>([
+        [7, () => below],
+        [1, () => ({ k: "array", e: below, max: 2 })],
+        [1, () => ({ k: "tuple", es: [below] })],
+        [1, () => ({ k: "record", e: below })],
+        [1, () => ({ k: "union", arms: [below, { k: "null" }] })],
+      ])();
+      const isTagged = random.chance(0.2);
+      const leaves = random.shuffled<Description>([{ k: "number" }, { k: "string" }, { k: "boolean" }, { k: "null" }]).slice(0, members);
+      level = {
+        k: "union",
+        arms: leaves.map((leaf, at) => {
+          const ms: Member[] = [{ key: "left", optional: false, d: held }, { key: "v", optional: false, d: leaf }];
+          if (isTagged) ms.unshift({ key: "kind", optional: false, d: { k: "literal", v: "k" + at } });
+          if (random.chance(0.15)) ms.push({ key: "u", optional: true, d: { k: random.pick(["unknown", "anyobject"]) } });
+          return { k: "object", ms, ...(random.chance(0.1) && { strict: true }) } as Description;
+        }),
+      };
+    }
+    return level;
+  }
+
   // A type that refers to itself in more than one member of a union.
   recursive(name: string): Description {
     const random = this.random;
@@ -212,26 +243,31 @@ export function program(seed: number, count: number): string {
   const types = new Types(random);
   const declared: string[] = [];
   const cases: string[] = [];
+  const aliases: string[] = [];
   for (let i = 0; i < count; i++) {
     const name = "T" + i;
-    const d = random.chance(0.12) ? types.recursive(name) : random.chance(0.75) ? types.union(random.between(1, 2)) : types.any(3);
+    const isNested = random.chance(0.15);
+    const d = isNested ? types.nested(name, (alias, level) => (declared.push(`type ${alias} = ${render(level)};`), aliases.push(`  ${alias}: ${JSON.stringify(level)},`))) : random.chance(0.12) ? types.recursive(name) : random.chance(0.75) ? types.union(random.between(1, 2)) : types.any(3); // prettier-ignore
     declared.push(`type ${name} = ${render(d)};`);
-    cases.push(`  { name: ${JSON.stringify(name)}, d: ${JSON.stringify(d)}, take: value => validate<${name}>(value), parse: text => Typed.parse<${name}>(text) },`);
+    cases.push(`  { name: ${JSON.stringify(name)}, fuel: ${isNested ? 14 : 3}, d: ${JSON.stringify(d)}, take: value => validate<${name}>(value), parse: text => Typed.parse<${name}>(text) },`);
   }
   return `// Seed ${seed}, ${count} types. Written by test/aot/fuzz/unions-handed-to-validate.ts.
 import { validate } from "bun:bundle";
 import { JSON as Typed, type Schema } from "bun";
 ${declared.join("\n")}
 type D = any;
-type Case = { name: string; d: D; take: (value: unknown) => unknown; parse: (text: string) => unknown };
+type Case = { name: string; fuel: number; d: D; take: (value: unknown) => unknown; parse: (text: string) => unknown };
 const cases: Case[] = [
 ${cases.join("\n")}
 ];
+const aliases: Record<string, D> = {
+${aliases.join("\n")}
+};
 ${harness}`;
 }
 
 const harness = String.raw`
-const byName: Record<string, D> = {};
+const byName: Record<string, D> = { ...aliases };
 for (const one of cases) byName[one.name] = one.d;
 const resolve = (d: D): D => (d.k === "ref" ? byName[d.to] : d);
 
@@ -424,15 +460,16 @@ function spoil(root: any): any {
 }
 // A sample of one member of a union with parts of a sample of another laid over it.
 function mixed(d: D): any {
-  const first = sample(d, 3), second = sample(d, 3);
+  const first = sample(d, fuel), second = sample(d, fuel);
   if (!isObject(first) || !isObject(second) || Array.isArray(first) !== Array.isArray(second) || Object.getPrototypeOf(first) !== Object.getPrototypeOf(second) || isLong(first) || isLong(second)) return first;
   for (const key of Object.keys(second)) if (chance(0.5)) put(first, key, second[key]);
   return first;
 }
+let fuel = 3;
 function make(d: D, seed: number): any {
   state = seed;
   const how = below(10);
-  let v = how < 3 ? sample(d, 3) : how < 5 ? mixed(d) : how < 9 ? spoil(chance(0.3) ? mixed(d) : sample(d, 3)) : spoil(spoil(sample(d, 3)));
+  let v = how < 3 ? sample(d, fuel) : how < 5 ? mixed(d) : how < 9 ? spoil(chance(0.3) ? mixed(d) : sample(d, fuel)) : spoil(spoil(sample(d, fuel)));
   isInTwoPlaces = false;
   if (chance(0.1)) v = shareOnePart(v);
   return v;
@@ -499,7 +536,7 @@ function dress(original: any, twin: any, way: Way): Dressed {
 
 // ---- The run
 const perType = Number(process.argv[2] ?? 300), firstSeed = Number(process.argv[3] ?? 1), only = process.argv[4];
-let pairs = 0, accepted = 0, refused = 0, unsure = 0, bad = 0;
+let pairs = 0, accepted = 0, refused = 0, unsure = 0, bad = 0, slowest = 0;
 const show = (v: any): string => { try { return (JSON.stringify(v, (_, x) => (typeof x === "bigint" ? x + "n" : typeof x === "function" ? "function" : x === undefined ? "undefined" : typeof x === "symbol" ? "symbol" : typeof x === "number" && !Number.isFinite(x) ? String(x) : isObject(x) && !Array.isArray(x) && Object.getPrototypeOf(x) !== Object.prototype && Object.getPrototypeOf(x) !== null ? Object.prototype.toString.call(x) : Array.isArray(x) && x.length > 50 ? "list of " + x.length : x)) ?? "undefined").slice(0, 300); } catch (e) { return "?"; } };
 function fail(what: string, one: Case, seed: number, way: string, v: any, got: string): void {
   if (bad++ < 60) console.log("DOES NOT HOLD: " + what + " | " + one.name + " seed " + seed + " | " + way + " | value " + show(v) + " | " + got);
@@ -516,6 +553,7 @@ function judge(one: Case, seed: number, way: string, v: any, verdict: boolean | 
   const started = performance.now();
   try { result = run(); isAccepted = true; } catch (e) { threw = e; }
   if (reads) for (const [what, times] of reads) if (times > (isInTwoPlaces ? 2 : 1)) { fail("each part is read once for each place it is in", one, seed, way, v, what + " was read " + times + " times"); break; }
+  slowest = Math.max(slowest, performance.now() - started);
   if (performance.now() - started > 5000) fail("an answer within five seconds", one, seed, way, v, Math.round(performance.now() - started) + " ms");
   if (!isAccepted) {
     refused++;
@@ -552,6 +590,7 @@ function isText(v: any, seen: Set<object>): boolean {
 const escaped = (text: string): string => text.replace(/"([A-Za-z_])([\w-]*)":/g, (_, first, rest) => '"\\u00' + first.charCodeAt(0).toString(16) + rest + '":');
 for (const one of cases) {
   if (only !== undefined && one.name !== only) continue;
+  fuel = one.fuel;
   for (let n = 0; n < perType; n++) {
     const seed = (firstSeed * 1000003 + n * 7919) | 0;
     const original = make(one.d, seed);
@@ -575,7 +614,7 @@ for (const one of cases) {
     }
   }
 }
-console.log("pairs " + pairs + " accepted " + accepted + " refused " + refused + " values without a sure verdict " + unsure + " answers that do not hold " + bad);
+console.log("pairs " + pairs + " accepted " + accepted + " refused " + refused + " values without a sure verdict " + unsure + " slowest answer " + Math.round(slowest) + " ms answers that do not hold " + bad);
 `;
 
 if (import.meta.main) console.log(program(Number(process.argv[2] ?? 1), Number(process.argv[3] ?? 24)));

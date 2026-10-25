@@ -137,7 +137,7 @@ export function program(seed: number, count: number, withZod: boolean): string {
   if (withZod) lines.push('import * as z from "zod";');
   const cases: string[] = [];
   const one = (name: string, zod: string, samples: unknown[]): string =>
-    `  ["${name}", (t: string) => JSON.parse<${name}>(t), (t: string) => JSON.parse<${name}>(t, (_, value) => value), (v: unknown) => validate<${name}>(v), ${zod}, ${JSON.stringify(samples)}],`;
+    `  ["${name}", (t: string) => Bun.JSON.parse<${name}>(t), (t: string) => Bun.JSON.parse<${name}>(t, (_, value) => value), (v: unknown) => validate<${name}>(v), ${zod}, ${JSON.stringify(samples)}],`;
   for (let i = 0; i < count; i++) {
     const generated = i % 3 ? object(3) : generate(3);
     lines.push(`type T${i} = ${generated.type};`);

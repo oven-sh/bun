@@ -1,5 +1,5 @@
 // A type that can be validated declares names, and JSON has no symbols. The copy that validate<T>(value) returns holds what is under the names. A type that takes no undeclared key takes no symbol either.
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 import type { Schema } from "bun";
 
 const mark = Symbol("mark");
@@ -32,7 +32,7 @@ class Pixel {
 
 const carriers: [string, () => any][] = [
   ["an object", () => ({ x: 1, [mark]: "kept" })],
-  ["an object that got the key later", () => Object.assign(JSON.parse('{"x":1}'), { [mark]: "kept" })],
+  ["an object that got the key later", () => Object.assign(globalThis.JSON.parse('{"x":1}'), { [mark]: "kept" })],
   ["a frozen object", () => Object.freeze({ x: 1, [mark]: "kept" })],
   ["an accessor under the symbol", () => ({ x: 1, get [mark]() { return "kept"; } })], // prettier-ignore
   ["an accessor under the name", () => ({ get x() { return 1; }, [mark]: "kept" })], // prettier-ignore

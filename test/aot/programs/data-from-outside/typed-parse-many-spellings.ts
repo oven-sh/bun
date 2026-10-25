@@ -2,7 +2,7 @@
 // IR+ ^ .*JSONStartsWith
 // IR+ ^ .*JSONParseNumber
 // VALIDATED compiles
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 
 interface Product { id: number; name: string; price: number; tag: string; active: boolean }
 interface Address { city: string; zip: string }
@@ -144,6 +144,6 @@ for (const text of [whole, (whole + "Ā").slice(0, -1)]) {
 }
 console.log("text that ends early", syntaxErrors, others);
 console.log("a rope", show(JSON.parse<Person>(whole.slice(0, 40) + whole.slice(40))), "16 bits", show(JSON.parse<Person>((whole + "Ā").slice(0, -1))));
-console.log("no text", (() => { try { return show(JSON.parse<number>(JSON.parse("[5]")[0])); } catch (error) { return (error as Error).constructor.name; } })());
+console.log("no text", (() => { try { return show(JSON.parse<number>(globalThis.JSON.parse("[5]")[0])); } catch (error) { return (error as Error).constructor.name; } })());
 const long = JSON.stringify({ id: 1, name: "n".repeat(100000), price: 2, tag: "é".repeat(70000), active: true });
 console.log("long", JSON.parse<Product>(long).name.length, JSON.parse<Product>(long).tag.length, JSON.parse<Product>('{"id":1,"name":"x","price":2.5,"tag":"t","active":true}').name);

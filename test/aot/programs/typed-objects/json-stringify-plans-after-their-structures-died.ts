@@ -1,5 +1,5 @@
 // Objects with undeclared keys are written, dropped and collected; then objects with other keys are parsed, so that new structures lie where the old ones lay, and written.
-const host: any = globalThis;
+import { JSON } from "bun"; const host: any = globalThis;
 const collect: () => void = host.Bun ? () => host.Bun.gc(true) : host.gc;
 let serial = 0;
 function longText(): string {

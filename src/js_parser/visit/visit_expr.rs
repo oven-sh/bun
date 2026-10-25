@@ -1927,7 +1927,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
-        let validator = match p.is_validate_of_bundle(e_.target) {
+        let is_validate = p.is_validate_of_bundle(e_.target);
+        if is_validate
+            && e_.optional_chain.is_none()
+            && e_.args.len_u32() == 1
+            && !matches!(e_.args.slice()[0].data, Data::ESpread(..))
+            && p.is_validate_without_check(e_.target)
+        {
+            let mut value = e_.args.slice()[0];
+            p.visit_expr(&mut value);
+            *e = value;
+            return;
+        }
+        let validator = match is_validate {
             true => p.visit_call_of_validate(e_.target, e_.optional_chain.is_some()),
             false => None,
         };

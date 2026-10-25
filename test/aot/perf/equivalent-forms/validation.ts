@@ -1,5 +1,5 @@
 // Pairs of loops that check one value: with tests written by hand, and by its type. ../equivalent-forms.test.ts says which pairs it holds together. Only `bun build --compile --aot` builds this file.
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 import { validate } from "bun:bundle";
 
 const which = process.argv[2] ?? "";
@@ -28,7 +28,7 @@ function checkByHand(value: unknown): Line {
 }
 
 function parseByHand(text: string): Line {
-  return checkByHand(JSON.parse(text));
+  return checkByHand(globalThis.JSON.parse(text));
 }
 
 const parsed: unknown[] = [];
@@ -39,9 +39,9 @@ const narrow: unknown[] = [];
 for (let i = 0; i < 8; i++) {
   texts.push(JSON.stringify({ sku: "s" + i, quantity: i + 1, unitCents: 100 * i }));
   refusedTexts.push(JSON.stringify({ sku: "s" + i, quantity: -i, unitCents: 100 * i }));
-  parsed.push(JSON.parse(texts[i]));
-  refused.push(JSON.parse(refusedTexts[i]));
-  narrow.push(JSON.parse(JSON.stringify({ id: i + 1, m07: i })));
+  parsed.push(globalThis.JSON.parse(texts[i]));
+  refused.push(globalThis.JSON.parse(refusedTexts[i]));
+  narrow.push(globalThis.JSON.parse(JSON.stringify({ id: i + 1, m07: i })));
 }
 
 function createLiteral(i: number): unknown {

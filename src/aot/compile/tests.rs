@@ -1125,5 +1125,13 @@ fn summary_says_whether_the_program_validates_by_type() {
     };
     assert!(!validates("console.log(JSON.parse(\"1\"));"));
     assert!(!validates("console.log(JSON.parse(\"1\") as number);"));
-    assert!(validates("console.log(JSON.parse<number>(\"1\"));"));
+    assert!(validates(
+        "import { JSON } from \"bun\"; console.log(JSON.parse<number>(\"1\"));"
+    ));
+    // The type argument of the global is one that the program declared.
+    assert!(!validates(
+        "declare global { interface JSON { parse<T>(text: string): T } }\n\
+         export {};\n\
+         console.log(JSON.parse<number>(\"1\"));"
+    ));
 }

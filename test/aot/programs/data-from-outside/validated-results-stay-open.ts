@@ -4,7 +4,7 @@
 // IR+ ^layout L\d+ .*name="Nested" .* representation=Typed
 // IR+ ^layout L\d+ .*name="Within" .* representation=Typed
 // IR- ^function f\d+ "(labelOf|triesOf|sumOf)" .*captures\([^)]*\)[^(]* \([^)]*(=L\d+|L\d+!)
-import { validate } from "bun:bundle";
+import { JSON } from "bun"; import { validate } from "bun:bundle";
 interface User { id: number; name: string }
 interface Login { account: string; tries: number }
 interface Within { x: number }
@@ -18,5 +18,5 @@ function main(text: string, value: unknown, deep: unknown): void {
   const nested = validate<Nested>(deep);
   console.log(labelOf(user), triesOf(login), sumOf(nested));
 }
-main('{"id":7,"name":"Ada"}', JSON.parse('{"account":"ada","tries":2}'), JSON.parse('{"label":"l","within":{"x":1},"list":[{"x":2}]}'));
+main('{"id":7,"name":"Ada"}', globalThis.JSON.parse('{"account":"ada","tries":2}'), globalThis.JSON.parse('{"label":"l","within":{"x":1},"list":[{"x":2}]}'));
 main('{"\\u0069d":8,"name":"Bo"}', { get account() { return "bo"; }, tries: 4 }, { label: "ll", within: Object.assign(Object.create(null), { x: 5 }), list: [{ x: 6 }, { x: 7 }] });

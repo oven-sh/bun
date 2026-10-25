@@ -1,6 +1,6 @@
 one object true the global false false
 global, right {"id":7,"name":"Ada"}
-global, wrong TypeError
+global, wrong {"id":"7"}
 imported, right {"id":7,"name":"Ada"}
 imported, wrong TypeError
 Bun.JSON, right {"id":7,"name":"Ada"}

@@ -1,7 +1,7 @@
 // An object with undeclared keys, or with its keys in another order, is made by the compiled parser at once: no plain object is made and converted, and the text is not read again.
 // IR+ ^ .*JSONParseExtraMembers
 // IR+ ^ .*JSONKeyOrderApply
-declare const aotOperationCount: undefined | ((name: string) => number);
+import { JSON } from "bun"; declare const aotOperationCount: undefined | ((name: string) => number);
 interface Point { x: number; y: number; label?: string }
 interface Segment { id: number; from: Point; to: Point; tags: string[] }
 

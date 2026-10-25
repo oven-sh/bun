@@ -1,4 +1,4 @@
-import type { Schema } from "bun";
+import { JSON } from "bun"; import type { Schema } from "bun";
 import type { Country } from "./types";
 
 type Text<Longest extends number> = string & Schema.MinLength<1> & Schema.MaxLength<Longest>;

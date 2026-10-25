@@ -2575,15 +2575,6 @@ describe("bundler", () => {
           for (let i = 0; i < 2; w.length) i++;
           return <div state="read" info={info} g={g} />;
         }
-        // A closure names \`w\` above its \`let\`.
-        export function ClosureAboveTheLet({ c }) {
-          const f = () => w;
-          const info = { f };
-          count([c]);
-          let w = [c];
-          for (let i = 0; i < 2; w.length) i++;
-          return <div state="read" info={info} />;
-        }
         // The read is of the second value of \`visible\`.
         export function UserListAssignedAgain({ users, c }) {
           let visible = users.filter(user => user.active);
@@ -2725,8 +2716,11 @@ describe("bundler", () => {
           return <div state="read" />;
         }
 
-        // The compiler cannot print a memo block that declares a function which its own body or earlier code names.
-        // These components stay as written. Nothing calls \`later\`, and before this fix the second one was compiled.
+        // These components stay as written. The compiler cannot print a memo block that declares a function which
+        // its own body or earlier code names. And a \`let\` in front of the memo block would end the TDZ of a variable
+        // that a closure names above its declaration: \`f()\` would give \`undefined\` where it throws. Nothing calls
+        // \`later\`, and before this fix \`FunctionCalledAboveItsDeclaration\` and \`ReadAboveTheLetIsCaught\` were
+        // compiled.
         export function FunctionThatCallsItself({ c }) {
           function g(n) { return n > 0 ? g(n - 1) : [c]; }
           const w = g(1);
@@ -2742,6 +2736,29 @@ describe("bundler", () => {
           count(w);
           const later = () => { for (let i = 0; i < 2; g.length) i++; };
           return <div state="read" info={info} later={later} />;
+        }
+        export function ClosureAboveTheLet({ c }) {
+          const f = () => w;
+          const info = { f };
+          count([c]);
+          let w = [c];
+          for (let i = 0; i < 2; w.length) i++;
+          return <div state="read" info={info} />;
+        }
+        export function ReadAboveTheLetIsCaught({ c }) {
+          let state;
+          const f = () => rows;
+          try {
+            f();
+            state = "no error";
+          } catch (e) {
+            state = "read";
+          }
+          let rows = [c];
+          const info = { first: rows[0] };
+          count(rows);
+          const later = () => { for (let i = 0; i < 2; rows.length) i++; };
+          return <div state={state} info={info} later={later} />;
         }
 
         export function UserList({ users }) {
@@ -2863,38 +2880,6 @@ describe("bundler", () => {
           return <div state={state} info={info} later={later} />;
           const w = [c];
         }
-
-        // The next two do not render what they render as written, which is \`caught ReferenceError\`. A memo block
-        // that declares \`rows\` has its \`let\` in front of \`f()\`, so \`f\` reads \`undefined\` where the source
-        // throws. The second one was so before this fix. The first one is so now, because of the read in \`later\`.
-        export function ReadAboveTheLetIsCaught({ c }) {
-          let state;
-          const f = () => rows;
-          try {
-            state = "no error " + f();
-          } catch (e) {
-            state = "caught " + e.name;
-          }
-          let rows = [c];
-          const info = { first: rows[0] };
-          count(rows);
-          const later = () => { for (let i = 0; i < 2; rows.length) i++; };
-          return <div state={state} info={info} later={later} />;
-        }
-        export function ReadAboveTheLetIsCaughtAndTheLetIsUsed({ c }) {
-          let state;
-          const f = () => rows;
-          try {
-            state = "no error " + f();
-          } catch (e) {
-            state = "caught " + e.name;
-          }
-          let rows = [c];
-          const info = { first: rows[0] };
-          count(rows);
-          const n = rows.length;
-          return <div state={state} info={info} n={n} />;
-        }
       `,
       ...stubReact,
       // One cache for each component, so the second render loads what the first one saved.
@@ -2909,15 +2894,14 @@ describe("bundler", () => {
       `,
     };
 
-    // Each form renders what it renders as written, but for the two `ReadAboveTheLet` forms. The number is the size
-    // of its memo cache.
+    // Each form renders what it renders as written. The number is the size of its memo cache.
     const stdout = `
       AfterAMergedScope: read | read | read | read | read [7]
       AfterAScopeMergedTwice: read | read | read | read | read [10]
       AssignedInTheScope: read | read | read | read | read [5]
       CapturedAndAssignedAgain: read | read | read | read | read [7]
       CapturedAndAssignedAgainInAClosure: read | read | read | read | read [9]
-      ClosureAboveTheLet: read | read | read | read | read [5]
+      ClosureAboveTheLet: read | read | read | read | read [as written]
       CommaBeforeTernary: read | read | read | read | read [5]
       CommaInTry: read | read | read | read | read [5]
       DeclaredAndReadInATry: read | read | read | read | read [5]
@@ -2941,8 +2925,7 @@ describe("bundler", () => {
       NestedScopes: read | read | read | read | read [9]
       OneOfTwoDestructuredNames: read | read | read | read | read [5]
       OptionalChainInAClosure: read | read | read | read | read [7]
-      ReadAboveTheLetIsCaught: no error undefined | no error undefined | no error undefined | no error undefined | no error undefined [9]
-      ReadAboveTheLetIsCaughtAndTheLetIsUsed: no error undefined | no error undefined | no error undefined | no error undefined | no error undefined [8]
+      ReadAboveTheLetIsCaught: read | read | read | read | read [as written]
       ReadInAMethodNextToAStore: read | read | read | read | read [8]
       ReadInTheScopeThatFollows: read | read | read | read | read [2]
       ReadThenStore: read | read | read | read | read [3]

@@ -52,9 +52,7 @@ impl Ratio {
         CSSNumberFns::to_css(self.denominator, dest)
     }
 
-    /// Steps past the ratio for a strict bound in a `min-`/`max-` feature: up for `sign`
-    /// 1.0, down for -1.0. Chrome before 110 and Safari before 16.4 read a ratio only as
-    /// two integers, so integer terms stay integers: `16 / 9` steps up to `16001 / 9000`.
+    /// Steps past the ratio for a strict bound. Integer terms stay integers: `16 / 9` steps up to `16001 / 9000`.
     pub(crate) fn step(self, sign: f32) -> Ratio {
         let Ratio {
             numerator,
@@ -70,8 +68,7 @@ impl Ratio {
                 denominator,
             };
         }
-        // Safari before 16.4 multiplies a term by the viewport size as a 32-bit float,
-        // so the terms stay within 5 digits.
+        // At most 5 digits: Safari before 16.4 multiplies a term by the viewport size as a 32-bit float.
         let mut scale = 1.0;
         while numerator.max(denominator) * scale * 10.0 < 100_000.0 {
             scale *= 10.0;

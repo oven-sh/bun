@@ -1095,16 +1095,11 @@ impl MediaFeatureValue {
         }
     }
 
-    /// Steps past `self` for strict-inequality → min/max boundary lowering:
-    /// up for `>` (`sign` 1.0), down for `<` (`sign` -1.0). Consumes `self`.
+    /// Steps past `self` for a strict bound in a `min-`/`max-` feature: `sign` is 1.0 for `>`, -1.0 for `<`.
     fn step(self, sign: f32) -> MediaFeatureValue {
         let other = sign * 0.001;
         match self {
-            // Blink gives a `min-`/`max-` length 1/64px of slack, so a smaller step is
-            // inclusive there: `(max-width: 1023.999px)` holds at 1024px.
-            // https://github.com/chromium/chromium/blob/103.0.5060.134/third_party/blink/renderer/core/css/media_query_evaluator.cc#L269-L285
-            // Safari 14 reads a media length as an integer, so the step up does nothing
-            // there: https://bugs.webkit.org/show_bug.cgi?id=224097
+            // Blink's `CompareDoubleValue` gives a `min-`/`max-` length 1/64px of slack, so a smaller step does nothing.
             MediaFeatureValue::Length(len) => {
                 MediaFeatureValue::Length(len.add(Length::px(sign * 0.02)))
             }
@@ -1264,8 +1259,7 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
     dest.write_char(b')')
 }
 
-/// A query that is one feature of media type `all`, with or without a `not`: the whole
-/// of `(width < V)`, `not (hover)` or `not all and (width < V)`.
+/// A query that is one feature of media type `all`, with or without a `not`: `not all and (width < V)`.
 struct LoneFeature<'a> {
     /// The `MediaCondition::Feature` of the query.
     condition: &'a MediaCondition,
@@ -1305,8 +1299,7 @@ impl MediaQuery {
 }
 
 impl MediaFeature {
-    /// For `(name < V)` and `(name > V)`: the name and the value, with the inclusive
-    /// comparison that the bound negates. `(width < V)` is "not `(width >= V)`".
+    /// The inclusive comparison that a strict bound negates: `(width < V)` is "not `(width >= V)`".
     #[inline]
     fn strict_bound(
         &self,
@@ -1337,16 +1330,7 @@ impl MediaFeature {
 }
 
 impl LoneFeature<'_> {
-    /// For targets without range syntax, writes a query that is one strict range bound,
-    /// or `not (..)` of one feature, with the `not` on the whole query.
-    ///
-    /// lightningcss prints `(width < V)` as `not (min-width: V)`. Browsers without range
-    /// syntax also reject `not (..)` inside a condition (both came in Chrome 104 and
-    /// Safari 16.4) and negate only a whole query, `not all and (min-width: V)`:
-    /// https://github.com/parcel-bundler/lightningcss/issues/1361. Any other strict
-    /// bound steps past its value in `write_min_max`.
-    ///
-    /// Returns whether it wrote the query.
+    /// For targets without range syntax, writes the query with its `not` on the whole query. Returns whether it did.
     #[cold]
     fn to_css_without_range_syntax(
         &self,
@@ -1368,19 +1352,18 @@ impl LoneFeature<'_> {
         | QueryFeature::Boolean { name }
         | QueryFeature::Range { name, .. }
         | QueryFeature::Interval { name, .. }) = &**feature;
-        // Safari before 16 reads a `resolution` feature and never matches it. A query
-        // that gains or loses `not all and` goes from never to always there, or back.
+        // Safari before 16 never matches a `resolution` feature, so adding or removing `not all and` flips the result there.
         if not != self.not_all
             && matches!(name, MediaFeatureName::Standard(MediaFeatureId::Resolution))
         {
             return Ok(false);
         }
         if not {
+            // Not lightningcss's `not (..)`: browsers without range syntax reject it (parcel-bundler/lightningcss#1361).
             dest.write_str("not all and ")?;
         }
         let Some((negates, name, value)) = strict else {
-            // The condition printer is the one caller of `QueryFeature::to_css`, and
-            // a second caller here takes that function out of line for every query.
+            // Through the condition: a second caller of `QueryFeature::to_css` takes it out of line for every query.
             self.condition.to_css(dest)?;
             return Ok(true);
         };

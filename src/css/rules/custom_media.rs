@@ -29,8 +29,7 @@ impl CustomMediaRule {
         dest.write_str("@custom-media ")?;
         DashedIdentFns::to_css(&self.name, dest)?;
         dest.write_char(b' ')?;
-        // Not a query of its own: `(--name)` puts it inside other queries, where the
-        // `not all and` of a lowered bound would negate those too.
+        // `(--name)` puts this query inside other queries, where a `not all and` would negate those too.
         self.query.to_css_as_written(dest)?;
         dest.write_char(b';')?;
         Ok(())

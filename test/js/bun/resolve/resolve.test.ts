@@ -764,14 +764,14 @@ describe("package.json exports and imports key order", () => {
       return e.code;
     }
   };
+  const pkg = (name: string, exports: Record<string, string>, file: string) => ({
+    [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", exports }),
+    [`node_modules/${name}/${file}`]: "module.exports = 2;",
+  });
 
   // Node's patternKeyCompare counts the "*" in the base length of a key. So "./a/b*" ties with the
   // folder key "./a/b/", and the "*" key wins the tie. A map of two keys is sorted with one comparison.
   it.concurrent('a "*" key wins a tie against a folder key', () => {
-    const pkg = (name: string, exports: Record<string, string>, file: string) => ({
-      [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", exports }),
-      [`node_modules/${name}/${file}`]: "module.exports = 2;",
-    });
     using dir = tempDir("resolver-pattern-key-tie", {
       "package.json": JSON.stringify({
         name: "host",
@@ -802,6 +802,26 @@ describe("package.json exports and imports key order", () => {
       longerFolderKeyFirst: join(modules, "longer-folder-first/lib/file.js"),
       longerFolderKeyLast: join(modules, "longer-star-first/lib/file.js"),
       catchAllStarKey: join(modules, "catch-all/lib/file.js"),
+    });
+  });
+
+  // The "*" of a tie captures text that starts with "/". On Windows that is a separator too, and the
+  // capture must not become the root of the path when the target puts it directly after "./".
+  it.concurrent('a "*" capture that starts with "/" stays inside the package', () => {
+    using dir = tempDir("resolver-pattern-slash-capture", {
+      "package.json": JSON.stringify({ name: "host" }),
+      ...pkg("tie", { "./a/b/": "./nomatch/", "./a/b*": "./*.js" }, "file.js"),
+      ...pkg("no-folder-key", { "./a*": "./*.js" }, "file.js"),
+    });
+    const root = String(dir);
+    const modules = join(root, "node_modules");
+
+    expect({
+      tie: resolveOrCode("tie/a/b/file", root),
+      noFolderKey: resolveOrCode("no-folder-key/a/file", root),
+    }).toEqual({
+      tie: join(modules, "tie/file.js"),
+      noFolderKey: join(modules, "no-folder-key/file.js"),
     });
   });
 

@@ -1,0 +1,3 @@
+async function f() {
+  return new (await library.loadESLint({ useFlatConfig: settings.useFlatConfig }))(newOptions);
+}

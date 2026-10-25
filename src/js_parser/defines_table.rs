@@ -13,10 +13,7 @@
 //! these functions has any side effects. It only says something about
 //! referencing these function without calling them.
 //!
-//! The identifier list has two classes. Every environment defines a
-//! `Universal` name. An `Other` name is a browser API, and a read of it throws a
-//! ReferenceError where it is not defined, so only a parse with
-//! `PureGlobals::All` assumes it.
+//! An identifier tagged `Other` is a browser API: only a parse with `PureGlobals::All` assumes it.
 
 use crate as js_ast;
 use crate::defines;

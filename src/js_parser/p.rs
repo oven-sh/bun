@@ -577,10 +577,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
 
-    /// True while the removability of a top-level declaration of a bundled
-    /// file is checked. Tree shaking removes an unused declaration also when
-    /// it reads a browser API that the parse does not assume
-    /// (`class A extends HTMLElement {}`), as esbuild does for every platform.
+    /// Inside a top-level declaration of a bundle, where tree shaking assumes the browser APIs.
     pub(crate) unused_decl_may_read_browser_globals: bool,
 
     // Inside a TypeScript namespace, an "export declare" statement can be used
@@ -5715,8 +5712,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.stmts_can_be_removed_if_unused_without_dce_check(stmts);
         }
         stmts.iter().all(|stmt| {
-            // Not an expression statement or a `try`: `try { document } catch {}`
-            // is a feature test, and the ReferenceError is its result.
+            // `try { document } catch {}` is a feature test, so only a declaration qualifies.
             self.unused_decl_may_read_browser_globals = matches!(
                 stmt.data,
                 js_ast::StmtData::SClass(_)

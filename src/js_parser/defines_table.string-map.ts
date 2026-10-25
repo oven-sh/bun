@@ -7,9 +7,7 @@
 
 import type { StringMapSpec } from "../codegen/generate-string-map.ts";
 
-// "Universal": the first two groups. Browsers, Node.js and Bun define each name.
-// "Other": the browser API groups. Bun defines few of these names, so a parse
-// for a Bun target assumes none of them (`PureGlobals` in `lib.rs`).
+// "Other" is a browser API: a parse for a Bun target does not assume it (`PureGlobals` in `lib.rs`).
 type V = "NaN" | "Infinity" | "StrictUndefined" | "Universal" | "Other";
 
 const ENTRIES: ReadonlyArray<readonly [string, V]> = [

@@ -490,21 +490,18 @@ pub mod defines {
         }
     }
 
-    /// Which names of the pure-global identifier table (`defines_table`) a
-    /// parse assumes that the environment of its output defines.
+    /// Which names of the pure-global table a parse assumes to exist where its output runs.
     #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
     pub enum PureGlobals {
         /// Every name, the browser APIs included.
         #[default]
         All,
-        /// Only the `Universal` names. The output runs in Bun, where a read of
-        /// `document` throws a ReferenceError.
+        /// Only the `Universal` names: in Bun a read of `document` throws a ReferenceError.
         Universal,
     }
 
     impl PureGlobals {
-        /// A Node.js target keeps `All`: esbuild assumes the whole table for
-        /// `--platform=node`.
+        /// A Node.js target keeps `All`, as esbuild does for `--platform=node`.
         pub fn for_target(target: bun_ast::Target) -> PureGlobals {
             if target.is_bun() {
                 PureGlobals::Universal

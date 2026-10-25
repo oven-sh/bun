@@ -9107,6 +9107,30 @@ export const c0 = tap({ go() { if (flag) return tap(num(c1()), x => {}); return 
       }
     });
 
+    // `a` is resolved a second time inside the resolution of the call in `b`, and that is where the cycle is found. `b`
+    // is `any` there, so `c` has no contextual type. `checkExpressionCached` keeps that visit of the initializer.
+    test("the initializer of a circular variable keeps the errors of its visit inside the cycle", async () => {
+      using dir = project({
+        "a.ts": `declare class P<C> { use<N>(f: (o: C) => N): P<N>; get(): C; }
+declare const pub: P<{}>;
+export const a = b.use(c => 1);
+export const b = pub.use(d => ({ more: f() }));
+function f() { return a.get(); }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").map(line => line.slice(0, line.indexOf(":", line.indexOf("TS"))))).toEqual([
+        "a.ts(3,14): error TS7022",
+        "a.ts(3,18): error TS2448",
+        "a.ts(3,18): error TS2454",
+        "a.ts(3,24): error TS7006",
+        "a.ts(4,14): error TS7022",
+        "a.ts(4,26): error TS7024",
+        "a.ts(5,10): error TS7023",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // `f3<Ast>(x)` fails, so its signature comes from `createSignatureInstantiation` and no other call has it. `f3(ast)`
     // infers the same type argument and gets the signature that `getSignatureInstantiation` remembers. In the cycle the
     // second one resolves to `any` first. If the first one took that, `f1` would return `Ast` and `+` would be an error.

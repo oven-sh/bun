@@ -1220,10 +1220,8 @@ struct Mentioned<'a> {
     is_near: &'a dyn Fn(FileId) -> bool,
     /// Returns `None` for the type that's searched for, and false for a type that isn't looked into.
     visits: &'a mut dyn FnMut(TypeId) -> Option<bool>,
-    /// Whether the alias and the origin of a type are searched too.
-    whole_keys: bool,
     is_found: bool,
-    /// `None` if a record is visited every time it's mentioned.
+    /// `None` if a record is visited every time it's mentioned. Then the alias and the origin of a type are searched too.
     seen: Option<crate::util::FxHashSet<Mention>>,
     to_visit: Vec<Mention>,
 }
@@ -2655,7 +2653,6 @@ impl<'p, 's> Checker<'p, 's> {
         let mut mentioned = Mentioned {
             is_near: &is_near,
             visits: &mut |_| Some(true),
-            whole_keys: false,
             is_found: false,
             seen: Some(Default::default()),
             to_visit: Vec::new(),
@@ -2688,7 +2685,7 @@ impl<'p, 's> Checker<'p, 's> {
         match record {
             Mention::Type(ty) => {
                 self.data(ty).visit(mentioned);
-                if mentioned.whole_keys
+                if mentioned.seen.is_none()
                     && let Some(provenance) = self.types().provenance(ty)
                 {
                     provenance.visit(mentioned);
@@ -2718,7 +2715,6 @@ impl<'p, 's> Checker<'p, 's> {
         let mut mentioned = Mentioned {
             is_near: &|_| false,
             visits: &mut |mentioned| (mentioned != part).then(|| may_mention(mentioned)),
-            whole_keys: true,
             is_found: false,
             // A type that's mentioned twice has to be searched before the first of the types that mention it is done.
             seen: None,

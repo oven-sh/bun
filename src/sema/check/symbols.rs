@@ -2712,8 +2712,8 @@ impl<'p, 's> Checker<'p, 's> {
             // `checkExpressionCached` checks the initializer again, with an empty `flowLoopStack`
             // and `flowTypeCache`.
             let loops = std::mem::take(&mut self.flow_loops);
-            let cache = std::mem::take(&mut self.flow_type_cache);
-            let depth = std::mem::replace(&mut self.flow_type_cache_depth, self.stack.len());
+            let cache = FlowTypeCache::empty(self.stack.len());
+            let cache = std::mem::replace(&mut self.flow_type_cache, cache);
             let found_outside = self.set_rechecked_aside();
             let mode = std::mem::replace(&mut self.mode_of_recheck, CheckMode::empty());
             let outer = self.begin_recheck();
@@ -2722,7 +2722,6 @@ impl<'p, 's> Checker<'p, 's> {
             self.mode_of_recheck = mode;
             self.restore_rechecked(found_outside);
             self.flow_type_cache = cache;
-            self.flow_type_cache_depth = depth;
             self.flow_loops = loops;
             ty
         } else {
@@ -2818,7 +2817,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.taint_from(pushed_at);
             }
             // Nothing keeps the type of the callee. The check of the call checks it again.
-            let quick = if self.flow_type_cache_depth == usize::MAX {
+            let quick = if self.flow_type_cache.depth == usize::MAX {
                 self.outside_flow_loops(|c| c.quick_type_of_expr(file, e))
             } else {
                 self.quick_type_of_expr(file, e)
@@ -3677,7 +3676,7 @@ impl<'p, 's> Checker<'p, 's> {
                 StmtKind::ForIn { left, expr, .. } if left == stmt => {
                     // The keys of a generic type are its own keys, restricted to strings.
                     // `checkForInStatement` checks the expression too, before or after this.
-                    let object = self.with_flow_loops_visible(|c| match c.flow_type_cache_depth {
+                    let object = self.with_flow_loops_visible(|c| match c.flow_type_cache.depth {
                         usize::MAX => {
                             c.outside_flow_loops(|c| c.check_expression_again(file, expr))
                         }

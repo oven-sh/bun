@@ -847,9 +847,8 @@ impl<'s> Program<'s> {
             mapped_constraints_in_progress: Vec::new(),
             mapped_props_reentered_through_members: Vec::new(),
             serialization_level: 0,
-            flow_type_cache: Default::default(),
+            flow_type_cache: FlowTypeCache::empty(usize::MAX),
             flow_type_caches_of_resolutions: Vec::new(),
-            flow_type_cache_depth: usize::MAX,
             flow_invocation_count: 0,
             discarded: None,
             non_existent_properties: Default::default(),
@@ -1378,6 +1377,27 @@ struct FlowTypeCacheOfResolution {
     types: FxHashMap<(FileId, ExprId), TypeId>,
 }
 
+/// `c.flowTypeCache`, for the loop back edge being traversed.
+struct FlowTypeCache {
+    types: FxHashMap<(FileId, ExprId), TypeId>,
+    /// `stack.len()` when that traversal began, or `usize::MAX` if no back edge is being traversed.
+    depth: usize,
+    /// Nothing else stores these types, so what follows from one isn't stored either, from this index of `stack` up.
+    /// It's `depth`, or the frame above the resolution whose types these are (`FlowTypeCacheOfResolution`).
+    taints_from: usize,
+}
+
+impl FlowTypeCache {
+    fn empty(depth: usize) -> Self {
+        let types = FxHashMap::default();
+        Self {
+            types,
+            depth,
+            taints_from: depth,
+        }
+    }
+}
+
 /// Metadata for an entry of `Checker::stack`.
 #[derive(Copy, Clone)]
 struct QueryFrame {
@@ -1532,12 +1552,9 @@ pub struct Checker<'p, 's> {
     /// `c.serializationLevel`: how many `TypeToString` calls are in progress, counting those whose
     /// resolutions are made eagerly.
     serialization_level: u32,
-    /// `c.flowTypeCache`, for the loop back edge being traversed.
-    flow_type_cache: FxHashMap<(FileId, ExprId), TypeId>,
+    flow_type_cache: FlowTypeCache,
     /// `c.flowTypeCache`, for each resolution in progress that has something in it, outermost first.
     flow_type_caches_of_resolutions: Vec<FlowTypeCacheOfResolution>,
-    /// `stack.len()` when that traversal began, or `usize::MAX` if no back edge is being traversed.
-    flow_type_cache_depth: usize,
     /// `c.flowInvocationCount`
     flow_invocation_count: u64,
     /// Where `add_diagnostic` stores a diagnostic it discards.

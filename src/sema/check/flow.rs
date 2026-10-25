@@ -5843,7 +5843,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `sharedFlows`. The next walk finds the loop in `flowLoopCache` and may compute a
         // different type. Results derived from this walk's type stay in `flowTypeCache`, or are
         // stored for the check in progress only.
-        let depth = self.flow_type_cache_depth;
+        let depth = self.flow_type_cache.depth;
         if evolved.incomplete && (depth == usize::MAX || !self.is_flow_loop_visible(depth)) {
             for at in (0..self.stack.len()).rev() {
                 match self.stack[at] {
@@ -6427,7 +6427,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return cached_type;
         }
-        let depth = self.flow_type_cache_depth;
+        let depth = self.flow_type_cache.depth;
         let is_in_back_edge = depth != usize::MAX && self.is_flow_loop_visible(depth);
         let level = self.inference_contexts.len() + 1;
         let outer = std::mem::replace(&mut self.context_free_level, level);
@@ -6992,14 +6992,10 @@ impl<'p, 's> Checker<'p, 's> {
                         ));
                         let mut restarted = None;
                         for &edge in &edges[1..] {
-                            let cache = std::mem::take(&mut self.flow_type_cache);
-                            let depth = std::mem::replace(
-                                &mut self.flow_type_cache_depth,
-                                self.stack.len(),
-                            );
+                            let cache = FlowTypeCache::empty(self.stack.len());
+                            let cache = std::mem::replace(&mut self.flow_type_cache, cache);
                             let t = self.flow_type(walk, edge).ty;
                             self.flow_type_cache = cache;
-                            self.flow_type_cache_depth = depth;
                             // "Control flow analysis was restarted and completed by checkExpressionCached."
                             restarted = (self.flow_memo)
                                 .cached_flow_loop_type(&key, &walk.reference)
@@ -7293,21 +7289,21 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypeOfExpression`. `flowTypeCache` holds what the shared expression cache doesn't store
     /// (`taint_from`).
     pub(super) fn get_type_of_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
-        let depth = self.flow_type_cache_depth;
+        let depth = self.flow_type_cache.depth;
         // `checkExpressionCached` computes with an empty cache, so a type resolution entered since
         // the traversal began hides this one.
         if depth == usize::MAX || !self.is_flow_loop_visible(depth) {
             return self.get_type_of_expression_outside_loops(file, e);
         }
-        if let Some(&cached) = self.flow_type_cache.get(&(file, e)) {
+        if let Some(&cached) = self.flow_type_cache.types.get(&(file, e)) {
             // The entry was computed from an incomplete loop type.
-            self.taint_from(depth);
+            self.taint_from(self.flow_type_cache.taints_from);
             return cached;
         }
         let start = self.flow_invocation_count;
         let ty = self.type_of_declaration_initializer_ex(file, e, Some(CheckMode::TYPE_ONLY));
         if self.flow_invocation_count != start && self.cached_type_of_expr(file, e).is_none() {
-            self.flow_type_cache.insert((file, e), ty);
+            self.flow_type_cache.types.insert((file, e), ty);
         }
         ty
     }
@@ -7324,7 +7320,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return cached;
         }
-        let mut types = FxHashMap::default();
+        let mut cache = FlowTypeCache::empty(self.stack.len());
         if !self.flow_type_caches_of_resolutions.is_empty()
             && !self.is_outside_resolutions_and_loops()
         {
@@ -7335,23 +7331,21 @@ impl<'p, 's> Checker<'p, 's> {
                 .flow_type_caches_of_resolutions
                 .pop_if(|it| Some(it.owner) == owner)
             {
+                cache.taints_from = last.owner.at + 1;
                 if let Some(&cached) = last.types.get(&(file, e)) {
-                    // Nothing else stores the type, so nothing that follows from it is stored either.
-                    self.taint_from(last.owner.at + 1);
+                    self.taint_from(cache.taints_from);
                     self.flow_type_caches_of_resolutions.push(last);
                     return cached;
                 }
-                types = last.types;
+                cache.types = last.types;
             }
         }
-        let outer = std::mem::replace(&mut self.flow_type_cache, types);
+        let outer = std::mem::replace(&mut self.flow_type_cache, cache);
         let loops = std::mem::take(&mut self.flow_loops);
-        let depth = std::mem::replace(&mut self.flow_type_cache_depth, self.stack.len());
         let start = self.flow_invocation_count;
         let ty = self.type_of_declaration_initializer_ex(file, e, Some(CheckMode::TYPE_ONLY));
-        self.flow_type_cache_depth = depth;
         self.flow_loops = loops;
-        let mut types = std::mem::replace(&mut self.flow_type_cache, outer);
+        let mut types = std::mem::replace(&mut self.flow_type_cache, outer).types;
         if self.flow_invocation_count != start
             && (self.cached_type_of_expr(file, e).is_none()
                 || self.is_checked_with_incomplete_walk(file, e))
@@ -8586,15 +8580,15 @@ impl<'p, 's> Checker<'p, 's> {
         let found_outside = self.set_rechecked_aside();
         let level = self.inference_contexts.len();
         let level = std::mem::replace(&mut self.context_free_level, level);
-        let depth = self.flow_type_cache_depth;
+        let depth = self.flow_type_cache.depth;
         if self.flow_loops.is_empty() {
-            self.flow_type_cache_depth = usize::MAX;
+            self.flow_type_cache.depth = usize::MAX;
         }
         let outer = self.begin_recheck();
         let ty = self.check_expression_ex(file, e, CheckMode::empty());
         self.check_expression(file, e);
         self.end_recheck(outer);
-        self.flow_type_cache_depth = depth;
+        self.flow_type_cache.depth = depth;
         self.context_free_level = level;
         self.restore_rechecked(found_outside);
         ty
@@ -8604,11 +8598,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// `checkExpressionCached`.
     pub(super) fn outside_flow_loops<R>(&mut self, compute: impl FnOnce(&mut Self) -> R) -> R {
         let loops = std::mem::take(&mut self.flow_loops);
-        let cache = std::mem::take(&mut self.flow_type_cache);
-        let depth = std::mem::replace(&mut self.flow_type_cache_depth, self.stack.len());
+        let cache = FlowTypeCache::empty(self.stack.len());
+        let cache = std::mem::replace(&mut self.flow_type_cache, cache);
         let result = compute(self);
         self.flow_type_cache = cache;
-        self.flow_type_cache_depth = depth;
         self.flow_loops = loops;
         result
     }

@@ -2956,12 +2956,12 @@ impl<'p, 's> Checker<'p, 's> {
             })
     }
 
-    /// True if `stack[i]` is an expression and the first resolution on the path from it has its result by now. The type of
-    /// a parameter whose name is a pattern is a resolution in TypeScript, which finds the cycle.
+    /// True if `stack[i]` is an expression and a resolution on the path from it has its result by now. Those before it on
+    /// the path are resolved again, because `findResolutionCycleStartIndex` stops there. The type of a parameter whose
+    /// name is a pattern is a resolution in TypeScript, which finds the cycle.
     fn ends_at_resolution_with_result(&self, i: usize) -> bool {
         matches!(self.stack[i], Query::Expr(..))
-            && (self.frames.get(self.first_resolution_from(i)))
-                .is_some_and(|frame| frame.has_result)
+            && self.frames[i..].iter().any(|frame| frame.has_result)
     }
 
     /// True if the first resolution on the path from `stack[i]` is a base constraint that `instantiateMappedType`

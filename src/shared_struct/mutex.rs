@@ -2,6 +2,13 @@
 //!
 //! Waits never block for longer than [`SLICE`] without polling the caller's [`Abort`], so a
 //! worker blocked here still notices termination and can return control to the VM.
+//!
+//! The locks here are `std`'s, not `bun_threading`'s: a wait that polls an abort callback needs a
+//! timed condition wait, and `bun_threading::Condition::timed_wait` is private to that crate.
+#![allow(
+    clippy::disallowed_types,
+    reason = "needs std::sync::Condvar::wait_timeout, which bun_threading::Condition does not expose"
+)]
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex as StdMutex};
@@ -150,10 +157,6 @@ impl Mutex {
     /// Whether the calling thread holds the lock.
     pub fn is_owned(&self) -> bool {
         self.owner.load(Ordering::Relaxed) == thread_id()
-    }
-
-    pub fn is_locked(&self) -> bool {
-        *self.state.lock().unwrap()
     }
 }
 

@@ -212,9 +212,6 @@ private:
             /* The pause for backed-up pipelined responses lifts when their bytes drain, and after
              * a hangup they never do. Node.js destroys the socket on the failed write. */
             s->hangup_closes_unsent = 1;
-        } else {
-            /* Bun.serve's own pauses only bound memory, so the peer's FIN may end them. */
-            s->fin_ends_pause = 1;
         }
 
         /* A peer FIN must not tear the connection down at the loop level:
@@ -877,6 +874,8 @@ private:
                     if (httpResponseData->parkedRequestBytes.size() >= LIBUS_RECV_BUFFER_LENGTH) {
                         /* This pause lifts when the response ahead has drained, and after a hangup it never does. */
                         s->hangup_closes_unsent = 1;
+                        /* It only bounds memory, so the peer's FIN ends it and reaches onEnd all the same. */
+                        s->fin_ends_pause = 1;
                         ((HttpResponse<SSL> *) s)->pauseReads(HttpResponseData<SSL>::READ_PAUSE_PARKED);
                     }
                     if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
@@ -1095,6 +1094,7 @@ private:
             || !reinterpret_cast<AsyncSocket<SSL> *>(s)->hasFullyDrained()) {
             return s;
         }
+        s->fin_ends_pause = 0;
         reinterpret_cast<HttpResponse<SSL> *>(s)->resumeReads(HttpResponseData<SSL>::READ_PAUSE_PARKED);
         /* us_socket_resume() closes a socket that the kernel doesn't take back. */
         if (us_socket_is_closed(s)) {

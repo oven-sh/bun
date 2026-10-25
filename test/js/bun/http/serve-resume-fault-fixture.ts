@@ -1,11 +1,12 @@
 // Sends one Bun.serve request whose socket is paused by request-body backpressure. The injected poll_start
-// failure makes the resume fail: the handler's, or with "client-ends" the loop's own when the client ends its side.
+// failure makes the handler's resume fail. With "client-ends" the request waits behind a held one, which pauses the
+// socket too, and the resume that fails is the loop's own when the client ends its side.
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { connect } from "node:net";
 
 const [mode, unix] = process.argv.slice(2);
-// Above REQUEST_BODY_HIGH_WATER_MARK, so the server pauses the socket.
-const BODY_CHUNK = 1024 * 1024 + 4096;
+// Above REQUEST_BODY_HIGH_WATER_MARK, so the server pauses the socket. Behind a held request it pauses at a read's worth.
+const BODY_CHUNK = (mode === "client-ends" ? 512 : 1024) * 1024 + 4096;
 
 const faultArmed = Promise.withResolvers<void>();
 const aborted = Promise.withResolvers<void>();
@@ -61,6 +62,7 @@ const server = Bun.serve({
 const socket = connect({ path: unix });
 socket.on("error", () => {});
 await new Promise<void>(resolve => socket.once("connect", resolve));
+if (mode === "client-ends") socket.write("GET /held HTTP/1.1\r\nHost: x\r\n\r\n");
 socket.write(`POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: ${8 * BODY_CHUNK}\r\n\r\n`);
 await new Promise<void>(resolve => socket.write(Buffer.alloc(BODY_CHUNK, 0x61), () => resolve()));
 

@@ -7191,8 +7191,8 @@ it("keeps serving after a handler throws a deeply nested request body", async ()
   expect(exitCode).toBe(1);
 });
 
-// Bun.serve stops reading a connection while a request body is unread, and while requests wait behind a response. A
-// client that has left can send no more, so its stream is read to the end, where its leaving shows.
+// Bun.serve stops reading a connection while requests wait behind a response. A client that has left can send no more,
+// so its stream is read to the end, where its leaving shows.
 describe.each([
   ["http", false],
   ["https", true],
@@ -7250,60 +7250,40 @@ describe.each([
     }
   });
 
-  it("releases a request whose body is unread", async () => {
-    const aborted = Promise.withResolvers<void>();
-    const cancelled = Promise.withResolvers<void>();
-    using server = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      tls: secure ? tls : undefined,
-      fetch(req, server) {
-        server.timeout(req, 0);
-        req.signal.addEventListener("abort", () => aborted.resolve());
-        return new Response(
-          new ReadableStream({
-            start: controller => controller.enqueue("connected\n"),
-            cancel: () => cancelled.resolve(),
-          }),
-        );
-      },
-    });
-    const client = await connectTo(server);
-    try {
-      const half = Buffer.alloc(1024 * 1024, "b");
-      client.resume();
-      await send(client, `POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${2 * half.length}\r\n\r\n`, half);
-      client.end();
-      await Promise.all([aborted.promise, cancelled.promise]);
-      expect(await released(server)).toBe(0);
-    } finally {
-      client.destroy();
-    }
-  });
-
-  it("gives a handler that starts late the whole body", async () => {
+  // It also stops reading while a request body is unread. That pause stays, so the end of the stream waits behind the body.
+  it("answers a client that sent its whole body and ended its side, when the handler reads it late", async () => {
     const body = Buffer.alloc(2 * 1024 * 1024, "b");
-    const read = Promise.withResolvers<number>();
+    const sent = Promise.withResolvers<void>();
+    let aborted = false;
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
       tls: secure ? tls : undefined,
       async fetch(req, server) {
         server.timeout(req, 0);
-        await turns(300);
-        await req.arrayBuffer().then(bytes => read.resolve(bytes.byteLength), read.reject);
-        return new Response("ok");
+        req.signal.addEventListener("abort", () => void (aborted = true));
+        // The kernel's buffers may be too small for what the server doesn't read, hence the deadline.
+        await Promise.race([sent.promise, Bun.sleep(1000)]);
+        await turns(200);
+        return new Response(`read ${(await req.arrayBuffer()).byteLength}`);
       },
     });
     const client = await connectTo(server);
     try {
+      let answer = "";
+      client.on("data", chunk => void (answer += chunk));
       client.end(
         Buffer.concat([
           Buffer.from(`POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${body.length}\r\n\r\n`),
           body,
         ]),
+        () => sent.resolve(),
       );
-      expect(await read.promise).toBe(body.length);
+      await once(client, "close");
+      expect({ answer: answer.split("\r\n").at(-1), aborted }).toEqual({
+        answer: `read ${body.length}`,
+        aborted: false,
+      });
     } finally {
       client.destroy();
     }

@@ -174,6 +174,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             failures_removed: _,
             client_components_affected: _,
             failures_added: _,
+            barrels_bundled_again: _,
         } = &dev.incremental_result;
         // .had_adjusted_edges (bool — no heap)
         // .client_components_added
@@ -192,6 +193,8 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         other_bytes += memory_cost_array_list(&dev.incremental_result.html_routes_soft_affected);
         // .html_routes_hard_affected
         other_bytes += memory_cost_array_list(&dev.incremental_result.html_routes_hard_affected);
+        // .barrels_bundled_again
+        other_bytes += memory_cost_array_list(&dev.incremental_result.barrels_bundled_again);
     }
     // .has_tailwind_plugin_hack
     if let Some(hack) = &dev.has_tailwind_plugin_hack {

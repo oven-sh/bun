@@ -4,7 +4,7 @@ import { MAX_PATH_BYTES } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { Dev, devTest, emptyHtmlFile, minimalFramework, WatchSynchronization } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -1265,6 +1265,763 @@ devTest("barrel optimization: multi-file imports preserved across rebuilds", {
       );
     });
     await c.expectMessage("result: ALPHA BETA GAMMA");
+  },
+});
+
+// A barrel that has deferred a re-export is bundled again by every build that reaches it. No save
+// changed its file, so a page or a server that has the barrel loaded evaluates it again in place:
+// no importer has to accept it.
+const deferringBarrel = (name: string, exports: string[]) => ({
+  [`node_modules/${name}/package.json`]: JSON.stringify({
+    name,
+    version: "1.0.0",
+    main: "./index.js",
+    sideEffects: false,
+  }),
+  // A comment is not a statement of the barrel.
+  [`node_modules/${name}/index.js`]:
+    `/** @license ${name} */\n` + exports.map(e => `export { ${e} } from './${e}.js';`).join("\n"),
+  ...Object.fromEntries(
+    exports.map(e => [`node_modules/${name}/${e}.js`, `export const ${e} = "${e.toUpperCase()}";`]),
+  ),
+});
+const scriptOf = async (dev: Dev, route: string) =>
+  (await dev.fetch(route).text()).match(/<script[^>]* src="([^"]+)"/)![1];
+// The barrel pass does not defer a re-export for the last two routes. It still bundles the barrel again.
+for (const [route, message, what, keepsScript] of [
+  ["/second", "second: B", "another export", false],
+  ["/third", "third: A", "the same export", true],
+  ["/all", "all: ABC", "every export", false],
+  ["/star", "star: A", "the barrel through export *", false],
+] as const) {
+  devTest(`barrel optimization: the first build of a route that reads ${what} does not reload an open page`, {
+    files: {
+      ...Object.fromEntries(
+        ["first", "second", "third", "all", "star"].map(name => [
+          `${name}.html`,
+          emptyHtmlFile({ scripts: [`${name}.ts`] }),
+        ]),
+      ),
+      "first.ts": `import { a } from 'two-lib'; console.log('first: ' + a);`,
+      "second.ts": `import { b } from 'two-lib'; console.log('second: ' + b);`,
+      "third.ts": `import { a } from 'two-lib'; console.log('third: ' + a);`,
+      "all.ts": `import * as lib from 'two-lib'; console.log('all: ' + lib.a + lib.b + lib.c);`,
+      "star.ts": `import { a } from 'star-lib'; console.log('star: ' + a);`,
+      ...deferringBarrel("two-lib", ["a", "b", "c"]),
+      "node_modules/star-lib/package.json": JSON.stringify({
+        name: "star-lib",
+        version: "1.0.0",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "node_modules/star-lib/index.js": `export * from 'two-lib';`,
+    },
+    async test(dev) {
+      await using first = await dev.client("/first");
+      await first.expectMessage("first: A");
+      const script = await scriptOf(dev, "/first");
+      // Every open page gets the modules of this build, the barrel with them.
+      await using other = await dev.client(route);
+      await other.expectMessage(message);
+      await first.drainAcks();
+      expect(first.messages).toEqual([]);
+      // The cached script of /first holds the barrel. It is out of date when the barrel loads more.
+      expect((await scriptOf(dev, "/first")) === script).toBe(keepsScript);
+    },
+  });
+}
+
+const appBarrel = {
+  "lib/package.json": JSON.stringify({ name: "app-lib", sideEffects: false }),
+  "lib/index.ts": `export { a } from './a'; export { b } from './b'; export { c } from './c';`,
+  "lib/a.ts": `export const a = "A";`,
+  "lib/b.ts": `export const b = "B";`,
+  "lib/c.ts": `export const c = "C";`,
+};
+devTest("barrel optimization: an open page evaluates a barrel again when another route requests more of it", {
+  files: {
+    "first.html": emptyHtmlFile({ scripts: ["first.ts"] }),
+    "second.html": emptyHtmlFile({ scripts: ["second.ts"] }),
+    "first.ts": `
+      import { readA } from './util';
+      globalThis.openPanel = () => require('./panel').panel();
+      console.log('first: ' + readA());
+      import.meta.hot.accept();
+    `,
+    "util.ts": `import { a } from './lib'; export const readA = () => a;`,
+    "panel.ts": `import { a } from './lib'; export const panel = () => 'panel: ' + a;`,
+    "second.ts": `import { readB } from './shared'; console.log('second: ' + readB());`,
+    "shared.ts": `import { b } from './lib'; export const readB = () => b;`,
+    ...appBarrel,
+  },
+  async test(dev) {
+    await using first = await dev.client("/first");
+    await first.expectMessage("first: A");
+    {
+      await using second = await dev.client("/second");
+      await second.expectMessage("second: B");
+    }
+    await first.drainAcks();
+    expect(first.messages).toEqual([]);
+    // No module of that update imports the barrel. A barrel that waits for its next importer is
+    // evaluated by this require(), which does not give the new exports to util.ts.
+    expect(await first.js<string>`openPanel()`).toBe("panel: A");
+    await dev.write("lib/a.ts", `export const a = "A2";`);
+    await first.expectMessage("first: A2");
+    expect(await first.js<string>`openPanel()`).toBe("panel: A2");
+    // The page was open when the build of /second sent shared.ts and lib/b.ts, and stored them.
+    await dev.write(
+      "first.ts",
+      `
+        import { readA } from './util';
+        import { readB } from './shared';
+        console.log('saved: ' + readA() + ' ' + readB());
+        import.meta.hot.accept();
+      `,
+    );
+    await first.expectMessage("saved: A2 B");
+  },
+});
+
+// main.ts has no accept boundary. The build of a save of comp.ts bundles the barrel again, which
+// main.ts also imports.
+devTest("barrel optimization: a save of a module that accepts itself does not reload the page", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["main.ts"] }),
+    "main.ts": `
+      import { a } from 'two-lib';
+      import './comp';
+      console.log('main: ' + a);
+    `,
+    "comp.ts": `
+      import { b } from 'two-lib';
+      console.log('comp: ' + b);
+      import.meta.hot.accept();
+    `,
+    ...deferringBarrel("two-lib", ["a", "b", "c"]),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("comp: B", "main: A");
+    await dev.patch("comp.ts", { find: "comp: ", replace: "saved: " });
+    // A reload would also run main.ts again.
+    await c.expectMessage("saved: B");
+    // The barrel has deferred c until this save. comp.ts reads it when it is evaluated.
+    await dev.write(
+      "comp.ts",
+      `
+        import { b, c } from 'two-lib';
+        console.log('again: ' + b + ' ' + c);
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("again: B C");
+  },
+});
+
+const acceptingImporter = (name: string) => `
+  import { a } from 'two-lib';
+  console.log('${name}: ' + a);
+  import.meta.hot.dispose(() => console.log('dispose ${name}'));
+  import.meta.hot.accept();
+`;
+devTest("barrel optimization: a save of a module does not run another importer of the barrel again", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `import './one'; import './two';`,
+    "one.ts": acceptingImporter("one"),
+    "two.ts": acceptingImporter("two"),
+    ...deferringBarrel("two-lib", ["a", "b"]),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one: A", "two: A");
+    await dev.patch("one.ts", { find: "one: ", replace: "saved: " });
+    await c.expectMessage("dispose one", "saved: A");
+    expect(c.messages).toEqual([]);
+  },
+});
+
+// The barrel has new exports each time it is evaluated, and the callback gets them. The page
+// waits for lib/b.ts before it calls the callback.
+devTest("barrel optimization: a module that accepts a barrel gets the exports that a build adds", {
+  files: {
+    "first.html": emptyHtmlFile({ scripts: ["first.ts"] }),
+    "second.html": emptyHtmlFile({ scripts: ["second.ts"] }),
+    "first.ts": `
+      import { a } from './lib';
+      console.log('first: ' + a);
+      import.meta.hot.accept('./lib', lib => console.log('accepted: ' + lib.a + ' ' + lib.b));
+    `,
+    "second.ts": `import { b } from './lib'; console.log('second: ' + b);`,
+    ...appBarrel,
+    "lib/b.ts": `export const b = await Promise.resolve("B");`,
+  },
+  async test(dev) {
+    await using first = await dev.client("/first");
+    await first.expectMessage("first: A");
+    await using second = await dev.client("/second");
+    await second.expectMessage("second: B");
+    await first.expectMessage("accepted: A B");
+  },
+});
+
+// The page would run the statements of the file again, and no importer with them.
+devTest("barrel optimization: a file of re-exports with statements of its own is a changed module", {
+  files: {
+    "first.html": emptyHtmlFile({ scripts: ["first.ts"] }),
+    "second.html": emptyHtmlFile({ scripts: ["second.ts"] }),
+    "first.ts": `import { a } from './lib'; console.log('first: ' + a);`,
+    "second.ts": `import { b } from './lib'; console.log('second: ' + b);`,
+    ...appBarrel,
+    "lib/index.ts": `
+      ${appBarrel["lib/index.ts"]}
+      import.meta.hot.dispose(() => console.log('dispose lib'));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using first = await dev.client("/first");
+    await first.expectMessage("first: A");
+    await using second = await dev.client("/second");
+    await second.expectMessage("second: B");
+    await first.expectMessage("dispose lib");
+  },
+});
+
+// outer-lib copies a, b and c from lib when it is evaluated.
+const outerBarrel = {
+  "node_modules/outer-lib/package.json": JSON.stringify({
+    name: "outer-lib",
+    version: "1.0.0",
+    main: "./index.js",
+    sideEffects: false,
+  }),
+  "node_modules/outer-lib/index.js": `export { a, b, c } from 'lib'; export { own } from './own.js';`,
+  "node_modules/outer-lib/own.js": `export const own = "OWN";`,
+  ...deferringBarrel("lib", ["a", "b", "c"]),
+};
+devTest("barrel optimization: a saved module reads a new re-export through an outer barrel", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { own } from 'outer-lib';
+      import { b } from 'lib';
+      console.log('index: ' + own + ' ' + b);
+      import.meta.hot.accept();
+    `,
+    ...outerBarrel,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index: OWN B");
+    await dev.write(
+      "index.ts",
+      `
+        import { a } from 'outer-lib';
+        console.log('saved: ' + a);
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("saved: A");
+  },
+});
+
+// The server has one module registry for all routes. It evaluates lib before outer-lib, which
+// copies a from it. Each barrel has a server copy and an SSR copy.
+devTest("barrel optimization: the server evaluates both copies of a barrel again when a route requests more of it", {
+  framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+  files: {
+    "routes/first.ts": `
+      import { own } from 'outer-lib';
+      import { b } from 'lib';
+      import { read } from '../first-ssr' with { bunBakeGraph: 'ssr' };
+      export default function () {
+        return new Response('first: ' + own + ' ' + b + ', ssr: ' + read());
+      }
+    `,
+    "first-ssr.ts": `
+      import { own } from 'outer-lib';
+      import { b } from 'lib';
+      export const read = () => own + ' ' + b;
+    `,
+    "routes/second.ts": `
+      import { a, b } from 'outer-lib';
+      import { read } from '../second-ssr' with { bunBakeGraph: 'ssr' };
+      export default function () {
+        return new Response('second: ' + b + ' ' + a + ', ssr: ' + read());
+      }
+    `,
+    "second-ssr.ts": `
+      import { a, b } from 'outer-lib';
+      export const read = () => b + ' ' + a;
+    `,
+    ...outerBarrel,
+  },
+  async test(dev) {
+    await dev.fetch("/first").equals("first: OWN B, ssr: OWN B");
+    await dev.fetch("/second").equals("second: B A, ssr: B A");
+    await dev.fetch("/first").equals("first: OWN B, ssr: OWN B");
+  },
+});
+
+// Each importer accepts itself, so an update that has the barrel as a changed module runs it again.
+const countedImporter = (name: string, label = "") => `
+  import { a } from './lib';
+  const runs = (globalThis.runs ??= {});
+  runs.${name} = (runs.${name} ?? 0) + 1;
+  import.meta.hot.accept();
+  export const value = '${label}' + a;
+`;
+devTest("barrel optimization: the server does not run the importers of either copy of a barrel again", {
+  framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+  files: {
+    "routes/first.ts": `
+      import { value as server } from '../server-user';
+      import { value as ssr } from '../ssr-user' with { bunBakeGraph: 'ssr' };
+      export default function () {
+        return Response.json({ server, ssr, runs: globalThis.runs });
+      }
+    `,
+    "server-user.ts": countedImporter("server"),
+    "ssr-user.ts": countedImporter("ssr"),
+    "routes/second.ts": `
+      import { b } from '../lib';
+      import { readB } from '../ssr-b' with { bunBakeGraph: 'ssr' };
+      export default function () {
+        return Response.json({ b, ssr: readB(), runs: globalThis.runs });
+      }
+    `,
+    "ssr-b.ts": `import { b } from './lib'; export const readB = () => b;`,
+    ...appBarrel,
+  },
+  async test(dev) {
+    await dev.fetch("/first").equals({ server: "A", ssr: "A", runs: { server: 1, ssr: 1 } });
+    // The first build of /second bundles the server copy and the SSR copy of the barrel again.
+    await dev.fetch("/second").equals({ b: "B", ssr: "B", runs: { server: 1, ssr: 1 } });
+    await dev.write("server-user.ts", countedImporter("server", "saved "));
+    await dev.fetch("/first").equals({ server: "saved A", ssr: "A", runs: { server: 2, ssr: 1 } });
+    await dev.write("ssr-user.ts", countedImporter("ssr", "saved "));
+    await dev.fetch("/first").equals({ server: "saved A", ssr: "saved A", runs: { server: 2, ssr: 2 } });
+  },
+});
+
+// Each module of ui-lib has a stylesheet, so the stylesheets of a route tell which modules of the
+// barrel the dev server knows that the route loads.
+const uiLib = {
+  ...deferringBarrel("ui-lib", ["a", "b", "c"]),
+  ...Object.fromEntries(
+    ["a", "b", "c"].flatMap(e => [
+      [`node_modules/ui-lib/${e}.js`, `import './${e}.css'; export const ${e} = "${e.toUpperCase()}";`],
+      [`node_modules/ui-lib/${e}.css`, `.${e} { color: red; }`],
+    ]),
+  ),
+};
+const uiLibRoute = (imports: string, from = "ui-lib") => `
+  import { ${imports} } from '${from}';
+  export default function (req, meta) {
+    return Response.json({ values: [${imports}], styles: meta.styles.length });
+  }
+`;
+devTest("barrel optimization: a save on one framework route reloads another route only when the barrel loads more", {
+  framework: minimalFramework,
+  files: {
+    "routes/first.ts": uiLibRoute("a"),
+    "routes/third.ts": uiLibRoute("a"),
+    "routes/direct.ts": uiLibRoute("b", "ui-lib/b.js"),
+    ...uiLib,
+  },
+  async test(dev) {
+    await dev.fetch("/direct").equals({ values: ["B"], styles: 1 });
+    await dev.fetch("/first").equals({ values: ["A"], styles: 1 });
+    await dev.fetch("/third").equals({ values: ["A"], styles: 1 });
+    const third = await dev.viewRoute("/third");
+
+    // The build bundles the barrel again with the same re-exports.
+    await dev.write("routes/first.ts", uiLibRoute("a") + "// saved");
+    expect(third.reloadedRoutes).toEqual([[]]);
+
+    // The barrel loads b.js, which the build of /direct has bundled. /third gets its stylesheet.
+    await dev.write("routes/first.ts", uiLibRoute("a, b"));
+    expect(third.reloadedRoutes.slice(1)).toEqual([[third.routeBundleIndex]]);
+    await dev.fetch("/third").equals({ values: ["A"], styles: 2 });
+
+    // The barrel loads c.js, which no build has bundled.
+    await dev.write("routes/first.ts", uiLibRoute("a, b, c"));
+    expect(third.reloadedRoutes.slice(2)).toEqual([[third.routeBundleIndex]]);
+    await dev.fetch("/third").equals({ values: ["A"], styles: 3 });
+  },
+});
+
+const twoGraphRoute = (name: string) => ({
+  [`routes/${name}.ts`]: `
+    import { a } from 'ui-lib';
+    import { read } from '../${name}-ssr' with { bunBakeGraph: 'ssr' };
+    export default function () {
+      return new Response('${name}: ' + a + ', ssr: ' + read());
+    }
+  `,
+  [`${name}-ssr.ts`]: `import { a } from 'ui-lib'; export const read = () => a;`,
+});
+devTest(
+  "barrel optimization: a save on one framework route does not reload a route that reads the barrel in two graphs",
+  {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    files: {
+      ...twoGraphRoute("first"),
+      ...twoGraphRoute("third"),
+      ...uiLib,
+    },
+    async test(dev) {
+      await dev.fetch("/first").equals("first: A, ssr: A");
+      await dev.fetch("/third").equals("third: A, ssr: A");
+      const third = await dev.viewRoute("/third");
+      // This build bundles the server copy of the barrel again, and the next one its SSR copy.
+      await dev.patch("routes/first.ts", { find: "first: ", replace: "saved: " });
+      await dev.patch("first-ssr.ts", { find: "() => a", replace: "() => a + '!'" });
+      expect(third.reloadedRoutes).toEqual([[], []]);
+      await dev.fetch("/first").equals("saved: A, ssr: A!");
+    },
+  },
+);
+
+// Each of these builds bundles the barrel again, and each time it is a changed module for the
+// page: index.ts does not accept it.
+devTest("barrel optimization: a barrel that changed reloads a page with no accept boundary", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `import './comp'; import { a } from './lib'; console.log('index: ' + a);`,
+    "comp.ts": `import { a } from './lib'; console.log('comp: ' + a); import.meta.hot.accept();`,
+    ...appBarrel,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("comp: A", "index: A");
+    // A save of the barrel.
+    await c.expectReload(async () => {
+      await dev.write("lib/index.ts", appBarrel["lib/index.ts"] + " // saved");
+    });
+    await c.expectMessage("comp: A", "index: A");
+    // A re-export that resolves to another file.
+    await c.expectReload(async () => {
+      await using batch = await dev.batchChanges();
+      fs.renameSync(dev.join("lib/a.ts"), dev.join("lib/a.tsx"));
+    });
+    await c.expectMessage("comp: A", "index: A");
+    // A save gives the file an export of its own. The dev server still bundles it in every build.
+    await c.expectReload(async () => {
+      await dev.write("lib/index.ts", appBarrel["lib/index.ts"] + " export const own = 1;");
+    });
+    await c.expectMessage("comp: A", "index: A");
+    await c.expectReload(async () => {
+      await dev.patch("comp.ts", { find: "comp: ", replace: "saved: " });
+    });
+    await c.expectMessage("saved: A", "index: A");
+  },
+});
+
+// The build of /third does not know that first.ts reads every export, and bundles the barrel
+// with a only (#46648). The page of /first has a module that can read b, so the barrel is a
+// changed module for it.
+devTest("barrel optimization: a barrel that loads less reloads an open page", {
+  files: {
+    "first.html": emptyHtmlFile({ scripts: ["first.ts"] }),
+    "second.html": emptyHtmlFile({ scripts: ["second.ts"] }),
+    "third.html": emptyHtmlFile({ scripts: ["third.ts"] }),
+    "first.ts": `import * as lib from 'two-lib'; console.log('first: ' + lib.a);`,
+    "second.ts": `import { a } from 'two-lib'; console.log('second: ' + a);`,
+    "third.ts": `import { a } from 'two-lib'; console.log('third: ' + a);`,
+    ...deferringBarrel("two-lib", ["a", "b", "c"]),
+  },
+  async test(dev) {
+    // The barrel defers b and c for this build, so every later build bundles it again.
+    expect((await dev.fetch("/second")).status).toBe(200);
+    await using first = await dev.client("/first");
+    await first.expectMessage("first: A");
+    await first.expectReload(async () => {
+      expect((await dev.fetch("/third")).status).toBe(200);
+    });
+    await first.expectMessage("first: A");
+  },
+});
+
+// The page of /first has b.js from the build of /direct, and not its stylesheet: an update has
+// the stylesheets of the modules that its build bundled. The page loads again, as before.
+devTest("barrel optimization: a barrel that loads a module of an earlier build reloads an open page", {
+  files: {
+    ...Object.fromEntries(
+      ["first", "second", "direct"].map(name => [`${name}.html`, emptyHtmlFile({ scripts: [`${name}.ts`] })]),
+    ),
+    "first.ts": `import { a } from 'ui-lib'; console.log('first: ' + a);`,
+    "second.ts": `import { b } from 'ui-lib'; console.log('second: ' + b);`,
+    "direct.ts": `import { b } from 'ui-lib/b.js'; console.log('direct: ' + b);`,
+    ...uiLib,
+  },
+  async test(dev) {
+    await using first = await dev.client("/first");
+    await first.expectMessage("first: A");
+    expect((await dev.fetch("/direct")).status).toBe(200);
+    await first.expectReload(async () => {
+      await using second = await dev.client("/second");
+      await second.expectMessage("second: B");
+    });
+    await first.expectMessage("first: A");
+    await first.style(".b").color.expect.toBe("red");
+  },
+});
+
+// `export *` copies the exports of x.ts when the barrel is evaluated. main.ts evaluates the barrel
+// before x.ts loads again, so the barrel is evaluated once more after it.
+const starBarrel = {
+  "lib/package.json": JSON.stringify({ name: "app-lib", sideEffects: false }),
+  "lib/index.ts": `export * from './x'; export { y } from './y'; export { z } from './z';`,
+  "lib/x.ts": `import { y } from './index'; export const v = 1; export const readY = () => y;`,
+  "lib/y.ts": `export const y = "Y";`,
+  "lib/z.ts": `export const z = "Z";`,
+};
+const starTarget = (v: number) => `import { y } from './index'; export const v = ${v}; export const readY = () => y;`;
+devTest("barrel optimization: a barrel with export * copies a saved module that imports the barrel", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["main.ts"] }),
+    "main.ts": `
+      import { v, readY } from './lib';
+      globalThis.read = () => v + ' ' + readY();
+      console.log('main');
+      import.meta.hot.accept();
+    `,
+    ...starBarrel,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("main");
+    expect(await c.js<string>`read()`).toBe("1 Y");
+    await dev.write("lib/x.ts", starTarget(2));
+    await c.expectMessage("main");
+    expect(await c.js<string>`read()`).toBe("2 Y");
+  },
+});
+
+// The update of the batch has a route module that fails to load. The rest of it still loads.
+devTest("barrel optimization: the server evaluates a barrel again in an update with a module that throws", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function () {
+        return new Response('index');
+      }
+    `,
+    "routes/other.ts": `
+      import { v, readY } from '../lib';
+      export default function () {
+        return new Response('other: ' + v + ' ' + readY());
+      }
+    `,
+    ...starBarrel,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index");
+    await dev.fetch("/other").equals("other: 1 Y");
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write("routes/index.ts", `throw new Error("thrown when the module loads");`);
+      await dev.write("lib/x.ts", starTarget(2));
+    }
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.fetch("/other").equals("other: 2 Y");
+  },
+});
+
+// The first build of /second makes each barrel load a module that fails: the second one with a
+// throw, the other two after a top-level await.
+const failingBarrel = (n: number, moduleOfB: string) => ({
+  [`lib${n}/package.json`]: JSON.stringify({ name: `app-lib${n}`, sideEffects: false }),
+  [`lib${n}/index.ts`]: `export { a } from './a'; export { b } from './b';`,
+  [`lib${n}/a.ts`]: `export const a = "A${n}";`,
+  [`lib${n}/b.ts`]: moduleOfB,
+});
+devTest("barrel optimization: the server keeps a route when a barrel loads a module that fails", {
+  framework: minimalFramework,
+  files: {
+    "routes/first.ts": `
+      import { a as a1 } from '../lib1';
+      import { a as a2 } from '../lib2';
+      import { a as a3 } from '../lib3';
+      export default function () {
+        return new Response('first: ' + a1 + ' ' + a2 + ' ' + a3);
+      }
+    `,
+    "routes/second.ts": `
+      import { b as b1 } from '../lib1';
+      import { b as b2 } from '../lib2';
+      import { b as b3 } from '../lib3';
+      export default function () {
+        return new Response('second: ' + b1 + ' ' + b2 + ' ' + b3);
+      }
+    `,
+    ...failingBarrel(1, `await Promise.resolve(); throw new Error("b of lib1 failed to load");`),
+    ...failingBarrel(2, `throw new Error("b of lib2 failed to load");`),
+    ...failingBarrel(3, `await Promise.resolve(); throw new Error("b of lib3 failed to load");`),
+  },
+  async test(dev) {
+    await dev.fetch("/first").equals("first: A1 A2 A3");
+    expect((await dev.fetch("/second")).status).toBe(500);
+    await dev.fetch("/first").equals("first: A1 A2 A3");
+    expect((await dev.fetch("/second")).status).toBe(500);
+    await dev.fetch("/first").equals("first: A1 A2 A3");
+  },
+});
+
+// The server copy and the SSR copy of a file share one record of the dev server, and one mark
+// for a save. The test holds the build of the save back, so the first build of /other bundles
+// both copies of the saved barrel, as imports.
+const copyingImporter = `import { a } from './lib'; export const copy = 'copy of ' + a; import.meta.hot.accept();`;
+devTest("barrel optimization: a route build that reaches a saved barrel reloads the importers of both copies", {
+  framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+  files: {
+    "routes/index.ts": `
+      import { copy as server } from '../server-user';
+      import { copy as ssr } from '../ssr-user' with { bunBakeGraph: 'ssr' };
+      export default function () {
+        return new Response('server: ' + server + ', ssr: ' + ssr);
+      }
+    `,
+    "routes/other.ts": `
+      import { a } from '../lib';
+      import { read } from '../ssr-other' with { bunBakeGraph: 'ssr' };
+      import { copy as server } from '../server-user';
+      import { copy as ssr } from '../ssr-user' with { bunBakeGraph: 'ssr' };
+      export default function () {
+        return new Response('other: ' + a + ' ' + read() + ', server: ' + server + ', ssr: ' + ssr);
+      }
+    `,
+    "server-user.ts": copyingImporter,
+    "ssr-user.ts": copyingImporter,
+    "ssr-other.ts": `import { a } from './lib'; export const read = () => a;`,
+    ...appBarrel,
+    "lib/a.ts": `export const a = "A"; export const a2 = "A2";`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("server: copy of A, ssr: copy of A");
+    {
+      await using batch = await dev.batchChanges();
+      const seen = new Promise<void>(resolve => {
+        dev.on("watch_synchronization", function onEvent(event: WatchSynchronization) {
+          if (event !== WatchSynchronization.SeenFiles) return;
+          dev.off("watch_synchronization", onEvent);
+          resolve();
+        });
+      });
+      await dev.write("lib/index.ts", appBarrel["lib/index.ts"].replace("{ a }", "{ a2 as a }"));
+      await seen;
+      await dev.fetch("/other").equals("other: A2 A2, server: copy of A2, ssr: copy of A2");
+    }
+    await dev.fetch("/").equals("server: copy of A2, ssr: copy of A2");
+  },
+});
+
+// The update of the save waits in slow.ts. The build of /second then makes the page evaluate the
+// barrel, which waits in b.js. The first update goes on while the barrel is still loading.
+const slowImporter = (text: string) => `
+  import { a } from 'two-lib';
+  console.log('${text} waits');
+  await globalThis.gates?.slow;
+  console.log('${text}: ' + a);
+  import.meta.hot.accept();
+`;
+devTest("barrel optimization: an update goes on while a later update loads the barrel", {
+  files: {
+    "first.html": emptyHtmlFile({ scripts: ["first.ts"] }),
+    "second.html": emptyHtmlFile({ scripts: ["second.ts"] }),
+    "first.ts": `import './slow';`,
+    "slow.ts": slowImporter("slow"),
+    "second.ts": `import { b } from 'two-lib'; console.log('second: ' + b);`,
+    ...deferringBarrel("two-lib", ["a", "b", "c"]),
+    "node_modules/two-lib/b.js": `console.log('b waits');\nawait globalThis.gates?.b;\nexport const b = "B";`,
+  },
+  async test(dev) {
+    await using first = await dev.client("/first");
+    await first.expectMessage("slow waits", "slow: A");
+    await first.js`
+      globalThis.gates = {};
+      gates.slow = new Promise(resolve => (gates.releaseSlow = resolve));
+      gates.b = new Promise(resolve => (gates.releaseB = resolve));
+    `;
+    const saved = dev.write("slow.ts", slowImporter("saved"));
+    await first.expectMessage("saved waits");
+    expect((await dev.fetch("/second")).status).toBe(200);
+    await first.expectMessage("b waits");
+    await first.js`gates.releaseSlow()`;
+    await first.expectMessage("saved: A");
+    await saved;
+    await first.js`gates.releaseB()`;
+    await first.drainAcks();
+  },
+});
+
+const clientComponent = (text: string) => `
+  "use client";
+  import { b } from 'two-lib';
+  export function Counter() {
+    return <p id="counter">{"${text} " + b}</p>;
+  }
+`;
+// The page imports the barrel in the server graph, and the client component in the SSR graph. A
+// route that the reload list names does not apply the JavaScript of the update.
+devTest("barrel optimization: a save of a client component that imports a barrel shows on a React page", {
+  framework: "react",
+  files: {
+    "pages/index.tsx": `
+      import { a } from 'two-lib';
+      import { Counter } from '../components/Counter';
+      export default function Page() {
+        return <div><h1>{a}</h1><Counter /></div>;
+      }
+    `,
+    "components/Counter.tsx": clientComponent("first"),
+    ...deferringBarrel("two-lib", ["a", "b", "c"]),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#counter", "first B");
+    await dev.write("components/Counter.tsx", clientComponent("saved"));
+    await c.expectElemText("#counter", "saved B");
+  },
+});
+
+// React loads a client component with import(), and keeps the exports that it got. A "use client"
+// barrel that is evaluated again in place gives them no new export, so it is a changed module.
+devTest('barrel optimization: a page renders an export of a "use client" barrel that another route requested', {
+  framework: "react",
+  files: {
+    "pages/index.tsx": `
+      import { Button } from '../ui';
+      export default function Index() {
+        return <Button />;
+      }
+    `,
+    "pages/other.tsx": `
+      import { Card } from '../ui';
+      export default function Other() {
+        return <Card />;
+      }
+    `,
+    "ui/package.json": JSON.stringify({ name: "ui", sideEffects: false }),
+    "ui/index.js": `"use client";\nexport { Button } from './Button.js';\nexport { Card } from './Card.js';`,
+    "ui/Button.js": `import * as React from 'react';\nexport const Button = () => React.createElement('p', { id: 'button' }, 'BUTTON');`,
+    "ui/Card.js": `import * as React from 'react';\nexport const Card = () => React.createElement('p', { id: 'card' }, 'CARD');`,
+  },
+  async test(dev) {
+    await using index = await dev.client("/");
+    await index.expectElemText("#button", "BUTTON");
+    await index.expectReload(async () => {
+      await using other = await dev.client("/other");
+      await other.expectElemText("#card", "CARD");
+    });
+    await index.js`
+      history.pushState(1, "", "/other");
+      $bake.goto(location.origin + "/other", 1);
+    `;
+    await index.expectElemText("#card", "CARD");
   },
 });
 

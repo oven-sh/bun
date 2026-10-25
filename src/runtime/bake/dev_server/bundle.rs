@@ -85,11 +85,6 @@ pub(crate) struct CacheEntry {
 
 impl DevServer {
     pub(crate) fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
-        // Barrel files with deferred records must always be re-parsed.
-        if self.barrel_files_with_deferrals.contains_key(path) {
-            return None;
-        }
-
         let _g = self.graph_safety_lock.guard();
 
         macro_rules! check {
@@ -105,12 +100,10 @@ impl DevServer {
                 if !$bundled_for_side {
                     return None;
                 }
-                return Some(CacheEntry {
-                    kind: $file.file_kind(),
-                });
+                (index as u32, $file.file_kind())
             }};
         }
-        match side {
+        let (index, kind) = match side {
             bake::Graph::Client => check!(&self.client_graph, |_file| true),
             // The server and SSR graphs share one record per file. Only a JS record tracks which graph bundled it.
             bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph, |file| {
@@ -121,7 +114,18 @@ impl DevServer {
                         file.is_rsc
                     }
             }),
+        };
+
+        // Barrel files with deferred records must always be re-parsed.
+        if self.barrel_files_with_deferrals.contains_key(path) {
+            let barrels = &mut self.incremental_result.barrels_bundled_again;
+            if !barrels.contains(&(side, index)) {
+                barrels.push((side, index));
+            }
+            return None;
         }
+
+        Some(CacheEntry { kind })
     }
 
     fn append_opaque_entry_point<const SIDE: bake::Side>(

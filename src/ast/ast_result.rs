@@ -102,6 +102,8 @@ pub struct Ast<'a> {
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
     pub import_meta_ref: Ref,
+    /// Set by the HMR lowering: the statements that stay in the module function are all imports.
+    pub hmr_body_is_imports_only: bool,
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -147,6 +149,7 @@ impl<'a> Ast<'a> {
             has_commonjs_export_names: false,
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
+            hmr_body_is_imports_only: false,
         }
     }
 }

@@ -9,6 +9,8 @@ pub(crate) struct HotUpdateContext<'a> {
     pub import_records: &'a [bun_ast::import_record::List<'a>],
     /// bundle_v2.Graph.input_files.items(.loader)
     pub loaders: &'a [Loader],
+    /// bundle_v2.Graph.input_files.items(.flags)
+    pub input_file_flags: &'a [bundler::Graph::InputFileFlags],
     /// Which files have a server-component boundary.
     pub server_to_client_bitset: DynamicBitSet,
     /// Used to reduce calls to the IncrementalGraph hash table.
@@ -274,6 +276,7 @@ pub(super) fn finalize_bundle(
         import_records,
         sources: input_file_sources,
         loaders: input_file_loaders,
+        input_file_flags: bv2.graph.input_files.items_flags(),
         server_to_client_bitset: scb_bitset,
         resolved_index_cache: &mut resolved_index_cache,
         server_seen_bit_set: DynamicBitSet::default(), // assigned below
@@ -769,6 +772,7 @@ pub(super) fn finalize_bundle(
                 server_modules,
                 dev.make_array_for_server_components_patch(global, added)?,
                 dev.make_array_for_server_components_patch(global, removed)?,
+                dev.make_array_of_reprinted_barrels(global)?,
             ],
         ) {
             Ok(v) => v,
@@ -1303,6 +1307,23 @@ pub(super) fn finalize_bundle(
 }
 
 impl DevServer {
+    /// The ids of the server modules of `current_chunk_reprinted_barrels`.
+    fn make_array_of_reprinted_barrels(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let barrels = &self.server_graph.current_chunk_reprinted_barrels;
+        if barrels.is_empty() {
+            return Ok(JSValue::NULL);
+        }
+        let arr = jsc::JSArray::create_empty(global, barrels.len())?;
+        for (i, barrel) in barrels.iter().enumerate() {
+            arr.put_index(
+                global,
+                u32::try_from(i).expect("int cast"),
+                bun_string_jsc::create_utf8_for_js(global, &barrel.id)?,
+            )?;
+        }
+        Ok(arr)
+    }
+
     fn make_array_for_server_components_patch(
         &mut self,
         global: &JSGlobalObject,

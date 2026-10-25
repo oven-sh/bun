@@ -58,6 +58,21 @@ devTest("expectElemText waits for a DOM update that lands after the ack", {
   },
 });
 
+devTest("disposing a client reports a reload that the test did not expect", {
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `console.log("loaded");`,
+  },
+  async test(dev) {
+    const c = await dev.client("/");
+    await c.expectMessage("loaded");
+    // The fixture waits 500 ms before it exits for this reload. The test ends first.
+    await c.js`location.reload()`;
+    expect(await rejectionMessage(c[Symbol.asyncDispose]())).toBe('Client exited: "Unexpected reload"');
+  },
+});
+
 devTest("disposing a client reports an exit code it produces while it is being disposed", {
   files: {
     "index.html": emptyHtmlFile({

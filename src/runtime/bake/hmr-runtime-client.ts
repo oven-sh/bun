@@ -84,7 +84,7 @@ const scriptTags: Map<string, PendingHmrQueue> =
   new Map<string, PendingHmrQueue>();
 (globalThis as any)[pendingScriptSymbol] = scriptTags;
 
-globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
+globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string, reprintedBarrels?: string[]) => {
   const queue = scriptTags.get(id);
   let entry = queue?.shift() ?? null;
   if (queue && queue.length === 0) {
@@ -104,7 +104,7 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   };
   addMapping(url, map);
   script.remove();
-  replaceModules(modules, map).catch(e => {
+  replaceModules(modules, map, reprintedBarrels).catch(e => {
     console.error(e);
     fullReload();
   });

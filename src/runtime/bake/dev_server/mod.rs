@@ -147,6 +147,8 @@ pub(crate) struct IncrementalResult {
     pub(crate) failures_removed: Vec<SerializedFailure>,
     pub(crate) client_components_affected: Vec<incremental_graph::ServerFileIndex>,
     pub(crate) failures_added: Vec<SerializedFailure>,
+    /// `(graph, file index)` of each barrel copy that this bundle parses again with no change.
+    pub(crate) barrels_bundled_again: Vec<(bake::Graph, u32)>,
 }
 impl IncrementalResult {
     pub(crate) const EMPTY: IncrementalResult = IncrementalResult {
@@ -159,6 +161,7 @@ impl IncrementalResult {
         client_components_added: Vec::new(),
         client_components_removed: Vec::new(),
         client_components_affected: Vec::new(),
+        barrels_bundled_again: Vec::new(),
     };
 
     /// Clears each list retaining capacity, asserts `failures_removed` was
@@ -174,6 +177,7 @@ impl IncrementalResult {
         self.failures_removed.clear();
         self.client_components_affected.clear();
         self.failures_added.clear();
+        self.barrels_bundled_again.clear();
         // NOTE: `had_adjusted_edges` is NOT reset here (matches spec).
     }
 }

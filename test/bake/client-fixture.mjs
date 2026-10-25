@@ -616,6 +616,12 @@ process.on("exit", () => {
     console.error("[E] location.reload() was not called");
     process.exit(exitCodeMap.reloadNotCalled);
   }
+  // The test ended before the timer of a reload that it did not expect. Not on Windows: a build
+  // there can see a half-written file, and the page reloads for it (see dev-and-prod.test.ts).
+  if (process.exitCode === 0 && pendingReload && process.platform !== "win32") {
+    console.error("[E] location.reload() called unexpectedly");
+    process.exit(exitCodeMap.unexpectedReload);
+  }
 });
 
 // Initial page load

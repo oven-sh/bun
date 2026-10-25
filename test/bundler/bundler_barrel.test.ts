@@ -2304,4 +2304,115 @@ describe("bundler", () => {
     expect(a).toContain("used value");
     expect(a).toBe(b);
   });
+
+  // --- ignoreDCEAnnotations turns automatic mode off ---
+  // "sideEffects": false is an annotation, and the flag says not to trust it.
+  // A barrel then defers nothing on the word of its package.json: the linker
+  // keeps every import with the flag, so each re-export has to load.
+
+  const annotatedBarrel = (reExport: string) => ({
+    "/entry.js": /* js */ `
+      import { a } from 'barrel-pkg';
+      console.log(a, globalThis.b, globalThis.other);
+    `,
+    "/node_modules/barrel-pkg/package.json": JSON.stringify({
+      name: "barrel-pkg",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "/node_modules/barrel-pkg/index.js": /* js */ `
+      export { a } from './a.js';
+      export { b } from './b.js';
+      ${reExport}
+    `,
+    "/node_modules/barrel-pkg/a.js": /* js */ `
+      export const a = "a";
+    `,
+    "/node_modules/barrel-pkg/b.js": /* js */ `
+      globalThis.b = "b ran";
+      export const b = 1;
+    `,
+    "/node_modules/other-pkg/package.json": JSON.stringify({
+      name: "other-pkg",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "/node_modules/other-pkg/index.js": /* js */ `
+      globalThis.other = "other-pkg ran";
+      export const other = 1;
+    `,
+  });
+
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`barrel/IgnoreDCEAnnotationsLoadsEveryReExport/${backend}`, {
+      files: annotatedBarrel(`export { other } from 'other-pkg';`),
+      ignoreDCEAnnotations: true,
+      backend,
+      outdir: "/out",
+      run: { stdout: "a b ran other-pkg ran" },
+    });
+
+    // Without the flag nothing asks for this name, and nothing resolves it.
+    // With the flag it is an import like any other.
+    itBundled(`barrel/IgnoreDCEAnnotationsReportsUnresolvableReExport/${backend}`, {
+      files: annotatedBarrel(`export { gone } from 'not-installed-pkg';`),
+      ignoreDCEAnnotations: true,
+      backend,
+      outdir: "/out",
+      bundleErrors: {
+        "/node_modules/barrel-pkg/index.js": ['Could not resolve: "not-installed-pkg"'],
+      },
+    });
+  }
+
+  // The same barrel without the flag: b.js and other-pkg stay unloaded.
+  itBundled("barrel/WithoutIgnoreDCEAnnotationsSkipsUnusedReExports", {
+    files: annotatedBarrel(`export { other } from 'other-pkg';`),
+    outdir: "/out",
+    run: { stdout: "a undefined undefined" },
+  });
+
+  // Only the plugin can resolve "virtual-dep". With the flag the plugin is
+  // asked, and the module it names loads.
+  itBundled("barrel/IgnoreDCEAnnotationsAsksResolvePlugin", ({ root }) => {
+    const resolved: string[] = [];
+    return {
+      files: {
+        ...annotatedBarrel(`export { virtual } from 'virtual-dep';`),
+        "/virtual-dep.js": /* js */ `
+          globalThis.other = "virtual-dep ran";
+          export const virtual = 1;
+        `,
+      },
+      ignoreDCEAnnotations: true,
+      outdir: "/out",
+      plugins(builder) {
+        resolved.length = 0;
+        builder.onResolve({ filter: /^virtual-dep$/ }, args => {
+          resolved.push(args.path);
+          return { path: join(root, "virtual-dep.js") };
+        });
+      },
+      run: { stdout: "a b ran virtual-dep ran" },
+      onAfterBundle() {
+        expect(resolved).toEqual(["virtual-dep"]);
+      },
+    };
+  });
+
+  // optimizeImports is the user's word, not an annotation of the package: a
+  // listed package stays optimized with the flag. b.js would fail the build.
+  itBundled("barrel/IgnoreDCEAnnotationsKeepsOptimizeImports", {
+    files: {
+      ...annotatedBarrel(`export { other } from 'other-pkg';`),
+      "/node_modules/barrel-pkg/package.json": JSON.stringify({ name: "barrel-pkg", main: "./index.js" }),
+      "/node_modules/barrel-pkg/b.js": /* js */ `
+        export const b = <<<SYNTAX_ERROR>>>;
+      `,
+    },
+    optimizeImports: ["barrel-pkg"],
+    ignoreDCEAnnotations: true,
+    outdir: "/out",
+    run: { stdout: "a undefined undefined" },
+  });
 });

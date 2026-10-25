@@ -772,6 +772,40 @@ describe("bundler files option", () => {
     });
   });
 
+  // `[dir]` is the directory of a file from the root. A directory that is only in `files` cannot be opened.
+  describe("[dir] of a file in a directory that is not on disk", () => {
+    const pathsOf = (result: Awaited<ReturnType<typeof Bun.build>>) =>
+      result.outputs.map(output => output.path.replaceAll("\\", "/")).sort();
+
+    test("a directory inside the root keeps its path from the root", async () => {
+      using dir = tempDir("bundler-files-dir-in-root", { "keep": "" });
+      const result = await Bun.build({
+        root: String(dir),
+        entrypoints: [`${dir}/entry.ts`, `${dir}/virtual/page.ts`, `${dir}/..cache/page.ts`],
+        splitting: true,
+        naming: { chunk: "[dir]/[name]-chunk.[ext]" },
+        files: {
+          [`${dir}/entry.ts`]: `import("./lazy/mod.ts");`,
+          [`${dir}/lazy/mod.ts`]: `export const lazy = 1;`,
+          [`${dir}/virtual/page.ts`]: `console.log("page");`,
+          [`${dir}/..cache/page.ts`]: `console.log("cache");`,
+        },
+      });
+      expect(result.logs).toBeEmpty();
+      expect(pathsOf(result)).toEqual(["..cache/page.js", "./entry.js", "./lazy/mod-chunk.js", "virtual/page.js"]);
+    });
+
+    // The docs example: every file is in memory, at a path above the root (the cwd).
+    test("a directory outside the root is the path of the key", async () => {
+      const result = await Bun.build({
+        entrypoints: ["/app/nested/index.ts"],
+        files: { "/app/nested/index.ts": `console.log("index");` },
+      });
+      expect(result.logs).toBeEmpty();
+      expect(pathsOf(result)).toEqual([isWindows ? expect.stringContaining("index.js") : "app/nested/index.js"]);
+    });
+  });
+
   // Specifiers are joined onto the importer's directory to find a matching
   // in-memory file. A specifier longer than a path buffer (4096 bytes on
   // Linux, 1024 on macOS, 98302 on Windows) used to abort the process. These

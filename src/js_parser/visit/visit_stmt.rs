@@ -2303,7 +2303,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // referencing, `esbuild` builds a separate hash map of hash
         // maps. We are avoiding that to reduce memory usage, since
         // enum inlining already uses alot of hash maps.
-        if p.current_scope == p.module_scope && p.options.bundle {
+        let is_top_level = p.current_scope == p.module_scope;
+        if is_top_level && p.options.bundle {
             p.top_level_enums.push(data.name.ref_);
         }
 
@@ -2389,9 +2390,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             has_string_value = true;
                         }
 
+                        p.unused_decl_may_read_browser_globals =
+                            is_top_level && p.tree_shakes_reads_of_browser_globals();
                         if !p.expr_can_be_removed_if_unused(&visited) {
                             all_values_are_pure = false;
                         }
+                        p.unused_decl_may_read_browser_globals = false;
                     }
                 }
             } else if let Some(num) = next_numeric_value {

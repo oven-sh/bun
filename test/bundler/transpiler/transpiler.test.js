@@ -6944,6 +6944,9 @@ describe("a read of a browser global", () => {
       ["x = (Math, 1);", "x = 1;\n"],
       ["if (console) {}", ""],
       ["var a = Math.cos, b = Math.sin;", "var { cos: a, sin: b } = Math;\n"],
+      // A name and a pure property chain on it have one answer.
+      ["crypto;", ""],
+      ["crypto.randomUUID;", ""],
       ["typeof document;", ""],
     ];
     for (const transpiler of forBun) {

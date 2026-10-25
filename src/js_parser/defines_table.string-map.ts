@@ -78,6 +78,8 @@ const ENTRIES: ReadonlyArray<readonly [string, V]> = [
   ["clearInterval", "Universal"],
   ["clearTimeout", "Universal"],
   ["console", "Universal"],
+  // The root of the pure property chain `crypto.randomUUID`.
+  ["crypto", "Universal"],
   ["decodeURI", "Universal"],
   ["decodeURIComponent", "Universal"],
   ["encodeURI", "Universal"],
@@ -688,7 +690,6 @@ const ENTRIES: ReadonlyArray<readonly [string, V]> = [
   ["top", "Other"],
   ["webkitURL", "Other"],
   ["window", "Other"],
-  ["crypto", "Other"],
 ];
 
 export default {

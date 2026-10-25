@@ -14,7 +14,7 @@ use bun_core::Output;
 use bun_core::strings;
 use bun_wyhash::Wyhash;
 
-use crate::defines::{Define, DefineData};
+use crate::defines::{Define, DefineData, PureGlobals};
 use crate::lexer as js_lexer;
 use crate::parse::parse_entry::Options as ParserOptions;
 use crate::renamer;
@@ -576,6 +576,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) is_revisit_for_substitution: bool,
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
+
+    /// True while the removability of a top-level declaration of a bundled
+    /// file is checked. Tree shaking removes an unused declaration also when
+    /// it reads a browser API that the parse does not assume
+    /// (`class A extends HTMLElement {}`), as esbuild does for every platform.
+    pub(crate) unused_decl_may_read_browser_globals: bool,
 
     // Inside a TypeScript namespace, an "export declare" statement can be used
     // to cause a namespace to be emitted even though it has no other observable
@@ -5705,7 +5711,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.options.features.dead_code_elimination {
             return false;
         }
-        self.stmts_can_be_removed_if_unused_without_dce_check(stmts)
+        if !self.tree_shakes_reads_of_browser_globals() {
+            return self.stmts_can_be_removed_if_unused_without_dce_check(stmts);
+        }
+        stmts.iter().all(|stmt| {
+            // Not an expression statement or a `try`: `try { document } catch {}`
+            // is a feature test, and the ReferenceError is its result.
+            self.unused_decl_may_read_browser_globals = matches!(
+                stmt.data,
+                js_ast::StmtData::SClass(_)
+                    | js_ast::StmtData::SLocal(_)
+                    | js_ast::StmtData::SExportDefault(_)
+            );
+            let can_be_removed =
+                self.stmts_can_be_removed_if_unused_without_dce_check(core::slice::from_ref(stmt));
+            self.unused_decl_may_read_browser_globals = false;
+            can_be_removed
+        })
+    }
+
+    /// See `unused_decl_may_read_browser_globals`.
+    pub(crate) fn tree_shakes_reads_of_browser_globals(&self) -> bool {
+        self.options.bundle && self.options.features.pure_globals == PureGlobals::Universal
     }
 
     fn stmts_can_be_removed_if_unused_without_dce_check(&mut self, stmts: &[Stmt]) -> bool {
@@ -6066,7 +6093,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         for property in class.properties.iter() {
             if property.kind == js_ast::g::PropertyKind::ClassStaticBlock {
                 let csb = property.class_static_block_ref().unwrap();
-                if !self.stmts_can_be_removed_if_unused_without_dce_check(csb.stmts.slice()) {
+                // A statement of a static block is not a declaration of the part.
+                let in_declaration =
+                    core::mem::replace(&mut self.unused_decl_may_read_browser_globals, false);
+                let can_be_removed =
+                    self.stmts_can_be_removed_if_unused_without_dce_check(csb.stmts.slice());
+                self.unused_decl_may_read_browser_globals = in_declaration;
+                if !can_be_removed {
                     return false;
                 }
                 continue;
@@ -6178,9 +6211,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // incorrect but proper TDZ analysis is very complicated and would have to
                 // be very conservative, which would inhibit a lot of optimizations of code
                 // inside closures. This may need to be revisited if it proves problematic.
+                let symbol = &self.symbols[ex.ref_.inner_index() as usize];
                 if ex.can_be_removed_if_unused()
-                    || self.symbols[ex.ref_.inner_index() as usize].kind
-                        != js_ast::symbol::Kind::Unbound
+                    || symbol.kind != js_ast::symbol::Kind::Unbound
+                    || (self.unused_decl_may_read_browser_globals
+                        && self
+                            .define
+                            .for_identifier(symbol.original_name.slice(), PureGlobals::All)
+                            .is_some_and(DefineData::can_be_removed_if_unused))
                 {
                     return true;
                 }
@@ -9796,6 +9834,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
             method_call_must_be_replaced_with_undefined: false,
+            unused_decl_may_read_browser_globals: false,
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),

@@ -320,13 +320,13 @@ error: Hello World`,
       answers.push(nested());
       // A module that reads a browser API as it loads.
       try {
-        require("./declaration.js");
+        require("./property.js");
         answers.push("browser");
       } catch {
         answers.push("no browser");
       }
       try {
-        await import("./class.js");
+        await import("./bare.js");
         answers.push("browser");
       } catch {
         answers.push("no browser");
@@ -350,27 +350,64 @@ error: Hello World`,
         }
       }
     `,
-    "/declaration.js": /* js */ `
+    "/property.js": /* js */ `
       const unused = window.document;
       export const loaded = true;
     `,
-    "/class.js": /* js */ `
-      class Unused extends HTMLElement {}
+    "/bare.js": /* js */ `
+      HTMLElement;
       export const loaded = true;
     `,
   };
   const noBrowser = "no browser, no browser, no browser, no browser, no browser";
-  // Every read is erased, so no static block and no class is left to throw.
+  // Every read is erased, so no static block and no statement is left to throw.
   // `window.document` is not a bare read.
   const assumed = "browser, , browser, no browser, browser";
+  // Tree shaking still removes an unused top-level declaration that reads a
+  // browser API, as it does for the other targets and as esbuild does.
+  const unusedDeclarations = {
+    "/entry.ts": /* ts */ `
+      import { render } from "./components.ts";
+      console.log(render());
+    `,
+    "/components.ts": /* ts */ `
+      export class Counter extends HTMLElement {}
+      export const doc = document;
+      export const win = window;
+      export let Lazy = class extends HTMLElement {
+        static registry = customElements;
+      };
+      export default class extends MutationObserver {}
+      export enum Ratio {
+        One = 1,
+        Device = devicePixelRatio,
+      }
+      export function render() {
+        return "<my-counter></my-counter>";
+      }
+    `,
+  };
   for (const backend of ["cli", "api"] as const) {
     for (const minifySyntax of [false, true]) {
-      itBundled(`bun/KeepsReadOfBrowserGlobal-${backend}${minifySyntax ? "-minify-syntax" : ""}`, {
+      const suffix = `${backend}${minifySyntax ? "-minify-syntax" : ""}`;
+      itBundled(`bun/KeepsReadOfBrowserGlobal-${suffix}`, {
         backend,
         target: "bun",
         minifySyntax,
         files: browserGlobalReads,
         run: { stdout: noBrowser },
+      });
+      itBundled(`bun/TreeShakesUnusedDeclarationThatReadsBrowserGlobal-${suffix}`, {
+        backend,
+        target: "bun",
+        minifySyntax,
+        files: unusedDeclarations,
+        onAfterBundle(api) {
+          expect(api.readFile("/out.js")).not.toMatch(
+            /HTMLElement|MutationObserver|customElements|devicePixelRatio|document|window/,
+          );
+        },
+        run: { stdout: "<my-counter></my-counter>" },
       });
     }
     itBundled(`bun/AssumesBrowserGlobalForTargetBrowser-${backend}`, {

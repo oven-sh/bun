@@ -81,7 +81,7 @@ pub(crate) fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIden
                 (*b"Window", PureGlobalIdentifierValue::Other),
                 (*b"Worker", PureGlobalIdentifierValue::Other),
                 (*b"closed", PureGlobalIdentifierValue::Other),
-                (*b"crypto", PureGlobalIdentifierValue::Other),
+                (*b"crypto", PureGlobalIdentifierValue::Universal),
                 (*b"escape", PureGlobalIdentifierValue::Universal),
                 (*b"frames", PureGlobalIdentifierValue::Other),
                 (*b"length", PureGlobalIdentifierValue::Other),

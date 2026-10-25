@@ -193,8 +193,9 @@ pub struct BundlerOptions {
     pub entry_naming: Box<[u8]>,
     pub chunk_naming: Box<[u8]>,
     pub asset_naming: Box<[u8]>,
-    pub server_components: bool,
     pub react_fast_refresh: bool,
+    /// `--check`: type check the entry points and what they import, and do not bundle if there are errors.
+    pub check: bool,
     pub react_compiler: bool,
     pub code_splitting: bool,
     pub split_require: bool,
@@ -210,6 +211,9 @@ pub struct BundlerOptions {
     pub output_format: bundle_enums::Format,
     pub bytecode: bool,
     pub bytecode_depth: u32,
+    pub optimize_bytecode: bool,
+    /// `--bytecode-order`: payload order files, most important first.
+    pub bytecode_order: Vec<Box<[u8]>>,
     pub banner: Box<[u8]>,
     pub footer: Box<[u8]>,
     pub css_chunking: bool,
@@ -234,6 +238,8 @@ pub struct BundlerOptions {
     pub compile_autoload_tsconfig: bool,
     pub compile_autoload_package_json: bool,
     pub compile_executable_path: Option<Box<[u8]>>,
+    /// `--compile-jit-policy`: JSC tier-up threshold scale baked into the executable (1 = normal).
+    pub compile_jit_policy: f32,
     pub compile_assets: Vec<Box<[u8]>>,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
@@ -253,8 +259,8 @@ impl Default for BundlerOptions {
             entry_naming: Box::from(&b"[dir]/[name].[ext]"[..]),
             chunk_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
             asset_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
-            server_components: false,
             react_fast_refresh: false,
+            check: false,
             react_compiler: false,
             code_splitting: false,
             split_require: true,
@@ -270,6 +276,8 @@ impl Default for BundlerOptions {
             output_format: bundle_enums::Format::Esm,
             bytecode: false,
             bytecode_depth: u32::MAX,
+            optimize_bytecode: true,
+            bytecode_order: Vec::new(),
             banner: Box::default(),
             footer: Box::default(),
             css_chunking: false,
@@ -290,6 +298,7 @@ impl Default for BundlerOptions {
             compile_autoload_tsconfig: false,
             compile_autoload_package_json: false,
             compile_executable_path: None,
+            compile_jit_policy: 1.0,
             compile_assets: Vec::new(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,
@@ -342,12 +351,18 @@ pub fn try_get<'a>() -> Option<&'a ContextData> {
 }
 
 pub struct DebugOptions {
-    pub dump_environment_variables: bool,
     pub silent: bool,
     pub hot_reload: HotReload,
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
     /// reload (node delivers this signal to its watched child; default SIGTERM).
     pub watch_kill_signal: bun_core::SignalCode,
+    /// `--watch-kill-signal` and `--no-clear-screen` as given. `cli::apply_watch_mode_flags`
+    /// applies them once the watch mode is final, which `bun bake` decides after the arguments
+    /// of `bun` are parsed.
+    pub watch_kill_signal_arg: Option<Box<[u8]>>,
+    pub no_clear_screen: bool,
+    /// `--watch` was given. `hot_reload` alone does not tell: `--hot` with `--check` is `Watch` too.
+    pub watch_flag: bool,
     pub global_cache: GlobalCache,
     pub offline_mode_setting: Option<OfflineMode>,
     pub run_in_bun: bool,
@@ -369,10 +384,12 @@ impl Default for DebugOptions {
     #[inline(always)]
     fn default() -> Self {
         Self {
-            dump_environment_variables: false,
             silent: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,
+            watch_kill_signal_arg: None,
+            no_clear_screen: false,
+            watch_flag: false,
             global_cache: GlobalCache::auto,
             offline_mode_setting: None,
             run_in_bun: false,
@@ -550,6 +567,8 @@ pub struct DebuggerEnable {
 
 pub struct RuntimeOptions {
     pub smol: bool,
+    /// `--check`: type check what is about to be run, and do not run it if there are errors.
+    pub check: bool,
     pub debugger: Debugger,
     pub if_present: bool,
     pub redis_preconnect: bool,
@@ -621,6 +640,7 @@ impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             smol: false,
+            check: false,
             debugger: Debugger::Unspecified,
             if_present: false,
             redis_preconnect: false,

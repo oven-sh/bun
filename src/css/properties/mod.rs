@@ -198,15 +198,6 @@ mod generic_registrations {
             css_values::length::Length::parse(input)
         }
     }
-    impl crate::generics::ParseWithOptions for css_values::length::Length {
-        #[inline]
-        fn parse_with_options(
-            input: &mut crate::css_parser::Parser,
-            _o: &crate::css_parser::ParserOptions,
-        ) -> crate::css_parser::CssResult<Self> {
-            css_values::length::Length::parse(input)
-        }
-    }
     impl crate::generics::Parse for css_values::color::CssColor {
         #[inline]
         fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
@@ -297,15 +288,6 @@ mod generic_registrations {
 
     // `GenericBorder<S, P>` covers Border / BorderTop / … / Outline. The
     // inherent impl block bounds `S` on the protocol traits; mirror here.
-    impl<S, const P: u8> crate::generics::Parse for GenericBorder<S, P>
-    where
-        GenericBorder<S, P>: GenericBorderImpl,
-    {
-        #[inline]
-        fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
-            <Self as GenericBorderImpl>::parse(input)
-        }
-    }
     impl<S, const P: u8> crate::generics::ParseWithOptions for GenericBorder<S, P>
     where
         GenericBorder<S, P>: GenericBorderImpl,

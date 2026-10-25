@@ -1,0 +1,6 @@
+for (var a = 0, b = 1; /* comment */ // comment
+a < b; a++);
+for (var c = 0; c < d; /* comment */ // comment
+c++);
+for (e; // comment
+f; g);

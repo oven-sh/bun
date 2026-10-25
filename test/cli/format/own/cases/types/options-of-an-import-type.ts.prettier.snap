@@ -1,0 +1,43 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = typeof import("https-proxy-agent-that-has-a-long-name-so-long", {
+  with: { "resolution-mode": "import" },
+});
+type B = import("a", { with: { "resolution-mode": "import" } });
+const x = (await load("aaaaaaaaaaaaaaaaaaaaaaaa")) as typeof import(
+  "https-proxy-agent-that-has-a-long-name",
+  { with: { "resolution-mode": "import" } }
+);
+type C = import(
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  {
+    with: {
+      "resolution-mode": "import",
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: "ccccccccccccccc",
+    },
+  }
+);
+type D = import("a", {
+  with: { "resolution-mode": "import" },
+});
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = typeof import("https-proxy-agent-that-has-a-long-name-so-long", {
+  with: { "resolution-mode": "import" },
+});
+type B = import("a", { with: { "resolution-mode": "import" } });
+const x = (await load("aaaaaaaaaaaaaaaaaaaaaaaa")) as typeof import(
+  "https-proxy-agent-that-has-a-long-name",
+  { with: { "resolution-mode": "import" } }
+);
+type C = import("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+  with: { "resolution-mode": "import", bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: "ccccccccccccccc" },
+});
+type D = import("a", {
+  with: { "resolution-mode": "import" },
+});
+
+===================== End =====================

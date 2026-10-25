@@ -1546,10 +1546,11 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
         cwd: String(dir),
         stdin: "ignore",
         stdout: "pipe",
-        stderr: "ignore",
+        stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      const steps = [...stdout.matchAll(/a VM (begins|is made)/g)].map(it => it[1]);
+      // The debug log is written to fd 1, which is standard error for everything but the report on Unix.
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const steps = [...(stdout + stderr).matchAll(/a VM (begins|is made)/g)].map(it => it[1]);
       // The number of engines depends on the number of cores.
       expect(steps.filter(it => it === "begins").length).toBe(steps.filter(it => it === "is made").length);
       expect(steps.slice(0, 2)).toEqual(["begins", "is made"]);

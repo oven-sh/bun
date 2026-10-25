@@ -19,9 +19,8 @@ unsafe extern "C" {
     // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is ABI-identical
     // to a non-null `*mut VM` and C++ mutation is interior to the opaque cell.
     safe fn Bun__generateHeapProfile(vm: &mut VM) -> BunString;
-    /// Writes a +1 ref of the V8 snapshot JSON into `out` and returns true.
-    /// Returns false, and leaves `out` alone, when the snapshot is too large
-    /// to serialize.
+    /// Writes a +1 ref of the snapshot JSON into `out` and returns true.
+    /// Returns false when the snapshot is too large to serialize.
     safe fn Bun__generateHeapSnapshotV8(vm: &mut VM, out: &mut BunString) -> bool;
 }
 
@@ -44,8 +43,7 @@ pub(crate) fn generate_and_write_profile(
     };
     let profile_slice = profile_string.to_utf8();
 
-    // The output file is created only once there is a profile to put in it.
-    // The directory is created only when the open says it is missing.
+    // Create the directory only when the open says it is missing.
     let flags = sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC;
     let opened = match sys::File::openat(Fd::cwd(), path_buf.slice(), flags, 0o664) {
         Err(err) if matches!(err.get_errno(), E::ENOENT | E::EPERM | E::EACCES) => {

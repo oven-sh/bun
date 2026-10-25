@@ -947,8 +947,7 @@ static auto takeV8HeapSnapshot(JSC::VM& vm, Take take) -> std::optional<decltype
     JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
     auto result = take(builder);
     if (builder.hasOverflowed()) [[unlikely]] {
-        // The builder appended a JSC-side snapshot of the whole heap to the
-        // profiler before it serialized. Nothing reads it after a failure.
+        // Drop the JSC-side snapshot the builder appended; nothing reads it after a failure.
         heapProfiler.clearSnapshots();
         return std::nullopt;
     }

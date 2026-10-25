@@ -27,7 +27,9 @@ fn resolves_a_call(hir: &File, node: hir::Node) -> bool {
     let mut pending = vec![node];
     while let Some(node) = pending.pop() {
         match hir.kind(node) {
-            Kind::CallExpression | Kind::NewExpression | Kind::TaggedTemplateExpression => return true,
+            Kind::CallExpression | Kind::NewExpression | Kind::TaggedTemplateExpression => {
+                return true;
+            }
             kind if kind.is_function_like() => {}
             _ => {
                 hir.for_each_child(node, &mut |child| {

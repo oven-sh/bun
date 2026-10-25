@@ -683,6 +683,42 @@ test.concurrent.skipIf(isWindows)("setRawMode(false) during a dialog of a Worker
   });
 });
 
+// `bun a.js | less`: a producer that did not change the terminal itself must not write its startup
+// termios back at exit, over the mode that `less` set (#29592). A dialog of the producer changes the
+// terminal only while it waits.
+test.concurrent.skipIf(isWindows)(
+  "a pipeline producer that asked a question does not write the terminal mode at exit",
+  async () => {
+    const flags = {};
+    const producer = `const answer = prompt("answer?");
+                      console.log("answered " + answer);
+                      require("node:fs").readSync(0, Buffer.alloc(1));`;
+    const { exitCode } = await typeOnTerminal(
+      `process.stdin.setRawMode(true);
+       const producer = Bun.spawn({
+         cmd: [process.execPath, "-e", ${JSON.stringify(producer)}],
+         stdio: ["inherit", "pipe", "inherit"],
+       });
+       for await (const chunk of producer.stdout) process.stdout.write(chunk);
+       console.log("producer exited " + (await producer.exited));
+       require("node:fs").readSync(0, Buffer.alloc(1));`,
+      [
+        ["answer?", sampleThenType(flags, "dialog", "x\r")],
+        [
+          "answered x",
+          terminal => {
+            // What another reader of the same terminal does while the producer runs.
+            terminal.localFlags |= ECHO;
+            terminal.write("k");
+          },
+        ],
+        ["producer exited 0", sampleThenType(flags, "afterProducer", "k")],
+      ],
+    );
+    expect({ flags, exitCode }).toEqual({ flags: { dialog: lineMode, afterProducer: "ECHO" }, exitCode: 0 });
+  },
+);
+
 // Only the CRLF terminator's `\r` is stripped. An earlier `\r` is part of the answer.
 test.concurrent.each([
   ["hello\r\n", "hello"],

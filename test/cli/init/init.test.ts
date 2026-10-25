@@ -145,6 +145,54 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
   });
 
+  // A parent that reads keys (readline, a TUI) can run `bun init` with its
+  // terminal still in raw mode, where Enter is a lone CR.
+  test.skipIf(isWindows)("bun init text questions end at Enter on a terminal left in raw mode", async () => {
+    await using temp = tempDir("bun-init-raw-terminal", {});
+
+    const decoder = new TextDecoder();
+    let output = "";
+    const menu = Promise.withResolvers<void>();
+    const namePrompt = Promise.withResolvers<void>();
+    const entryPrompt = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 80,
+      rows: 24,
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("Select a project template")) menu.resolve();
+        if (output.includes("package name")) namePrompt.resolve();
+        if (output.includes("entry point")) entryPrompt.resolve();
+      },
+    });
+    terminal.setRawMode(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init"],
+      cwd: temp,
+      env: initEnv,
+      terminal,
+    });
+    // Fail with the child's output if it exits before a prompt we wait for.
+    const exitedEarly = proc.exited.then(code => {
+      throw new Error(`bun init exited before the prompt (code ${code}):\n${output}`);
+    });
+    exitedEarly.catch(() => {});
+
+    await Promise.race([menu.promise, exitedEarly]);
+    terminal.write("3");
+    await Promise.race([namePrompt.promise, exitedEarly]);
+    terminal.write("my-lib\r");
+    await Promise.race([entryPrompt.promise, exitedEarly]);
+    // Ctrl-D on the empty line is EOF: `bun init` exits before it writes a file.
+    terminal.write("\x04");
+
+    const exitCode = await proc.exited;
+    // The terminal echoes the answer, and the next question starts on a new line.
+    expect(Bun.stripANSI(output).replaceAll("\r", "")).toMatch(/package name .*my-lib\nentry point /);
+    expect(exitCode).toBe(0);
+  });
+
   test("bun init in folder", async () => {
     await using temp = tempDir("bun-init-in-folder", {
       "mydir": {

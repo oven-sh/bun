@@ -546,6 +546,65 @@ describe("Process Behavior", () => {
   });
 });
 
+describe("The question about warnings", () => {
+  // A parent that reads keys (readline, a TUI) can run `bun install` with its
+  // terminal still in raw mode, where Enter is a lone CR.
+  it.skipIf(isWindows)("ends at Enter on a terminal left in raw mode", async () => {
+    const ctx = await createTestContext();
+    try {
+      setContextHandler(ctx, dummyRegistryForContext(ctx, []));
+      const bunfig = await Bun.file(join(ctx.package_dir, "bunfig.toml")).text();
+      await Bun.write(join(ctx.package_dir, "bunfig.toml"), `${bunfig}\n[install.security]\nscanner = "./scanner.ts"`);
+      await Bun.write(
+        join(ctx.package_dir, "scanner.ts"),
+        `export const scanner = {
+           version: "1",
+           scan: async ({ packages }) => [
+             { package: packages[0].name, description: "a warning", level: "warn", url: "https://example.com" },
+           ],
+         };`,
+      );
+      await Bun.write(join(ctx.package_dir, "package.json"), JSON.stringify({ name: "my-app", version: "1.0.0" }));
+
+      let output = "";
+      const decoder = new TextDecoder();
+      const question = Promise.withResolvers<void>();
+      await using terminal = new Bun.Terminal({
+        cols: 200,
+        rows: 50,
+        data(_, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("Continue anyway? [y/N]")) question.resolve();
+        },
+      });
+      terminal.setRawMode(true);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "bar"],
+        cwd: ctx.package_dir,
+        env: bunEnv,
+        terminal,
+      });
+      // Fail with the child's output if it exits before the question.
+      const exitedEarly = proc.exited.then(code => {
+        throw new Error(`bun install exited before the question (code ${code}):\n${output}`);
+      });
+      exitedEarly.catch(() => {});
+
+      await Promise.race([question.promise, exitedEarly]);
+      terminal.write("y\r");
+
+      const exitCode = await proc.exited;
+      expect({
+        installed: existsSync(join(ctx.package_dir, "node_modules", "bar")),
+        exitCode,
+      }).toEqual({ installed: true, exitCode: 0 });
+    } finally {
+      destroyTestContext(ctx);
+    }
+  });
+});
+
 describe("Large Data Handling", () => {
   test("scanner returns many advisories", {
     scanner: async ({ packages }) => {

@@ -2580,6 +2580,11 @@ impl<'l> Loader<'l> {
         let mut load_plugin =
             |location: &Json, prefix: &[u8]| self.js_plugins.load_located(location, prefix);
         let named = self.named_plugins(Flavor::EslintRc)?;
+        let installed = installed_version(cwd, b"eslint");
+        let eslint_major = match installed.and_then(|it| minor_of(&it)) {
+            Some((9, _)) => 9,
+            _ => 8,
+        };
         let mut config = Config::from_legacy(
             self.linter.registry(),
             &LegacyOptions {
@@ -2591,6 +2596,7 @@ impl<'l> Loader<'l> {
                 plugins_from: plugins_from.as_deref(),
                 cascade,
                 named: &named,
+                eslint_major,
             },
             &mut files,
             &mut load,

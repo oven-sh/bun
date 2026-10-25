@@ -1074,7 +1074,7 @@ impl Reader<'_> {
             keeps_options: semantics.keeps_options,
             accepts_all_plugins: semantics.accepts_all_plugins,
             is_legacy: semantics.is_legacy,
-            eslint_major: if semantics.is_legacy { 8 } else { 10 },
+            eslint_major: 10,
             without_modules: false,
             infers_globals: crate::language::InferGlobals::No,
             lints_all_named_files: false,

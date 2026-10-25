@@ -7186,6 +7186,84 @@ console.log(A, B, C, D, E, f, H, I);
       });
     });
 
+    // ESLint 9 reads an `.eslintrc.*` too, with ESLINT_USE_FLAT_CONFIG=false. Its own rules and their defaults apply then.
+    describe("with an .eslintrc, the rules are those of the installed ESLint", () => {
+      const files = {
+        ".eslintrc.json": JSON.stringify({
+          root: true,
+          parserOptions: { ecmaVersion: 2022 },
+          rules: {
+            complexity: ["error", 1],
+            "no-magic-numbers": "error",
+            "no-misleading-character-class": "error",
+            "object-shorthand": "error",
+            "no-unused-vars": "error",
+            "no-constant-condition": "error",
+            "no-unused-private-class-members": "error",
+          },
+        }),
+        "a.js": `foo(+1);
+foo(/[👍]/);
+foo({ val: /** @type {number} */ (val) });
+function f(a) { return a?.b ?? a.c; }
+try { f(); } catch (e) {}
+while (true) { f(); }
+foo(class { #x = 1; });
+`,
+      };
+      // Each with the number of its suggestions.
+      const eslint8 = [
+        "no-magic-numbers 1:6-1:7 No magic number: 1. (0)",
+        "no-misleading-character-class 2:5-2:11 Unexpected surrogate pair in character class. Use 'u' flag. (1)",
+        "object-shorthand 3:7-3:39 Expected property shorthand. (0)",
+        "complexity 4:1-4:38 Function 'f' has a complexity of 2. Maximum allowed is 1. (0)",
+        "no-constant-condition 6:8-6:12 Unexpected constant condition. (0)",
+        "no-unused-private-class-members 7:13-7:15 '#x' is defined but never used. (0)",
+        "no-magic-numbers 7:18-7:19 No magic number: 1. (0)",
+      ];
+      const eslint9 = [
+        "no-magic-numbers 1:5-1:7 No magic number: +1. (0)",
+        "no-misleading-character-class 2:7-2:9 Unexpected surrogate pair in character class. Use 'u' flag. (1)",
+        "complexity 4:1-4:11 Function 'f' has a complexity of 3. Maximum allowed is 1. (0)",
+        "no-unused-vars 5:21-5:22 'e' is defined but never used. (0)",
+        "no-unused-private-class-members 7:13-7:15 '#x' is defined but never used. (0)",
+        "no-magic-numbers 7:18-7:19 No magic number: 1. (0)",
+      ];
+      test.each([
+        ["8.57.1", eslint8],
+        ["9.39.5", eslint9],
+        // ESLint 10 doesn't read the file.
+        ["10.12.0", eslint8],
+        ["none", eslint8],
+      ])("eslint %s", async (version, expected) => {
+        const installed = version !== "none" && {
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+        };
+        const { raw } = await lint({ ...files, ...installed }, ["-f", "json", "a.js"]);
+        const reports = (JSON.parse(raw)[0].messages as any[]).map(
+          it =>
+            `${it.ruleId} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message} (${it.suggestions?.length ?? 0})`,
+        );
+        expect(reports).toEqual(expected);
+      });
+
+      test("with an eslint.config.js too, a rule that only suggests since ESLint 10 doesn't with ESLint 9", async () => {
+        const { raw } = await lint(
+          {
+            "eslint.config.mjs": `export default [{ rules: { "no-unused-private-class-members": "error", "no-compare-neg-zero": "error" } }];`,
+            "a.js": "foo(class { #x = 1; }, a === -0);\n",
+            "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "9.39.5" }),
+          },
+          ["-f", "json", "a.js"],
+        );
+        const messages = JSON.parse(raw)[0].messages as any[];
+        expect(messages.map(it => [it.ruleId, it.suggestions])).toEqual([
+          ["no-unused-private-class-members", undefined],
+          ["no-compare-neg-zero", undefined],
+        ]);
+      });
+    });
+
     // Since ESLint 10, `eslint-scope` treats a JSX element's name as a reference. Before that, a plugin's rule has to
     // mark the variables that an element uses, like `react/jsx-uses-vars`. Here that rule is `local/uses-vars`, and
     // MARKS=off turns it off.

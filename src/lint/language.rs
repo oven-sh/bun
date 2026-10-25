@@ -236,9 +236,9 @@ pub struct LanguageOptions {
     /// Set for an ESLint 8 config: the settings that only ESLint 8 has. There, `/* eslint-env mocha */` defines an
     /// environment's variables, and espree only accepts syntax up to the configured `ecmaVersion`.
     pub eslint_8: Option<Arc<crate::linter::config::Eslint8>>,
-    /// The ESLint major version whose rule defaults, report positions and messages are used: 8 with ESLint 8 config
-    /// files, 8 or 9 with an `eslint.config.js` if that's the installed `eslint`, and 10 otherwise. It's also 10 with an
-    /// oxlint config, where [`is_oxlint`](Self::is_oxlint) decides instead.
+    /// The ESLint major version whose rule defaults, report positions and messages are used: 8 or 9 if that's the
+    /// installed `eslint`. Otherwise it's 8 with ESLint 8 config files and 10 with an `eslint.config.js`. It's also 10
+    /// with an oxlint config, where [`is_oxlint`](Self::is_oxlint) decides instead.
     pub eslint_major: u8,
     /// Don't read any file other than the one being linted. oxlint only does that with its `import` plugin.
     pub without_modules: bool,

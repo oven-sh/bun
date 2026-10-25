@@ -288,6 +288,13 @@ static MESSAGES: [(&str, &str, Message, u8); 4] = [
     ("no-useless-assignment", "unnecessaryAssignment", Message::new("unnecessaryAssignment", r##"This assigned value is not used in subsequent statements."##), 9),
 ];
 
+/// The rules that have suggestions today and none in ESLint 9. What has fixes is the same.
+#[rustfmt::skip]
+static SUGGEST_SINCE_10: [&str; 2] = [
+    "no-compare-neg-zero",
+    "no-unused-private-class-members",
+];
+
 /// `meta.schema` as JSON, where it differs from `schema::data`. Sorted by rule name.
 #[rustfmt::skip]
 static SCHEMAS: [(&str, &str); 77] = [
@@ -408,10 +415,11 @@ pub(crate) fn message_of(meta: &Meta, message: Message, major: u8) -> Message {
         .map_or(message, |it| it.2)
 }
 
-/// Returns whether the rule `meta` has fixes, and whether it has suggestions.
-pub(crate) fn changes_of(meta: &Meta) -> (bool, bool) {
-    let flags = match meta.plugin {
-        Plugin::Eslint => flags_of(meta.name.as_bytes()),
+/// Returns whether the rule `meta` has fixes, and whether it has suggestions, in ESLint `major`, which is 8 or 9.
+pub(crate) fn changes_of(meta: &Meta, major: u8) -> (bool, bool) {
+    let flags = match (meta.plugin, major) {
+        (Plugin::Eslint, 8) => flags_of(meta.name.as_bytes()),
+        (Plugin::Eslint, _) => return (true, !SUGGEST_SINCE_10.contains(&meta.name)),
         _ => None,
     };
     flags.map_or((true, true), |it| (it & FIXABLE != 0, it & SUGGESTS != 0))

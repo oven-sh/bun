@@ -87,6 +87,8 @@ pub struct LegacyOptions<'o> {
     pub cascade: usize,
     /// The plugins listed in bunfig.toml's `plugins`. ESLint 8 has no syntax for a path or for a different prefix.
     pub named: &'o [super::NamedPlugin],
+    /// [`LanguageOptions::eslint_major`](crate::language::LanguageOptions::eslint_major): 9 if ESLint 9 reads the files.
+    pub eslint_major: u8,
 }
 
 /// `IgnorePattern`'s `DotPatterns`. ESLint treats these as `.gitignore` lines.
@@ -2227,7 +2229,10 @@ impl Config {
     ) -> Result<Config, ConfigError> {
         // A `--rulesdir` rule with the same name as an ESLint rule inherits nothing from it.
         let replaced = options.rules.and_then(|it| it.get(b"rules")?.as_object());
-        let mut defaults = eslint_8_defaults();
+        let mut defaults = match options.eslint_major {
+            8 => eslint_8_defaults(),
+            _ => Json::Object(Vec::new()),
+        };
         if let Json::Object(entries) = &mut defaults {
             let replaced = replaced.unwrap_or_default();
             entries.retain(|it| !replaced.iter().any(|other| other.0 == it.0));
@@ -2313,6 +2318,7 @@ impl Config {
         Ok(Config {
             lints_all_named_files: !options.ignore,
             dot_patterns: Some(dot_patterns),
+            eslint_major: options.eslint_major,
             ..legacy.reader.finish(Semantics {
                 keeps_options: true,
                 accepts_all_plugins: true,

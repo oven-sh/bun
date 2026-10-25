@@ -83,6 +83,12 @@ for (const name of [...new Set([...names, ...rules9.keys()])].filter(name => !is
   }
 }
 
+const changed9 = key =>
+  [...rules9.keys()].filter(name => !rules9.get(name).meta[key] !== !rulesToday.get(name)?.meta[key]);
+if (changed9("fixable").length > 0) throw new Error(`fixable: ${changed9("fixable")}`);
+const suggestSince10 = changed9("hasSuggestions").sort(byBytes);
+for (const name of suggestSince10) if (rules9.get(name).meta.hasSuggestions) throw new Error(name);
+
 const bytes = schemas.reduce((sum, name) => sum + schemaOf(rules8.get(name)).length, 0);
 writeFileSync(
   join(import.meta.dirname, "eslint8.rs"),
@@ -123,6 +129,12 @@ ${[...environments.keys()]
 #[rustfmt::skip]
 static MESSAGES: [(&str, &str, Message, u8); ${messages.length}] = [
 ${messages.map(([name, id, idBefore, text, last]) => `    ("${name}", "${id}", Message::new("${idBefore}", ${quoted(text)}), ${last}),`).join("\n")}
+];
+
+/// The rules that have suggestions today and none in ESLint 9. What has fixes is the same.
+#[rustfmt::skip]
+static SUGGEST_SINCE_10: [&str; ${suggestSince10.length}] = [
+${suggestSince10.map(name => `    "${name}",`).join("\n")}
 ];
 
 /// \`meta.schema\` as JSON, where it differs from \`schema::data\`. Sorted by rule name.
@@ -169,10 +181,11 @@ pub(crate) fn message_of(meta: &Meta, message: Message, major: u8) -> Message {
         .map_or(message, |it| it.2)
 }
 
-/// Returns whether the rule \`meta\` has fixes, and whether it has suggestions.
-pub(crate) fn changes_of(meta: &Meta) -> (bool, bool) {
-    let flags = match meta.plugin {
-        Plugin::Eslint => flags_of(meta.name.as_bytes()),
+/// Returns whether the rule \`meta\` has fixes, and whether it has suggestions, in ESLint \`major\`, which is 8 or 9.
+pub(crate) fn changes_of(meta: &Meta, major: u8) -> (bool, bool) {
+    let flags = match (meta.plugin, major) {
+        (Plugin::Eslint, 8) => flags_of(meta.name.as_bytes()),
+        (Plugin::Eslint, _) => return (true, !SUGGEST_SINCE_10.contains(&meta.name)),
         _ => None,
     };
     flags.map_or((true, true), |it| (it & FIXABLE != 0, it & SUGGESTS != 0))

@@ -500,15 +500,16 @@ describe("bun", () => {
 
       // The command line for one <TAB> press: `words` is what readline made of the line.
       const defaultWordbreaks = ` \t\n"'><=;|&(:`;
-      function bash(words: string[], wordbreaks: string) {
+      function bash(line: string, words: string[], wordbreaks: string) {
         return [
           "bash",
           "--norc",
           "--noprofile",
           "-c",
-          `source ./bun.bash; COMP_WORDBREAKS="$1"; COMP_WORDS=(${words.join(" ")}); COMP_CWORD=${words.length - 1}; _bun_completions; printf '%s\\n' "\${COMPREPLY[@]}"`,
+          `source ./bun.bash; COMP_WORDBREAKS="$1"; COMP_LINE="$2"; COMP_WORDS=(${words.map(word => `"${word}"`).join(" ")}); COMP_CWORD=${words.length - 1}; _bun_completions; printf '%s\\n' "\${COMPREPLY[@]}"`,
           "bash",
           wordbreaks,
+          line,
         ];
       }
 
@@ -539,6 +540,8 @@ describe("bun", () => {
           "bun --loader .ts:j": ["js", "json", "jsx"],
           "bun --inspect=localhost:6499 run d": ["dev"],
           "bun --cwd=sub run li": ["lint:fix"],
+          // A blank ends the word, so `host:` and `te` stay apart.
+          "bun run dev -- host: te": ["test/", "test:unit"],
           // As before.
           "bun add --p": ["--peer", "--production"],
           "bun r": ["remove", "repl", "run"],
@@ -547,7 +550,8 @@ describe("bun", () => {
         // bash's default COMP_WORDBREAKS has ':' and '=', so readline makes them words of their own.
         const replies = await offered(String(dir), Object.keys(expected), line =>
           bash(
-            line.split(" ").flatMap(word => word.split(/([:=])/).filter(Boolean)),
+            line,
+            line.split(" ").flatMap(word => (word === "" ? [""] : word.split(/([:=])/).filter(Boolean))),
             defaultWordbreaks,
           ),
         );
@@ -565,7 +569,7 @@ describe("bun", () => {
             "bun run te": ["test/", "test:unit"],
           };
           const replies = await offered(String(dir), Object.keys(expected), line =>
-            bash(line.split(" "), defaultWordbreaks.replace(":", "")),
+            bash(line, line.split(" "), defaultWordbreaks.replace(":", "")),
           );
           expect(replies).toEqual(expected);
         },

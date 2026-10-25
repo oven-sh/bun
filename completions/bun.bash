@@ -86,11 +86,15 @@ _bun_reassemble_comp_words() {
     cword=${COMP_CWORD};
     [[ "${COMP_WORDBREAKS}" == *:* ]] || { words=( "${COMP_WORDS[@]}" ); return; };
 
-    local i j=-1;
+    local i j=-1 line="${COMP_LINE}" blank_before;
     for ((i = 0; i < ${#COMP_WORDS[@]}; i += 1)); do
+        # `bar: baz` and `bar :baz` stay two words: a blank on the line ends a word
+        blank_before="";
+        [[ "${line}" == [[:blank:]]* ]] && blank_before=1;
+        line="${line#*"${COMP_WORDS[i]}"}";
         # a ':' piece, or the piece right after one, continues the previous word
         # (never the command name itself)
-        if (( j >= 1 )) && [[ "${COMP_WORDS[i]}" == ":" || "${COMP_WORDS[i - 1]}" == ":" ]]; then
+        if (( j >= 1 )) && [[ -z "${blank_before}" ]] && [[ "${COMP_WORDS[i]}" == ":" || "${COMP_WORDS[i - 1]}" == ":" ]]; then
             words[j]+="${COMP_WORDS[i]}";
         else
             words[++j]="${COMP_WORDS[i]}";

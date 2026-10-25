@@ -2455,8 +2455,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break 'check_for_usestate false;
                 } {
                     debug_assert!(p.options.features.server_components.is_server_side());
-                    if !strings::starts_with(p.source.path.pretty, b"node_modules")
-                        && original_name == b"useState"
+                    if original_name == b"useState"
+                        && !bun_paths::strings::path_contains_node_modules_folder(
+                            p.source.path.text,
+                        )
                     {
                         p.log()
                             .add_error(

@@ -282,48 +282,112 @@ describe("source map remapping of the printed stack", () => {
     return { dir: String(dir), out: JSON.parse(stdout), stderr, exitCode };
   }
 
+  // main.js made of `lines`, with `map` beside it or in a data: URL.
+  function prebuilt(kind, lines, map) {
+    const json = JSON.stringify(map);
+    const url = kind === "inline" ? "data:application/json;base64," + btoa(json) : "main.js.map";
+    return {
+      "main.js": lines.join("\n") + `\n//# sourceMappingURL=${url}\n`,
+      ...(kind === "external" && { "main.js.map": json }),
+    };
+  }
+
   // A prebuilt file whose map names a source that is neither on disk nor in
   // `sourcesContent` (the shape of a deployed `bun build --target=bun
   // --sourcemap` artifact with the sources stripped). The original source can't
   // be shown, but the frames still have to be remapped, exactly like
-  // error.stack is.
-  test.concurrent("external map whose original source is unavailable", async () => {
-    const main = [
-      "// @bun",
-      'function thrower() { throw new Error("HOSTILE"); }',
-      "const out = {};",
-      "try { thrower(); } catch (e) { out.inspect = Bun.inspect(e); }",
-      "try { thrower(); } catch (e) { out.stack = e.stack; }",
-      "console.log(JSON.stringify(out));",
-      "thrower();",
-    ];
-    // One segment at column 0 of each generated line below, so every position on
-    // a line maps to the same original position: line 1 -> orig.ts:11:5, line 3
-    // -> 21:5, line 4 -> 31:5, line 6 -> 41:5. (Column 5 rather than 1 because
-    // error.stack prints no column at all for column 1.)
-    const map = {
-      version: 3,
-      sources: ["orig.ts"],
-      sourcesContent: [null],
-      names: [],
-      mappings: ";AAUI;;AAUA;AAUA;;AAUA",
-    };
-    const { dir, out, stderr, exitCode } = await run({
-      "main.js": main.join("\n") + "\n//# sourceMappingURL=main.js.map\n",
-      "main.js.map": JSON.stringify(map),
-    });
+  // error.stack is. `sourcesContent` is optional, and so is each entry of it.
+  describe.each(["external", "inline"])("%s map whose original source is unavailable", kind => {
+    test.concurrent.each([
+      ["[null]", { sourcesContent: [null] }],
+      ["absent", {}],
+      ["null", { sourcesContent: null }],
+      ["shorter than sources", { sourcesContent: [] }],
+      ["longer than sources", { sourcesContent: [null, "extra"] }],
+    ])("sourcesContent %s", async (_, sourcesContent) => {
+      const main = [
+        "// @bun",
+        'function thrower() { throw new Error("HOSTILE"); }',
+        "const out = {};",
+        "try { thrower(); } catch (e) { out.inspect = Bun.inspect(e); }",
+        "try { thrower(); } catch (e) { out.stack = e.stack; }",
+        "console.log(JSON.stringify(out));",
+        "thrower();",
+      ];
+      // One segment at column 0 of each generated line below, so every position on
+      // a line maps to the same original position: line 1 -> orig.ts:11:5, line 3
+      // -> 21:5, line 4 -> 31:5, line 6 -> 41:5. (Column 5 rather than 1 because
+      // error.stack prints no column at all for column 1.)
+      const map = {
+        version: 3,
+        sources: ["orig.ts"],
+        ...sourcesContent,
+        names: [],
+        mappings: ";AAUI;;AAUA;AAUA;;AAUA",
+      };
+      const { dir, out, stderr, exitCode } = await run(prebuilt(kind, main, map));
 
-    const files = ["orig.ts", "main.js"];
-    expect({
-      stack: frames(out.stack, dir, files),
-      inspect: frames(out.inspect, dir, files),
-      uncaught: frames(stderr, dir, files),
-    }).toEqual({
-      stack: ["at thrower (orig.ts:11:5)", "at orig.ts:31:5"],
-      inspect: ["at thrower (orig.ts:11:5)", "at orig.ts:21:5"],
-      uncaught: ["at thrower (orig.ts:11:5)", "at orig.ts:41:5"],
+      const files = ["orig.ts", "main.js"];
+      expect({
+        stack: frames(out.stack, dir, files),
+        inspect: frames(out.inspect, dir, files),
+        uncaught: frames(stderr, dir, files),
+      }).toEqual({
+        stack: ["at thrower (orig.ts:11:5)", "at orig.ts:31:5"],
+        inspect: ["at thrower (orig.ts:11:5)", "at orig.ts:21:5"],
+        uncaught: ["at thrower (orig.ts:11:5)", "at orig.ts:41:5"],
+      });
+      expect(exitCode).toBe(1);
     });
-    expect(exitCode).toBe(1);
+  });
+
+  // inA() maps to source 0 and inB() to source 1, both at 2:5. The first error
+  // printed reads its content while the map is decoded, the later ones look it
+  // up by source index.
+  const twoSources = [
+    "// @bun",
+    'function inA() { throw new Error("A"); }',
+    'function inB() { throw new Error("B"); }',
+    "const inspect = fn => { try { fn(); } catch (e) { return Bun.inspect(e); } };",
+    "console.log(JSON.stringify({ a: inspect(inA), b: inspect(inB), aAgain: inspect(inA) }));",
+  ];
+  const twoSourcesMap = { version: 3, names: [], mappings: ";AACI;ACAA" };
+
+  describe.each(["external", "inline"])("%s map with content for some of its sources", kind => {
+    test.concurrent.each([
+      ["a source without an entry", ["a.ts", "b.ts"], ["// a.ts\n    in_a();\n"], "at inB (b.ts:2:5)"],
+      // The mapping of inB() names no source. Where that puts its frame is not
+      // the point here, only that the leftover entry is not shown as its code.
+      [
+        "an entry without a source",
+        ["a.ts"],
+        ["// a.ts\n    in_a();\n", "// extra\n    in_extra();\n"],
+        expect.stringMatching(/^at inB \(/),
+      ],
+    ])("%s", async (_, sources, sourcesContent, inB) => {
+      const map = { ...twoSourcesMap, sources, sourcesContent };
+      const { dir, out, exitCode } = await run(prebuilt(kind, twoSources, map));
+
+      const summary = text => ({
+        at: frames(text, dir, ["a.ts", "b.ts", "main.js"])[0],
+        shown: ["in_a()", "in_extra()"].filter(code => text.includes(code)),
+      });
+      expect({ a: summary(out.a), b: summary(out.b), aAgain: summary(out.aAgain) }).toEqual({
+        a: { at: "at inA (a.ts:2:5)", shown: ["in_a()"] },
+        b: { at: inB, shown: [] },
+        aAgain: { at: "at inA (a.ts:2:5)", shown: ["in_a()"] },
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test.concurrent.each(["text", {}])("a sourcesContent of %j is rejected", async sourcesContent => {
+    const map = { ...twoSourcesMap, sources: ["a.ts", "b.ts"], sourcesContent };
+    const { dir, out, stderr, exitCode } = await run(prebuilt("external", twoSources, map));
+
+    expect(frames(out.a, dir, ["a.ts", "main.js"])[0]).toStartWith("at inA (main.js:2:");
+    expect(stderr).toContain("InvalidSourceMap");
+    expect(exitCode).toBe(0);
   });
 
   // Modules bun transpiled itself. `present.ts` stays on disk; `deleted.ts` is

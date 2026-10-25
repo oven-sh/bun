@@ -21,13 +21,11 @@ use crate::defines_table::{
 // directly with no cross-crate hook.
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
-    Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines, UserDefines,
-    UserDefinesArray, are_parts_equal,
+    Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, PureGlobals, RawDefines,
+    UserDefines, UserDefinesArray, are_parts_equal,
 };
 
-/// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.
-pub(crate) type DefineDataInit<'a> = Options<'a>;
-/// Alias for `ExprData` so `options.rs` can write `DefineValue::EUndefined(..)`.
+/// Alias for `ExprData` so `options.rs` can write `DefineValue::EString(..)`.
 pub(crate) use bun_ast::ExprData as DefineValue;
 
 // `Expr::Data` stores `Number`/`Undefined` inline (not via pointer), so no

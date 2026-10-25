@@ -12,6 +12,11 @@
 //! Note that membership in this list says nothing about whether calling any of
 //! these functions has any side effects. It only says something about
 //! referencing these function without calling them.
+//!
+//! The identifier list has two classes. Every environment defines a
+//! `Universal` name. An `Other` name is a browser API, and a read of it throws a
+//! ReferenceError where it is not defined, so only a parse with
+//! `PureGlobals::All` assumes it.
 
 use crate as js_ast;
 use crate::defines;
@@ -270,6 +275,7 @@ pub(crate) enum PureGlobalIdentifierValue {
     NaN,
     Infinity,
     StrictUndefined,
+    Universal,
     Other,
 }
 
@@ -279,7 +285,9 @@ impl PureGlobalIdentifierValue {
             PureGlobalIdentifierValue::NaN => identifiers::nan(),
             PureGlobalIdentifierValue::Infinity => identifiers::infinity(),
             PureGlobalIdentifierValue::StrictUndefined => identifiers::undefined(),
-            PureGlobalIdentifierValue::Other => pure_global_identifier_define(),
+            PureGlobalIdentifierValue::Universal | PureGlobalIdentifierValue::Other => {
+                pure_global_identifier_define()
+            }
         }
     }
 }

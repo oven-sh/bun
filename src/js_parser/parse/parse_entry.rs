@@ -298,6 +298,7 @@ impl<'a> Options<'a> {
                 remove_cjs_module_wrapper: f.remove_cjs_module_wrapper,
                 runtime_transpiler_cache: None,
                 lower_using: f.lower_using,
+                pure_globals: f.pure_globals,
                 bundler_feature_flags: None,
                 define_hash: f.define_hash,
                 repl_mode: f.repl_mode,

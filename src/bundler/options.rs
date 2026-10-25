@@ -912,20 +912,6 @@ pub(crate) fn defines_from_transform_options(
         }
     }
 
-    if target.is_bun() {
-        if !user_defines.contains(b"window") {
-            environment_defines.get_or_put_value(
-                b"window",
-                defines::DefineData::init(defines::DefineDataInit {
-                    valueless: true,
-                    original_name: Some(b"window".as_slice()),
-                    value: defines::DefineValue::EUndefined(Default::default()),
-                    ..Default::default()
-                }),
-            )?;
-        }
-    }
-
     let resolved_defines = defines::DefineData::from_input(&user_defines, drop, log, bump)?;
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");

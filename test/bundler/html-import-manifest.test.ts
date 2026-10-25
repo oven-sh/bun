@@ -452,6 +452,45 @@ console.log("About manifest:", aboutHtml);
     },
   });
 
+  // The script of an imported HTML file runs in a browser, so its chunk assumes
+  // the browser APIs, as a build for the browser does. The server chunk runs
+  // in Bun, where a read of `document` throws a ReferenceError.
+  for (const minifySyntax of [false, true]) {
+    itBundled(`html-import/browser-chunk-assumes-browser-globals${minifySyntax ? "-minify-syntax" : ""}`, {
+      outdir: "out/",
+      target: "bun",
+      minifySyntax,
+      entryPoints: ["/server.js"],
+      files: {
+        "/server.js": `
+          import html from "./client.html";
+          function probe() {
+            try {
+              document;
+              return "no ReferenceError";
+            } catch (e) {
+              return e.name;
+            }
+          }
+          console.log(html.index, probe());
+        `,
+        "/client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head><body></body></html>`,
+        "/client.js": `
+          window;
+          document;
+          HTMLElement;
+          console.log("client");
+        `,
+      },
+      run: { stdout: "./client.html ReferenceError" },
+      onAfterBundle(api) {
+        const [manifest] = readManifests(api, "out/server.js");
+        const chunk = manifest.files.find(file => file.loader === "js")!;
+        expect(api.readFile(join("out", chunk.path)).trim()).toBe('// client.js\nconsole.log("client");');
+      },
+    });
+  }
+
   // Each page only gets the chunks and assets its own code can load.
   itBundled("html-import/splitting-attributes-lazy-chunks-to-their-page", {
     outdir: "out/",

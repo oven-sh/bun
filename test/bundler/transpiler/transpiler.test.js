@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
 import { join } from "path";
+import pureGlobals from "../../../src/js_parser/defines_table.string-map.ts";
 
 describe("Bun.Transpiler", () => {
   const transpiler = new Bun.Transpiler({
@@ -6883,5 +6884,118 @@ describe("same-target destructuring with an unstable target", () => {
       stable: "a1b1",
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+// The transpiler assumes that a read of a known global has no effect, and drops
+// the read when nothing uses its value. Most of the names in that list are
+// browser APIs. Bun does not define them, and a read of a name that is not
+// defined throws a ReferenceError. A transpiler for a Bun target assumes only
+// the names that every environment defines. Browser and Node.js targets assume
+// the whole list, as esbuild does.
+describe("a read of a browser global", () => {
+  const forBun = [
+    new Bun.Transpiler({ loader: "js", target: "bun" }),
+    new Bun.Transpiler({ loader: "js", target: "bun", minify: { syntax: true } }),
+  ];
+
+  it("stays for a Bun target", () => {
+    const cases = [
+      ["document;", "document;\n"],
+      ["void document;", "document;\n"],
+      ["!document;", "document;\n"],
+      ["[document];", "document;\n"],
+      ["({ a: document });", "document;\n"],
+      ["document === 1;", "document;\n"],
+      ["document ? 1 : 2;", "document;\n"],
+      ["document || 1;", "document;\n"],
+      ["document && 1;", "document;\n"],
+      ["document ?? 1;", "document;\n"],
+      ["x = (document, 1);", "x = (document, 1);\n"],
+      ["if (document) {}", "if (document)\n  ;\n"],
+      ["if (!document) {}", "if (!document)\n  ;\n"],
+      ["/* @__PURE__ */ f(document);", "document;\n"],
+      ["x = [1, document][0];", "x = [1, document][0];\n"],
+      // Every group of the list: CSSOM, SVG and the other browser APIs.
+      ["CSSStyleSheet;", "CSSStyleSheet;\n"],
+      ["SVGElement;", "SVGElement;\n"],
+      ["HTMLElement;", "HTMLElement;\n"],
+      ["window;", "window;\n"],
+      // Bun defines `fetch`, but a program can delete it.
+      ["fetch;", "fetch;\n"],
+      // `location` throws first when both are missing.
+      [
+        "function f() { const a = document; return [location, a]; }",
+        "function f() {\n  const a = document;\n  return [location, a];\n}\n",
+      ],
+      // A getter on `globalThis.document` runs once for each read.
+      ["var a = document.a, b = document.b;", "var a = document.a, b = document.b;\n"],
+    ];
+    for (const transpiler of forBun) {
+      expect(cases.map(([input]) => [input, transpiler.transformSync(input)])).toEqual(cases);
+    }
+  });
+
+  it("is dropped for a Bun target when every environment defines the name", () => {
+    const cases = [
+      ["Math;", ""],
+      ["void URL;", ""],
+      ["!setTimeout;", ""],
+      ["x = (Math, 1);", "x = 1;\n"],
+      ["if (console) {}", ""],
+      ["var a = Math.cos, b = Math.sin;", "var { cos: a, sin: b } = Math;\n"],
+      ["typeof document;", ""],
+    ];
+    for (const transpiler of forBun) {
+      expect(cases.map(([input]) => [input, transpiler.transformSync(input)])).toEqual(cases);
+    }
+  });
+
+  it("is dropped for a browser target and for a Node.js target", () => {
+    const cases = [
+      ["document;", ""],
+      ["void document;", ""],
+      ["x = (document, 1);", "x = 1;\n"],
+      ["if (document) {}", ""],
+      ["x = [1, document][0];", "x = 1;\n"],
+      ["window;", ""],
+      ["fetch;", ""],
+      ["madeUpName;", "madeUpName;\n"],
+    ];
+    for (const target of ["browser", "node"]) {
+      const transpiler = new Bun.Transpiler({ loader: "js", target, minify: { syntax: true } });
+      expect(cases.map(([input]) => [input, transpiler.transformSync(input)])).toEqual(cases);
+    }
+  });
+
+  it("is dropped for a Bun target when a define names the global", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js", target: "bun", define: { document: "document" } });
+    const cases = [
+      ["document;", ""],
+      ["x = (document, 1);", "x = 1;\n"],
+      ["if (document) {}", ""],
+      ["location;", "location;\n"],
+    ];
+    expect(cases.map(([input]) => [input, transpiler.transformSync(input)])).toEqual(cases);
+  });
+
+  it("Bun defines every name of the Universal class", async () => {
+    const universal = pureGlobals.entries.filter(([, tag]) => tag === "Universal").map(([name]) => name);
+    expect(universal).toContain("Math");
+    expect(universal.filter(name => !(name in globalThis))).toEqual([]);
+
+    const url = URL.createObjectURL(
+      new Blob([`postMessage(${JSON.stringify(universal)}.filter(name => !(name in globalThis)));`]),
+    );
+    const worker = new Worker(url);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.onmessage = event => resolve(event.data);
+      worker.onerror = event => reject(new Error(event.message));
+      expect(await promise).toEqual([]);
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
   });
 });

@@ -278,7 +278,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `&DefineData` is tied to `'a`, not `&*p`, and `&mut self`
             // helpers (`value_for_define`) below need no lifetime laundering.
             let defines = p.define;
-            if let Some(def) = defines.for_identifier(name) {
+            if let Some(def) = defines.for_identifier(name, p.options.features.pure_globals) {
                 if !def.valueless() {
                     let newvalue: Expr =
                         p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);

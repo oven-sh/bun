@@ -1529,6 +1529,7 @@ impl<'a> Transpiler<'a> {
                 // JavaScriptCore implements `using` / `await using` natively, so
                 // when targeting Bun there is no need to lower them.
                 opts.features.lower_using = !target.is_bun();
+                opts.features.pure_globals = crate::defines::PureGlobals::for_target(target);
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = self.options.minify_syntax;

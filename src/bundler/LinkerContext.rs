@@ -4076,6 +4076,22 @@ impl<'a> LinkerContext<'a> {
                                 ..Default::default()
                             };
                         }
+
+                        // Whatever prints this read depends on the part that
+                        // declares that file's exports object. esbuild adds it to
+                        // every import statement of such a file instead, which
+                        // also keeps the file for names that bind statically.
+                        let deps = self.top_level_symbols_to_parts(
+                            next_tracker.source_index.get(),
+                            next_tracker.import_ref,
+                        );
+                        re_exports.reserve(deps.len());
+                        for &dep in deps {
+                            re_exports.push(Dependency {
+                                part_index: dep,
+                                source_index: bun_ast::Index::init(next_tracker.source_index.get()),
+                            });
+                        }
                     }
                 }
                 ImportTrackerStatus::NoMatch => {
@@ -4624,6 +4640,26 @@ impl<'a> LinkerContext<'a> {
                             alias: result.alias,
                             ..Default::default()
                         }));
+                    // Not empty when the namespace is another file's exports
+                    // object (`DynamicFallback`). The entry binds the item to
+                    // itself, so the item still prints through its alias, and
+                    // each reader of `imports_to_bind` gets the dependencies,
+                    // like for a `NormalAndNamespace` match.
+                    if !re_exports.is_empty() {
+                        imports_to_bind
+                            .put(
+                                import_ref,
+                                crate::ImportData {
+                                    re_exports,
+                                    data: ImportTracker {
+                                        source_index: crate::Index::init(source_index),
+                                        import_ref,
+                                        ..Default::default()
+                                    },
+                                },
+                            )
+                            .expect("unreachable");
+                    }
                 }
                 MatchImportKind::Cycle => {
                     let source = self.get_source(source_index);

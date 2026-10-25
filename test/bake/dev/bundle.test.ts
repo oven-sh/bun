@@ -1769,8 +1769,10 @@ devTest("finds a module that moved before any build read it", {
       import { c } from 'lib/c';
       console.log('${label}', a, c);
     `;
-    // This build fails to open c.js. The next one reads the directory again.
+    // This build resolves lib/c from the old listing and fails to open c.js.
     await dev.write("index.ts", importsC("first"));
+    expect(await exportsInBundle()).toEqual(["EXPORT_A"]);
+    // This one reads the directory again.
     await dev.write("index.ts", importsC("second"));
     expect(await exportsInBundle()).toEqual(["EXPORT_A", "EXPORT_C"]);
   },
@@ -1796,7 +1798,7 @@ devTest("reports a removed package to a page that imports a file beside its barr
   async test(dev) {
     expect((await dev.fetch("/page1")).status).toBe(200);
     fs.rmSync(dev.join("node_modules/lib"), { recursive: true });
-    await dev.fetch("/page2");
+    expect((await dev.fetch("/page2")).status).toBe(500);
     expect((await dev.fetch("/page1")).status).toBe(500);
   },
 });

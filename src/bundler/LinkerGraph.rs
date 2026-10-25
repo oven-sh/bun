@@ -150,6 +150,14 @@ pub mod js_meta {
         pub(crate) needs_export_symbol_from_runtime: bool,
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
+        /// A lifted CommonJS file whose exports are all known at bundle time:
+        /// the parser lifted every `exports.x = ...` (it did not keep the file
+        /// CommonJS), and no `export *` of the file reaches a file with
+        /// unknown exports. Step 1 of `scan_imports_and_exports` keeps the
+        /// `__commonJS` wrapper of such a file when an importer holds its
+        /// `module.exports`. Its `exports_kind` is then `Cjs` like a genuine
+        /// CommonJS file, but an `export *` of it still resolves statically.
+        pub(crate) lifted_exports_are_static: bool,
         pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;
@@ -854,13 +862,22 @@ impl<'a> LinkerGraph<'a> {
         }
 
         let src_named_exports: &[bundled_ast::NamedExports] = self.ast.items_named_exports();
-        let dest_resolved_exports: &mut [ResolvedExports] = self.meta.items_resolved_exports_mut();
+        let src_exports_kind: &[bun_ast::ExportsKind] = self.ast.items_exports_kind();
+        let src_ast_flags: &[bundled_ast::Flags] = self.ast.items_flags();
+        let meta = self.meta.split_mut();
+        let dest_resolved_exports: &mut [ResolvedExports] = meta.resolved_exports;
+        let dest_flags: &mut [js_meta::Flags] = meta.flags;
         debug_assert_eq!(src_named_exports.len(), dest_resolved_exports.len());
         for (source_index, (src, dest)) in src_named_exports
             .iter()
             .zip(dest_resolved_exports.iter_mut())
             .enumerate()
         {
+            // Snapshot of the parser's verdict, before the linker overwrites
+            // `exports_kind` for a lifted file that keeps its wrapper.
+            dest_flags[source_index].lifted_exports_are_static = src_ast_flags[source_index]
+                .contains(bundled_ast::Flags::COMMONJS_LIFTED_TO_ESM)
+                && src_exports_kind[source_index] != bun_ast::ExportsKind::Cjs;
             let mut resolved = ResolvedExports::default();
             resolved
                 .ensure_total_capacity(src.count())

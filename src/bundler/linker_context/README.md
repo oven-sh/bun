@@ -182,6 +182,7 @@ _What happens_:
 - Recursively traverses export star chains to collect all re-exported names
 - Handles export star conflicts when multiple modules export the same name
 - Ignores export stars from CommonJS modules (since their exports aren't statically analyzable)
+- A lifted CommonJS module that keeps its `__commonJS` wrapper (step 1 keeps it when an importer holds its `module.exports`) still has a static export list. An export star from it resolves at bundle time. Each name becomes a read off the export star's namespace (`var ns = __toESM(require_x())`, then `ns.name`), the same shape as a named import of a wrapped module.
 - Generates code for expression-style loaders (JSON, CSS modules, etc.)
 
 _Export star resolution algorithm_:

@@ -19,11 +19,11 @@ use crate::bundled_ast::{self, NamedExports, NamedImports};
 use crate::options::{self, Format, Loader};
 use crate::perf;
 use crate::{
-    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, LinkerContext, Part,
-    RefImportData, ResolvedExports, WrapKind, js_meta,
+    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, LinkerContext,
+    LinkerGraph, Part, RefImportData, ResolvedExports, WrapKind, js_meta,
 };
 use bun_ast::symbol::{self, Kind as SymbolKind};
-use bun_ast::{Dependency, ExportsKind, PartList, Ref};
+use bun_ast::{Dependency, ExportsKind, G, PartList, Ref};
 
 use crate::linker_context_mod::LinkerCtx;
 
@@ -532,9 +532,16 @@ pub(crate) fn scan_imports_and_exports(
                             exports_kind,
                             named_exports,
                             ast_flags: ast_flags_list,
+                            flags,
+                            parts_list,
+                            top_level_symbol_to_parts_overlay: meta
+                                .top_level_symbol_to_parts_overlay,
+                            wrapped_lifted_names: HashMap::default(),
+                            wrapped_lifted_targets: HashMap::default(),
                         });
                     }
                     export_star_ctx.as_mut().unwrap().add_exports(
+                        &mut this.graph,
                         resolved_exports,
                         id,
                         source_index,
@@ -1355,7 +1362,13 @@ pub(crate) fn scan_imports_and_exports(
                         let other_id = other_source_index as usize;
                         debug_assert!(other_id < this.graph.meta.len());
                         let other_export_kind = col_ref!(exports_kind)[other_id];
-                        if other_source_index != source_index && other_export_kind.is_dynamic() {
+                        if other_source_index != source_index
+                            && other_export_kind.is_dynamic()
+                            && !export_star_target_is_wrapped_lifted(
+                                other_export_kind,
+                                col_ref!(flags)[other_id],
+                            )
+                        {
                             happens_at_runtime = true;
                         }
 
@@ -1445,6 +1458,21 @@ fn should_call_runtime_require(format: options::Format) -> bool {
     format != Format::Cjs
 }
 
+/// The target of an `export *` is a lifted CommonJS file that keeps its
+/// `__commonJS` wrapper (step 1 made it `Cjs` so that an importer gets the real
+/// `module.exports`) and whose exports are still all known at bundle time. The
+/// `export *` resolves statically. Each name is a property read off the
+/// `__toESM(require_x())` namespace, like a named import of a wrapped file.
+#[inline]
+pub(crate) fn export_star_target_is_wrapped_lifted(kind: ExportsKind, flags: js_meta::Flags) -> bool {
+    kind == ExportsKind::Cjs && flags.lifted_exports_are_static
+}
+
+#[inline]
+fn same_export(a: ImportTracker, b: ImportTracker) -> bool {
+    a.source_index.get() == b.source_index.get() && a.import_ref == b.import_ref
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // DependencyWrapper
 // ──────────────────────────────────────────────────────────────────────────
@@ -1516,8 +1544,14 @@ impl DependencyWrapper<'_> {
             };
             if found_dynamic {
                 for frame in self.export_star_stack.drain(..) {
-                    self.exports_kind[frame.source_index as usize] =
-                        ExportsKind::EsmWithDynamicFallback;
+                    let id = frame.source_index as usize;
+                    // An `export *` of this file reaches a file with unknown
+                    // exports, so its own export list is not static either.
+                    self.flags[id].lifted_exports_are_static = false;
+                    // A wrapped lifted file stays `Cjs`: the wrapper needs it.
+                    if self.exports_kind[id] != ExportsKind::Cjs {
+                        self.exports_kind[id] = ExportsKind::EsmWithDynamicFallback;
+                    }
                 }
                 return true;
             }
@@ -1529,7 +1563,15 @@ impl DependencyWrapper<'_> {
     fn enter_export_star(&mut self, source_index: IndexInt) -> ExportStarEntry {
         // Terminate the traversal now if this file already has dynamic exports
         match self.exports_kind[source_index as usize] {
-            ExportsKind::Cjs | ExportsKind::EsmWithDynamicFallback => {
+            ExportsKind::Cjs
+                if !export_star_target_is_wrapped_lifted(
+                    ExportsKind::Cjs,
+                    self.flags[source_index as usize],
+                ) =>
+            {
+                return ExportStarEntry::Dynamic;
+            }
+            ExportsKind::EsmWithDynamicFallback => {
                 return ExportStarEntry::Dynamic;
             }
             _ => {}
@@ -1595,7 +1637,7 @@ impl DependencyWrapper<'_> {
 // ──────────────────────────────────────────────────────────────────────────
 struct ExportStarContext<'a> {
     import_records_list: *mut [ImportRecordList<'a>],
-    stack: Vec<ExportStarFrame>,
+    stack: Vec<ResolveExportStarFrame>,
     /// Has a bit set for each source index on `stack`.
     on_stack: bun_collections::AutoBitSet,
     exports_kind: *mut [ExportsKind],
@@ -1603,6 +1645,37 @@ struct ExportStarContext<'a> {
     imports_to_bind: *mut [RefImportData],
     export_star_records: *mut [bun_alloc::AstVec<u32>],
     ast_flags: *mut [AstFlags],
+    flags: *mut [js_meta::Flags],
+    parts_list: *mut [PartList<'a>],
+    top_level_symbol_to_parts_overlay: *mut [js_meta::TopLevelSymbolToParts],
+    /// The symbol made for one name read through one `export *` of a wrapped
+    /// lifted file, by (file, import record, alias). `add_exports` runs once
+    /// per file that has export stars, so the same edge is walked from every
+    /// file whose export stars reach it.
+    wrapped_lifted_names: HashMap<(IndexInt, u32, &'static [u8]), Ref>,
+    /// The export each such symbol stands for, for the ambiguity check.
+    wrapped_lifted_targets: HashMap<Ref, ImportTracker>,
+}
+
+/// A file in the `export *` walk of `add_exports` and the index of its next
+/// export star record.
+struct ResolveExportStarFrame {
+    source_index: IndexInt,
+    next_record: usize,
+    /// Set once the walk has passed through an `export *` of a wrapped lifted
+    /// file: every name found from here on is read off that star's namespace.
+    via: Option<WrappedLiftedExportStar>,
+}
+
+/// The `export *` statement of `source_index` whose target is a wrapped lifted
+/// file. `namespace_ref` is the statement's namespace symbol, which
+/// `convert_stmts_for_chunk` declares as `var ns = __toESM(require_x())`.
+#[derive(Clone, Copy)]
+struct WrappedLiftedExportStar {
+    source_index: IndexInt,
+    import_record_index: u32,
+    namespace_ref: Ref,
+    part_index: u32,
 }
 
 impl<'a> ExportStarContext<'a> {
@@ -1611,12 +1684,13 @@ impl<'a> ExportStarContext<'a> {
     /// `export *` path from `source_index` to the file being merged.
     fn add_exports(
         &mut self,
+        graph: &mut LinkerGraph<'a>,
         resolved_exports: *mut [ResolvedExports],
         target_id: usize,
         source_index: IndexInt,
     ) {
         debug_assert!(self.stack.is_empty());
-        self.push(source_index);
+        self.push(source_index, None);
 
         while let Some(frame) = self.stack.last_mut() {
             let source_index = frame.source_index;
@@ -1628,6 +1702,7 @@ impl<'a> ExportStarContext<'a> {
                 continue;
             };
             frame.next_record += 1;
+            let mut via = frame.via;
 
             // A lifted file's export star was `module.exports = ns`, so it re-exports `default` too.
             let reexports_default = self.stack.iter().all(|frame| {
@@ -1646,15 +1721,18 @@ impl<'a> ExportStarContext<'a> {
                 continue;
             }
 
-            // Export stars from a CommonJS module don't work because they can't be
-            // statically discovered. Just silently ignore them in this case.
-            //
-            // We could attempt to check whether the imported file still has ES6
-            // exports even though it still uses CommonJS features. However, when
-            // doing this we'd also have to rewrite any imports of these export star
-            // re-exports as property accesses off of a generated require() call.
             if col_ref!(self.exports_kind)[other_id] == ExportsKind::Cjs {
-                continue;
+                if !export_star_target_is_wrapped_lifted(
+                    ExportsKind::Cjs,
+                    col_ref!(self.flags)[other_id],
+                ) {
+                    // The exports of a CommonJS module are not known at bundle
+                    // time. The export star runs at run time instead (`__reExport`).
+                    continue;
+                }
+                if via.is_none() {
+                    via = Some(self.export_star_of(source_index, import_id));
+                }
             }
 
             // Collect (alias, name) pairs so the
@@ -1684,45 +1762,56 @@ impl<'a> ExportStarContext<'a> {
                     }
                 }
 
+                // The export this name resolves to.
+                let target = ImportTracker {
+                    import_ref: name.ref_,
+                    source_index: Index::source(other_source_index),
+                    name_loc: name.alias_loc,
+                };
+                // What `resolved_exports` binds to: the export itself, or a
+                // symbol that reads it off the wrapped lifted file's namespace.
+                let binding = match via {
+                    None => target,
+                    Some(via) => ImportTracker {
+                        import_ref: self.wrapped_lifted_name(graph, via, alias_slice, target),
+                        source_index: Index::source(via.source_index),
+                        name_loc: name.alias_loc,
+                    },
+                };
+
                 let gop = col!(resolved_exports)[target_id]
                     .get_or_put(alias_slice)
                     .expect("oom");
                 if !gop.found_existing {
                     // Initialize the re-export
                     *gop.value_ptr = ExportData {
-                        data: ImportTracker {
-                            import_ref: name.ref_,
-                            source_index: Index::source(other_source_index),
-                            name_loc: name.alias_loc,
-                        },
+                        data: binding,
                         ..Default::default()
                     };
 
                     // Make sure the symbol is marked as imported so that code splitting
                     // imports it correctly if it ends up being shared with another chunk
-                    col!(self.imports_to_bind)[source_index as usize]
-                        .put(
-                            name.ref_,
-                            ImportData {
-                                data: ImportTracker {
-                                    import_ref: name.ref_,
-                                    source_index: Index::source(other_source_index),
+                    if via.is_none() {
+                        col!(self.imports_to_bind)[source_index as usize]
+                            .put(
+                                name.ref_,
+                                ImportData {
+                                    data: ImportTracker {
+                                        import_ref: name.ref_,
+                                        source_index: Index::source(other_source_index),
+                                        ..Default::default()
+                                    },
                                     ..Default::default()
                                 },
-                                ..Default::default()
-                            },
-                        )
-                        .expect("oom");
-                } else if gop.value_ptr.data.source_index.get() != other_source_index {
+                            )
+                            .expect("oom");
+                    }
+                } else if !same_export(self.resolution(gop.value_ptr.data), target) {
                     // Two different re-exports colliding makes it potentially ambiguous
                     gop.value_ptr
                         .potentially_ambiguous_export_star_refs
                         .push(ImportData {
-                            data: ImportTracker {
-                                source_index: Index::source(other_source_index),
-                                import_ref: name.ref_,
-                                name_loc: name.alias_loc,
-                            },
+                            data: binding,
                             ..Default::default()
                         });
                 }
@@ -1731,17 +1820,88 @@ impl<'a> ExportStarContext<'a> {
             // Search further through this file's export stars, unless it's
             // already on the stack (a cycle)
             if !self.on_stack.is_set(other_id) {
-                self.push(other_source_index);
+                self.push(other_source_index, via);
             }
         }
     }
 
-    fn push(&mut self, source_index: IndexInt) {
+    fn push(&mut self, source_index: IndexInt, via: Option<WrappedLiftedExportStar>) {
         self.on_stack.set(source_index as usize);
-        self.stack.push(ExportStarFrame {
+        self.stack.push(ResolveExportStarFrame {
             source_index,
             next_record: 0,
+            via,
         });
+    }
+
+    /// The export a `resolved_exports` entry stands for.
+    fn resolution(&self, binding: ImportTracker) -> ImportTracker {
+        self.wrapped_lifted_targets
+            .get(&binding.import_ref)
+            .copied()
+            .unwrap_or(binding)
+    }
+
+    /// The `export *` statement of `source_index` for `import_record_index`.
+    fn export_star_of(
+        &self,
+        source_index: IndexInt,
+        import_record_index: u32,
+    ) -> WrappedLiftedExportStar {
+        for (part_index, part) in col_ref!(self.parts_list)[source_index as usize]
+            .as_slice()
+            .iter()
+            .enumerate()
+        {
+            for stmt in part.stmts.slice() {
+                if let bun_ast::StmtData::SExportStar(export_star) = stmt.data
+                    && export_star.import_record_index == import_record_index
+                {
+                    return WrappedLiftedExportStar {
+                        source_index,
+                        import_record_index,
+                        namespace_ref: export_star.namespace_ref,
+                        part_index: part_index as u32,
+                    };
+                }
+            }
+        }
+        unreachable!("an export star record always has its statement")
+    }
+
+    /// The symbol in `via.source_index` that reads `alias` off the namespace
+    /// of `via`'s export star, made on first use. It is an import whose
+    /// `namespace_alias` prints it as `ns.alias`, the shape a named import of
+    /// a wrapped CommonJS file takes in step 4.
+    fn wrapped_lifted_name(
+        &mut self,
+        graph: &mut LinkerGraph<'a>,
+        via: WrappedLiftedExportStar,
+        alias: &[u8],
+        target: ImportTracker,
+    ) -> Ref {
+        // SAFETY: `alias` is a `named_exports` key in the parser arena, which
+        // outlives the link pass.
+        let alias: &'static [u8] = unsafe { bun_ptr::detach_lifetime(alias) };
+        let key = (via.source_index, via.import_record_index, alias);
+        if let Some(&ref_) = self.wrapped_lifted_names.get(&key) {
+            return ref_;
+        }
+        let ref_ = graph.generate_new_symbol(via.source_index, SymbolKind::Import, alias);
+        // SAFETY: a fresh symbol; no other borrow of the symbol table is live.
+        unsafe { graph.symbol_mut(ref_) }.namespace_alias =
+            Some(bun_alloc::ast_box(G::NamespaceAlias {
+                namespace_ref: via.namespace_ref,
+                alias: bun_ast::StoreStr::new(alias),
+                ..Default::default()
+            }));
+        // A use of the symbol pulls in the part that declares the namespace.
+        col!(self.top_level_symbol_to_parts_overlay)[via.source_index as usize]
+            .put(ref_, bun_alloc::AstAlloc::vec_from_slice(&[via.part_index]))
+            .expect("oom");
+        self.wrapped_lifted_names.insert(key, ref_);
+        self.wrapped_lifted_targets.insert(ref_, target);
+        ref_
     }
 }
 

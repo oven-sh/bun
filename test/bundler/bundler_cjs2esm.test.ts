@@ -1345,6 +1345,189 @@ describe("bundler", () => {
       },
     });
   }
+  // The wrapper kept for a held default import does not make the module's
+  // exports unknown: an `export *` of it still resolves at bundle time, so an
+  // ES module consumer of the output gets every name (#46926).
+  for (const [name, holder] of [
+    ["ExportStarWithDefaultReExportOfLiftedCommonJS", `export { default } from "./lib.cjs";`],
+    ["ExportStarWithDefaultAsNameOfLiftedCommonJS", `export { default as lib } from "./lib.cjs";`],
+    ["ExportStarWithExportDefaultOfLiftedCommonJS", `import lib from "./lib.cjs"; export default lib;`],
+  ]) {
+    itBundled(`cjs2esm/${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          export * from "./lib.cjs";
+          ${holder}
+        `,
+        "/lib.cjs": /* js */ `
+          exports.foo = 1;
+          exports.bar = 2;
+        `,
+      },
+      format: "esm",
+      cjs2esm: { unhandled: ["/lib.cjs"] },
+      runtimeFiles: {
+        "/test.js": /* js */ `
+          import * as ns from './out.js';
+          const held = ns.default ?? ns.lib;
+          console.log(Object.keys(ns).join(","), ns.foo, ns.bar, held.foo === ns.foo);
+          Object.freeze(held);
+          try { held.foo = 9; } catch {}
+          console.log(held.foo, ns.foo);
+        `,
+      },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("__reExport");
+      },
+      run: {
+        file: "/test.js",
+        stdout: `bar,${name.includes("AsName") ? "foo,lib" : "default,foo"} 1 2 true\n1 1`,
+      },
+    });
+  }
+  // The same through a shared chunk: the entry reads each name off the
+  // namespace the chunk exports.
+  itBundled("cjs2esm/ExportStarWithDefaultReExportOfLiftedCommonJSSplitting", {
+    files: {
+      "/entry.js": /* js */ `
+        export * from "react";
+        export { default } from "react";
+      `,
+      "/other.js": /* js */ `
+        export * from "react";
+      `,
+      ...liftedReact,
+    },
+    entryPoints: ["/entry.js", "/other.js"],
+    format: "esm",
+    splitting: true,
+    outdir: "/out",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { useState, version } from './out/entry.js';
+        import * as ns from './out/entry.js';
+        import * as other from './out/other.js';
+        console.log(useState(2)[0], version, ns.default.useState === useState, other.useId());
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "2 19.0.0 true id",
+    },
+  });
+  // A name the wrapped module and another `export *` both provide is ambiguous,
+  // as it is for an ES module.
+  itBundled("cjs2esm/ExportStarOfWrappedLiftedCommonJSAmbiguity", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from "./barrel.js";
+        console.log(foo);
+      `,
+      "/barrel.js": /* js */ `
+        export * from "./lib.cjs";
+        export { default } from "./lib.cjs";
+        export * from "./other.js";
+      `,
+      "/lib.cjs": /* js */ `
+        exports.foo = 1;
+      `,
+      "/other.js": /* js */ `
+        export const foo = "other";
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": ['Ambiguous import "foo" has multiple matching exports'],
+    },
+  });
+  // Two barrels over one wrapped module resolve a name to the same export.
+  itBundled("cjs2esm/ExportStarOfWrappedLiftedCommonJSThroughTwoBarrels", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from "./both.js";
+        import * as ns from "./both.js";
+        console.log(foo, Object.keys(ns).join(","));
+      `,
+      "/both.js": /* js */ `
+        export * from "./a.js";
+        export * from "./b.js";
+      `,
+      "/a.js": /* js */ `
+        export * from "./lib.cjs";
+        export { default } from "./lib.cjs";
+      `,
+      "/b.js": /* js */ `
+        export * from "./lib.cjs";
+      `,
+      "/lib.cjs": /* js */ `
+        exports.foo = 1;
+        exports.bar = 2;
+      `,
+    },
+    format: "esm",
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    run: {
+      stdout: "1 bar,foo",
+    },
+  });
+  // A react-family file the parser kept CommonJS (`exports[key]`) has no
+  // static export list, so an `export *` of it still runs at run time.
+  itBundled("cjs2esm/ExportStarOfDeoptimizedLiftedCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo, dyn } from "./barrel.js";
+        import lib from "./barrel.js";
+        console.log(foo, dyn, lib.dyn);
+      `,
+      "/barrel.js": /* js */ `
+        export * from "react";
+        export { default } from "react";
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "main": "index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.foo = 1;
+        exports[globalThis.key || "dyn"] = 2;
+      `,
+    },
+    format: "esm",
+    cjs2esm: { unhandled: ["/node_modules/react/index.js"] },
+    run: {
+      stdout: "1 2 2",
+    },
+  });
+  // A lifted `sideEffect(); module.exports = require("./impl")` whose target is
+  // CommonJS has no static export list either.
+  itBundled("cjs2esm/ExportStarOfWrappedLiftedCommonJSOverCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo, dyn } from "./barrel.js";
+        import lib from "./barrel.js";
+        console.log(foo, dyn, lib.foo);
+      `,
+      "/barrel.js": /* js */ `
+        export * from "react-dom";
+        export { default } from "react-dom";
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        { "name": "react-dom", "main": "index.js" }
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log("side effect");
+        module.exports = require("./impl.cjs");
+      `,
+      "/node_modules/react-dom/impl.cjs": /* js */ `
+        exports[globalThis.key || "dyn"] = 1;
+        exports.foo = 2;
+      `,
+    },
+    format: "esm",
+    cjs2esm: { unhandled: ["/node_modules/react-dom/index.js", "/node_modules/react-dom/impl.cjs"] },
+    run: {
+      stdout: "side effect\n2 1 2",
+    },
+  });
   // A method call through the default import or the namespace of a CommonJS
   // module passes `module.exports` as `this`. The `stack-trace` package reads it.
   const thisReadingLib = {

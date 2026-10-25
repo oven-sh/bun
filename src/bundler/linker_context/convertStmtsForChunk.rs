@@ -12,6 +12,7 @@ use crate::EntryPoint;
 use crate::WrapKind;
 use crate::bundled_ast::Flags as AstFlags;
 use crate::chunk::Chunk;
+use crate::linker_context::scan_imports_and_exports::export_star_target_is_wrapped_lifted;
 use crate::linker_context_mod::{LinkerContext, LinkerOptionsMode, StmtList, StmtListWhich};
 use crate::options::Format;
 
@@ -291,6 +292,39 @@ pub(crate) fn convert_stmts_for_chunk(
                                                 },
                                                 stmt.loc,
                                             ),
+                                            ..Default::default()
+                                        },
+                                        stmt.loc,
+                                    ))?;
+                            } else if !is_module_exports_of_wrapped_file
+                                && export_star_target_is_wrapped_lifted(
+                                    c.graph.ast.items_exports_kind()[other_source_index],
+                                    flag,
+                                )
+                            {
+                                // Step 3 bound each name of this export star to a read
+                                // off its namespace: "var ns = __toESM(require_x())".
+                                stmts
+                                    .inside_wrapper_prefix
+                                    .append_non_dependency(Stmt::alloc(
+                                        S::Local {
+                                            decls: G::DeclList::from_slice(&[G::Decl {
+                                                binding: Binding::alloc(
+                                                    bump,
+                                                    B::Identifier {
+                                                        r#ref: s.namespace_ref,
+                                                    },
+                                                    stmt.loc,
+                                                ),
+                                                value: Some(Expr::init(
+                                                    E::RequireString {
+                                                        import_record_index: s
+                                                            .import_record_index,
+                                                        ..Default::default()
+                                                    },
+                                                    stmt.loc,
+                                                )),
+                                            }]),
                                             ..Default::default()
                                         },
                                         stmt.loc,

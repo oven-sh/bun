@@ -1071,6 +1071,7 @@ impl<'s> Program<'s> {
             is_call_re_resolved: false,
             untyped_call_resolved_again: None,
             assigned_parameters: Vec::new(),
+            parameters_resolved_as_properties: Vec::new(),
             assigned_unknown: Vec::new(),
             context_checking: Vec::new(),
             contextual_signature_in_check: None,
@@ -2075,6 +2076,9 @@ pub struct Checker<'p, 's> {
     /// The indices in `stack` of the parameters whose type `assignParameterType` is computing. It doesn't
     /// push a type resolution, so a cycle through such a parameter's initializer isn't the parameter's cycle.
     assigned_parameters: Vec<usize>,
+    /// The indices in `stack` of the `Query::Pat` of a parameter that stands for the resolution of the property that the
+    /// parameter declares. See `type_of_property_of_parameter_in_flight`.
+    parameters_resolved_as_properties: Vec<usize>,
     /// The patterns of the parameters whose `links.resolvedType` is `unknown` while
     /// `assignParameterType` computes the type of the pattern to replace it.
     assigned_unknown: Vec<(FileId, PatId)>,

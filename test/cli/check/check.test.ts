@@ -9344,6 +9344,30 @@ class S { constructor(readonly c: typeof x) {} get all() { return this.c.all(); 
       expect(exitCode).toBe(1);
     });
 
+    // Both requests are for the property `held`, so the second one closes the cycle.
+    test("a parameter property that's asked for twice is circular", async () => {
+      using dir = project({
+        "a.ts": `interface Item { children: Item[] }
+declare const start: Item;
+let current: Item | undefined = start;
+while (current) {
+  const { children } = current;
+  class Holder { constructor(public held = children[0]) {} }
+  current = new Holder().held;
+}
+export {};
+`,
+      });
+      const own =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        `a.ts(5,11): error TS7022: 'children' implicitly has type 'any' ${own}`,
+        `a.ts(6,30): error TS7022: 'held' implicitly has type 'any' ${own}`,
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // `types.ts` is checked first. `first` and `second` are circular, and the argument of `extend` leads to `made`. The
     // resolution of `use(null!)` asks for the type of `v` once, for the argument. That leads to `made` and `use(null!)`
     // again, which asks for `v` a second time and finds the cycle.

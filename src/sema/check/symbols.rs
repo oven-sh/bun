@@ -278,11 +278,17 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((file, Decl::ParameterProperty(p))) = value_declaration {
             let pat = self.hir(file)[p].pat;
             let parameter = Query::Pat(file, pat);
-            if self.may_be_in_flight(parameter) && self.stack.contains(&parameter) {
+            if self.may_be_in_flight(parameter)
+                && let Some(at) = self.stack.iter().rposition(|&q| q == parameter)
+                && !self.parameters_resolved_as_properties.contains(&at)
+            {
                 return self.type_of_property_of_parameter_in_flight(sym, file, pat);
             }
             let scope = self.begin_scope();
+            self.parameters_resolved_as_properties
+                .push(self.stack.len());
             let ty = self.type_of_param(file, p);
+            self.parameters_resolved_as_properties.pop();
             // Cached here once it's cached there, because every `this.x` queries it. The cached value is copied,
             // because `ty` can be provisional while the final type is stored.
             let cached = (self.p.pat_types.get(&self.task, &(file, pat))).map(|(ty, _)| ty);
@@ -456,7 +462,10 @@ impl<'p, 's> Checker<'p, 's> {
             let ty = self.type_of_pat_uncached(file, pat);
             match self.leave(query) {
                 _ if self.left_a_cycle => {}
-                Ok(stored) => return self.p.symbol_types.insert(&self.task, sym, ty, stored),
+                Ok(stored) => {
+                    self.p.symbol_types.insert(&self.task, sym, ty, stored);
+                    return ty;
+                }
                 Err(open) => {
                     self.cache_provisionally(query, u64::from(ty.0), open);
                     return ty;

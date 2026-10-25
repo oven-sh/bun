@@ -97,7 +97,7 @@ extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t hay
 static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
 
 // export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
-extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
+extern "C" BunString Bun__inspect_singleline(Zig::GlobalObject* globalObject, JSC::JSValue value);
 
 using namespace JSC;
 using namespace WebCore;
@@ -181,20 +181,7 @@ JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUIntBE);
 
 extern "C" EncodedJSValue WebCore_BufferEncodingType_toJS(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding)
 {
-    // clang-format off
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    switch (encoding) {
-    case WebCore::BufferEncodingType::utf8:      return JSC::JSValue::encode(globalObject->commonStrings().utf8String(globalObject));
-    case WebCore::BufferEncodingType::ucs2:      return JSC::JSValue::encode(globalObject->commonStrings().ucs2String(globalObject));
-    case WebCore::BufferEncodingType::utf16le:   return JSC::JSValue::encode(globalObject->commonStrings().utf16leString(globalObject));
-    case WebCore::BufferEncodingType::latin1:    return JSC::JSValue::encode(globalObject->commonStrings().latin1String(globalObject));
-    case WebCore::BufferEncodingType::ascii:     return JSC::JSValue::encode(globalObject->commonStrings().asciiString(globalObject));
-    case WebCore::BufferEncodingType::base64:    return JSC::JSValue::encode(globalObject->commonStrings().base64String(globalObject));
-    case WebCore::BufferEncodingType::base64url: return JSC::JSValue::encode(globalObject->commonStrings().base64urlString(globalObject));
-    case WebCore::BufferEncodingType::hex:       return JSC::JSValue::encode(globalObject->commonStrings().hexString(globalObject));
-    case WebCore::BufferEncodingType::buffer:    return JSC::JSValue::encode(globalObject->commonStrings().bufferString(globalObject));
-    }
-    // clang-format on
+    return JSC::JSValue::encode(WebCore::convertEnumerationToJS(*lexicalGlobalObject, encoding));
 }
 
 namespace Bun {
@@ -427,6 +414,19 @@ bool Bun::rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject* globalObje
     return true;
 }
 
+WTF::MallocSpan<uint8_t> Bun::copySharedBytes(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes)
+{
+    if (bytes.empty())
+        return {};
+    auto copy = WTF::MallocSpan<uint8_t>::tryMalloc(bytes.size());
+    if (!copy) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    memcpySpan(copy.mutableSpan(), bytes);
+    return copy;
+}
+
 JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator)
 {
     JSC::JSUint8Array* uint8Array = nullptr;
@@ -536,11 +536,6 @@ JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const 
     return createBuffer(lexicalGlobalObject, data.data(), data.size());
 }
 
-JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const Vector<uint8_t>& data)
-{
-    return createBuffer(lexicalGlobalObject, data.begin(), data.size());
-}
-
 JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     return createUninitializedBuffer(lexicalGlobalObject, 0);
@@ -623,7 +618,7 @@ JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, W
         }
         case WebCore::BufferEncodingType::ascii: // ascii is a noop for latin1
         case WebCore::BufferEncodingType::latin1: { // The native encoding is latin1, so we don't need to do any conversion.
-            result = JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size()));
+            result = JSValue::encode(createBuffer(lexicalGlobalObject, byteCast<uint8_t>(span.data()), span.size()));
             break;
         }
         default: {
@@ -1885,11 +1880,11 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
 
     {
         // Matches Node's ERR_INVALID_ARG_TYPE('value', ['number', 'string', 'Buffer', 'Uint8Array'], val).
-        WTF::StringBuilder messageBuilder;
+        Bun::MessageBuilder messageBuilder;
         messageBuilder.append("The \"value\" argument must be one of type number or string or an instance of Buffer or Uint8Array. Received "_s);
         Bun::determineSpecificType(JSC::getVM(lexicalGlobalObject), lexicalGlobalObject, messageBuilder, valueValue);
         RETURN_IF_EXCEPTION(scope, -1);
-        scope.throwException(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, messageBuilder.toString()));
+        scope.throwException(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, messageBuilder));
         return -1;
     }
 }
@@ -2084,8 +2079,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         std::span<Latin1Character> data;
         auto str = String::tryCreateUninitialized(bytes.size(), data);
         if (str.isNull()) [[unlikely]] {
-            throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return {};
+            return Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, lexicalGlobalObject);
         }
 
         memcpy(data.data(), bytes.data(), bytes.size());
@@ -2100,8 +2094,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         }
         auto str = String::tryCreateUninitialized(u16length, data);
         if (str.isNull()) [[unlikely]] {
-            throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return {};
+            return Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, lexicalGlobalObject);
         }
         memcpy(reinterpret_cast<void*>(data.data()), bytes.data(), u16length * 2);
         return JSValue::encode(jsString(vm, WTF::move(str)));
@@ -2110,10 +2103,9 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         std::span<Latin1Character> data;
         auto str = String::tryCreateUninitialized(bytes.size(), data);
         if (str.isNull()) [[unlikely]] {
-            throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return {};
+            return Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, lexicalGlobalObject);
         }
-        Bun__encoding__writeLatin1(bytes.data(), bytes.size(), data.data(), data.size(), static_cast<uint8_t>(encoding));
+        Bun__encoding__writeLatin1(byteCast<Latin1Character>(bytes.data()), bytes.size(), byteCast<uint8_t>(data.data()), data.size(), static_cast<uint8_t>(encoding));
         return JSValue::encode(jsString(vm, WTF::move(str)));
     }
 
@@ -2164,7 +2156,13 @@ JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, T
         length = byteLength - offset;
     }
 
-    return jsBufferToStringFromBytes(lexicalGlobalObject, scope, castedThis->span().subspan(offset, length), encoding);
+    auto bytes = castedThis->span().subspan(offset, length);
+    if (castedThis->isShared() && encoding == BufferEncodingType::utf8) [[unlikely]] {
+        auto copy = Bun::copySharedBytes(lexicalGlobalObject, scope, bytes);
+        RETURN_IF_EXCEPTION(scope, {});
+        return jsBufferToStringFromBytes(lexicalGlobalObject, scope, copy.span(), encoding);
+    }
+    return jsBufferToStringFromBytes(lexicalGlobalObject, scope, bytes, encoding);
 }
 
 // Mirrors v8::Value::IntegerValue(): NaN becomes 0 and anything outside the
@@ -2394,11 +2392,20 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
     return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
 
+// Node's native writers reject a non-string value and never coerce it (THROW_AND_RETURN_IF_NOT_STRING, src/node_errors.h).
+static JSString* stringArgumentOrThrow(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    if (value.isString()) [[likely]]
+        return asString(value);
+    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "argument must be a string"_s);
+    return nullptr;
+}
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/buffer.js#L962-L990
 // Only utf8Write/latin1Write/asciiWrite go through this strict JS wrapper in node;
 // the other encodings use jsBufferPrototypeFunction_StringWriteWithEncoding below.
 template<BufferEncodingType encoding>
-static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, JSValue offsetValue, JSValue lengthValue)
+static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSValue stringValue, JSValue offsetValue, JSValue lengthValue)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -2459,6 +2466,10 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
         maxLength = std::min(byteLength - safeOffset, static_cast<size_t>(intLength));
     }
 
+    // Node's JS wrapper checks the bounds first, so a bounds error wins over a non-string value.
+    JSString* str = stringArgumentOrThrow(scope, lexicalGlobalObject, stringValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, safeOffset, maxLength, encoding));
 }
 
@@ -2470,10 +2481,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunctionWriteWithEncoding(JSC::JSGlo
 
     auto* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
 
-    auto arg0 = callFrame->argument(0);
-    JSString* text = arg0.toStringOrNull(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
+    JSValue stringValue = callFrame->argument(0);
     JSValue offsetValue = callFrame->argument(1);
     JSValue lengthValue = callFrame->argument(2);
 
@@ -2482,7 +2490,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunctionWriteWithEncoding(JSC::JSGlo
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, jsBufferPrototypeFunction_writeEncodingBody<encoding>(vm, lexicalGlobalObject, castedThis, text, offsetValue, lengthValue));
+    RELEASE_AND_RETURN(scope, jsBufferPrototypeFunction_writeEncodingBody<encoding>(vm, lexicalGlobalObject, castedThis, stringValue, offsetValue, lengthValue));
 }
 
 // https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L711-L741
@@ -2505,7 +2513,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_StringWriteWithEncoding(JSC
     const JSValue offsetValue = callFrame->argument(1);
     const JSValue lengthValue = callFrame->argument(2);
 
-    JSString* text = strValue.toStringOrNull(lexicalGlobalObject);
+    // The binding rejects the value before it reads offset or length.
+    JSString* text = stringArgumentOrThrow(scope, lexicalGlobalObject, strValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     size_t offset = 0;
@@ -2513,9 +2522,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_StringWriteWithEncoding(JSC
         return {};
     }
 
-    // toStringOrNull/toNumber only run user-overridable code for object arguments, and
+    // toNumber only runs user-overridable code for an object argument, and
     // that code can detach or resize the view, so re-validate only when it could have run.
-    if ((strValue.isObject() || offsetValue.isObject()) && castedThis->isDetached()) [[unlikely]] {
+    if (offsetValue.isObject() && castedThis->isDetached()) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
         return {};
     }
@@ -2947,7 +2956,8 @@ static JSC::JSArrayBufferView* bufferAccessReceiver(JSC::JSGlobalObject* lexical
 {
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(thisValue);
     if (!view) [[unlikely]] {
-        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "buf"_s, "Buffer"_s, thisValue);
+        // In a bare call `this` is the caller's scope object. toThis() converts it to undefined, which is what a strict JS callee sees.
+        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "buf"_s, "Buffer"_s, thisValue.toThis(lexicalGlobalObject, JSC::ECMAMode::strict()));
         return nullptr;
     }
     return view;
@@ -3068,7 +3078,7 @@ fastPath:
         return JSValue::encode(jsNumber(JSC::purifyNaN(static_cast<double>(std::bit_cast<T>(raw)))));
     } else if constexpr (byteSize == 8) {
         // readBigInt64* / readBigUInt64*
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(lexicalGlobalObject, std::bit_cast<T>(raw))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(lexicalGlobalObject, std::bit_cast<T>(raw))));
     } else
         return JSValue::encode(jsNumber(std::bit_cast<T>(raw)));
 }

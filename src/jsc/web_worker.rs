@@ -15,7 +15,7 @@
 //!
 //! Thread lifecycle (`thread_main`):
 //!   1. `start_vm()`  — arena, env snapshot, `VirtualMachine`, publish its handle (`vm_handle`).
-//!   2. `spin()`      — load the entry point, `workerGlobalScopeStarted`, run the
+//!   2. `spin()`      — 'online', load the entry point, `workerGlobalScopeStarted`, run the
 //!                      event loop until it drains or termination is requested,
 //!                      `beforeExit` on a natural drain.
 //!   3. `shutdown()`  — 'exit' handlers, stop phase, join own children, JSC VM
@@ -75,7 +75,6 @@ pub struct WebWorker {
     /// Created by `node:worker_threads`' `Worker` (as opposed to the Web `Worker`
     /// constructor): loads `node:worker_threads` before preloads and the entry point.
     is_node_worker: bool,
-    store_fd: bool,
     /// Borrowed from the proxy's `WorkerOptions` (alive as long as the proxy).
     argv_ptr: *const WTFStringImpl,
     argv_len: usize,
@@ -128,13 +127,13 @@ pub struct WebWorker {
 /// `start_vm()` on the worker thread.
 struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
-    env_map: bun_dotenv::Map,
+    env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
 }
 
 enum EntryOutcome {
     Continue,
-    /// The entry module rejected and no handler took it: the worker exits.
+    /// The entry module rejected, and either no handler caught it or the handler stopped the worker.
     Stop,
 }
 
@@ -155,6 +154,7 @@ pub enum Status {
 // even when C++ mutates through it. `proxy` is the opaque C++ `WorkerMessagingProxy*`
 // round-tripped from `create()`; it is only ever handed back to C++.
 unsafe extern "C" {
+    safe fn WebWorker__workerThreadStarted(proxy: *mut c_void);
     safe fn WebWorker__workerGlobalScopeStarted(proxy: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__workerGlobalScopeDestroyed(
         proxy: *mut c_void,
@@ -285,6 +285,7 @@ impl WebWorker {
         name_str: &BunString,
         specifier_str: &BunString,
         error_message: &mut BunString,
+        error_is_invalid_exec_argv: &mut bool,
         _parent_context_id: u32,
         this_context_id: u32,
         mini: bool,
@@ -350,7 +351,6 @@ impl WebWorker {
         // its own thread; the worker never dereferences `parent`.
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ref = unsafe { &*parent };
-        let store_fd = parent_ref.transpiler.resolver.store_fd;
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
@@ -363,6 +363,16 @@ impl WebWorker {
                 ))
             };
             if let Some(flags) = parsed {
+                if let Some(invalid) = flags.invalid {
+                    use bun_core::WTFStringImplExt as _;
+                    // SAFETY: an index into the same slice, whose strings the caller keeps alive.
+                    let arg = unsafe { &**exec_argv_ptr.add(invalid) }.to_owned_slice_z();
+                    let mut message = b"Initiated Worker with invalid execArgv flags: ".to_vec();
+                    message.extend_from_slice(arg.as_bytes());
+                    *error_message = BunString::clone_utf8(&message);
+                    *error_is_invalid_exec_argv = true;
+                    return core::ptr::null_mut();
+                }
                 let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
                 transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
                 let parent_allows_ffi_cc = transform_options.allow_ffi_cc.unwrap_or(true);
@@ -374,21 +384,21 @@ impl WebWorker {
         // parent's proxy_env_storage: snapshot slots + map under its lock so
         // every slice copied is backed by a ref the snapshot holds.
         let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
-        let mut env_map = {
+        let mut env_loader = {
             let parent_slots = parent_ref.proxy_env_storage.lock();
             proxy_env_slots.clone_from(&parent_slots);
-            match parent_ref.env_loader().map.clone_with_allocator() {
-                Ok(m) => m,
+            match parent_ref.env_loader().clone_for_worker() {
+                Ok(loader) => loader,
                 Err(_) => {
                     *error_message = BunString::static_("Out of memory");
                     return core::ptr::null_mut();
                 }
             }
         };
-        proxy_env_slots.sync_into(&mut env_map);
+        proxy_env_slots.sync_into(&mut env_loader.map);
         let init = WorkerVmInit {
             transform_options,
-            env_map,
+            env_loader,
             proxy_env_slots,
         };
 
@@ -405,7 +415,6 @@ impl WebWorker {
             mini,
             eval_mode,
             is_node_worker,
-            store_fd,
             argv_ptr,
             argv_len,
             exec_argv_ptr,
@@ -664,7 +673,7 @@ impl WebWorker {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         let WorkerVmInit {
             transform_options,
-            env_map,
+            env_loader,
             proxy_env_slots,
         } = init;
 
@@ -674,8 +683,7 @@ impl WebWorker {
         // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
         // it on every path — including the early-terminate checkpoint below,
         // which calls `shutdown()` before the VM exists.
-        let loader_ptr: *mut bun_dotenv::Loader =
-            bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init_with_map(env_map)));
+        let loader_ptr: *mut bun_dotenv::Loader = bun_core::heap::into_raw(Box::new(env_loader));
         self.worker_env_loader.set(loader_ptr);
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
@@ -692,7 +700,6 @@ impl WebWorker {
             virtual_machine::Options {
                 args: transform_options,
                 env_loader: NonNull::new(loader_ptr),
-                store_fd: self.store_fd,
                 graph: crate::virtual_machine::standalone_module_graph(),
                 ..Default::default()
             },
@@ -767,7 +774,7 @@ impl WebWorker {
         Ok(vm)
     }
 
-    /// Phase 2: load the entry point, dispatch 'online', run the event loop.
+    /// Phase 2: post 'online', load the entry point, run the event loop.
     /// Runs inside `holdAPILock`. Always ends by calling `shutdown()`.
     ///
     /// Returns `()` so the thread can unwind-free fall out of the
@@ -794,6 +801,9 @@ impl WebWorker {
             self.flush_logs(vm);
             return self.shutdown();
         }
+
+        // 'online' before the entry runs, as in node: it precedes anything the entry posts.
+        WebWorker__workerThreadStarted(self.messaging_proxy);
 
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
         // `preload: Vec<Box<[u8]>>` — clone the boxes (cheap, ≤handful).
@@ -874,6 +884,11 @@ impl WebWorker {
         // so buffered postMessageToThread deliveries drain and the sender's
         // Atomics.waitAsync settles. WebWorker__entrySettled re-calls it as a no-op.
         WebWorker__entrySettled(vm.global());
+        // The hook runs JS, which can request termination. If it did, stop before the start sequence's GC.
+        if self.has_requested_terminate() {
+            self.flush_logs(vm);
+            return self.shutdown();
+        }
 
         // The entry's evaluation outcome is checked once now and then after every
         // loop turn: a rejection (immediate, or a top-level await rejecting
@@ -898,7 +913,7 @@ impl WebWorker {
                     (*promise).result(vm.jsc_vm()),
                     is_rejection,
                 );
-                if handled {
+                if handled && !self.has_requested_terminate() {
                     EntryOutcome::Continue
                 } else {
                     EntryOutcome::Stop
@@ -906,8 +921,8 @@ impl WebWorker {
             }
         };
         if let EntryOutcome::Stop = observe_entry(vm) {
-            // exit_code is already 1 from uncaught_exception; re-setting it here
-            // would clobber a process.on('exit') change to process.exitCode.
+            // exit_code is already set (1, or the handler's process.exit() code). Setting it again
+            // here would clobber a process.on('exit') change to process.exitCode.
             return self.shutdown();
         }
         // A still-pending entry promise is an unsettled top-level await: as in
@@ -921,15 +936,14 @@ impl WebWorker {
 
         self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);
-        // Pending -> Running: 'online' is posted to the parent and messages/tasks
-        // that arrived while the entry point was loading are delivered. After the
-        // entry point on purpose, so the parent observes 'online' only once the
-        // worker's top-level code has run (up to its first top-level await).
+        // Pending -> Running: messages and tasks queued while the entry loaded are delivered.
         WebWorker__workerGlobalScopeStarted(self.messaging_proxy, vm.global());
         self.set_status(Status::Running);
 
         // don't run the GC if we don't actually need to
-        if vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0 {
+        if vm.standalone_module_graph.is_none()
+            && (vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0)
+        {
             vm.global().vm().release_weak_refs();
             // `Arena = bumpalo::Bump` has no collect; global mimalloc
             // handles reclamation.
@@ -1010,45 +1024,13 @@ impl WebWorker {
         drop(self.vm_handle.lock().take());
         let vm_ptr = self.vm.replace(core::ptr::null_mut());
 
-        // ---- 2. User exit handlers -----------------------------------------
+        // ---- 2–5. User exit handlers; stop, forbid script, wait, ~VM, loops, destroy
         let mut exit_code: i32 = 0;
         if !vm_ptr.is_null() {
-            // SAFETY: vm_ptr valid; no other thread holds a pointer to it (they
-            // only ever held its handle) — `&mut` is exclusive.
-            let vm = unsafe { &mut *vm_ptr };
-            vm.is_shutting_down = true;
-            vm.on_exit();
-            exit_code = i32::from(vm.exit_handler.exit_code);
-            log!(
-                "[{}] shutdown: exit handlers done",
-                self.execution_context_id
-            );
-
-            // ---- 3–5. Stop, forbid script, wait, ~VM, loops, destroy ----------
-            // SAFETY: this thread's VM; sole owner.
-            unsafe { VirtualMachine::teardown(vm_ptr, crate::virtual_machine::Teardown::Worker) };
-
-            // `destroy()` deinits the fields; reclaim the storage `init` put on
-            // the global heap (worker `init_worker` always passes `log: None`,
-            // so the log box is VM-owned here).
-            // SAFETY: sole owner; nothing past this point dereferences the VM.
-            unsafe {
-                let console = core::mem::replace(&mut (*vm_ptr).console, core::ptr::null_mut());
-                if !console.is_null() {
-                    bun_core::heap::destroy(console);
-                }
-                if let Some(log) = (*vm_ptr).log.take() {
-                    bun_core::heap::destroy(log.as_ptr());
-                }
-                virtual_machine::VMHolder::set_vm(None);
-                // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
-                // `init`, NOT `Box::new` — dealloc the raw storage directly so
-                // field `Drop`s do not re-run on already-`deinit`'d state.
-                std::alloc::dealloc(
-                    vm_ptr.cast::<u8>(),
-                    core::alloc::Layout::new::<VirtualMachine>(),
-                );
-            }
+            // SAFETY: this thread's VM, whose API lock `thread_main` took; no other
+            // thread holds a pointer to it (they only ever held its handle);
+            // `init_worker` always passes `log: None`.
+            exit_code = i32::from(unsafe { VirtualMachine::exit_and_free(vm_ptr) });
         }
         log!(
             "[{}] shutdown: VirtualMachine destroyed",
@@ -1160,7 +1142,7 @@ impl WebWorker {
 
 fn on_unhandled_rejection(
     vm: &mut VirtualMachine,
-    global_object: &JSGlobalObject,
+    _: &JSGlobalObject,
     error_instance_or_exception: JSValue,
 ) {
     // Prevent recursion
@@ -1173,6 +1155,9 @@ fn on_unhandled_rejection(
     if !vm.script_allowed() {
         return;
     }
+
+    // The realm that raised the error may be a node:vm context.
+    let global_object = vm.global();
 
     let mut error_instance = error_instance_or_exception
         .to_error()
@@ -1276,75 +1261,14 @@ unsafe fn resolve_entry_point_specifier<'s>(
     error_message: &mut BunString,
     log: &mut bun_ast::Log,
 ) -> Option<&'s [u8]> {
-    // SAFETY: per fn contract; read-only field.
-    if let Some(graph) = unsafe { (*parent).standalone_module_graph } {
-        if graph.find(str).is_some() {
-            return Some(str);
-        }
-
-        // Since `bun build --compile` renames files to `.js` by default, we
-        // need to do the reverse of our file extension mapping.
-        //
-        //   new Worker("./foo")     -> new Worker("./foo.js")
-        //   new Worker("./foo.ts")  -> new Worker("./foo.js")
-        //   new Worker("./foo.jsx") -> new Worker("./foo.js")
-        //   new Worker("./foo.mjs") -> new Worker("./foo.js")
-        //   new Worker("./foo.mts") -> new Worker("./foo.js")
-        //   new Worker("./foo.cjs") -> new Worker("./foo.js")
-        //   new Worker("./foo.cts") -> new Worker("./foo.js")
-        //   new Worker("./foo.tsx") -> new Worker("./foo.js")
-        //
-        if str.starts_with(b"./") || str.starts_with(b"../") {
-            'try_from_extension: {
-                let mut pathbuf = bun_paths::path_buffer_pool::get();
-                let base_path = graph.base_public_path_with_default_suffix();
-                let base = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
-                    base_path,
-                    &mut pathbuf[..],
-                    &[str],
-                );
-                let base_len = base.len();
-                let extname_len = bun_paths::extension(base).len();
-                // `extname` cannot be held as a sub-slice of `pathbuf` while
-                // writing into `pathbuf` — compare
-                // by re-slicing after dropping the mutable borrow.
-                let extname = &pathbuf[base_len - extname_len..base_len];
-
-                // ./foo -> ./foo.js
-                if extname.is_empty() {
-                    pathbuf[base_len..base_len + 3].copy_from_slice(b".js");
-                    if let Some(js_file) = graph.find(&pathbuf[0..base_len + 3]) {
-                        return Some(js_file);
-                    }
-                    break 'try_from_extension;
-                }
-
-                // ./foo.ts -> ./foo.js
-                if extname == b".ts" {
-                    pathbuf[base_len - 3..base_len].copy_from_slice(b".js");
-                    if let Some(js_file) = graph.find(&pathbuf[0..base_len]) {
-                        return Some(js_file);
-                    }
-                    break 'try_from_extension;
-                }
-
-                if extname.len() == 4 {
-                    const EXTS: [&[u8]; 6] = [b".tsx", b".jsx", b".mjs", b".mts", b".cts", b".cjs"];
-                    for ext in EXTS {
-                        if extname == ext {
-                            let js_len = b".js".len();
-                            pathbuf[base_len - ext.len()..base_len - ext.len() + js_len]
-                                .copy_from_slice(b".js");
-                            let as_js = &pathbuf[0..base_len - ext.len() + js_len];
-                            if let Some(js_file) = graph.find(as_js) {
-                                return Some(js_file);
-                            }
-                            break 'try_from_extension;
-                        }
-                    }
-                }
-            }
-        }
+    // In a `bun build --compile` executable, a relative specifier names an embedded entry point (relative to the
+    // embedded root) before it names a file on disk, and an absolute one may be an embedded path in either syntax
+    // (`new URL("./w.ts", import.meta.url)`).
+    // SAFETY: per fn contract; `standalone_module_graph` is a read-only field.
+    if let Some(graph) = unsafe { (*parent).standalone_module_graph }
+        && let Some(name) = graph.resolve(graph.base_public_path_with_default_suffix(), str)
+    {
+        return Some(name);
     }
 
     // A `data:` URL is the module itself (the loader decodes it); it never names

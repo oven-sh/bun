@@ -22,8 +22,10 @@ const sock = net.connect({
   },
 });
 sock.on("error", () => {});
-sock.on("connectionAttemptFailed", () => {
+sock.on("connectionAttemptFailed", (address, port, family, err) => {
   attemptFailedBeforeDestroy ||= !destroyed;
+  // Closing the handle cancels the pending attempt, as uv_close does.
+  if (destroyed) console.log("attempt failed at destroy:", err.code);
 });
 
 // The regression: the stale per-attempt timer firing on the destroyed socket,

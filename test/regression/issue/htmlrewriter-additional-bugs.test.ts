@@ -28,22 +28,26 @@ test("HTMLRewriter should properly validate handler objects", () => {
   // Test null and undefined handlers
   expect(() => {
     const rewriter = new HTMLRewriter();
+    // @ts-expect-error
     rewriter.on("div", null);
   }).toThrow("Expected object");
 
   expect(() => {
     const rewriter = new HTMLRewriter();
+    // @ts-expect-error
     rewriter.on("div", undefined);
   }).toThrow("Expected object");
 
   // Test non-object handlers
   expect(() => {
     const rewriter = new HTMLRewriter();
+    // @ts-expect-error
     rewriter.on("div", "not an object");
   }).toThrow("Expected object");
 
   expect(() => {
     const rewriter = new HTMLRewriter();
+    // @ts-expect-error
     rewriter.on("div", 42);
   }).toThrow("Expected object");
 });
@@ -80,6 +84,7 @@ test("HTMLRewriter should handle various input edge cases safely", () => {
   // Null input (should throw)
   expect(() => {
     const rewriter = new HTMLRewriter();
+    // @ts-expect-error
     rewriter.transform(null);
   }).toThrow("Expected Response or Body");
 

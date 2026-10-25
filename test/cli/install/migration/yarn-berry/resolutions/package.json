@@ -1,0 +1,11 @@
+{
+  "name": "berry-resolutions",
+  "dependencies": {
+    "a-dep": "^1.0.1",
+    "one-range-dep": "^1.0.0"
+  },
+  "resolutions": {
+    "no-deps": "1.0.0",
+    "a-dep": "npm:1.0.5"
+  }
+}

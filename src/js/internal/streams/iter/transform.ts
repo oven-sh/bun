@@ -13,16 +13,16 @@ const { isArrayBufferView, isAnyArrayBuffer } = require("node:util/types");
 const { kValidatedTransform } = require("internal/streams/iter/types");
 const { checkRangesOrGetDefault, validateFiniteNumber, validateObject } = require("internal/validators");
 
-const NativeZlib = $rust("node_zlib_binding.rs", "NativeZlib");
-const NativeBrotli = $rust("node_zlib_binding.rs", "NativeBrotli");
-const NativeZstd = $rust("node_zlib_binding.rs", "NativeZstd");
+const NativeZlib = $bindgen("node_zlib_binding.bind.ts", "NativeZlib");
+const NativeBrotli = $bindgen("node_zlib_binding.bind.ts", "NativeBrotli");
+const NativeZstd = $bindgen("node_zlib_binding.bind.ts", "NativeZstd");
 const constants = process.binding("constants").zlib;
 
 const Uint8ArraySlice = Uint8Array.prototype.slice;
 
 // Matches node's internal/errors genericNodeError().
 function genericNodeError(message, options) {
-  const error = new Error(message);
+  const error: NodeJS.ErrnoException = new Error(message);
   error.errno = options.errno;
   error.code = options.code;
   return error;
@@ -281,7 +281,7 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
       let outBuf;
       let outOffset = 0;
       let chunkSize;
-      let pending = [];
+      let pending: Uint8Array[] = [];
       let pendingBytes = 0;
 
       // Current write operation state (read by the callback for looping).
@@ -399,10 +399,10 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
           pendingBytes = 0;
           return batch;
         }
-        const batch = [];
+        const batch: Uint8Array[] = [];
         let batchBytes = 0;
         while (pending.length > 0 && batchBytes < BATCH_HWM) {
-          const buf = pending.shift();
+          const buf = pending.shift()!;
           batch.push(buf);
           const len = buf.byteLength;
           batchBytes += len;
@@ -493,7 +493,7 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
     transform: function* (source) {
       // The processCallback is never called in sync mode, but handle.init()
       // requires it. Pass a no-op.
-      let error = null;
+      let error: NodeJS.ErrnoException | null = null;
       function onError(message, errno, code) {
         error = genericNodeError(message, { __proto__: null, errno, code });
         error.errno = errno;
@@ -506,7 +506,7 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
       const chunkSize = result.chunkSize;
       let outBuf = Buffer.allocUnsafe(chunkSize);
       let outOffset = 0;
-      let pending = [];
+      let pending: Uint8Array[] = [];
       let pendingBytes = 0;
 
       function processSyncInput(input, flushFlag) {
@@ -567,10 +567,10 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
           pendingBytes = 0;
           return batch;
         }
-        const batch = [];
+        const batch: Uint8Array[] = [];
         let batchBytes = 0;
         while (pending.length > 0 && batchBytes < BATCH_HWM) {
-          const buf = pending.shift();
+          const buf = pending.shift()!;
           const len = buf.byteLength;
           batch.push(buf);
           batchBytes += len;

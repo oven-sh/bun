@@ -50,6 +50,43 @@ it("long arrays get cutoff", () => {
   );
 });
 
+it("long arrays get cutoff at a nested indent", () => {
+  const row = "          4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,\n";
+  expect(Bun.inspect([[[[Array(1000).fill(4)]]]], { depth: 5 })).toEqual(
+    "[\n  [\n    [\n      [\n        [\n" +
+      row +
+      row +
+      row +
+      row +
+      "          4, 4, 4, 4,\n" +
+      "          ... 900 more items\n" +
+      "        ]\n      ]\n    ]\n  ]\n]",
+  );
+});
+
+it("console.dir treats a BigInt depth like the same number", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let o = {}, c = o; for (let i = 0; i < 40; i++) { c.n = {}; c = c.n; }
+       for (const depth of [7n, 7, -1n, -1]) {
+         console.dir(o, { depth, colors: false });
+         console.log("--");
+       }`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [big7, num7, bigNegative, numNegative] = stdout.split("--\n");
+  expect(big7).toBe(num7);
+  expect(bigNegative).toBe(numNegative);
+  expect(exitCode).toBe(0);
+});
+
 it("console.group", async () => {
   const filepath = join(import.meta.dir, "console-group.fixture.js").replaceAll("\\", "/");
   const proc = Bun.spawnSync({

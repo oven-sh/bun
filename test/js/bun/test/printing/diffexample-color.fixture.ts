@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 
 try {
   expect("a\nb\nc\n d\ne").toEqual("a\nd\nc\nd\ne");
-} catch (e) {
+} catch (e: any) {
   console.log(e.message);
 }
 
@@ -32,7 +32,7 @@ const b = {
 };
 try {
   expect(a).toEqual(b);
-} catch (e) {
+} catch (e: any) {
   console.log(e.message);
 }
 
@@ -44,19 +44,19 @@ for (let i = 0; i < 100000; i++) {
 }
 try {
   expect(longInt32ArrayReceived).toEqual(longInt32ArrayExpected);
-} catch (e) {
+} catch (e: any) {
   console.log(e.message);
 }
 
 try {
   expect("Hello 👋 世界 🌍").toEqual("Hello 👋 世界 🌎");
-} catch (e) {
+} catch (e: any) {
   console.log(e.message);
 }
 
 try {
   expect("Line 1: 你好\nLine 2: مرحبا\nLine 3: Здравствуйте").toEqual("Line 1: 你好\nLine 2: مرحبا\nLine 3: Привет");
-} catch (e) {
+} catch (e: any) {
   console.log(e.message);
 }
 
@@ -72,25 +72,25 @@ try {
     arabic: "اختبار",
     mixed: "Hello 世界 🌎",
   });
-} catch (e) {
+} catch (e: any) {
   console.log(e.message);
 }
 
 try {
   expect("café résumé naïve").toEqual("café resumé naive");
-} catch (e) {
+} catch (e: any) {
   console.log(e.message);
 }
 
 try {
   expect("© ® ™ £ € ¥ § ¶").toEqual("© ® ™ £ € ¥ § ¶");
-} catch (e) {
+} catch (e: any) {
   console.log(e.message);
 }
 
 try {
   expect("Línea 1: ñoño\nLínea 2: àèìòù\nLínea 3: äëïöü").toEqual("Línea 1: ñoño\nLínea 2: àèìòù\nLínea 3: aeiou");
-} catch (e) {
+} catch (e: any) {
   console.log(e.message);
 }
 
@@ -104,6 +104,6 @@ try {
     spanish: "niño español",
     special: "½ ¼ ¾ ± × ÷",
   });
-} catch (e) {
+} catch (e: any) {
   console.log(e.message);
 }

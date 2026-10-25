@@ -279,7 +279,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind: LocalKind,
         is_export: bool,
     ) -> usize {
-        let was_const = kind == LocalKind::KConst;
         // A namespace member isn't a module export.
         let can_replace_exports =
             IS_POSSIBLY_DECL_TO_REMOVE && self.enclosing_namespace_arg_ref.is_none();
@@ -592,12 +591,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                let is_after = self.vis_scope().is_after_const_local_prefix;
                 self.visit_decl(
                     decl,
                     VisitDeclOpts {
                         was_anonymous_named_expr,
-                        could_be_const_value: was_const && !is_after,
+                        kind,
                         could_be_macro: if Self::ALLOW_MACROS {
                             prev_macro_call_count != self.macro_call_count
                         } else {
@@ -622,12 +620,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
                             continue 'outer;
                         }
-                        let is_after = self.vis_scope().is_after_const_local_prefix;
                         self.visit_decl(
                             decl,
                             VisitDeclOpts {
                                 was_anonymous_named_expr: false,
-                                could_be_const_value: was_const && !is_after,
+                                kind,
                                 could_be_macro: false,
                             },
                         );
@@ -652,7 +649,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         j
     }
 
-    pub(crate) fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) {
+    pub(crate) fn visit_binding_and_expr_for_macro(
+        &mut self,
+        binding: Binding,
+        expr: Expr,
+        kind: LocalKind,
+        has_default: bool,
+    ) {
         match binding.data {
             BData::BObject(bound_object) => {
                 let bound_object = bound_object.get();
@@ -672,15 +675,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             self.visit_binding_and_expr_for_macro(
                                                 property.value,
                                                 query.expr,
+                                                kind,
+                                                property.default_value.is_some(),
                                             );
                                         }
                                         _ => {
                                             if self.options.features.inlining {
                                                 if let BData::BIdentifier(id) = property.value.data
                                                 {
-                                                    self.const_values
-                                                        .put(id.r#ref, query.expr)
-                                                        .expect("oom");
+                                                    self.admit_const_value(
+                                                        id.r#ref,
+                                                        kind,
+                                                        property.default_value.is_some(),
+                                                        query.expr,
+                                                    );
                                                 }
                                             }
                                         }
@@ -713,37 +721,56 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 *child_expr = self.new_expr(E::Missing {}, expr.loc);
                                 continue;
                             }
-                            self.visit_binding_and_expr_for_macro(item.binding, *child_expr);
+                            self.visit_binding_and_expr_for_macro(
+                                item.binding,
+                                *child_expr,
+                                kind,
+                                item.default_value.is_some(),
+                            );
                         }
                     }
                 }
             }
             BData::BIdentifier(id) => {
                 if self.options.features.inlining {
-                    self.const_values.put(id.r#ref, expr).expect("oom");
+                    self.admit_const_value(id.r#ref, kind, has_default, expr);
                 }
             }
             BData::BMissing(_) => {}
         }
     }
 
+    /// The only writer of `const_values`. `ConstValue::new` tests the kind and the
+    /// value. `visit_decl` tests the position.
+    #[inline]
+    fn admit_const_value(&mut self, ref_: Ref, kind: LocalKind, has_default: bool, value: Expr) {
+        if let Some(value) = js_ast::ConstValue::new(kind, has_default, value) {
+            debug_assert!(self.symbols[ref_.inner_index() as usize].kind == SymbolKind::Constant);
+            self.const_values.put(ref_, value).expect("oom");
+        }
+    }
+
     pub(crate) fn visit_decl(&mut self, decl: &mut G::Decl, opts: VisitDeclOpts) {
         let VisitDeclOpts {
             was_anonymous_named_expr,
-            could_be_const_value,
+            kind,
             could_be_macro,
         } = opts;
         // Optionally preserve the name
         match decl.binding.data {
             BData::BIdentifier(id) => {
                 let id_ref = id.r#ref;
-                if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
+                // A declaration whose initializer held a macro call is exempt from the
+                // const-local prefix: `log(); const n = macro(); other(n)` gives the macro
+                // `other` the literal, and `let i = macro(); const n = 1;` still inlines `n`.
+                let is_macro = Self::ALLOW_MACROS && could_be_macro;
+                if kind == LocalKind::KConst
+                    && (is_macro || !self.vis_scope().is_after_const_local_prefix)
+                {
                     if let Some(val) = decl.value {
-                        if val.can_be_const_value() {
-                            self.const_values.put(id_ref, val).expect("oom");
-                        }
+                        self.admit_const_value(id_ref, kind, false, val);
                     }
-                } else {
+                } else if !is_macro {
                     self.vis_scope().is_after_const_local_prefix = true;
                 }
                 // SAFETY: original_name is arena-owned, valid for 'a.
@@ -759,7 +786,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BData::BObject(_) | BData::BArray(_) => {
                 if Self::ALLOW_MACROS {
                     if could_be_macro && let Some(value) = decl.value {
-                        self.visit_binding_and_expr_for_macro(decl.binding, value);
+                        self.visit_binding_and_expr_for_macro(decl.binding, value, kind, false);
                     }
                 }
             }
@@ -1853,10 +1880,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         | StmtData::STypeScript(_) => continue,
                         StmtData::SLocal(mut local) => {
                             // "using" / "await using" declarations have disposal
-                            // side-effects on scope exit. Their refs can end up in
-                            // `const_values` via the macro path in `visitDecl`
-                            // (`could_be_macro`), so skip them here to avoid
-                            // silently dropping the declaration.
+                            // side-effects on scope exit and are never in
+                            // `const_values`. Skip them, so that the scan reaches
+                            // the declarations below them.
                             if local.kind.is_using() {
                                 continue;
                             }

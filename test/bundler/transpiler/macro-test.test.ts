@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -249,6 +249,310 @@ test("spreading a macro result into JSX doesn't change the other uses of its con
     `[{"a":1,"b":[2]},{"a":1,"b":[2],"children":"kid"},{"a":1,"b":[2]},{"a":1,"b":[2]}]`,
   );
   expect(exitCode).toBe(0);
+});
+
+// Bun replaces the macro call with its result, and the rest of the program runs as written. So each module below
+// must export what it exports when `m.ts` is imported without the macro attribute.
+describe("a macro result that is bound to a name", () => {
+  const names = "num, hello, yes, nul, undef, undefs, obj, arr, holes, keys, twice";
+  const macros = `
+    export const num = () => 21;
+    export const hello = () => "Hello";
+    export const yes = () => true;
+    export const nul = () => null;
+    export const undef = () => undefined;
+    export const undefs = () => [undefined, null];
+    export const obj = () => ({ a: 1, b: { c: 2 }, list: [1, 2] });
+    export const arr = () => [1, "two", [3]];
+    export const holes = () => ({ a: undefined, b: 4, c: null });
+    export const keys = () => ({ xx: 1, x: 5, 0: "zero" });
+    export const twice = () => {
+      const o = { a: 1, b: 2 };
+      return { p: o, q: o };
+    };
+  `;
+
+  // Modules with the value that each must export.
+  const written: [body: string, exported: unknown][] = [
+    [`let s = hello(); s += " World"; export default s;`, "Hello World"],
+    [`let n = num(); n = 5; export default n;`, 5],
+    [`var v = num(); v++; export default v;`, 22],
+    [`let { a, b } = obj(); a = 99; export default [a, b];`, [99, { c: 2 }]],
+    [`const [u = 5, n = 6] = undefs(); export default [u, n];`, [5, null]],
+    [`const { a = 10, b = 20, c = 30 } = holes(); export default [a, b, c];`, [10, 4, null]],
+    [`const n = num(); const s = hello(); export default [n + n, s + s.length];`, [42, "Hello5"]],
+    [`export default [obj().b.c, arr()[2][0], arr().length, hello().length, num() + num()];`, [2, 3, 3, 5, 42]],
+  ];
+
+  // Modules from cross products of the declaration kind, the value and the use. No exported value is stored for
+  // them: the plain import is the oracle.
+  const generated: string[] = [];
+  // A read of a `const` that holds a macro object or array is a new copy of the object (#7196). A module that
+  // can tell the copy from the object does not run for `const`.
+  const copied = (kind: string, seesCopy: boolean) => kind === "const" && seesCopy;
+  for (const kind of ["const", "let", "var"]) {
+    const add = (body: string, seesCopy = false) => copied(kind, seesCopy) || generated.push(body);
+    for (const value of ["num", "hello", "yes", "nul", "undef", "obj", "arr"]) {
+      const x = `${kind} x = ${value}();`;
+      add(`${x} export default [x, typeof x];`);
+      add(`${x} const read = () => x; export default [read(), read()];`);
+      add(`${x} export default String(x) + JSON.stringify([x]);`);
+      if (kind === "const") continue;
+      add(`${x} x = 5; export default x;`);
+      add(`${x} x ??= "fallback"; export default x;`);
+      add(`${x} x += "!"; export default x;`);
+      add(`${x} [x] = ["array target"]; export default x;`);
+      add(`${x} ({ x } = { x: "object target" }); export default x;`);
+      add(`${x} for (x of ["loop target"]) {} export default x;`);
+    }
+
+    const o = `${kind} x = obj();`;
+    add(`${o} export default [x.a, x.b.c, x.list[1], x.list.length, Object.keys(x), "a" in x];`);
+    add(`${o} const { a, b: { c } } = x; export default [a, c];`);
+    add(`${o} export default JSON.stringify({ ...x, extra: 1 });`);
+    add(`${o} export default x === x;`, true);
+    add(`${o} x.a = 9; x.b.c = 8; x.list.push(3); delete x.list; export default x;`, true);
+    add(`${o} const y = x; y.added = true; export default [y === x, x.added];`, true);
+    add(`${o} export default new Map([[x, "found"]]).get(x);`, true);
+
+    const a = `${kind} x = arr();`;
+    add(`${a} export default [x[0], x[1], x[2][0], x.length, x.map(v => typeof v), x.includes("two")];`);
+    add(`${a} const [first, , [third]] = x; export default [first, third];`);
+    add(`${a} export default [...x, ...x].length;`);
+    add(`${a} x.push(4); x[0] = 0; export default [x, x.length];`, true);
+    add(`${a} const y = x; y.length = 1; export default [y === x, x];`, true);
+    add(`${a} export default new Set([x]).has(x);`, true);
+
+    add(`${kind} { a, b: { c }, list: [first, second] } = obj(); export default [a, c, first, second];`);
+    add(
+      `${kind} { a: renamed, missing = "d", b: { c = 0, gone = "g" } } = obj(); export default [renamed, missing, c, gone];`,
+    );
+    add(`${kind} { list, ...rest } = obj(); export default [list, rest];`);
+    add(`${kind} { list: [, second = 0, third = "t"] } = obj(); export default [second, third];`);
+    add(`${kind} [p, q, [r]] = arr(); export default [p, q, r];`);
+    add(`${kind} [p = 0, , [t] = [], u = "u"] = arr(); export default [p, t, u];`);
+    add(`${kind} [head, ...tail] = arr(); export default [head, tail];`);
+    add(`${kind} { b, list } = obj(); b.c = 9; list.push(3); export default [b, list, b === b];`, true);
+    if (kind === "const") continue;
+    add(`${kind} { a, b } = obj(); a = 5; b = null; export default [a, b];`);
+    add(`${kind} [p, q] = arr(); p += 1; [q] = ["target"]; export default [p, q];`);
+    add(`${kind} { b: { c }, list: [first] } = obj(); c = "c"; first = "f"; export default [c, first];`);
+  }
+
+  // A debug build is 10 to 100 times slower, so it runs a sample of the generated modules, always the same one.
+  const every = isDebug || isASAN ? 8 : 1;
+  const bodies = [...written.map(([body]) => body), ...generated.filter((_, i) => i % every === 0)];
+
+  const files: Record<string, string> = {
+    "m.ts": macros,
+    // Imports each module by itself, so that a module that cannot load does not hide the other modules.
+    "observe.ts": `
+      const [dir, ext, count] = process.argv.slice(2);
+      const seen = [];
+      for (let i = 0; i < Number(count); i++) {
+        try {
+          seen.push((await import("./" + dir + "/" + i + "." + ext)).default);
+        } catch (e) {
+          seen.push("threw " + e?.name);
+        }
+      }
+      console.log(JSON.stringify(seen, (key, value) => (value === undefined ? "undefined" : value)));
+    `,
+  };
+  bodies.forEach((body, i) => {
+    files[`plain/${i}.ts`] = `import { ${names} } from "../m.ts";\n${body}\n`;
+    files[`macro/${i}.ts`] = `import { ${names} } from "../m.ts" with { type: "macro" };\n${body}\n`;
+  });
+
+  async function observe(cwd: string, dir: string, ext: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "observe.ts", dir, ext, String(bodies.length)],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+    const seen: unknown[] = JSON.parse(stdout.trim().split("\n").pop()!);
+    return { seen: Object.fromEntries(bodies.map((body, i) => [`${i}: ${body}`, seen[i]])), stderr, exitCode };
+  }
+
+  // The plain import gives each written module its value, and no generated module throws there.
+  async function oracle(cwd: string) {
+    const plain = await observe(cwd, "plain", "ts");
+    expect(Object.values(plain.seen).slice(0, written.length)).toEqual(written.map(([, exported]) => exported));
+    expect(Object.values(plain.seen).filter(value => String(value).startsWith("threw "))).toEqual([]);
+    return plain;
+  }
+
+  test.concurrent("bun run", async () => {
+    using dir = tempDir("macro-bound-run", files);
+    expect(await observe(String(dir), "macro", "ts")).toEqual(await oracle(String(dir)));
+  });
+
+  // `--no-bundle --target=bun` and `--minify` turn the inliner on. The plain build leaves it off.
+  test.concurrent.each([
+    ["bun build", []],
+    ["bun build --no-bundle", ["--no-bundle"]],
+    ["bun build --minify", ["--minify"]],
+  ])("%s", async (_, flags) => {
+    using dir = tempDir("macro-bound-build", files);
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        ...flags,
+        ...bodies.map((_, i) => `./macro/${i}.ts`),
+        "--target=bun",
+        "--outdir=out",
+        // Without a name pattern, 9 or more entry points go to `out/macro/` (#38732).
+        "--entry-naming=[name].[ext]",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ buildErr, buildExit }).toEqual({ buildErr: "", buildExit: 0 });
+    expect(await observe(String(dir), "out", "js")).toEqual(await oracle(String(dir)));
+  });
+
+  // The inliner takes a `const` primitive from a macro at each position. It takes no `let` and no `var`: the
+  // program can assign to them.
+  test.concurrent("the inliner takes a const primitive and no let or var", async () => {
+    const from = `import { num, hello, no, pagePath } from "./m.ts" with { type: "macro" };\n`;
+    using dir = tempDir("macro-bound-inline", {
+      "m.ts": `
+        export const num = () => 21;
+        export const hello = () => "Hello";
+        export const no = () => false;
+        export const pagePath = () => "./page.ts";
+      `,
+      "page.ts": `export default "the page";`,
+      "first.ts": from + `const n = num(); const s = hello(); export default [n, n, s, s];`,
+      "below.ts": from + `globalThis.effect = 1; const n = num(); const s = hello(); export default [n, n, s, s];`,
+      "plain.ts": from + `globalThis.effect = 1; const k = 5; export default [k, k];`,
+      "let.ts": from + `let n = num(); export default [n, n];`,
+      "after-let.ts": from + `let i = num(); const k = 5; export default [i, k, k];`,
+      "flag-const.ts": from + `const DEV = no(); export default DEV ? "dev" : "prod";`,
+      "flag-var.ts": from + `var DEV = no(); export default DEV ? "dev" : "prod";`,
+      "import-const.ts": from + `const page = pagePath(); export default import(page);`,
+      "import-let.ts": from + `let page = pagePath(); export default import(page);`,
+    });
+    const entries = [
+      "first",
+      "below",
+      "plain",
+      "let",
+      "after-let",
+      "flag-const",
+      "flag-var",
+      "import-const",
+      "import-let",
+    ];
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        ...entries.map(name => `./${name}.ts`),
+        "--target=bun",
+        "--minify-syntax",
+        "--outdir=out",
+        "--entry-naming=[name].[ext]",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ buildErr, buildExit }).toEqual({ buildErr: "", buildExit: 0 });
+    const out = (name: string) => Bun.file(path.join(String(dir), "out", name + ".js")).text();
+
+    expect(await out("first")).toContain(`[21, 21, "Hello", "Hello"]`);
+    // A macro result is a literal at each position. An ordinary `const` below a statement is not inlined.
+    expect(await out("below")).toContain(`[21, 21, "Hello", "Hello"]`);
+    expect(await out("plain")).toContain(`[k, k]`);
+    expect(await out("let")).toContain(`[n, n]`);
+    // A `let` that holds a macro result does not end the run of `const` declarations that the inliner takes.
+    expect(await out("after-let")).toContain(`[i, 5, 5]`);
+    expect(await out("flag-const")).toContain(`= "prod"`);
+    expect(await out("flag-var")).toContain(`DEV ? "dev" : "prod"`);
+    // The bundler follows an `import()` of a `const` string. It cannot follow a `let`.
+    expect(await out("import-const")).toContain(`"the page"`);
+    expect(await out("import-let")).toContain(`import(page)`);
+  });
+
+  // A macro argument is evaluated at build time. The program can assign to a `let` before the call, so only a
+  // `const` has a build-time value. A `let` that holds a macro result does not hide the `const` below it.
+  test.concurrent("a macro argument can name a const primitive and cannot name a let", async () => {
+    const from = `import { num, hello, id, greet } from "./m.ts" with { type: "macro" };\n`;
+    using dir = tempDir("macro-bound-argument", {
+      "m.ts": `
+        export const num = () => 21;
+        export const hello = () => "Hello";
+        export const id = (x: any) => x;
+        export const greet = (name: string) => "hello " + name;
+      `,
+      "const.ts":
+        from +
+        `let counter = num();\nconst name = "world";\nconst h = hello();\nconsole.log(greet(name), id(h), counter);`,
+      "let.ts": from + `let h = hello();\nconsole.log(id(h));`,
+    });
+    async function run(file: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), file],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
+    }
+    expect(await run("const.ts")).toEqual({ lastLine: "hello world Hello 21", stderr: "", exitCode: 0 });
+    const rejected = await run("let.ts");
+    expect(rejected.stderr).toContain(`"Cannot convert identifier to JS. Try a statically-known value" error in macro`);
+    expect(rejected.exitCode).toBe(1);
+  });
+
+  // The pattern still tells which properties the program can read, for a `let` too.
+  test.concurrent("a let pattern drops the properties that it does not bind", async () => {
+    using dir = tempDir("macro-bound-let-pattern", {
+      "m.ts": `export const big = () => ({ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8 });`,
+      "entry.ts": `
+        import { big } from "./m.ts" with { type: "macro" };
+        let { a } = big();
+        a += 100;
+        console.log(a);
+      `,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--target=bun", "--minify", "--outfile=out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ buildErr, buildExit }).toEqual({ buildErr: "", buildExit: 0 });
+    const out = await Bun.file(path.join(String(dir), "out.js")).text();
+    expect(out).toContain("a:1");
+    expect(out).not.toContain("b:2");
+    expect(out).not.toContain("h:8");
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), "out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "101", stderr: "", exitCode: 0 });
+  });
 });
 
 // A value returned only by a getter can be collected once the walk moves on, and a later value can reuse its address.

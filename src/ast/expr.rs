@@ -65,10 +65,6 @@ impl Expr {
         }
     }
 
-    pub fn can_be_const_value(&self) -> bool {
-        self.data.can_be_const_value()
-    }
-
     pub fn can_be_moved(&self) -> bool {
         self.data.can_be_moved()
     }
@@ -2255,24 +2251,6 @@ impl Data {
 }
 
 impl Data {
-    /// "const values" here refers to expressions that can participate in constant
-    /// inlining, as they have no side effects on instantiation, and there would be
-    /// no observable difference if duplicated. This is a subset of canBeMoved()
-    pub(crate) fn can_be_const_value(&self) -> bool {
-        match self {
-            Data::ENumber(_)
-            | Data::EBoolean(_)
-            | Data::EBranchBoolean(_)
-            | Data::ENull(_)
-            | Data::EUndefined(_)
-            | Data::EInlinedEnum(_) => true,
-            Data::EString(str) => str.next.is_none(),
-            Data::EArray(array) => array.was_originally_macro,
-            Data::EObject(object) => object.was_originally_macro,
-            _ => false,
-        }
-    }
-
     /// Expressions that can be moved are those that do not have side
     /// effects on their own. This is used to determine what can be moved
     /// outside of a module wrapper (__esm/__commonJS).

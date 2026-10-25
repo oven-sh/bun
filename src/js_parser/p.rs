@@ -2188,7 +2188,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if self.options.features.inlining {
             if let Some(replacement) = self.const_values.get(&ref_) {
-                let replacement = *replacement;
+                let replacement = replacement.expr();
                 self.ignore_usage(ref_);
                 return replacement;
             }

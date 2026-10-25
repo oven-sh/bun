@@ -3377,6 +3377,23 @@ console.log(<div {...obj} key="after" />);`),
       );
     });
 
+    // The operand left of `**` can get its unary operator when it is printed.
+    it("exponentiation of an inlined enum and of minified literals", () => {
+      ts.expectPrinted_(
+        "enum E { A = -1, B = 2 }\nx = [E.A ** 2, E['A'] ** 2, E.B ** 2];",
+        'var E;\n((E) => {\n  E[E["A"] = -1] = "A";\n  E[E["B"] = 2] = "B";\n})(E ||= {});\n' +
+          "x = [(-1) /* A */ ** 2, (-1) /* A */ ** 2, 2 /* B */ ** 2];\n",
+      );
+      expectPrintedMin_("x = undefined ** 2;", "x = (void 0) ** 2;\n");
+      expectPrintedMin_("x = true ** 2;", "x = (!0) ** 2;\n");
+      expectPrintedMin_("x = false ** 2;", "x = (!1) ** 2;\n");
+      expectPrintedMin_("x = (-y) ** 2;", "x = (-y) ** 2;\n");
+      expectPrintedMin_("x = ++y ** 2;", "x = ++y ** 2;\n");
+      expectPrintedMin_("x = y-- ** 2;", "x = y-- ** 2;\n");
+      expectPrintedMin_("x = new Y ** 2;", "x = new Y ** 2;\n");
+      expectPrintedMin_("x = 2 ** -y;", "x = 2 ** -y;\n");
+    });
+
     it("for-of loop variable named async", () => {
       // "\u0061sync" is the identifier `async`, which is legal as a for-of loop
       // variable, but printing it as the raw token sequence `async of` is a

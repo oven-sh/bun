@@ -4039,6 +4039,38 @@ describe("bundler", () => {
     },
     run: { stdout: "true true true" },
   });
+  // The left operand of `**` cannot start with a unary operator. These operands get their `-` or
+  // their `void` when they are printed.
+  itBundled("edgecase/ExponentLeftInlinedEnum", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Other } from "./other";
+        enum Local { A = -1 }
+        const enum Const { A = -2 }
+        console.log(Local.A ** 2, Const.A ** 2, Other.A ** 2, Other["A"] ** 2, Other.B ** 2);
+      `,
+      "/other.ts": /* ts */ `
+        export enum Other { A = -3, B = 4 }
+      `,
+    },
+    run: { stdout: "1 4 9 9 16" },
+  });
+  itBundled("edgecase/ExponentLeftUndefinedMinify", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as lib from "./lib";
+        console.log(import.meta.hot ** 2, lib.missing ** 2, undefined ** 2, true ** 2);
+      `,
+      "/lib.ts": /* ts */ `
+        export const present = 1;
+      `,
+    },
+    minifySyntax: true,
+    bundleWarnings: {
+      "/entry.ts": [`Import "missing" will always be undefined because there is no matching export in "lib.ts"`],
+    },
+    run: { stdout: "NaN NaN NaN 1" },
+  });
   // https://github.com/oven-sh/bun/issues/14509
   // A require() in the catch handler of a try/catch is the common "fallback
   // require" pattern and should not fail the build when unresolvable.

@@ -123,6 +123,94 @@ devTest("add new css import later", {
     await c.style("body").notFound();
   },
 });
+devTest("editing a stylesheet imported with the css loader from a file with another extension", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<h1>hello world</h1>`,
+    }),
+    "index.ts": `
+      import "./theme.txt" with { type: "css" };
+    `,
+    "theme.txt": `
+      @import "./heading.css";
+      body {
+        color: red;
+      }
+    `,
+    "heading.css": `
+      h1 {
+        color: green;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+    await c.style("h1").color.expect.toBe("green");
+    // A save used to bundle theme.txt with the text loader of its extension.
+    await dev.write(
+      "theme.txt",
+      `
+        @import "./heading.css";
+        body {
+          color: blue;
+        }
+      `,
+    );
+    await c.style("body").color.expect.toBe("#00f");
+    // A save of a stylesheet that theme.txt imports bundles theme.txt again.
+    await dev.write(
+      "heading.css",
+      `
+        h1 {
+          color: red;
+        }
+      `,
+    );
+    await c.style("h1").color.expect.toBe("red");
+    await c.style("body").color.expect.toBe("#00f");
+  },
+});
+devTest("a hot update keeps the css loader of a Tailwind stylesheet with another extension", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./tailwind-plugin.ts"]
+    `,
+    // The name turns on the list of Tailwind stylesheets, which the dev server bundles again with each hot update.
+    "tailwind-plugin.ts": `
+      export default {
+        name: "tailwind-plugin",
+        setup() {},
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `hello world`,
+    }),
+    "index.ts": `
+      import "./theme.txt" with { type: "css" };
+      console.log("first");
+    `,
+    "theme.txt": `
+      .tailwind {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("first");
+    await c.style(".tailwind").color.expect.toBe("red");
+    // The hot update used to bundle theme.txt with the text loader of its extension.
+    await c.expectReload(async () => {
+      await dev.patch("index.ts", { find: "first", replace: "second" });
+    });
+    await c.expectMessage("second");
+    await c.style(".tailwind").color.expect.toBe("red");
+  },
+});
 devTest("css import another css file", {
   files: {
     "index.html": emptyHtmlFile({

@@ -160,6 +160,35 @@ devTest("html references a json file that is cached as a module", {
     expect(html).not.toInclude('rel="manifest"');
   },
 });
+devTest("saving a json file that html links as a manifest keeps the link an asset", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head><link rel="manifest" href="./manifest.json"></head><body>
+      <script type="module" src="script.ts"></script>
+      </body></html>
+    `,
+    "script.ts": `console.log("loaded");`,
+    "manifest.json": `{ "name": "first" }`,
+  },
+  async test(dev) {
+    // The url of the manifest link, and what that url serves.
+    const manifest = async () => {
+      const html = await (await dev.fetch("/")).text();
+      const href = html.match(/<link rel="manifest" href="([^"]*)">/)?.[1];
+      return { href, text: href && (await (await dev.fetch(href)).text()) };
+    };
+    const asset = expect.stringMatching(/^\/_bun\/asset\/.*\.json$/);
+    expect(await manifest()).toEqual({ href: asset, text: `{ "name": "first" }` });
+
+    // This save bundles the page again while the manifest is cached.
+    await dev.patch("index.html", { find: "<body>", replace: "<body><p>saved</p>" });
+    expect(await manifest()).toEqual({ href: asset, text: `{ "name": "first" }` });
+
+    // A save used to bundle manifest.json with the json loader, and the page lost the asset.
+    await dev.write("manifest.json", `{ "name": "second" }`);
+    expect(await manifest()).toEqual({ href: asset, text: `{ "name": "second" }` });
+  },
+});
 devTest("import then create", {
   files: {
     "index.html": `

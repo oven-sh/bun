@@ -1027,6 +1027,563 @@ devTest("importing html file with text loader (#18154)", {
     await c.expectMessage("<div>hello world</div>");
   },
 });
+devTest("editing an html file imported with the text loader (#22533, #24893)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: "<p>root document</p>",
+    }),
+    "index.ts": `
+      import html from "./app.html" with { type: "text" };
+      console.log(html);
+    `,
+    "app.html": "<div>first</div>",
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("<div>first</div>");
+
+    // A save used to bundle app.html with the html loader of its extension.
+    await c.expectReload(async () => {
+      await dev.write("app.html", "<div>second</div>");
+    });
+    await c.expectMessage("<div>second</div>");
+    await dev.fetch("/").expect.toInclude("<p>root document</p>");
+
+    await c.expectReload(async () => {
+      await dev.write("app.html", "<div>third</div>");
+    });
+    await c.expectMessage("<div>third</div>");
+    await dev.fetch("/").expect.toInclude("<p>root document</p>");
+  },
+});
+devTest("editing a text-imported html file that an onResolve plugin claims (#22533)", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    // The plugin resolves entry points, so the file that is bundled again takes the plugin path.
+    "plugin.ts": `
+      export default {
+        name: "resolve-html-entry-points",
+        setup(build) {
+          build.onResolve({ filter: /\\.html$/ }, args => (args.importer ? undefined : { path: args.path }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import html from "./app.html" with { type: "text" };
+      console.log(html);
+    `,
+    "app.html": "<div>first</div>",
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("<div>first</div>");
+
+    await c.expectReload(async () => {
+      await dev.write("app.html", "<div>second</div>");
+    });
+    await c.expectMessage("<div>second</div>");
+  },
+});
+devTest("editing files imported with a loader other than their extension's keeps that loader (#24893, #23299)", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import template from "./template.mustache" with { type: "text" };
+      import data from "./data.json" with { type: "text" };
+      import snippet from "./snippet.ts" with { type: "text" };
+      import shader from "./shader.wgsl" with { type: "text" };
+      import styles from "./styles.css" with { type: "text" };
+      import config from "./config.txt" with { type: "json" };
+      console.log(template);
+      console.log(typeof data + ":" + data);
+      console.log(snippet);
+      console.log(shader);
+      console.log(styles);
+      console.log(typeof config + ":" + config.version);
+    `,
+    "template.mustache": "{{first}}",
+    "data.json": `{"version":1}`,
+    "snippet.ts": `console.log("snippet ran");`,
+    "shader.wgsl": "fn first() {}",
+    "styles.css": "body{color:red}",
+    "config.txt": `{"version":1}`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    // What index.ts logs for each file, in the order of its imports.
+    const logged = {
+      "template.mustache": "{{first}}",
+      "data.json": 'string:{"version":1}',
+      "snippet.ts": 'console.log("snippet ran");',
+      "shader.wgsl": "fn first() {}",
+      "styles.css": "body{color:red}",
+      "config.txt": "object:1",
+    };
+    await c.expectMessage(...Object.values(logged));
+
+    // A save used to use the extension's loader: an asset URL, an object, a module that runs, an asset URL, a stylesheet, a string.
+    for (const [file, contents, message] of [
+      ["template.mustache", "{{second}}", "{{second}}"],
+      ["data.json", `{"version":2}`, 'string:{"version":2}'],
+      ["snippet.ts", `console.log("snippet ran again");`, 'console.log("snippet ran again");'],
+      ["shader.wgsl", "fn second() {}", "fn second() {}"],
+      ["styles.css", "body{color:blue}", "body{color:blue}"],
+      ["config.txt", `{"version":2}`, "object:2"],
+    ] as const) {
+      await c.expectReload(async () => {
+        await dev.write(file, contents);
+      });
+      logged[file] = message;
+      await c.expectMessage(...Object.values(logged));
+    }
+  },
+});
+devTest("a saved file takes the loader that its importer asks for at the time of the save", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import * as data from "./data.ts";
+      console.log(data.default ?? data.x);
+    `,
+    "data.ts": `export const x = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    // index.ts logs the text of data.ts when data.ts is a text module, and its export when it is a module.
+    await c.expectMessage(1);
+
+    const importer = (attribute: string) =>
+      `import * as data from "./data.ts"${attribute}; console.log(data.default ?? data.x);`;
+    let version = 1;
+    // Saves index.ts with `attribute` on its import, then saves data.ts.
+    const save = async (attribute: string) => {
+      await c.expectReload(async () => {
+        await dev.write("index.ts", importer(attribute));
+      });
+      // Until data.ts is saved, index.ts has the module of the last bundle of data.ts.
+      await c.expectMessage(expect.anything());
+      await c.expectReload(async () => {
+        await dev.write("data.ts", `export const x = ${++version};`);
+      });
+    };
+    await save(` with { type: "text" }`);
+    await c.expectMessage("export const x = 2;");
+    await save("");
+    await c.expectMessage(3);
+    await save(` with { type: "text" }`);
+    await c.expectMessage("export const x = 4;");
+
+    // No import is left, so the next import of data.ts gets the loader of its extension.
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log("no import");`);
+    });
+    await c.expectMessage("no import");
+    await dev.write("data.ts", `export const x = 5;`);
+    await c.expectReload(async () => {
+      await dev.write("index.ts", importer(""));
+    });
+    await c.expectMessage(5);
+  },
+});
+devTest("a file that two importers ask for with two loaders is saved with the loader of its extension", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./a.ts";
+      import "./b.ts";
+    `,
+    // Each importer asks for the text of one file and for the module of the other file.
+    "a.ts": `
+      import text from "./one.ts" with { type: "text" };
+      import { two } from "./two.ts";
+      console.log("a:" + typeof text + ":" + two);
+    `,
+    "b.ts": `
+      import { one } from "./one.ts";
+      import text from "./two.ts" with { type: "text" };
+      console.log("b:" + one + ":" + typeof text);
+    `,
+    "one.ts": `export const one = 1;`,
+    "two.ts": `export const two = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    // The dev server keeps one module for each path, so only one importer of each file gets what it asks for.
+    await c.expectMessage(expect.anything(), expect.anything());
+
+    await c.expectReload(async () => {
+      await using batch = await dev.batchChanges();
+      await dev.write("one.ts", `export const one = 2;`);
+      await dev.write("two.ts", `export const two = 2;`);
+    });
+    await c.expectMessage("a:undefined:2", "b:2:undefined");
+  },
+});
+devTest("a file that an onLoad plugin stops loading is saved with the loader of its extension", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "loads-marked-files",
+        setup(build) {
+          build.onLoad({ filter: /comp\\.ts$/ }, async args => {
+            const contents = await Bun.file(args.path).text();
+            if (!contents.includes("@strip")) return undefined;
+            return { contents: contents.replace(": string", ""), loader: "js" };
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { label } from "./comp.ts";
+      console.log(label);
+    `,
+    "comp.ts": `
+      // @strip
+      export const label: string = "one";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+
+    // The plugin declines this save. The js loader that it chose before must not parse the TypeScript.
+    await c.expectReload(async () => {
+      await dev.write("comp.ts", `export const label: string = "two";`);
+    });
+    await c.expectMessage("two");
+  },
+});
+devTest("an import that drops its type in the same batch as a save of the file", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import text from "./data.ts" with { type: "text" };
+      console.log("text:" + typeof text);
+    `,
+    "data.ts": `export const x = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("text:string");
+
+    await c.expectReload(async () => {
+      await using batch = await dev.batchChanges();
+      await dev.write("index.ts", `import "./data.ts"; console.log("index ran");`);
+      await dev.write("data.ts", `export const x = 2;`);
+    });
+    await c.expectMessage("index ran");
+
+    // The import of that batch no longer asks for the text loader, so this save must not use it.
+    await c.expectReload(async () => {
+      await dev.write("data.ts", `export const x = 3; console.log("data ran");`);
+    });
+    await c.expectMessage("data ran", "index ran");
+  },
+});
+devTest("deleting a file imported by a module loaded through an import attribute", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./app.txt" with { type: "js" };
+    `,
+    "app.txt": `
+      import { value } from "./other";
+      console.log(value);
+    `,
+    "other.ts": `
+      export const value = 123;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+
+    // app.txt is bundled again as the importer: only with the js loader is its import reported.
+    await dev.delete("other.ts", {
+      errors: ['app.txt:1:23: error: Could not resolve: "./other"'],
+    });
+    // The repair bundles the failed app.txt again, with the js loader too.
+    await c.expectReload(async () => {
+      await dev.write("other.ts", `export const value = 456;`);
+    });
+    await c.expectMessage(456);
+  },
+});
+devTest("editing a server file imported with a loader other than its extension's keeps that loader", {
+  framework: minimalFramework,
+  files: {
+    "message.txt": `export const message = "first";`,
+    "routes/index.ts": `
+      import { message } from '../message.txt' with { type: 'js' };
+      export default function (req, meta) {
+        return new Response(message);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("first");
+    // A save used to use the text loader, which has no "message" export.
+    await dev.write("message.txt", `export const message = "second";`);
+    await dev.fetch("/").equals("second");
+    await dev.write("message.txt", `export const message = "third";`);
+    await dev.fetch("/").equals("third");
+  },
+});
+devTest("saving a server file imported with the text loader does not run it", {
+  framework: minimalFramework,
+  files: {
+    "snippet.ts": `globalThis.snippetRan = true;`,
+    "routes/index.ts": `
+      import snippet from '../snippet.ts' with { type: 'text' };
+      export default function (req, meta) {
+        return Response.json({ snippet: typeof snippet, ran: globalThis.snippetRan === true });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ snippet: "string", ran: false });
+    // A save used to bundle snippet.ts with the ts loader of its extension, and the server ran it.
+    await dev.write("snippet.ts", `globalThis.snippetRan = true; // saved`);
+    await dev.fetch("/").equals({ snippet: "string", ran: false });
+  },
+});
+devTest("a file whose first bundle fails is still rebundled with the loader its import chose", {
+  framework: minimalFramework,
+  files: {
+    "message.txt": `export const message = ;`,
+    "routes/index.ts": `
+      import { message } from '../message.txt' with { type: 'js' };
+      export default function (req, meta) {
+        return new Response(message);
+      }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    // The failed attempt is the only bundle of message.txt so far.
+    await dev.write("message.txt", `export const message = "first";`);
+    await dev.fetch("/").equals("first");
+    await dev.write("message.txt", `export const message = "second";`);
+    await dev.fetch("/").equals("second");
+  },
+});
+devTest("a framework route that another route imports as text is still bundled as the route after a save", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function (req, meta) {
+        return new Response("first");
+      }
+    `,
+    "routes/source.ts": `
+      import source from './index.ts' with { type: 'text' };
+      export default function (req, meta) {
+        return new Response(typeof source);
+      }
+    `,
+  },
+  async test(dev) {
+    // /source bundles routes/index.ts as a text module before the route of routes/index.ts is requested.
+    await dev.fetch("/source").equals("string");
+    await dev.write(
+      "routes/index.ts",
+      `
+        export default function (req, meta) {
+          return new Response("second");
+        }
+      `,
+    );
+    await dev.fetch("/").equals("second");
+  },
+});
+devTest("a page and a client entry point that client code imports as text are still bundled as modules after a save", {
+  framework: {
+    fileSystemRouterTypes: [
+      {
+        root: "routes",
+        style: "nextjs-pages",
+        serverEntryPoint: "./server.ts",
+        clientEntryPoint: "./client.ts",
+        clientPages: true,
+      },
+    ],
+  },
+  files: {
+    "server.ts": `
+      export function render(request, meta) {
+        return new Response(meta.modules.join(" "));
+      }
+    `,
+    "client.ts": `
+      import { route } from "bun:bake/client";
+      import other from "./routes/other.ts" with { type: "text" };
+      const entry: string = "client entry, first";
+      console.log(entry, other, route);
+    `,
+    "routes/index.ts": `
+      import entry from "../client.ts" with { type: "text" };
+      const page: string = "index page";
+      export default () => page + entry;
+    `,
+    "routes/other.ts": `
+      const page: string = "other page, first";
+      export default () => page;
+    `,
+  },
+  async test(dev) {
+    // The browser bundle of a route. The server entry point answers with the url of that bundle.
+    const bundle = async (route: string) => {
+      const [url] = (await (await dev.fetch(route)).text()).split(" ");
+      return await (await dev.fetch(url)).text();
+    };
+    // The route / bundles routes/other.ts as a text module before the route /other is requested.
+    expect(await bundle("/")).toContain("page: string");
+
+    await dev.write(
+      "routes/other.ts",
+      `
+        const page: string = "other page, second";
+        export default () => page;
+      `,
+    );
+    await dev.patch("client.ts", { find: "client entry, first", replace: "client entry, second" });
+    // As modules, the two files lose their type annotations.
+    const saved = await bundle("/other");
+    expect(saved).toContain("other page, second");
+    expect(saved).toContain("client entry, second");
+    expect(saved).not.toContain("page: string");
+    expect(saved).not.toContain("entry: string");
+  },
+});
+devTest("saving files that the SSR graph imports with the text loader", {
+  framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+  files: {
+    "snippet.ts": `globalThis.snippetRan = true;`,
+    "shared.ts": `export const shared = "one";`,
+    "ssr.ts": `
+      import snippet from './snippet.ts' with { type: 'text' };
+      import sharedText from './shared.ts' with { type: 'text' };
+      export const kinds = () => ({
+        snippet: typeof snippet,
+        shared: typeof sharedText,
+        ran: globalThis.snippetRan === true,
+      });
+    `,
+    "routes/index.ts": `
+      import { shared } from '../shared';
+      export default function (req, meta) {
+        return new Response("index " + shared);
+      }
+    `,
+    "routes/other.ts": `
+      import { kinds } from '../ssr.ts' with { bunBakeGraph: 'ssr' };
+      export default function (req, meta) {
+        return Response.json(kinds());
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index one");
+    await dev.fetch("/other").equals({ snippet: "string", shared: "string", ran: false });
+
+    // Only the SSR graph bundles snippet.ts. A save used to bundle it with the ts loader, and the server ran it.
+    await dev.write("snippet.ts", `globalThis.snippetRan = true; // saved`);
+    await dev.fetch("/other").equals({ snippet: "string", shared: "string", ran: false });
+
+    // The server graph imports shared.ts as a module and the SSR graph imports it as text.
+    // The dev server keeps one file for the two graphs, so a save takes the loader of the extension.
+    await dev.write("shared.ts", `export const shared = "two";`);
+    await dev.fetch("/").equals("index two");
+  },
+});
+devTest("a file that the browser imports as text and the server as a module keeps both loaders on a save", {
+  framework: {
+    fileSystemRouterTypes: [
+      { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" },
+    ],
+  },
+  files: {
+    "shared.ts": `export const x = 1;`,
+    "client.ts": `
+      import text from "./shared.ts" with { type: "text" };
+      console.log(text);
+    `,
+    "server.ts": `
+      export function render(req, meta) {
+        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+        const body = "<p>" + meta.pageModule.default() + "</p>" + scripts;
+        return new Response("<!DOCTYPE html><html><body>" + body + "</body></html>", {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+    `,
+    "routes/index.ts": `
+      import { x } from "../shared.ts";
+      export default () => "x:" + x;
+    `,
+    "routes/second.ts": `
+      import { x } from "../shared.ts";
+      export default () => "x:" + x;
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<p>x:1</p>");
+    await dev.write("shared.ts", `export const x = 2;`);
+    // The browser bundle of a route is built on its first request, so /second shows the browser graph after the save.
+    await dev.fetch("/second").expect.toInclude("<p>x:2</p>");
+    await using c = await dev.client("/second");
+    await c.expectMessage("export const x = 2;");
+  },
+});
+devTest("a route file that a script imports as text is bundled as the route when its script is deleted", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: {
+    "bun.app.ts": `
+      import main from "./main.html";
+      import about from "./about.htm" with { type: "html" };
+      export default {
+        static: { "/main": main, "/about": about },
+        fetch() {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+    "main.html": emptyHtmlFile({ scripts: ["main.ts"] }),
+    "main.ts": `
+      import about from "./about.htm" with { type: "text" };
+      console.log(typeof about);
+    `,
+    "about.htm": emptyHtmlFile({ scripts: ["about.ts"], body: "<p>about</p>" }),
+    "about.ts": `console.log("about");`,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    await dev.fetch("/about").expect.toInclude("<p>about</p>");
+    // main.ts asks for about.htm as text after the route bundled it as html.
+    await dev.fetch("/main").expect.toInclude("<script");
+
+    // about.htm is bundled again to report its missing script: as the html of its route, not as the text that main.ts asks for.
+    await dev.delete("about.ts", { errors: null });
+    expect((await dev.fetch("/about")).status).toBe(500);
+  },
+});
 devTest("importing bun on the client", {
   files: {
     "index.html": emptyHtmlFile({

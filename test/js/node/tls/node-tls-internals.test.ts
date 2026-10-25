@@ -420,10 +420,33 @@ describe("certificates the system distrusts", () => {
     });
   });
 
-  test("a distrusted certificate the peer sent but did not need is ignored", async () => {
+  test("a distrusted certificate the peer sent but did not need is ignored when the chain verifies", async () => {
     addDistrustedCertificateForTesting(der(unrelatedCert));
     const listening = await listen({ key: leafKey, cert: `${leafChain}\n${unrelatedCert}` });
     expect(await connectTo(listening, { ca: rootCert })).toEqual({ authorized: true, authorizationError: null });
+  });
+
+  test("every certificate the peer sent is checked when the chain does not verify", async () => {
+    addDistrustedCertificateForTesting(der(unrelatedCert));
+    const listening = await listen({ key: leafKey, cert: `${leafChain}\n${unrelatedCert}` });
+    expect(await connectTo(listening, { ca: unrelatedCert })).toEqual({ error: "CERT_REVOKED" });
+  });
+
+  test("a distrusted certificate in the client's chain is rejected by the server", async () => {
+    addDistrustedCertificateForTesting(der(intermediateCert));
+    const listening = await listen({
+      key: readKey("agent1-key.pem"),
+      cert: readKey("agent1-cert.pem"),
+      ca: rootCert,
+      requestCert: true,
+      rejectUnauthorized: true,
+    });
+    const { promise, resolve } = Promise.withResolvers<object>();
+    listening.once("tlsClientError", (err, socket) =>
+      resolve({ error: (err as NodeJS.ErrnoException).code, authorizationError: socket.authorizationError }),
+    );
+    connectTo(listening, { key: leafKey, cert: leafChain, ca: rootCert });
+    expect(await promise).toEqual({ error: "CERT_REVOKED", authorizationError: "CERT_REVOKED" });
   });
 
   test("clearing the list accepts the chain again", async () => {

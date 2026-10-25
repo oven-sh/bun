@@ -4760,7 +4760,9 @@ impl<'p, 's> Checker<'p, 's> {
         if self.stack.iter().any(|&q| self.is_resolution(q)) {
             let (reported, requests) =
                 (self.reported.len(), self.reported_iteration_requests.len());
+            let outer = std::mem::replace(&mut self.is_prechecking, true);
             check(self);
+            self.is_prechecking = outer;
             self.reported.truncate(reported);
             self.settle_iteration_requests(requests, true);
         }

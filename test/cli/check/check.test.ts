@@ -7693,6 +7693,34 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
+    // Each `||` in the condition of an `if` looks for functions that aren't called among all the operands to its left:
+    // over a minute for these 30,000 in a release build.
+    test.each(["||", "??"])("finds the uncalled functions in a long chain of `%s` in an `if`", async operator => {
+      const n = isDebug || isASAN ? 3_000 : 30_000;
+      const calls = Array.from({ length: n }, (_, i) => `g(${i})`).join(` ${operator} `);
+      using dir = project({
+        "a.ts": `declare function g(x: number): boolean | undefined;
+declare function uncalled(): boolean;
+export function f() {
+  if (
+    uncalled ${operator}
+    ${calls} ${operator}
+    uncalled ${operator}
+    g(0)
+  ) {
+    return 1;
+  }
+  return 0;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      const message =
+        "This condition will always return true since this function is always defined. Did you mean to call it instead?";
+      expect(stdout).toBe(`a.ts(5,5): error TS2774: ${message}\na.ts(7,5): error TS2774: ${message}`);
+      expect(exitCode).toBe(1);
+    });
+
     // Each operand looks for the function around it, and its distance from there is the length of the rest of the chain.
     // So do the statements of a long `if .. else if ..` chain. Nothing here nests: the chain is handled in loops.
     test("reports TS2563 for a long chain of `&&` in an argument", async () => {

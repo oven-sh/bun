@@ -172,16 +172,65 @@ impl<'p> Checker<'p, '_> {
     /// `condType`.
     fn check_known_truthy_types(&mut self, file: FileId, test: ExprId, whole: ExprId, body: Node) {
         let hir = self.hir(file);
-        let mut test = test;
-        self.check_known_truthy_type(file, test, whole, body);
-        while let ExprKind::Binary {
-            op: BinOp::Or | BinOp::Nullish,
-            left,
-            ..
-        } = hir[test].kind
-        {
-            test = left;
-            self.check_known_truthy_type(file, test, whole, body);
+        let is_logical = |e: ExprId| {
+            matches!(
+                hir[e].kind,
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    ..
+                }
+            )
+        };
+        // Each `||` of a chain in the condition of an `if` visits all the operators to its left, which would make a
+        // chain of n operators take n * n steps. Only the check of the leftmost operand depends on `whole`, unless a
+        // right operand is itself a chain. The other checks are the same each time, so those that reported nothing
+        // aren't repeated. What a check reports or resolves isn't final in a loop or while something is in resolution.
+        let is_repeatable =
+            !self.is_prechecking && !self.is_rechecking() && !self.is_in_flow_loop();
+        let known = if is_repeatable {
+            let known = self.last_known_truthy_chain.take();
+            known.filter(|known| (known.file, known.body) == (file, body))
+        } else {
+            None
+        };
+        let mut repeated = smallvec::SmallVec::new();
+        let mut at = test;
+        loop {
+            if let Some(known) = &known
+                && (at == known.top
+                    || matches!(hir[known.top].kind, ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, left, .. } if left == at))
+            {
+                for &again in &known.repeated {
+                    if again != known.top || at == known.top {
+                        self.check_known_truthy_type(file, again, whole, body);
+                        repeated.push(again);
+                    }
+                }
+                at = known.leftmost;
+            }
+            let reported = self.reported.len();
+            self.check_known_truthy_type(file, at, whole, body);
+            let ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } = hir[at].kind
+            else {
+                break;
+            };
+            if is_logical(right) || self.reported.len() != reported {
+                repeated.push(at);
+            }
+            at = left;
+        }
+        if is_repeatable {
+            self.last_known_truthy_chain = Some(KnownTruthyChain {
+                file,
+                top: test,
+                leftmost: at,
+                body,
+                repeated,
+            });
         }
     }
 

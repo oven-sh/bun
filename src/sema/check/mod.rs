@@ -224,6 +224,17 @@ pub(crate) use file_local_fields;
 /// true if `instantiateSignature` created it for the call.
 pub(crate) type AssignedSignature = (Option<SigId>, bool);
 
+/// A chain of `||` and `??` whose operators, from `top` down its left operands to `leftmost`, which isn't one,
+/// `Checker::check_known_truthy_type` has checked with this `body`. It would find nothing to report if it checked them
+/// again, except for those in `repeated`.
+struct KnownTruthyChain {
+    file: FileId,
+    top: ExprId,
+    leftmost: ExprId,
+    body: crate::hir::Node,
+    repeated: smallvec::SmallVec<[ExprId; 2]>,
+}
+
 /// See `Checker::contextual_signature_in_check`. The signature is the same for as long as
 /// `Checker::contextual` and `Checker::inference_contexts` have these lengths.
 #[derive(Clone, Copy)]
@@ -1051,6 +1062,8 @@ impl<'s> Program<'s> {
             context_checking: Vec::new(),
             contextual_signature_in_check: None,
             last_logical_chain: (FileId(0), ExprId::NONE, crate::bind::Parent::None),
+            last_known_truthy_chain: None,
+            is_prechecking: false,
             last_nullishness: ((FileId(0), ExprId::NONE), 0),
             context_checked_here: Default::default(),
             in_check_identifier: Vec::new(),
@@ -2018,6 +2031,10 @@ pub struct Checker<'p, 's> {
     contextual_signature_in_check: Option<ContextualSignatureInCheck>,
     /// The operator that `parent_of_logical_chain` was last called for, and the result.
     last_logical_chain: (FileId, ExprId, crate::bind::Parent),
+    /// See `check_known_truthy_types`.
+    last_known_truthy_chain: Option<KnownTruthyChain>,
+    /// `precheck_with` is running its argument.
+    is_prechecking: bool,
     /// The `??` or `??=` that `syntactic_nullishness` last answered for, and the answer.
     last_nullishness: ((FileId, ExprId), u8),
     /// The functions whose entry in `Program::context_checked` this checker wrote or tried to

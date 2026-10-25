@@ -3980,6 +3980,18 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// True if `q`, for which `leave` has just returned `Err`, is also being resolved below the `resolution_start`
+    /// barrier, and nothing happened during this resolution that makes a result non-cacheable: its frame only
+    /// inherited that from the frame below. tsc assigns `resolvedReturnType` and a variable's `resolvedType` only if
+    /// they're nil, so the resolution below the barrier finds this result when it ends, and it stays.
+    fn is_first_result_above_barrier(&self, q: Query) -> bool {
+        self.stack[..self.resolution_start.min(self.stack.len())].contains(&q)
+            && self.left_frame.is_some_and(|frame| {
+                self.lowest_taint_since(frame.serial) == usize::MAX
+                    && self.rejected_at < frame.serial
+            })
+    }
+
     /// True if `mark_cycle_from` rejects a cycle whose head is `stack[from - 1]` because of `eager`.
     fn is_behind_barrier(&self, from: usize) -> bool {
         let above = |barriers: &[usize]| barriers.iter().filter(|&&at| at >= from).count();

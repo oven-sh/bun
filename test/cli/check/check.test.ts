@@ -8758,6 +8758,30 @@ export const first: never = cart.first;
       expect(exitCode).toBe(1);
     });
 
+    // Each call starts a new resolution stack, so `acc` is resolved a second time inside its first resolution. By then
+    // `f0` is `any`, because its cycle has been found, so the inner resolution assigns `any`. The outer one gets
+    // `readonly [any]`, but `getTypeOfVariableOrParameterOrProperty` only assigns if the symbol has no type yet.
+    test("a variable keeps the type that a resolution inside its first resolution assigned", async () => {
+      using dir = project({
+        "m0.ts": `import { f1 } from "./m1";
+declare function compose<A, B, C>(f: (a: A) => B, g: (b: B) => C): (a: A) => C;
+export const f0 = compose((x: number) => f0(x) + 1, y => [f1(1)] as const);
+`,
+        "m1.ts": `import { f0 } from "./m0";
+export function f1(x: number, depth = f1(1)) { let acc = f0(x); acc = "s"; const p: never = acc; return acc; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "m0.ts(3,14): error TS7022: 'f0' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "m0.ts(3,27): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "m1.ts(2,82): error TS2322: Type 'any' is not assignable to type 'never'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("TS7053 prints an aliased intersection with a class by its members", async () => {
       using dir = project({
         "a.ts": `class User { id = 1 }

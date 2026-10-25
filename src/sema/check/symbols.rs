@@ -414,6 +414,15 @@ impl<'p, 's> Checker<'p, 's> {
             Ok(stored) => {
                 self.p.symbol_types.insert(&self.task, sym, ty, stored);
             }
+            Err(_)
+                if is_variable_or_property(flags, value_declaration)
+                    && self.is_first_result_above_barrier(Query::Symbol(sym)) =>
+            {
+                self.p
+                    .symbol_types
+                    .insert(&self.task, sym, ty, Stored::new());
+                self.note_result(Query::Symbol(sym));
+            }
             Err(open) => self.cache_provisionally(Query::Symbol(sym), u64::from(ty.0), open),
         }
         ty
@@ -2553,6 +2562,11 @@ impl<'p, 's> Checker<'p, 's> {
                     .pat_types
                     .insert(&self.task, (file, pat), (ty, false), stored);
             }
+            Err(_) if self.is_first_result_above_barrier(query) => {
+                let stored = Stored::new();
+                (self.p.pat_types).insert(&self.task, (file, pat), (ty, false), stored);
+                self.note_result(query);
+            }
             Err(open) => self.cache_provisionally(query, u64::from(ty.0), open),
         }
         ty
@@ -4457,16 +4471,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .fn_return_types
                     .insert(&self.task, (file, func), (ty, false), stored);
             }
-            // The resolution below the `resolution_start` barrier finds this result when it ends. Nothing happened
-            // during this one that makes a result non-cacheable. Its frame only inherited that from the frame below.
-            Err(_)
-                if self.stack[..self.resolution_start.min(self.stack.len())]
-                    .contains(&Query::Return(file, func))
-                    && self.left_frame.is_some_and(|frame| {
-                        self.lowest_taint_since(frame.serial) == usize::MAX
-                            && self.rejected_at < frame.serial
-                    }) =>
-            {
+            Err(_) if self.is_first_result_above_barrier(Query::Return(file, func)) => {
                 let stored = Stored::new();
                 (self.p.fn_return_types).insert(&self.task, (file, func), (ty, false), stored);
             }

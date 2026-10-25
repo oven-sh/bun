@@ -574,6 +574,10 @@ impl FrameworkRouter {
         // SAFETY: `fs` is the non-null process-global FileSystem singleton (see above);
         // `addr_of_mut!` only computes a field address without forming a reference.
         let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
+        // A directory reached through a link shares the listing of its real path, so
+        // `Entry.dir` can be the real directory. `DirInfo.abs_path` is the path as walked
+        // from the type's root, which is what names a route and its file.
+        let walked_dir: &'static [u8] = dir_info.abs_path;
 
         {
             // Note: `entries.data` is backed by `std::collections::HashMap`,
@@ -626,7 +630,7 @@ impl FrameworkRouter {
                         }
 
                         if let Some(child_info) =
-                            r.read_dir_info_ignore_error(fs_ref.abs(&[file.dir, file.base()]))
+                            r.read_dir_info_ignore_error(fs_ref.abs(&[walked_dir, file.base()]))
                         {
                             self.scan_inner(t_index, r, &child_info, arena_state, ctx)?;
                         }
@@ -651,7 +655,7 @@ impl FrameworkRouter {
                         }
 
                         let t = &self.types[t_index.get() as usize];
-                        let abs_path = fs_ref.abs(&[file.dir, file.base()]);
+                        let abs_path = fs_ref.abs(&[walked_dir, file.base()]);
 
                         // Parse the pattern from the path relative to this type's root, which can be outside `self.root`.
                         let mut rel_path_buf = bun_paths::path_buffer_pool::get();
@@ -789,7 +793,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Dynamic(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                fs_ref.abs(&[walked_dir, file.base()]),
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -820,7 +824,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Static(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                fs_ref.abs(&[walked_dir, file.base()]),
                                 ctx,
                                 &mut out_colliding_file_id,
                             )

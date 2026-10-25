@@ -2,7 +2,7 @@ use crate::CrateError as Error;
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_paths::{AutoAbsPathChecked, PathBuffer};
-use bun_sys as sys;
+use bun_sys::{self as sys, E, Fd};
 
 use crate::VM;
 
@@ -45,13 +45,17 @@ pub(crate) fn generate_and_write_profile(
     let profile_slice = profile_string.to_utf8();
 
     // The output file is created only once there is a profile to put in it.
-    sys::File::make_open(
-        path_buf.slice(),
-        sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-        0o664,
-    )
-    .and_then(|file| file.write_all(profile_slice.slice()))
-    .map_err(|_| Error::WriteFailed)?;
+    // The directory is created only when the open says it is missing.
+    let flags = sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC;
+    let opened = match sys::File::openat(Fd::cwd(), path_buf.slice(), flags, 0o664) {
+        Err(err) if matches!(err.get_errno(), E::ENOENT | E::EPERM | E::EACCES) => {
+            sys::File::make_open(path_buf.slice(), flags, 0o664)
+        }
+        result => result,
+    };
+    opened
+        .and_then(|file| file.write_all(profile_slice.slice()))
+        .map_err(|_| Error::WriteFailed)?;
 
     // Print where the markdown profile was written; node parity for the
     // .heapprofile format is silence on success.

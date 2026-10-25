@@ -66,7 +66,6 @@
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/HeapProfiler.h>
 #include "BunHeapProfiler.h"
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/GetPtr.h>

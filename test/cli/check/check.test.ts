@@ -758,7 +758,7 @@ ${Array.from({ length: 300 }, (_, i) => `export const x${i} = [1, 2].map(v => ({
 });
 `,
       "use.ts": `import { cart } from "./cart";
-export const text = cart.text;
+export const text: never = cart.text;
 `,
     });
     // Without the rule, a release build loses the first two errors in 84 % of the runs.
@@ -767,7 +767,8 @@ export const text = cart.text;
       expect(stdout).toBe(
         `cart.ts(306,32): error TS2339: Property 'coupon' does not exist on type '{ total: (s: { prices: number[]; coupon: string; }) => number; discounted(): number | ((s: { prices: number[]; coupon: string; }) => number); text(): any; }'.
 cart.ts(306,41): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
-cart.ts(307,37): error TS2339: Property 'toFixed' does not exist on type '() => number | ((s: { prices: number[]; coupon: string; }) => number)'.`,
+cart.ts(307,37): error TS2339: Property 'toFixed' does not exist on type '() => number | ((s: { prices: number[]; coupon: string; }) => number)'.
+use.ts(2,14): error TS2322: Type 'any' is not assignable to type 'never'.`,
       );
       expect(exitCode).toBe(1);
     }

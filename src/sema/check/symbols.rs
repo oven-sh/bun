@@ -4434,6 +4434,9 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeId::UNRESOLVED
             };
         }
+        let is_contextual =
+            self.hir(file)[func].ret.is_none() && self.takes_context(file, func).is_some();
+        self.returns_inferred += u64::from(is_contextual);
         let ty = self.return_type_of_fn_uncached(file, func, CheckMode::empty());
         let left = self.leave(Query::Return(file, func));
         // `getReturnTypeOfSignature`: `sig.resolvedReturnType` is assigned only if it's nil, and

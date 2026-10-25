@@ -701,6 +701,10 @@ impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
     }
 }
 
+/// See `ByKey::get_with_origin`.
+#[derive(Copy, Clone)]
+pub struct IsPublished(pub bool);
+
 /// A memo table for keys that are more than a single id.
 pub struct ByKey<K, V, P: Policy = Frozen, A: Alloc = Global> {
     published: WindowedMap<K, V, A>,
@@ -1497,6 +1501,17 @@ where
             return Some(value);
         }
         (task.buffer().typed(&self.slot)?.get(spread, key)).copied()
+    }
+
+    /// `get`, and whether the entry is published.
+    #[inline]
+    pub fn get_with_origin(&self, task: &Task<'s>, key: &K) -> Option<(V, IsPublished)> {
+        let spread = spread_in_window(key);
+        if let Some(value) = self.published(task, spread, key) {
+            return Some((value, IsPublished(true)));
+        }
+        let own = task.buffer().typed(&self.slot)?.get(spread, key)?;
+        Some((*own, IsPublished(false)))
     }
 
     #[inline]

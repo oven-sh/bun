@@ -14,6 +14,7 @@ use super::related::FileSpan;
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::shortcuts::task_fact;
 use super::*;
+use crate::table::IsPublished;
 use crate::util::{FxHashSet, FxHasher, Window, Windowed};
 use smallvec::SmallVec;
 use std::hash::Hasher;
@@ -4340,7 +4341,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// computed from the former is also only valid for this task. All of its entries are successes.
     #[inline]
     fn known_relation(&mut self, key: &Key) -> Option<u8> {
-        let known = self.p.relations.get(&self.task, key);
+        let found = self.p.relations.get_with_origin(&self.task, key);
+        // Another task that doesn't find the failure can cut the comparison off where this one fails.
+        if let Some((entry, IsPublished(false))) = found
+            && entry & FAILED != 0
+        {
+            self.task.hold_back();
+        }
+        let known = found.map(|(entry, _)| entry);
         if self.relations_of_this_task.is_empty() || known.is_some_and(|entry| entry & FAILED == 0)
         {
             return known;

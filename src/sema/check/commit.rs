@@ -75,7 +75,9 @@
 //! - **A record-keyed entry doesn't wait for a commit if nothing it depends on does** (`Task::may_write_immediately`).
 //!   That requires that neither its key nor its value is bound, and that since its evaluation began nothing was stored
 //!   that waits for a commit and nothing was read that's only valid for the checker's current stack
-//!   (`Task::hold_back`). Then everything its evaluation stored was also published immediately, before it. An entry
+//!   (`Task::hold_back`). A failed comparison of the task's own that isn't published counts as such a read: a task that
+//!   doesn't find the failure can cut the comparison off a level above it, where it counts as true. Then everything
+//!   its evaluation stored was also published immediately, before it. An entry
 //!   that's published immediately can't be rolled back. So a task stops publishing immediately from the moment
 //!   something happens that may get it discarded, or it stores the result of a resolution cycle, until its next commit
 //!   (`Task::stop_writing_immediately`).

@@ -512,9 +512,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.may_be_in_flight(q) && self.stack.contains(&q)
     }
 
-    /// Runs `check`, a check of the callee or the arguments of `call`, as `getResolvedSignature`
-    /// runs `resolveSignature`: the resolutions below the call are hidden (`resolutionStart`),
-    /// unless the call is being resolved.
+    /// `getResolvedSignature`: hides the resolutions below `call` from `check`, a check of its
+    /// callee or arguments, unless the call is being resolved.
     pub(super) fn behind_resolved_signature<T>(
         &mut self,
         file: FileId,

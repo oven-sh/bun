@@ -37,12 +37,6 @@ pub(crate) mod object_url_registry;
 pub(crate) use object_url_registry::ObjectURLRegistry;
 
 // ─── webcore-local jsc re-export ─────────────────────────────────────────────
-// `bun_jsc` is now a dep of `bun_runtime`; forward to it. The per-class
-// submodules (`JSBlob`, `JSResponse`, …) live in `bun_jsc::generated`
-// (`js_class_module!`); the previous local stub macro (`js_class_mod`) that
-// returned `JSValue::default()` from `to_js_unchecked` has been removed —
-// every webcore caller now imports the real bindings directly
-// (`bun_jsc::generated::JS{Blob,Request,Response,…}`).
 pub(crate) mod jsc {
     pub(crate) use crate::jsc::*;
     pub(crate) use bun_jsc::virtual_machine::VirtualMachine;
@@ -344,7 +338,6 @@ pub enum SinkHandle {
     HTMLRewriter(bun_ptr::BackRef<crate::api::html_rewriter::RewriterPipe>),
     HttpResponse(bun_ptr::BackRef<streams::HTTPResponseSink, bun_ptr::Mut>),
     HttpsResponse(bun_ptr::BackRef<streams::HTTPSResponseSink, bun_ptr::Mut>),
-    ArrayBuffer(bun_ptr::BackRef<sink::ArrayBufferSink, bun_ptr::Mut>),
 }
 
 impl SinkHandle {
@@ -374,8 +367,6 @@ impl SinkHandle {
             SinkHandle::HttpResponse(mut p) => unsafe { p.get_mut() }.write(data),
             // SAFETY: live backref; transform detaches before the JSSink is finalized.
             SinkHandle::HttpsResponse(mut p) => unsafe { p.get_mut() }.write(data),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::ArrayBuffer(mut p) => unsafe { p.get_mut() }.write(data),
         }
     }
 
@@ -394,7 +385,6 @@ impl SinkHandle {
             SinkHandle::HTMLRewriter(p) => p.end_from_stream(err),
             SinkHandle::HttpResponse(_) => {}
             SinkHandle::HttpsResponse(_) => {}
-            SinkHandle::ArrayBuffer(_) => {}
         }
     }
 }

@@ -1,10 +1,9 @@
 //! `bun_jsc` re-export façade for the SQL bindings.
 //!
-//! All core handle types (`JSValue`, `JSGlobalObject`, `CallFrame`, `JsError`,
+//! All core handle types (`JSValue`, `JSGlobalObject`, `JsError`,
 //! `JsResult`, `JSObject`, `JSType`, [`VirtualMachine`],
 //! [`EventLoop`], [`KeepAlive`], …) are **re-exported from `bun_jsc` /
-//! `bun_io`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
-//! see identical types. SQL-specific helpers that `bun_jsc` doesn't expose at
+//! `bun_io`**. SQL-specific helpers that `bun_jsc` doesn't expose at
 //! this tier are provided as extension traits ([`JSGlobalObjectSqlExt`],
 //! [`VirtualMachineSqlExt`], [`EventLoopSqlExt`]).
 //!
@@ -18,13 +17,12 @@
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_void};
-use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 pub use bun_jsc::{
-    CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator,
-    JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult,
-    MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc,
+    ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator, JSGlobalObject,
+    JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
+    Strong, StrongOptional, bun_string_jsc,
 };
 
 pub use bun_jsc::IntegerRange;
@@ -479,192 +477,6 @@ pub mod api {
                 }
             }
         }
-    }
-}
-
-// The getters and setters of the cached slots that `.classes.ts` declares.
-pub mod codegen {
-    ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
-        as crate::postgres::PostgresSQLConnection { onconnect, onclose, onretire, checkServerIdentity, onnotification, columnTransform });
-    ::bun_jsc::js_class_module!(JSPostgresSQLQuery = "PostgresSQLQuery"
-        as crate::postgres::PostgresSQLQuery { binding, copy, pendingValue, target });
-
-    ::bun_jsc::js_class_module!(js_mysql_query = "MySQLQuery"
-        as crate::mysql::js_my_sql_query::JSMySQLQuery { binding, pendingValue, target });
-}
-
-// `bun_jsc::JSFunction::create` has another signature. SQL only needs the `JSHostFn` thunk.
-#[repr(C)]
-pub(crate) struct JSFunction {
-    _opaque: [u8; 0],
-    _m: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
-
-/// `jsc.JSHostFn` — the JSC-ABI host-function pointer JSC dispatches to
-/// (`extern "sysv64"` on win-x64, `extern "C"` elsewhere). Re-exported from
-/// `bun_jsc` so the cfg-split lives in one place.
-pub use bun_jsc::host_fn::JsHostFn as JSHostFn;
-
-pub(crate) trait IntoJSHostFn<Marker>: Sized {
-    fn into_js_host_fn(self) -> JSHostFn;
-}
-#[doc(hidden)]
-pub(crate) struct HostFnResult;
-#[doc(hidden)]
-pub(crate) struct HostFnPlain;
-
-// `jsc_host_abi!` can't express a generic `where` clause, so cfg-split the
-// thunk body manually (sysv64 on win-x64, C elsewhere — matches `JSHostFn`).
-// The where-clause is bracketed to avoid `tt`-muncher ambiguity against `{`.
-// Thunk bodies scope their raw-ptr derefs locally, so the fn itself has no
-// caller preconditions; a safe `extern fn` coerces to the `JSHostFn` type.
-macro_rules! sql_jsc_host_thunk {
-    ($name:ident<$F:ident>($($args:tt)*) -> $ret:ty where [$($bound:tt)+] $body:block) => {
-        #[cfg(all(windows, target_arch = "x86_64"))]
-        extern "sysv64" fn $name<$F>($($args)*) -> $ret where $($bound)+ $body
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        extern "C" fn $name<$F>($($args)*) -> $ret where $($bound)+ $body
-    };
-}
-
-impl<F> IntoJSHostFn<HostFnResult> for F
-where
-    F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static,
-{
-    fn into_js_host_fn(self) -> JSHostFn {
-        debug_assert_eq!(
-            core::mem::size_of::<F>(),
-            0,
-            "IntoJSHostFn: expected fn item (ZST)"
-        );
-        let _ = self;
-        sql_jsc_host_thunk! {
-            thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
-            where [F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static]
-            {
-                let f: F = bun_core::ffi::conjure_zst::<F>();
-                // JSC passes live non-null `*JSGlobalObject` / `*CallFrame`; both
-                // strictly outlive the host-fn call, satisfying the `ParentRef`
-                // invariant. Safe `From<NonNull>` + `Deref` collapse the per-thunk
-                // raw `&*ptr` pair to one audited deref site in `bun_ptr`.
-                let global = bun_ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
-                let frame = bun_ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
-                match f(&global, &frame) {
-                    Ok(v) => v,
-                    Err(JsError::OutOfMemory) => { let _ = global.throw_out_of_memory(); JSValue::ZERO }
-                    Err(_) => JSValue::ZERO,
-                }
-            }
-        }
-        thunk::<F>
-    }
-}
-impl<F> IntoJSHostFn<HostFnPlain> for F
-where
-    F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static,
-{
-    fn into_js_host_fn(self) -> JSHostFn {
-        debug_assert_eq!(
-            core::mem::size_of::<F>(),
-            0,
-            "IntoJSHostFn: expected fn item (ZST)"
-        );
-        let _ = self;
-        sql_jsc_host_thunk! {
-            thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
-            where [F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static]
-            {
-                let f: F = bun_core::ffi::conjure_zst::<F>();
-                // JSC passes live non-null pointers; both outlive the host-fn
-                // call (the `ParentRef` invariant). Safe `Deref` recovers `&T`.
-                let global = bun_ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
-                let frame = bun_ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
-                f(&global, &frame)
-            }
-        }
-        thunk::<F>
-    }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Default)]
-pub enum ImplementationVisibility {
-    #[default]
-    Public = 0,
-    Private = 1,
-    PrivateRecursive = 2,
-}
-#[repr(u8)]
-#[derive(Clone, Copy, Default)]
-pub enum Intrinsic {
-    #[default]
-    None = 0,
-}
-#[derive(Clone, Copy, Default)]
-pub struct CreateJSFunctionOptions {
-    pub(crate) implementation_visibility: ImplementationVisibility,
-    pub(crate) intrinsic: Intrinsic,
-    pub(crate) constructor: Option<JSHostFn>,
-}
-
-unsafe extern "C" {
-    // `&JSGlobalObject` is ABI-identical to a non-null `*const JSGlobalObject`;
-    // remaining args are by-value scalars/fn-ptrs. No caller-side memory
-    // preconditions remain → `safe fn`.
-    safe fn JSFunction__createFromZig(
-        global: &JSGlobalObject,
-        fn_name: &bun_core::String,
-        implementation: JSHostFn,
-        arg_count: u32,
-        implementation_visibility: ImplementationVisibility,
-        intrinsic: Intrinsic,
-        constructor: Option<JSHostFn>,
-    ) -> JSValue;
-}
-
-/// `bun_jsc::create_host_function_object`-shaped helper for the SQL binding
-/// objects. Macro (not fn) because each entry's `$f` is a *distinct* fn-item
-/// ZST routed through [`IntoJSHostFn`] — a `&[(&str, JSHostFn, u32)]` slice
-/// can't hold heterogeneous safe-Rust signatures. Expands to the same
-/// `put`/`JSFunction::create` ladder the open-coded sites used; returns the
-/// receiver for chaining.
-#[macro_export]
-macro_rules! put_host_functions {
-    ($obj:expr, $global:expr, [ $( ($name:literal, $f:expr, $arity:expr) ),* $(,)? ]) => {{
-        let __obj: $crate::jsc::JSValue = $obj;
-        let __g = $global;
-        $(
-            __obj.put(
-                __g,
-                $name.as_bytes(),
-                $crate::jsc::JSFunction::create(__g, $name, $f, $arity, ::core::default::Default::default()),
-            );
-        )*
-        __obj
-    }};
-}
-
-impl JSFunction {
-    /// Accepts a safe Rust `fn(&JSGlobalObject, &CallFrame) -> JSValue` /
-    /// `-> JsResult<JSValue>` via [`IntoJSHostFn`].
-    pub(crate) fn create<M, F: IntoJSHostFn<M>>(
-        global: &JSGlobalObject,
-        name: &str,
-        implementation: F,
-        arg_count: u32,
-        opts: CreateJSFunctionOptions,
-    ) -> JSValue {
-        let implementation: JSHostFn = implementation.into_js_host_fn();
-        let fn_name = bun_core::String::from_bytes(name.as_bytes());
-        JSFunction__createFromZig(
-            global,
-            &fn_name,
-            implementation,
-            arg_count,
-            opts.implementation_visibility,
-            opts.intrinsic,
-            opts.constructor,
-        )
     }
 }
 

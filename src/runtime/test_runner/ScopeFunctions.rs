@@ -1,9 +1,14 @@
 use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_core::String as BunString;
 
+use crate::generated_bindgen::jest::js_ScopeFunctions as js;
+use crate::generated_bindgen::scope_functions::{
+    Bun__ScopeFunctions__callAsFunction, CallbackOrOptions, DescriptionOrCallback,
+};
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
 use crate::test_runner::bun_test::js_fns::Signature;
 use crate::test_runner::jest;
@@ -47,103 +52,90 @@ pub enum Mode {
     Test,
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. All three
+// Every JS-exposed method takes `&self`. All three
 // fields are written exactly once in `create_unbound` and never mutated again,
 // so no `Cell`/`JsCell` wrapping is needed — the type is read-only after
-// construction. `generic_if`/`generic_extend`/`fn_each`/`call_as_function` all
+// construction. `generic_if`/`generic_extend`/`each`/`call_as_function` all
 // re-enter JS (create_bound → to_js / JSFunction::create / bind), which can
 // form fresh `&ScopeFunctions` to the same wrapper; aliased `&Self` is sound,
 // aliased `&mut Self` would not be.
-#[bun_jsc::JsClass(no_constructor)]
 pub(crate) struct ScopeFunctions {
     pub(crate) mode: Mode,
     pub(crate) cfg: BaseScopeCfg,
     /// typically `.zero`. not Strong.Optional because codegen visits the C++ `m_each`
-    /// WriteBarrier on the JS wrapper (see `values: ["each"]` in jest.classes.ts). This
+    /// WriteBarrier on the JS wrapper (see `internalFields: ["each"]` in jest.bind.ts). This
     /// field is kept in sync with that slot via `js::each_set_cached` in `create_unbound`.
     pub(crate) each: JSValue,
 }
 
 impl ScopeFunctions {
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_skip(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"get .skip", "skip")
+    pub(crate) fn get_skip(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.generic_extend(cx.global(), BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"get .skip", "skip")
     }
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_todo(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", "todo")
+    pub(crate) fn get_todo(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.generic_extend(cx.global(), BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", "todo")
     }
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_failing(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .failing", "failing")
+    pub(crate) fn get_failing(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.generic_extend(cx.global(), BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .failing", "failing")
     }
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_concurrent(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"get .concurrent", "concurrent")
+    pub(crate) fn get_concurrent(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.generic_extend(cx.global(), BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"get .concurrent", "concurrent")
     }
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_serial(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .serial", "serial")
+    pub(crate) fn get_serial(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.generic_extend(cx.global(), BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .serial", "serial")
     }
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_only(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", "only")
+    pub(crate) fn get_only(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.generic_extend(cx.global(), BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", "only")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, "if")
+    pub(crate) fn r#if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
+        self.generic_if(cx.global(), condition, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, "if")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_skip_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", false, "skipIf")
+    pub(crate) fn skip_if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
+        self.generic_if(cx.global(), condition, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", false, "skipIf")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_todo_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, "todoIf")
+    pub(crate) fn todo_if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
+        self.generic_if(cx.global(), condition, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, "todoIf")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_failing_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", false, "failingIf")
+    pub(crate) fn failing_if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
+        self.generic_if(cx.global(), condition, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", false, "failingIf")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_concurrent_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", false, "concurrentIf")
+    pub(crate) fn concurrent_if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
+        self.generic_if(cx.global(), condition, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", false, "concurrentIf")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_serial_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, "serialIf")
+    pub(crate) fn serial_if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
+        self.generic_if(cx.global(), condition, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, "serialIf")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn each(&self, cx: &mut JsScope<'_>, table: JsLocal<'_>) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
-        let [array] = frame.arguments_as_array::<1>();
+        let global = cx.global();
+        let array = table.to_js();
         if array.is_undefined_or_null() || !array.is_array() {
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
         }
 
-        if !this.each.is_empty() {
-            return Err(global.throw(format_args!("Cannot {} on {}", "each", this)));
+        if !self.each.is_empty() {
+            return Err(global.throw(format_args!("Cannot {} on {}", "each", self)));
         }
-        create_bound(global, this.mode, array, this.cfg, "each")
+        create_bound(global, self.mode, array, self.cfg, "each")
     }
 }
 
-#[bun_jsc::host_fn]
-fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn call_as_function<'a>(
+    cx: &mut JsScope<'a>,
+    this_value: JsLocal<'a>,
+    first: DescriptionOrCallback<'a>,
+    second: CallbackOrOptions<'a>,
+    third: CallbackOrOptions<'a>,
+) -> JsResult<()> {
     let _g = group_log::begin();
 
-    let Some(this_ptr) = ScopeFunctions::from_js(frame.this()) else {
+    let global = cx.global();
+    let Some(this) = this_value.to_js().as_class_ref::<ScopeFunctions>() else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
-    // SAFETY: `from_js` returned non-null; the JS wrapper keeps the boxed
-    // ScopeFunctions alive for the duration of this call (we hold `frame.this()`).
-    // R-2: deref as shared (`&*const`) — every field is read-only after
-    // `create_unbound`, and the body re-enters JS (get_length / array_iterator /
-    // bind / enqueue) which can form fresh `&ScopeFunctions` to the same object.
-    let this: &ScopeFunctions = unsafe { &*this_ptr.cast_const() };
-    let line_no = jest::capture_test_line_number(frame, global);
+    let line_no = jest::capture_test_line_number(global);
 
     let buntest_strong = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(this))?;
     let bun_test_ptr = buntest_strong.get();
@@ -155,7 +147,9 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
     let args = parse_arguments(
         global,
-        frame,
+        first,
+        second,
+        third,
         Signature::ScopeFunctions(this),
         ParseArgumentsCfg { callback: callback_mode, kind: FunctionKind::TestOrDescribe },
     )?;
@@ -214,7 +208,6 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     // (it is reused on later loop iterations).
                     &mut *bun_test_ptr,
                     global,
-                    frame,
                     bound,
                     formatted_label.as_deref(),
                     &args.options,
@@ -229,7 +222,6 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         this.enqueue_describe_or_test_callback(
             bun_test_ptr,
             global,
-            frame,
             args.callback,
             args.description.as_deref(),
             &args.options,
@@ -238,7 +230,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         )?;
     }
 
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 trait WriteEnd {
@@ -293,7 +285,6 @@ impl ScopeFunctions {
         &self,
         bun_test: &mut BunTest,
         global: &JSGlobalObject,
-        frame: &CallFrame,
         callback: Option<JSValue>,
         description: Option<&[u8]>,
         options: &ParseArgumentsOptions,
@@ -334,7 +325,6 @@ impl ScopeFunctions {
                     -1
                 };
                 debugger.test_reporter_agent.report_test_found(
-                    frame,
                     id,
                     &name,
                     match self.mode {
@@ -438,7 +428,7 @@ impl ScopeFunctions {
     fn generic_if(
         &self,
         global: &JSGlobalObject,
-        frame: &CallFrame,
+        condition: bool,
         conditional_cfg: BaseScopeCfg,
         name: &[u8],
         invert: bool,
@@ -446,12 +436,7 @@ impl ScopeFunctions {
     ) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
-        let [condition] = frame.arguments_as_array::<1>();
-        if frame.arguments().len() == 0 {
-            return Err(global.throw(format_args!("Expected condition to be a boolean")));
-        }
-        let cond = condition.to_boolean();
-        if cond != invert {
+        if condition != invert {
             self.generic_extend(global, conditional_cfg, name, fn_name)
         } else {
             create_bound(global, self.mode, self.each, self.cfg, fn_name)
@@ -521,36 +506,26 @@ pub(crate) struct ParseArgumentsCfg {
     pub(crate) kind: FunctionKind,
 }
 
-fn get_description(
+/// What a test is called that is named after a class or a function.
+fn name_of_callable(
     global: &JSGlobalObject,
-    description: JSValue,
+    callable: JsLocal<'_, Callable>,
     signature: Signature,
 ) -> JsResult<Vec<u8>> {
-    if description.is_empty() {
-        return Ok(Vec::new());
-    }
+    let callable = callable.to_js();
+    if callable.is_class(global) {
+        let class_name = callable.get_class_name(global)?;
 
-    if description.is_class(global) {
-        let description_class_name = description.get_class_name(global)?;
-
-        if !description_class_name.is_empty() {
-            return Ok(description_class_name.to_owned_slice());
+        if !class_name.is_empty() {
+            return Ok(class_name.to_owned_slice());
         }
 
-        let description_name = description.get_name(global)?;
-        return Ok(description_name.to_owned_slice());
+        return Ok(callable.get_name(global)?.to_owned_slice());
     }
 
-    if description.is_function() {
-        let func_name = description.get_name(global)?;
-        if func_name.length() > 0 {
-            return Ok(func_name.to_owned_slice());
-        }
-    }
-
-    if description.is_number() || description.is_string() {
-        let slice = description.to_utf8(global)?;
-        return Ok(slice.into_vec());
+    let name = callable.get_name(global)?;
+    if name.length() > 0 {
+        return Ok(name.to_owned_slice());
     }
 
     Err(global.throw(format_args!(
@@ -559,81 +534,38 @@ fn get_description(
     )))
 }
 
-pub(crate) fn parse_arguments(
+pub(crate) fn parse_arguments<'a>(
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    first: DescriptionOrCallback<'a>,
+    second: CallbackOrOptions<'a>,
+    third: CallbackOrOptions<'a>,
     signature: Signature,
     cfg: ParseArgumentsCfg,
 ) -> JsResult<ParseArgumentsResult> {
-    let [a1, a2, a3] = frame.arguments_as_array::<3>();
-
-    #[derive(Copy, Clone)]
-    enum Len { Three, Two, One, Zero }
-    let len: Len = if !a3.is_undefined_or_null() {
-        Len::Three
-    } else if !a2.is_undefined_or_null() {
-        Len::Two
-    } else if !a1.is_undefined_or_null() {
-        Len::One
-    } else {
-        Len::Zero
-    };
-
-    #[derive(Copy, Clone)]
-    struct DescriptionCallbackOptions {
-        description: JSValue,
-        callback: JSValue,
-        options: JSValue,
-    }
-    impl Default for DescriptionCallbackOptions {
-        fn default() -> Self {
-            Self {
-                description: JSValue::UNDEFINED,
-                callback: JSValue::UNDEFINED,
-                options: JSValue::UNDEFINED,
-            }
-        }
-    }
-
-    let items: DescriptionCallbackOptions = match len {
-        // description, callback(fn), options(!fn)
-        // description, options(!fn), callback(fn)
-        Len::Three => {
-            if a2.is_function() {
-                DescriptionCallbackOptions { description: a1, callback: a2, options: a3 }
-            } else {
-                DescriptionCallbackOptions { description: a1, callback: a3, options: a2 }
-            }
-        }
-        // callback(fn), options(!fn)
-        // description, callback(fn)
-        Len::Two => {
-            if a1.is_function() && !a2.is_function() {
-                DescriptionCallbackOptions { callback: a1, options: a2, ..Default::default() }
-            } else {
-                DescriptionCallbackOptions { description: a1, callback: a2, ..Default::default() }
-            }
-        }
+    let (description, callback, options) = match (first, second, third) {
+        // callback
+        // callback, options
+        (
+            DescriptionOrCallback::Function(callback),
+            options @ (CallbackOrOptions::None | CallbackOrOptions::Timeout(_) | CallbackOrOptions::Options(_)),
+            CallbackOrOptions::None,
+        ) => (DescriptionOrCallback::None, CallbackOrOptions::Callback(callback), options),
         // description
-        // callback(fn)
-        Len::One => {
-            if a1.is_function() {
-                DescriptionCallbackOptions { callback: a1, ..Default::default() }
-            } else {
-                DescriptionCallbackOptions { description: a1, ..Default::default() }
-            }
-        }
-        Len::Zero => DescriptionCallbackOptions::default(),
+        // description, callback
+        // description, callback, options
+        (description, callback @ CallbackOrOptions::Callback(_), options)
+        | (description, callback, options @ CallbackOrOptions::None) => (description, callback, options),
+        // description, options, callback
+        (description, options, callback) => (description, callback, options),
     };
-    let (description, callback, options) = (items.description, items.callback, items.options);
 
-    let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
-        None
-    } else if callback.is_function() {
-        Some(callback.with_async_context_if_needed(global))
-    } else {
-        let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
-        return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
+    let result_callback: Option<JSValue> = match callback {
+        CallbackOrOptions::Callback(callback) => Some(callback.to_js().with_async_context_if_needed(global)),
+        CallbackOrOptions::None if cfg.callback != CallbackMode::Require => None,
+        _ => {
+            let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
+            return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
+        }
     };
 
     let mut result = ParseArgumentsResult {
@@ -641,53 +573,36 @@ pub(crate) fn parse_arguments(
         callback: result_callback,
         options: ParseArgumentsOptions::default(),
     };
-    // `result` cleanup handled by Drop on early return.
 
     let mut timeout_option: Option<f64> = None;
 
-    if options.is_number() {
-        timeout_option = Some(options.as_number());
-    } else if options.is_function() {
-        return Err(global.throw(format_args!(
-            "{}() expects options to be a number or object, not a function",
-            signature
-        )));
-    } else if options.is_object() {
-        if let Some(timeout) = options.get(global, "timeout")? {
-            if !timeout.is_number() {
-                return Err(global.throw(format_args!("{}() expects timeout to be a number", signature)));
-            }
-            timeout_option = Some(timeout.as_number());
+    match options {
+        CallbackOrOptions::None => {}
+        CallbackOrOptions::Timeout(timeout) => timeout_option = Some(timeout),
+        CallbackOrOptions::Callback(_) => {
+            return Err(global.throw(format_args!(
+                "{}() expects options to be a number or object, not a function",
+                signature
+            )));
         }
-        if let Some(retries) = options.get(global, "retry")? {
-            if !retries.is_number() {
-                return Err(global.throw(format_args!("{}() expects retry to be a number", signature)));
-            }
+        CallbackOrOptions::Options(options) => {
+            timeout_option = options.timeout;
             // Lossy cast: Rust `as` saturates on overflow/NaN.
-            result.options.retry = Some(retries.as_number() as u32);
-        }
-        if let Some(repeats) = options.get(global, "repeats")? {
-            if !repeats.is_number() {
-                return Err(global.throw(format_args!("{}() expects repeats to be a number", signature)));
+            result.options.retry = options.retry.map(|retry| retry as u32);
+            if let Some(repeats) = options.repeats {
+                if result.options.retry.is_some() && result.options.retry.unwrap() != 0 {
+                    return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
+                }
+                result.options.repeats = repeats as u32;
             }
-            if result.options.retry.is_some() && result.options.retry.unwrap() != 0 {
-                return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
-            }
-            result.options.repeats = repeats.as_number() as u32;
         }
-    } else if options.is_undefined_or_null() {
-        // no options
-    } else {
-        return Err(global.throw(format_args!(
-            "{}() expects a number, object, or undefined as the third argument",
-            signature
-        )));
     }
 
-    result.description = if description.is_undefined_or_null() {
-        None
-    } else {
-        Some(get_description(global, description, signature)?)
+    result.description = match description {
+        DescriptionOrCallback::None => None,
+        DescriptionOrCallback::Function(callable) => Some(name_of_callable(global, callable, signature)?),
+        DescriptionOrCallback::Text(text) => Some(text.into_vec()),
+        DescriptionOrCallback::Number(number) => Some(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], number).to_vec()),
     };
 
     if result.options.retry.is_none() {
@@ -709,19 +624,6 @@ pub(crate) fn parse_arguments(
     result.options.timeout = timeout_option_ms.or(override_timeout_ms).or(default_timeout_ms).unwrap_or(0);
 
     Ok(result)
-}
-
-// Codegen bridge — `#[bun_jsc::JsClass]` derive provides `to_js`/`from_js`/`from_js_direct`.
-// `js::each_set_cached` is the codegen'd setter for the C++ `m_each` WriteBarrier
-// (see jest.classes.ts `values: ["each"]`).
-//
-// Hand-expansion of the cached-value accessors `src/codegen/generate-classes.ts` emits:
-// `eachSetCached` / `eachGetCached` thin-wrap the C++-side
-// `ScopeFunctionsPrototype__each{Set,Get}CachedValue` shims, which write/read the
-// `JSC::WriteBarrier<Unknown> m_each` slot on the JSCell wrapper so the GC visits
-// the `.each(arr)` argument between construction and the trailing `("name", cb)` call.
-pub(crate) mod js {
-    bun_jsc::codegen_cached_accessors!("ScopeFunctions"; each);
 }
 
 impl fmt::Display for ScopeFunctions {
@@ -754,12 +656,10 @@ impl Drop for ScopeFunctions {
 fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
     let _g = group_log::begin();
 
-    // `JsClass::to_js` boxes `self` and hands the raw pointer to the C++
-    // wrapper (m_ctx); freed in `finalize`.
     let value = ScopeFunctions { mode, cfg, each }.to_js(global);
     value.ensure_still_alive();
     // Write into the C++ m_each WriteBarrier so GC visits it. The Rust `each` field
-    // lives in unmanaged memory that JSC never scans; without this the array can be
+    // lives in the payload, which JSC never scans; without this the array can be
     // collected between `.each(arr)` and the trailing `("name", cb)` call.
     if !each.is_empty() {
         js::each_set_cached(value, global, each);
@@ -768,10 +668,7 @@ fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseS
 }
 
 fn bind(value: JSValue, global: &JSGlobalObject, name: &'static str) -> JsResult<JSValue> {
-    // `#[bun_jsc::host_fn]` on `call_as_function` emits the C-ABI thunk
-    // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
-    // `JSHostFn` shape, not the safe Rust signature.
-    let call_fn = bun_jsc::JSFunction::create(global, name, __jsc_host_call_as_function, 1, Default::default());
+    let call_fn = bun_jsc::JSFunction::create(global, name, Bun__ScopeFunctions__callAsFunction, 1, Default::default());
     let bound = JSValueTestExt::bind(call_fn, global, value, &BunString::static_(name), 1.0, &[])?;
     set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     Ok(bound)

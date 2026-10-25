@@ -43,21 +43,6 @@ mod ext {
     use super::*;
     use crate::dependencies;
 
-    /// Inline of `Url::parse`.
-    pub(super) fn url_parse(input: &mut Parser) -> Result<Url> {
-        let start_pos = input.position();
-        let loc = input.current_source_location();
-        let url = input.expect_url_cloned()?;
-        let end_pos = input.position();
-        let import_record_idx =
-            input.add_import_record(url, start_pos, end_pos, bun_ast::ImportKind::Url)?;
-        Ok(Url::new(
-            url,
-            import_record_idx,
-            dependencies::Location::from_source_location(loc),
-        ))
-    }
-
     /// Inline of `Url::to_css`.
     pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
         let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
@@ -608,7 +593,7 @@ impl TokenList {
                     }
                     if strings::eql(*f, b"url") && !input.flags.raw_url_tokens() {
                         input.reset(&state);
-                        tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
+                        tokens.push(TokenOrValue::Url(Url::parse(input)?));
                         last_is_delim = false;
                         last_is_whitespace = false;
                     } else if strings::eql(*f, b"var") {
@@ -657,7 +642,7 @@ impl TokenList {
                 }
                 Token::UnquotedUrl(_) if !input.flags.raw_url_tokens() => {
                     input.reset(&state);
-                    tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
+                    tokens.push(TokenOrValue::Url(Url::parse(input)?));
                     last_is_delim = false;
                     last_is_whitespace = false;
                     continue;

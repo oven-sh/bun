@@ -2344,7 +2344,7 @@ describe.concurrent("a directory created below one that was looked up while it w
 
   it("every level that was looked up while it was missing gets its parent", async () => {
     const { stdout, stderr, exitCode } = await run(`
-      // Each lookup caches one more level: pages/a, then pages/a/b, then pages/a/b/c.
+      // After these lookups pages/a, pages/a/b and pages/a/b/c are cached as "not found".
       for (let i = 0; i < 4; i++) console.log(resolve("./a/b/c/d/page.ts", pages));
       write("pages/a/b/node_modules/mid/index.js", 'module.exports = "mid";');
       write("pages/a/b/c/d/page.ts", 'import pkg from "pkg"; import mid from "mid"; export default pkg + " " + mid;');
@@ -2410,31 +2410,113 @@ describe.concurrent("a directory created below one that was looked up while it w
     expect(exitCode).toBe(0);
   });
 
+  it("a package in the parent of the new directory is nearer than the project's", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const dir = path.join(pages, "a", "b");
+      const from = specifier => {
+        try {
+          return relative(createRequire(dir + path.sep).resolve(specifier));
+        } catch (e) {
+          return e.code;
+        }
+      };
+      console.log(from("pkg"));
+      write("pages/a/node_modules/dep/index.js", 'module.exports = "dep of pages/a";');
+      fs.mkdirSync(dir, { recursive: true });
+      console.log(from("dep"));
+    `);
+    expect(stdout).toEqual(["node_modules/pkg/index.js", "pages/a/node_modules/dep/index.js"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // Not fixed, and the same on main: pages/a/b itself is cached as "not found", so the lookup starts in pages
+  // and skips pages/a/node_modules. Node prints "pages/a/node_modules/dep/index.js" for the second line.
+  it("a bare resolve from the directory that was itself looked up while it was missing starts above it", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const dir = path.join(pages, "a", "b");
+      console.log(resolve("./a/b/page.ts", pages));
+      write("pages/a/node_modules/dep/index.js", 'module.exports = "dep of pages/a";');
+      fs.mkdirSync(dir, { recursive: true });
+      console.log(resolve("dep", dir));
+    `);
+    expect(stdout).toEqual(["ERR_MODULE_NOT_FOUND", "node_modules/dep/index.js"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The ancestors are opened again in one walk, and a walk holds 256 directories. The row of 257 pins the
+  // result when they do not fit: the directory gets no parent, as before.
+  it.skipIf(isWindows).each([
+    [256, "node_modules/pkg/index.js"],
+    [257, "ERR_MODULE_NOT_FOUND"],
+  ])("%d levels below the project: a bare import from the deepest one gives %s", async (levels, pkg) => {
+    const { stdout, stderr, exitCode } = await run(`
+      const leaf = path.join(root, ...Array.from({ length: ${levels} }, () => "d"));
+      console.log(resolve("./x.js", path.join(root, "d")));
+      write(relative(path.join(leaf, "x.js")), "");
+      console.log(resolve("./x.js", leaf) === relative(path.join(leaf, "x.js")));
+      console.log(resolve("pkg", leaf));
+    `);
+    expect(stdout).toEqual(["ERR_MODULE_NOT_FOUND", "true", pkg]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The retry of a failed lookup lists pages again, with a name that has no separator at its end. The
+  // `browser` map of pages/package.json is matched against the path of pages, which must end with one.
+  // The second row passes without the fix: it pins the result for the walk that opens pages again.
+  it.each([
+    ["a failed lookup in it", `resolve("./missing.ts", pages)`],
+    ["a failed lookup of a directory in it", `resolve("./a", pages)`],
+  ])("the browser map of a directory applies after %s", async (_, miss) => {
+    const { stdout, stderr, exitCode } = await run(
+      `
+      console.log(${miss});
+      write("pages/a/b/page.ts", 'import lib from "../../lib.js"; export default lib;');
+      console.log(await load(path.join(pages, "a", "b", "page.ts")));
+      const result = await Bun.build({ entrypoints: [path.join(pages, "a", "b", "page.ts")], target: "browser", throw: false });
+      const bundle = result.success ? await result.outputs[0].text() : result.logs.map(log => String(log.message)).join("; ");
+      console.log(["node lib", "browser lib"].filter(text => bundle.includes(text)).join(", ") || bundle);
+    `,
+      {
+        "pages/package.json": JSON.stringify({ name: "pages", browser: { "./lib.js": "./lib.browser.js" } }),
+        "pages/lib.js": `module.exports = "node lib";`,
+        "pages/lib.browser.js": `module.exports = "browser lib";`,
+      },
+    );
+    expect(stdout).toEqual(["ERR_MODULE_NOT_FOUND", "node lib", "browser lib"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   // A failed build caches "not found" for the first two levels of the path that are missing. The next
   // build lists the directory of the file: that drops the directory's own "not found". The levels above
-  // it are opened again.
-  it("Bun.build() after a build that failed on the missing path, one to three levels below", async () => {
+  // it are opened again. pages/four is imported by an absolute path.
+  // Serial: the runner ends the child of a test that times out only when the test does not run in a group.
+  it.serial("Bun.build() after a lookup that failed on the missing path", async () => {
     const { stdout, stderr, exitCode } = await run(`
       const build = entry => Bun.build({ entrypoints: [path.join(root, entry)], throw: false });
+      const text = async result =>
+        result.success ? await result.outputs[0].text() : result.logs.map(log => String(log.message)).join("; ");
       // The first builds of a process can run at resolver generation 0, where a cached "not found" is
       // final (#38212). Build until one build reads such a directory again: each later build does too.
+      // A timeout of this test means that no build did.
       write("probe.ts", 'import page from "./probe/page.ts"; console.log(page);');
       await build("probe.ts");
       write("probe/page.ts", "export default 1;");
       while (!(await build("probe.ts")).success) {}
-      for (const dir of ["one", "two/b", "three/b/c"]) {
+      for (const dir of ["one", "two/b", "three/b/c", "four"]) {
         const top = dir.split("/")[0];
-        write(top + ".ts", 'import page from "./pages/' + dir + '/page.ts"; console.log(page);');
+        const from = top === "four" ? root.split(path.sep).join("/") : ".";
+        write(top + ".ts", 'import page from "' + from + "/pages/" + dir + '/page.ts"; console.log(page);');
         const failed = await build(top + ".ts");
         write("pages/" + top + "/node_modules/dep/index.js", 'module.exports = "dep of pages/' + top + '";');
         write(
           "pages/" + dir + "/page.ts",
           'import pkg from "pkg"; import dep from "dep"; import alias from "@lib"; export default [pkg, dep, alias];',
         );
-        const result = await build(top + ".ts");
-        const bundle = result.success
-          ? await result.outputs[0].text()
-          : result.logs.map(log => String(log.message)).join("; ");
+        const bundle = await text(await build(top + ".ts"));
         const modules = ["node_modules/pkg/index.js", "dep of pages/" + top, "dep of the project", "lib.js"];
         console.log(failed.success, modules.filter(module => bundle.includes(module)).join(", ") || bundle);
       }
@@ -2443,6 +2525,7 @@ describe.concurrent("a directory created below one that was looked up while it w
       "false node_modules/pkg/index.js, dep of pages/one, lib.js",
       "false node_modules/pkg/index.js, dep of pages/two, lib.js",
       "false node_modules/pkg/index.js, dep of pages/three, lib.js",
+      "false node_modules/pkg/index.js, dep of pages/four, lib.js",
     ]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);

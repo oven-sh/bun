@@ -165,39 +165,132 @@ test.concurrent("an installed package is not fetched for a directory created aft
   expect(exitCode).toBe(0);
 });
 
+// A directory of mode 0o311 can be entered but not listed. Each script sets that mode and restores it.
+// Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+describe.skipIf(isWindows)("an installed package is not fetched", () => {
+  const project = (script: string, registry: ReturnType<typeof fixtureRegistry>) => ({
+    "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0" } }),
+    "node_modules/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+    "node_modules/no-deps/index.js": `module.exports = require("./package.json");\n`,
+    "pages/keep.js": "",
+    "index.js": `
+      const fs = require("fs");
+      const path = require("path");
+      const { createRequire } = require("module");
+      const pages = path.join(__dirname, "pages");
+      const missing = file => {
+        try {
+          require(path.join(pages, file));
+        } catch {}
+      };
+      const unlistable = (dir, run) => {
+        fs.chmodSync(path.join(pages, dir), 0o311);
+        try {
+          run();
+        } finally {
+          fs.chmodSync(path.join(pages, dir), 0o755);
+        }
+      };
+      const write = (file, contents) => {
+        fs.mkdirSync(path.dirname(path.join(pages, file)), { recursive: true });
+        fs.writeFileSync(path.join(pages, file), contents);
+      };
+      ${script}
+    `,
+    "bunfig.toml": registry.bunfig,
+  });
+
+  async function run(script: string, unlistable: string) {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-unlistable", project(script, registry));
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+        ...unprivileged,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, requests: registry.requests, exitCode };
+    } finally {
+      // A child that does not reach its own `finally` leaves a directory that `dir` cannot remove.
+      if (existsSync(join(String(dir), "pages", unlistable))) chmodSync(join(String(dir), "pages", unlistable), 0o755);
+    }
+  }
+
+  // pages/a is cached as "not found". pages/a/locked is read as an empty directory, and pages/a is then
+  // opened again: pages/a/locked/app gets the project's node_modules.
+  test("below a directory that cannot be listed, after a lookup that missed the directory above it", async () => {
+    expect(
+      await run(
+        `
+        missing("a/other/page.js");
+        write("a/locked/app/page.js", ${JSON.stringify(printNoDepsVersion)});
+        unlistable("a/locked", () => require(path.join(pages, "a", "locked", "app", "page.js")));
+      `,
+        "a/locked",
+      ),
+    ).toEqual({ stdout: "1.0.0\n", stderr: "", requests: [], exitCode: 0 });
+  });
+
+  // pages/a, pages/a/b and pages/a/b/c are cached as "not found". pages/a/b does not open again, so it and
+  // pages/a/b/c stay as they are cached: a bare import from pages/a/b/c starts in a directory above, as before.
+  test("from a directory below one that still cannot be listed", async () => {
+    expect(
+      await run(
+        `
+        for (let i = 0; i < 3; i++) missing("a/b/c/d/page.js");
+        write("a/b/c/d/page.js", "module.exports = 'page';");
+        unlistable("a/b", () => {
+          const c = path.join(pages, "a", "b", "c");
+          console.log(require(path.join(c, "d", "page.js")), createRequire(c + path.sep)("no-deps").version);
+        });
+      `,
+        "a/b",
+      ),
+    ).toEqual({ stdout: "page 1.0.0\n", stderr: "", requests: [], exitCode: 0 });
+  });
+});
+
 // `app` is the cwd and cannot be listed, so it is cached as a directory that does not open. When
 // `app/src` is read, the resolver opens `app` again. That fails, and `app` must not turn into an
 // empty directory: the registry would be asked for a package that is installed.
 // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-test.skipIf(isWindows)("an installed package is not fetched below a project directory that does not open", async () => {
-  using registry = fixtureRegistry();
-  using dir = tempDir("autoinstall-unreadable-cwd", {
-    "app/package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0" } }),
-    "app/node_modules/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
-    "app/node_modules/no-deps/index.js": `module.exports = require("./package.json");\n`,
-    "app/src/index.js": printNoDepsVersion,
-    "app/bunfig.toml": registry.bunfig,
-  });
-  const app = join(String(dir), "app");
-  using unprivileged = unprivilegedSpawnOptions(String(dir));
-  chmodSync(app, 0o311);
-  try {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "src/index.js"],
-      cwd: app,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(app, ".bun-cache") },
-      stdout: "pipe",
-      stderr: "pipe",
-      ...unprivileged,
+test.skipIf(isWindows)(
+  "an installed package is not fetched when the cwd is a project directory that does not open",
+  async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-unreadable-cwd", {
+      "app/package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0" } }),
+      "app/node_modules/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+      "app/node_modules/no-deps/index.js": `module.exports = require("./package.json");\n`,
+      "app/src/index.js": printNoDepsVersion,
+      "app/bunfig.toml": registry.bunfig,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain(`Cannot read directory "${app}"`);
-    expect(stderr).toContain(`while resolving "no-deps"`);
-    expect({ stdout, requests: registry.requests, exitCode }).toEqual({ stdout: "", requests: [], exitCode: 1 });
-  } finally {
-    chmodSync(app, 0o755);
-  }
-});
+    const app = join(String(dir), "app");
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    chmodSync(app, 0o311);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "src/index.js"],
+        cwd: app,
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(app, ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+        ...unprivileged,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(`Cannot read directory "${app}"`);
+      expect(stderr).toContain(`while resolving "no-deps"`);
+      expect({ stdout, requests: registry.requests, exitCode }).toEqual({ stdout: "", requests: [], exitCode: 1 });
+    } finally {
+      chmodSync(app, 0o755);
+    }
+  },
+);
 
 // docs/runtime/auto-install.mdx: a bare import resolves to the version range the
 // nearest package.json declares for it, and only falls back to `latest` when no

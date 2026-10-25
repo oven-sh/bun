@@ -5,8 +5,6 @@ const { kWeakHandler, resistStopPropagation } = require("internal/shared");
 const { finished } = require("internal/streams/end-of-stream");
 
 const MathFloor = Math.floor;
-const PromiseResolve = Promise.$resolve.bind(Promise);
-const PromiseReject = Promise.$reject.bind(Promise);
 const PromisePrototypeThen = $Promise.prototype.$then;
 const ArrayPrototypePush = Array.prototype.push;
 const NumberIsNaN = Number.isNaN;
@@ -85,9 +83,9 @@ function map(fn, options) {
               continue;
             }
 
-            val = PromiseResolve(val);
+            val = Promise.$resolve(val);
           } catch (err) {
-            val = PromiseReject(err);
+            val = Promise.$reject(err);
           }
 
           cnt += 1;
@@ -108,7 +106,7 @@ function map(fn, options) {
         }
         queue.push(kEof);
       } catch (err) {
-        const val = PromiseReject(err);
+        const val = Promise.$reject(err);
         PromisePrototypeThen.$call(val, afterItemProcessed, onCatch);
         queue.push(val);
       } finally {
@@ -323,7 +321,7 @@ function drop(number, options?) {
     }
   }.$call(this);
 }
-ObjectDefineProperty(drop, "length", { value: 1 });
+ObjectDefineProperty(drop, "length", { __proto__: null, value: 1 });
 
 function take(number, options?: { signal: AbortSignal }) {
   if (options != null) {
@@ -353,7 +351,7 @@ function take(number, options?: { signal: AbortSignal }) {
     }
   }.$call(this);
 }
-ObjectDefineProperty(take, "length", { value: 1 });
+ObjectDefineProperty(take, "length", { __proto__: null, value: 1 });
 
 export default {
   streamReturningOperators: {

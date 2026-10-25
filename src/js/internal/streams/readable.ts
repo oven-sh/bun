@@ -1729,20 +1729,35 @@ Readable.wrap = function (src, options?) {
   }).wrap(src);
 };
 
-// Node does this in lib/stream.js; here not every user of Readable loads node:stream.
-const { streamReturningOperators, promiseReturningOperators } = require("internal/streams/operators");
-const opStreamKeys = ObjectKeys(streamReturningOperators);
-for (let i = 0; i < opStreamKeys.length; i++) {
-  const key = opStreamKeys[i];
-  const op = streamReturningOperators[key];
+// Node defines the operators below in lib/stream.js. Here a user of this class may never load node:stream.
+// The wrappers read Stream.Readable when called, as Node's do.
+Stream.Readable = Readable as unknown as typeof Stream.Readable;
+
+// Function.length of each operator. internal/streams/operators loads when one is first called.
+const streamOperatorLengths = { drop: 1, filter: 2, flatMap: 2, map: 2, take: 1 };
+const promiseOperatorLengths = { every: 1, forEach: 2, reduce: 3, toArray: 1, some: 1, find: 2 };
+
+let operators;
+function loadOperator(kind, key, length) {
+  const op = (operators ??= require("internal/streams/operators"))[kind][key];
+  $assert(op.name === key && op.length === length, `operators.${key} is not ${key}/${length}`);
+  return op;
+}
+
+const streamOperatorKeys = ObjectKeys(streamOperatorLengths);
+for (let i = 0; i < streamOperatorKeys.length; i++) {
+  const key = streamOperatorKeys[i];
+  const length = streamOperatorLengths[key];
+  let op;
   function fn(...args) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
-    return Readable.from(op.$apply(this, args));
+    op ??= loadOperator("streamReturningOperators", key, length);
+    return Stream.Readable.from(op.$apply(this, args));
   }
-  ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
-  ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
+  ObjectDefineProperty(fn, "name", { __proto__: null, value: key });
+  ObjectDefineProperty(fn, "length", { __proto__: null, value: length });
   ObjectDefineProperty(Readable.prototype, key, {
     __proto__: null,
     value: fn,
@@ -1751,18 +1766,22 @@ for (let i = 0; i < opStreamKeys.length; i++) {
     writable: true,
   });
 }
-const opPromiseKeys = ObjectKeys(promiseReturningOperators);
-for (let i = 0; i < opPromiseKeys.length; i++) {
-  const key = opPromiseKeys[i];
-  const op = promiseReturningOperators[key];
+const promiseOperatorKeys = ObjectKeys(promiseOperatorLengths);
+for (let i = 0; i < promiseOperatorKeys.length; i++) {
+  const key = promiseOperatorKeys[i];
+  const length = promiseOperatorLengths[key];
+  let op;
   function fn(...args) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
-    return Promise.$resolve().then(() => op.$apply(this, args));
+    return Promise.$resolve().then(() => {
+      op ??= loadOperator("promiseReturningOperators", key, length);
+      return op.$apply(this, args);
+    });
   }
-  ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
-  ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
+  ObjectDefineProperty(fn, "name", { __proto__: null, value: key });
+  ObjectDefineProperty(fn, "length", { __proto__: null, value: length });
   ObjectDefineProperty(Readable.prototype, key, {
     __proto__: null,
     value: fn,

@@ -669,6 +669,36 @@ describe("https.Server has the methods of tls.Server", () => {
     expect(await request({})).toBe("refused");
   });
 
+  // An instance names no key, so the server has no certificate left to present, as in Node and like tls.Server.
+  describe.each([true, false])(
+    "setSecureContext() with a tls.createSecureContext() object, rejectUnauthorized: %p",
+    rejectUnauthorized => {
+      test.each(["before", "after"] as const)("%s listen(): no handshake completes", async when => {
+        await using server = https.createServer(
+          { ...agent2, ca: ca[0], requestCert: true, rejectUnauthorized },
+          (req, res) => res.end("served"),
+        );
+        const instance = tls.createSecureContext({ ...agent3, ca: ca[0] }) as tls.SecureContextOptions;
+        if (when === "before") server.setSecureContext(instance);
+        const port = await listen(server);
+        if (when === "after") server.setSecureContext(instance);
+
+        function handshakes(options: tls.ConnectionOptions) {
+          const { promise, resolve } = Promise.withResolvers<boolean>();
+          const client = connect(port, options);
+          client.on("secureConnect", () => resolve(true));
+          client.on("error", () => {});
+          client.on("close", () => resolve(false));
+          return promise.finally(() => client.destroy());
+        }
+        expect({ withoutCertificate: await handshakes({}), withCertificate: await handshakes(agent1) }).toEqual({
+          withoutCertificate: false,
+          withCertificate: false,
+        });
+      });
+    },
+  );
+
   test("setSecureContext() throws on bad options and leaves the context alone", async () => {
     await using server = https.createServer(agent2);
     const port = await listen(server);

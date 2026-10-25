@@ -87,6 +87,7 @@ const {
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const outgoingSocketSetter = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "socket")!.set!;
 const kConnections = Symbol("http.server.connections");
+const buntls = Symbol.for("::buntls::");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kPendingDrainClose = Symbol("http.server.pendingDrainClose");
@@ -754,10 +755,10 @@ Server.prototype.listen = function () {
   let ipv6Only = false;
   let exclusive = false;
   const tlsServer = this[tlsSymbol];
-  // The context already has the verify mode. socket.authorized reads requestCert.
+  // tls.Server's context for its own listener always has the server's verify mode. socket.authorized reads requestCert.
   let tls = tlsServer && {
     __proto__: null,
-    secureContext: tlsServer._sharedCreds.context,
+    secureContext: tlsServer[buntls](null)[0].secureContext,
     requestCert: tlsServer._requestCert === true,
     serverName: tlsServer.servername,
   };

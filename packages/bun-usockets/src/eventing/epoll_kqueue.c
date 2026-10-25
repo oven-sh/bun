@@ -681,7 +681,7 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 #endif
 
 #ifdef LIBUS_USE_EPOLL
-/* EPOLLIN reports the peer's FIN to a socket that reads. A paused fin_ends_pause socket asks for it by name, and the resume takes it out again. */
+/* EPOLLIN reports the peer's FIN to a socket that reads. A paused fin_ends_pause socket asks for it by name, and the resume takes it out again. Only for a change: a poll is started before its socket is initialized. */
 static int epoll_fin_interest(struct us_poll_t *p, int events) {
     if ((events & LIBUS_SOCKET_READABLE) || us_internal_poll_type(p) != POLL_TYPE_SOCKET) return 0;
     struct us_socket_t *s = (struct us_socket_t *) p;
@@ -741,7 +741,7 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
          * spinning the loop at 100% CPU until the JS side closes the fd. */
         events |= EPOLLHUP | EPOLLERR;
     }
-    event.events = events | epoll_fin_interest(p, events);
+    event.events = events;
     event.data.ptr = p;
     int ret;
     do {

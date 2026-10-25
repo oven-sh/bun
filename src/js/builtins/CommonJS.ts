@@ -325,11 +325,11 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
 $overriddenName = "load";
 $visibility = "Private";
 export function modulePrototypeLoad(this: JSCommonJSModule, filename: string) {
-  const assert = require("node:assert");
+  const assert = $requireNativeModule("node:assert");
   assert(!this.loaded, "Module already loaded");
 
-  const Module = require("node:module");
-  const path = require("node:path");
+  const Module = $requireNativeModule("node:module");
+  const path = $requireNativeModule("node:path");
 
   const dirname = path.dirname(filename);
   // Like Node, preserve caller-preset filename/paths (`??=` in Node's load).

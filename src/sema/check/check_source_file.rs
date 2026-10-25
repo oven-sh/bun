@@ -347,6 +347,11 @@ impl<'s> Checker<'_, 's> {
             }
             FnBody::Block(list) => self.check_function_or_module_block(file, list),
             FnBody::Expr(e) => {
+                // `getReturnTypeFromBody` has checked `e` with `checkExpressionCached`. This is
+                // `checkExpression(body)`.
+                if self.is_checked_with_incomplete_walk(file, e) {
+                    self.check_expression_again(file, e);
+                }
                 self.check_expression(file, e);
                 self.check_returned_body(file, func, e);
             }

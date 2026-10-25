@@ -10724,6 +10724,29 @@ export function f(q: { v: number } | undefined) {
       expect(exitCode).toBe(1);
     });
 
+    // After `while (root) { }`, `root` is `never`. `getReturnTypeFromBody` checks the body first, and the walk ends with an
+    // incomplete `never`, which has every property. The deferred check of the function checks the body again.
+    test("the body of an arrow function is checked again after a walk that ended with an incomplete type", async () => {
+      using dir = project({
+        "a.ts": `declare const c: boolean;
+declare const root: { kids: unknown[] };
+declare const arr: unknown[];
+export function f() {
+  for (const key in root) {
+    while (root) { }
+    while (c) {
+      while (c) { if (c) break; }
+      try { arr.push((() => root.v)()); } finally { }
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe("a.ts(9,34): error TS2339: Property 'v' does not exist on type 'never'.");
+      expect(exitCode).toBe(1);
+    });
+
     test("what can be reached after a `finally` block depends on how the block was entered", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

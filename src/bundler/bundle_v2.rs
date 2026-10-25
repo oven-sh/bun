@@ -7332,22 +7332,19 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
-                // A `files` hit stands in for the resolver's result. The steps below treat it like a file on disk.
-                let in_memory_result: Option<_resolver::Result> =
-                    self.file_map.and_then(|file_map| {
-                        file_map.resolve(
+                let mut is_in_memory = false;
+                let mut had_busted_dir_cache = false;
+                let mut resolve_result: _resolver::Result = 'inner: loop {
+                    // An in-memory file stands in for the resolver's result from here on.
+                    if let Some(file_map) = self.file_map
+                        && let Some(result) = file_map.resolve(
                             self.arena(),
                             source.path.text,
                             import_record.path.text,
                             import_record.kind.is_from_css() || loader == Loader::Html,
                         )
-                    });
-                let is_in_memory = in_memory_result.is_some();
-                let mut had_busted_dir_cache = false;
-                let resolve_result: _resolver::Result = 'inner: loop {
-                    if let Some(mut result) = in_memory_result {
-                        // A `files` hit takes the JSX options of the build, not of a tsconfig.json.
-                        result.jsx = transpiler.options.jsx.clone();
+                    {
+                        is_in_memory = true;
                         break result;
                     }
                     match transpiler.resolver.resolve_with_framework(
@@ -7542,7 +7539,6 @@ pub mod bv2_impl {
                         }
                     }
                 };
-                let mut resolve_result = resolve_result;
                 // if there were errors, lets go ahead and collect them all
                 if last_error.is_some() {
                     continue;
@@ -7711,16 +7707,19 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                if !is_in_memory {
+                if is_in_memory {
+                    // A `./` key has its display path. Any other key is its own display path.
+                    if path.pretty.as_ptr() == path.text.as_ptr() {
+                        // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
+                        // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
+                        path.pretty = unsafe {
+                            bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(path.text))
+                        };
+                    }
+                } else {
                     *path = self
                         .path_with_pretty_initialized(path, target)
                         .expect("oom");
-                } else if path.pretty.as_ptr() == path.text.as_ptr() {
-                    // An absolute key or a name is its own display path. A relative path already has one.
-                    // SAFETY: the arena outlives the bundle pass. Detaching keeps `&self` free for the calls below.
-                    path.pretty = unsafe {
-                        bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(path.text))
-                    };
                 }
 
                 import_record.path = path_as_static(path);
@@ -7738,7 +7737,12 @@ pub mod bv2_impl {
                     target
                 };
 
-                resolve_task.jsx = resolve_result.jsx.clone();
+                // A `FileMap` result skips the resolver, so it has the default jsx options.
+                resolve_task.jsx = if is_in_memory {
+                    transpiler.options.jsx.clone()
+                } else {
+                    resolve_result.jsx.clone()
+                };
                 resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);

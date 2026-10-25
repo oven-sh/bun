@@ -368,10 +368,11 @@ extern "C" X509_STORE *us_get_shared_default_ca_store() {
 bool us_x509_der_digest(const uint8_t *der, size_t len, us_sha256_digest &digest) {
   const uint8_t *data = der;
   X509 *cert = d2i_X509(NULL, &data, len);
-  if (cert == NULL) return false;
   unsigned int digest_len = 0;
-  bool ok = X509_digest(cert, EVP_sha256(), digest.data(), &digest_len) && digest_len == digest.size();
+  bool ok = cert != NULL && X509_digest(cert, EVP_sha256(), digest.data(), &digest_len) && digest_len == digest.size();
   X509_free(cert);
+  // A parse error is not this handshake's error.
+  if (!ok) ERR_clear_error();
   return ok;
 }
 

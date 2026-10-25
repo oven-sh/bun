@@ -220,6 +220,13 @@ void us_quic_driver_set_pending(us_quic_driver_t *d) { d->pending = 1; }
 int us_quic_driver_is_pending(us_quic_driver_t *d) { return d->pending; }
 void us_quic_driver_set_ssl_ctx(us_quic_driver_t *d, SSL_CTX *ssl_ctx) { d->ssl_ctx = ssl_ctx; }
 
+int us_quic_send_header_block(lsquic_stream_t *s, const lsquic_http_headers_t *headers, int end_stream) {
+    /* The UDP socket leaves stale EAGAINs behind, which would turn a hard failure into a retry. */
+    errno = 0;
+    int r = lsquic_stream_send_headers(s, headers, end_stream);
+    return r != 0 && errno == EAGAIN ? US_QUIC_SEND_HEADERS_RETRY : r;
+}
+
 /* A pass can run JS that frees any driver or walks the list again, so a driver freed during a walk stays linked until the outermost walk ends. */
 static void us_quic_loop_end_walk(struct us_loop_t *loop) {
     if (--loop->data.quic_walk_depth) return;
@@ -1388,10 +1395,7 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
     }
 
     lsquic_http_headers_t lh = { .count = (int) count, .headers = xh };
-    /* The UDP socket leaves stale EAGAINs behind, which would turn a hard failure into a retry. */
-    errno = 0;
-    int r = lsquic_stream_send_headers(s->stream, &lh, end_stream);
-    if (r != 0 && errno == EAGAIN) r = US_QUIC_SEND_HEADERS_RETRY;
+    int r = us_quic_send_header_block(s->stream, &lh, end_stream);
     if (buf != stackbuf) us_free(buf);
     if (xh != stackh) us_free(xh);
     if (end_stream && r == 0) lsquic_stream_shutdown(s->stream, 1);

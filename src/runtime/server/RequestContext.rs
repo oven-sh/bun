@@ -1952,8 +1952,10 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         // Content-Range arithmetic gets ambiguous; the slice path keeps
         // its existing slice-as-range behavior. `offset == 0` alone is
         // insufficient — `Bun.file(p).slice(0, n)` has offset 0 — so we
-        // also check the size: an unsliced blob has either the unset-size
-        // sentinel or, if JS already read `.size`, the stat'd size; a
+        // also check the size: an unsliced blob has the unset-size
+        // sentinel, also after JS read `.size`; a window that spans the
+        // file (`.slice(0, size)`, or a structured clone of a handle
+        // that was asked for its size) has the stat'd size; a shorter
         // `.slice(0, n)` blob has `n < stat_size`. Skip if the user
         // already set Content-Range or a non-200 status — they're
         // managing partial responses themselves.

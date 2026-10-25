@@ -119,6 +119,8 @@ bitflags::bitflags! {
     pub struct BlobFlags: u8 {
         /// It was created via the `File` constructor.
         const IS_JSDOM_FILE = 1 << 0;
+        /// A `stat` answered this unsliced `Bun.file()` view when `.size`, `exists()`, a structured clone or a body stream asked for its size. The answer is the length that the store caches. `size` stays `MAX_SIZE`, so the answer is not the byte budget of a read or a copy. It places `slice()` and a structured clone. It is read only while `size` is `MAX_SIZE`.
+        const SIZE_ASKED = 1 << 1;
     }
 }
 
@@ -275,6 +277,17 @@ impl Blob {
         let mut flags = self.flags.get();
         flags.set(BlobFlags::IS_JSDOM_FILE, is_jsdom_file);
         self.flags.set(flags);
+    }
+
+    /// Whether this view has [`BlobFlags::SIZE_ASKED`].
+    #[inline]
+    pub fn size_asked(&self) -> bool {
+        self.flags.get().contains(BlobFlags::SIZE_ASKED)
+    }
+
+    #[inline]
+    pub fn set_size_asked(&self) {
+        self.flags.set(self.flags.get() | BlobFlags::SIZE_ASKED);
     }
 
     /// Move the store ref out without releasing it —

@@ -254,7 +254,7 @@ pub(crate) trait BlobExt {
     fn get_size_for_bindings(&self) -> u64;
     fn stat(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn get_size(&self) -> f64;
-    fn resolve_size(&self);
+    fn resolve_size(&self) -> SizeType;
     fn resolved_size(&self) -> (SizeType, SizeType);
     fn constructor(
         cx: &mut JsScope<'_>,
@@ -741,7 +741,7 @@ impl BlobExt for Blob {
                 // Version 4: a file-backed slice's window end. Written before
                 // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
                 // on the wire and the receiver stats it locally, like v3.
-                writer.write_int_le::<u64>(self.size.get())?;
+                writer.write_int_le::<u64>(asked_size(self))?;
                 self.resolve_size();
                 store.serialize(writer)?;
             }
@@ -1187,30 +1187,28 @@ impl BlobExt for Blob {
     }
 
     fn get_exists_sync(&self) -> JSValue {
-        match self.store.get() {
-            _ if self.size.get() == MAX_SIZE => self.resolve_size(),
-            // A failed stat is not an answer to keep: the file may exist by now.
-            Some(store) if matches!(&store.data, store::Data::File(file) if file.seekable.is_none()) => {
-                resolve_file_stat(store)
-            }
-            _ => {}
-        }
-
         // If there's no store that means it's empty and we just return true
         let Some(store) = self.store.get() else {
             return JSValue::TRUE;
         };
-
-        if matches!(store.data, store::Data::Bytes(_)) {
+        // Not `match &store.data`: see `resolved_size`.
+        match Store::data_mut(store).tag() {
             // Bytes will never error
-            return JSValue::TRUE;
+            store::DataTag::Bytes => JSValue::TRUE,
+            store::DataTag::S3 => JSValue::FALSE,
+            store::DataTag::File => {
+                // A failed stat is not an answer to keep: the file may exist by now.
+                if Store::data_mut(store).as_file().seekable.is_none() {
+                    resolve_file_stat(store);
+                }
+                let file = Store::data_mut(store).as_file();
+                if file.seekable.is_some() && self.size.get() == MAX_SIZE {
+                    self.set_size_asked();
+                }
+                // We say regular files and pipes exist.
+                JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
+            }
         }
-
-        // We say regular files and pipes exist.
-        let store::Data::File(file) = &store.data else {
-            return JSValue::FALSE;
-        };
-        JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
     }
     fn write(
         &self,
@@ -1756,7 +1754,8 @@ impl BlobExt for Blob {
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
 
-        if self.size.get() == 0 {
+        let size = asked_size(self);
+        if size == 0 {
             let ptr = Blob::new(Blob::init_empty(global_this));
             // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; spelled
             // `BlobExt::to_js(&*ptr, ..)` to pick the `&self` impl over the
@@ -1764,7 +1763,7 @@ impl BlobExt for Blob {
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
-        let size_i64 = i64::try_from(self.size.get()).unwrap_or(i64::MAX);
+        let size_i64 = i64::try_from(size).unwrap_or(i64::MAX);
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;
@@ -1916,9 +1915,11 @@ impl BlobExt for Blob {
 
     fn get_size_for_bindings(&self) -> u64 {
         let has_size = self.size.get() != MAX_SIZE;
-        if !has_size {
-            self.resolve_size();
-        }
+        let size = if has_size {
+            self.size.get()
+        } else {
+            self.resolve_size()
+        };
 
         // If the file doesn't exist or is not seekable
         // signal that the size is unknown.
@@ -1931,20 +1932,16 @@ impl BlobExt for Blob {
                     .or_else(|| mode_seen_by_clone.map(bun_sys::S::ISREG))
                     .unwrap_or(false)
                 {
-                    // Printing is not to leave the 0 of a failed stat behind: the body would read as empty.
-                    if !has_size && file.seekable.is_none() {
-                        self.size.set(MAX_SIZE);
-                    }
                     return u64::MAX;
                 }
             }
         }
 
-        if self.size.get() == MAX_SIZE {
+        if size == MAX_SIZE {
             return u64::MAX;
         }
 
-        self.size.get()
+        size
     }
     fn stat(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
@@ -2000,30 +1997,49 @@ impl BlobExt for Blob {
     }
 
     fn get_size(&self) -> f64 {
-        if self.size.get() == MAX_SIZE {
-            if self.is_s3() {
-                return f64::NAN;
-            }
-            self.resolve_size();
-            if self.size.get() == MAX_SIZE && self.store.get().is_some() {
-                return f64::INFINITY;
-            } else if self.size.get() == 0 && self.store.get().is_some() {
-                if let store::Data::File(file) =
-                    &self.store().expect("infallible: store present").data
-                {
-                    if !file.seekable.unwrap_or(true) && file.max_size == MAX_SIZE {
-                        return f64::INFINITY;
-                    }
-                }
-            }
+        let size = self.size.get();
+        if size != MAX_SIZE {
+            return size as f64;
         }
-        self.size.get() as f64
+        // The common case stays inline: an unsliced file whose store has a stat.
+        if let Some(length) = cached_file_length(self) {
+            self.set_size_asked();
+            return (length - length.min(self.offset.get())) as f64;
+        }
+        match unresolved_size(self) {
+            None => f64::NAN,
+            // A pipe keeps `MAX_SIZE`: its length is not known.
+            Some(MAX_SIZE) => f64::INFINITY,
+            Some(size) => size as f64,
+        }
     }
 
-    fn resolve_size(&self) {
+    /// Asks the store for the size of this view and returns the answer. An in-memory view and a `slice()` of a file are clamped to it. An unsliced file view is marked, never written: the answer of a `stat` is not the byte budget of a later read or copy.
+    fn resolve_size(&self) -> SizeType {
+        let (offset, size) = self.resolved_size();
+        if self.needs_to_read_file() {
+            let store = self.store().expect("infallible: store present");
+            // `resolved_size` ran the `stat`. A failed one is not a size: the view keeps its window.
+            if Store::data_mut(store).as_file().seekable.is_none() {
+                return size;
+            }
+            if self.size.get() == MAX_SIZE {
+                self.set_size_asked();
+                return size;
+            }
+        }
+        self.offset.set(offset);
+        self.size.set(size);
+        size
+    }
+
+    /// The `(offset, size)` of this view as its store answers, without touching
+    /// `self`: 0 after a failed `stat`. For callers
+    /// (e.g. `ByteBlobLoader::setup`) that need the resolved size of a `Blob`
+    /// they don't own mutably — `Blob` is not `Clone`.
+    fn resolved_size(&self) -> (SizeType, SizeType) {
         let Some(store) = self.store.get() else {
-            self.size.set(0);
-            return;
+            return (self.offset.get(), 0);
         };
         // dispatch on the copied `DataTag` rather than
         // `match &store.data { File(file) => … }`. The latter goes through
@@ -2032,57 +2048,8 @@ impl BlobExt for Blob {
         // materializes `&mut File` on the same memory via the raw
         // `heap::alloc` pointer — Stacked Borrows UB, and under noalias the
         // optimizer may legally cache the pre-call `seekable: None` and fall
-        // through to `self.size.get() = 0`. `Store::data_mut` centralises
+        // through to a size of 0. `Store::data_mut` centralises
         // the raw-ptr deref so each read here is a fresh, safe borrow.
-        match Store::data_mut(store).tag() {
-            store::DataTag::Bytes => {
-                let offset = self.offset.get();
-                let store_size = store.size();
-                if store_size != MAX_SIZE {
-                    self.offset.set(store_size.min(offset));
-                    let available = store_size - self.offset.get();
-                    self.size.set(window_size(self.size.get(), available));
-                }
-            }
-            store::DataTag::File => {
-                if Store::data_mut(store).as_file().seekable.is_none() {
-                    resolve_file_stat(store);
-                }
-                // Fresh borrow after possible mutation by `resolve_file_stat`.
-                let file = Store::data_mut(store).as_file();
-
-                if file.seekable.is_some() && file.max_size != MAX_SIZE {
-                    let store_size = file.max_size;
-                    let offset = self.offset.get();
-                    self.offset.set(store_size.min(offset));
-                    let available = store_size - self.offset.get();
-                    self.size.set(window_size(self.size.get(), available));
-                    return;
-                }
-
-                // For non-seekable files (pipes, FIFOs), the size is genuinely
-                // unknown — leave it as max_size so that stream readers don't
-                // treat it as an empty file.
-                if file.seekable == Some(false) {
-                    return;
-                }
-                self.size.set(0);
-            }
-            store::DataTag::S3 => self.size.set(0),
-        }
-    }
-
-    /// Non-mutating variant of [`resolve_size`]: returns the `(offset, size)` that
-    /// `resolve_size` would assign without touching `self`. For callers
-    /// (e.g. `ByteBlobLoader::setup`) that need the resolved size of a `Blob`
-    /// they don't own mutably — `Blob` is not `Clone`.
-    fn resolved_size(&self) -> (SizeType, SizeType) {
-        let Some(store) = self.store.get() else {
-            return (self.offset.get(), 0);
-        };
-        // see `resolve_size` — dispatch on the copied tag and re-read
-        // via `Store::data_mut` after `resolve_file_stat` so no
-        // `Deref`-produced `&Data`/`&File` is live across the mutating call.
         match Store::data_mut(store).tag() {
             store::DataTag::Bytes => {
                 let offset = self.offset.get();
@@ -2106,6 +2073,9 @@ impl BlobExt for Blob {
                     let available = store_size - offset;
                     return (offset, window_size(self.size.get(), available));
                 }
+                // For non-seekable files (pipes, FIFOs), the size is genuinely
+                // unknown — leave it as max_size so that stream readers don't
+                // treat it as an empty file.
                 if file.seekable == Some(false) {
                     return (self.offset.get(), self.size.get());
                 }
@@ -5669,7 +5639,7 @@ fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
     }
 }
 
-/// Window clamp shared by the `resolve_size`/`resolved_size` arms: only an
+/// Window clamp shared by the `resolved_size` arms: only an
 /// unknown (`MAX_SIZE`) size resolves to the store's remainder; a concrete
 /// size (a slice's window) is authoritative, clamped so a bogus or stale
 /// value can't report past the end of the backing store.
@@ -5679,6 +5649,38 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
     } else {
         current.min(available)
     }
+}
+
+/// The length that a `stat` of this view's file store found, when one did.
+#[inline]
+fn cached_file_length(blob: &Blob) -> Option<SizeType> {
+    match &blob.store.get().as_deref()?.data {
+        store::Data::File(file) if file.seekable.is_some() && file.max_size != MAX_SIZE => {
+            Some(file.max_size)
+        }
+        _ => None,
+    }
+}
+
+/// The size that `slice()` and a structured clone of `blob` count from. An unsliced view with `BlobFlags::SIZE_ASKED` counts as the length that the `stat` found.
+#[inline]
+fn asked_size(blob: &Blob) -> SizeType {
+    let size = blob.size.get();
+    if size == MAX_SIZE && blob.size_asked() {
+        if let Some(length) = cached_file_length(blob) {
+            return length - length.min(blob.offset.get());
+        }
+    }
+    size
+}
+
+/// `.size` of a view that no `stat` has answered yet. `None` for an S3 object, whose size is not known before the download.
+#[inline(never)]
+fn unresolved_size(blob: &Blob) -> Option<SizeType> {
+    if blob.is_s3() {
+        return None;
+    }
+    Some(blob.resolve_size())
 }
 
 /// resolve file stat like size, last_modified

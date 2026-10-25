@@ -2659,7 +2659,7 @@ declare module "bun" {
    *
    * This Blob is lazy: it does no work until you read from it.
    *
-   * - `size` is not valid until the contents of the file are read at least once.
+   * - `size` comes from a `stat` of the file, not from its contents. A read, a copy or an upload takes the file as it is at that time.
    * - `type` is auto-set based on the file extension when possible
    *
    * @category File System
@@ -4883,7 +4883,7 @@ declare module "bun" {
    *
    * This Blob is lazy: it does no work until you read from it.
    *
-   * - `size` is not valid until the contents of the file are read at least once.
+   * - `size` comes from a `stat` of the file, not from its contents. A read, a copy or an upload takes the file as it is at that time.
    * - `type` is auto-set based on the file extension when possible
    *
    * @example
@@ -4932,7 +4932,7 @@ declare module "bun" {
    *
    * This Blob is lazy: it does no work until you read from it. Errors propagate as promise rejections.
    *
-   * `Blob.size` is not valid until the contents of the file are read at least once.
+   * `Blob.size` comes from a `stat` of the file, not from its contents. A read, a copy or an upload takes the file as it is at that time.
    * `Blob.type` is set based on the file extension when possible
    *
    * @example
@@ -4950,7 +4950,7 @@ declare module "bun" {
    *
    * This Blob is lazy: it does no work until you read from it.
    *
-   * - `size` is not valid until the contents of the file are read at least once.
+   * - `size` comes from a `stat` of the file, not from its contents. A read, a copy or an upload takes the file as it is at that time.
    *
    * @example
    * ```js

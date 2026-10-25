@@ -646,25 +646,6 @@ impl JSType {
         )
     }
 
-    pub fn is_typed_array_or_array_buffer(self) -> bool {
-        matches!(
-            self,
-            JSType::ArrayBuffer
-                | JSType::BigInt64Array
-                | JSType::BigUint64Array
-                | JSType::Float32Array
-                | JSType::Float16Array
-                | JSType::Float64Array
-                | JSType::Int16Array
-                | JSType::Int32Array
-                | JSType::Int8Array
-                | JSType::Uint16Array
-                | JSType::Uint32Array
-                | JSType::Uint8Array
-                | JSType::Uint8ClampedArray
-        )
-    }
-
     pub fn is_array_buffer_like(self) -> bool {
         matches!(
             self,

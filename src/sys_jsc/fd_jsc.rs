@@ -1,78 +1,19 @@
 //! JSC bridge for `bun.FD`. Keeps `src/sys/` free of JSC types.
 
-use core::ffi::c_int;
-
 #[cfg(windows)]
 use bun_sys::FdKind;
 use bun_sys::{Fd, FdExt};
 
-use crate::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions};
+use crate::{JSGlobalObject, JSValue};
 
-/// Extension trait wiring `to_js` / `from_js` onto `bun_sys::Fd`;
+/// Extension trait wiring `to_js` onto `bun_sys::Fd`;
 /// the `*_jsc` crate provides them as trait methods.
 pub trait FdJsc: Sized {
-    fn from_js(value: JSValue) -> Option<Self>;
-    fn from_js_validated(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Self>>;
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
     fn to_number_without_making_lib_uv_owned(self) -> i64;
 }
 
 impl FdJsc for Fd {
-    /// fd "fails" if not given an int32, returning null in that case
-    fn from_js(value: JSValue) -> Option<Fd> {
-        if !value.is_any_int() {
-            return None;
-        }
-        let fd64 = value.to_int64();
-        if fd64 < 0 || fd64 > i64::from(i32::MAX) {
-            return None;
-        }
-        let fd: i32 = i32::try_from(fd64).expect("int cast");
-        // On Windows, JS-visible fds are libuv/CRT fds (see `to_js`). libuv fd
-        // 0/1/2 already map to stdio, so there is no need to substitute the
-        // cached `.system` HANDLE here — doing so forces every `sys_uv` call to
-        // round-trip through `Fd::uv()`'s stdio-handle comparison, which panics
-        // if the process std handle was swapped after startup.
-        Some(Fd::from_uv(fd))
-    }
-
-    // If a non-number is given, returns null.
-    // If the given number is not an fd (negative), an error is thrown and error.JSException is returned.
-    fn from_js_validated(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Fd>> {
-        if !value.is_number() {
-            return Ok(None);
-        }
-        let float = value.as_number();
-        if float % 1.0 != 0.0 {
-            return Err(global.throw_range_error(
-                float,
-                RangeErrorOptions {
-                    field_name: b"fd",
-                    msg: b"an integer",
-                    ..Default::default()
-                },
-            ));
-        }
-        if float < 0.0 || float > i32::MAX as f64 {
-            // Node validates fd with validateInt32, which spells the range with "&&".
-            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L126
-            let range = format!(">= 0 && <= {}", i32::MAX);
-            return Err(global.throw_range_error(
-                float,
-                RangeErrorOptions {
-                    field_name: b"fd",
-                    msg: range.as_bytes(),
-                    ..Default::default()
-                },
-            ));
-        }
-        let int: i64 = float as i64;
-        let fd: c_int = c_int::try_from(int).expect("int cast");
-        // See `from_js` above for why stdio fds are not remapped to the cached
-        // `.system` HANDLE on Windows.
-        Ok(Some(Fd::from_uv(fd)))
-    }
-
     /// After calling, the input file descriptor is no longer valid and must not be used.
     /// If an error is thrown, the file descriptor is cleaned up for you.
     fn to_js(self, global: &JSGlobalObject) -> JSValue {

@@ -432,11 +432,6 @@ impl<'a> JsLocal<'a> {
         unsafe { &*(core::ptr::from_ref(values) as *const [JSValue]) }
     }
 
-    #[inline(always)]
-    pub fn is_undefined(self) -> bool {
-        self.0.is_undefined()
-    }
-
     #[inline]
     pub fn as_callable(self) -> Option<JsLocal<'a, Callable>> {
         self.0.is_callable().then(|| JsLocal::from_raw(self.0))
@@ -1106,11 +1101,6 @@ pub mod to_js {
     #[inline(always)]
     pub fn undefined<'a>(_: &JsHeap<'a>, (): ()) -> Result<'a, JsLocal<'a>> {
         Ok(JsLocal::UNDEFINED)
-    }
-
-    #[inline(always)]
-    pub fn null<'a>(_: &JsHeap<'a>, (): ()) -> Result<'a, JsLocal<'a>> {
-        Ok(JsLocal::NULL)
     }
 
     /// A body may also return a plain [`JSValue`]: it goes straight back to JSC.

@@ -1,0 +1,35 @@
+------------------
+{ printWidth: 80 }
+------------------
+// @flow
+export type A = {|
+  a: B,
+|};
+
+import type { C } from "c";
+// ----
+
+d();
+type E = F;
+g();
+type H = I;
+j();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// @flow
+export type A = {|
+  a: B,
+|};
+
+import type { C } from "c";
+// ----
+
+d();
+type E = F;
+g();
+type H = I;
+j();
+
+===================== End =====================

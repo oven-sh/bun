@@ -105,7 +105,7 @@ test("Error inside minified file (no color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:86:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:87:5)"
     `);
   }
 });
@@ -134,7 +134,7 @@ test("Error inside minified file (color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:114:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:115:5)"
     `);
   }
 });
@@ -169,6 +169,60 @@ describe("observable properties", () => {
   }
 });
 
+describe("error.code is a String object that has no primitive value", () => {
+  const codes = {
+    "toString throws": `Object.assign(new String("E_X"), { toString() { throw new Error("toString threw"); } })`,
+    "no prototype": `Object.setPrototypeOf(new String("E_X"), null)`,
+    "Symbol.toPrimitive returns an object": `Object.assign(new String("E_X"), { [Symbol.toPrimitive]() { return {}; } })`,
+  };
+
+  async function run(source) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  describe.each(Object.entries(codes))("%s", (_, code) => {
+    // The own-property printer converts a String object with `toString`, so
+    // both calls can throw that error to the caller.
+    test.concurrent("Bun.inspect and console.error return to the caller", async () => {
+      const { stdout, stderr, exitCode, signalCode } = await run(`
+        const e = new Error("boom");
+        e.code = ${code};
+        try { Bun.inspect(e); } catch {}
+        try { console.error(e); } catch {}
+        console.log("survived");
+      `);
+      expect(stderr).toContain("error: boom");
+      expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "survived\n", exitCode: 0, signalCode: null });
+    });
+
+    test.concurrent.each([
+      ["an uncaught throw", "throw e;"],
+      ["an unhandled rejection", "Promise.reject(e);"],
+    ])("%s prints the error", async (_, raise) => {
+      const { stdout, stderr, exitCode, signalCode } = await run(`
+        const e = new Error("boom");
+        e.code = ${code};
+        ${raise}
+      `);
+      expect(stderr).toContain("error: boom");
+      expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "", exitCode: 1, signalCode: null });
+    });
+  });
+
+  test("a String object that has a primitive value is printed", () => {
+    const e = new Error("boom");
+    e.code = new String("E_X");
+    expect(Bun.inspect(e)).toContain(`code: "E_X"`);
+  });
+});
+
 test("error.stack throwing an error doesn't lead to a crash", () => {
   const err = new Error("my message");
   Object.defineProperty(err, "stack", {
@@ -181,6 +235,25 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   expect(() => {
     throw err;
   }).toThrow();
+});
+
+test("an uncaught error whose message getter throws exits with code 1", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `class E extends Error { get message() { throw new RangeError("from the getter"); } }
+      setTimeout(() => { setImmediate(() => console.log("immediate")); throw new E(); }, 0);
+      console.log("after");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("throw new E()");
+  expect(stdout).toBe("after\nimmediate\n");
+  expect(exitCode).toBe(1);
 });
 
 describe("source map remapping of the printed stack", () => {
@@ -326,4 +399,219 @@ describe("source map remapping of the printed stack", () => {
     });
     expect(exitCode).toBe(1);
   });
+});
+
+// The printer replaces an AggregateError with the members of its `errors`
+// property. When there is nothing to walk it has to print the AggregateError
+// itself. A deleted `errors` used to crash the process (the empty value was
+// passed to the iteration, which read it as a cell at address 0), an accessor
+// was passed to it as well, the other shapes printed nothing, and a
+// non-iterable `errors` made console.error throw.
+describe.concurrent("AggregateError whose errors cannot be walked", () => {
+  async function run(cmd, files) {
+    using dir = tempDir("inspect-aggregate-error", files ?? {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const header = "AggregateError: outer message";
+  const make = 'const e = new AggregateError([new Error("inner")], "outer message");';
+  const shapes = {
+    "errors was deleted": "delete e.errors;",
+    "errors is an empty array": "e.errors = [];",
+    "errors is not iterable": "e.errors = {};",
+    "errors is null": "e.errors = null;",
+    "errors is a primitive": "e.errors = 1;",
+    "the errors getter throws": 'Object.defineProperty(e, "errors", { get() { throw new Error("getter"); } });',
+  };
+
+  for (const [name, shape] of Object.entries(shapes)) {
+    test(`console.error: ${name}`, async () => {
+      const { stdout, stderr, exitCode } = await run([
+        "-e",
+        `${make} ${shape} console.error(e); console.log("after");`,
+      ]);
+      expect(stderr).toContain(header);
+      expect(stdout).toBe("after\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test(`uncaught: ${name}`, async () => {
+      const { stderr, exitCode } = await run(["-e", `${make} ${shape} throw e;`]);
+      expect(stderr).toContain(header);
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  test("Bun.inspect: errors was deleted", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `${make} delete e.errors; console.log(JSON.stringify(Bun.inspect(e)));`,
+    ]);
+    expect(JSON.parse(stdout)).toContain(header);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("errors is an accessor: the members it returns are printed", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `${make}
+       Object.defineProperty(e, "errors", { get() { return [new Error("from the getter")]; } });
+       console.error(e);
+       console.log("after");`,
+    ]);
+    expect(stderr).toContain("error: from the getter");
+    expect(stderr).not.toContain(header);
+    expect(stdout).toBe("after\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("members are still printed in place of the AggregateError", async () => {
+    const { stderr, exitCode } = await run([
+      "-e",
+      'throw new AggregateError([new Error("first member"), new TypeError("second member")], "outer message");',
+    ]);
+    expect(stderr).toContain("error: first member");
+    expect(stderr).toContain("TypeError: second member");
+    expect(stderr).not.toContain(header);
+    expect(exitCode).toBe(1);
+  });
+
+  // Without any user code: a module with two or more build errors rejects its
+  // first load with an AggregateError of BuildMessages. JSC settles every later
+  // load of it from the module registry with a copy made by
+  // JSModuleLoader::duplicateError, which keeps the error type and message but
+  // not the `errors` property.
+  const broken = {
+    "broken.ts": "export function f() {\n  const v = {b: {},),r,};\n}\n",
+  };
+
+  test("the error a second load of a module that failed to build rejects with", async () => {
+    const { stdout, stderr, exitCode } = await run(["main.ts"], {
+      ...broken,
+      "main.ts": `
+        const seen = [];
+        for (let i = 0; i < 2; i++) {
+          try {
+            await import("./broken.ts");
+          } catch (e) {
+            seen.push(e.constructor.name);
+            if (i === 1) console.error(e);
+          }
+        }
+        console.log(JSON.stringify(seen));
+      `,
+    });
+    expect(stdout).toBe('["AggregateError","AggregateError"]\n');
+    expect(stderr).toContain("broken.ts");
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/36963
+  test("bun test: two files import a module that failed to build", async () => {
+    const importer = 'import { f } from "./broken.ts";\nf();\n';
+    const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
+      ...broken,
+      "a.test.ts": importer,
+      "b.test.ts": importer,
+    });
+    expect(stderr).toContain("a.test.ts:");
+    expect(stderr).toContain("b.test.ts:");
+    expect(stderr).toContain("across 2 files");
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe("an error with a circular reference to itself", () => {
+  // Drops the source preview, stack frames, blank lines and the version line.
+  function rendered(text) {
+    return text
+      .split("\n")
+      .filter(line => !/^\s*\d+ \| /.test(line) && !/^\s*\^\s*$/.test(line) && !/^\s+at /.test(line))
+      .filter(line => line.trim() !== "" && !line.startsWith("Bun v"));
+  }
+
+  test("prints [Circular] under the key that closes the cycle", () => {
+    const self = new Error("x");
+    self.self = self;
+    expect(rendered(Bun.inspect(self))).toEqual(["error: x", " self: [Circular],"]);
+
+    const a = new Error("a");
+    a.cause = new Error("b", { cause: a });
+    expect(rendered(Bun.inspect(a))).toEqual(["error: a", "error: b", " cause: [Circular],"]);
+
+    const outer = new Error("a");
+    const inner = new Error("b");
+    outer.x = [inner];
+    inner.y = inner;
+    expect(rendered(Bun.inspect(outer))).toEqual(["error: a", " x: [", "error: b", " y: [Circular],", "],"]);
+  });
+
+  test("is printed once when thrown", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", 'const e = new Error("cyc"); e.cause = e; e.errors = [e]; throw e;'],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ lines: rendered(stderr), exitCode }).toEqual({
+      lines: ["error: cyc", "  cause: [Circular],", " errors: [", "  [Circular]", "],"],
+      exitCode: 1,
+    });
+  });
+
+  test("an error that appears twice without a cycle is printed in full each time", () => {
+    const e = new Error("twice");
+    e.meta = {};
+    const lines = rendered(Bun.inspect([e, { a: e, b: { c: e } }]));
+    expect(lines.filter(line => line.trim() === "error: twice").length).toBe(3);
+    expect(lines.filter(line => line.includes("[Circular]"))).toEqual([]);
+  });
+});
+
+// `Malloc=1` lets ASAN catch a read past the end of the source.
+test.concurrent("prints the source preview for an error positioned at the end of the source text", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `(0, eval)("xyz");`],
+    env: { ...bunEnv, NO_COLOR: "1", Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, excerpt: stderr.split("\n").slice(0, 3) }).toEqual({
+    stdout: "",
+    excerpt: ["1 | xyz", "       ^", "ReferenceError: xyz is not defined"],
+  });
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("reports the right position for a multi-line `new` expression in a 16-bit source", async () => {
+  const source = `/* 中 */
+function code() {
+  throw new (class Boom extends Error {
+    constructor(message) {
+      super(message);
+    }
+  })("boom");
+}
+code();`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `(0, eval)(${JSON.stringify(source)});`],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toMatch(/error: boom\n +at code \(.*:3:9\)\n/);
+  expect(exitCode).toBe(1);
 });

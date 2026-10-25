@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "6e891cbe4790982ca9f3f9a60319a72e61b5d725";
+const MIMALLOC_COMMIT = "92ef6587c57b262f6e6abf513f7776a2f8d12aeb";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -23,6 +23,8 @@ export const mimalloc: Dependency = {
     repo: "oven-sh/mimalloc",
     commit: MIMALLOC_COMMIT,
   }),
+
+  patches: ["patches/mimalloc/new-oom-hook.patch"],
 
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
@@ -35,7 +37,7 @@ export const mimalloc: Dependency = {
     //            alloc-override.c emits _expand/_msize/free which duplicate
     //            against libucrt(d) at link time. The C deps that would
     //            otherwise sit on the uCRT heap are pointed at mimalloc one
-    //            by one instead (ICU and libuv in bun_bin's
+    //            by one instead (ICU and libuv in bun_runtime::bin_entry's
     //            use_mimalloc_in_dependencies, BoringSSL via the hooks in
     //            boringssl.ts, c-ares via ares_library_init_mem).
     const override = cfg.linux && !cfg.asan;
@@ -54,6 +56,12 @@ export const mimalloc: Dependency = {
       // tears down locks/TLS while other static destructors may still call
       // free(). MI_SKIP_COLLECT_ON_EXIT only skips the heap walk inside it.
       MI_NO_PROCESS_DETACH: 1,
+
+      // mi_free finds a block's page through the page map. Without this, page
+      // meta data sits at 256 MiB boundaries, every arena must start on one, and
+      // mi_manage_os_memory_ex refuses JSC's structure heap once its reservation
+      // is 256 MiB or less (JSC halves it under `ulimit -v`): abort on startup.
+      MI_FREE_USE_PAGEMAP: 1,
 
       ...(cfg.release && { MI_BUILD_RELEASE: true }),
     };
@@ -109,7 +117,12 @@ export const mimalloc: Dependency = {
       cflags.push(cfg.abi === "musl" ? "-ftls-model=local-dynamic" : "-ftls-model=initial-exec");
     }
 
-    if (override) cflags.push("-fno-builtin-malloc");
+    if (override) {
+      cflags.push("-fno-builtin-malloc");
+      // mimalloc also implements `operator new` here. See patches/mimalloc/new-oom-hook.patch.
+      // The value is a function name, and a `defines` entry would quote it.
+      cflags.push("-DMI_NEW_OOM=Bun__outOfMemory");
+    }
 
     // ─── Windows: silence the vendored-C-as-C++ warning flood ───
     // lang:"c++" means .c compiles as C++; clang-cl then complains about

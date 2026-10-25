@@ -11,22 +11,12 @@
 #[path = "ffi_body.rs"]
 mod ffi_body;
 
-/// `js2native` codegen resolves `$rust(ffi.rs, Bun__FFI__cc)` to
-/// `crate::ffi::ffi::bun__ffi__cc`; the module name maps the `.rs` basename.
-/// `FFI::bun_ffi_cc` lives in `ffi_body` — re-export it under
-/// the codegen-expected path so the dispatch table links without forcing the
-/// generator to special-case `ffi/ffi.rs`.
-pub mod ffi {
-    pub(crate) use super::ffi_body::bun__ffi__cc;
-}
-
 #[path = "FFIObject.rs"]
-pub mod ffi_object_draft;
+pub(crate) mod ffi_object_draft;
 
 // Canonical name (re-exported by `runtime::api`
 // as `FFIObject`); the module itself still lives under the draft name because
 // `api/BunObject.rs` references `crate::ffi::ffi_object_draft::getter`.
-pub use ffi_object_draft as ffi_object;
 
 // ─── DOMCall slowpath C-ABI exports ──────────────────────────────────────────
 // The C++ DOMJIT side expects a `<class>__<fn>__slowpath` export with
@@ -48,7 +38,7 @@ mod dom_call_slowpath {
                 arguments_len: usize,
             ) -> JSValue {
                 // SAFETY: C++ DOMJIT slowpath caller passes a live global and a
-                // valid `[JSValue; arguments_len]` span (ZigLazyStaticFunctions).
+                // valid `[JSValue; arguments_len]` span (ZigGeneratedCode.cpp).
                 let (global, arguments) = unsafe {
                     (&*global, core::slice::from_raw_parts(arguments_ptr, arguments_len))
                 };
@@ -126,13 +116,7 @@ pub(crate) fn get_dl_error() -> Box<[u8]> {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// FFI — `.classes.ts` payload (the C++ JSCell wrapper stays generated; this is
-// `m_ctx`). The codegen `FFIPrototype__*` thunks resolve to `crate::ffi::FFI`,
-// so this MUST be the same type that `to_js()` boxes into the wrapper.
-// ═════════════════════════════════════════════════════════════════════════════
-
-pub use ffi_body::FFI;
+pub(crate) use ffi_body::FFI;
 
 // The full `CompileC`/`Source`/`SymbolsMap`/`StringArray`/`CompilerRT` port
 // lives in `ffi_body`; the draft duplicates that used to sit here were unused

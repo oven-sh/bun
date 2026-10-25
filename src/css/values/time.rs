@@ -43,7 +43,7 @@ impl Time {
         }
 
         let location = input.current_source_location();
-        let token = input.next()?.clone();
+        let token = *input.next()?;
         match &token {
             Token::Dimension(dim) => {
                 if bun_core::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {

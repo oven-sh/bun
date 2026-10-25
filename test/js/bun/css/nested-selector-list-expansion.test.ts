@@ -55,7 +55,7 @@ function nestedRules(selectors: string, depth: number): string {
 
 // Targets that support neither `:is()` nor CSS nesting.
 const OLD_TARGETS = { chrome: 80 << 16 };
-// Targets that support CSS nesting natively, so nothing needs to be expanded.
+// Targets that support CSS nesting natively, so nesting is not compiled away.
 const MODERN_TARGETS = { chrome: 130 << 16 };
 
 test("deeply nested multi-selector rules error instead of exploding when compiled for old targets", () => {
@@ -64,9 +64,9 @@ test("deeply nested multi-selector rules error instead of exploding when compile
 });
 
 test("deeply nested ::part() selector lists error instead of exploding when compiled for old targets", () => {
-  // ::part() can never be wrapped in :is(), so each selector is split into its
-  // own rule with a clone of every nested rule — the other shape of the same
-  // exponential blowup.
+  // Chrome 80 cannot parse the :is() that a compiled `&` needs, so each nested
+  // selector is split into its own rule with a clone of every nested rule. That
+  // is the other shape of the same exponential blowup.
   const src = nestedRules("x::part(a), y::part(b)", 17);
   expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(LIMIT_ERROR);
 });
@@ -94,33 +94,24 @@ test("deep nesting is preserved as-is for targets that support CSS nesting", () 
   expect(out.length).toBeLessThan(10_000);
 });
 
-// `:user-valid` is treated as unsupported for every target, but the lists below
-// have no pseudo-elements and equal specificity, so the minifier collapses each
-// list into a single `:is(& .a:user-valid, & .b:user-valid)` selector instead
-// of splitting it into cloned rules.
+// `:user-valid` is treated as unsupported for every target, so each list below
+// is split into one rule per selector, and each of those rules gets a clone of
+// every nested rule. The minifier does not collapse such a list into a single
+// `:is(& .a:user-valid, & .b:user-valid)` selector.
 
-test("incompatible selector lists that collapse into :is() don't hit the limit when nesting is preserved", () => {
-  // Nothing is cloned and nesting stays native, so the output is linear and no
-  // limit applies — even though a per-level multiplier would naively reach 2^20.
+test("incompatible selector lists hit the limit when nesting is preserved", () => {
+  // Nesting stays native, but the split doubles the nested rules at every level.
+  expect(minifyTest(nestedRules(".a:user-valid, .b:user-valid", 2), "", MODERN_TARGETS)).toBe(
+    ".a:user-valid{& .a:user-valid{color:red}& .b:user-valid{color:red}}" +
+      ".b:user-valid{& .a:user-valid{color:red}& .b:user-valid{color:red}}",
+  );
   const src = nestedRules(".a:user-valid, .b:user-valid", 20);
-  const out = minifyTest(src, "", MODERN_TARGETS);
-  expect(out).toContain("color:red");
-  expect(out.length).toBeLessThan(100_000);
+  expect(() => minifyTest(src, "", MODERN_TARGETS)).toThrow(LIMIT_ERROR);
 });
 
-test("collapsed :is() lists still hit the limit when nesting has to be compiled away", () => {
-  // The :is() wrap keeps one `&` per original selector, so compiling nesting
-  // away still doubles the printed selector per level (~34 MB at this depth).
+test("incompatible selector lists hit the limit when nesting has to be compiled away", () => {
   const src = nestedRules(".a:user-valid, .b:user-valid", 20);
   expect(() => minifyTest(src, "", { chrome: 100 << 16 })).toThrow(LIMIT_ERROR);
-});
-
-test("incompatible selector lists that cannot collapse into :is() hit the limit when nesting is preserved", () => {
-  // `:is()` cannot hold `::part()`, so each list is split into one rule per
-  // selector, each with a clone of every nested rule. The limit has to count
-  // that split even though nesting stays native.
-  const src = nestedRules("x::part(a):user-valid, y z:user-valid", 17);
-  expect(() => minifyTest(src, "", MODERN_TARGETS)).toThrow(LIMIT_ERROR);
 });
 
 test("@nest selector lists are not charged for a split when nesting is preserved", () => {

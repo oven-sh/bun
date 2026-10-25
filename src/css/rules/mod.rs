@@ -392,12 +392,11 @@ impl<R> media::MediaRule<R> {
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
-        placement: css::selector::ListPlacement<'_>,
     ) -> Result<bool, MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
     {
-        self.rules.minify(context, parent_is_unused, placement)?;
+        self.rules.minify(context, parent_is_unused)?;
         Ok(self.rules.v.is_empty() || self.query.never_matches())
     }
 }
@@ -489,7 +488,6 @@ impl<R> CssRuleList<R> {
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
-        placement: css::selector::ListPlacement<'_>,
     ) -> Result<(), MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
@@ -520,10 +518,10 @@ impl<R> CssRuleList<R> {
                             && last_rule.query.eql(&med.query)
                         {
                             last_rule.rules.v.append(&mut med.rules.v);
-                            let _ = last_rule.minify(context, parent_is_unused, placement)?;
+                            let _ = last_rule.minify(context, parent_is_unused)?;
                             break 'arm;
                         }
-                        if med.minify(context, parent_is_unused, placement)? {
+                        if med.minify(context, parent_is_unused)? {
                             break 'arm;
                         }
                     }
@@ -534,7 +532,7 @@ impl<R> CssRuleList<R> {
                             // Drop the duplicate-condition rule outright.
                             break 'arm;
                         }
-                        supp.minify(context, parent_is_unused, placement)?;
+                        supp.minify(context, parent_is_unused)?;
                         if supp.rules.v.is_empty() {
                             break 'arm;
                         }
@@ -546,10 +544,10 @@ impl<R> CssRuleList<R> {
                         // `MAX_SELECTOR_EXPANSION` — otherwise an at-rule between
                         // two nesting levels hides the inner levels from the cap
                         // and the printer expands them exponentially.
-                        cont.rules.minify(context, parent_is_unused, placement)?;
+                        cont.rules.minify(context, parent_is_unused)?;
                     }
                     CssRule::LayerBlock(lay) => {
-                        lay.rules.minify(context, parent_is_unused, placement)?;
+                        lay.rules.minify(context, parent_is_unused)?;
                         if lay.rules.v.is_empty() {
                             break 'arm;
                         }
@@ -560,7 +558,7 @@ impl<R> CssRuleList<R> {
                     CssRule::MozDocument(doc) => {
                         // See `Container` above: recurse so nested style rules
                         // count against the selector-expansion cap.
-                        doc.rules.minify(context, parent_is_unused, placement)?;
+                        doc.rules.minify(context, parent_is_unused)?;
                     }
                     CssRule::Style(_sty) => {
                         minify_style_arm(
@@ -570,7 +568,6 @@ impl<R> CssRuleList<R> {
                             &mut merge_state,
                             context,
                             parent_is_unused,
-                            placement,
                         )?;
                         break 'arm;
                     }
@@ -578,11 +575,7 @@ impl<R> CssRuleList<R> {
                     CssRule::Scope(scpe) => {
                         // See `Container` above: recurse so nested style rules
                         // count against the selector-expansion cap.
-                        let in_scope = css::selector::ListPlacement {
-                            in_scope_rule: true,
-                            ..placement
-                        };
-                        scpe.rules.minify(context, parent_is_unused, in_scope)?;
+                        scpe.rules.minify(context, parent_is_unused)?;
                     }
                     CssRule::Nesting(nst) => {
                         // See `Container` above. `@nest` wraps a single style
@@ -600,17 +593,17 @@ impl<R> CssRuleList<R> {
                         // pre-port behavior.
                         nst.style.charge_selector_expansion(context)?;
                         // The wrapped rule prints its selector list as written, so only compiled nesting multiplies it.
+                        let splits_selectors = false;
                         nst.style.minify_nested_rules(
                             context,
                             parent_is_unused,
-                            style::SelectorListLowering::AsWritten,
-                            placement,
+                            splits_selectors,
                         )?;
                     }
                     CssRule::StartingStyle(rl) => {
                         // See `Container` above: recurse so nested style rules
                         // count against the selector-expansion cap.
-                        rl.rules.minify(context, parent_is_unused, placement)?;
+                        rl.rules.minify(context, parent_is_unused)?;
                     }
                     CssRule::FontPaletteValues(_) => {}
                     CssRule::Property(_) => {}
@@ -664,11 +657,9 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     merge_state: &mut StyleRuleMergeState,
     context: &mut MinifyContext<'_, '_>,
     parent_is_unused: bool,
-    placement: css::selector::ListPlacement<'_>,
 ) -> Result<(), MinifyErr> {
     use css::SmallList;
-    use css::selector::{self, Component, Selector, SelectorList};
-    use style::SelectorListLowering;
+    use css::selector::{self, Selector, SelectorList};
     let CssRule::Style(sty) = rule else {
         unreachable!()
     };
@@ -677,41 +668,28 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         return Ok(());
     }
 
-    // If some of the selectors in this rule are not compatible with the targets,
-    // we need to either wrap in :is() or split them into multiple rules.
-    let lowering = sty.selector_list_lowering(context.targets, placement);
-    if sty.minify(context, parent_is_unused, lowering, placement)? {
+    let splits_selectors = sty.splits_selectors(context.targets);
+    if sty.minify(context, parent_is_unused, splits_selectors)? {
         return Ok(());
     }
 
-    let mut incompatible: SmallList<Selector, 1> = match lowering {
-        SelectorListLowering::AsWritten => SmallList::default(),
-        SelectorListLowering::WrapInIs => {
-            debug_assert!(selector::can_wrap_in_is(sty.selectors.v.slice(), placement));
-            let component = Component::Is(core::mem::take(&mut sty.selectors.v).to_owned_slice());
-            let mut list = SmallList::<Selector, 1>::default();
-            list.append(Selector::from_component(component));
-            sty.selectors = SelectorList { v: list };
-            SmallList::default()
-        }
-        SelectorListLowering::Partition => {
-            // Otherwise, partition the selectors and keep the compatible ones in this rule.
-            // We will generate additional rules for incompatible selectors later.
-            let mut incompatible = SmallList::<Selector, 1>::default();
-            let mut i: u32 = 0;
-            while i < sty.selectors.v.len() {
-                if selector::is_compatible(
-                    &sty.selectors.v.slice()[i as usize..i as usize + 1],
-                    context.targets,
-                ) {
-                    i += 1;
-                } else {
-                    incompatible.append(sty.selectors.v.ordered_remove(i));
-                }
+    // If some of the selectors in this rule are not compatible with the targets,
+    // we need to split them into multiple rules.
+    let mut incompatible = SmallList::<Selector, 1>::default();
+    if splits_selectors {
+        // The compatible selectors stay in this rule. The rules for the incompatible ones are generated later.
+        let mut i: u32 = 0;
+        while i < sty.selectors.v.len() {
+            if selector::is_compatible(
+                &sty.selectors.v.slice()[i as usize..i as usize + 1],
+                context.targets,
+            ) {
+                i += 1;
+            } else {
+                incompatible.append(sty.selectors.v.ordered_remove(i));
             }
-            incompatible
         }
-    };
+    }
 
     sty.update_prefix(context);
 
@@ -780,15 +758,8 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     }
 
     // Create additional rules for logical properties, @supports overrides, and incompatible selectors.
-    let (supps, logical) = if sty.selectors.v.is_empty() {
-        // The partition left this rule no selector. The rule of each selector gets its own copies below.
-        (Vec::new(), Vec::new())
-    } else {
-        (
-            context.handler_context.get_supports_rules::<R>(sty),
-            context.handler_context.get_additional_rules::<R>(sty),
-        )
-    };
+    let supps = context.handler_context.get_supports_rules::<R>(sty);
+    let logical = context.handler_context.get_additional_rules::<R>(sty);
 
     struct IncompatibleRuleEntry<R> {
         rule: style::StyleRule<R>,
@@ -890,7 +861,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 
     if !logical.is_empty() {
         let mut log = CssRuleList { v: logical };
-        log.minify(context, parent_is_unused, placement)?;
+        log.minify(context, parent_is_unused)?;
         rules.append(&mut log.v);
     }
     rules.extend(supps);
@@ -901,7 +872,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         }
         if !entry.logical.is_empty() {
             let mut log = CssRuleList { v: entry.logical };
-            log.minify(context, parent_is_unused, placement)?;
+            log.minify(context, parent_is_unused)?;
             rules.append(&mut log.v);
         }
         rules.extend(entry.supports);

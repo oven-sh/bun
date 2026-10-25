@@ -398,7 +398,6 @@ impl<R> SupportsRule<R> {
         &mut self,
         context: &mut MinifyContext,
         parent_is_unused: bool,
-        placement: crate::selector::ListPlacement<'_>,
     ) -> core::result::Result<(), MinifyErr>
     where
         R: for<'b> crate::generics::DeepClone<'b>,
@@ -411,7 +410,7 @@ impl<R> SupportsRule<R> {
         // behind it multiply against the enclosing nesting levels exactly like
         // plain nested rules — leaving them unvisited here lets the printer
         // expand them exponentially.
-        self.rules.minify(context, parent_is_unused, placement)
+        self.rules.minify(context, parent_is_unused)
     }
 }
 

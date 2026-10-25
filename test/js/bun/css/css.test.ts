@@ -5752,12 +5752,11 @@ describe("css tests", () => {
     minify_test(":host(:hover) {color: red}", ":host(:hover){color:red}");
     minify_test("::slotted(:hover) {color: red}", "::slotted(:hover){color:red}");
 
-    // A browser drops a rule when it cannot parse one selector of the list. For targets that
-    // cannot parse every selector, the minifier prints one `:is(list)` selector or moves each
-    // unsupported selector to its own rule. `lowered` takes the list and the selectors of the
-    // rules that it must print.
+    // A browser drops a rule when it cannot parse one selector of the list. So each selector
+    // that a target cannot parse moves to its own rule. The minifier does not print one
+    // `:is(list)` for such a list: a pseudo-element inside `:is()` matches nothing, and every
+    // selector would weigh as much as the most specific one.
     const noHas = { chrome: 100 << 16 };
-    const noFocusVisible = { safari: 15 << 16 };
     const noHasInFirefox = {
       chrome: 111 << 16,
       edge: 111 << 16,
@@ -5766,264 +5765,88 @@ describe("css tests", () => {
       ios_saf: (16 << 16) | (4 << 8),
     };
     const nativeNesting = { chrome: 130 << 16 };
-    const nativeNestingNoHas = { firefox: 118 << 16 };
-    const lowered = (targets: Browsers, list: string, ...rules: string[]) =>
+    const split = (targets: Browsers, list: string, ...rules: string[]) =>
       minify_test(`${list} { color: red }`, rules.map(rule => `${rule}{color:red}`).join(""), targets);
 
-    // Every selector needs the lowering, and all of them weigh the same.
-    lowered(noHas, "a:has(.x), b:has(.x)", ":is(a:has(.x),b:has(.x))");
-    lowered(noHas, ".b:has(.x), .c:has(.x), .d:has(.x)", ":is(.b:has(.x),.c:has(.x),.d:has(.x))");
-    lowered(noHas, ".a:has(> .x), .b:has(.x)", ":is(.a:has(>.x),.b:has(.x))");
-    lowered(noHas, ".a:has(.x.y), .b.c:has(.z)", ":is(.a:has(.x.y),.b.c:has(.z))");
-    lowered(noHas, ":state(a) .x:has(i), :state(a) .y:has(i)", ":is(:state(a) .x:has(i),:state(a) .y:has(i))");
-    lowered(
-      noHas,
-      ":host(.dark) .a:has(.k), :host(.dark) .b:has(.x)",
-      ":is(:host(.dark) .a:has(.k),:host(.dark) .b:has(.x))",
-    );
-    lowered(noHas, ":where(:state(x)) .a:has(.x), .b:has(.x)", ":is(:where(:state(x)) .a:has(.x),.b:has(.x))");
-
-    // A selector that every target can parse stays outside `:is()`.
-    lowered(noFocusVisible, ".a:hover, .b:focus-visible", ".a:hover", ".b:focus-visible");
-    lowered(noHas, ".a.b, .c:has(.x)", ".a.b", ".c:has(.x)");
-    lowered(noHas, ".a, .b:has(.x), .c:has(.x)", ".a", ".b:has(.x)", ".c:has(.x)");
-    lowered(noHas, ".b:has(.x), .a, .c:has(.x)", ".a", ".b:has(.x)", ".c:has(.x)");
-    lowered(noHas, ".b:has(.x), .c:has(.x), .a", ".a", ".b:has(.x)", ".c:has(.x)");
-    lowered(
-      noHasInFirefox,
-      ":root, :root:has(input.theme-controller[value=light]:checked), [data-theme=light]",
-      ":root,[data-theme=light]",
-      ":root:has(input.theme-controller[value=light]:checked)",
-    );
-
-    // `:is()` cannot hold a pseudo-element.
-    lowered(noHas, "a::before, b:has(.x)", "a:before", "b:has(.x)");
-    lowered(noHas, "x-el::part(a), y-el z-el:has(q-el)", "x-el::part(a)", "y-el z-el:has(q-el)");
-    lowered(noHas, "::slotted(.x), i.c:has(.q)", "::slotted(.x)", "i.c:has(.q)");
-    lowered(
+    split(noHas, "x-el::part(a), y-el z-el:has(q-el)", "x-el::part(a)", "y-el z-el:has(q-el)");
+    split(noHas, "::slotted(.x), i.c:has(.q)", "::slotted(.x)", "i.c:has(.q)");
+    split(noHas, ".a, .b:has(.x)", ".a", ".b:has(.x)");
+    split(noHas, ".a:has(.x), .a:has(#y)", ".a:has(.x)", ".a:has(#y)");
+    split(noHas, ".a:has(.x), .a:has(.x.y.z)", ".a:has(.x)", ".a:has(.x.y.z)");
+    split(noHas, "a:has(.x), b:has(.x)", "a:has(.x)", "b:has(.x)");
+    split(noHas, ":host(.a):has(.x), :host(.b):has(.y)", ":host(.a):has(.x)", ":host(.b):has(.y)");
+    split(noHas, "a:visited:has(.x), a:hover:has(.y)", "a:visited:has(.x)", "a:hover:has(.y)");
+    split(noHasInFirefox, ":has(.a), :has(.c)", ":has(.a)", ":has(.c)");
+    split(
       nativeNesting,
       "x-el::part(a):user-valid, y-el z-el:user-valid",
       "x-el::part(a):user-valid",
       "y-el z-el:user-valid",
     );
-    lowered(
-      nativeNesting,
-      "y-el z-el:user-valid, x-el::part(a):user-valid, w-el v-el:user-valid",
-      "y-el z-el:user-valid",
-      "x-el::part(a):user-valid",
-      "w-el v-el:user-valid",
-    );
 
-    // `:is()` takes the specificity of its most specific argument, and so does `:has()`.
-    lowered(noHas, ".a:has(.x), .a:has(#y)", ".a:has(.x)", ".a:has(#y)");
-    lowered(noHas, ".a:has(.x), .a:has(.x.y.z)", ".a:has(.x)", ".a:has(.x.y.z)");
-    lowered(noHas, ".a:not(:has(.x)), .b:not(:has(#y))", ".a:not(:has(.x))", ".b:not(:has(#y))");
-    lowered(noHas, "li:has(> hr), li:has(> .divider)", "li:has(>hr)", "li:has(>.divider)");
-    lowered(noHas, ".a:has(#y), .b:has(.x), .c:has(.x)", ".a:has(#y)", ".b:has(.x)", ".c:has(.x)");
-    lowered(noHas, ".b:has(.x), .a:has(#y), .c:has(.x)", ".b:has(.x)", ".a:has(#y)", ".c:has(.x)");
-    lowered(noHas, ".b:has(.x), .c:has(.x), .a:has(#y)", ".b:has(.x)", ".c:has(.x)", ".a:has(#y)");
+    // The selectors that every target can parse stay in one rule.
+    split(noHas, ".b:has(.x), .a, .c:has(.y), .d", ".a,.d", ".b:has(.x)", ".c:has(.y)");
+    split(
+      noHasInFirefox,
+      ":root, :root:has(input.theme-controller[value=light]:checked), [data-theme=light]",
+      ":root,[data-theme=light]",
+      ":root:has(input.theme-controller[value=light]:checked)",
+    );
+    split(noHas, ".a, .b:hover", ".a,.b:hover");
+    split(noHas, ":is(.a, .b:has(.x)) .c, .d", ":is(.a,.b:has(.x)) .c,.d");
 
-    // An unknown functional pseudo-class weighs what its argument means. All selectors of the
-    // list must have the same ones.
-    lowered(noHas, ":state(a) .x:has(i), :state(b) .y:has(i)", ":state(a) .x:has(i)", ":state(b) .y:has(i)");
-    lowered(
-      noHas,
-      ":state(b) .z:has(i), :state(a) .x:has(i), :state(a) .y:has(i)",
-      ":state(b) .z:has(i)",
-      ":state(a) .x:has(i)",
-      ":state(a) .y:has(i)",
-    );
-    lowered(
-      noHas,
-      ":state(a) .x:has(i), :state(b) .z:has(i), :state(a) .y:has(i)",
-      ":state(a) .x:has(i)",
-      ":state(b) .z:has(i)",
-      ":state(a) .y:has(i)",
-    );
-    lowered(
-      noHas,
-      ":state(a) .x:has(i), :state(a) .y:has(i), :state(b) .z:has(i)",
-      ":state(a) .x:has(i)",
-      ":state(a) .y:has(i)",
-      ":state(b) .z:has(i)",
-    );
-    lowered(noHas, ".a:not(:state(x)):has(i), .b.k:has(i)", ".a:not(:state(x)):has(i)", ".b.k:has(i)");
-    lowered(
-      noHas,
-      ".a:nth-child(2 of :state(x)):has(i), .b.k.m:has(i)",
-      ".a:nth-child(2 of :state(x)):has(i)",
-      ".b.k.m:has(i)",
-    );
-
-    // These do not match, weigh or print inside `:is()` as they do outside: a shadow host that
-    // is the subject, `:visited` and `:link`, `:-webkit-any()`, a pseudo-class with a vendor
-    // prefix pass, and a namespace.
-    lowered(noHas, ":host(.a):has(.x), :host(.b):has(.y)", ":host(.a):has(.x)", ":host(.b):has(.y)");
-    lowered(
-      noHas,
-      ".k.b:has(.c), :host(.a):has(.x), .k.d:has(.c)",
-      ".k.b:has(.c)",
-      ":host(.a):has(.x)",
-      ".k.d:has(.c)",
-    );
-    lowered(noHas, ":host-context(.dark):has(.x), .b:has(.y)", ":host-context(.dark):has(.x)", ".b:has(.y)");
-    lowered(noHas, ":is(:host(.a)):has(.x), :is(:host(.b)):has(.y)", ":host(.a):has(.x)", ":host(.b):has(.y)");
-    lowered(
-      noHas,
-      ":where(:host(.a)):has(.x), :where(:host(.b)):has(.y)",
-      ":where(:host(.a)):has(.x)",
-      ":where(:host(.b)):has(.y)",
-    );
-    lowered(noHas, "a:visited:has(.x), a:hover:has(.y)", "a:visited:has(.x)", "a:hover:has(.y)");
-    lowered(noHas, "a:link:has(.x), a:hover:has(.y)", "a:link:has(.x)", "a:hover:has(.y)");
-    lowered(noHas, "a:not(:visited):has(.x), a:hover:has(.y)", "a:not(:visited):has(.x)", "a:hover:has(.y)");
-    lowered(noHas, ":-webkit-any(h1, h2) c:has(i), d e:has(i)", ":-webkit-any(h1,h2) c:has(i)", "d e:has(i)");
-    lowered(
-      noFocusVisible,
-      ".a:fullscreen:hover, .b:fullscreen:focus",
-      ".a:-webkit-full-screen:hover",
-      ".a:fullscreen:hover",
-      ".b:-webkit-full-screen:focus",
-      ".b:fullscreen:focus",
-    );
-    lowered(
-      noFocusVisible,
-      ":where(:fullscreen) .a:focus-visible, :where(:fullscreen) .b:focus-visible",
-      ":where(:-webkit-full-screen) .a:focus-visible",
-      ":where(:fullscreen) .a:focus-visible",
-      ":where(:-webkit-full-screen) .b:focus-visible",
-      ":where(:fullscreen) .b:focus-visible",
-    );
-    minify_test(
-      "@namespace svg url(http://www.w3.org/2000/svg); svg|a:has(.y), a:has(.x) { color: red }",
-      '@namespace svg "http://www.w3.org/2000/svg";svg|a:has(.y){color:red}a:has(.x){color:red}',
-      noHas,
-    );
-
-    // A rule whose selectors all move to their own rules prints nothing itself, so it gets no
-    // `@supports` rule for the color fallback either.
-    minify_test(
-      ".a:has(.x), .b.c:has(.y) { box-shadow: var(--w) 12px lab(40% 56.6 39) }",
-      ".a:has(.x){box-shadow:var(--w)12px #b32323}" +
-        "@supports (color:lab(0% 0 0)){.a:has(.x){box-shadow:var(--w)12px lab(40% 56.6 39)}}" +
-        ".b.c:has(.y){box-shadow:var(--w)12px #b32323}" +
-        "@supports (color:lab(0% 0 0)){.b.c:has(.y){box-shadow:var(--w)12px lab(40% 56.6 39)}}",
-      noHas,
-    );
-
-    // `&` weighs as much as the selector list of the parent rule. Two selectors weigh the same
-    // only if both use `&` the same way.
+    // The same in nested rules, with nesting compiled away and with native nesting.
+    minify_test(".p { &:has(.x), &:has(#y) { color: red } }", ".p:has(.x){color:red}.p:has(#y){color:red}", noHas);
     minify_test(
       ".p { & .a:has(.x), & .b:has(.x) { color: red } }",
-      ":is(.p .a:has(.x),.p .b:has(.x)){color:red}",
+      ".p .a:has(.x){color:red}.p .b:has(.x){color:red}",
       noHas,
     );
-    minify_test(".p { .a:has(&), .b:has(&) { color: red } }", ":is(.a:has(.p),.b:has(.p)){color:red}", noHas);
-    minify_test(
-      ".p { :where(&) .a:has(.x), :where(&) .b:has(.x) { color: red } }",
-      ":is(:where(.p) .a:has(.x),:where(.p) .b:has(.x)){color:red}",
-      noHas,
-    );
-    minify_test(".p { &:has(.x), &:has(#y) { color: red } }", ".p:has(.x){color:red}.p:has(#y){color:red}", noHas);
-    minify_test(".p { & &:has(.x), &:has(.x) { color: red } }", ".p .p:has(.x){color:red}.p:has(.x){color:red}", noHas);
-    minify_test(
-      ".item { & + &:has(.x), &:has(.y) { color: red } }",
-      ".item+.item:has(.x){color:red}.item:has(.y){color:red}",
-      noHas,
-    );
-    minify_test(
-      ".p { :is(&) .k a:has(.x), :is(&, .x) a:has(.x) { color: red } }",
-      ".p .k a:has(.x){color:red}:is(.p,.x) a:has(.x){color:red}",
-      noHas,
-    );
-
-    // With nesting compiled away, the printer writes the parent selector in place of `&`. The
-    // nested list then goes inside `:is()` only if the parent selector can.
-    minify_test(".p { &:has(.x), &:has(.y) { color: red } }", ":is(.p:has(.x),.p:has(.y)){color:red}", noHas);
     minify_test(
       "x-el::part(input) { &:user-valid, &:user-invalid { color: red } }",
       "x-el::part(input):user-valid{color:red}x-el::part(input):user-invalid{color:red}",
       noHasInFirefox,
     );
     minify_test(
-      "a:visited { &:has(.x), &:has(.y) { color: red } }",
-      "a:visited:has(.x){color:red}a:visited:has(.y){color:red}",
+      ".a:has(.x), .b:has(.y) { color: red; .c { color: blue } }",
+      ".a:has(.x){color:red}.a:has(.x) .c{color:#00f}.b:has(.y){color:red}.b:has(.y) .c{color:#00f}",
       noHas,
     );
+    // The nested rules of the selectors that stay come after every split rule, so the
+    // declarations of a split rule cannot override them.
     minify_test(
-      "a:visited { .k { @media (min-width: 1px) { &:has(.x), &:has(.y) { color: red } } } }",
-      "@media (min-width:1px){a:visited .k:has(.x){color:red}a:visited .k:has(.y){color:red}}",
+      ".a, .b:has(.x) { color: red; .c { color: blue } }",
+      ".a{color:red}.b:has(.x){color:red}.b:has(.x) .c{color:#00f}.a .c{color:#00f}",
       noHas,
     );
+    minify_test(".a, .b:has(.x) { .c { color: blue } }", ".b:has(.x) .c{color:#00f}.a .c{color:#00f}", noHas);
     minify_test(
-      ".a:fullscreen { .x:has(i), .y:has(i) { color: red } }",
-      ".a:fullscreen .x:has(i){color:red}.a:fullscreen .y:has(i){color:red}",
-      noHas,
+      ".a, .b:user-valid { color: red; .c { color: blue } }",
+      ".a{color:red}.b:user-valid{color:red;& .c{color:#00f}}.a{& .c{color:#00f}}",
+      nativeNesting,
     );
-    minify_test(
-      ".p { @nest a:visited & { &:has(.x), &:has(.y) { color: red } } }",
-      "a:visited .p:has(.x){color:red}a:visited .p:has(.y){color:red}",
-      noHas,
-    );
-    minify_test(
-      ":host(.a) { &:has(.x), &:has(.y) { color: red } }",
-      ":host(.a):has(.x){color:red}:host(.a):has(.y){color:red}",
-      noHas,
-    );
-    minify_test(
-      ":host { &:hover { &:has(.x), &:has(.y) { color: red } } }",
-      ":host:hover:has(.x){color:red}:host:hover:has(.y){color:red}",
-      noHas,
-    );
-    minify_test(
-      ":host(.a) { .x:has(i), .y:has(i) { color: red } }",
-      ":is(:host(.a) .x:has(i),:host(.a) .y:has(i)){color:red}",
-      noHas,
-    );
-    minify_test(
-      ":host { .k { &:has(.x), &:has(.y) { color: red } } }",
-      ":is(:host .k:has(.x),:host .k:has(.y)){color:red}",
-      noHas,
-    );
-
-    // The same decisions where the browser resolves `&`.
     minify_test(
       ".p { .a:user-valid, .b:user-valid { color: red } }",
-      ".p{:is(& .a:user-valid,& .b:user-valid){color:red}}",
+      ".p{& .a:user-valid{color:red}& .b:user-valid{color:red}}",
       nativeNesting,
     );
-    minify_test(
-      ".p { & &:user-valid, &:user-valid { color: red } }",
-      ".p{& &:user-valid{color:red}&:user-valid{color:red}}",
-      nativeNesting,
-    );
-    minify_test(
-      ".p { & .a:has(.x), & .b:has(.x) { color: red } }",
-      ".p{:is(& .a:has(.x),& .b:has(.x)){color:red}}",
-      nativeNestingNoHas,
-    );
-    minify_test(
-      ".p { &:has(.x), &:has(#y) { color: red } }",
-      ".p{&:has(.x){color:red}&:has(#y){color:red}}",
-      nativeNestingNoHas,
-    );
-    minify_test(
-      "x-el::part(a) { &:user-valid, &:user-invalid { color: red } }",
-      "x-el::part(a){:is(&:user-valid,&:user-invalid){color:red}}",
-      nativeNesting,
-    );
-
-    // In `@scope`, each selector of a list is relative to the scoping root. An `:is()` argument
-    // is not.
     minify_test(
       "@scope (.card) { .a .x:has(i), .b .y:has(i) { color: red } }",
       "@scope(.card){.a .x:has(i){color:red}.b .y:has(i){color:red}}",
       noHas,
     );
+
+    // The rules that a logical property adds for each direction are minified again, and their
+    // selector lists split the same way.
+    const rtl = "ae ar arc bcc bqi ckb dv fa glk he ku mzn nqo pnb ps sd ug ur yi"
+      .split(" ")
+      .map(language => `:lang(${language})`)
+      .join(",");
     minify_test(
-      "@scope (.card) { .p { .a:has(i), .b:has(i) { color: red } } }",
-      "@scope(.card){.p .a:has(i){color:red}.p .b:has(i){color:red}}",
-      noHas,
+      ".a, .b { border-start-start-radius: 1px }",
+      `.a:not(${rtl}){border-top-left-radius:1px}.b:not(${rtl}){border-top-left-radius:1px}` +
+        `.a:is(${rtl}){border-top-right-radius:1px}.b:is(${rtl}){border-top-right-radius:1px}`,
+      { chrome: 88 << 16 },
     );
 
     minify_test(":root::view-transition {position: fixed}", ":root::view-transition{position:fixed}");

@@ -2409,11 +2409,7 @@ mod stylesheet_impl {
                 selector_expansion_total: 0,
             };
 
-            if self
-                .rules
-                .minify(&mut minify_ctx, false, Default::default())
-                .is_err()
-            {
+            if self.rules.minify(&mut minify_ctx, false).is_err() {
                 // Rule-level minify signals failure with the unit `MinifyErr`
                 // and records the diagnostic out-of-band on the context.
                 debug_assert!(minify_ctx.err.is_some());

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -654,49 +654,6 @@ test("css-module/NoBundleHashesByRelativePath", async () => {
   expect(hashA).toBeDefined();
   expect(hashB).toBeDefined();
   expect(hashA).not.toBe(hashB);
-});
-
-// `:global()` and `:local()` print as their argument, which can end in a
-// pseudo-element and has a specificity of its own. So a selector list with one
-// of them must not become one `:is(list)` selector for targets that have
-// `:is()` and lack `:has()`. The first rule has neither and must become one: it
-// shows that the targets apply. Browser targets reach a CSS module only through
-// the `BUN_DEBUG_CSS_TARGET_*` variables, which debug and ASAN builds read.
-test.skipIf(!isDebug && !isASAN)("css-module/GlobalSelectorListIsNotWrappedInIs", async () => {
-  using dir = tempDir("css-module-global-list", {
-    "styles.module.css": `
-      .a:has(.k), .b:has(.k) { color: pink }
-      .x :global(.y::before), .x:has(.z) { color: red }
-      :global(x-el::part(a)), .y:has(.q) { color: green }
-      :global(.dark) .c:has(.k), :global(.dark) .d:has(.k) { color: teal }
-      :local(.e::after), :local(.f) { color: navy }
-    `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "styles.module.css", "--minify", "--outdir", "out"],
-    env: { ...bunEnv, BUN_DEBUG_CSS_TARGET_chrome: "100 << 16" },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const css = await Bun.file(`${dir}/out/styles.module.css`).text();
-  const hash = css.match(/\.x_([A-Za-z0-9_-]+) /)?.[1];
-  expect(css.trim()).toBe(
-    [
-      `:is(.a_${hash}:has(.k_${hash}),.b_${hash}:has(.k_${hash})){color:pink}`,
-      `.x_${hash} .y:before{color:red}`,
-      `.x_${hash}:has(.z_${hash}){color:red}`,
-      `x-el::part(a){color:green}`,
-      `.y_${hash}:has(.q_${hash}){color:green}`,
-      `.dark .c_${hash}:has(.k_${hash}){color:teal}`,
-      `.dark .d_${hash}:has(.k_${hash}){color:teal}`,
-      `.e_${hash}:after{color:navy}`,
-      `.f_${hash}{color:navy}`,
-    ].join(""),
-  );
-  expect(exitCode).toBe(0);
 });
 
 test("a resolve error in CSS covers the whole url() and composes path", async () => {

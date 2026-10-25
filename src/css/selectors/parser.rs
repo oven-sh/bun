@@ -498,7 +498,7 @@ fn compute_simple_selector_specificity<Impl: BunSelectorImpl>(
             }
             specificity.add(Specificity::from_u32(max));
         }
-        C::Negation(_) | C::Is(_) | C::Has(_) | C::Any { .. } => {
+        C::Negation(_) | C::Is(_) | C::Any { .. } => {
             // https://drafts.csswg.org/selectors/#specificity-rules:
             //
             //     The specificity of an :is() pseudo-class is replaced by the
@@ -507,8 +507,6 @@ fn compute_simple_selector_specificity<Impl: BunSelectorImpl>(
             let list: &[GenericSelector<Impl>] = match simple_selector {
                 C::Negation(list) => list,
                 C::Is(list) => list,
-                // Selectors 4 weighs :has() like :is(). lightningcss does not: parcel-bundler/lightningcss#1324
-                C::Has(list) => list,
                 C::Any { selectors, .. } => selectors,
                 _ => unreachable!(),
             };
@@ -519,6 +517,7 @@ fn compute_simple_selector_specificity<Impl: BunSelectorImpl>(
             specificity.add(Specificity::from_u32(max));
         }
         C::Where(_)
+        | C::Has(_)
         | C::ExplicitUniversalType
         | C::ExplicitAnyNamespace
         | C::ExplicitNoNamespace
@@ -1821,10 +1820,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         false
     }
 
-    pub(crate) fn has_pseudo_element(&self) -> bool {
-        self.specificity_and_flags.has_pseudo_element()
-    }
-
     /// Returns count of simple selectors and combinators in the Selector.
     pub(crate) fn len(&self) -> usize {
         self.components.len()
@@ -2668,12 +2663,6 @@ pub struct SpecificityAndFlags {
 }
 
 impl SpecificityAndFlags {
-    /// `::part()` and `::slotted()` are pseudo-elements too, and the parser gives each its own flag.
-    pub(crate) fn has_pseudo_element(self) -> bool {
-        self.flags.intersects(
-            SelectorFlags::HAS_PSEUDO | SelectorFlags::HAS_SLOTTED | SelectorFlags::HAS_PART,
-        )
-    }
     pub(crate) fn hash(self, hasher: &mut Wyhash) {
         hasher.update(&self.specificity.to_ne_bytes());
         hasher.update(&[self.flags.bits()]);

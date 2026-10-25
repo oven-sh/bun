@@ -41,8 +41,7 @@ const deferred = { deferred: true, reportedAs: "options" } as const;
 const boolean = (value: boolean) => ({ type: b.bool.default(value), expected: ["boolean"] });
 const optionalBoolean = { type: b.bool.optional, expected: ["boolean"] };
 
-/** `other` is `ToString` of what is not a string, for the error that names it. */
-export const EncodingName = b.union({ name: b.string.allowStringObject, other: b.string.loose });
+export const EncodingName = b.union({ name: b.stringLike, other: b.opaque });
 const encoding = EncodingName.falsyAsNull;
 const flag = FileFlags.emptyStringAsNull;
 const mode = { type: FileMode.emptyStringAsNull, expected: ["number"] };
@@ -50,7 +49,7 @@ const signal = {
   type: b.abortSignal.shared.emptyStringAsNull,
   expected: ["AbortSignal"],
 };
-const encodingOr = (options: b.Type) => b.union({ encoding: b.string.allowStringObject, options, other: b.ignored });
+const encodingOr = (options: b.Type) => b.union({ encoding: b.stringLike, options, other: b.ignored });
 
 export const EncodingOptions = b.dictionary({ encoding }, options);
 export const EncodingOrOptions = encodingOr(EncodingOptions);
@@ -257,7 +256,7 @@ const operations: Record<string, Operation> = {
           ...fd,
           buffer: WriteString.withValue,
           position,
-          encoding: b.string.allowStringObject.otherAsNull.deferred,
+          encoding: b.stringLike.otherAsNull,
         },
         expected: { buffer: writeBuffer },
       },

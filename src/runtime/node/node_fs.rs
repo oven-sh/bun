@@ -13,7 +13,7 @@ use bun_core::{String as BunString, Utf8WithString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
-use bun_jsc::bindgen::{BufferSource, Deferred, JsLocal};
+use bun_jsc::bindgen::{BufferSource, Deferred, JsLocal, StringLike};
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -3160,7 +3160,7 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
             path: Deferred<'_, generated::PathLike<'_>>,
-            options: Deferred<'_, generated::EncodingOrOptions>,
+            options: Deferred<'_, generated::EncodingOrOptions<'_>>,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let encoding = parse_encoding_arg(ctx, options, Encoding::Utf8)?;
@@ -3177,7 +3177,7 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
             path: Deferred<'_, generated::PathLike<'_>>,
-            options: Deferred<'_, generated::EncodingOrOptions>,
+            options: Deferred<'_, generated::EncodingOrOptions<'_>>,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, path.convert(ctx)?, parsing, "path")?;
             let encoding = parse_encoding_arg(ctx, options, Encoding::Utf8)?;
@@ -3192,12 +3192,12 @@ pub(crate) mod args {
     /// Shared by `Readlink`/`Realpath`/`MkdirTemp::from_js`.
     fn parse_encoding_arg(
         ctx: &JSGlobalObject,
-        options: Deferred<'_, generated::EncodingOrOptions>,
+        options: Deferred<'_, generated::EncodingOrOptions<'_>>,
         default: Encoding,
     ) -> JsResult<Encoding> {
         Ok(match options.convert(ctx)? {
             generated::EncodingOrOptions::Encoding(name) => {
-                Encoding::from_name_with_default_on_empty(&name, ctx, default)?
+                Encoding::from_name_with_default_on_empty(name, ctx, default)?
             }
             generated::EncodingOrOptions::Options(options) => {
                 Encoding::assert(options.encoding, ctx, default)?
@@ -3353,7 +3353,7 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
             prefix: Deferred<'_, generated::PathLike<'_>>,
-            options: Deferred<'_, generated::EncodingOrOptions>,
+            options: Deferred<'_, generated::EncodingOrOptions<'_>>,
         ) -> JsResult<Self> {
             let prefix =
                 PathLike::from_js(ctx, prefix.convert(ctx)?, parsing)?.map_err(|value| {
@@ -3401,7 +3401,7 @@ pub(crate) mod args {
             let mut recursive = false;
             match options.convert(ctx)? {
                 generated::EncodingOrReaddirOptions::Encoding(name) => {
-                    encoding = Encoding::from_name_with_default_on_empty(&name, ctx, encoding)?;
+                    encoding = Encoding::from_name_with_default_on_empty(name, ctx, encoding)?;
                 }
                 generated::EncodingOrReaddirOptions::Options(val) => {
                     encoding = Encoding::assert(val.encoding(ctx)?, ctx, encoding)?;
@@ -3622,7 +3622,7 @@ pub(crate) mod args {
             fd: i32,
             (buffer, bv): (generated::WriteString, JsLocal<'_>),
             position: Option<f64>,
-            encoding: Deferred<'_, Option<BunString>>,
+            encoding: Option<JsLocal<'_, StringLike>>,
         ) -> JsResult<Self> {
             let generated::WriteString::Text(buffer) = buffer else {
                 return Err(ctx.throw_invalid_argument_type_value(
@@ -3631,10 +3631,8 @@ pub(crate) mod args {
                     bv.to_js(),
                 ));
             };
-            let encoding = match encoding.convert(ctx)? {
-                Some(name) => {
-                    Encoding::from_name_with_default_on_empty(&name, ctx, Encoding::Utf8)?
-                }
+            let encoding = match encoding {
+                Some(name) => Encoding::from_name_with_default_on_empty(name, ctx, Encoding::Utf8)?,
                 None => Encoding::Utf8,
             };
             let buffer = StringOrBuffer::from_bun_string(
@@ -3899,7 +3897,7 @@ pub(crate) mod args {
             });
             match options.convert(ctx)? {
                 generated::EncodingOrReadFileOptions::Encoding(name) => {
-                    encoding = Encoding::from_name_with_default_on_empty(&name, ctx, encoding)?;
+                    encoding = Encoding::from_name_with_default_on_empty(name, ctx, encoding)?;
                 }
                 generated::EncodingOrReadFileOptions::Options(arg) => {
                     encoding = Encoding::assert(arg.encoding(ctx)?, ctx, encoding)?;
@@ -3992,7 +3990,7 @@ pub(crate) mod args {
             }
             match options.convert(ctx)? {
                 generated::EncodingOrWriteFileOptions::Encoding(name) => {
-                    encoding = Encoding::from_name_with_default_on_empty(&name, ctx, encoding)?;
+                    encoding = Encoding::from_name_with_default_on_empty(name, ctx, encoding)?;
                 }
                 generated::EncodingOrWriteFileOptions::Options(arg) => {
                     encoding = Encoding::assert(arg.encoding(ctx)?, ctx, encoding)?;

@@ -6,7 +6,7 @@ use crate::jsc::{self, JSGlobalObject, JSValue, JsResult};
 use bun_core::WStr;
 use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
-use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
+use bun_jsc::bindgen::{JsLocal, JsScope, StringLike, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
@@ -24,9 +24,8 @@ use crate::webcore::{Blob, Request, Response};
 pub(crate) use jsc::MarkedArrayBuffer as Buffer;
 use jsc::PinnedArrayBuffer;
 
-// LAYERING: `Fd::{from_js,from_js_validated,to_js}` are provided by the
-// canonical `bun_sys_jsc::FdJsc` extension trait (full range/type
-// validation). Re-exported so existing
+// LAYERING: `Fd::to_js` is provided by the canonical `bun_sys_jsc::FdJsc`
+// extension trait. Re-exported so existing
 // `crate::node::types::FdJsc` import paths keep resolving.
 pub(crate) use bun_sys_jsc::FdJsc;
 
@@ -566,7 +565,7 @@ impl From<bun_core::NodeEncoding> for Encoding {
 
 pub(crate) fn assert_encoding_valid(
     cx: &mut JsScope<'_>,
-    encoding: Option<generated::EncodingName>,
+    encoding: Option<generated::EncodingName<'_>>,
 ) -> JsResult<()> {
     Encoding::assert(encoding, cx.global(), Encoding::Utf8)?;
     Ok(())
@@ -596,41 +595,53 @@ impl Encoding {
     }
 
     pub(crate) fn assert(
-        value: Option<generated::EncodingName>,
+        value: Option<generated::EncodingName<'_>>,
         global_object: &JSGlobalObject,
         default: Encoding,
     ) -> JsResult<Encoding> {
         match value {
             None => Ok(default),
             Some(generated::EncodingName::Name(name)) => {
-                Self::from_name_with_default_on_empty(&name, global_object, default)
+                Self::from_name_with_default_on_empty(name, global_object, default)
             }
             Some(generated::EncodingName::Other(value)) => {
-                Err(Self::throw_encoding_error(global_object, &value))
+                Err(Self::throw_encoding_error(global_object, value.to_js()))
             }
         }
     }
 
     pub(crate) fn from_name_with_default_on_empty(
-        name: &bun_core::String,
+        name: JsLocal<'_, StringLike>,
         global_object: &JSGlobalObject,
         default: Encoding,
     ) -> JsResult<Encoding> {
-        if name.is_empty() {
-            return Ok(default);
+        let value = name.to_js();
+        match Self::from_js_with_default_on_empty(value, global_object, default)? {
+            Some(e) => Ok(e),
+            None => Err(Self::throw_encoding_error(global_object, value)),
         }
-        Self::from(name.to_utf8().slice())
-            .ok_or_else(|| Self::throw_encoding_error(global_object, name))
     }
 
-    fn throw_encoding_error(
+    fn from_js_with_default_on_empty(
+        value: JSValue,
         global_object: &JSGlobalObject,
-        value: &bun_core::String,
-    ) -> jsc::JsError {
+        default: Encoding,
+    ) -> JsResult<Option<Encoding>> {
+        let str = bun_core::String::from_js(value, global_object)?;
+        if str.is_empty() {
+            return Ok(Some(default));
+        }
+        Ok(Self::from(str.to_utf8().slice()))
+    }
+
+    fn throw_encoding_error(global_object: &JSGlobalObject, value: JSValue) -> jsc::JsError {
         global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_VALUE,
-                format_args!("encoding '{value}' is an invalid encoding"),
+                format_args!(
+                    "encoding '{}' is an invalid encoding",
+                    value.fmt_string(global_object)
+                ),
             )
             .throw()
     }

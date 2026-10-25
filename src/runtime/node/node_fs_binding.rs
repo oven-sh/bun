@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 
 use bun_jsc::bindgen::{
-    BufferSource, Callable, Deferred, JsLocal, JsPayload as _, JsScope, JsWrapper,
+    BufferSource, Callable, Deferred, JsLocal, JsPayload as _, JsScope, JsWrapper, StringLike,
 };
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSArray, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
@@ -390,7 +390,7 @@ node_fs_bindings! {
         (path: Deferred<'_, schema::PathLike<'_>>, options: Deferred<'_, schema::MkdirOptionsOrMode<'_>>),
         |global, parsing| args::Mkdir::from_js(global, parsing, path, options);
     mkdtemp_sync / mkdtemp / mkdtemp_cb => Mkdtemp, args::MkdirTemp<'static>, ret::Mkdtemp,
-        (prefix: Deferred<'_, schema::PathLike<'_>>, options: Deferred<'_, schema::EncodingOrOptions>),
+        (prefix: Deferred<'_, schema::PathLike<'_>>, options: Deferred<'_, schema::EncodingOrOptions<'_>>),
         |global, parsing| args::MkdirTemp::from_js(global, parsing, prefix, options);
     open_sync / open / open_cb => Open, args::Open<'static>, ret::Open,
         (path: Deferred<'_, schema::PathLike<'_>>, flags: Deferred<'_, Option<schema::FileFlags<'_>>>, mode: Deferred<'_, Option<schema::FileMode<'_>>>),
@@ -402,7 +402,7 @@ node_fs_bindings! {
         (fd: i32, buffer: JsLocal<'_, BufferSource>, offset: schema::WriteOffset<'_>, length: schema::WriteLength, position: Option<f64>),
         |global, parsing| args::Write::from_buffer(global, parsing, fd, buffer, offset, length, position);
     write_string_sync / write_string / write_string_cb => Write, args::Write<'static>, ret::Write,
-        (fd: i32, buffer: (schema::WriteString, JsLocal<'_>), position: Option<f64>, encoding: Deferred<'_, Option<bun_core::String>>),
+        (fd: i32, buffer: (schema::WriteString, JsLocal<'_>), position: Option<f64>, encoding: Option<JsLocal<'_, StringLike>>),
         |global, parsing| args::Write::from_string(global, parsing, fd, buffer, position, encoding);
     read_file_sync / read_file / read_file_cb => ReadFile, args::ReadFile<'static>, ret::ReadFile,
         (path: Deferred<'_, schema::PathOrFileDescriptor<'_>>, options: Deferred<'_, schema::EncodingOrReadFileOptions<'_>>),
@@ -411,7 +411,7 @@ node_fs_bindings! {
         (path: Deferred<'_, schema::PathOrFileDescriptor<'_>>, data: schema::WriteFileData<'_>, options: Deferred<'_, schema::EncodingOrWriteFileOptions<'_>>),
         |global, parsing| args::WriteFile::from_js(global, parsing, path, data, options);
     readlink_sync / readlink / readlink_cb => Readlink, args::Readlink<'static>, ret::Readlink,
-        (path: Deferred<'_, schema::PathLike<'_>>, options: Deferred<'_, schema::EncodingOrOptions>),
+        (path: Deferred<'_, schema::PathLike<'_>>, options: Deferred<'_, schema::EncodingOrOptions<'_>>),
         |global, parsing| args::Readlink::from_js(global, parsing, path, options);
     rm_sync / rm / rm_cb => Rm, args::Rm<'static>, ret::Rm,
         (path: Deferred<'_, schema::PathLike<'_>>, options: Deferred<'_, schema::RmOptionsArgument>),
@@ -420,10 +420,10 @@ node_fs_bindings! {
         (path: Deferred<'_, schema::PathLike<'_>>, options: Deferred<'_, schema::RmdirOptions>),
         |global, parsing| args::RmDir::from_js(global, parsing, path, options);
     realpath_sync / realpath / realpath_cb => RealpathNonNative, args::Realpath<'static>, ret::Realpath,
-        (path: Deferred<'_, schema::PathLike<'_>>, options: Deferred<'_, schema::EncodingOrOptions>),
+        (path: Deferred<'_, schema::PathLike<'_>>, options: Deferred<'_, schema::EncodingOrOptions<'_>>),
         |global, parsing| args::Realpath::from_js(global, parsing, path, options);
     realpath_native_sync / realpath_native / realpath_native_cb => Realpath, args::Realpath<'static>, ret::Realpath,
-        (path: Deferred<'_, schema::PathLike<'_>>, options: Deferred<'_, schema::EncodingOrOptions>),
+        (path: Deferred<'_, schema::PathLike<'_>>, options: Deferred<'_, schema::EncodingOrOptions<'_>>),
         |global, parsing| args::Realpath::from_js(global, parsing, path, options);
     rename_sync / rename / rename_cb => Rename, args::Rename<'static>, ret::Rename,
         (old_path: Deferred<'_, schema::PathLike<'_>>, new_path: Deferred<'_, schema::PathLike<'_>>),

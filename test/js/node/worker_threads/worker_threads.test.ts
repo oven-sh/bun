@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, nodeExeAtLeast, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -594,6 +594,331 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe(`error boom\n${JSON.stringify({ code: 42, out: "hello\nexit handler 1 true\n" })}\n`);
     expect(exitCode).toBe(0);
+  });
+});
+
+// node posts a dying worker's error after the worker's process 'exit' listeners have run
+// (workerOnGlobalUncaughtException in lib/internal/main/worker_thread.js). The stdio flush
+// is one of them, and it is all that is promised ahead of 'error'. Where a test counts
+// output, the worker dies only after the parent has acted on it: the parent's stdio ports
+// are attached by then.
+describe("a worker's fatal error is posted after its 'exit' listeners", () => {
+  // Spawned so the test runner's unhandled-error hook doesn't intercept the worker's error.
+  async function runParent(exe: string, script: string, cwd?: string) {
+    await using proc = Bun.spawn({ cmd: [exe, "-e", script], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode };
+  }
+  const ran = (stdout: unknown) => ({
+    stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout),
+    stderr: "",
+    exitCode: 0,
+  });
+  const openGate = (gate: string) => `(Atomics.store(${gate}, 0, 1), Atomics.notify(${gate}, 0))`;
+
+  // The worker blocks until the parent has read W0 and dies in the same turn. W0 still
+  // awaits its ack and W1..W29 wait behind it: 110 bytes that leave only in the exit-time
+  // flush, which the listener that reports them runs ahead of.
+  const dyingWorker = (stream: string, die: string) =>
+    `const { parentPort, workerData } = require("node:worker_threads");
+     const parentReadW0 = new Int32Array(workerData);
+     process.prependListener("exit", () => parentPort.postMessage(process.${stream}.writableLength));
+     parentPort.once("message", () => {
+       process.${stream}.write("W0\\n");
+       Atomics.wait(parentReadW0, 0, 0);
+       for (let i = 1; i < 30; i++) process.${stream}.write("W" + i + "\\n");
+       ${die}
+     });`;
+  const countLinesAtError = (stream: string, die: string) => `
+    const { Worker } = require("node:worker_threads");
+    const parentReadW0 = new Int32Array(new SharedArrayBuffer(4));
+    const w = new Worker(${JSON.stringify(dyingWorker(stream, die))}, { eval: true, ${stream}: true, workerData: parentReadW0.buffer });
+    let lines = 0, linesAtError = -1, parkedBytesAtExit = -1;
+    w.${stream}.on("data", chunk => {
+      lines += String(chunk).split("\\n").filter(Boolean).length;
+      // One loop turn later, so the flushed lines cannot ride the task that delivered W0.
+      if (lines === 1) setImmediate(() => ${openGate("parentReadW0")});
+    });
+    // One loop turn after the listener: the ack that its first read posts is ahead of this message.
+    setImmediate(() => w.postMessage("go"));
+    w.on("message", bytes => (parkedBytesAtExit = bytes));
+    w.on("error", () => (linesAtError = lines));
+    w.on("exit", () => console.log(JSON.stringify({ parkedBytesAtExit, linesAtError, linesAtExit: lines })));`;
+  const allLinesAtError = ran({ parkedBytesAtExit: 110, linesAtError: 30, linesAtExit: 30 });
+  const reportEvents = (workerSrc: string) => `
+    const { Worker } = require("node:worker_threads");
+    const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true });
+    const events = [];
+    w.on("error", error => events.push("error: " + error.message));
+    w.on("exit", code => console.log(JSON.stringify([...events, "exit " + code])));`;
+
+  // Every expected value here is node's (v26.3.0): these run under node as well.
+  describe.each([
+    ["bun", bunExe()],
+    ["node", nodeExeAtLeast("26.3.0")],
+  ])("as %s does", (_runtime, exe) => {
+    const row = test.skipIf(!exe).concurrent;
+
+    row.each([
+      ["stdout", "uncaught exception", 'throw new Error("boom");'],
+      ["stdout", "unhandled rejection", 'Promise.reject(new Error("boom"));'],
+      ["stderr", "uncaught exception", 'throw new Error("boom");'],
+    ])("captured %s is at the parent before 'error': %s", async (stream, _cause, die) => {
+      expect(await runParent(exe!, countLinesAtError(stream, die))).toEqual(allLinesAtError);
+    });
+
+    row("auto-piped stdout survives a parent that exits from its 'error' listener", async () => {
+      const workerSrc = `const { parentPort, workerData } = require("node:worker_threads");
+        const parentWroteW0 = new Int32Array(workerData);
+        setImmediate(() => {
+          console.log("W0");
+          parentPort.postMessage("W0 is ahead of this message");
+          Atomics.wait(parentWroteW0, 0, 0);
+          for (let i = 1; i < 30; i++) console.log("W" + i);
+          throw new Error("boom");
+        });`;
+      const result = await runParent(
+        exe!,
+        `const { Worker } = require("node:worker_threads");
+        const parentWroteW0 = new Int32Array(new SharedArrayBuffer(4));
+        const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, workerData: parentWroteW0.buffer });
+        w.once("message", () => setImmediate(() => ${openGate("parentWroteW0")}));
+        w.on("error", () => process.exit(0));`,
+      );
+      expect(result).toEqual(ran(Array.from({ length: 30 }, (_, i) => "W" + i).join("\n")));
+    });
+
+    row.each([
+      [
+        "an 'exit' listener's change to the error reaches the parent",
+        `const error = new Error("boom");
+         process.on("exit", () => { error.message = "changed by the 'exit' listener"; });
+         throw error;`,
+        ["error: changed by the 'exit' listener", "exit 1"],
+      ],
+      [
+        "process.exit() in an 'exit' listener withdraws the error",
+        `process.on("exit", () => process.exit(7));
+         throw new Error("boom");`,
+        ["exit 7"],
+      ],
+      [
+        "process.exit() in an 'exit' listener after an unhandled rejection leaves exit code 1",
+        `process.on("exit", () => process.exit());
+         Promise.reject(new Error("boom"));`,
+        ["exit 1"],
+      ],
+      [
+        "a throw from an 'exit' listener does not replace the error",
+        `process.on("exit", () => { throw new Error("thrown by the 'exit' listener"); });
+         throw new Error("boom");`,
+        ["error: boom", "exit 1"],
+      ],
+      [
+        // node runs no 'exit' listeners here, so none can withdraw the handler's error.
+        "process.exit() in an 'exit' listener does not withdraw what an 'uncaughtException' handler threw",
+        `process.on("exit", () => process.exit());
+         process.on("uncaughtException", () => { throw new Error("thrown by the handler"); });
+         throw new Error("boom");`,
+        ["error: thrown by the handler", "exit 1"],
+      ],
+    ])("%s", async (_name, workerSrc, events) => {
+      expect(await runParent(exe!, reportEvents(workerSrc))).toEqual(ran(events));
+    });
+
+    row("terminate() during the 'exit' listeners leaves no 'error'", async () => {
+      const workerSrc = `const { parentPort, workerData } = require("node:worker_threads");
+        const terminated = new Int32Array(workerData);
+        process.on("exit", () => {
+          parentPort.postMessage("in the 'exit' listener");
+          Atomics.wait(terminated, 0, 0);
+        });
+        throw new Error("boom");`;
+      const result = await runParent(
+        exe!,
+        `const { Worker } = require("node:worker_threads");
+        const terminated = new Int32Array(new SharedArrayBuffer(4));
+        const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, workerData: terminated.buffer });
+        const events = [];
+        w.on("message", () => (w.terminate(), ${openGate("terminated")}));
+        w.on("error", error => events.push("error: " + error.message));
+        w.on("exit", code => console.log(JSON.stringify([...events, "exit " + code])));`,
+      );
+      expect(result).toEqual(ran(["exit 1"]));
+    });
+  });
+
+  // node runs no 'exit' listeners after a handler that throws and loses the parked output.
+  // Bun runs them, so the flush is ahead of 'error' here too.
+  test.concurrent(
+    "captured stdout is at the parent before the error that an 'uncaughtException' handler threw",
+    async () => {
+      const die = `process.on("uncaughtException", () => { throw new Error("thrown by the handler"); });
+      throw new Error("boom");`;
+      expect(await runParent(bunExe(), countLinesAtError("stdout", die))).toEqual(allLinesAtError);
+    },
+  );
+
+  test.concurrent(
+    "the worker's own 'error' event still comes first, and process.exit() in it keeps the error",
+    async () => {
+      // 5: the event has the error and its text, and came before the 'exit' listeners.
+      const workerSrc = `const error = new Error("boom");
+      addEventListener("error", event => {
+        const first = !process._exiting && event.error === error && event.message.includes("error: boom");
+        process.exit(first ? 5 : 6);
+      });
+      throw error;`;
+      expect(await runParent(bunExe(), reportEvents(workerSrc))).toEqual(ran(["error: boom", "exit 5"]));
+    },
+  );
+
+  // A Web Worker keeps its order: the post, then the 'exit' listeners.
+  test.concurrent.each([
+    ["process.exit() in an 'exit' listener", `process.on("exit", () => process.exit(7));`, ["error", "close 7"]],
+    [
+      "a message from an 'exit' listener",
+      `process.on("exit", code => postMessage("'exit' listener " + code));`,
+      ["error", "message: 'exit' listener 1", "close 1"],
+    ],
+  ])("a Web Worker's 'error' is not held back by %s", async (_name, listener, events) => {
+    const result = await runParent(
+      bunExe(),
+      `const source = ${JSON.stringify(listener + ' throw new Error("boom");')};
+      const worker = new Worker(URL.createObjectURL(new Blob([source])));
+      const events = [];
+      worker.addEventListener("error", event => (event.preventDefault(), events.push("error")));
+      worker.addEventListener("message", event => events.push("message: " + event.data));
+      worker.addEventListener("close", event => console.log(JSON.stringify([...events, "close " + event.code])));`,
+    );
+    expect(result).toEqual(ran(events));
+  });
+
+  // In the test runner a worker's error takes another door into the same report.
+  // events.once() is not used for 'exit': it rejects on the worker's 'error'.
+  function exitCodeOf(worker: Worker) {
+    const { promise, resolve } = Promise.withResolvers<number>();
+    worker.on("exit", resolve);
+    return promise;
+  }
+
+  test("in the test runner's own process: captured stdout is at the parent before 'error'", async () => {
+    const parentReadW0 = new Int32Array(new SharedArrayBuffer(4));
+    const worker = new Worker(dyingWorker("stdout", 'throw new Error("boom");'), {
+      eval: true,
+      stdout: true,
+      workerData: parentReadW0.buffer,
+    });
+    let lines = 0;
+    let linesAtError = -1;
+    worker.stdout.on("data", chunk => {
+      lines += String(chunk).split("\n").filter(Boolean).length;
+      if (lines === 1) setImmediate(() => (Atomics.store(parentReadW0, 0, 1), Atomics.notify(parentReadW0, 0)));
+    });
+    setImmediate(() => worker.postMessage("go"));
+    worker.on("error", () => (linesAtError = lines));
+    const code = await exitCodeOf(worker);
+    expect({ linesAtError, linesAtExit: lines, code }).toEqual({ linesAtError: 30, linesAtExit: 30, code: 1 });
+  });
+
+  test.each([
+    ["uncaught exception", 'throw new Error("boom");'],
+    ["unhandled rejection", 'Promise.reject(new Error("boom"));'],
+  ])(
+    "in the test runner's own process: process.exit() in an 'exit' listener after an %s leaves exit code 1",
+    async (_cause, die) => {
+      const worker = new Worker(`process.on("exit", () => process.exit()); ${die}`, { eval: true });
+      const events: string[] = [];
+      worker.on("error", error => events.push("error: " + error.message));
+      const code = await exitCodeOf(worker);
+      expect([...events, "exit " + code]).toEqual(["exit 1"]);
+    },
+  );
+
+  // The other fatal report: a worker that fails to start after a preload ran. The 'exit'
+  // listener waits until the parent has every earlier line, so its own line needs a task
+  // of its own at the parent. What it throws is not for the monitor.
+  test.concurrent("a start failure is posted after the 'exit' listeners that a preload added", async () => {
+    using dir = tempDir("worker-start-failure-after-preload", {
+      "preload.cjs": `const parentHasAllLines = new Int32Array(require("node:worker_threads").workerData);
+        for (let i = 0; i < 30; i++) console.log("P" + i);
+        process.on("uncaughtExceptionMonitor", () => console.log("the monitor ran"));
+        process.on("exit", code => {
+          Atomics.wait(parentHasAllLines, 0, 0);
+          console.log("'exit' listener " + code);
+          throw new Error("thrown by the 'exit' listener");
+        });`,
+      "entry.cjs": `console.log("the entry does not run");`,
+    });
+    const result = await runParent(
+      bunExe(),
+      `const { Worker } = require("node:worker_threads");
+      const parentHasAllLines = new Int32Array(new SharedArrayBuffer(4));
+      // new Worker() accepts any data: specifier; this one fails to resolve on the worker thread.
+      const preload = ["./preload.cjs", "data:text/javascript"];
+      const w = new Worker("./entry.cjs", { stdout: true, preload, workerData: parentHasAllLines.buffer });
+      let lines = 0;
+      const events = [];
+      w.stdout.on("data", chunk => {
+        lines += String(chunk).split("\\n").filter(Boolean).length;
+        if (lines === 30) setImmediate(() => ${openGate("parentHasAllLines")});
+      });
+      w.on("error", error => events.push({ error: error.message, lines }));
+      w.on("exit", code => console.log(JSON.stringify([...events, { exit: code, lines }])));`,
+      String(dir),
+    );
+    expect(result).toEqual(
+      ran([
+        { error: 'BuildMessage: InvalidDataURL resolving preload "data:text/javascript"', lines: 31 },
+        { exit: 1, lines: 31 },
+      ]),
+    );
+  });
+
+  // On that path the worker first delivers a postMessageToThread() message it had buffered.
+  // Its 'workerMessage' listeners still run ahead of the 'exit' listeners, and a
+  // process.exit() in one does not lose the start failure.
+  test.concurrent.each([
+    [
+      "runs",
+      "",
+      { worker: ["'workerMessage' listener, exiting: false", "'exit' listener 1"], events: ["error", "exit 1"] },
+    ],
+    [
+      "calls process.exit()",
+      "process.exit(7);",
+      { worker: ["'workerMessage' listener, exiting: false", "'exit' listener 7"], events: ["error", "exit 7"] },
+    ],
+  ])("a start failure is posted after a 'workerMessage' listener that %s", async (_name, inListener, expected) => {
+    using dir = tempDir("worker-start-failure-after-routed-message", {
+      "preload.mjs": `import { workerData } from "node:worker_threads";
+        process.on("workerMessage", () => {
+          console.log("'workerMessage' listener, exiting: " + !!process._exiting);
+          ${inListener}
+        });
+        process.on("exit", code => console.log("'exit' listener " + code));
+        // The parent posted the routed message ahead of this one: it is buffered when this arrives.
+        await new Promise(resolve => workerData.once("message", resolve));
+        workerData.close();`,
+      "entry.cjs": `console.log("the entry does not run");`,
+    });
+    const result = await runParent(
+      bunExe(),
+      `const { Worker, MessageChannel, postMessageToThread } = require("node:worker_threads");
+      const { port1, port2 } = new MessageChannel();
+      const preload = ["./preload.mjs", "data:text/javascript"];
+      const w = new Worker("./entry.cjs", { stdout: true, preload, workerData: port2, transferList: [port2] });
+      postMessageToThread(w.threadId, "routed").catch(() => {});
+      port1.postMessage("the routed message is ahead of this one");
+      port1.unref();
+      let output = "";
+      const events = [];
+      w.stdout.setEncoding("utf8").on("data", chunk => (output += chunk));
+      w.on("error", () => events.push("error"));
+      w.on("exit", code => console.log(JSON.stringify({ worker: output.split("\\n").filter(Boolean), events: [...events, "exit " + code] })));`,
+      String(dir),
+    );
+    expect(result).toEqual(ran(expected));
   });
 });
 

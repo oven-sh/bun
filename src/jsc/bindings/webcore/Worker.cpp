@@ -193,19 +193,21 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
     proxy->parentContextWillDestroy();
 }
 
-// An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
-// it to the Worker object.
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
+// An error that ends the worker: 'error' on the worker's own global scope.
+extern "C" void WebWorker__dispatchErrorEvent(Zig::GlobalObject* globalObject, const BunString* message, JSC::EncodedJSValue errorValue)
 {
-    JSC::JSValue error = JSC::JSValue::decode(errorValue);
-    String messageStr = message.transferToWTFString();
     ErrorEvent::Init init;
-    init.message = messageStr;
-    init.error = error;
+    init.message = message->toWTFString();
+    init.error = JSC::JSValue::decode(errorValue);
     init.cancelable = false;
     init.bubbles = false;
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
+}
+
+// That error, reported to the Worker object: its 'error' event on the parent thread.
+extern "C" void WebWorker__postErrorToWorkerObject(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
+{
+    proxy->postErrorToWorkerObject(*globalObject, message.transferToWTFString(), JSC::JSValue::decode(errorValue));
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);

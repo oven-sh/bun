@@ -117,6 +117,8 @@ pub struct WebWorker {
     worker_env_loader: Cell<*mut bun_dotenv::Loader>,
     /// `process.exit(code)` ran; later error paths must not overwrite its code.
     exit_called: AtomicBool,
+    /// The worker's 'uncaughtException' handler threw: `on_unhandled_rejection` takes its error next.
+    uncaught_exception_handler_threw: Cell<bool>,
     /// The parent asked this thread to stop (`worker.terminate()` or an exiting
     /// parent) while its VM was live — as opposed to the thread stopping itself,
     /// or being stopped before it started. Written under the `vm_handle` lock.
@@ -135,6 +137,15 @@ enum EntryOutcome {
     Continue,
     /// The entry module rejected, and either no handler caught it or the handler stopped the worker.
     Stop,
+}
+
+/// Where the error that ends a worker came from.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum FatalCause {
+    /// An uncaught error, an unhandled rejection, or a failed start.
+    Uncaught,
+    /// The worker's own 'uncaughtException' handler threw it.
+    HandlerThrew,
 }
 
 #[repr(u8)]
@@ -166,7 +177,12 @@ unsafe extern "C" {
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
     safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
-    safe fn WebWorker__dispatchError(
+    safe fn WebWorker__dispatchErrorEvent(
+        global: &JSGlobalObject,
+        message: &BunString,
+        err: JSValue,
+    );
+    safe fn WebWorker__postErrorToWorkerObject(
         global: &JSGlobalObject,
         proxy: *mut c_void,
         message: BunString,
@@ -437,6 +453,7 @@ impl WebWorker {
             arena: JsCell::new(None),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
+            uncaught_exception_handler_threw: Cell::new(false),
             terminated_by_parent: AtomicBool::new(false),
         });
         let worker_ref = bun_ptr::ParentRef::from(worker.as_non_null());
@@ -874,8 +891,12 @@ impl WebWorker {
                 if !self.exit_called.load(Ordering::Relaxed) {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
-                self.flush_logs(vm);
+                // A preload may have run: the hook's listeners, then the 'exit' listeners, then the failure.
+                let failure = self.log_error(vm);
                 WebWorker__entrySettled(vm.global());
+                if let Some((message, error)) = failure {
+                    self.report_fatal(vm, message, error, FatalCause::Uncaught);
+                }
                 return self.shutdown();
             }
         };
@@ -1110,10 +1131,25 @@ impl WebWorker {
     /// stopped: the parent asked for exactly that, and building the error
     /// object would run into the pending termination.
     fn flush_logs(&self, vm: &VirtualMachine) {
+        let Some((message, error)) = self.log_error(vm) else {
+            return;
+        };
+        let global = vm.global();
+        let report = jsc::host_fn::from_js_host_call_generic(global, || {
+            WebWorker__dispatchErrorEvent(global, &message, error);
+            WebWorker__postErrorToWorkerObject(global, self.messaging_proxy, message, error)
+        });
+        if let Err(e) = report {
+            let _ = crate::task::report_error_or_terminate(global, e);
+        }
+    }
+
+    /// The VM log as the error to report and its text, unless it is empty or the worker is being stopped.
+    fn log_error(&self, vm: &VirtualMachine) -> Option<(BunString, JSValue)> {
         jsc::mark_binding();
         let vm_log = vm.log_ref().unwrap();
         if vm_log.msgs.is_empty() || !vm.script_allowed() {
-            return;
+            return None;
         }
         let global = vm.global();
         let result: jsc::JsResult<(JSValue, BunString)> = (|| {
@@ -1121,22 +1157,62 @@ impl WebWorker {
             let str = err.to_bun_string(global)?;
             Ok((err, str))
         })();
-        let (err, str) = match result {
-            Ok(pair) => pair,
+        match result {
+            Ok((err, str)) => Some((str, err)),
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(err) => {
                 // The worker's start sequence is its outermost frame: building the error from the
                 // log threw, and that is reported here instead (a termination just stands down).
                 let _ = crate::task::report_error_or_terminate(global, err);
+                None
+            }
+        }
+    }
+
+    /// The worker's 'uncaughtException' handler threw. Worker-thread only.
+    pub(crate) fn note_uncaught_exception_handler_threw(&self) {
+        self.uncaught_exception_handler_threw.set(true);
+    }
+
+    /// The error that ends this worker: 'error' on its own global scope, then on the parent's Worker.
+    fn report_fatal(
+        &self,
+        vm: &VirtualMachine,
+        message: BunString,
+        error: JSValue,
+        cause: FatalCause,
+    ) {
+        let global = vm.global();
+        call_in_fatal_report(global, || {
+            WebWorker__dispatchErrorEvent(global, &message, error)
+        });
+        // Node's workerOnGlobalUncaughtException runs the 'exit' listeners (the stdio flush is one) before the post.
+        if self.is_node_worker && vm.script_allowed() {
+            // What an 'exit' listener throws is not the error to report, nor one for the worker's handlers.
+            vm.as_mut().on_unhandled_rejection =
+                VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+            let was_handling =
+                core::mem::replace(&mut vm.as_mut().is_handling_uncaught_exception, true);
+            call_in_fatal_report(global, || {
+                virtual_machine::ExitHandler::dispatch_on_exit(vm)
+            });
+            vm.as_mut().is_handling_uncaught_exception = was_handling;
+            // As in node, a stop during the listeners withdraws the error, unless a handler threw it.
+            if !vm.script_allowed() && cause == FatalCause::Uncaught {
                 return;
             }
-        };
-        let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
-            WebWorker__dispatchError(global, self.messaging_proxy, str, err)
-        });
-        if let Err(e) = dispatch {
-            let _ = crate::task::report_error_or_terminate(global, e);
         }
+        call_in_fatal_report(global, || {
+            WebWorker__postErrorToWorkerObject(global, self.messaging_proxy, message, error)
+        });
+    }
+}
+
+/// `report_fatal` returns through live C++ frames: the call's throw scopes are checked here.
+fn call_in_fatal_report(global: &JSGlobalObject, call: impl FnOnce()) {
+    if jsc::host_fn::from_js_host_call_generic(global, call).is_err() {
+        // The last-resort handler has nobody to pass this to, and the worker stops next.
+        let _ = global.try_take_exception();
     }
 }
 
@@ -1179,6 +1255,15 @@ fn on_unhandled_rejection(
     // heap `WebWorker` owned by C++ that outlives `vm`. `&WebWorker` (not
     // `&mut`) — see worker-thread `&self` note.
     let worker = vm.worker_ref().expect("Assertion failure: no worker");
+    let cause = if worker.uncaught_exception_handler_threw.get() {
+        FatalCause::HandlerThrew
+    } else {
+        FatalCause::Uncaught
+    };
+    // Node sets the code before it emits 'exit': an error that a listener withdraws still leaves 1.
+    if worker.is_node_worker {
+        vm.as_mut().exit_handler.exit_code = 1;
+    }
 
     let format_result = jsc::console_object::format2(
         jsc::console_object::MessageLevel::Debug,
@@ -1201,34 +1286,15 @@ fn on_unhandled_rejection(
         return;
     }
     jsc::mark_binding();
-    // We RETURN through
-    // the live C++ frames after dispatching (see the note below), so the
-    // simulated throw of the C++ `DECLARE_THROW_SCOPE` inside
-    // `SerializedScriptValue::create` (reached via `dispatchErrorWithValue`) must
-    // be checked before unwinding, or the next `TopExceptionScope` ctor on the
-    // stack — `performMicrotaskCheckpoint` / NodeTimerObject `call()` — trips
-    // `verifyExceptionCheckNeedIsSatisfied`. Wrap in `from_js_host_call_generic`
-    // (declares + checks a TopExceptionScope around the FFI call, same as
-    // `flush_logs` above) and discard any actual exception: we are already the
-    // last-resort error handler and about to arm termination.
-    let error_message = BunString::clone_utf8(&array);
-    if jsc::host_fn::from_js_host_call_generic(global_object, || {
-        WebWorker__dispatchError(
-            global_object,
-            worker.messaging_proxy,
-            error_message,
-            error_instance,
-        );
-    })
-    .is_err()
-    {
-        let _ = global_object.try_take_exception();
-    }
+    worker.report_fatal(vm, BunString::clone_utf8(&array), error_instance, cause);
     // node runs the worker's process 'exit' handlers on an uncaught exception (code 1;
     // they may change process.exitCode). Run them before arming termination — a pending
     // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
     // and its processIsExiting guard stops shutdown() from running them twice.
-    virtual_machine::ExitHandler::dispatch_on_exit(vm);
+    // A node:worker_threads worker ran them in `report_fatal`, ahead of the post.
+    if !worker.is_node_worker {
+        virtual_machine::ExitHandler::dispatch_on_exit(vm);
+    }
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy

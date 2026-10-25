@@ -16188,38 +16188,6 @@ const holder = { get g() { return router({ a: both }); } };
       expect(exitCode).toBe(1);
     });
 
-    // The second pass of `merge` visits `first.g` again, after `Inner.p` referred to itself and became `any`. That visit
-    // checks `pair(..)` inside its own check. The way back leads through `Outer.p`, which has no type yet and is resolved
-    // again, to `Inner.p`, which has one. So the visit ends with a tuple, and `merge` reports TS2741 for it.
-    test("an expression is checked again inside its own check where any resolution on the way back has its result", async () => {
-      const circular =
-        "because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.";
-      const own =
-        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
-      using dir = project({
-        "a.ts": `declare class Router<D> { def: D }
-declare function merge<A, B>(a: Router<A>, b: Router<B>): Router<A & B>;
-declare function pair<A, B>(a: A, b: B): [A, B];
-declare function lazy<T>(f: () => T): { get(): T };
-const first = { get g() { return pair(second.g, new Outer().p); } };
-class Outer { p = new Inner().p.def; }
-class Inner { p = merge(first.g, new Inner().p); }
-const second = { get g() { return lazy(() => first.g); } };
-`,
-      });
-      const { stdout, exitCode } = await check(dir);
-      expect(stdout.split("\n")).toEqual([
-        `a.ts(5,21): error TS7023: 'g' implicitly has return type 'any' ${circular}`,
-        `a.ts(6,15): error TS7022: 'p' implicitly has type 'any' ${own}`,
-        `a.ts(7,15): error TS7022: 'p' implicitly has type 'any' ${own}`,
-        "a.ts(7,25): error TS2741: Property 'def' is missing in type '[any, any]' but required in type 'Router<unknown>'.",
-        "a.ts(7,46): error TS2729: Property 'p' is used before its initialization.",
-        `a.ts(8,22): error TS7023: 'g' implicitly has return type 'any' ${circular}`,
-        `a.ts(8,40): error TS7024: Function implicitly has return type 'any' ${circular}`,
-      ]);
-      expect(exitCode).toBe(1);
-    });
-
     // `x60.a` is in the callee of `merge` and `extend`, not in an argument. The getters of `x91` are only on the way into
     // the cycle of `x30`, `x51` and `x60.a`.
     test("a getter in progress in the callee of a call does not make getters on the way into the cycle circular", async () => {

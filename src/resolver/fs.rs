@@ -426,7 +426,7 @@ impl DirEntry {
 
     /// Records that the key hashing to `alias_key` is mapped to this listing
     /// too. `own_key` is the hash of the key the listing was read under.
-    pub fn add_alias(&mut self, own_key: u64, alias_key: u64) {
+    pub(crate) fn add_alias(&mut self, own_key: u64, alias_key: u64) {
         if alias_key == own_key {
             return;
         }

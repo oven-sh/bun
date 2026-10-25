@@ -62,14 +62,6 @@ impl Declaration {
 }
 
 impl SupportsCondition {
-    pub fn clone_with_import_records(
-        &self,
-        bump: &bun_alloc::Arena,
-        _: &mut Vec<bun_ast::ImportRecord>,
-    ) -> Self {
-        self.deep_clone(bump)
-    }
-
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> SupportsCondition {
         // Hand-rolled variant-walk —
         // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`
@@ -112,13 +104,6 @@ impl SupportsCondition {
             (Self::Unknown(a), Self::Unknown(b)) => *a == *b,
             _ => false,
         }
-    }
-}
-
-impl crate::generics::CssEql for SupportsCondition {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        SupportsCondition::eql(self, other)
     }
 }
 
@@ -221,13 +206,6 @@ impl SupportsCondition {
         }
         dest.write_char(b')')?;
         Ok(())
-    }
-}
-
-impl css::generic::ToCss for SupportsCondition {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        SupportsCondition::to_css(self, dest)
     }
 }
 

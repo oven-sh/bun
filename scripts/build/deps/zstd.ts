@@ -41,10 +41,15 @@ export const zstd: Dependency = {
     commit: ZSTD_COMMIT,
   }),
 
-  // x64 targets nehalem, so zstd picks its BMI2 kernels at run time and
-  // probes CPUID in every CCtx/DCtx init. CPUID is a VM exit under a
-  // hypervisor (about 2 us each, two per init). Probe once instead.
-  patches: ["patches/zstd/bmi2-probe-once.patch"],
+  patches: [
+    // x64 targets nehalem, so zstd picks its BMI2 kernels at run time and
+    // probes CPUID in every CCtx/DCtx init. CPUID is a VM exit under a
+    // hypervisor (about 2 us each, two per init). Probe once instead.
+    "patches/zstd/bmi2-probe-once.patch",
+    // ZSTD_freeCCtx frees a context's dictionaries before joining the worker
+    // threads, so a job that's still running can read freed memory.
+    "patches/zstd/free-workers-before-dictionaries.patch",
+  ],
 
   build: cfg => {
     const sources = [...SOURCES];

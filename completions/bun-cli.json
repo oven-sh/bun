@@ -172,6 +172,67 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "package",
+          "shortName": "p",
+          "description": "Specify package to install when binary name differs from package name",
+          "hasValue": true,
+          "valueType": "package",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-install",
+          "description": "Skip installation if package is not already installed",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set the working directory",
+          "hasValue": true,
+          "valueType": "path",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "env-file",
+          "description": "Load environment variables from the specified file(s)",
+          "hasValue": true,
+          "valueType": "file",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "seconds",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Run the lifecycle scripts of the package and of ALL of its dependencies during installation",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Enable verbose output during installation",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Suppress output during installation",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [
@@ -373,7 +434,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -427,7 +488,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -494,6 +555,13 @@
           "multiple": false
         },
         {
+          "name": "save-prod",
+          "description": "Add dependency to \"dependencies\", also when another group lists it",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "exact",
           "shortName": "E",
           "description": "Add the exact version instead of the ^range",
@@ -528,6 +596,52 @@
         {
           "name": "catalog",
           "description": "Add the resolved version to the root package.json catalog and depend on it as \"catalog:\" (use --catalog=NAME for a named catalog)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -694,7 +808,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -748,7 +862,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -815,6 +929,13 @@
           "multiple": false
         },
         {
+          "name": "save-prod",
+          "description": "Add dependency to \"dependencies\", also when another group lists it",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "exact",
           "shortName": "E",
           "description": "Add the exact version instead of the ^range",
@@ -849,6 +970,52 @@
         {
           "name": "catalog",
           "description": "Add the resolved version to the root package.json catalog and depend on it as \"catalog:\" (use --catalog=NAME for a named catalog)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1025,7 +1192,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1079,7 +1246,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1127,6 +1294,52 @@
           "name": "filter",
           "shortName": "F",
           "description": "Remove the package(s) from the matching workspaces instead of the current package",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1296,7 +1509,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1351,7 +1564,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1406,6 +1619,14 @@
         {
           "name": "os",
           "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1474,6 +1695,20 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [
@@ -1528,6 +1763,53 @@
           "description": "Ignore advisories by GHSA or numeric advisory ID (repeatable)",
           "hasValue": true,
           "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Skip packages that are only needed by devDependencies (alias: --prod)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Skip packages that are only needed by the given dependency types: dev, optional, or peer (repeatable)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Show what bun audit fix would change without changing anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "latest",
+          "shortName": "L",
+          "description": "Also apply fixes your declared ranges exclude, rewriting package.json",
+          "hasValue": false,
           "required": false,
           "multiple": false
         }
@@ -1714,7 +1996,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1769,7 +2051,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1824,6 +2106,14 @@
         {
           "name": "os",
           "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1886,6 +2176,13 @@
           "multiple": false
         },
         {
+          "name": "check",
+          "description": "Exit with code 1 if node_modules has packages that can be removed, without deleting anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "os",
           "description": "Prune for a different operating system than the current one",
           "hasValue": true,
@@ -1896,6 +2193,14 @@
         {
           "name": "cpu",
           "description": "Prune for a different CPU architecture than the current one",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Prune for a different libc than the current one",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1950,7 +2255,7 @@
           "type": "string"
         }
       ],
-      "examples": ["bun prune", "bun prune --production", "bun prune --dry-run"],
+      "examples": ["bun prune", "bun prune --production", "bun prune --dry-run", "bun prune --check"],
       "usage": "Usage: bun prune [flags]",
       "documentationUrl": "https://bun.com/docs/pm/cli/prune.",
       "dynamicCompletions": {}
@@ -2095,7 +2400,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2149,7 +2454,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2207,6 +2512,52 @@
           "shortName": "r",
           "description": "Check outdated packages in all workspaces",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         }
@@ -2269,14 +2620,14 @@
         },
         {
           "name": "no-save",
-          "description": "Don't update package.json or save a lockfile",
+          "description": "Don't update package.json or save a lockfile (the default)",
           "hasValue": false,
           "required": false,
           "multiple": false
         },
         {
           "name": "save",
-          "description": "Save to package.json (true by default)",
+          "description": "Update package.json and save a lockfile (false by default)",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2378,7 +2729,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2432,7 +2783,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2475,6 +2826,52 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [
@@ -2492,7 +2889,7 @@
           "completionType": "package"
         }
       ],
-      "examples": ["bun link", "bun link <package>"],
+      "examples": ["bun link", "bun link <package>", "bun link --save <package>"],
       "usage": "Usage: bun link [flags] [<packages>]",
       "documentationUrl": "https://bun.com/docs/cli/link.",
       "dynamicCompletions": {}
@@ -2528,14 +2925,14 @@
         },
         {
           "name": "no-save",
-          "description": "Don't update package.json or save a lockfile",
+          "description": "Don't update package.json or save a lockfile (the default)",
           "hasValue": false,
           "required": false,
           "multiple": false
         },
         {
           "name": "save",
-          "description": "Save to package.json (true by default)",
+          "description": "Update package.json and save a lockfile (false by default)",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2637,7 +3034,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2691,7 +3088,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2732,6 +3129,52 @@
           "shortName": "h",
           "description": "Print this help menu",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         }
@@ -2889,7 +3332,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2943,7 +3386,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -3027,6 +3470,76 @@
           "hasValue": true,
           "valueType": "val",
           "defaultValue": "9",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tolerate-republish",
+          "description": "Don't exit with code 1 when republishing over an existing version number",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "filter",
+          "shortName": "F",
+          "description": "Publish each matching workspace package",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "recursive",
+          "shortName": "r",
+          "description": "Publish every workspace package whose version is not on the registry",
+          "hasValue": false,
           "required": false,
           "multiple": false
         }
@@ -3194,7 +3707,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -3248,7 +3761,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -3302,6 +3815,52 @@
         {
           "name": "patches-dir",
           "description": "The directory to put the patch file in (only if --commit is used)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -3368,7 +3927,7 @@
         },
         "ls": {
           "name": "ls",
-          "description": "list the dependency tree according to the current lockfile",
+          "description": "list the tree of installed dependencies",
           "flags": [],
           "positionalArgs": []
         },
@@ -3453,6 +4012,32 @@
             "rm": {
               "name": "rm",
               "description": "clear the cache"
+            },
+            "prune": {
+              "name": "prune",
+              "description": "remove the packages that are older than 30 days",
+              "flags": [
+                {
+                  "name": "max-age",
+                  "description": "Remove cache entries older than this many days (default 30)",
+                  "hasValue": true,
+                  "valueType": "days",
+                  "defaultValue": "30"
+                },
+                {
+                  "name": "dry-run",
+                  "description": "Print what would be removed without deleting anything",
+                  "hasValue": false
+                }
+              ]
+            },
+            "pack": {
+              "name": "pack",
+              "description": "write the cache entries this lockfile needs into one file"
+            },
+            "unpack": {
+              "name": "unpack",
+              "description": "restore the cache entries of a pack that the cache does not have"
             }
           }
         },
@@ -3623,7 +4208,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -3677,7 +4262,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -3725,6 +4310,52 @@
           "name": "json",
           "description": "Output in JSON format",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         }
@@ -3988,13 +4619,6 @@
         {
           "name": "app",
           "description": "(EXPERIMENTAL) Build a web app for production using Bun Bake.",
-          "hasValue": false,
-          "required": false,
-          "multiple": false
-        },
-        {
-          "name": "server-components",
-          "description": "(EXPERIMENTAL) Enable server components",
           "hasValue": false,
           "required": false,
           "multiple": false

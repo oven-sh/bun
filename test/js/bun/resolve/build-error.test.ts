@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 test("BuildError is modifiable", async () => {
   try {
-    await import("../util/inspect-error-fixture-bad.js");
+    await import("../util/inspect-error-fixture-bad.js" as string);
     expect.unreachable();
   } catch (e) {
     var error: BuildMessage = e as BuildMessage;
@@ -310,7 +310,7 @@ test("BuildMessage finalize frees with the same allocator it was created with", 
       void e.message;
       void e.level;
       void e.position;
-      void e.notes;
+      void (e as any).notes;
       void String(e);
     }
     Bun.gc(true);

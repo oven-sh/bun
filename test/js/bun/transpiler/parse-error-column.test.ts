@@ -201,15 +201,15 @@ test.concurrent("CLI caret counts the left-trimmed prefix in columns, not bytes"
 });
 
 test.concurrent("CLI caret counts a left-trimmed astral prefix in UTF-16 units, like the column", async () => {
-  // U+10400 (a valid identifier character) is 4 UTF-8 bytes and 2 UTF-16
-  // units, and columns count UTF-16 units. 30 of them put `]` at byte 120 /
-  // column 61; the window keeps the 10 characters (20 units) before it, so
-  // the caret belongs 20 units in (10 if the trimmed width were counted in
-  // characters, 60 if it were not subtracted at all).
+  // U+10400 (a valid identifier character) is 4 UTF-8 bytes, 2 UTF-16 units
+  // and 1 terminal column, and columns count UTF-16 units. 30 of them put `]`
+  // at byte 120 / column 61; the window keeps the 10 characters (20 units)
+  // before it, so the caret belongs 10 terminal columns in (30 if the trimmed
+  // width were counted in characters, 50 if it were not subtracted at all).
   const { excerpts } = await printedExcerpts(["build", "long.js"], {
     "long.js": fill(120, "\u{10400}") + "]" + fill(100, "b"),
   });
-  expect(excerpts).toEqual([{ excerpt: "1 | " + fill(40, "\u{10400}") + "]" + fill(79, "b"), caret: 4 + 20 }]);
+  expect(excerpts).toEqual([{ excerpt: "1 | " + fill(40, "\u{10400}") + "]" + fill(79, "b"), caret: 4 + 10 }]);
 });
 
 test.concurrent("CLI caret is aligned for both the error and its note on a long line", async () => {
@@ -249,3 +249,28 @@ test.concurrent(
     expect(excerpts).toEqual([{ excerpt: "2 | let b = 2; ]", caret: 4 + "let b = 2; ".length }]);
   },
 );
+
+test.concurrent("CLI caret counts a tab the same with and without non-ASCII text on the line", async () => {
+  using dir = tempDir("parse-col-caret-tabs", {
+    "ascii.js": '\t\tconst a = "e" + ;\n',
+    "accent.js": '\t\tconst a = "é" + ;\n',
+    "wide.js": '\tconst a = "名前" + ;\n',
+  });
+  const caretIn = async (file: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", file],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return stderr
+      .split("\n")
+      .find(l => l.trimEnd().endsWith("^"))!
+      .indexOf("^");
+  };
+  const [ascii, accent, wide] = await Promise.all(["ascii.js", "accent.js", "wide.js"].map(caretIn));
+  // "1 | " is 4 columns. Each of the two wide characters takes 2.
+  expect({ ascii, accent, wide }).toEqual({ ascii: 4 + 18, accent: 4 + 18, wide: 4 + 20 });
+});

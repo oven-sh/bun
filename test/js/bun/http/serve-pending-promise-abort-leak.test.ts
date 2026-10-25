@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, bunRun } from "harness";
 import { connect } from "node:net";
 import { join } from "node:path";
 
@@ -11,6 +11,10 @@ async function stopAndAssertDrained(server: ReturnType<typeof Bun.serve>) {
   await server.stop();
   expect(server.pendingRequests).toBe(0);
 }
+
+// symbolize=0 so an unfixed build's ASAN abort exits promptly instead of
+// spending seconds in llvm-symbolizer.
+const asanOptionsWithoutSymbolizer = [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":");
 
 test.each([false, true])(
   "RequestContext is freed when client aborts before Promise<Response> settles (http2: %p)",
@@ -735,6 +739,40 @@ test.each(stoppedRequests)("server.stop(true) inside the handler of %s aborts it
   expect(events).toEqual(expected);
   expect(server.pendingRequests).toBe(0);
   await stopped!;
+});
+
+// A request head that arrives split over two reads is parsed out of the HTTP
+// parser's per-socket fallback buffer, and the uWS request the dispatch holds
+// views into that buffer. server.stop(true) inside the handler closes the
+// request's own socket right there, and the close destructed the parser with
+// its buffer. Everything that materialises the headers after that read freed
+// memory: `req.headers` inside the handler, and the snapshot the server takes
+// itself when an async handler ends the dispatch. Under a sanitizer it is a
+// heap-use-after-free; without one the headers come back as the bytes of
+// whatever allocation took the block over.
+test.concurrent.each(["lazy", "async"])(
+  "a request head split over two reads survives server.stop(true) in the handler (%s headers)",
+  async mode => {
+    expect(
+      await bunRun(join(import.meta.dir, "serve-split-head-stop-fixture.ts"), {
+        SPLIT_HEAD_MODE: mode,
+        ASAN_OPTIONS: asanOptionsWithoutSymbolizer,
+      }),
+    ).toSpawn(`${Buffer.alloc(40, 0x4d).toString()}|300|host,x-mark,x-pad`);
+  },
+);
+
+// The same buffer, reached by the client alone: no server API call and no
+// nested event loop. The head is split, the request declares a body it never
+// sends, and `Connection: close` makes the completed response close the socket
+// inside the dispatch. The pending `req.text()` then rejects, and its handler
+// reads a url and headers that the close already freed.
+test.concurrent("a split request head survives a Connection: close response on an unfinished body", async () => {
+  expect(
+    await bunRun(join(import.meta.dir, "serve-split-head-close-fixture.ts"), {
+      ASAN_OPTIONS: asanOptionsWithoutSymbolizer,
+    }),
+  ).toSpawn(`AbortError|"http://x/a"|300|connection,content-length,host,x-pad`);
 });
 
 // A Response the server will never render still owns a body stream that

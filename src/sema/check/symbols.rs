@@ -422,10 +422,52 @@ impl<'p, 's> Checker<'p, 's> {
                     .symbol_types
                     .insert(&self.task, sym, ty, Stored::new());
                 self.note_result(Query::Symbol(sym));
+                self.store_results_below_first_result();
             }
             Err(open) => self.cache_provisionally(Query::Symbol(sym), u64::from(ty.0), open),
         }
         ty
+    }
+
+    /// Call after storing a result for which `is_first_result_above_barrier`. tsc has also assigned the types of the
+    /// variables and the return types that were resolved on the way to it, and nothing asks for them again from there.
+    /// The same holds for them: their frames only inherited that they're non-cacheable.
+    fn store_results_below_first_result(&mut self) {
+        let Some(frame) = self.left_frame.take() else {
+            return;
+        };
+        let is_below = |entry: &Provisional| {
+            entry.own_serial > frame.serial && entry.from == u32::MAX && entry.event_bits == 0
+        };
+        let below = (self.provisional.iter()).filter(|(_, entry)| is_below(entry));
+        let below: Vec<(Query, TypeId)> = below
+            .map(|(&q, entry)| (q, TypeId(entry.raw as u32)))
+            .collect();
+        for (q, ty) in below {
+            let stored = Stored::new();
+            match q {
+                // `getTypeOfAlias` assigns what the outer call returns.
+                Query::Symbol(sym)
+                    if is_variable_or_property(
+                        self.files().flags(sym),
+                        self.files().value_declaration(sym),
+                    ) =>
+                {
+                    self.p.symbol_types.insert(&self.task, sym, ty, stored);
+                }
+                Query::Pat(file, pat) | Query::ParameterSymbol(file, pat) => {
+                    (self.p.pat_types).insert(&self.task, (file, pat), (ty, false), stored);
+                }
+                Query::Return(file, func) => {
+                    (self.p.fn_return_types).insert(&self.task, (file, func), (ty, false), stored);
+                }
+                Query::LiteralProp(file, p) => {
+                    (self.p.literal_prop_types).insert(&self.task, (file, p), ty, stored);
+                }
+                _ => continue,
+            }
+            self.note_result(q);
+        }
     }
 
     /// `reportCircularityError`, where `popTypeResolution` finds the cycle. `at` is the range of
@@ -2566,6 +2608,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let stored = Stored::new();
                 (self.p.pat_types).insert(&self.task, (file, pat), (ty, false), stored);
                 self.note_result(query);
+                self.store_results_below_first_result();
             }
             Err(open) => self.cache_provisionally(query, u64::from(ty.0), open),
         }
@@ -4474,6 +4517,8 @@ impl<'p, 's> Checker<'p, 's> {
             Err(_) if self.is_first_result_above_barrier(Query::Return(file, func)) => {
                 let stored = Stored::new();
                 (self.p.fn_return_types).insert(&self.task, (file, func), (ty, false), stored);
+                self.note_result(Query::Return(file, func));
+                self.store_results_below_first_result();
             }
             Err(open) => self.cache_provisionally(Query::Return(file, func), u64::from(ty.0), open),
         }

@@ -168,6 +168,8 @@ struct Provisional {
     /// The length of `flow_loops` when it was computed.
     flow_loops: u32,
     serial: u64,
+    /// The serial number of the query's own frame.
+    own_serial: u64,
 }
 
 /// Calls `$each!` with the names of the `Buffered` fields of `Program`. A table whose entries
@@ -4036,6 +4038,7 @@ impl<'p, 's> Checker<'p, 's> {
                         | since(self.any_signature_read_at) << 6,
                     flow_loops: self.flow_loops.len() as u32,
                     serial: scope.serial,
+                    own_serial: frame.serial,
                 },
             );
         }

@@ -8782,6 +8782,30 @@ export function f1(x: number, depth = f1(1)) { let acc = f0(x); acc = "s"; const
       expect(exitCode).toBe(1);
     });
 
+    // `d1` is resolved a second time inside its first resolution, and that result stays. So do the types of `a5` and of
+    // its property, which were resolved on the way: `d0` is `any` there. Later the import of `d0` has the type that the
+    // outer resolution of `d0` returned.
+    test("what was resolved on the way to a type that a resolution inside the first one assigned stays too", async () => {
+      using dir = project({
+        "m0.ts": `import { d1 } from "./m1";
+export declare function compose<A, B, C>(f: (a: A) => B, g: (b: B) => C): (a: A) => C;
+export const d0 = compose((x: number) => d0(1), y => { let a1 = [d1(1)]; return [a1] as const; });
+`,
+        "m1.ts": `import { compose, d0 } from "./m0";
+export const d1 = compose((x: number) => d0(1), y => { let a5 = { v: d0(1) }; const p: never = a5; return [a5]; });
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "m0.ts(3,14): error TS7022: 'd0' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "m0.ts(3,27): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+          "m1.ts(2,85): error TS2322: Type '{ v: any; }' is not assignable to type 'never'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("TS7053 prints an aliased intersection with a class by its members", async () => {
       using dir = project({
         "a.ts": `class User { id = 1 }

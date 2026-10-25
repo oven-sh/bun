@@ -16277,6 +16277,114 @@ const holder = { get g() { return router({ a: both }); } };
       expect(exitCode).toBe(1);
     });
 
+    // The second pass of `merge` visits `first.g` again, after `Inner.p` referred to itself and became `any`. That visit
+    // checks `pair(..)` inside its own check. The way back leads through `Outer.p`, which has no type yet and is resolved
+    // again, to `Inner.p`, which has one. So the visit ends with a tuple, and `merge` reports TS2741 for it.
+    test("an expression is checked again inside its own check where any resolution on the way back has its result", async () => {
+      const circular =
+        "because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.";
+      const own =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      using dir = project({
+        "a.ts": `declare class Router<D> { def: D }
+declare function merge<A, B>(a: Router<A>, b: Router<B>): Router<A & B>;
+declare function pair<A, B>(a: A, b: B): [A, B];
+declare function lazy<T>(f: () => T): { get(): T };
+const first = { get g() { return pair(second.g, new Outer().p); } };
+class Outer { p = new Inner().p.def; }
+class Inner { p = merge(first.g, new Inner().p); }
+const second = { get g() { return lazy(() => first.g); } };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        `a.ts(5,21): error TS7023: 'g' implicitly has return type 'any' ${circular}`,
+        `a.ts(6,15): error TS7022: 'p' implicitly has type 'any' ${own}`,
+        `a.ts(7,15): error TS7022: 'p' implicitly has type 'any' ${own}`,
+        "a.ts(7,25): error TS2741: Property 'def' is missing in type '[any, any]' but required in type 'Router<unknown>'.",
+        "a.ts(7,46): error TS2729: Property 'p' is used before its initialization.",
+        `a.ts(8,22): error TS7023: 'g' implicitly has return type 'any' ${circular}`,
+        `a.ts(8,40): error TS7024: Function implicitly has return type 'any' ${circular}`,
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    // The callback of `get` is checked again inside its own check, after `x50` referred to itself and became `any`. The way
+    // back leads through `x71`, which has no type yet, to `x50`.
+    test("the second check of a callback inside its own check reports a wrong argument", async () => {
+      const own =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          ...JSON.parse(tsconfig),
+          files: ["index.ts", "m7.ts", "m9.ts", "m5.ts", "lib.ts"],
+        }),
+        "index.ts": `export * from "./m5";
+export * from "./m7";
+export * from "./m9";
+`,
+        "lib.ts": `export declare class Ctx<V> { get<K extends keyof V>(k: K): V[K]; }
+export declare function get<E, R>(mw: () => E, h: (c: Ctx<E>) => R): R;
+`,
+        "m5.ts": `import { x70A } from "./m7";
+import { x90 } from "./index";
+export const x50 = { b: x70A, c: x90 };
+`,
+        "m7.ts": `import { x50 } from "./index";
+import { x91 } from "./m9";
+export const x70A = x50.b;
+export const x71 = { a: x91, b: () => 1 };
+`,
+        "m9.ts": `import { get } from "./lib";
+import { x71, x50 } from "./index";
+export const x90 = x71.b();
+export const x91 = get(() => ({ extra: x50 }), c => c.get("user"));
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        `m5.ts(3,14): error TS7022: 'x50' implicitly has type 'any' ${own}`,
+        `m7.ts(3,14): error TS7022: 'x70A' implicitly has type 'any' ${own}`,
+        `m7.ts(4,14): error TS7022: 'x71' implicitly has type 'any' ${own}`,
+        `m9.ts(4,59): error TS2345: Argument of type '"user"' is not assignable to parameter of type '"extra"'.`,
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    // The second check of `x32().x.nest` resolves the return type of `x32`, `cache` and the return type of `make` again,
+    // because `x20` has its type by then. So the annotation of `cache` is evaluated inside its own evaluation. This time
+    // `make` gets as far as `x42`, which leads through `x12` to the second resolution of the return type of `x32`.
+    test("a type annotation is evaluated again inside its own evaluation where a resolution on the way back has its result", async () => {
+      const circular =
+        "because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.";
+      const own =
+        "because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
+      using dir = project({
+        "a.ts": `declare class Router<D> { def: D; nest<K extends string, R>(k: K, r: R): Router<D & Record<K, R>>; merge<E>(o: Router<E>): Router<D & E>; }
+declare function router<D>(d: D): Router<D>;
+const x20 = router({ stats: self(), sub: x61() });
+function self() { return x20; }
+function x61() { return x32().x.nest("x", 1); }
+const x12 = x32().x.merge(x20);
+const x42 = router({ sub: x12 });
+let cache: ReturnType<typeof make> | undefined;
+function make() { return { x: x20, y: x42 }; }
+function x32() { return cache ??= make(); }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        `a.ts(3,7): error TS7022: 'x20' implicitly has type 'any' ${own}`,
+        `a.ts(4,10): error TS7023: 'self' implicitly has return type 'any' ${circular}`,
+        `a.ts(6,7): error TS7022: 'x12' implicitly has type 'any' ${own}`,
+        `a.ts(7,7): error TS7022: 'x42' implicitly has type 'any' ${own}`,
+        "a.ts(8,5): error TS2502: 'cache' is referenced directly or indirectly in its own type annotation.",
+        `a.ts(9,10): error TS7023: 'make' implicitly has return type 'any' ${circular}`,
+        `a.ts(10,10): error TS7023: 'x32' implicitly has return type 'any' ${circular}`,
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // `x60.a` is in the callee of `merge` and `extend`, not in an argument. The getters of `x91` are only on the way into
     // the cycle of `x30`, `x51` and `x60.a`.
     test("a getter in progress in the callee of a call does not make getters on the way into the cycle circular", async () => {

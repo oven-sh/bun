@@ -7,6 +7,13 @@
       "JsPoster"
     ]
   },
+  "src/js_parser_jsc/macro_thread.rs": {
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "RequestPtr",
+      "Seed"
+    ]
+  },
   "src/jsc/CppTask.rs": {
     "WorkPool::schedule*": 1,
     "owned_task!": [

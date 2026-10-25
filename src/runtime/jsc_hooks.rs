@@ -1537,6 +1537,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
+    stop_macro_thread: bun_js_parser_jsc::macro_thread::stop,
     close_timer_loop_handles_after_vm_destroyed,
 };
 
@@ -3733,7 +3734,7 @@ fn __bun_fetch_builtin_module(
         if let Some(&entry) = jsc_vm.macro_entry_points.get(&id) {
             let entry = entry.cast::<MacroEntryPoint>();
             // SAFETY: `entry` is the `heap::alloc`d `MacroEntryPoint`
-            // inserted by `load_macro_entry_point`; map ownership keeps it
+            // inserted by `start_macro_entry_point`; map ownership keeps it
             // alive for the VM lifetime.
             let contents = unsafe { &(*entry).source.contents };
             return Some(ResolvedSource {

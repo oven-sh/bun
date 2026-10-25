@@ -124,18 +124,11 @@ pub mod Macro {
             path: &[u8],
         ) -> Option<&'static MacroRemapEntry>;
         // No raw-pointer args; the body is a safe `pub fn` in
-        // `bun_js_parser_jsc`. See [`collect_vm_garbage`] for the call-site
-        // contract.
+        // `bun_js_parser_jsc`.
         safe fn __bun_macro_collect_vm_garbage();
     }
 
-    /// Sweep this thread's bundler-macro VM so JS-wrapper-owned native boxes
-    /// (e.g. a `new Bun.Transpiler()` constructed inside a macro body) are
-    /// finalized before the worker thread's TLS root vanishes. Only call from
-    /// `bun_bundler::ThreadPool::Worker::deinit` after both per-worker
-    /// `MacroContext` boxes are freed — every other `MacroContext::deinit`
-    /// path is either inside JS execution or inside a GC sweep, where
-    /// re-entering `run_gc(true)` is unsound.
+    /// Has the macro VM collect what the macro calls of this thread left in it. For a thread that is done with its parse work.
     #[inline]
     pub fn collect_vm_garbage() {
         __bun_macro_collect_vm_garbage();

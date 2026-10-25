@@ -24,4 +24,5 @@ bun_jsc.workspace = true
 bun_ast.workspace = true
 bun_ptr.workspace = true
 bun_resolver.workspace = true
+bun_threading.workspace = true
 thiserror.workspace = true

@@ -114,7 +114,7 @@ When Bun's transpiler sees a macro import, it calls the function using Bun's Jav
 
 Macros run synchronously in the transpiler during the visiting phase, after the transpiler parses the file into an AST. They run in the order their calls appear in the file; the transpiler does not load or run a macro module until it reaches a call to one of its exports. The transpiler waits for each macro to finish before continuing, and awaits any Promise a macro returns.
 
-Bun's bundler is multi-threaded, so macros execute in parallel in multiple spawned JavaScript "workers".
+Bun's bundler parses files on several threads. Those threads share one JavaScript VM for macros, and that VM runs on a thread of its own. The VM runs one macro at a time. While a macro waits for a Promise, the VM runs the macros of other files.
 
 ## Dead code elimination
 

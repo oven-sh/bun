@@ -869,6 +869,7 @@ dependencies = [
  "bun_parsers",
  "bun_ptr",
  "bun_resolver",
+ "bun_threading",
  "strum",
  "thiserror",
 ]

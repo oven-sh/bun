@@ -565,9 +565,9 @@ describe("event loop routing around macros", () => {
   });
 });
 
-// A module that is not the entry point is transpiled on a worker thread, where no VM exists yet. The
-// macro VM created there has to take the CLI's transform options, or the macro module never sees
-// `--define`.
+// A module that is not the entry point is transpiled on a worker thread, which has no VM. The macro
+// VM that its macro call starts has to take the CLI's transform options, or the macro module never
+// sees `--define`.
 test("a macro in a module transpiled off the main thread sees --define", async () => {
   using dir = tempDir("macro-off-thread-define", {
     "m.ts": `export function mode() {\n  return process.env.MODE ?? "none";\n}\n`,
@@ -586,9 +586,9 @@ test("a macro in a module transpiled off the main thread sees --define", async (
   expect(exitCode).toBe(0);
 });
 
-// `Bun.build()` parses on the process-wide worker pool. The macro VM a worker creates takes the
-// options of the build that creates it and lives on after that build, so this runs in its own
-// process: an earlier build in the same process would otherwise decide what the macro sees.
+// `Bun.build()` parses on the process-wide worker pool. The first macro call of the process starts
+// the macro VM with the options of its build, and that VM lives on after the build. So this runs in
+// its own process: an earlier build in the same process would otherwise decide what the macro sees.
 test("Bun.build() passes define and loader to the macro VM", async () => {
   using dir = tempDir("macro-build-api-options", {
     "entry.ts": `import { mode, banner } from "./macro.ts" with { type: "macro" };\nconsole.log(mode(), banner());\n`,
@@ -743,7 +743,7 @@ test("bun build reports a macro result that is nested too deeply", async () => {
   expect(exitCode).toBe(1);
 });
 
-// Each parse thread creates a macro VM on its first macro call, and that VM loads the cwd's `.env` files.
+// The first macro call from a parse thread starts the macro VM, and that VM loads the cwd's `.env` files.
 describe("macro VM env loader", () => {
   const macroModules = 8;
   const files: Record<string, string> = {
@@ -809,5 +809,369 @@ describe("macro VM env loader", () => {
     const [withMacro, withoutMacro] = await Promise.all([build("./with-macro.ts"), build("./without-macro.ts")]);
     expect(withoutMacro).toEqual({ resolved: false, unresolved: true, exitCode: 1 });
     expect(withMacro).toEqual(withoutMacro);
+  });
+});
+
+// A thread with no VM does not run a macro itself: a work pool thread that transpiles an imported
+// module or runs `transform()`, and every thread of `bun build`. It sends the call to the macro
+// thread, which owns the one macro VM of the process, and copies the result back.
+describe("the macro thread", () => {
+  async function run(files: Record<string, string>, cmd: string[], env: Record<string, string | undefined> = bunEnv) {
+    using dir = tempDir("macro-thread", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds also print "[macro] call <name>" to stdout.
+    const lines = stdout.split("\n").filter(line => line !== "" && !line.startsWith("[macro]"));
+    return { lines, stderr, exitCode };
+  }
+
+  // The environment of the ASAN lane: the process destroys its VMs when it exits, and LeakSanitizer
+  // then turns what is left into a report on stderr and a failed exit. A build without ASAN ignores
+  // the two options and checks the behaviour only.
+  const leakCheckedEnv = {
+    ...bunEnv,
+    BUN_DESTRUCT_VM_ON_EXIT: "1",
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+    LSAN_OPTIONS:
+      bunEnv.LSAN_OPTIONS ??
+      `print_suppressions=0:suppressions=${path.join(import.meta.dir, "..", "..", "leaksan.supp")}`,
+  };
+
+  describe("leaves nothing of a macro for LeakSanitizer", () => {
+    // Each macro makes an object with native memory behind it. `banner` drops it, the other two keep it.
+    const files = {
+      "banner.txt": "hello",
+      "macro.ts": [
+        `import { promises as fs } from "node:fs";`,
+        `export function banner() {`,
+        `  Bun.file(import.meta.dir + "/banner.txt");`,
+        `  return "not returned";`,
+        `}`,
+        `export function kept() {`,
+        `  ((globalThis as any).kept ??= []).push(Bun.file(import.meta.dir + "/banner.txt"));`,
+        `  return "kept";`,
+        `}`,
+        `export async function read() {`,
+        `  const bytes = await fs.readFile(import.meta.dir + "/banner.txt");`,
+        `  ((globalThis as any).kept ??= []).push(bytes);`,
+        `  return bytes.length;`,
+        `}`,
+      ].join("\n"),
+      ...Object.fromEntries(
+        [0, 1, 2, 3].map(i => [
+          `lib${i}.ts`,
+          `import { banner } from "./macro.ts" with { type: "macro" };\nexport default banner();\n`,
+        ]),
+      ),
+      "lib-kept.ts": `import { kept } from "./macro.ts" with { type: "macro" };\nexport default kept();\n`,
+      "lib-read.ts": `import { read } from "./macro.ts" with { type: "macro" };\nexport default await read();\n`,
+      "static.ts": [
+        `import a from "./lib0.ts";`,
+        `import b from "./lib1.ts";`,
+        `import c from "./lib2.ts";`,
+        `import d from "./lib3.ts";`,
+        `console.log(JSON.stringify([a, b, c, d]));`,
+      ].join("\n"),
+      "dynamic.ts": `console.log((await import("./lib0.ts")).default);\n`,
+      "transform.ts": [
+        'const code = `import { banner } from ${JSON.stringify(import.meta.dir + "/macro.ts")} with { type: "macro" };\\nexport default banner();`;',
+        `console.log((await new Bun.Transpiler({ loader: "ts" }).transform(code)).trim());`,
+      ].join("\n"),
+      "worker.ts": [
+        `const worker = new Worker(new URL(process.argv[2], import.meta.url).href);`,
+        `worker.onmessage = event => {`,
+        `  console.log(event.data);`,
+        `  worker.terminate();`,
+        `};`,
+      ].join("\n"),
+      "worker-imports.ts": `import value from "./lib0.ts";\npostMessage(value);\n`,
+      "worker-calls.ts": `import { banner } from "./macro.ts" with { type: "macro" };\npostMessage(banner());\n`,
+      "kept.ts": `import value from "./lib-kept.ts";\nconsole.log(value);\n`,
+      "read.ts": `import value from "./lib-read.ts";\nconsole.log(value);\n`,
+      "build-api.ts": [
+        `const result = await Bun.build({ entrypoints: [import.meta.dir + "/kept.ts"] });`,
+        `const text = await result.outputs[0].text();`,
+        `console.log(text.split("\\n").find(line => line.includes('"kept"')));`,
+      ].join("\n"),
+    };
+
+    // A build that leaks spends seconds on the symbols of each report, in a symbolizer that takes
+    // over 1 GB. So these have the time to show the report, and they do not run at the same time.
+    test.each([
+      [
+        "the modules that the entry file imports",
+        ["run", "static.ts"],
+        '["not returned","not returned","not returned","not returned"]',
+      ],
+      ["a module that import() loads", ["run", "dynamic.ts"], "not returned"],
+      ["Bun.Transpiler#transform()", ["run", "transform.ts"], 'export default "not returned";'],
+      ["a module that a Worker imports", ["run", "worker.ts", "./worker-imports.ts"], "not returned"],
+      // This one runs in the Worker's own VM, which freed no macro table when it ended.
+      ["the entry file of a Worker", ["run", "worker.ts", "./worker-calls.ts"], "not returned"],
+      ["bun build --no-bundle", ["build", "--no-bundle", "./lib0.ts"], 'export default "not returned";'],
+      ["an object that the macro keeps, in an imported module", ["run", "kept.ts"], "kept"],
+      ["an object that the macro keeps, in Bun.build()", ["run", "build-api.ts"], 'var lib_kept_default = "kept";'],
+      ["an object that the macro keeps, in bun build", ["build", "./kept.ts"], 'var lib_kept_default = "kept";'],
+      ["what an async macro read and keeps", ["run", "read.ts"], "5"],
+    ])(
+      "%s",
+      async (_, cmd, line) => {
+        const { lines, stderr, exitCode } = await run(files, cmd, leakCheckedEnv);
+        expect(stderr).toBe("");
+        expect(lines).toContain(line);
+        expect(exitCode).toBe(0);
+      },
+      60_000,
+    );
+  });
+
+  // The next four tests do not run at the same time as other tests. Each one has a child that
+  // never exits if the behaviour breaks, and the runner kills the child of a test that timed out
+  // only when that test runs alone.
+
+  // Each call waits until the other one arrived, so neither returns unless the macro VM runs the
+  // second call while the first one waits.
+  test("runs the macros of other files while a macro waits for a promise", async () => {
+    const { lines, stderr, exitCode } = await run(
+      {
+        "gate.ts": [
+          `const arrived: string[] = [];`,
+          `let open!: () => void;`,
+          `const both = new Promise<void>(resolve => (open = resolve));`,
+          `export async function gate(name: string) {`,
+          `  arrived.push(name);`,
+          `  if (arrived.length === 2) open();`,
+          `  await both;`,
+          `  return arrived.length;`,
+          `}`,
+        ].join("\n"),
+        "a.ts": `import { gate } from "./gate.ts" with { type: "macro" };\nexport default await gate("a");\n`,
+        "b.ts": `import { gate } from "./gate.ts" with { type: "macro" };\nexport default await gate("b");\n`,
+        "index.ts": `import a from "./a.ts";\nimport b from "./b.ts";\nconsole.log(a, b);\n`,
+      },
+      ["run", "index.ts"],
+      // Each of the two calls keeps the pool thread of its module until it returns.
+      { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+    );
+    expect({ lines, stderr }).toEqual({ lines: ["2 2"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The result of `outer` holds a promise that settles only after a pool thread got `inner` from the
+  // macro thread, which at that time waits for this promise.
+  test("serves a macro call that the result it waits for depends on", async () => {
+    const { lines, stderr, exitCode } = await run(
+      {
+        "macro.ts": [
+          `export function inner() {`,
+          `  return "inner";`,
+          `}`,
+          `export function outer() {`,
+          '  const code = `import { inner } from ${JSON.stringify(import.meta.path)} with { type: "macro" };\\nexport default inner();`;',
+          `  return { code: new Bun.Transpiler({ loader: "ts" }).transform(code) };`,
+          `}`,
+        ].join("\n"),
+        "lib.ts": `import { outer } from "./macro.ts" with { type: "macro" };\nexport default outer();\n`,
+        "index.ts": `import value from "./lib.ts";\nconsole.log(JSON.stringify(value));\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect({ lines, stderr }).toEqual({ lines: [JSON.stringify({ code: 'export default "inner";\n' })], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // `outer` transpiles a call of `b` on the macro thread itself, so that thread loads `b.ts` and
+  // waits. `b.ts` waits for a pool thread, which has to get `c` from the macro thread.
+  test("serves a macro call that the module of another macro waits for", async () => {
+    const { lines, stderr, exitCode } = await run(
+      {
+        "c.ts": `export function c() {\n  return "c";\n}\n`,
+        "b.ts": [
+          'const code = `import { c } from ${JSON.stringify(import.meta.dir + "/c.ts")} with { type: "macro" };\\nexport default c();`;',
+          `const transpiled = await new Bun.Transpiler({ loader: "ts" }).transform(code);`,
+          `export function b() {`,
+          `  return transpiled.trim();`,
+          `}`,
+        ].join("\n"),
+        "a.ts": [
+          `export function outer() {`,
+          '  const code = `import { b } from ${JSON.stringify(import.meta.dir + "/b.ts")} with { type: "macro" };\\nexport default b();`;',
+          `  return new Bun.Transpiler({ loader: "ts" }).transformSync(code).trim();`,
+          `}`,
+        ].join("\n"),
+        "lib.ts": `import { outer } from "./a.ts" with { type: "macro" };\nexport default outer();\n`,
+        "index.ts": `import value from "./lib.ts";\nconsole.log(value);\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect({ lines, stderr }).toEqual({ lines: [`export default 'export default "c";';`], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // `BUN_DESTRUCT_VM_ON_EXIT` makes the exit wait for the work that left the main thread. The macro
+  // never returns, so the exit has to stop the macro thread to get the transpile of `lib.ts` back.
+  test("stops a macro that is still running when the process exits", async () => {
+    const { lines, stderr, exitCode } = await run(
+      {
+        "macro.ts": [
+          `import { writeFileSync } from "node:fs";`,
+          `export async function never() {`,
+          `  writeFileSync(import.meta.dir + "/started", "");`,
+          `  await new Promise(() => {});`,
+          `}`,
+        ].join("\n"),
+        "lib.ts": `import { never } from "./macro.ts" with { type: "macro" };\nexport default await never();\n`,
+        "index.ts": [
+          `import { existsSync } from "node:fs";`,
+          `import("./lib.ts");`,
+          `while (!existsSync(import.meta.dir + "/started")) await Bun.sleep(1);`,
+          `console.log("exiting");`,
+          `process.exit(0);`,
+        ].join("\n"),
+      },
+      ["run", "index.ts"],
+      leakCheckedEnv,
+    );
+    expect({ lines, stderr }).toEqual({ lines: ["exiting"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("gives a macro in an imported module the result it has in the entry file", async () => {
+    const files = {
+      "shapes.ts": [
+        `const shared = { n: 1 };`,
+        `export const text = () => "caf\\u00e9 \\u4f60\\u597d \\u{1F600}";`,
+        `export const numbers = () => [0, -0, 1.5, -7, 2 ** 40, 1e300];`,
+        `export const nested = () => ({ a: [1, { b: [true, false, null, undefined] }], "key with space": {}, 3: "three", list: [] });`,
+        `export const twice = () => ({ x: shared, y: shared, z: [shared] });`,
+        `export const getter = () => ({ get list() { return [1, 2]; } });`,
+        `export const json = () => new Response(JSON.stringify({ ok: [1, "two"] }), { headers: { "content-type": "application/json" } });`,
+        `export const plain = () => new Response("plain text");`,
+        `export const bytes = () => new Blob([new Uint8Array([0, 1, 2, 255])], { type: "application/octet-stream" });`,
+        `export const later = async () => { await Bun.sleep(1); return { late: true }; };`,
+        `export const promised = () => ({ inner: Promise.resolve("done") });`,
+        `export const nothing = () => undefined;`,
+      ].join("\n"),
+      "use.ts": [
+        `import { text, numbers, nested, twice, getter, json, plain, bytes, later, promised, nothing } from "./shapes.ts" with { type: "macro" };`,
+        `console.log(JSON.stringify({`,
+        `  text: text(),`,
+        `  numbers: numbers().map(n => (Object.is(n, -0) ? "-0" : n)),`,
+        `  nested: nested(),`,
+        `  twice: twice(),`,
+        `  getter: getter(),`,
+        `  json: json(),`,
+        `  plain: plain(),`,
+        `  bytes: bytes(),`,
+        `  later: await later(),`,
+        `  promised: promised(),`,
+        `  nothing: [nothing()].length,`,
+        `}));`,
+      ].join("\n"),
+      "imports-use.ts": `import "./use.ts";\n`,
+    };
+    // `use.ts` as the entry file is transpiled on the main thread, so its macros run in the main VM.
+    const [inEntryFile, inImportedModule] = await Promise.all([
+      run(files, ["run", "use.ts"]),
+      run(files, ["run", "imports-use.ts"]),
+    ]);
+    expect(inEntryFile).toEqual({
+      lines: [
+        JSON.stringify({
+          text: "café 你好 😀",
+          numbers: [0, "-0", 1.5, -7, 2 ** 40, 1e300],
+          nested: { 3: "three", a: [1, { b: [true, false, null, null] }], "key with space": {}, list: [] },
+          twice: { x: { n: 1 }, y: { n: 1 }, z: [{ n: 1 }] },
+          getter: { list: [1, 2] },
+          json: { ok: [1, "two"] },
+          plain: "plain text",
+          bytes: "data:application/octet-stream;base64,AAEC/w==",
+          later: { late: true },
+          promised: { inner: "done" },
+          nothing: 1,
+        }),
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(inImportedModule).toEqual(inEntryFile);
+  });
+
+  // The getter throws while the macro thread reads the result. The macro VM reports that exception
+  // and is ready for the next call.
+  test.concurrent("runs the next macro after a result that throws when it is read", async () => {
+    const { lines, stderr, exitCode } = await run(
+      {
+        "macro.ts": [
+          `export const throwsInGetter = () => ({`,
+          `  get x() {`,
+          `    throw new Error("getter boom");`,
+          `  },`,
+          `});`,
+          `export const fine = () => "fine";`,
+        ].join("\n"),
+        "a.ts": `import { throwsInGetter } from "./macro.ts" with { type: "macro" };\nexport default throwsInGetter();\n`,
+        "b.ts": `import { fine } from "./macro.ts" with { type: "macro" };\nexport default fine();\n`,
+        "index.ts": [
+          `const failed = await import("./a.ts").then(() => false, () => true);`,
+          `console.log(failed, (await import("./b.ts")).default);`,
+        ].join("\n"),
+      },
+      ["run", "index.ts"],
+    );
+    expect(stderr).toContain("error: getter boom");
+    expect(lines).toEqual(["true fine"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("exits with the code that a macro gives process.exit()", async () => {
+    const { lines, stderr, exitCode } = await run(
+      {
+        "macro.ts": `export function exit3() {\n  process.exit(3);\n}\n`,
+        "lib.ts": `import { exit3 } from "./macro.ts" with { type: "macro" };\nexport default exit3();\n`,
+        "index.ts": `import value from "./lib.ts";\nconsole.log("not reached", value);\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect({ lines, stderr }).toEqual({ lines: [], stderr: "" });
+    expect(exitCode).toBe(3);
+  });
+
+  // A bundler thread that is done with a build has the macro VM collect what the build's macros left.
+  test.concurrent("collects the garbage of a Bun.build() when the build is over", async () => {
+    const { lines, stderr, exitCode } = await run(
+      {
+        "macro.ts": [
+          `let last: WeakRef<object> | undefined;`,
+          `export function probe() {`,
+          `  const state = last === undefined ? "first" : last.deref() === undefined ? "collected" : "alive";`,
+          `  last = new WeakRef({});`,
+          `  return state;`,
+          `}`,
+        ].join("\n"),
+        "entry.ts": `import { probe } from "./macro.ts" with { type: "macro" };\nconsole.log(probe());\n`,
+        "build.ts": [
+          `import { bundlerWorkerLiveCount } from "bun:internal-for-testing";`,
+          `async function build() {`,
+          `  const result = await Bun.build({ entrypoints: [import.meta.dir + "/entry.ts"] });`,
+          `  const text = await result.outputs[0].text();`,
+          `  // The threads of a build let go of it after the build has its result.`,
+          `  while (bundlerWorkerLiveCount() > 0) await Bun.sleep(1);`,
+          `  return text.trim().split("\\n").at(-1);`,
+          `}`,
+          `console.log(await build());`,
+          `console.log(await build());`,
+        ].join("\n"),
+      },
+      ["run", "build.ts"],
+    );
+    expect({ lines, stderr }).toEqual({ lines: ['console.log("first");', 'console.log("collected");'], stderr: "" });
+    expect(exitCode).toBe(0);
   });
 });

@@ -7,6 +7,7 @@ pub use error::{Error, Result};
 pub mod Macro;
 #[path = "expr_jsc.rs"]
 pub mod expr_jsc;
+pub mod macro_thread;
 
 // Re-export the foreign `Expr` alongside its JSC extension trait so downstream
 // callers can write `bun_js_parser_jsc::Expr` / `expr.to_js(global)` without

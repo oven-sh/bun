@@ -1257,7 +1257,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             },
             inject: Vec::new(),
             external: config.external.keys().to_vec(),
-            // Also read by `Macro::init`, which creates the macro VM from these.
+            // Also read by the first macro call, which creates the macro VM from these.
             loaders: config.loaders.clone(),
             main_fields: Vec::new(),
             extension_order: Vec::new(),

@@ -897,7 +897,7 @@ impl BuildCommand {
                             "failed to create executable: {}",
                             err.name()
                         ));
-                        Global::exit(1);
+                        exit_or_watch(1, false);
                     }
                 };
 
@@ -905,7 +905,7 @@ impl BuildCommand {
                     &result
                 {
                     Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
-                    Global::exit(1);
+                    exit_or_watch(1, false);
                 }
 
                 // Write external sourcemap files next to the compiled executable.
@@ -1162,6 +1162,7 @@ fn exit_or_watch(code: u8, watch: bool) -> ! {
         // so this parks the thread for ~584 years — effectively forever.
         std::thread::sleep(std::time::Duration::from_secs(u64::MAX / 1_000_000_000));
     }
+    bun_js_parser_jsc::macro_thread::stop_before_exit();
     Global::exit(u32::from(code));
 }
 

@@ -1134,6 +1134,15 @@ impl EventLoop {
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        self.wait_for_promise_and(promise, || false)
+    }
+
+    /// [`wait_for_promise`](Self::wait_for_promise) that calls `each_turn` after every tick, and ticks again without a sleep when it returns true.
+    pub fn wait_for_promise_and(
+        &mut self,
+        promise: jsc::AnyPromise,
+        mut each_turn: impl FnMut() -> bool,
+    ) -> Result<(), jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
@@ -1146,7 +1155,7 @@ impl EventLoop {
                 return Err(jsc::Stopped);
             }
             self.tick();
-            if promise.status() == PromiseStatus::Pending {
+            if !each_turn() && promise.status() == PromiseStatus::Pending {
                 self.auto_tick();
             }
         }

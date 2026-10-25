@@ -5,7 +5,7 @@
 // VM's behalf holds a `bun_jsc::Ticket`, and the VM's teardown waits for every
 // ticket. That is only a guarantee if there is no way *around* the door, so
 // this lint freezes, for the VM crates (`jsc`, `runtime`, `event_loop`,
-// `sql_jsc`, `http_jsc`), the two things that could open one:
+// `sql_jsc`, `http_jsc`, `js_parser_jsc`), the two things that could open one:
 //
 //   1. `unsafe impl Send` / `unsafe impl Sync`, the `owned_task!` macro
 //      (which emits one) and `intrusive_work_task!` (which is what makes a
@@ -36,7 +36,7 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const INVENTORY = import.meta.dir + "/vm-thread-door.inventory.json";
 
-const SCOPED = ["src/jsc/", "src/runtime/", "src/event_loop/", "src/sql_jsc/", "src/http_jsc/"];
+const SCOPED = ["src/jsc/", "src/runtime/", "src/event_loop/", "src/sql_jsc/", "src/http_jsc/", "src/js_parser_jsc/"];
 // The door itself.
 const DOOR = new Set(["src/jsc/VmHandle.rs", "src/jsc/job.rs"]);
 

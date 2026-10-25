@@ -24,8 +24,7 @@ export const addBlockedSPKIForTesting: (hash: ArrayBufferView) => void = $newCpp
 );
 export const clearBlockedSPKIsForTesting: () => void = $newCppFunction("NodeTLS.cpp", "clearBlockedSPKIsForTesting", 0);
 
-// Process-wide additions to the certificates the OS distrusts (Windows' Disallowed stores, blocked_spkis.cpp). `der` is
-// a DER certificate. Unlike the OS list, these apply whether or not the OS trust store is in use.
+// Process-wide additions to the certificates the OS distrusts (blocked_spkis.cpp), on every platform. `der` is a DER certificate.
 export const addDistrustedCertificateForTesting: (der: ArrayBufferView) => void = $newCppFunction(
   "NodeTLS.cpp",
   "addDistrustedCertificateForTesting",

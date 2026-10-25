@@ -941,49 +941,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && (kind == js_ast::symbol::Kind::PrivateMethod
                             || kind == js_ast::symbol::Kind::PrivateStaticMethod)
                     {
-                        let r = bun_ast::Range {
-                            loc: e_.index.loc,
-                            len: i32::try_from(name.len()).expect("int cast"),
-                        };
-                        p.log().add_range_warning_fmt(
-                            Some(p.source),
-                            r,
-                            format_args!(
-                                "Writing to read-only method \"{}\" will throw",
-                                BStr::new(name)
-                            ),
-                        );
+                        p.warn_private_name("Writing to read-only method", name, e_.index.loc);
                     } else if in_.assign_target != js_ast::AssignTarget::None
                         && (kind == js_ast::symbol::Kind::PrivateGet
                             || kind == js_ast::symbol::Kind::PrivateStaticGet)
                     {
-                        let r = bun_ast::Range {
-                            loc: e_.index.loc,
-                            len: i32::try_from(name.len()).expect("int cast"),
-                        };
-                        p.log().add_range_warning_fmt(
-                            Some(p.source),
-                            r,
-                            format_args!(
-                                "Writing to getter-only property \"{}\" will throw",
-                                BStr::new(name)
-                            ),
-                        );
+                        p.warn_private_name("Writing to getter-only property", name, e_.index.loc);
                     } else if in_.assign_target != js_ast::AssignTarget::Replace
                         && (kind == js_ast::symbol::Kind::PrivateSet
                             || kind == js_ast::symbol::Kind::PrivateStaticSet)
                     {
-                        let r = bun_ast::Range {
-                            loc: e_.index.loc,
-                            len: i32::try_from(name.len()).expect("int cast"),
-                        };
-                        p.log().add_range_warning_fmt(
-                            Some(p.source),
-                            r,
-                            format_args!(
-                                "Reading from setter-only property \"{}\" will throw",
-                                BStr::new(name)
-                            ),
+                        p.warn_private_name(
+                            "Reading from setter-only property",
+                            name,
+                            e_.index.loc,
                         );
                     }
                 }
@@ -1941,12 +1912,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     e_.is_direct_eval = true;
 
-                    // Pessimistically assume that if this looks like a CommonJS module
-                    // (e.g. no "export" keywords), a direct call to "eval" means that
-                    // code could potentially access "module" or "exports".
-                    if p.options.bundle && !p.is_file_considered_to_have_esm_exports {
-                        p.record_usage(p.module_ref);
-                        p.record_usage(p.exports_ref);
+                    if p.options.bundle {
+                        // Pessimistically assume that if this looks like a CommonJS module
+                        // (e.g. no "export" keywords), a direct call to "eval" means that
+                        // code could potentially access "module" or "exports".
+                        if !p.is_file_considered_to_have_esm_exports {
+                            p.record_usage(p.module_ref);
+                            p.record_usage(p.exports_ref);
+                        }
+
+                        if p.is_file_considered_to_have_esm_exports || p.has_es_module_syntax {
+                            p.warn_direct_eval(e_.target.loc);
+                        }
                     }
 
                     // Walk `Scope.parent` (`Option<StoreRef<Scope>>`) via the safe
@@ -1957,8 +1934,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         scope.contains_direct_eval = true;
                         scope_iter = scope.parent;
                     }
-
-                    // TODO: Log a build note for this like esbuild does
                 }
             }
             Data::EDot(dot) => {

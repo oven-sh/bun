@@ -745,6 +745,105 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  test("warns about a direct eval in an ES module", async () => {
+    const evalLine = `console.log(eval("secret + helper()"));`;
+    using dir = tempDir("bun-build-api-direct-eval", {
+      "esm.js": `import { helper } from "./lib.js";\nconst secret = 42;\n${evalLine}\n`,
+      "lib.js": `export function helper() { return 1; }\n`,
+      "commonjs.js": `module.exports = eval("1");\n`,
+    });
+    // `notes` is not in the `BuildMessage` type.
+    const plain = (message: any) => ({ level: message.level, message: message.message, position: message.position });
+    const logsOf = async (entry: string) => {
+      const build = await Bun.build({ entrypoints: [join(String(dir), entry)] });
+      return {
+        success: build.success,
+        logs: build.logs.map((log: any) => ({ ...plain(log), notes: log.notes.map(plain) })),
+      };
+    };
+
+    expect(await logsOf("esm.js")).toEqual({
+      success: true,
+      logs: [
+        {
+          level: "warn",
+          message: "Using direct eval with a bundler is not recommended and may cause problems",
+          position: {
+            file: expect.stringMatching(/esm\.js$/),
+            namespace: "file",
+            line: 3,
+            column: evalLine.indexOf("eval") + 1,
+            length: "eval".length,
+            offset: expect.any(Number),
+            lineText: evalLine,
+          },
+          notes: [
+            {
+              level: "note",
+              message:
+                'Use globalThis.eval(code) when the code reads only global variables. To give the code a variable, an import or require from this file, pass it as an argument: new Function("name", code)(name)',
+              position: null,
+            },
+          ],
+        },
+      ],
+    });
+    expect(await logsOf("commonjs.js")).toEqual({ success: true, logs: [] });
+  });
+
+  test('logLevel = "error" in bunfig.toml drops the direct eval warning', async () => {
+    const project = {
+      "entry.js": `export const value = eval("1");\n`,
+      "build.js": `
+        const build = await Bun.build({ entrypoints: ["./entry.js"] });
+        console.log(JSON.stringify({ success: build.success, logs: build.logs.map(log => log.message) }));
+      `,
+    };
+    using dir = tempDir("bun-build-api-direct-eval-log-level", {
+      default: project,
+      quiet: { ...project, "bunfig.toml": `logLevel = "error"\n` },
+    });
+    const build = async (project: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.js"],
+        env: bunEnv,
+        cwd: join(String(dir), project),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: JSON.parse(stdout), stderr, exitCode };
+    };
+
+    expect({ default: await build("default"), quiet: await build("quiet") }).toEqual({
+      default: {
+        stdout: {
+          success: true,
+          logs: ["Using direct eval with a bundler is not recommended and may cause problems"],
+        },
+        stderr: "",
+        exitCode: 0,
+      },
+      quiet: { stdout: { success: true, logs: [] }, stderr: "", exitCode: 0 },
+    });
+  });
+
+  test("a build of an ES module bundle warns about a direct eval that came from node_modules", async () => {
+    using dir = tempDir("bun-build-api-direct-eval-second-build", {
+      "entry.js": `import { run } from "dep";\nexport const value = run("1");\n`,
+      "node_modules/dep/package.json": `{ "name": "dep", "type": "module", "main": "index.js" }`,
+      "node_modules/dep/index.js": `export function run(code) { return eval(code); }\n`,
+    });
+    const messages = (build: Awaited<ReturnType<typeof Bun.build>>) => build.logs.map(log => log.message);
+
+    const first = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], outdir: join(String(dir), "dist") });
+    const second = await Bun.build({ entrypoints: [join(String(dir), "dist", "entry.js")] });
+    expect({ first: messages(first), second: messages(second) }).toEqual({
+      first: [],
+      second: ["Using direct eval with a bundler is not recommended and may cause problems"],
+    });
+  });
+
   test("Bun.write(BuildArtifact)", async () => {
     Bun.gc(true);
     const tmpdir = tempDirWithFiles("bun-build-api-write", {

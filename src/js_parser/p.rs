@@ -1001,6 +1001,60 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    /// A visit-pass warning about valid but suspect code is silent inside node_modules, as in
+    /// esbuild, and on the minifier's second visit of a statement.
+    fn warns_about_weird_code(&self) -> bool {
+        !self.is_revisit_for_substitution
+            && !bun_paths::strings::path_contains_node_modules_folder(self.source.path.text)
+    }
+
+    /// `problem` is the start of the sentence, such as "Writing to read-only method".
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn warn_private_name(
+        &mut self,
+        problem: &'static str,
+        name: &[u8],
+        loc: bun_ast::Loc,
+    ) {
+        if !self.warns_about_weird_code() {
+            return;
+        }
+
+        let r = bun_ast::Range {
+            loc,
+            len: i32::try_from(name.len()).expect("int cast"),
+        };
+        self.log().add_range_warning_fmt(
+            Some(self.source),
+            r,
+            format_args!("{} \"{}\" will throw", problem, bstr::BStr::new(name)),
+        );
+    }
+
+    /// esbuild's `direct-eval` warning. The caller checks that the file is a bundled ES module.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn warn_direct_eval(&mut self, loc: bun_ast::Loc) {
+        if !self.warns_about_weird_code() {
+            return;
+        }
+
+        let r = js_lexer::range_of_identifier(self.source, loc);
+        self.log().add_range_warning_fmt_with_notes(
+            Some(self.source),
+            r,
+            Box::new([bun_ast::range_data(
+                None,
+                bun_ast::Range::NONE,
+                "Use globalThis.eval(code) when the code reads only global variables. To give the code a variable, an import or require from this file, pass it as an argument: new Function(\"name\", code)(name)",
+            )]),
+            format_args!(
+                "Using direct eval with a bundler is not recommended and may cause problems"
+            ),
+        );
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     // Inlined ExpressionTransposer recursion.
     // Defined as `&mut self` methods so the only live `&mut` is the caller's

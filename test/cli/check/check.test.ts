@@ -11766,6 +11766,28 @@ export function f() {
       expect(exitCode).toBe(1);
     });
 
+    // b.ts is first in program order, and next to long.ts the two are small enough for one task. The check of b.ts infers
+    // the return type of `f` and reports the error from the type that the loop has for `x` at that point.
+    test("a missing property that the check of an earlier file has reported isn't reported again", async () => {
+      using dir = project({
+        "a.ts": `import "./b";
+export function f() {
+  let x: string | number | undefined = 0;
+  for (const e of [1]) {
+    x = x?.v;
+    try { } catch { }
+  }
+  return x;
+}
+`,
+        "b.ts": `import { f } from "./a";\nexport const r = f();\n`,
+        "long.ts": `export {};\n${repeat(`[1, "1"].map(v => typeof v === "string" ? v.length : v + 1);\n`, 400)}`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+      expect(stdout).toBe("a.ts(5,12): error TS2339: Property 'v' does not exist on type 'number'.");
+      expect(exitCode).toBe(1);
+    });
+
     test("a shared flow node in a `finally` block has the type of its first visit", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;

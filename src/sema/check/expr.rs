@@ -606,12 +606,14 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         // `checkDeclarationInitializer`: an outer resolution of the variable that's still in `getQuickTypeOfExpression`
-        // finds this type if it gets to `checkExpressionCached`.
+        // finds this type if it gets to `checkExpressionCached`. `getTypeOfExpression` doesn't get there.
         if is_initializer {
             let from = returned.reported_from as usize;
             let outer = &self.stack[..self.stack.len() - 1];
             if let Some(at) = outer.iter().rposition(|&q| q == Query::Expr(file, e))
                 && self.frames[at].is_quick_type
+                && at > 0
+                && self.stack[at - 1] == self.stack[self.stack.len() - 2]
                 && !(self.initializers_checked_inside.iter()).any(|it| it.quick_type_frame == at)
             {
                 let reported = self.take_reported_from(from);

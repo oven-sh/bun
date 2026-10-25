@@ -2878,7 +2878,6 @@ impl<'p, 's> Checker<'p, 's> {
                 return quick;
             }
             if let Some(checked_inside) = checked_inside
-                && check_mode.is_none()
                 && self.enter(Query::Expr(file, e))
             {
                 self.reported.extend(checked_inside.reported);

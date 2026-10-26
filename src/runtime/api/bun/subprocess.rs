@@ -896,7 +896,6 @@ impl Subprocess<'_> {
                 }
             }
         });
-
         Ok(array)
     }
 

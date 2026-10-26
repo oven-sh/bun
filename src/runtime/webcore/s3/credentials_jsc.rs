@@ -94,9 +94,9 @@ pub(crate) fn get_credentials_with_options(
             if let Some(parsed) = URL::parse_s3_endpoint(endpoint) {
                 new_credentials.credentials.endpoint = parsed.host_with_path;
 
-                // Default to https://
-                // Only use http:// if the endpoint specifically starts with 'http://'
-                new_credentials.credentials.insecure_http = parsed.is_http;
+                                // Default to https://
+                                // Only use http:// if the endpoint specifically starts with 'http://'
+                                new_credentials.credentials.insecure_http = parsed.is_http;
 
                 new_credentials.changed_credentials = true;
             } else if !endpoint.is_empty() {

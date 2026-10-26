@@ -1138,9 +1138,7 @@ impl Expect {
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
                 let mut formatter = ConsoleObject::Formatter::new(global_this);
                 return throw!(
-                    self,
-                    global_this,
-                    signature,
+                    self, global_this, signature,
                     "\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
                     value.to_fmt(&mut formatter),
                 );
@@ -1580,14 +1578,7 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(
-            global_this,
-            &matcher_name,
-            matcher_fn,
-            &matcher_args,
-            expect.flags.get(),
-            false,
-        )?;
+        let _ = Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), false)?;
 
         Ok(this_value)
     }
@@ -2422,21 +2413,13 @@ impl ExpectCustomAsymmetricMatcher {
 
         // prepare the args array as `[received, ...captured_args]`
         let args_count = captured_args.get_length(global_this)?;
-        let mut matcher_args: Vec<JSValue> =
-            Vec::with_capacity((args_count as usize).saturating_add(1));
+        let mut matcher_args: Vec<JSValue> = Vec::with_capacity((args_count as usize).saturating_add(1));
         matcher_args.push(received);
         for i in 0..args_count {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(
-            global_this,
-            &matcher_name,
-            matcher_fn,
-            &matcher_args,
-            self.flags,
-            true,
-        )
+        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, self.flags, true)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
@@ -2552,12 +2535,7 @@ impl ExpectMatcherContext {
         false
     }
 
-    pub(crate) fn equals(
-        &self,
-        cx: &mut JsScope<'_>,
-        a: JsLocal<'_>,
-        b: JsLocal<'_>,
-    ) -> JsResult<bool> {
+    pub(crate) fn equals(&self, cx: &mut JsScope<'_>, a: JsLocal<'_>, b: JsLocal<'_>) -> JsResult<bool> {
         a.to_js().jest_deep_equals(b.to_js(), cx.global())
     }
 }
@@ -2810,8 +2788,7 @@ pub(crate) mod mock {
                 let mut formatter = make_formatter(global);
                 return match kind {
                     MockKind::CallsWithSig => throw!(
-                        this,
-                        global,
+                        this, global,
                         Self::get_signature(matcher_name, matcher_params, false),
                         "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {}",
                         value.to_fmt(&mut formatter),

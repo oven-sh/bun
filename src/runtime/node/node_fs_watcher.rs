@@ -1107,8 +1107,7 @@ impl FSWatcher {
                 }
             } else {
                 None
-            },
-        );
+            });
         // SAFETY: `ctx` is the unique heap pointer; `init_js` hands ownership to
         // the GC wrapper via `to_js_ptr`.
         unsafe {

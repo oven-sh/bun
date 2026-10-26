@@ -14,13 +14,7 @@ impl Expect {
         expected: JsLocal<'_>,
     ) -> JsResult<()> {
         MarkedArgumentBuffer::new(|return_roots| {
-            to_have_returned_with_impl(
-                self,
-                cx.global(),
-                this_value.to_js(),
-                expected.to_js(),
-                return_roots,
-            )
+            to_have_returned_with_impl(self, cx.global(), this_value.to_js(), expected.to_js(), return_roots)
         })
     }
 }

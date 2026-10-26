@@ -1616,8 +1616,8 @@ extern "C" JS_EXPORT napi_status node_api_set_prototype(napi_env env,
 
 extern "C" JS_EXPORT napi_status node_api_create_object_with_properties(napi_env env,
     napi_value prototype_or_null,
-    napi_value* property_names,
-    napi_value* property_values,
+    const napi_value* property_names,
+    const napi_value* property_values,
     size_t property_count,
     napi_value* result)
 {
@@ -2902,9 +2902,6 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
 }
 
 static_assert(std::is_same_v<JSBigInt::Digit, uint64_t>, "All NAPI bigint functions assume that bigint words are 64 bits");
-#if USE(BIGINT32)
-#error All NAPI bigint functions assume that BIGINT32 is disabled
-#endif
 
 extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value value, int64_t* result, bool* lossless)
 {

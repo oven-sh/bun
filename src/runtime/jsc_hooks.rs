@@ -1356,7 +1356,7 @@ fn body_mixin_get_blob(
 ) -> bun_jsc::JsResult<Option<JSValue>> {
     use crate::webcore::body::BodyMixin as _;
     if let Some(resp) = value.as_::<crate::webcore::Response>() {
-        // SAFETY: `as_` returned the live `m_ctx` payload of a JS-heap
+        // SAFETY: `as_` returned the live payload of a JS-heap
         // `Response` cell pinned by `value` for the duration of this call.
         return Ok(Some(
             unsafe { &mut *resp }.get_blob_without_call_frame(global)?,
@@ -4622,7 +4622,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
 /// Materialise an embedded file (`.node`/`.so`/`.dylib`/`.dll` from
 /// `bun build --compile`) to an on-disk path `dlopen(2)` can open. Called
 /// from `resolve_embedded_node_file_hook` (`process.dlopen()`) and
-/// `ffi_body::FFI::open` (`bun:ffi`).
+/// `ffi_body::FFI::dlopen` (`bun:ffi`).
 ///
 /// The filename is a hash of the contents, so every `dlopen()` of the same
 /// embedded library — across calls, Worker VMs, and restarts — shares one

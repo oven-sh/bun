@@ -533,6 +533,37 @@ exports.format = async (text, options) => {
     timeout,
   );
 
+  // `--parser` names the file's parser, as with `--stdin-filepath`: an unknown one is refused when the server starts
+  // formatting, not passed over for every file.
+  test(
+    "refuses an unknown --parser once, as bun fmt --stdin-filepath does",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", { "a.js": "" });
+      await using client = new Client([...command, "--parser=nope"], String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      open(client, join(String(dir), "a.js"), "a  ;\n");
+      const told = () =>
+        client.received
+          .filter(it => it.method === "window/showMessage" || it.method === "window/logMessage")
+          .map(it => [it.method, it.params.type, it.params.message]);
+      const first = await format(client, join(String(dir), "a.js"));
+      expect(first).toMatchObject({ result: null });
+      expect(first.error).toBeUndefined();
+      expect(told()).toEqual([["window/showMessage", 1, `bun fmt: Couldn't resolve parser "nope".`]]);
+      const second = await format(client, join(String(dir), "a.js"));
+      expect(second).toMatchObject({ result: null });
+      expect(second.error).toBeUndefined();
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect(told()).toHaveLength(1);
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   // The editor registers the formatter for TOML too, and Prettier has no parser for it: that is about the one file,
   // not the folder, so it is logged and the rest of the folder still formats.
   test(

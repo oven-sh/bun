@@ -2345,12 +2345,13 @@ impl<'r> Run<'r> {
             return Err(self.out);
         }
         let configs = Configs::new(options, environment);
-        let run = self.start_with(&configs)?;
+        let run = self.start_with(&configs, options.formats_unnamed_stdin())?;
         Ok((run, configs))
     }
 
-    /// [`Run::start`] after `--version`, with the configs made by the caller.
-    fn start_with(mut self, configs: &Configs) -> Result<Self, Outcome> {
+    /// [`Run::start`] after `--version`, with the configs made by the caller. `is_unnamed`: the text comes on stdin
+    /// with `--parser` and no name, which refuses `--staged` and lets an unknown parser through to the file.
+    fn start_with(mut self, configs: &Configs, is_unnamed: bool) -> Result<Self, Outcome> {
         let (options, environment) = (self.options, self.environment);
         self.is_native = configs.is_native();
         if let Some(name) = (options.plugins.iter()).find(|it| config::is_missing_plugin(it))
@@ -2384,7 +2385,6 @@ impl<'r> Run<'r> {
         if let Some(only) = (options.only.as_ref()).filter(|_| options.stdin_filepath.is_some()) {
             return Err(self.fail(&only.stdin_conflict_error("--stdin-filepath")));
         }
-        let is_unnamed = options.formats_unnamed_stdin();
         if let Some(only) = options.only.as_ref().filter(|_| is_unnamed) {
             return Err(self.fail(&only.stdin_conflict_error("--parser without files")));
         }
@@ -2547,7 +2547,7 @@ impl<'e> Prepared<'e> {
             return Err(run.fail(&why).stderr);
         }
         let configs = Configs::owned(options.clone(), environment);
-        let run = run.start_with(&configs).map_err(|out| out.stderr)?;
+        let run = run.start_with(&configs, false).map_err(|out| out.stderr)?;
         let (run, ignored) = run.ignored(&configs).map_err(|out| out.stderr)?;
         let is_native = run.is_native;
         Ok(Prepared {

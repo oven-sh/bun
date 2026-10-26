@@ -210,9 +210,17 @@ impl FileSystemRouter {
                         // `abs()` writes into a thread-local buffer; copy out
                         // before recursing (recursion overwrites it).
                         let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(&full_path),
-                        );
+                        let child = strings::paths::without_trailing_slash_windows_path(&full_path);
+                        // Behind a link a bust reaches the listing only by a path that was read.
+                        if !matches!(
+                            vm.as_mut().transpiler.resolver.read_dir_info(child),
+                            Ok(Some(_))
+                        ) {
+                            // Marked missing: read again once the mark is busted.
+                            let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(child);
+                            let _ = vm.as_mut().transpiler.resolver.read_dir_info(child);
+                        }
+                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(child);
                         Self::bust_dir_cache_recursive(&full_path);
                     }
                 }

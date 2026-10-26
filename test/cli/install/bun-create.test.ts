@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, statSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, githubTarball, isASAN, isPosix, tempDir, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, githubTarball, isASAN, isMacOS, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
 import { delimiter, join } from "path";
@@ -338,11 +338,16 @@ const gitIdentity = {
   GIT_COMMITTER_EMAIL: "t@t.t",
 };
 
-/** `bun create ...args` in `cwd`; local templates are looked up in `<cwd>/bun-create`. */
-async function create(cwd: string, args: string[], extraEnv: Record<string, string | undefined> = {}) {
+/** `bun create ...args` in `cwd`; local templates are looked up in `<cwd>/bun-create`. `wrapper` is a command that runs it. */
+async function create(
+  cwd: string,
+  args: string[],
+  extraEnv: Record<string, string | undefined> = {},
+  wrapper: string[] = [],
+) {
   const merged = { ...env, BUN_CREATE_DIR: join(cwd, "bun-create"), ...extraEnv };
   await using proc = spawn({
-    cmd: [bunExe(), "create", ...args],
+    cmd: [...wrapper, bunExe(), "create", ...args],
     cwd,
     env: merged,
     stdin: "ignore",
@@ -350,8 +355,14 @@ async function create(cwd: string, args: string[], extraEnv: Record<string, stri
     stderr: "pipe",
   });
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { out, err, exitCode };
+  return { out, err, exitCode, signalCode: proc.signalCode };
 }
+
+/**
+ * A wrapper for `create`: a write past 2048 bytes of a file fails with EFBIG. POSIX only.
+ * The sh of macOS (bash 3.2) counts blocks of 1024 bytes, the others count blocks of 512.
+ */
+const fileSizeLimit = ["sh", "-c", `trap '' XFSZ; ulimit -f ${isMacOS ? 2 : 4} && exec "$@"`, "sh"];
 
 async function git(cwd: string, ...args: string[]) {
   await using proc = spawn({
@@ -897,9 +908,9 @@ for (const [status, expected] of [
   });
 }
 
-/** Serves `files` as the tarball of every GitHub repository. `env` points `bun create` at it and at the test registry. */
-async function serveGithub(files: Record<string, string>) {
-  const tarball = await githubTarball("dylan-conway-create-test-0123abc", files);
+/** Serves `files`, or a gzipped tarball as it is, as the tarball of every GitHub repository. `env` points `bun create` at it and at the test registry. */
+async function serveGithub(files: Record<string, string> | Uint8Array) {
+  const tarball = files instanceof Uint8Array ? files : await githubTarball("dylan-conway-create-test-0123abc", files);
   const requests: string[] = [];
   const server = Bun.serve({
     tls,
@@ -1153,6 +1164,162 @@ describe.concurrent.each(["local", "GitHub"])("a link in the destination of a %s
     });
     expect(exitCode).toBe(0);
   });
+});
+
+// Every exit that did not print package.json again left it with 0 bytes, and most of them exited 0.
+describe.concurrent.each(["local", "GitHub"])("the package.json of a %s template", kind => {
+  const withSection = `{\n  "name": "a-long-template-name",\n  "version": "1.0.0",\n  "bun-create": {\n    "start": "bun run ok"\n  }\n}\n`;
+  const missingValue = `{\n  "name": "tpl",\n  "version": \n}\n`;
+  const mine = `{\n  "name": "mine"\n}\n`;
+  const note = "note: template files were written. package.json is as the template has it\n";
+  /** One line with `keys` keys. bun create prints each key on a line of its own, which is 4 bytes more. */
+  const oneLine = (keys: number) =>
+    JSON.stringify({ name: "tpl", ...Object.fromEntries(Array.from({ length: keys }, (_, i) => [`k${1000 + i}`, 0])) });
+
+  /** `bun create <template of files> dest --no-install ...args`, next to the files of `existing`. `dest` is what it holds afterwards. */
+  async function createFrom(
+    files: Record<string, string>,
+    existing: Record<string, string>,
+    args: string[] = [],
+    wrapper: string[] = [],
+  ) {
+    using github = await serveGithub(files);
+    using dir = tempDir("create-package-json", { "bun-create/tpl": files, ...existing });
+    const result = await create(
+      String(dir),
+      [kind === "local" ? "tpl" : "dylan-conway/create-test", "dest", "--no-install", ...args],
+      github.env,
+      wrapper,
+    );
+    return { ...result, dest: await tree(join(String(dir), "dest")) };
+  }
+
+  it("is printed again over the longer text of the template", async () => {
+    const { out, err, exitCode, dest } = await createFrom({ "package.json": withSection }, {}, ["--no-git"]);
+
+    expect(dest).toEqual({ "package.json": `{\n  "name": "dest",\n  "version": "1.0.0"\n}\n` });
+    expect(err).not.toContain("error");
+    expect(out).toContain("\n  cd dest\n  bun run ok\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("is the template's with --no-package-json", async () => {
+    const { out, err, exitCode, dest } = await createFrom({ "package.json": withSection }, {}, [
+      "--no-git",
+      "--no-package-json",
+    ]);
+
+    expect(dest).toEqual({ "package.json": withSection });
+    expect(err).not.toContain("error");
+    expect(out).toContain("\n  cd dest\n  bun dev\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("is the destination's own when the template has none", async () => {
+    const { err, exitCode, dest } = await createFrom({ "index.js": "// hi\n" }, { "dest/package.json": mine }, [
+      "--no-git",
+    ]);
+
+    expect(dest).toEqual({ "index.js": "// hi\n", "package.json": mine });
+    expect(err).not.toContain("error");
+    expect(exitCode).toBe(0);
+  });
+
+  // The command stops before git: `dest` holds no repository.
+  it.each([
+    ["does not parse", missingValue, "error: Unexpected }"],
+    ["has a root that is not an object", "[1, 2, 3]\n", "error: package.json root must be an object"],
+  ])("is the template's when it %s, and the command fails", async (_, text, error) => {
+    const { out, err, exitCode, dest } = await createFrom({ "package.json": text, "index.js": "// hi\n" }, {});
+
+    expect(dest).toEqual({ "index.js": "// hi\n", "package.json": text });
+    expect(err).toContain(error);
+    expect(err).toContain(note);
+    expect(err).not.toContain("] git");
+    expect(out).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  it("is the template's when --force put it over the destination's own and it does not parse", async () => {
+    const { err, exitCode, dest } = await createFrom(
+      { "package.json": missingValue, "index.js": "// hi\n" },
+      { "dest/package.json": mine, "dest/keep.txt": "mine" },
+      ["--force"],
+    );
+
+    expect(dest).toEqual({ "index.js": "// hi\n", "keep.txt": "mine", "package.json": missingValue });
+    expect(err).toContain(note);
+    expect(exitCode).toBe(1);
+  });
+
+  it("is the template's when the command stops at a .gitignore it cannot replace", async () => {
+    const { err, exitCode, dest } = await createFrom(
+      { "package.json": withSection, "gitignore": "template" },
+      { "dest/.gitignore/inner.txt": "mine" },
+      ["--no-git"],
+    );
+
+    expect(dest).toEqual({ ".gitignore/inner.txt": "mine", "gitignore": "template", "package.json": withSection });
+    expect(err).toContain(": renaming gitignore to .gitignore\n");
+    expect(exitCode).toBe(1);
+  });
+
+  it.skipIf(!isPosix)("stops the command when its new text cannot be written", async () => {
+    // 1.6 KB on one line, and 2.3 KB with a line for each key.
+    const text = oneLine(180);
+    const { out, err, exitCode, signalCode } = await createFrom(
+      { "package.json": text },
+      {},
+      ["--no-git"],
+      fileSizeLimit,
+    );
+
+    expect(text.length).toBeLessThan(2048);
+    expect(err).toContain("package.json failed to write due to error EFBIG\n");
+    expect(out).toBe("");
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
+  if (kind === "GitHub") {
+    it("is the template's when a later entry of the tarball is cut short", async () => {
+      using github = await serveGithub(
+        gzipSync(
+          Buffer.concat([
+            tarEntry("pkg/package.json", Buffer.from(withSection)),
+            // The header declares 4096 bytes. The archive ends after it.
+            tarEntry("pkg/zz.txt", Buffer.alloc(4096)).subarray(0, 512),
+          ]),
+        ),
+      );
+      using dir = tempDir("create-package-json-cut", {});
+      const { out, err, exitCode } = await create(
+        String(dir),
+        ["dylan-conway/create-test", "dest", "--no-git", "--no-install"],
+        github.env,
+      );
+
+      expect(await Bun.file(join(String(dir), "dest", "package.json")).text()).toBe(withSection);
+      expect(err).toContain("Unexpected");
+      expect(out).not.toContain("Success!");
+      expect(exitCode).toBe(1);
+    });
+
+    it.skipIf(!isPosix)("is the start of the template's when the extractor cannot write all of it", async () => {
+      const text = oneLine(400);
+      const { out, err, exitCode, signalCode, dest } = await createFrom(
+        { "package.json": text },
+        {},
+        ["--no-git"],
+        fileSizeLimit,
+      );
+
+      expect(text.length).toBeGreaterThan(2048);
+      expect(dest).toEqual({ "package.json": text.slice(0, 2048) });
+      expect(err).toContain("package.json failed to write due to error EFBIG\n");
+      expect(out).toBe("");
+      expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+    });
+  }
 });
 
 it.concurrent("should preserve package.json indentation from the template", async () => {

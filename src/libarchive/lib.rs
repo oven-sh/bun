@@ -1277,7 +1277,9 @@ pub mod archiver {
     pub struct Plucker {
         pub contents: MutableString,
         pub(crate) filename_hash: u64,
+        /// The entry was read into `contents`.
         pub found: bool,
+        /// The entry's file, open for writing, once it holds `contents`.
         pub fd: Fd,
     }
 
@@ -1289,6 +1291,15 @@ pub mod archiver {
                 fd: Fd::INVALID,
                 found: false,
             })
+        }
+
+        /// Writes `contents` to `file`, the entry's file, and keeps `file`.
+        #[cold]
+        #[inline(never)]
+        pub(crate) fn take_file(&mut self, file: Fd) -> bun_sys::Result<()> {
+            bun_sys::File::borrow(&file).pwrite_all(self.contents.list.as_slice(), 0)?;
+            self.fd = file;
+            Ok(())
         }
     }
 
@@ -1897,7 +1908,7 @@ impl Archiver {
                                                 return Err(crate::Error::Fail);
                                             }
                                             plucker_.found = !plucker_.contents.list.is_empty();
-                                            plucker_.fd = output.fd;
+                                            plucker_.take_file(output.fd)?;
                                             output.close = false;
                                             continue 'loop_;
                                         }

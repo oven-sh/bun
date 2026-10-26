@@ -168,6 +168,29 @@ describe("Atomics in a realm that only received a struct", () => {
   });
 });
 
+describe("the native structs cannot be replaced by a script", () => {
+  test("defining the hook that the lowering used to read does not change what shared structs are", () => {
+    const key = Symbol.for("bun.structs.native");
+    Object.defineProperty(globalThis, key, {
+      value: { create: () => ({ fake: true }) },
+      configurable: true,
+    });
+    try {
+      shared struct Box {
+        v;
+      }
+      const box = new Box() as any;
+      expect(box.fake).toBeUndefined();
+      expect(Object.getPrototypeOf(box)).toBeNull();
+      box.v = 1;
+      expect(Atomics.load(box, "v")).toBe(1);
+      expect(Reflect.canBeShared(box)).toBe(true);
+    } finally {
+      delete (globalThis as any)[key];
+    }
+  });
+});
+
 describe("shared struct exotic object", () => {
   test("[[Delete]] is false for every key and [[Set]] ignores the receiver", () => {
     shared struct S {

@@ -424,6 +424,19 @@ describe("struct definitions", () => {
     expect(Object.isExtensible(S.prototype)).toBe(false);
   });
 
+  test("the prototype keeps the constructor property", () => {
+    struct S {
+      v;
+    }
+    expect(S.prototype.constructor).toBe(S);
+    expect(new S().constructor).toBe(S);
+  });
+
+  test("eval and new Function do not know the struct syntax (a limit of lowering at build time)", () => {
+    expect(() => new Function("struct S { x; }")).toThrow(SyntaxError);
+    expect(() => (0, eval)("struct S { x; }")).toThrow(SyntaxError);
+  });
+
   test("no helper property is left on the prototype or the constructor", () => {
     struct S {
       a = 1;

@@ -43,23 +43,6 @@ mod ext {
     use super::*;
     use crate::dependencies;
 
-    /// Inline of `Url::parse`.
-    pub(super) fn url_parse(input: &mut Parser) -> Result<Url> {
-        let start_pos = input.position();
-        let loc = input.current_source_location();
-        let url = input.expect_url()?;
-        // SAFETY: `url` borrows the parser source/arena which outlives the
-        // `add_import_record` call (same lifetime erasure as `src_str`).
-        let url: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
-        let end_pos = input.position();
-        let import_record_idx =
-            input.add_import_record(url, start_pos, end_pos, bun_ast::ImportKind::Url)?;
-        Ok(Url {
-            import_record_idx,
-            loc: dependencies::Location::from_source_location(loc),
-        })
-    }
-
     /// Inline of `Url::to_css`.
     pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
         let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
@@ -610,7 +593,7 @@ impl TokenList {
                     }
                     if strings::eql(*f, b"url") && !input.flags.raw_url_tokens() {
                         input.reset(&state);
-                        tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
+                        tokens.push(TokenOrValue::Url(Url::parse(input)?));
                         last_is_delim = false;
                         last_is_whitespace = false;
                     } else if strings::eql(*f, b"var") {
@@ -659,7 +642,7 @@ impl TokenList {
                 }
                 Token::UnquotedUrl(_) if !input.flags.raw_url_tokens() => {
                     input.reset(&state);
-                    tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
+                    tokens.push(TokenOrValue::Url(Url::parse(input)?));
                     last_is_delim = false;
                     last_is_whitespace = false;
                     continue;
@@ -1377,11 +1360,7 @@ impl Clone for TokenOrValue {
             TokenOrValue::Token(t) => TokenOrValue::Token(*t),
             TokenOrValue::Color(c) => TokenOrValue::Color(c.clone()),
             TokenOrValue::UnresolvedColor(c) => TokenOrValue::UnresolvedColor(c.clone()),
-            // `Url` has no `#[derive(Clone)]` but both fields are `Copy`.
-            TokenOrValue::Url(u) => TokenOrValue::Url(Url {
-                import_record_idx: u.import_record_idx,
-                loc: u.loc,
-            }),
+            TokenOrValue::Url(u) => TokenOrValue::Url(u.clone()),
             TokenOrValue::Var(v) => TokenOrValue::Var(v.clone()),
             TokenOrValue::Env(e) => TokenOrValue::Env(e.clone()),
             TokenOrValue::Function(f) => TokenOrValue::Function(f.clone()),

@@ -1115,6 +1115,12 @@ fn lerp_components<T: Colorspace>(this: &T, p1: f32, other: &T, p2: f32) -> (f32
     )
 }
 
+/// A missing channel (`none`, NaN) equals a missing channel.
+#[inline]
+fn channel_eq(a: f32, b: f32) -> bool {
+    a == b || (a.is_nan() && b.is_nan())
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // parse_color_function and component parsers
 // ──────────────────────────────────────────────────────────────────────────
@@ -1540,12 +1546,21 @@ macro_rules! define_colorspace {
         into_css = $into_css:expr;
     ) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq)]
+        #[derive(Debug, Clone, Copy)]
         pub struct $name {
             pub $a: f32,
             pub $b: f32,
             pub $c: f32,
             pub alpha: f32,
+        }
+
+        impl PartialEq for $name {
+            fn eq(&self, other: &Self) -> bool {
+                channel_eq(self.$a, other.$a)
+                    && channel_eq(self.$b, other.$b)
+                    && channel_eq(self.$c, other.$c)
+                    && channel_eq(self.alpha, other.alpha)
+            }
         }
 
         impl Colorspace for $name {

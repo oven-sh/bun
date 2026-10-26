@@ -292,6 +292,639 @@ describe("css tests", () => {
     `,
       indoc`.foo{border-spacing:-20px}`,
     );
+
+    // Two neighbouring rules are one rule only when both components are equal.
+    minify_test(
+      `.table { border-spacing: 0 } .rows { border-spacing: 0 8px }`,
+      `.table{border-spacing:0}.rows{border-spacing:0 8px}`,
+    );
+    minify_test(
+      `.a { border-spacing: 4px 8px } .b { border-spacing: 8px 4px }`,
+      `.a{border-spacing:4px 8px}.b{border-spacing:8px 4px}`,
+    );
+    minify_test(
+      `.a { border-spacing: 4px 8px } .b { border-spacing: 8px }`,
+      `.a{border-spacing:4px 8px}.b{border-spacing:8px}`,
+    );
+    minify_test(
+      `@media print { .a { border-spacing: 0 } .b { border-spacing: 0 8px } }`,
+      `@media print{.a{border-spacing:0}.b{border-spacing:0 8px}}`,
+    );
+    minify_test(`.a { border-spacing: 0 8px } .b { border-spacing: 0 8px }`, `.a,.b{border-spacing:0 8px}`);
+  });
+
+  describe("border_radius", () => {
+    cssTest(
+      `
+      .foo {
+        border-radius: 10px 100px 10px 100px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 10px 100px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-radius: 10px 100px 10px 100px / 120px 120px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 10px 100px / 120px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-top-left-radius: 10px 120px;
+        border-top-right-radius: 100px 120px;
+        border-bottom-right-radius: 100px 120px;
+        border-bottom-left-radius: 10px 120px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 10px 100px 100px 10px / 120px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-top-left-radius: 4px 2px;
+        border-top-right-radius: 3px 4px;
+        border-bottom-right-radius: 6px 2px;
+        border-bottom-left-radius: 3px 4px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 4px 3px 6px / 2px 4px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-top-left-radius: 1% 2%;
+        border-top-right-radius: 3% 4%;
+        border-bottom-right-radius: 5% 6%;
+        border-bottom-left-radius: 7% 8%;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 1% 3% 5% 7% / 2% 4% 6% 8%;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-radius: 10px 100px 10px 100px / 120px 120px;
+        border-start-start-radius: 10px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 10px 100px / 120px;
+        border-start-start-radius: 10px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-start-start-radius: 10px;
+        border-radius: 10px 100px 10px 100px / 120px 120px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 10px 100px / 120px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-top-left-radius: 10px 120px;
+        border-top-right-radius: 100px 120px;
+        border-start-start-radius: 10px;
+        border-bottom-right-radius: 100px 120px;
+        border-bottom-left-radius: 10px 120px;
+      }
+    `,
+      `
+      .foo {
+        border-top-left-radius: 10px 120px;
+        border-top-right-radius: 100px 120px;
+        border-start-start-radius: 10px;
+        border-bottom-right-radius: 100px 120px;
+        border-bottom-left-radius: 10px 120px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-radius: 10px;
+        border-top-left-radius: 20px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 20px 10px 10px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-radius: 10px;
+        border-top-left-radius: var(--test);
+      }
+    `,
+      `
+      .foo {
+        border-radius: 10px;
+        border-top-left-radius: var(--test);
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-radius: 10px 100px 10px 100px;
+        -moz-border-radius: 10px 100px 10px 100px;
+        border-radius: 10px 100px 10px 100px;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-radius: 10px 100px;
+        -moz-border-radius: 10px 100px;
+        border-radius: 10px 100px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-radius: 10px 100px 10px 100px;
+        -moz-border-radius: 20px;
+        border-radius: 30px;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-radius: 10px 100px;
+        -moz-border-radius: 20px;
+        border-radius: 30px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-top-left-radius: 10px;
+        -moz-border-top-left-radius: 10px;
+        border-top-left-radius: 10px;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-top-left-radius: 10px;
+        -moz-border-top-left-radius: 10px;
+        border-top-left-radius: 10px;
+      }
+    `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-radius: 30px;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-border-radius: 30px;
+        -moz-border-radius: 30px;
+        border-radius: 30px;
+      }
+`,
+      {
+        safari: 4 << 16,
+        firefox: 3 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-top-left-radius: 30px;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-border-top-left-radius: 30px;
+        -moz-border-top-left-radius: 30px;
+        border-top-left-radius: 30px;
+      }
+`,
+      {
+        safari: 4 << 16,
+        firefox: 3 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-border-radius: 30px;
+        -moz-border-radius: 30px;
+        border-radius: 30px;
+      }
+    `,
+      indoc`
+      .foo {
+        border-radius: 30px;
+      }
+`,
+      {
+        safari: 14 << 16,
+        firefox: 46 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-border-top-left-radius: 30px;
+        -moz-border-top-left-radius: 30px;
+        border-top-left-radius: 30px;
+      }
+    `,
+      indoc`
+      .foo {
+        border-top-left-radius: 30px;
+      }
+`,
+      {
+        safari: 14 << 16,
+        firefox: 46 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-border-radius: 30px;
+        -moz-border-radius: 30px;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-border-radius: 30px;
+        -moz-border-radius: 30px;
+      }
+`,
+      {
+        safari: 14 << 16,
+        firefox: 46 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-border-top-left-radius: 30px;
+        -moz-border-top-right-radius: 30px;
+        border-bottom-right-radius: 30px;
+        border-bottom-left-radius: 30px;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-border-top-left-radius: 30px;
+        -moz-border-top-right-radius: 30px;
+        border-bottom-right-radius: 30px;
+        border-bottom-left-radius: 30px;
+      }
+`,
+      {
+        safari: 14 << 16,
+        firefox: 46 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-radius: var(--test);
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-border-radius: var(--test);
+        -moz-border-radius: var(--test);
+        border-radius: var(--test);
+      }
+`,
+      {
+        safari: 4 << 16,
+        firefox: 3 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-start-start-radius: 5px;
+      }
+    `,
+      indoc`
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        border-top-left-radius: 5px;
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        border-top-right-radius: 5px;
+      }
+`,
+      {
+        safari: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-start-start-radius: 5px;
+        border-start-end-radius: 10px;
+      }
+    `,
+      indoc`
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        border-top-left-radius: 5px;
+        border-top-right-radius: 10px;
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        border-top-left-radius: 10px;
+        border-top-right-radius: 5px;
+      }
+`,
+      {
+        safari: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-end-end-radius: 10px;
+        border-end-start-radius: 5px;
+      }
+    `,
+      indoc`
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        border-bottom-right-radius: 10px;
+        border-bottom-left-radius: 5px;
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        border-bottom-right-radius: 5px;
+        border-bottom-left-radius: 10px;
+      }
+`,
+      {
+        safari: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-start-start-radius: var(--radius);
+      }
+    `,
+      indoc`
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        border-top-left-radius: var(--radius);
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        border-top-right-radius: var(--radius);
+      }
+`,
+      {
+        safari: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-start-start-radius: var(--start);
+        border-start-end-radius: var(--end);
+      }
+    `,
+      indoc`
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        border-top-left-radius: var(--start);
+        border-top-right-radius: var(--end);
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        border-top-right-radius: var(--start);
+        border-top-left-radius: var(--end);
+      }
+`,
+      {
+        safari: 12 << 16,
+      },
+    );
+
+    // Two neighbouring rules are one rule only when the horizontal and the
+    // vertical radius of each corner are equal.
+    minify_test(
+      `.circle { border-radius: 50% } .oval { border-radius: 50% / 10% }`,
+      `.circle{border-radius:50%}.oval{border-radius:50%/10%}`,
+    );
+    minify_test(
+      `.a { border-radius: 10px 20px } .b { border-radius: 10px 20px / 20px 10px }`,
+      `.a{border-radius:10px 20px}.b{border-radius:10px 20px/20px 10px}`,
+    );
+    minify_test(
+      `.a { border-radius: 10px 20px / 5px 6px } .b { border-radius: 10px 20px / 5px 6px }`,
+      `.a,.b{border-radius:10px 20px/5px 6px}`,
+    );
+    minify_test(
+      `.a { border-top-left-radius: 10px } .b { border-top-left-radius: 10px 20px }`,
+      `.a{border-top-left-radius:10px}.b{border-top-left-radius:10px 20px}`,
+    );
+    minify_test(
+      `.a { border-bottom-right-radius: 10px 20px } .b { border-bottom-right-radius: 20px 10px }`,
+      `.a{border-bottom-right-radius:10px 20px}.b{border-bottom-right-radius:20px 10px}`,
+    );
+    minify_test(
+      `.a { border-start-start-radius: 10px } .b { border-start-start-radius: 10px 20px }`,
+      `.a{border-start-start-radius:10px}.b{border-start-start-radius:10px 20px}`,
+    );
+    minify_test(
+      `.a { border-top-left-radius: 20px 10px } .b { border-top-left-radius: 10px }`,
+      `.a{border-top-left-radius:20px 10px}.b{border-top-left-radius:10px}`,
+    );
+    minify_test(
+      `.a { border-radius: 50% !important } .b { border-radius: 50% / 10% !important }`,
+      `.a{border-radius:50%!important}.b{border-radius:50%/10%!important}`,
+    );
+
+    // The right-to-left rule has the two corners swapped, so it is not the left-to-right rule.
+    prefix_test(
+      `
+      .foo {
+        border-start-start-radius: 5px 10px;
+        border-start-end-radius: 10px 5px;
+      }
+    `,
+      indoc`
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        border-top-left-radius: 5px 10px;
+        border-top-right-radius: 10px 5px;
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        border-top-left-radius: 10px 5px;
+        border-top-right-radius: 5px 10px;
+      }
+`,
+      {
+        safari: 12 << 16,
+      },
+    );
+
+    // One value under several vendor prefixes keeps each prefix, in any order.
+    minify_test(
+      `.a { border-radius: 10px; -moz-border-radius: 10px }`,
+      `.a{-moz-border-radius:10px;border-radius:10px}`,
+    );
+    minify_test(
+      `.a { border-radius: 50% / 10%; -moz-border-radius: 50% / 10% }`,
+      `.a{-moz-border-radius:50%/10%;border-radius:50%/10%}`,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-radius: 10px;
+        -moz-border-radius: 10px;
+      }
+    `,
+      indoc`
+      .foo {
+        border-radius: 10px;
+      }
+`,
+      {
+        safari: 14 << 16,
+        firefox: 46 << 16,
+      },
+    );
+
+    // Two vendor prefixes with different values stay two declarations, in source order.
+    minify_test(
+      `.a { -webkit-border-top-left-radius: 10px 20px; border-top-left-radius: 20px 10px }`,
+      `.a{-webkit-border-top-left-radius:10px 20px;border-top-left-radius:20px 10px}`,
+    );
+
+    // The four corners share only the unprefixed value, so the prefixed corner stays a longhand.
+    minify_test(
+      `.a { -webkit-border-top-left-radius: 1px; border-top-left-radius: 1px; border-top-right-radius: 1px; border-bottom-right-radius: 1px; border-bottom-left-radius: 1px }`,
+      `.a{border-radius:1px;-webkit-border-top-left-radius:1px}`,
+    );
+
+    // Two rules with the same selector become one rule, and that rule keeps each prefix.
+    minify_test(
+      `.a { border-radius: 1px } .a { -moz-border-radius: 1px }`,
+      `.a{-moz-border-radius:1px;border-radius:1px}`,
+    );
+
+    // When a prefix gets a second value, each prefix that had the first value
+    // gets it too. lightningcss has the same rule.
+    minify_test(`.a { border-top-left-radius: 1px; border-top-left-radius: 2px }`, `.a{border-top-left-radius:2px}`);
+    minify_test(
+      `.a { border-top-left-radius: 1px; -webkit-border-top-left-radius: 1px; border-top-left-radius: 2px }`,
+      `.a{-webkit-border-top-left-radius:2px;border-top-left-radius:2px}`,
+    );
+    minify_test(
+      `.a { -moz-border-radius: 1px; border-radius: 1px; -moz-border-radius: 2px }`,
+      `.a{-moz-border-radius:2px;border-radius:2px}`,
+    );
+    prefix_test(
+      `
+      .a {
+        -moz-border-radius: 1px;
+        border-radius: 1px;
+        -moz-border-radius: 2px;
+      }
+    `,
+      indoc`
+      .a {
+        border-radius: 2px;
+      }
+`,
+      {
+        chrome: 80 << 16,
+        edge: 80 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+        opera: 67 << 16,
+      },
+    );
+
+    // lightningcss prints this for three rules with one selector, because it
+    // minifies again after each merge. Bun minifies once after the last merge
+    // and prints `border-radius: 2px`.
+    cssTestTodo(
+      `
+      .a { -moz-border-radius: 1px }
+      .a { border-radius: 1px }
+      .a { -moz-border-radius: 2px }
+    `,
+      `
+      .a {
+        border-radius: 1px;
+        -moz-border-radius: 2px;
+      }
+    `,
+      {
+        chrome: 80 << 16,
+        edge: 80 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+        opera: 67 << 16,
+      },
+    );
   });
 
   describe("border", () => {
@@ -1717,6 +2350,488 @@ describe("css tests", () => {
     `,
       {
         chrome: 99 << 16,
+      },
+    );
+  });
+
+  describe("border-image", () => {
+    cssTest(
+      `
+      .foo {
+        border-image: url(test.png) 60;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("test.png") 60;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: url(test.png) 60;
+        border-image-source: url(foo.png);
+      }
+    `,
+      `
+      .foo {
+        border-image: url("foo.png") 60;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image-source: url(foo.png);
+        border-image-slice: 10 40 10 40 fill;
+        border-image-width: 10px;
+        border-image-outset: 0;
+        border-image-repeat: round round;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("foo.png") 10 40 fill / 10px round;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: url(foo.png) 60;
+        border-image-source: var(--test);
+      }
+    `,
+      `
+      .foo {
+        border-image: url("foo.png") 60;
+        border-image-source: var(--test);
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+        border-image: url("test.png") 60;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+        border-image: url("test.png") 60;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+        border-image-source: url(foo.png);
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+        border-image-source: url("foo.png");
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: 1px solid red;
+        border-image: url(test.png) 60;
+      }
+    `,
+      `
+      .foo {
+        border: 1px solid red;
+        border-image: url("test.png") 60;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: url(test.png) 60;
+        border: 1px solid red;
+      }
+    `,
+      `
+      .foo {
+        border: 1px solid red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: 1px solid red;
+        border-image: var(--border-image);
+      }
+    `,
+      `
+      .foo {
+        border: 1px solid red;
+        border-image: var(--border-image);
+      }
+    `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: url("test.png") 60;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+        -moz-border-image: url("test.png") 60;
+        -o-border-image: url("test.png") 60;
+        border-image: url("test.png") 60;
+      }
+    `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        opera: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: url(foo.png) 10 40 fill / 10px round;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("foo.png") 10 40 fill / 10px round;
+      }
+    `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        opera: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: var(--test) 60;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: var(--test) 60;
+        -moz-border-image: var(--test) 60;
+        -o-border-image: var(--test) 60;
+        border-image: var(--test) 60;
+      }
+    `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        opera: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-border-image: url(foo.png) 60;
+        -moz-border-image: url(foo.png) 60;
+        -o-border-image: url(foo.png) 60;
+        border-image: url(foo.png) 60;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("foo.png") 60;
+      }
+    `,
+      {
+        chrome: 15 << 16,
+      },
+    );
+
+    // The next four are skipped: lightningcss prints the legacy direction keyword
+    // (`top,`) in generated -webkit-/-moz-linear-gradient() fallbacks since
+    // parcel-bundler/lightningcss#936, which bun's port does not have yet.
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: -webkit-gradient(linear, 0 0, 0 100%, from(#ff0f0e), to(#7773ff)) 60;
+        -webkit-border-image: -webkit-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        border-image: linear-gradient(#ff0f0e, #7773ff) 60;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
+      }
+    `,
+      {
+        chrome: 8 << 16,
+      },
+      true,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: -webkit-gradient(linear, 0 0, 0 100%, from(#ff0f0e), to(#7773ff)) 60;
+        -webkit-border-image: -webkit-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        -moz-border-image: -moz-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        border-image: linear-gradient(#ff0f0e, #7773ff) 60;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
+      }
+    `,
+      {
+        chrome: 8 << 16,
+        firefox: 4 << 16,
+      },
+      true,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
+      }
+    `,
+      `
+      .foo {
+        border-image: -webkit-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        border-image: -moz-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        border-image: linear-gradient(#ff0f0e, #7773ff) 60;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
+      }
+    `,
+      {
+        chrome: 15 << 16,
+        firefox: 15 << 16,
+      },
+      true,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      `
+      .foo {
+        border-image-source: -webkit-linear-gradient(top, #ff0f0e, #7773ff);
+        border-image-source: linear-gradient(#ff0f0e, #7773ff);
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      {
+        chrome: 15 << 16,
+      },
+      true,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) var(--foo);
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(#ff0f0e, #7773ff) var(--foo);
+      }
+
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          border-image: linear-gradient(lab(56.208% 94.4644 98.8928), lab(51% 70.4544 -115.586)) var(--foo);
+        }
+      }
+    `,
+      {
+        chrome: 90 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image-source: linear-gradient(red, green);
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      `
+      .foo {
+        border-image-source: linear-gradient(red, green);
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image-source: linear-gradient(red, green);
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      `
+      .foo {
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      {
+        chrome: 112 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, green);
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, green);
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: var(--fallback);
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      `
+      .foo {
+        border-image: var(--fallback);
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: url("fallback.png") 10 40 fill / 10px;
+        border-image: url("main.png") 10 40 fill / 10px space;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("fallback.png") 10 40 fill / 10px;
+        border-image: url("main.png") 10 40 fill / 10px space;
+      }
+    `,
+      {
+        chrome: 50 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: url("fallback.png") 10 40 fill / 10px;
+        border-image: url("main.png") 10 40 fill / 10px space;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("main.png") 10 40 fill / 10px space;
+      }
+    `,
+      {
+        chrome: 56 << 16,
+      },
+    );
+
+    // `border` resets border-image, so a kept fallback must stay after it.
+    prefix_test(
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image-source: url(a.png);
+        border: 2px solid red;
+        border-image-source: url(fallback.png);
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      `
+      .foo {
+        border: 2px solid red;
+        border-image-source: url("fallback.png");
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      {
+        chrome: 95 << 16,
       },
     );
   });
@@ -5029,6 +6144,12 @@ describe("css tests", () => {
     minify_test("@font-face { font-family: 'revert'; }", '@font-face{font-family:"revert"}');
     minify_test("@font-face { font-family: 'revert-layer'; }", '@font-face{font-family:"revert-layer"}');
 
+    // Only `oblique 14deg 14deg` is the default oblique angle.
+    minify_test("@font-face { font-style: oblique 14deg 20deg }", "@font-face{font-style:oblique 14deg 20deg}");
+    minify_test("@font-face { font-style: oblique 20deg 14deg }", "@font-face{font-style:oblique 20deg 14deg}");
+    minify_test("@font-face { font-style: oblique 0deg 10deg }", "@font-face{font-style:oblique 0deg 10deg}");
+    minify_test("@font-face { font-style: oblique 14deg 14deg }", "@font-face{font-style:oblique}");
+
     prefix_test(
       `
       .foo {
@@ -7987,6 +9108,12 @@ describe("css tests", () => {
     );
   });
 
+  // Two colors with `none` in the same channel are equal, so shorthands and rules merge.
+  describe("a color with a missing channel equals itself", () => {
+    minify_test(".a { border: 1px solid oklch(10% 0 none) }", ".a{border:1px solid oklch(10% 0 none)}");
+    minify_test(".a { border: 1px solid rgb(0 0 0 / none) }", ".a{border:1px solid #0000}");
+  });
+
   describe("page", () => {
     minify_test("@page { margin: 1em }", "@page{margin:1em}");
     minify_test("@page :left { margin: 1em }", "@page:left{margin:1em}");
@@ -8107,6 +9234,39 @@ describe("css tests", () => {
     minify_test('.foo{grid-template-areas:"a . b" ". c ."}', '.foo{grid-template-areas:"a . b" ". c ."}');
     minify_test('.foo{grid-template-areas:"a ... b"}', '.foo{grid-template-areas:"a ... b"}');
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
+  });
+
+  describe("url", () => {
+    // Two `url()` values with the same text are equal, so rules that differ
+    // only in the selector merge.
+    minify_test(".a{background:url(a.png)}.b{background:url(a.png)}", ".a,.b{background:url(a.png)}");
+    minify_test('.a{background:url(a.png)}.b{background:url("a.png")}', ".a,.b{background:url(a.png)}");
+    minify_test(".a{mask:url(a.svg#m)}.b{mask:url(a.svg#m)}", ".a,.b{mask:url(a.svg#m)}");
+    minify_test(".a{cursor:url(a.cur),auto}.b{cursor:url(a.cur),auto}", ".a,.b{cursor:url(a.cur),auto}");
+    minify_test(".a{--i:url(a.png)}.b{--i:url(a.png)}", ".a,.b{--i:url(a.png)}");
+    minify_test(
+      '.a{background-image:image-set("a.png" 1x,"b.png" 2x)}.b{background-image:image-set("a.png" 1x,"b.png" 2x)}',
+      '.a,.b{background-image:image-set("a.png" 1x,"b.png" 2x)}',
+    );
+
+    // Rules with different urls stay apart.
+    minify_test(
+      ".a{background:url(a.png)}.b{background:url(b.png)}",
+      ".a{background:url(a.png)}.b{background:url(b.png)}",
+    );
+    minify_test(".a{--i:url(a.png)}.b{--i:url(b.png)}", ".a{--i:url(a.png)}.b{--i:url(b.png)}");
+    minify_test(
+      '.a{background-image:image-set("a.png" 1x,"b.png" 2x)}.b{background-image:image-set("a.png" 1x,"c.png" 2x)}',
+      '.a{background-image:image-set("a.png" 1x,"b.png" 2x)}.b{background-image:image-set("a.png" 1x,"c.png" 2x)}',
+    );
+
+    // Two `border-image` declarations with one url: the first is the value
+    // for Chrome 80, which has no `dvh`, so it stays.
+    prefix_test(
+      ".a { border-image: url(x.png) 30 / 1vh; border-image: url(x.png) 30 / 1dvh }",
+      '.a { border-image: url("x.png") 30 / 1vh; border-image: url("x.png") 30 / 1dvh; }',
+      { chrome: 80 << 16 },
+    );
   });
 
   describe("edge cases", () => {

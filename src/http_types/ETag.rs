@@ -134,6 +134,19 @@ pub fn if_match(
     false
 }
 
+/// RFC 9110 §13.1.5 strong comparison: a weak tag on either side never matches.
+pub fn if_range(
+    // Stored `ETag` header, `None` when the representation has none.
+    etag: Option<&[u8]>,
+    // `If-Range` header
+    if_range: &[u8],
+) -> bool {
+    let Some(etag) = etag else { return false };
+    let ours = parse(etag);
+    let theirs = parse(if_range);
+    !ours.is_weak && !theirs.is_weak && ours.tag == theirs.tag
+}
+
 pub fn if_none_match(
     // "ETag" header
     etag: &[u8],
@@ -171,7 +184,6 @@ pub fn if_none_match(
 // must not name:
 //   - `Options` / `from()`       — FetchHeaders + Blob (T6, vtabled in bun_http)
 //   - `from_pico_http_headers()` — bun_picohttp (kept beside its only caller)
-//   - `to_fetch_headers`         — extension-trait in bun_http_jsc
 // ═══════════════════════════════════════════════════════════════════════
 
 /// `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`

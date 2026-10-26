@@ -24,11 +24,9 @@ import path from "path";
 // - `rust`-abi markers. Their thunk is `extern "Rust"` and its consumers are
 //   `extern "Rust" {}` blocks in other Rust crates (cycle-breaking hooks), so a
 //   C++ search cannot see them.
-// - Symbols the bindgen generators synthesize. `bindgen_*` names are built by
-//   `src/codegen/bindgen-lib-internal.ts` from `.bind.ts` inputs and
-//   `js2native_*` names by `src/codegen/generate-js2native.ts`; their callers
-//   live in generated C++ (`GeneratedBindings.cpp`, `GeneratedJS2Native.h`)
-//   that is not part of the tracked tree.
+// - `js2native_*` names, which `src/codegen/generate-js2native.ts` synthesizes;
+//   their callers live in generated C++ (`GeneratedJS2Native.h`) that is not
+//   part of the tracked tree.
 //
 // Both scans go through `git grep` so they see tracked files only (a
 // `git stash` round-trip can leave stray files in the working directory) and
@@ -39,10 +37,10 @@ const root = path.resolve(import.meta.dir, "..", "..", "..");
 // Same grammar as `markerRe` in src/codegen/generate-host-exports.ts: the
 // marker is the whole line. Prose such as "from the `// HOST_EXPORT(Sym, c)`
 // markers" in a doc comment does not match. Group 1 is the symbol, group 2
-// the abi (`jsc` when absent).
+// the abi (`c` when absent).
 const MARKER = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(jsc|c|rust))?\s*\)\s*$/;
 
-const GENERATED_PREFIXES = ["bindgen_", "js2native_"];
+const GENERATED_PREFIXES = ["js2native_"];
 
 // The C++ side of the boundary. Vendored C libraries (the sqlite amalgamation,
 // llhttp) never call back into Rust and are 10 MB of text, so they are excluded.

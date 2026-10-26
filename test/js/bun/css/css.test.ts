@@ -7710,6 +7710,9 @@ describe("css tests", () => {
         ".tag{--h-xs:1px}.tag.xs{--h:var(--h-xs)}.tag{--h-sm:2px}",
         // The last rule differs from the one before it. The first rule is not compared again.
         ".a{width:1px}.b{top:0}.a{width:2px}.c{top:0}.a{width:1px}",
+        // Another url, and a radius with a second value.
+        ".a{background:url(data:,a)}.b{top:0}.a{background:url(data:,b)}",
+        ".a{border-radius:1px}.b{top:0}.a{border-radius:1px/2px}",
       ])("%s", source => {
         expect(cssInternals.minifyTest(source, "", targets)).toBe(source);
       });
@@ -7739,8 +7742,30 @@ describe("css tests", () => {
         [".a{color:red;overflow:clip}.b{top:0}.a{color:red;overflow:clip}", ".b{top:0}.a{color:red;overflow:clip}"],
         [".a{overflow:clip!important}.b{top:0}.a{overflow:clip!important}", ".b{top:0}.a{overflow:clip!important}"],
         [".a{width:1px}.b{top:0}.a{width:2px}.c{top:0}.a{width:2px}", ".a{width:1px}.b{top:0}.c{top:0}.a{width:2px}"],
+        // A block with `url()`, a missing channel or a two-value size equals its copy.
+        [".a{background:url(data:,a)}.b{top:0}.a{background:url(data:,a)}", ".b{top:0}.a{background:url(data:,a)}"],
+        [".a{--c:oklch(98.5% 0 none)}.b{top:0}.a{--c:oklch(98.5% 0 none)}", ".b{top:0}.a{--c:oklch(98.5% 0 none)}"],
+        [".a{border-radius:1px/2px}.b{top:0}.a{border-radius:1px/2px}", ".b{top:0}.a{border-radius:1px/2px}"],
       ])("%s", (source, expected) => {
         expect(cssInternals.minifyTest(source, "", targets)).toBe(expected);
+      });
+    });
+
+    // bun prints a rule once for each vendor prefix that its selectors need. When bun minifies
+    // that output again, every copy from the earlier build has to go, or the sheet grows on each build.
+    describe("browser targets: output that is minified again stops changing", () => {
+      test.each([
+        ".a:not(.b,.c){color:red}",
+        ".a:not(.b,.c){background:url(data:,a)}",
+        ".a:not(.b,.c){color:lab(none 0 0)}",
+        ".a:not(.b,.c){border-radius:1px/2px}",
+        ".a:autofill{background:url(data:,a)}",
+        ".a:autofill:not(.b,.c){background:url(data:,a)}",
+        ".a:fullscreen:not(.b,.c){background:url(data:,a)}",
+      ])("%s", source => {
+        const builds = [source];
+        for (let i = 0; i < 4; i++) builds.push(cssInternals.minifyTest(builds[i], "", targets));
+        expect(builds[4]).toBe(builds[3]);
       });
     });
 
@@ -7764,6 +7789,20 @@ describe("css tests", () => {
       });
     });
 
+    // The CSS is stdout, or the file `outfile` for a build with --outdir.
+    const build = async (cwd: string, args: string[], outfile?: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", ...args],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const css = exitCode !== 0 ? "" : outfile ? await Bun.file(join(cwd, outfile)).text() : stdout;
+      return { css: css.trim(), stderr, exitCode };
+    };
+
     test.concurrent("bun build keeps the earlier rule for a browser, and removes it for --target bun", async () => {
       using dir = tempDir("css-duplicate-rules", {
         "in.css": [
@@ -7779,26 +7818,14 @@ describe("css tests", () => {
         "styles.module.css": ["div{width:100vh}", "span{color:red}", "div{width:100dvh}", ""].join("\n"),
         "entry.js": `import "./styles.module.css";\n`,
       });
-      // The CSS is stdout, or the file `outfile` for a build with --outdir.
-      const build = async (args: string[], outfile?: string) => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "build", ...args],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        const css = exitCode !== 0 ? "" : outfile ? await Bun.file(join(String(dir), outfile)).text() : stdout;
-        return { css: css.trim(), stderr, exitCode };
-      };
+      const cwd = String(dir);
 
       const [browser, bun, module, pretty] = await Promise.all([
-        build(["./in.css", "--minify"]),
-        build(["./in.css", "--minify", "--target", "bun"]),
-        build(["./entry.js", "--minify", "--outdir", "out"], "out/entry.css"),
+        build(cwd, ["./in.css", "--minify"]),
+        build(cwd, ["./in.css", "--minify", "--target", "bun"]),
+        build(cwd, ["./entry.js", "--minify", "--outdir", "out"], "out/entry.css"),
         // The check also runs without --minify.
-        build(["./in.css"]),
+        build(cwd, ["./in.css"]),
       ]);
       expect([browser, bun, module, { ...pretty, css: pretty.css.replace(/\/\*.*?\*\/|\s/g, "") }]).toEqual([
         {
@@ -7814,6 +7841,24 @@ describe("css tests", () => {
           exitCode: 0,
         },
       ]);
+    });
+
+    test.concurrent("bun build of its own output stops changing", async () => {
+      using dir = tempDir("css-duplicate-rules-rebuild", {
+        "in.css": ".a:not(.b,.c){background:url(data:,a)}\n.d:autofill{background:url(data:,a)}\n",
+      });
+      const cwd = String(dir);
+      const builds = [];
+      for (let i = 0; i < 4; i++) {
+        const result = await build(cwd, ["./in.css", "--minify"]);
+        builds.push(result);
+        await Bun.write(join(cwd, "in.css"), result.css);
+      }
+      expect(builds.map(({ stderr, exitCode }) => ({ stderr, exitCode }))).toEqual(
+        Array(4).fill({ stderr: "", exitCode: 0 }),
+      );
+      expect(builds[2].css).toContain(".a:not(");
+      expect(builds[3].css).toBe(builds[2].css);
     });
   });
 

@@ -1627,7 +1627,7 @@ describe("Bun.write(dest, stream) into a descriptor the sink was given, with not
 
   // node:child_process wraps the parent's end of descriptor 3 in a socket. `Bun.spawn` gives a raw handle.
   async function runIntoPipe(input: "alone" | "withTheLastChunk", write: string) {
-    const options: SpawnOptions = { stdio: ["pipe", "pipe", "pipe", "pipe"], env: bunEnv as NodeJS.ProcessEnv };
+    const options: SpawnOptions = { stdio: ["pipe", "ignore", "pipe", "pipe"], env: bunEnv as NodeJS.ProcessEnv };
     using child = spawn(bunExe(), ["-e", fixture(dests.pipe, inputs[input], { stat: 3 })], options);
     const { promise: closed, resolve, reject } = Promise.withResolvers<number | null>();
     child.on("close", resolve);

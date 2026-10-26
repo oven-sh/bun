@@ -310,13 +310,16 @@ describe("console.table reads each cell once", () => {
     ).toThrow(boom);
   });
 
-  // Each getter runs arbitrary user code, including a full GC. The cell must
+  // A getter runs arbitrary user code, including a full GC. Each cell must
   // still render the value that its single read returned.
   test("cell values survive a full GC between the width and render passes", () => {
     const N = 64;
     const rows = Array.from({ length: N }, (_, i) => ({
       get x() {
-        Bun.gc(true);
+        // A full GC takes about 50 ms on a debug build, so 4 getters run one,
+        // not all 64. A value that a GC frees shows as a wrong id when the
+        // object of a later getter takes its memory.
+        if (i % 16 === 0) Bun.gc(true);
         return { id: i };
       },
     }));

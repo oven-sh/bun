@@ -517,6 +517,43 @@ describe("bundler", () => {
     capture: ['"d"', "99", '"abcd"[4]', '"ab".charCodeAt(2)'],
     minifySyntax: true,
   });
+  // An index that is negative, not whole, or 2**32 and more is left for run time. -0 is index 0.
+  itBundled("minify/StringIndexFoldingBounds", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(C[-1]);
+        capture(C[1.5]);
+        capture(C[4294967295]);
+        capture(C[4294967296]);
+        capture(C[4294967297]);
+        capture(C[-0]);
+        capture(C.charCodeAt(-1));
+        capture(C.charCodeAt(-0));
+        capture(C.charCodeAt(1.5));
+        capture(C.charCodeAt(4294967296));
+        capture(["p", "q"][-1]);
+        capture(["p", "q"][1.5]);
+        capture(["p", "q"][4294967297]);
+      `,
+    },
+    define: { C: '"€a"' },
+    minifySyntax: true,
+    capture: [
+      '"€a"[-1]',
+      '"€a"[1.5]',
+      '"€a"[4294967295]',
+      '"€a"[4294967296]',
+      '"€a"[4294967297]',
+      '"€"',
+      '"€a".charCodeAt(-1)',
+      "8364",
+      '"€a".charCodeAt(1.5)',
+      '"€a".charCodeAt(4294967296)',
+      '["p", "q"][-1]',
+      '["p", "q"][1.5]',
+      '["p", "q"][4294967297]',
+    ],
+  });
   // `import.meta.file`/`dir` (cjs output) and `module.filename` are inlined from the file path,
   // which is 8-bit and can be non-ASCII. Its folds have to read it per UTF-16 code unit, and
   // `require(import.meta.dir + "/m.js")` still has to resolve at build time.

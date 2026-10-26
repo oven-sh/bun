@@ -43,7 +43,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Blocks until `ready` returns true, then restarts the process. Call it after the error is printed.
 pub fn restart_when(waits_for: &[u8], mut ready: impl FnMut() -> bool) -> ! {
     bun_core::pretty_errorln!(
-        "<r><d>note<r><d>:<r> --watch restarts when {} changes",
+        "<r><d>note<r><d>:<r> Bun restarts when {} changes",
         bun_core::fmt::quote(waits_for),
     );
     bun_core::Output::flush();

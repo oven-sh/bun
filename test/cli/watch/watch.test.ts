@@ -945,6 +945,17 @@ it.concurrent("--watch waits for a bunfig.toml that does not parse on the first 
   await saveUntil(stdout.waitFor("run v1 pre"), () => writeFileSync(join(cwd, "dep.mjs"), depSource("v1")));
 });
 
+// `--hot` with `--check` restarts the process on a change, as --watch does. A
+// start that exits closes stderr without the note, so the note shows the wait.
+it.concurrent("--hot --check waits for a bunfig.toml that does not parse", async () => {
+  using dir = tempDir("hot-check-bunfig-broken", { ...preloadFixture, "bunfig.toml": `preload = [\n` });
+  const { proc, stderr } = spawnWatch(["--hot", "--check", "entry.mjs"], String(dir));
+  await using _ = proc;
+
+  await stderr.waitFor("Unterminated array");
+  await stderr.waitFor("Bun restarts when");
+});
+
 it.concurrent("bun build --watch waits for a bunfig.toml that does not parse when the process restarts", async () => {
   const bunfig = `[install]\nauto = "disable"\n`;
   // The bundle goes outside the watched directory. On Windows the watcher can

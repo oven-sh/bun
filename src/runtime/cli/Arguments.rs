@@ -962,16 +962,21 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
 
-    // `load_config` reads this: under --watch a bunfig.toml that does not parse waits for a save.
-    let watch = match cmd {
-        CommandTag::AutoCommand
-        | CommandTag::RunCommand
-        | CommandTag::TestCommand
-        | CommandTag::RunAsNodeCommand => !args.flag(b"--hot") && args.flag(b"--watch"),
+    // `load_config` reads this: in the mode that restarts the process, a bunfig.toml that does not parse waits for a save.
+    let restarts = match cmd {
+        CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::TestCommand => {
+            if args.flag(b"--hot") {
+                // `watch_instead_of_hot_for_check` makes this the restarting mode later.
+                args.flag(b"--check")
+            } else {
+                args.flag(b"--watch")
+            }
+        }
+        CommandTag::RunAsNodeCommand => !args.flag(b"--hot") && args.flag(b"--watch"),
         CommandTag::BuildCommand => args.flag(b"--watch"),
         _ => false,
     };
-    if watch {
+    if restarts {
         ctx.debug.hot_reload = HotReload::Watch;
     }
 

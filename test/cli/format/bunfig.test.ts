@@ -542,6 +542,13 @@ export function add(a, b) {}
       example(["```sh", "npm install", "```"]),
       example(["\t```sh", "\tnpm install", "\t```"]),
     ],
+    // oxfmt reads the whole block as code, like the second pass above.
+    [
+      "an indented opening fence and a closing fence at the margin",
+      "jsdoc = true",
+      example(["  ```ts", "  foo()", "```"]),
+      example(["  ```ts", "  foo();", "  ```"]),
+    ],
     [
       "a fence inside a fence",
       "jsdoc = true",

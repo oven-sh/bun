@@ -60,16 +60,16 @@ fn example_code(text: &[u8]) -> &[u8] {
 }
 
 /// Splits `rest`, the lines after an opening fence, into the code and the closing fence: the last line that is ```
-/// behind `fence_indent`, the indentation of the opening fence, since a formatted example indents both with the code.
-/// oxfmt 0.72 finds it at the start of the line only, and on its second pass prints the block as code, with
+/// behind at most `fence_indent`, the indentation of the opening fence, since a formatted example indents both with
+/// the code. oxfmt 0.72 finds it at the start of the line only, and on its second pass prints the block as code, with
 /// ` *   ```;` at the end.
 fn split_at_closing_fence<'a>(rest: &'a [u8], fence_indent: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
     let mut end = rest.len();
     loop {
         let start = strings::last_index_of_char(&rest[..end], b'\n').map_or(0, |at| at + 1);
-        if rest[start..end]
-            .strip_prefix(fence_indent)
-            .is_some_and(|line| line.starts_with(b"```"))
+        let line = &rest[start..end];
+        let fence = strings::trim_unicode_whitespace_start(line);
+        if fence.starts_with(b"```") && fence_indent.starts_with(&line[..line.len() - fence.len()])
         {
             let inner = strings::trim_unicode_whitespace_end(&rest[..start]);
             return Some((inner, strings::trim_unicode_whitespace(&rest[start..])));

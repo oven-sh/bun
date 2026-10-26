@@ -518,9 +518,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.options.features.minify_syntax {
                         // minify "long-string".length to 11
                         if name == b"length" {
-                            if let Some(len) = str_.javascript_length() {
-                                return Some(p.new_expr(E::Number::new(len as f64), loc));
-                            }
+                            let len = str_.javascript_length();
+                            return Some(p.new_expr(E::Number::new(f64::from(len)), loc));
                         }
                     }
                 }

@@ -520,7 +520,7 @@ fn evaluate_instruction(
                 if let PropertyLiteral::String(prop_name) = property {
                     if prop_name.slice() == b"length" {
                         // Use UTF-16 code unit count to match JS .length semantics
-                        let len = s.len_utf16()? as f64;
+                        let len = s.len_utf16() as f64;
                         let loc = *loc;
                         let result = Constant::Primitive {
                             value: PrimitiveValue::Number(FloatValue::new(len)),
@@ -805,17 +805,11 @@ fn is_reserved_word(s: &[u8]) -> bool {
     )
 }
 
-/// 8-bit data is WTF-8, and is not always ASCII.
 fn push_units(out: &mut Vec<u16>, s: &bun_ast::E::EString) {
     if s.is_utf16 {
         out.extend_from_slice(s.slice16());
     } else {
-        let bytes = s.slice8();
-        let start = out.len();
-        out.resize(start + bytes.len(), 0);
-        let written =
-            bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut out[start..], bytes).len();
-        out.truncate(start + written);
+        out.extend(s.slice8().iter().map(|&b| b as u16));
     }
 }
 

@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::borrow::Cow;
 use std::io::Write as _;
 use std::sync::OnceLock;
@@ -142,6 +142,15 @@ pub struct Entry {
     pub need_stat: AtomicBool,
 
     abs_path: OnceLock<Interned>,
+    /// What `walked_path_or_try_fill` filled, newest first.
+    walked_paths: AtomicPtr<WalkedPath>,
+}
+
+/// A path to a file through a link to its directory. `path[..dir_len]` is the directory walked.
+struct WalkedPath {
+    path: Interned,
+    dir_len: usize,
+    next: Option<&'static WalkedPath>,
 }
 
 impl Entry {
@@ -206,10 +215,49 @@ impl Entry {
         p
     }
 
-    /// Kept by a re-read for `name` if that is `base_` and ends a filled `abs_path`, byte for byte.
+    /// The paths that `walked_path_or_try_fill` filled.
+    fn walked_paths(&self) -> impl Iterator<Item = &'static WalkedPath> {
+        // SAFETY: a node is never freed, and is not written once it is stored.
+        let newest = unsafe { self.walked_paths.load(Ordering::Acquire).as_ref() };
+        core::iter::successors(newest, |walked| walked.next)
+    }
+
+    /// Like `abs_path_or_try_fill`, with one path per `dir` that leads to the file through a link.
+    pub fn walked_path_or_try_fill<E>(
+        &self,
+        dir: &[u8],
+        fill: impl FnOnce() -> Result<Interned, E>,
+    ) -> Result<Interned, E> {
+        let through_dir = |walked: &&WalkedPath| &walked.path[..walked.dir_len] == dir;
+        if let Some(walked) = self.walked_paths().find(through_dir) {
+            return Ok(walked.path);
+        }
+        let _guard = self.mutex.lock_guard();
+        if let Some(walked) = self.walked_paths().find(through_dir) {
+            return Ok(walked.path);
+        }
+        let path = fill()?;
+        // Kept only if a lookup by `dir` finds it.
+        if path.starts_with(dir) {
+            let walked = Box::new(WalkedPath {
+                path,
+                dir_len: dir.len(),
+                next: self.walked_paths().next(),
+            });
+            self.walked_paths
+                .store(bun_core::heap::into_raw(walked), Ordering::Release);
+        }
+        Ok(path)
+    }
+
+    /// Kept by a re-read for `name` if that is `base_` and ends every filled path, byte for byte.
     fn is_kept_as(&self, name: &[u8]) -> bool {
         let path = self.abs_path().as_bytes();
-        self.base() == name && (path.is_empty() || path.ends_with(name))
+        self.base() == name
+            && (path.is_empty() || path.ends_with(name))
+            && self
+                .walked_paths()
+                .all(|walked| walked.path.ends_with(name))
     }
 
     /// Stat-on-first-use.
@@ -602,6 +650,7 @@ impl DirEntry {
                     fd: Fd::INVALID,
                 }));
                 addr_of_mut!((*p).abs_path).write(OnceLock::new());
+                addr_of_mut!((*p).walked_paths).write(AtomicPtr::new(core::ptr::null_mut()));
                 p
             }
         };

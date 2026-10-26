@@ -475,6 +475,8 @@ pub struct Resolver<'a> {
     /// Stored as a `Copy` enum tag (no self-reference) and resolved on demand
     /// via [`Self::extension_order`] / [`options::BundleOptions::ext_order_slice`].
     pub(crate) extension_order: options::ExtOrder,
+    /// For a match that skips `finalize_result`: a file behind a link is named by the path walked.
+    names_as_walked: bool,
     pub(crate) timer: Timer,
 
     pub care_about_bin_folder: bool,
@@ -619,6 +621,7 @@ impl<'a> Resolver<'a> {
             fs: from.fs,
             log,
             extension_order: from.extension_order,
+            names_as_walked: false,
             timer: Timer::start().unwrap_or_else(|_| panic!("Timer fail")),
             care_about_bin_folder: from.care_about_bin_folder,
             care_about_scripts: from.care_about_scripts,
@@ -957,6 +960,7 @@ impl<'a> Resolver<'a> {
             fs: _fs,
             log,
             extension_order: options::ExtOrder::DefaultDefault,
+            names_as_walked: false,
             care_about_browser_field,
             care_about_bin_folder: false,
             care_about_scripts: false,
@@ -1209,10 +1213,10 @@ impl<'a> Resolver<'a> {
             && !self.matches_user_external_pattern(import_path)
         {
             let mut res = MatchResult::default();
-            if self
-                .resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res)
-                .is_success()
-            {
+            self.names_as_walked = true;
+            let matched = self.resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res);
+            self.names_as_walked = false;
+            if matched.is_success() {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note(
                         b"Resolved via tsconfig.json \"paths\" before applying packages=external"
@@ -1223,7 +1227,7 @@ impl<'a> Resolver<'a> {
                 self.extension_order = original_order;
                 return ResultUnion::Success(Result {
                     import_kind: kind,
-                    path_pair: self.paths_as_walked(res.path_pair, res.walked_dirs),
+                    path_pair: res.path_pair,
                     package_json: res.package_json,
                     dirname_fd: res.dirname_fd,
                     file_fd: res.file_fd,
@@ -3798,7 +3802,7 @@ impl<'a> Resolver<'a> {
                 }
 
                 let Some((absolute_out_path, via_link)) =
-                    Self::found_file_path(entry_query.entry(), resolved_dir_info.abs_path, base)
+                    self.found_file_path(entry_query.entry(), resolved_dir_info.abs_path, base)
                 else {
                     esm_resolution.status = Status::ModuleNotFound;
                     return MatchStatus::NotFound;
@@ -3959,7 +3963,7 @@ impl<'a> Resolver<'a> {
         query: &crate::fs::EntryLookup<'static>,
         out: &mut MatchResult,
     ) -> bool {
-        let Some((abs_path, via_link)) = Self::found_file_path(
+        let Some((abs_path, via_link)) = self.found_file_path(
             query.entry(),
             resolved_dir_info.abs_path,
             query.entry().base(),
@@ -5472,7 +5476,7 @@ impl<'a> Resolver<'a> {
                 == Fs::file_system::EntryKind::File
             {
                 let Some((out_buf, via_link)) =
-                    Self::found_file_path(lookup.entry(), dir_info.abs_path, &base[..])
+                    self.found_file_path(lookup.entry(), dir_info.abs_path, &base[..])
                 else {
                     return MatchStatus::NotFound;
                 };
@@ -5661,38 +5665,6 @@ impl<'a> Resolver<'a> {
                 .map(Dirname::dirname),
             WalkedDir::FileAt(file) => Some(Dirname::dirname(file.slice())),
         }
-    }
-
-    /// A result that skips `finalize_result` names a file behind a link by the path walked.
-    fn paths_as_walked(&self, mut pair: PathPair, walked: [Option<WalkedDir>; 2]) -> PathPair {
-        let [primary, secondary] = walked;
-        if let Some(walked) = primary {
-            self.name_as_walked(&mut pair.primary, &walked);
-        }
-        if let (Some(walked), Some(path)) = (secondary, pair.secondary.as_mut()) {
-            self.name_as_walked(path, &walked);
-        }
-        pair
-    }
-
-    fn name_as_walked(&self, path: &mut Path, walked: &WalkedDir) {
-        let Some(dir) = self.walked_dir_path(walked) else {
-            return;
-        };
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(as_walked) = self
-            .fs_ref()
-            .abs_buf_checked(&[dir, bun_paths::basename(path.text)], &mut buf[..])
-        else {
-            return;
-        };
-        let text = self
-            .fs_ref()
-            .dirname_store
-            .append_slice(as_walked)
-            .expect("unreachable");
-        path.text = text;
-        path.pretty = text;
     }
 
     pub(crate) fn load_as_file_or_directory(
@@ -6029,7 +6001,7 @@ impl<'a> Resolver<'a> {
                 }
 
                 let Some((abs_path, via_link)) =
-                    Self::found_file_path(query.entry(), dir_path, query.entry().base())
+                    self.found_file_path(query.entry(), dir_path, query.entry().base())
                 else {
                     dec_ret!(None);
                 };
@@ -6107,7 +6079,7 @@ impl<'a> Resolver<'a> {
                             }
 
                             let Some((abs_path, via_link)) =
-                                Self::found_file_path(query.entry(), dir_path, &buffer[..])
+                                self.found_file_path(query.entry(), dir_path, &buffer[..])
                             else {
                                 dec_ret!(None);
                             };
@@ -6269,7 +6241,7 @@ impl<'a> Resolver<'a> {
 
                 // now that we've found it, we allocate it.
                 let (found, via_link) =
-                    Self::found_file_path(query.entry(), Dirname::dirname(path), file_name)?;
+                    self.found_file_path(query.entry(), Dirname::dirname(path), file_name)?;
                 return Some(LoadResult {
                     path: found,
                     dirname_fd,
@@ -6302,6 +6274,7 @@ impl<'a> Resolver<'a> {
 
     /// The path of the file found as `name` in `dir`, and whether it is the real one behind a link.
     fn found_file_path(
+        &self,
         entry: &Fs::file_system::Entry,
         dir: &[u8],
         name: &[u8],
@@ -6309,16 +6282,34 @@ impl<'a> Resolver<'a> {
         if listing_is_named(entry.dir, dir) {
             return Some((Self::entry_abs_path(entry, name)?, false));
         }
-        if let Some(real) = Self::entry_abs_path(entry, entry.base()) {
+        if !self.names_as_walked
+            && let Some(real) = Self::entry_abs_path(entry, entry.base())
+        {
             return Some((real, true));
         }
-        let walked = Fs::FileSystem::get().abs_buf_checked(&[dir, name], bufs!(entry_abs_path))?;
-        Some((
-            Fs::file_system::DirnameStore::instance()
-                .append_slice(walked)
-                .expect("unreachable"),
-            false,
-        ))
+        Some((Self::entry_walked_path(entry, dir, name)?, false))
+    }
+
+    /// `dir` joined with `name`, interned once per `dir` that leads to the file through a link.
+    fn entry_walked_path(
+        entry: &Fs::file_system::Entry,
+        dir: &[u8],
+        name: &[u8],
+    ) -> Option<&'static [u8]> {
+        let dir = strings::without_trailing_slash_windows_path(dir);
+        entry
+            .walked_path_or_try_fill(dir, || {
+                let joined = Fs::FileSystem::get()
+                    .abs_buf_checked(&[dir, name], bufs!(entry_abs_path))
+                    .ok_or(())?;
+                Ok::<_, ()>(Interned::from_static(
+                    Fs::file_system::DirnameStore::instance()
+                        .append_slice(joined)
+                        .expect("unreachable"),
+                ))
+            })
+            .ok()
+            .map(Interned::as_bytes)
     }
 
     /// For a reader that ran `kind()` on `entry`: where a link leads, else its filled `abs_path`.

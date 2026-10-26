@@ -665,7 +665,10 @@ mod tests {
 
     #[test]
     fn shape_marks_a_struct_block() {
-        let shape = StructShape::new(vec![vec![u16::from(b'a')]]).unwrap();
+        let shape = StructShape::new(vec![crate::shape::FieldKey::Name(
+            vec![u16::from(b'a')].into(),
+        )])
+        .unwrap();
         let b = SharedBlock::with_shape(shape).unwrap();
         assert_eq!(b.len(), 1);
         assert!(b.shape().is_some());

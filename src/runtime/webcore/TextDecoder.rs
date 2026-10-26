@@ -300,6 +300,10 @@ impl TextDecoder {
                         }
 
                         debug_assert!(matches!(err, strings::ToUTF16Error::OutOfMemory));
+                        // A streamed chunk that throws for its length or for memory gives back the bytes that it carried.
+                        if !FLUSH {
+                            self.buffered = buffered;
+                        }
                         return Err(if bun_core::String::utf16_transcode_too_long(input) {
                             heap.string_too_long()
                         } else {
@@ -314,6 +318,9 @@ impl TextDecoder {
                 if let Some((decoded, leftover, leftover_len)) = maybe_decode_result {
                     // The one way `create_utf16_string_from_vec` fails, checked before the decoder changes.
                     if decoded.len() > bun_core::String::max_length() {
+                        if !FLUSH {
+                            self.buffered = buffered;
+                        }
                         return Err(heap.string_too_long());
                     }
                     if set_bom_seen {
@@ -334,7 +341,15 @@ impl TextDecoder {
                 // All-ASCII input needed no conversion. `create_latin1_string`
                 // copies, so `input` may borrow the caller's buffer or `joined_owned`.
                 // Experiment: using mimalloc directly is slightly slower
-                let string = heap.create_latin1_string(input)?;
+                let string = match heap.create_latin1_string(input) {
+                    Ok(string) => string,
+                    Err(error) => {
+                        if !FLUSH {
+                            self.buffered = buffered;
+                        }
+                        return Err(error);
+                    }
+                };
                 if set_bom_seen {
                     self.bom_seen = true;
                 }

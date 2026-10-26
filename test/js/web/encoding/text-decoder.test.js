@@ -1054,7 +1054,20 @@ describe("TextDecoder when the result is too long for a string", () => {
       const transcoder = new TextDecoder();
       await run("utf-8, stream, not ASCII", () => transcoder.decode(notAscii, { stream: true }));
       // The chunk that failed left neither its BOM state nor its last bytes in the decoder.
-      results["the next chunk, not ASCII"] = transcoder.decode(Uint8Array.of(0xef, 0xbb, 0xbf, 0x61));`,
+      results["the next chunk, not ASCII"] = transcoder.decode(Uint8Array.of(0xef, 0xbb, 0xbf, 0x61));
+      // A chunk that throws gives back the bytes that the chunk before it left: the start of "€" here.
+      const carrying = new TextDecoder();
+      carrying.decode(Uint8Array.of(0xe2, 0x82), { stream: true });
+      const rest = new Uint8Array(${1024 * 1024 + 2}).fill(97);
+      rest[0] = 0xac;
+      await run("utf-8, stream, after the start of a sequence", () => carrying.decode(rest, { stream: true }));
+      results["the sequence, ended later"] = carrying.decode(Uint8Array.of(0xac, 0x61));
+      // And the start of a BOM. The rest of this chunk is ASCII, so it is not transcoded.
+      const split = new TextDecoder();
+      split.decode(Uint8Array.of(0xef, 0xbb), { stream: true });
+      rest[0] = 0xbf;
+      await run("utf-8, stream, after the start of a BOM", () => split.decode(rest, { stream: true }));
+      results["the BOM, ended later"] = split.decode(Uint8Array.of(0xbf, 0x61));`,
       { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(1024 * 1024) },
     );
     expect(results).toEqual({
@@ -1062,6 +1075,10 @@ describe("TextDecoder when the result is too long for a string", () => {
       "one byte less": { length: 1024 * 1024 },
       "utf-8, stream, not ASCII": tooLong,
       "the next chunk, not ASCII": "a",
+      "utf-8, stream, after the start of a sequence": tooLong,
+      "the sequence, ended later": "€a",
+      "utf-8, stream, after the start of a BOM": tooLong,
+      "the BOM, ended later": "a",
     });
     expect(exitCode).toBe(0);
   });

@@ -7159,6 +7159,158 @@ describe("css tests", () => {
         chrome: Some(95 << 16),
       },
     );
+
+    // One entry of a `transition` can become several names: a logical shorthand becomes its physical longhands,
+    // and `mask-border` gets `-webkit-mask-box-image`. Each name keeps the values of the entry it came from.
+    describe("an entry that becomes several names keeps its duration, delay and timing function", () => {
+      const safari = (version: number) => ({ safari: Some(version << 16) });
+      const rtlLangs = "ae ar arc bcc bqi ckb dv fa glk he ku mzn nqo pnb ps sd ug ur yi"
+        .split(" ")
+        .map(lang => `:lang(${lang})`)
+        .join(", ");
+      // The rules that one rule with an inline logical property becomes for Safari 8.
+      const directionRules = (ltr: string, rtl: string) => `
+        .foo:not(:-webkit-any(${rtlLangs})) { ${ltr} }
+        .foo:not(:is(${rtlLangs})) { ${ltr} }
+        .foo:-webkit-any(${rtlLangs}) { ${rtl} }
+        .foo:is(${rtlLangs}) { ${rtl} }
+      `;
+
+      prefix_test(
+        `.foo { transition: mask-border 1s, opacity 2s }`,
+        `.foo { transition: -webkit-mask-box-image 1s, mask-border 1s, opacity 2s; }`,
+        safari(15),
+      );
+      prefix_test(
+        `.foo { transition: inset 1s, opacity 2s }`,
+        `.foo { transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: margin-block 1s, opacity 2s, color 3s }`,
+        `.foo { transition: margin-top 1s, margin-bottom 1s, opacity 2s, color 3s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: border-block-color 1s, border-inline-width 2s, opacity 3s }`,
+        `.foo { transition: border-top-color 1s, border-bottom-color 1s, border-left-width 2s, border-right-width 2s, opacity 3s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: mask-composite 1s, mask-mode 2s, opacity 3s }`,
+        `.foo { transition: -webkit-mask-composite 1s, mask-composite 1s, -webkit-mask-source-type 2s, mask-mode 2s, opacity 3s; }`,
+        safari(15),
+      );
+      prefix_test(
+        `.foo { transition: inset 1s linear 3s, opacity 2s ease-in 4s }`,
+        `.foo { transition: top 1s linear 3s, bottom 1s linear 3s, left 1s linear 3s, right 1s linear 3s, opacity 2s ease-in 4s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo {
+          transition-property: inset, opacity;
+          transition-duration: 1s, 2s;
+          transition-delay: 3s, 4s;
+          transition-timing-function: linear, ease-in;
+        }`,
+        `.foo { transition: top 1s linear 3s, bottom 1s linear 3s, left 1s linear 3s, right 1s linear 3s, opacity 2s ease-in 4s; }`,
+        safari(8),
+      );
+      // A shorter list repeats over the entries as written, and a value past the last entry is not used.
+      prefix_test(
+        `.foo {
+          transition-property: inset, opacity, color;
+          transition-duration: 1s, 2s;
+          transition-delay: 0s;
+          transition-timing-function: ease;
+        }`,
+        `.foo { transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s, color 1s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo {
+          transition-property: inset;
+          transition-duration: 1s, 2s;
+          transition-delay: 0s;
+          transition-timing-function: ease;
+        }`,
+        `.foo { transition: top 1s, bottom 1s, left 1s, right 1s; }`,
+        safari(8),
+      );
+      // The order as written stays, so the last entry for a property still decides.
+      prefix_test(
+        `.foo { transition: top 5s, inset 1s, left 7s }`,
+        `.foo { transition: top 5s, top 1s, bottom 1s, left 1s, right 1s, left 7s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: all 1s, inset 2s }`,
+        `.foo { transition: all 1s, top 2s, bottom 2s, left 2s, right 2s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: inset 1s, opacity 2s; transition-duration: 3s, 4s }`,
+        `.foo { transition: top 3s, bottom 3s, left 3s, right 3s, opacity 4s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition-duration: 3s, 4s; transition: inset 1s, opacity 2s }`,
+        `.foo { transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s; }`,
+        safari(8),
+      );
+      // The handler writes what it holds when a prefixed value differs or a longhand is not parsed.
+      prefix_test(
+        `.foo { -webkit-transition: inset 1s, opacity 2s; transition: inset 3s, opacity 4s }`,
+        `.foo {
+          -webkit-transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s;
+          transition: top 3s, bottom 3s, left 3s, right 3s, opacity 4s;
+        }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: inset 1s, opacity 2s; transition-timing-function: var(--ease) }`,
+        `.foo {
+          transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s;
+          transition-timing-function: var(--ease);
+        }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: inset 1s, opacity 2s, transform 3s }`,
+        `.foo {
+          -webkit-transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s, -webkit-transform 3s, transform 3s;
+          transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s, -webkit-transform 3s, transform 3s;
+        }`,
+        safari(6),
+      );
+      // Both direction rules, with the inline logical property in front of the entry and behind it.
+      prefix_test(
+        `.foo { transition: margin-inline-start 1s, inset 2s, opacity 3s }`,
+        directionRules(
+          `transition: margin-left 1s, top 2s, bottom 2s, left 2s, right 2s, opacity 3s;`,
+          `transition: margin-right 1s, top 2s, bottom 2s, left 2s, right 2s, opacity 3s;`,
+        ),
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: inset 1s, margin-inline-start 2s, opacity 3s }`,
+        directionRules(
+          `transition: top 1s, bottom 1s, left 1s, right 1s, margin-left 2s, opacity 3s;`,
+          `transition: top 1s, bottom 1s, left 1s, right 1s, margin-right 2s, opacity 3s;`,
+        ),
+        safari(8),
+      );
+      // Nothing becomes several names without targets, or for targets that need nothing.
+      minify_test(
+        ".foo { transition: inset 1s, mask-border 2s, transform 3s }",
+        ".foo{transition:inset 1s,mask-border 2s,transform 3s}",
+      );
+      prefix_test(
+        `.foo { transition: inset 1s, mask-border 2s, transform 3s, opacity 4s }`,
+        `.foo { transition: inset 1s, mask-border 2s, transform 3s, opacity 4s; }`,
+        { chrome: Some(130 << 16) },
+      );
+    });
   });
 
   describe("animation", () => {

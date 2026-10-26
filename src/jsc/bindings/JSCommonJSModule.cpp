@@ -65,6 +65,7 @@
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
 #include "ModuleLoader.h"
+#include "BunProcess.h"
 #include <JavaScriptCore/JSMap.h>
 
 #include <JavaScriptCore/JSMapInlines.h>
@@ -174,6 +175,73 @@ static void putModuleGraphRequireMain(VM& vm, JSFunction* requireFunction, JSCom
         requireFunction->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsModuleGraphRequireMainGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
 }
 
+extern "C" bool Bun__VM__isMainModuleLoad(void* bunVM, const BunString* key, bool startedScriptIsMain);
+extern "C" bool Bun__VM__isRunMainModule(void* bunVM, const BunString* key);
+
+// Node copies process.mainModule into each new require function. Here a new one is bound from a function whose frozen prototype has `main`.
+static JSObject* prototypeWithMainModule(Zig::GlobalObject* globalObject)
+{
+    if (!globalObject->hasRequireFunctionUnbound())
+        return nullptr;
+    JSObject* prototype = globalObject->requireFunctionUnbound()->getPrototypeDirect().getObject();
+    return prototype->inherits<RequireFunctionPrototype>() ? nullptr : prototype;
+}
+
+static JSObject* requireFunctionPrototypeOf(Zig::GlobalObject* globalObject)
+{
+    JSObject* prototype = prototypeWithMainModule(globalObject);
+    return (prototype ? prototype : globalObject->requireFunctionUnbound())->getPrototypeDirect().getObject();
+}
+
+static void bindNewRequireFunctionsFrom(VM& vm, Zig::GlobalObject* globalObject, JSObject* prototype)
+{
+    globalObject->setRequireFunctionUnbound(vm, JSFunction::create(vm, globalObject, commonJSRequireCodeGenerator(vm), globalObject->globalScope(), JSFunction::createStructure(vm, globalObject, prototype)));
+}
+
+JSValue mainModuleOfNewRequireFunctions(Zig::GlobalObject* globalObject)
+{
+    JSObject* prototype = prototypeWithMainModule(globalObject);
+    return prototype ? prototype->getDirect(globalObject->vm(), WebCore::builtinNames(globalObject->vm()).mainPublicName()) : JSValue();
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__forgetMainModuleOfNewRequireFunctions(Zig::GlobalObject* globalObject)
+{
+    if (prototypeWithMainModule(globalObject))
+        bindNewRequireFunctionsFrom(globalObject->vm(), globalObject, requireFunctionPrototypeOf(globalObject));
+}
+
+// Node's Module._load() for a main module: it is process.mainModule, and `require.main` of the require functions made from now on.
+static void becomeMainModule(VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* prototype = JSC::constructEmptyObject(globalObject, requireFunctionPrototypeOf(globalObject), 1);
+    prototype->putDirect(vm, WebCore::builtinNames(vm).mainPublicName(), moduleObject, 0);
+    // Native code reads `main` and the prototype of this object, and user code reaches it with Object.getPrototypeOf(require).
+    prototype->freeze(vm);
+    bindNewRequireFunctionsFrom(vm, globalObject, prototype);
+
+    globalObject->processObject()->setMainModuleOfRunMain(globalObject, moduleObject);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
+// Whether the CommonJS module that the loader creates now for `key` is a main module: RunMainModules in VirtualMachine.rs.
+static bool isMainModuleLoad(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSString* key)
+{
+    if (graph || !globalObject->m_moduleRunMainFunction.isInitialized())
+        return false;
+    BunString bunKey = Bun::toString(key->tryGetValue().data);
+    return Bun__VM__isMainModuleLoad(globalObject->bunVM(), &bunKey, !!prototypeWithMainModule(globalObject));
+}
+
+void putImportMetaMainOfRunMainModule(Zig::GlobalObject* globalObject, JSObject* importMeta, JSValue key)
+{
+    if (!key.isString())
+        return;
+    BunString bunKey = Bun::toString(asString(key)->tryGetValue().data);
+    if (Bun__VM__isRunMainModule(globalObject->bunVM(), &bunKey))
+        importMeta->putDirect(globalObject->vm(), WebCore::builtinNames(globalObject->vm()).mainPublicName(), jsBoolean(true), PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::DontEnum);
+}
+
 // The source a graph's module is compiled from: the same text, in a code-cache entry of its
 // overlay shape's own. A graph's wrapper runs under the graph's overlay (below), and JSC's code
 // cache shares compiled code, baseline JIT code included, between everything with the same key;
@@ -239,12 +307,18 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 
     // Node reports a CJS entry's top-level throw as origin "uncaughtException", not
     // "unhandledRejection"; record the entry mode for the run command. Only the root
-    // module (m_id == ".") can be the entry, so the FFI compare runs at most once.
+    // module (m_id == ".") can be the entry, so the FFI compare runs once for each main module.
     if (auto* id = moduleObject->m_id.get(); id && id->length() == 1) [[unlikely]] {
         auto view = id->view(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         if (view == "."_s)
             Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
+    }
+
+    bool becomesMain = std::exchange(moduleObject->loadedAsMain, false);
+    if (becomesMain) [[unlikely]] {
+        becomeMainModule(vm, globalObject, moduleObject);
+        RETURN_IF_EXCEPTION(scope, false);
     }
 
     JSFunction* resolveFunction = nullptr;
@@ -353,6 +427,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
             auto* importMeta = Zig::ImportMetaObject::create(globalObject, filename);
             RETURN_IF_EXCEPTION(scope, false);
             importMeta->setModuleGraph(vm, graph);
+            if (becomesMain) [[unlikely]]
+                putImportMetaMainOfRunMainModule(globalObject, importMeta, filename);
             args.append(importMeta);
         }
     }
@@ -1716,7 +1792,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && requireMap->size() == 0) {
+        bool isMain = isMainModuleLoad(globalObject, graph, requireMapKey);
+        if (!graph && (requireMap->size() == 0 || isMain)) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
@@ -1739,6 +1816,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
             requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
+        moduleObject->loadedAsMain = isMain;
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
@@ -1848,7 +1926,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && requireMap->size() == 0) {
+        bool isMain = isMainModuleLoad(globalObject, graph, requireMapKey);
+        if (!graph && (requireMap->size() == 0 || isMain)) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
@@ -1856,6 +1935,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
             requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
+        moduleObject->loadedAsMain = isMain;
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),

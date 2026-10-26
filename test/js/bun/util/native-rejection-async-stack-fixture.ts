@@ -119,7 +119,7 @@ async function catchRejectResult() {
   await native().catch(reject);
   return seen;
 }
-// As above, behind a chain that is longer than one walk.
+// As above. A long then() chain follows the promise that `reject` belongs to.
 async function catchRejectResultLongChain() {
   const { promise, reject } = Promise.withResolvers();
   let tail = promise;
@@ -128,7 +128,7 @@ async function catchRejectResultLongChain() {
   await native().catch(reject);
   return seen;
 }
-// As above, behind more reject functions than the search has walks.
+// As above. A chain of reject functions follows the promise that `reject` belongs to.
 async function catchRejectResultManyTargets() {
   let { promise, reject } = Promise.withResolvers();
   const first = reject;
@@ -151,6 +151,19 @@ async function failFastWorker() {
   }
   await worker().catch(abort);
   return seen;
+}
+
+// The rejection passes through a chain of reject functions. Only the last promise is awaited.
+async function rejectFunctionChain() {
+  let { promise, reject } = Promise.withResolvers();
+  const first = reject;
+  for (let i = 0; i < 10; i++) {
+    const next = Promise.withResolvers();
+    promise.catch(next.reject);
+    ({ promise, reject } = next);
+  }
+  native().catch(first);
+  await promise;
 }
 
 // worker() is in a cycle of then() links that the walk can only enter through a
@@ -186,6 +199,7 @@ const shapes = [
   catchRejectResult,
   catchRejectResultLongChain,
   catchRejectResultManyTargets,
+  rejectFunctionChain,
   failFastWorker,
   cycleBehindRejectFunction,
 ];

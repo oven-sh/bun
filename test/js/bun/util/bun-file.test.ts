@@ -142,6 +142,7 @@ test.concurrent.each([
     "catchRejectResult",
     "catchRejectResultLongChain",
     "catchRejectResultManyTargets",
+    "rejectFunctionChain",
   ];
   const frames = {
     ...Object.fromEntries(shapes.map(shape => [shape, [shape, "asyncFramesOf"]])),

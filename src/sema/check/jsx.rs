@@ -463,9 +463,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// type, or `None` if it has none.
     fn jsx_props_from_member(&mut self, sig: SigId, name: Atom) -> Option<TypeId> {
         // If the signature represents the signatures of a union's members, each member's instance
-        // type is considered.
+        // type is considered. An instantiation of such a signature has no `composite`
+        // (`instantiateSignatureEx`), so its instance type is the instantiated union of theirs.
         let single_sig = [sig];
         let parts: &[SigId] = match self.types().sig(sig) {
+            SigData::Synth { of, ret, .. } if of.len() > 1 && *ret != TypeId::UNRESOLVED => {
+                &single_sig[..]
+            }
             SigData::Synth { of, .. } if !of.is_empty() => &of[..],
             _ => &single_sig[..],
         };
@@ -475,9 +479,15 @@ impl<'p, 's> Checker<'p, 's> {
             if self.is_any(instance) {
                 return Some(instance);
             }
-            // `getTypeOfPropertyOfType`: an index signature isn't a property.
+            // `getTypeOfPropertyOfType`: an index signature isn't a property, and neither is a
+            // property that only some members of a union have.
             let apparent = self.apparent_type(instance);
-            if !self.is_union(apparent) && self.prop_ref(apparent, name).is_none() {
+            let is_property = if self.is_union(apparent) {
+                self.get_property_of_type(apparent, name).is_some()
+            } else {
+                self.prop_ref(apparent, name).is_some()
+            };
+            if !is_property {
                 return None;
             }
             results.push(self.type_of_property(instance, name)?);

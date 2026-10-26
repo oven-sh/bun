@@ -471,7 +471,10 @@ impl DevServer {
                 }
             } else {
                 // Without `PATH_IS_MODULE` the path is a specifier, not an in-graph file.
-                if !import.flags.contains(bun_ast::ImportRecordFlags::PATH_IS_MODULE) {
+                if !import
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::PATH_IS_MODULE)
+                {
                     continue;
                 }
                 // Find the in-graph import.

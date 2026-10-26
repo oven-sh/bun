@@ -215,10 +215,13 @@ interface TranspilerOptions {
       // - export function and export class, when deadCodeElimination is false
       // - a name that a destructuring pattern declares
       // - export default class, when the value for default is not a pair
-      // - export { local as name } with no from, when the key is name (the key is local)
+      // - export { local as name } with no from, when the key is name
+      // For that list the key is local, and only a pair works: a plain value declares local a second time
       // For a pair or a map that you keep in a variable, write as const
       // Write each key as an identifier or default, and each name as an identifier
       // The constructor throws a TypeError for a key or a name such as a-b
+      // Give each pair a name that the top level of the file does not declare
+      // transformSync() throws for a name that is taken, or when two replaced exports of one file take the same name
       replace?: Record<
         string,
         | string

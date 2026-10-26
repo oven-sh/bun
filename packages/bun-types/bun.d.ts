@@ -3029,7 +3029,9 @@ declare module "bun" {
        *   `export const { a } = value`.
        * - `export default class`, when the value for `default` is not a pair.
        * - `export { local as name }` with no `from`, when the key is `name`.
-       *   The key for that list is `local`.
+       *
+       * For that list the key is `local`, and only a pair works. A plain
+       * value adds a second declaration of `local`.
        *
        * For a pair or a map that you keep in a variable, write `as const`:
        * `const pair = ["__N_SSG", true] as const`. Without a type, TypeScript
@@ -3038,6 +3040,11 @@ declare module "bun" {
        * Write each key as an identifier or `default`, and each `name` as an
        * identifier. The constructor throws a `TypeError` for a key or a
        * `name` such as `a-b`.
+       *
+       * Give each pair a `name` that the top level of the file does not
+       * declare. `transformSync()` throws when the top level declares a
+       * variable, function or class with that `name`, or when two replaced
+       * exports of one file take the same `name`.
        *
        * @example
        * ```ts

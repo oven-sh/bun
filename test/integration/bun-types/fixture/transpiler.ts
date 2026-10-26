@@ -58,6 +58,7 @@ new Bun.Transpiler({
 });
 
 // The runtime only reads the pair, so a readonly tuple is accepted.
+// Two keys can take one name, when each file exports only one of the two keys.
 {
   const entry = ["__N_SSG", true] as const;
   new Bun.Transpiler({ exports: { replace: { getStaticProps: entry, getStaticPaths: entry } } });

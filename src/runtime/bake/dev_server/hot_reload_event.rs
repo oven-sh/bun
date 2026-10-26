@@ -96,19 +96,19 @@ impl HotReloadEvent {
         // First handle directories, because this may mutate `event.files`
         if dev.directory_watchers.watches.count() > 0 {
             for changed_dir_with_slash in self.dirs.keys() {
-                let changed_dir = bun_paths::string_paths::without_trailing_slash_windows_path(
-                    changed_dir_with_slash,
-                );
-
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions
                 // SAFETY: server_transpiler is initialized in DevServer::init before any
                 // HotReloadEvent can fire.
                 let _ = unsafe { dev.server_transpiler.assume_init_mut() }
                     .resolver
-                    .bust_dir_cache(changed_dir);
+                    .bust_dir_cache(changed_dir_with_slash);
 
                 // if a directory watch exists for resolution failures, check those now.
+                // `DirectoryWatchStore::insert` keys `watches` with this strip.
+                let changed_dir = bun_paths::string_paths::without_trailing_slash_windows_path(
+                    changed_dir_with_slash,
+                );
                 if let Some(watcher_index) = dev.directory_watchers.watches.get_index(changed_dir) {
                     let mut new_chain: Option<u32> = None;
                     let mut it: Option<u32> =

@@ -2535,13 +2535,19 @@ impl<'a> Resolver<'a> {
     }
 
     fn bust_dir_cache_and_parent(&mut self, path: &[u8]) -> bool {
-        // On Windows the dirname of `a\hello\` is `a\hello`, so strip first.
-        let path = Self::dir_cache_key(path);
-        let dir = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
-
-        let a = self.bust_dir_cache(dir);
+        let a = self.bust_dir_cache(Self::import_path_dir(path));
         let b = self.bust_dir_cache(path);
         a || b
+    }
+
+    /// The directory that `load_as_file` lists for the import path `path`. The bust for an
+    /// import path takes the directory here too, so it drops that listing.
+    /// Not `dir_cache_key` of a native dirname: the directory part of an import path is read
+    /// loosely. `import("/a/b\\/c.js")` loads `/a/b/c.js`, as node's ESM loader does (it parses
+    /// a URL). Node's `require` throws for it.
+    #[inline]
+    fn import_path_dir(path: &[u8]) -> &[u8] {
+        strings::without_trailing_slash_windows_path(Dirname::dirname(path))
     }
 
     pub(crate) fn load_node_modules(
@@ -5893,10 +5899,7 @@ impl<'a> Resolver<'a> {
             }};
         }
 
-        // Not `dir_cache_key`: `path` is an import path, and its directory part is read loosely.
-        // `import("/a/b\\/c.js")` loads `/a/b/c.js`, as node's ESM loader does (it parses a URL).
-        // Node's `require` throws for it.
-        let dir_path = strings::without_trailing_slash_windows_path(Dirname::dirname(path));
+        let dir_path = Self::import_path_dir(path);
 
         // PORT — `dir_entry` is a slot in the BSSMap singleton (ARENA, see
         // LIFETIMES.tsv); wrap in `BackRef` so later `&mut self` calls

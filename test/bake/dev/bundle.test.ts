@@ -137,6 +137,35 @@ devTest("recovers from an unresolved import of a path that ends in a slash", {
     await c.expectMessage("value: 789");
   },
 });
+// The directory to evict is the one whose listing the failed lookup read. On POSIX an import path
+// reads `fr\/` as `fr/`, so for `<root>/fr\/late.ts` that is the listing of `fr`.
+devTest("an absolute import through a directory spelled fr\\/ resolves after the file is created", {
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "fr/present.ts": `export {};`,
+    "index.ts": `console.log("start");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("start");
+
+    const specifier = dev.join("fr") + "\\/late.ts";
+    const source = `import { abc } from ${JSON.stringify(specifier)};\nconsole.log("value: " + abc);`;
+    await dev.write("index.ts", source, {
+      errors: [`index.ts:1:21: error: Could not resolve: "${specifier}"`],
+    });
+    // The dev server watches a directory only for a relative specifier, so this write starts no build.
+    fs.writeFileSync(dev.join("fr/late.ts"), `export const abc = "456";`);
+    await c.expectReload(async () => {
+      await dev.write("index.ts", source + "\n// saved again");
+    });
+    await c.expectMessage("value: 456");
+  },
+});
 devTest("default export same-scope handling", {
   files: {
     "index.html": emptyHtmlFile({

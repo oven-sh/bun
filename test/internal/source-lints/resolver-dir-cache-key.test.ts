@@ -27,9 +27,9 @@ async function rustSources(directory: string): Promise<{ file: string; source: s
 }
 
 test("src/resolver derives the keys of its directory caches with dir_cache_key", async () => {
-  // The calls that stay take a path that is not a key. `load_as_file` takes the directory part of an import path:
-  // `import("/a/b\\/c.js")` loads `/a/b/c.js`, as node's ESM loader does. The second `Dirname::dirname` takes the
-  // directory of a tsconfig.json for its `extends`.
+  // The calls that stay take a path that is not a key. `import_path_dir` takes the directory part of an import
+  // path, for `load_as_file` and for the bust of an import path: `import("/a/b\\/c.js")` loads `/a/b/c.js`, as
+  // node's ESM loader does. The second `Dirname::dirname` takes the directory of a tsconfig.json for its `extends`.
   const known = {
     "without_trailing_slash_windows_path(": { "src/resolver/resolver.rs": 1 },
     "Dirname::dirname(": { "src/resolver/resolver.rs": 2 },
@@ -50,13 +50,30 @@ test("src/resolver derives the keys of its directory caches with dir_cache_key",
 });
 
 test("no caller strips a path before it busts the directory cache", async () => {
-  const wrapped = /\bbust_dir_cache\w*\s*\(\s*(?:\w+::)*without_trailing_slash\w*\s*\(/g;
+  const strip = /\bwithout_trailing_slash\w*\s*\(/;
 
   const sources = await rustSources("src");
   const found: string[] = [];
   for (const { file, source } of sources) {
-    for (const match of source.matchAll(wrapped)) {
-      found.push(`${file}:${source.slice(0, match.index).split("\n").length}`);
+    for (const call of source.matchAll(/\bbust_dir_cache\w*\s*\(/g)) {
+      const before = source.slice(0, call.index);
+      if (/\bfn\s+$/.test(before)) continue;
+
+      const argsStart = call.index + call[0].length;
+      let argsEnd = argsStart;
+      for (let depth = 1; argsEnd < source.length; argsEnd++) {
+        if (source[argsEnd] === "(") depth++;
+        if (source[argsEnd] === ")" && --depth === 0) break;
+      }
+      const args = source.slice(argsStart, argsEnd);
+
+      // The strip is in the argument list, or in the `let` of a local that the argument list names.
+      const body = before.slice([...before.matchAll(/\bfn\s+\w+/g)].at(-1)?.index ?? 0);
+      const locals = args.match(/(?<![.\w])[a-z_]\w*\b(?!\s*[(:])/g) ?? [];
+      const stripped =
+        strip.test(args) ||
+        locals.some(local => new RegExp(`\\blet\\s+(?:mut\\s+)?${local}\\b[^=;]*=[^;]*?${strip.source}`).test(body));
+      if (stripped) found.push(`${file}:${before.split("\n").length}`);
     }
   }
   expect(sources.length).toBeGreaterThan(1000);

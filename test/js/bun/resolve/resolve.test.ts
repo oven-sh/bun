@@ -1499,6 +1499,65 @@ test.skipIf(isWindows).concurrent.each([
   expect(exitCode).toBe(0);
 });
 
+// A failed lookup drops the listing of the directory of the file and tries one more time. For an import path that
+// spells the directory as `fr\/`, that is the listing of `fr`.
+test.skipIf(isWindows).concurrent("a file created after a failed lookup through fr\\/ is found", async () => {
+  using dir = tempDir("resolve-backslash-dir-retry", {
+    "fr/present.js": ``,
+    "retry.cjs": `
+      const { writeFileSync } = require("node:fs");
+      const B = String.fromCharCode(92);
+      const load = specifier => {
+        try {
+          return require(specifier);
+        } catch (e) {
+          return e.code ?? e.name;
+        }
+      };
+      const run = specifier =>
+        new Promise(resolve => {
+          const worker = new Worker(specifier);
+          worker.onerror = event => resolve(/ModuleNotFound/.test(event.message) ? "ModuleNotFound" : event.message);
+          worker.onmessage = event => {
+            worker.terminate();
+            resolve(event.data);
+          };
+        });
+      const lookups = {
+        "require, relative": ["late1.js", 'module.exports = "late1";', () => load("./fr" + B + "/late1")],
+        "require, absolute": ["late2.js", 'module.exports = "late2";', () => load(__dirname + "/fr" + B + "/late2")],
+        "Worker, relative": ["late3.js", 'postMessage("late3");', () => run("./fr" + B + "/late3.js")],
+        "Worker, absolute": ["late4.js", 'postMessage("late4");', () => run(__dirname + "/fr" + B + "/late4.js")],
+      };
+      (async () => {
+        const result = {};
+        for (const [name, [file, source, lookup]] of Object.entries(lookups)) {
+          const before = await lookup();
+          writeFileSync(__dirname + "/fr/" + file, source);
+          result[name] = [before, await lookup()];
+        }
+        console.log(JSON.stringify(result));
+      })();
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-install", "retry.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stripAsanWarning(stderr)).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "require, relative": ["MODULE_NOT_FOUND", "late1"],
+    "require, absolute": ["MODULE_NOT_FOUND", "late2"],
+    "Worker, relative": ["ModuleNotFound", "late3"],
+    "Worker, absolute": ["ModuleNotFound", "late4"],
+  });
+  expect(exitCode).toBe(0);
+});
+
 // ASAN builds print a warning on stderr that has nothing to do with resolution.
 function stripAsanWarning(stderr: string): string {
   return stderr

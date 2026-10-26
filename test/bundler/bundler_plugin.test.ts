@@ -1008,20 +1008,19 @@ describe("bundler", () => {
     });
   }
 
-  // A barrel's records are resolved again each time a consumer un-defers one of
-  // them. The plugin's external answer for "react" must survive that: the
-  // bundled "virt" module has the same text as the path the plugin returned.
-  // late.js is loaded only after both answers are queued, so its un-defer of
-  // `a` runs after the external answer landed.
-  itBundled("plugin/SameTextModule_ExternalAnswerSurvivesBarrelUnDefer", () => {
-    const reactAnswered = Promise.withResolvers<void>();
+  // A late importer un-defers a barrel re-export, and a plugin answers external
+  // for it. The bundler links the un-deferred record while that answer is
+  // pending, when the record still has its specifier "react", which is also the
+  // text of the "virt" module. late.js is loaded only after the "virt" answer is
+  // queued, so that module is in the path map by then.
+  itBundled("plugin/SameTextModule_BarrelUnDeferAnsweredExternal", () => {
     const virtAnswered = Promise.withResolvers<void>();
     return {
       files: {
         "/entry.js": /* js */ `
-          import { React, x } from "barrel";
-          import "./late.js";
-          console.log(React, x);
+          import { x } from "barrel";
+          import late from "./late.js";
+          console.log(x, late);
         `,
         "/late.js": ``,
         "/node_modules/barrel/package.json": JSON.stringify({
@@ -1032,35 +1031,25 @@ describe("bundler", () => {
         "/node_modules/barrel/index.js": /* js */ `
           export { default as React } from "react";
           export { x } from "virt";
-          export { a } from "./a.js";
-          export { b } from "./b.js";
         `,
-        "/node_modules/barrel/a.js": `export const a = "a";`,
-        "/node_modules/barrel/b.js": `export const b = "b";`,
+        "/node_modules/react/package.json": JSON.stringify({ name: "react", main: "./index.js" }),
+        "/node_modules/react/index.js": `module.exports = "real";`,
       },
       plugins(builder) {
-        builder.onResolve({ filter: /^react$/ }, () => {
-          reactAnswered.resolve();
-          return { path: "react-vendored", external: true };
-        });
+        builder.onResolve({ filter: /^react$/ }, args => ({ path: args.path, external: true }));
         builder.onResolve({ filter: /^virt$/ }, () => {
           virtAnswered.resolve();
-          return { path: "react-vendored", namespace: "virt" };
+          return { path: "react", namespace: "virt" };
         });
         builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
-          return { contents: `export const x = "x";`, loader: "js" };
+          return { contents: `export const x = "x"; export default "virt";`, loader: "js" };
         });
         builder.onLoad({ filter: /late\.js$/ }, async () => {
-          await Promise.all([reactAnswered.promise, virtAnswered.promise]);
-          return { contents: `import { a } from "barrel"; console.log(a);`, loader: "js" };
+          await virtAnswered.promise;
+          return { contents: `import { React } from "barrel"; export default React;`, loader: "js" };
         });
       },
-      onAfterBundle(api) {
-        const contents = api.readFile("/out.js");
-        expect(contents).toContain(`from "react-vendored"`);
-        expect(contents).toContain(`"x"`);
-        expect(contents).not.toContain(`"react"`);
-      },
+      run: { stdout: "x real" },
     };
   });
 

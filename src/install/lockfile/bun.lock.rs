@@ -3421,8 +3421,7 @@ fn parse_append_dependencies(
 
             for row in object_rows(&deps) {
                 let name_str = row.key.slice();
-                // `bun add .` before 1.4.4 wrote `"": "."` for a root without a name. No folder
-                // can have that name, and the package.json parse skips the row too.
+                // An old `bun add .` wrote `"": "."`. No folder can have that name.
                 if name_str.is_empty() {
                     log.add_warning_fmt(
                         Some(source),

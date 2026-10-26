@@ -291,8 +291,7 @@ pub(crate) fn save(
 pub struct SerializerLoadResult {
     pub packages_need_update: bool,
     pub(crate) migrated_from_lockb_v2: bool,
-    /// A text lockfile had a dependency row with an empty name. The loader skipped the row, and
-    /// the next save writes the lockfile without it.
+    /// The text loader skipped a dependency row with an empty name. The next save drops it.
     pub(crate) dropped_unnamed_rows: bool,
 }
 

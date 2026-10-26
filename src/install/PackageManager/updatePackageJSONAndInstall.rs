@@ -284,8 +284,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     let dependency_list: &'static [u8] = manager.options.update.prop;
     let mut any_changes = false;
-    // `bun add -g .` before 1.4.4 wrote `"": "."` into the global package.json. The parse skips
-    // the row; a command that writes the file drops it.
+    // Drops the `"": "."` row that an old `bun add -g .` wrote into the global package.json.
     if manager.options.global {
         for list in DependencyGroup::FOUR {
             any_changes |=

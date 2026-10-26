@@ -131,6 +131,7 @@ impl Mutex {
     }
 
     /// Locks only if that needs no waiting.
+    #[cfg(test)]
     pub fn try_lock(&self) -> bool {
         let mut locked = self.state.lock().unwrap();
         if *locked {

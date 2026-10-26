@@ -3436,6 +3436,68 @@ describe.concurrent("AST nodes in JavaScript plugins", () => {
     },
     timeout,
   );
+
+  // A rule written for espree or oxlint reads `node.start` and `node.end`. typescript-estree's nodes don't have them.
+  // Without an ESLint or oxlint config there's no parser to match, so every file has them. Issue #46971.
+  test(
+    "have `start` and `end` in every file without an ESLint or oxlint config",
+    async () => {
+      const plugin = `const keys = it => Object.keys(it).join();
+        const positions = it => [it.start, it.end, ...it.range].join();
+        export default { meta: { name: "probe" }, rules: { positions: { create: context => ({
+          Program(node) {
+            const [comment] = context.sourceCode.getAllComments();
+            const [token] = context.sourceCode.getTokens(node);
+            const [declaration] = node.body;
+            const annotation = declaration.declarations[0].id.typeAnnotation;
+            context.report({ node, message: JSON.stringify({
+              keys: keys(declaration), positions: positions(declaration),
+              annotationKeys: annotation ? keys(annotation) : null, annotationPositions: annotation ? positions(annotation) : null,
+              commentKeys: keys(comment), commentPositions: positions(comment),
+              tokenKeys: keys(token), tokenPositions: positions(token),
+            }) });
+          },
+        }) } } };`;
+      const files = {
+        "plugin.mjs": plugin,
+        "bunfig.toml": `[lint]\nplugins = ["./plugin.mjs"]\n[lint.rules]\n"probe/positions" = "error"\n`,
+        "index.ts": "// a\nconst answer: number = 42;\n",
+        "index.js": "// a\nconst answer = 42;\n",
+      };
+      const { raw, exitCode } = await lint(files, ["-f", "json", "index.ts", "index.js"]);
+      const results: { filePath: string; messages: { ruleId: string; message: string }[] }[] = JSON.parse(raw);
+      const said = Object.fromEntries(
+        results.map(it => [
+          it.filePath.replaceAll("\\", "/").split("/").at(-1),
+          JSON.parse(it.messages.find(message => message.ruleId === "probe/positions")!.message),
+        ]),
+      );
+      expect(said).toEqual({
+        "index.ts": {
+          keys: "type,declarations,declare,kind,start,end,range,loc,parent",
+          positions: "5,31,5,31",
+          annotationKeys: "type,loc,start,end,range,typeAnnotation,parent",
+          annotationPositions: "17,25,17,25",
+          commentKeys: "type,loc,start,end,range,value",
+          commentPositions: "0,4,0,4",
+          tokenKeys: "type,loc,start,end,range,value",
+          tokenPositions: "5,10,5,10",
+        },
+        "index.js": {
+          keys: "type,start,end,loc,range,declarations,kind,parent",
+          positions: "5,23,5,23",
+          annotationKeys: null,
+          annotationPositions: null,
+          commentKeys: "type,value,start,end,range,loc",
+          commentPositions: "0,4,0,4",
+          tokenKeys: "type,value,start,end,loc,range",
+          tokenPositions: "5,10,5,10",
+        },
+      });
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
 });
 
 describe.concurrent("scopes in JavaScript plugins", () => {

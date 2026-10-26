@@ -656,6 +656,68 @@ describe("HTTP/3 header blocks that follow another header block", () => {
     client.close();
     expect(received.filter(message => message.bytes !== size || message.checksum !== checksum)).toEqual([]);
   });
+
+  // The second block leaves the queue in a write event that has nothing else to send, and lsquic holds the
+  // part of it that the stream's window has no room for. The stream has to keep its write interest until
+  // that part is out, or nothing flushes the end of the block and the client waits for it until the test
+  // times out.
+  test("a client gets a second interim response while the server has nothing else to send", async () => {
+    // Bytes that Huffman coding doesn't shorten.
+    const field = (length: number) => Buffer.alloc(length, "~").toString();
+    const transportParams = { maxIdleTimeout: 2 };
+    const bothSeen = Promise.withResolvers<void>();
+    const answered = Promise.withResolvers<boolean[]>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams,
+        async onheaders(this: any) {
+          const sent = [
+            this.sendInformationalHeaders({ ":status": "103", "x-first": field(5000) }),
+            this.sendInformationalHeaders({ ":status": "103", "x-second": field(3000) }),
+          ];
+          await bothSeen.promise;
+          answered.resolve([...sent, this.sendHeaders({ ":status": "204" }, { terminal: true })]);
+        },
+      },
+    );
+    await using endpoint = new QuicEndpoint();
+    // The server's send window on the stream is smaller than either block.
+    const client = await connect(server.address!, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { ...transportParams, initialMaxStreamDataBidiLocal: 4096 },
+      onerror() {},
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    let stream: any;
+    try {
+      await client.opened;
+      const blocks: string[] = [];
+      stream = await client.createBidirectionalStream({
+        headers: request("/"),
+        oninfo: (block: Record<string, string>) => {
+          blocks.push(`info ${block[":status"]} ${(block["x-first"] ?? block["x-second"])?.length}`);
+          if (blocks.length === 2) bothSeen.resolve();
+        },
+        onheaders: (block: Record<string, string>) => void blocks.push("headers " + block[":status"]),
+      } as any);
+      stream.closed.catch(() => {});
+      expect(await answered.promise).toEqual([true, true, true]);
+      for await (const _ of stream);
+      expect(blocks).toEqual(["info 103 5000", "info 103 3000", "headers 204"]);
+    } finally {
+      stream?.destroy();
+      if (!client.destroyed) client.close().catch(() => {});
+    }
+  });
 });
 
 // RFC 9114 10.3. nghttp3, which parses fields for Node, removes such a regular field and delivers the rest.

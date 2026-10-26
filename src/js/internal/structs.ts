@@ -1,14 +1,21 @@
 // The JavaScript side of the TC39 structs surface: `Atomics.Mutex`, `Atomics.Condition`, `SharedArray`,
 // `Reflect.canBeShared` and the shared-struct overloads of `Atomics.load/store/exchange/compareExchange`.
 //
-// Nothing here runs until a program first touches one of those names: ZigGlobalObject.cpp defines them as lazy
-// properties, and the first read loads this module and replaces every lazy property with the value exported below.
+// Nothing here runs until a program first touches one of those names or a realm is handed a shared struct: ZigGlobalObject.cpp
+// defines the names as lazy properties, and the first read (or the first shared struct a realm receives) loads this module and
+// replaces every lazy property with the value exported below.
 // The classes themselves come from `src/shared_struct_jsc` (bindgen) and `SharedStructObject.cpp`.
 
 const ObjectDefineProperty = Object.defineProperty;
 
-const { Mutex, Condition, SharedArray, SharedStruct } = $bindgen("shared_struct_classes.bind.ts", "classes")();
+const { Mutex, Condition, SharedArray, SharedStruct, MutexClass, ConditionClass } = $bindgen(
+  "shared_struct_classes.bind.ts",
+  "classes",
+)();
 const nativeCanBeShared = $bindgen("shared_struct_classes.bind.ts", "canBeShared");
+const nativeIsSharedObject = $bindgen("shared_struct_classes.bind.ts", "isSharedObject");
+const nativeIsMutex = $bindgen("shared_struct_classes.bind.ts", "isMutex");
+const nativeIsCondition = $bindgen("shared_struct_classes.bind.ts", "isCondition");
 const nativeAtomicLoad = $bindgen("shared_struct_classes.bind.ts", "atomicLoad");
 const nativeAtomicStore = $bindgen("shared_struct_classes.bind.ts", "atomicStore");
 const nativeAtomicExchange = $bindgen("shared_struct_classes.bind.ts", "atomicExchange");
@@ -20,30 +27,39 @@ const originalStore = Atomics.store;
 const originalExchange = Atomics.exchange;
 const originalCompareExchange = Atomics.compareExchange;
 
-const mutexLock = Mutex.prototype.lock;
-const mutexTryLock = Mutex.prototype.tryLock;
-const mutexUnlock = Mutex.prototype.unlock;
-const conditionWait = Condition.prototype.wait;
-const conditionNotify = Condition.prototype.notify;
+// A Mutex or a Condition has no prototype; the operations live on the prototypes of the generated classes behind them.
+const mutexLock = MutexClass.prototype.lock;
+const mutexUnlock = MutexClass.prototype.unlock;
+const conditionWait = ConditionClass.prototype.wait;
+const conditionNotify = ConditionClass.prototype.notify;
 
 /** Defines `value` as a builtin method or constructor property: writable, configurable, not enumerable. */
 function define(target: object, key: PropertyKey, value: unknown) {
   ObjectDefineProperty(target, key, { value, writable: true, enumerable: false, configurable: true });
 }
 
+/** Sets the `length` of a builtin function, which counts the parameters before the first optional one. */
+function lengthOf<T extends Function>(fn: T, length: number): T {
+  ObjectDefineProperty(fn, "length", { value: length, writable: false, enumerable: false, configurable: true });
+  return fn;
+}
+
 function assertMutex(mutex: unknown) {
-  if (!(mutex instanceof Mutex)) throw new TypeError("Expected an Atomics.Mutex");
+  if (!nativeIsMutex(mutex)) throw new TypeError("Expected an Atomics.Mutex");
 }
 
 function assertCondition(condition: unknown) {
-  if (!(condition instanceof Condition)) throw new TypeError("Expected an Atomics.Condition");
+  if (!nativeIsCondition(condition)) throw new TypeError("Expected an Atomics.Condition");
 }
 
-/** A timeout in milliseconds as the native calls take it: `undefined` waits for ever, as `NaN` and `Infinity` do. */
-function timeoutArgument(timeoutMs: unknown): number | undefined {
-  if (timeoutMs === undefined) return undefined;
-  const ms = +(timeoutMs as number);
-  return ms === ms && ms !== Infinity ? (ms < 0 ? 0 : ms) : undefined;
+/**
+ * A timeout in milliseconds as the native calls take it. It has to be a Number. `NaN` and `+Infinity` wait for ever (`undefined`);
+ * `-Infinity` and anything below zero do not wait at all.
+ */
+function timeoutMillis(timeout: unknown): number | undefined {
+  if (typeof timeout !== "number") throw new TypeError("The timeout must be a Number");
+  if (timeout !== timeout || timeout === Infinity) return undefined;
+  return timeout < 0 ? 0 : timeout;
 }
 
 let armToken: (token: UnlockToken, mutex: unknown) => void;
@@ -62,8 +78,8 @@ class UnlockToken {
       token.#mutex = mutex;
     };
     heldMutex = token => {
-      if (!(token instanceof UnlockToken)) throw new TypeError("Expected an Atomics.Mutex.UnlockToken");
-      return token.#mutex;
+      if (!(#mutex in (token as object))) throw new TypeError("Expected an Atomics.Mutex.UnlockToken");
+      return (token as UnlockToken).#mutex;
     };
   }
 
@@ -81,15 +97,18 @@ class UnlockToken {
   }
 
   [Symbol.dispose]() {
-    this.unlock();
+    const mutex = this.#mutex;
+    if (mutex === null) return;
+    this.#mutex = null;
+    mutexUnlock.$call(mutex);
   }
 }
+// The prototype of the proposal's UnlockToken has `locked`, `unlock` and `[Symbol.dispose]` and nothing else.
+Reflect.deleteProperty(UnlockToken.prototype, "constructor");
 
-/** The token a lock fills: the empty one the caller passed, or a new one. */
-function tokenToFill(token: unknown): UnlockToken {
-  if (token === undefined) return new UnlockToken();
+/** Checks that `token` is an empty UnlockToken, which a lock may fill. */
+function assertEmptyToken(token: unknown) {
   if (heldMutex(token) !== null) throw new TypeError("The Atomics.Mutex.UnlockToken is already locked");
-  return token as UnlockToken;
 }
 
 /** The mutex a non-empty token holds. */
@@ -103,27 +122,29 @@ const mutexStatics = {
   /** Blocks until `mutex` is held and returns the token that releases it: `token` if one is given, else a new one. */
   lock(mutex: unknown, unlockToken?: UnlockToken) {
     assertMutex(mutex);
-    const token = tokenToFill(unlockToken);
+    if (unlockToken !== undefined) assertEmptyToken(unlockToken);
+    const token = unlockToken ?? new UnlockToken();
+    // A mutex this thread already holds is a deadlock, which the native lock refuses with a TypeError.
     if (!mutexLock.$call(mutex, undefined)) throw new Error("Atomics.Mutex.lock was interrupted");
     armToken(token, mutex);
     return token;
   },
 
-  /** Like `lock`, but `null` when the mutex is not taken, after `timeoutMs` if one is given and at once otherwise. */
-  lockIfAvailable(mutex: unknown, timeoutMs?: number, unlockToken?: UnlockToken) {
+  /** Like `lock`, but `null` when the mutex is not taken within `timeout` milliseconds. */
+  lockIfAvailable(mutex: unknown, timeout: number, unlockToken?: UnlockToken) {
     assertMutex(mutex);
-    const token = tokenToFill(unlockToken);
-    const timeout = timeoutMs === undefined ? 0 : timeoutArgument(timeoutMs);
-    // A zero timeout never waits, so it must not trip over a mutex this thread already holds.
-    const held = timeout === 0 ? mutexTryLock.$call(mutex) : mutexLock.$call(mutex, timeout);
-    if (!held) return null;
+    if (unlockToken !== undefined) assertEmptyToken(unlockToken);
+    const timeoutMs = timeoutMillis(timeout);
+    const token = unlockToken ?? new UnlockToken();
+    // Even with no wait at all, a mutex this thread already holds is a TypeError, not a null.
+    if (!mutexLock.$call(mutex, timeoutMs)) return null;
     armToken(token, mutex);
     return token;
   },
 };
 
-define(Mutex, "lock", mutexStatics.lock);
-define(Mutex, "lockIfAvailable", mutexStatics.lockIfAvailable);
+define(Mutex, "lock", lengthOf(mutexStatics.lock, 1));
+define(Mutex, "lockIfAvailable", lengthOf(mutexStatics.lockIfAvailable, 2));
 define(Mutex, "UnlockToken", UnlockToken);
 
 const conditionStatics = {
@@ -134,17 +155,23 @@ const conditionStatics = {
   },
 
   /**
-   * Waits at most `timeoutMs`. With a `predicate`, keeps waiting until it returns true, checking it with the mutex held,
+   * Waits at most `timeout` milliseconds. With a `predicate`, keeps waiting until it returns true, checking it with the mutex held,
    * and answers whether it did; without one it answers whether it was notified before the timeout.
    */
-  waitFor(condition: unknown, unlockToken: UnlockToken, timeoutMs: number, predicate?: () => unknown) {
+  waitFor(condition: unknown, unlockToken: UnlockToken, timeout: number, predicate?: () => unknown) {
     assertCondition(condition);
     const mutex = lockedMutex(unlockToken);
-    const timeout = timeoutArgument(timeoutMs);
-    if (predicate === undefined) return conditionWait.$call(condition, mutex, timeout);
-    if (!$isCallable(predicate)) throw new TypeError("Atomics.Condition.waitFor: predicate must be a function");
+    const timeoutMs = timeoutMillis(timeout);
+    if (predicate !== undefined && !$isCallable(predicate)) {
+      throw new TypeError("Atomics.Condition.waitFor: predicate must be a function");
+    }
+    if (predicate === undefined) {
+      // No time at all: report the timeout without giving the mutex up.
+      if (timeoutMs === 0) return false;
+      return conditionWait.$call(condition, mutex, timeoutMs);
+    }
 
-    const deadline = timeout === undefined ? Infinity : performance.now() + timeout;
+    const deadline = timeoutMs === undefined ? Infinity : performance.now() + timeoutMs;
     while (!predicate()) {
       const remaining = deadline - performance.now();
       if (remaining <= 0) return false;
@@ -158,31 +185,69 @@ const conditionStatics = {
   /** Wakes up to `count` waiters (all of them by default) and returns how many were woken. */
   notify(condition: unknown, count?: number) {
     assertCondition(condition);
-    return conditionNotify.$call(condition, count);
+    if (count === undefined) count = Infinity;
+    if (typeof count !== "number" || (count !== Infinity && !Number.isInteger(count))) {
+      throw new TypeError("Atomics.Condition.notify: count must be an integral Number or Infinity");
+    }
+    return conditionNotify.$call(condition, count === Infinity ? undefined : count < 1 ? 0 : count);
   },
 };
 
-define(Condition, "wait", conditionStatics.wait);
-define(Condition, "waitFor", conditionStatics.waitFor);
-define(Condition, "notify", conditionStatics.notify);
+define(Condition, "wait", lengthOf(conditionStatics.wait, 2));
+define(Condition, "waitFor", lengthOf(conditionStatics.waitFor, 3));
+define(Condition, "notify", lengthOf(conditionStatics.notify, 1));
 
-// Shared structs and arrays are not typed arrays, so the engine's own functions would throw for them. Everything else,
-// including every error, stays the original's.
+/** A shared struct field is named by a property key: a string or a symbol, never a number or an object that converts to one. */
+function assertPropertyKey(key: unknown) {
+  if (typeof key !== "string" && typeof key !== "symbol") {
+    throw new TypeError("A shared struct field is named by a string or a symbol");
+  }
+}
+
+/** A field that is not there is a RangeError (a shared array's elements and `length` are fields, a Mutex has none). */
+function assertField(target: object, key: PropertyKey) {
+  if (!Reflect.has(target, key)) throw new RangeError("The shared struct has no such field");
+}
+
+function assertShareable(value: unknown) {
+  if (!nativeCanBeShared(value))
+    throw new TypeError("Only primitives and shared structs can be stored in a shared struct");
+}
+
+// Shared structs, arrays, mutexes and conditions are not typed arrays, so the engine's own functions would throw for them.
+// Everything else, including every error, stays the original's. The checks follow the order of the proposal.
 const atomicsOverloads = {
   load(target: unknown, index: unknown) {
-    if ($isTypedArrayView(target)) return originalLoad.$call(this, target, index);
+    if ($isTypedArrayView(target) || !nativeIsSharedObject(target)) return originalLoad.$call(this, target, index);
+    assertPropertyKey(index);
+    assertField(target as object, index as PropertyKey);
     return nativeAtomicLoad(target, index);
   },
   store(target: unknown, index: unknown, value: unknown) {
-    if ($isTypedArrayView(target)) return originalStore.$call(this, target, index, value);
+    if ($isTypedArrayView(target) || !nativeIsSharedObject(target)) {
+      return originalStore.$call(this, target, index, value);
+    }
+    assertPropertyKey(index);
+    assertShareable(value);
+    assertField(target as object, index as PropertyKey);
     return nativeAtomicStore(target, index, value);
   },
   exchange(target: unknown, index: unknown, value: unknown) {
-    if ($isTypedArrayView(target)) return originalExchange.$call(this, target, index, value);
+    if ($isTypedArrayView(target) || !nativeIsSharedObject(target)) {
+      return originalExchange.$call(this, target, index, value);
+    }
+    assertPropertyKey(index);
+    assertShareable(value);
+    assertField(target as object, index as PropertyKey);
     return nativeAtomicExchange(target, index, value);
   },
   compareExchange(target: unknown, index: unknown, expected: unknown, replacement: unknown) {
-    if ($isTypedArrayView(target)) return originalCompareExchange.$call(this, target, index, expected, replacement);
+    if ($isTypedArrayView(target) || !nativeIsSharedObject(target)) {
+      return originalCompareExchange.$call(this, target, index, expected, replacement);
+    }
+    assertPropertyKey(index);
+    assertShareable(replacement);
+    assertField(target as object, index as PropertyKey);
     return nativeAtomicCompareExchange(target, index, expected, replacement);
   },
 };

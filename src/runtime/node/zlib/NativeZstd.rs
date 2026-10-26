@@ -109,7 +109,7 @@ mod _impl {
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
             init_params_array: JsLocal<'_>,
-            pledged_src_size: JsLocal<'_>,
+            pledged_src_size: Option<f64>,
             write_state: JsLocal<'_>,
             process_callback: JsLocal<'_>,
             dictionary: JsLocal<'_>,
@@ -121,7 +121,6 @@ mod _impl {
             self.throw_unless_idle(global)?;
 
             let init_params_array_value = init_params_array.to_js();
-            let pledged_src_size_value = pledged_src_size.to_js();
             let write_state_value = write_state.to_js();
             let process_callback_value = process_callback.to_js();
 
@@ -160,15 +159,29 @@ mod _impl {
                 write_js_callback.with_async_context_if_needed(global),
             );
 
-            let mut pledged_src_size: u64 = u64::MAX;
-            if pledged_src_size_value.is_number() {
-                pledged_src_size = u64::from(validators::validate_uint32(
-                    global,
-                    pledged_src_size_value,
-                    format_args!("pledgedSrcSize"),
-                    false,
-                )?);
-            }
+            // Node's messages: https://github.com/nodejs/node/blob/v26.12.1/src/node_zlib.cc#L1007-L1026
+            let pledged_src_size: u64 = match pledged_src_size {
+                None => u64::MAX,
+                Some(size) => {
+                    if size.trunc() != size || size.abs() > jsc::MAX_SAFE_INTEGER as f64 {
+                        return Err(global
+                            .err(
+                                jsc::ErrorCode::OUT_OF_RANGE,
+                                format_args!("pledgedSrcSize must be a safe integer"),
+                            )
+                            .throw());
+                    }
+                    if size < 0.0 {
+                        return Err(global
+                            .err(
+                                jsc::ErrorCode::OUT_OF_RANGE,
+                                format_args!("pledgedSrcSize must be non-negative"),
+                            )
+                            .throw());
+                    }
+                    size as u64
+                }
+            };
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
             // outlives the `stream.init` call below (E0716 otherwise).
@@ -261,6 +274,8 @@ mod _impl {
         pub(crate) input: c::ZSTD_inBuffer,
         pub(crate) output: c::ZSTD_outBuffer,
         pub(crate) pledged_src_size: u64,
+        /// Input that the first frame has taken. `None` without a pledge, and after that frame ends.
+        consumed_src_size: Option<u64>,
         pub(crate) remaining: u64,
     }
 
@@ -281,6 +296,7 @@ mod _impl {
                     pos: 0,
                 },
                 pledged_src_size: u64::MAX,
+                consumed_src_size: None,
                 remaining: 0,
             }
         }
@@ -305,6 +321,15 @@ mod _impl {
                 );
             }
             Error::OK
+        }
+
+        /// Gives the pledge to zstd, which keeps it for one frame, and starts the count for that frame.
+        fn apply_pledge(&mut self) -> usize {
+            self.consumed_src_size = (self.pledged_src_size != u64::MAX).then_some(0);
+            // SAFETY: state is a valid CCtx set by init().
+            unsafe {
+                c::ZSTD_CCtx_setPledgedSrcSize(self.state_ptr().cast(), self.pledged_src_size as _)
+            }
         }
 
         pub(crate) fn init(&mut self, pledged_src_size: u64, dictionary: Option<&[u8]>) -> Error {
@@ -336,9 +361,7 @@ mod _impl {
                         self.state = None;
                         return err;
                     }
-                    // SAFETY: state is non-null (checked above).
-                    let result =
-                        unsafe { c::ZSTD_CCtx_setPledgedSrcSize(state, pledged_src_size as _) };
+                    let result = self.apply_pledge();
                     if c::ZSTD_isError(result) > 0 {
                         // SAFETY: state is a valid CCtx allocated above.
                         let _ = unsafe { c::ZSTD_freeCCtx(state) };
@@ -486,16 +509,33 @@ mod _impl {
                 return;
             }
             self.remaining = match self.mode {
-                // SAFETY: state is a valid CCtx; input/output point to caller-kept-alive buffers (set_buffers).
-                NodeMode::ZSTD_COMPRESS => unsafe {
-                    c::ZSTD_compressStream2(
-                        self.state_ptr().cast(),
-                        &raw mut self.output,
-                        &raw mut self.input,
-                        // cast c_int → ZSTD_EndDirective (c_uint)
-                        self.flush as c_uint,
-                    )
-                },
+                NodeMode::ZSTD_COMPRESS => {
+                    let input_pos = self.input.pos;
+                    // SAFETY: state is a valid CCtx; input/output point to caller-kept-alive buffers (set_buffers).
+                    let mut remaining = unsafe {
+                        c::ZSTD_compressStream2(
+                            self.state_ptr().cast(),
+                            &raw mut self.output,
+                            &raw mut self.input,
+                            // cast c_int → ZSTD_EndDirective (c_uint)
+                            self.flush as c_uint,
+                        )
+                    };
+                    // zstd does not compare the pledge with the input if a frame's first call is ZSTD_e_end (nodejs/node#64601), nor for a frame of several worker jobs.
+                    if let Some(consumed) = self.consumed_src_size {
+                        let consumed = consumed + (self.input.pos - input_pos) as u64;
+                        if remaining == 0 && self.flush as c_uint == c::ZSTD_e_end {
+                            self.consumed_src_size = None;
+                            if consumed != self.pledged_src_size {
+                                // zstd's ERROR(): an error result is the negated code.
+                                remaining = (c::ZSTD_error_srcSize_wrong as usize).wrapping_neg();
+                            }
+                        } else {
+                            self.consumed_src_size = Some(consumed);
+                        }
+                    }
+                    remaining
+                }
                 NodeMode::ZSTD_DECOMPRESS => {
                     // SAFETY: state is a valid DCtx.
                     let mut ret = unsafe {

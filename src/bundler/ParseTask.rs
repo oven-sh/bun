@@ -1828,21 +1828,24 @@ pub mod parse_worker {
             // the "alloc-dupe into the log arena" pattern. We dupe `path` too:
             // a raw slice into C-plugin memory may be
             // freed after `log_fn` returns, so duping is required.
-            let source_line_text = self.source_line_text();
+            let column = self.column.max(-1);
+            let (source_line_text, line_text_start_column) =
+                Location::line_excerpt(self.source_line_text(), column);
             let file = log.dupe(self.path());
             let line_text = if !source_line_text.is_empty() {
                 Some(log.dupe(source_line_text))
             } else {
                 None
             };
-            let location = Location::init(
+            let mut location = Location::init(
                 file,
                 namespace,
                 self.line.max(-1),
-                self.column.max(-1),
+                column,
                 (self.column_end - self.column).max(0) as u32,
                 line_text,
             );
+            location.line_text_start_column = line_text_start_column;
             let mut msg = Msg {
                 data: bun_ast::Data {
                     location: Some(location),

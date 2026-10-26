@@ -185,12 +185,17 @@ impl ErrorLocation {
         // `bun_ast::Location` grows a real lifetime.
         let line_text = bun_core::strings::get_lines_in_text::<1>(&source.contents, self.line)
             .map(|lines| unsafe { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
+        let column = i32::try_from(self.column).expect("int cast");
+        let (line_text, line_text_start_column) = line_text
+            .map(|line| bun_ast::Location::line_excerpt(line, column))
+            .unzip();
         Ok(bun_ast::Location {
             file: std::borrow::Cow::Borrowed(source.path.text),
             namespace: std::borrow::Cow::Borrowed(source.path.namespace),
             line: i32::try_from(self.line + 1).expect("int cast"),
-            column: i32::try_from(self.column).expect("int cast"),
+            column,
             line_text: line_text.map(std::borrow::Cow::Borrowed),
+            line_text_start_column: line_text_start_column.unwrap_or(0),
             ..Default::default()
         })
     }

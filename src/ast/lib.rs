@@ -796,7 +796,7 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, None)
+        Self::init_or_null_impl(_source, r, None, false)
     }
 
     /// `init_or_null`, but computing the line/column through a
@@ -806,14 +806,16 @@ impl Location {
         _source: Option<&Source>,
         r: Range,
         tracker: &mut LineColumnTracker,
+        redact_sensitive_information: bool,
     ) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, Some(tracker))
+        Self::init_or_null_impl(_source, r, Some(tracker), redact_sensitive_information)
     }
 
     fn init_or_null_impl(
         _source: Option<&Source>,
         r: Range,
         tracker: Option<&mut LineColumnTracker>,
+        redact_sensitive_information: bool,
     ) -> Option<Location> {
         if let Some(source) = _source {
             if r.is_empty() {
@@ -833,31 +835,24 @@ impl Location {
                 None => source.init_error_position(r.loc),
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
-            // An error in the last 80 bytes keeps the whole line: bake's overlay pads by `column`.
             let offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
             let mut line_text_start_column = 0;
-            if full_line.len() > 80 + offset_in_line {
-                let mut lo = offset_in_line.saturating_sub(40);
-                let mut hi = (offset_in_line + 80).min(full_line.len());
-                while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
-                    lo -= 1;
-                }
-                while hi < full_line.len()
-                    && !bun_core::strings::is_utf8_char_boundary(full_line[hi])
-                {
-                    hi += 1;
-                }
-                if lo > 0 {
+            // The key that marks a secret can be far from the error, so a redacted line is not cut at its end.
+            let is_too_long = full_line.len() > MAX_WHOLE_LINE_LEN && !redact_sensitive_information;
+            // An error in the last 80 bytes of a shorter line keeps the whole line: bake's overlay pads by `column`.
+            if is_too_long || full_line.len() > EXCERPT_LEN_AFTER + offset_in_line {
+                let kept = excerpt_range(full_line, offset_in_line);
+                if kept.start > 0 {
                     // Same counter as `column_count`, over the kept bytes only.
-                    let mut kept = ErrorPositionState::default();
-                    kept.advance(full_line, lo, offset_in_line);
+                    let mut before = ErrorPositionState::default();
+                    before.advance(full_line, kept.start, offset_in_line);
                     line_text_start_column =
-                        u32::try_from(data.column_count.saturating_sub(kept.column_number))
+                        u32::try_from(data.column_count.saturating_sub(before.column_number))
                             .expect("int cast");
                 }
-                full_line = &full_line[lo..hi];
+                full_line = &full_line[kept];
             }
 
             return Some(Location {
@@ -878,6 +873,43 @@ impl Location {
         }
         None
     }
+
+    /// What a `Location` keeps of `line` for an error at the 1-based `column`, and the `line_text_start_column` of it.
+    pub fn line_excerpt(line: &[u8], column: i32) -> (&[u8], u32) {
+        if line.len() <= MAX_WHOLE_LINE_LEN {
+            return (line, 0);
+        }
+        use bun_core::strings;
+        let column = u32::try_from(column.saturating_sub(1)).unwrap_or(0);
+        let at = strings::wtf8_offset_of_utf16_index(line, column);
+        let kept = excerpt_range(line, at);
+        let start_column = column.saturating_sub(strings::wtf8_len_utf16(&line[kept.start..at]));
+        (&line[kept], start_column)
+    }
+}
+
+/// A longer line isn't hand-written. A `Location` keeps an excerpt of it wherever the error is.
+const MAX_WHOLE_LINE_LEN: usize = 1000;
+const EXCERPT_LEN_BEFORE: usize = 40;
+const EXCERPT_LEN_AFTER: usize = 80;
+
+/// The bytes of `line` in the excerpt for an error at byte `at`: those around it, or the last ones when the line ends first.
+fn excerpt_range(line: &[u8], at: usize) -> core::ops::Range<usize> {
+    use bun_core::strings;
+    let mut hi = (at + EXCERPT_LEN_AFTER).min(line.len());
+    let mut lo = at
+        .saturating_sub(EXCERPT_LEN_BEFORE)
+        .min(hi.saturating_sub(EXCERPT_LEN_BEFORE + EXCERPT_LEN_AFTER));
+    // A UTF-8 sequence has at most 3 continuation bytes.
+    for _ in 0..3 {
+        if !strings::is_on_char_boundary(line, lo) {
+            lo -= 1;
+        }
+        if !strings::is_on_char_boundary(line, hi) {
+            hi += 1;
+        }
+    }
+    lo..hi
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1571,11 +1603,22 @@ impl Log {
         r: Range,
         text: impl IntoText,
     ) -> Data {
+        self.tracked_range_data_with(source, r, text, false)
+    }
+
+    fn tracked_range_data_with(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        text: impl IntoText,
+        redact_sensitive_information: bool,
+    ) -> Data {
         let location = if source.is_some() {
             Location::init_or_null_tracked(
                 source,
                 r,
                 self.line_column_tracker.get_or_insert_default(),
+                redact_sensitive_information,
             )
         } else {
             Location::init_or_null(source, r)
@@ -1729,7 +1772,7 @@ impl Log {
             _ => {}
         }
         let data = self
-            .tracked_range_data(source, r, text)
+            .tracked_range_data_with(source, r, text, redact_sensitive_information)
             .clone_line_text(self.clone_line_text);
         self.add_msg(Msg {
             kind,
@@ -2237,13 +2280,14 @@ impl Log {
     #[cold]
     pub fn add_error_opts(&mut self, text: Str, opts: AddErrorOptions<'_>) {
         self.errors += 1;
-        let data = self.tracked_range_data(
+        let data = self.tracked_range_data_with(
             opts.source,
             Range {
                 loc: opts.loc,
                 len: opts.len,
             },
             text,
+            opts.redact_sensitive_information,
         );
         self.add_msg(Msg {
             kind: Kind::Err,

@@ -76,3 +76,44 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
   },
   30_000,
 );
+
+test("a native error whose message exceeds the string length limit is thrown with a fallback message", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+      import { expect } from "bun:test";
+      setSyntheticAllocationLimitForTesting(1024 * 1024);
+      const long = Buffer.alloc(1024 * 1024 - 16, "a").toString();
+      const cases = {
+        "Bun.listen": () => Bun.listen({ unix: long, socket: { data() {} } }),
+        "Bun.JSONC.parse": () => Bun.JSONC.parse(long),
+        "expect": () => expect(1, long).toBe(2),
+      };
+      for (const [name, run] of Object.entries(cases)) {
+        try {
+          run();
+          console.log(name + ": did not throw");
+        } catch (e) {
+          console.log(name + ": " + e.name + ": " + e.message);
+        }
+      }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+    stdout: [
+      "Bun.listen: Error: The error message exceeds the maximum string length",
+      "Bun.JSONC.parse: SyntaxError: The error message exceeds the maximum string length",
+      "expect: Error: The error message exceeds the maximum string length",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
+});

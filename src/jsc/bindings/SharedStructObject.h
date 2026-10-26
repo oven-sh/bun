@@ -74,7 +74,8 @@ protected:
 
     // The wrapper that slot `index` last gave out or took in, and the address of the object behind it. The address is checked on every
     // read, because another thread may have changed the slot. Only slots that were read or written have an entry (an array can be
-    // billions of elements long), and the map is only touched with the cell lock held, which the GC takes to visit it.
+    // billions of elements long), and the map is only touched with the cell lock held, which the GC takes to visit it. The key is the slot index plus one: a hash map
+    // cannot hold the key zero.
     struct SlotCache {
         JSC::WriteBarrier<JSC::JSObject> wrapper;
         const void* key { nullptr };

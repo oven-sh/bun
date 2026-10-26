@@ -298,12 +298,12 @@ void JSSharedView::remember(VM& vm, size_t index, const void* key, JSObject* obj
 {
     WTF::Locker locker { cellLock() };
     if (key && object) {
-        SlotCache& entry = m_cache.add(index, SlotCache()).iterator->value;
+        SlotCache& entry = m_cache.add(index + 1, SlotCache()).iterator->value;
         if (object != entry.wrapper.get())
             entry.wrapper.set(vm, this, object);
         entry.key = key;
     } else {
-        auto it = m_cache.find(index);
+        auto it = m_cache.find(index + 1);
         if (it != m_cache.end()) {
             it->value.wrapper.clear();
             it->value.key = nullptr;
@@ -314,7 +314,7 @@ void JSSharedView::remember(VM& vm, size_t index, const void* key, JSObject* obj
 JSObject* JSSharedView::cachedWrapper(size_t index, const void* key) const
 {
     WTF::Locker locker { cellLock() };
-    auto it = m_cache.find(index);
+    auto it = m_cache.find(index + 1);
     if (it == m_cache.end())
         return nullptr;
     return key && it->value.key == key ? it->value.wrapper.get() : nullptr;
@@ -327,7 +327,7 @@ JSValue JSSharedView::load(JSGlobalObject* globalObject, size_t index)
     JSObject* cached = nullptr;
     {
         WTF::Locker locker { cellLock() };
-        auto it = m_cache.find(index);
+        auto it = m_cache.find(index + 1);
         if (it != m_cache.end()) {
             cachedKey = it->value.key;
             cached = it->value.wrapper.get();

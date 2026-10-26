@@ -1904,8 +1904,7 @@ pub mod dir_entry_accessor {
                     Ok(Ok(DirEntryHandle { value: Some(value) }))
                 }
                 EntriesOption::Err(err) => match err.original_err {
-                    // The walker reads the errno, as from `SyscallAccessor`: ENOTDIR is a file,
-                    // and a symlink that doesn't open is skipped.
+                    // The walker reads the errno in the `Maybe`, as from `SyscallAccessor`.
                     crate::Error::Sys(errno) => Ok(Err(SysError::new(errno, Syscall::Tag::open))),
                     other => Err(other.into_core()),
                 },

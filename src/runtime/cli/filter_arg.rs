@@ -320,17 +320,14 @@ impl SelectedPackages {
     }
 }
 
-/// What an error from the walk of a "workspaces" entry means for the run. Returns if the walk
-/// continues.
+/// Ends the run for a directory that doesn't open, as `bun install` does. Else the walk continues.
 fn on_walk_error(err: &bun_sys::Error) {
     if err.syscall == bun_sys::Tag::open {
         match err.get_errno() {
-            // A symlink loop leads nowhere, like a symlink to nothing. It is no package.
+            // A symlink loop leads nowhere, like a symlink to nothing.
             bun_sys::E::ELOOP => return,
-            // The walker reports a path that's too long for it as a failed `open`. That one
-            // package is skipped.
+            // The walker's own error for a path that is too long for it.
             bun_sys::E::ENAMETOOLONG => {}
-            // A directory that doesn't open ends the run, as it ends `bun install`.
             _ => {
                 Output::err_generic("{}", (err,));
                 Global::exit(1);

@@ -96,18 +96,8 @@ pub fn restart_when(
     restart(clear_terminal)
 }
 
-/// Starts the process again with the same arguments, as a watched file change does.
+/// Starts the process again with the same arguments, as a watched file change does. On Windows the caller is a child of the watcher manager.
 pub fn restart(clear_terminal: bool) -> ! {
-    #[cfg(windows)]
-    if !bun_sys::windows::is_watcher_child() {
-        if clear_terminal {
-            bun_core::output::flush();
-            bun_core::output::disable_buffering();
-            bun_core::output::reset_terminal_all();
-        }
-        // The first start has not become the watcher manager yet: no parent would spawn the next child.
-        bun_sys::windows::become_watcher_manager();
-    }
     bun_core::reload_process(clear_terminal, false);
     unreachable!()
 }

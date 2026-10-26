@@ -1,0 +1,19 @@
+------------------
+{ printWidth: 80 }
+------------------
+x = /* prettier-ignore */ function(){}();
+for (let x = /* prettier-ignore */ [a   in b]; ;);
+(/* prettier-ignore */ {}.a, b);
+(/* prettier-ignore */ a   +   b, c);
+x = (/* prettier-ignore */ a   +   b, c);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+x = /* prettier-ignore */ function(){}();
+for (let x = /* prettier-ignore */ [a   in b]; ;);
+(/* prettier-ignore */ {}.a, b);
+(/* prettier-ignore */ a   +   b, c);
+x = (/* prettier-ignore */ a   +   b, c);
+
+===================== End =====================

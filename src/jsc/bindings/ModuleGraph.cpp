@@ -14,6 +14,7 @@
 
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSLexicalEnvironmentInlines.h>
@@ -362,9 +363,53 @@ static JSObject* createModuleGraphFrame(Zig::GlobalObject* globalObject, JSModul
     return frame;
 }
 
+JSValue asyncContextWithoutModuleGraphs(Zig::GlobalObject* globalObject, JSValue asyncContext)
+{
+    if (!globalObject->hasModuleGraphs())
+        return asyncContext;
+
+    VM& vm = globalObject->vm();
+    auto& names = WebCore::builtinNames(vm);
+    auto isModuleGraphFrame = [&](JSObject* frame) {
+        JSValue storage = frame->getDirect(vm, names.storagePublicName());
+        return storage && (storage == globalObject || dynamicDowncast<JSModuleGraph>(storage));
+    };
+
+    // `asyncContext` keeps every frame alive. Frames older than the oldest graph frame are reused as-is. Newer ones are copied.
+    Vector<JSObject*, 16> frames;
+    size_t framesToRebuild = 0;
+    for (JSObject* frame = asyncContext.getObject(); frame;) {
+        frames.append(frame);
+        if (isModuleGraphFrame(frame))
+            framesToRebuild = frames.size();
+        JSValue previous = frame->getDirect(vm, names.prevPublicName());
+        frame = previous ? previous.getObject() : nullptr;
+    }
+    if (!framesToRebuild)
+        return asyncContext;
+
+    auto getField = [&](JSObject* frame, const Identifier& name) {
+        JSValue value = frame->getDirect(vm, name);
+        return value ? value : jsUndefined();
+    };
+    JSValue result = getField(frames[framesToRebuild - 1], names.prevPublicName());
+    for (size_t i = framesToRebuild - 1; i--;) {
+        JSObject* frame = frames[i];
+        if (isModuleGraphFrame(frame))
+            continue;
+        JSObject* copy = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
+        copy->putDirectOffset(vm, FrameStorage, getField(frame, names.storagePublicName()));
+        copy->putDirectOffset(vm, FrameValue, getField(frame, vm.propertyNames->value));
+        copy->putDirectOffset(vm, FramePrev, result);
+        copy->putDirectOffset(vm, FrameMasked, getField(frame, names.maskedPublicName()));
+        result = copy;
+    }
+    return result;
+}
+
 // With no script on the stack, a microtask checkpoint resets the async context
 // (GlobalObject::drainMicrotasks): inside a scope native code entered, to what it entered.
-static void noteEnteredFromEventLoop(Zig::GlobalObject* globalObject, JSValue asyncContext)
+void noteEnteredFromEventLoop(Zig::GlobalObject* globalObject, JSValue asyncContext)
 {
     VM& vm = globalObject->vm();
     if (vm.entryScope || !globalObject->m_moduleGraphs)
@@ -596,24 +641,22 @@ JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specif
     String cwd = cwdValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto referrer = Identifier::fromString(vm, makeString(cwd, PLATFORM_SEP, "[module-graph]"_s));
-    Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifier), referrer, nullptr, false);
+    Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifier), referrer, nullptr, /* useImportMap */ true);
     RETURN_IF_EXCEPTION(scope, nullptr);
     // The first import makes its module main, whether or not it then loads. (Not a builtin: it
     // is no graph's module.)
     bool becomesMain = !m_mainPath && !Bun::isBuiltinModule(key.string());
     if (becomesMain)
         m_mainPath.set(vm, this, jsString(vm, key.string()));
-    JSPromise* loaded = loader->requestImportModule(globalObject, key, Identifier(), nullptr, nullptr);
+    // JSModuleLoader::requestImportModule() after its resolve, which would ask about the key.
+    JSPromise* loaded = loader->loadModule(globalObject, key, nullptr, nullptr, { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Dynamic });
     if (scope.exception()) [[unlikely]] {
         if (becomesMain)
             m_mainPath.clear();
         return nullptr;
     }
-    // The loader marks its promise handled (import() in script derives one from it): so is what is
-    // returned here derived, by a reaction of JSC's own with no handler, so that a failure nobody
-    // handles is reported.
     JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
-    result->pipeFrom(vm, loaded);
+    loaded->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ImportModuleNamespace, result, jsUndefined());
     return result;
 }
 

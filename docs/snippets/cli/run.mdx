@@ -113,6 +113,10 @@ bun run <file or script>
 
 ### Development Workflow
 
+<ParamField path="--check" type="boolean">
+  Type check before running. Nothing runs if there are type errors. See <a href="/runtime/check">bun check</a>
+</ParamField>
+
 <ParamField path="--watch" type="boolean">
   Automatically restart the process on file change
 </ParamField>
@@ -271,7 +275,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--use-openssl-ca" type="boolean">
-  Use OpenSSL's default CA store
+  Use OpenSSL's default CA store instead of the bundled one
 </ParamField>
 
 <ParamField path="--use-bundled-ca" type="boolean">

@@ -542,7 +542,8 @@ describe("bundler", () => {
   });
 
   // Define all the invalid cases
-  const invalidComposesTests = [
+  type InvalidComposesTest = { name: string; cssContent: string; expectedError?: string; expectedWarning?: string };
+  const invalidComposesTests: InvalidComposesTest[] = [
     {
       name: "IDSelector",
       cssContent: `
@@ -1272,6 +1273,33 @@ b {
           a { color: red }
         }
       `,
+    },
+  });
+
+  itBundled("css/URLInEnvFallbackOfAtImportMediaQuery", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./b.css" (min-width: env(foo, url(sub/g.css)));
+        .c0 { color: blue }
+      `,
+      "/b.css": `.b1 { color: green }`,
+      "/sub/g.css": `.c0 { color: red }`,
+    },
+    backend: "cli",
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe(`/* b.css */
+@media (min-width: env(foo, url(sub/g.css))) {
+  .b1 {
+    color: green;
+  }
+}
+
+/* entry.css */
+.c0 {
+  color: #00f;
+}
+`);
     },
   });
 

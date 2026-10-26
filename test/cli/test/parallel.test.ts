@@ -1216,6 +1216,30 @@ test("--parallel forwards --experimental-http2-fetch to workers", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("--parallel forwards --use-openssl-ca to workers", async () => {
+  const fixture = `import {test,expect} from "bun:test";
+    import {getCACertificates, rootCertificates} from "node:tls";
+    test("no bundled roots", () => expect(getCACertificates("default")).not.toContain(rootCertificates[0]));`;
+  // The workers' environment has what .env sets, which the flag wins over.
+  using dir = tempDir("parallel-use-openssl-ca", {
+    "a.test.js": fixture,
+    "b.test.js": fixture,
+    ".env": "NODE_USE_SYSTEM_CA=1\n",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--use-openssl-ca"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", NODE_USE_SYSTEM_CA: undefined },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel forwards --conditions to workers", async () => {
   using dir = tempDir("parallel-conditions", {
     "node_modules/condpkg/package.json": JSON.stringify({

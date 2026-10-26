@@ -12,11 +12,11 @@ const {
   serveOnFreePort,
   printBannerAndHandleShortcuts,
 } = require("internal/serve_cli");
-const setConfigPlugins = $newRustFunction("bake/config/plugins.rs", "setConfigPlugins", 2);
-const isRestart = $newRustFunction("bake/config/plugins.rs", "isRestart", 0);
-const restartProcess = $newRustFunction("bake/config/plugins.rs", "restartProcess", 0);
-const setPages = $newRustFunction("bake/config/plugins.rs", "setPages", 1);
-const checkFramework = $newRustFunction("bake/config/plugins.rs", "checkFramework", 1);
+const setConfigPlugins = $bindgen("bake_plugins.bind.ts", "setConfigPlugins");
+const isRestart = $bindgen("bake_plugins.bind.ts", "isRestart");
+const restartProcess = $bindgen("bake_plugins.bind.ts", "restartProcess");
+const setPages = $bindgen("bake_plugins.bind.ts", "setPages");
+const checkFramework = $bindgen("bake_plugins.bind.ts", "checkFramework");
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;

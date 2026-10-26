@@ -6,26 +6,20 @@
 //! Symbols that already have a Rust `#[export_name]` / `#[no_mangle]` elsewhere
 //! are intentionally **not** re-declared here to avoid duplicate-symbol link
 //! errors:
-//!   - `Bun__getTLSDefaultCiphers` / `Bun__setTLSDefaultCiphers`
 //!   - `Bun__Process__getStdinFdType`
 //!       → `src/jsc/rare_data.rs`
-//!   - `Resolver__nodeModulePathsForJS` / `Resolver__nodeModulePathsJSValue`
+//!   - `Resolver__nodeModulePathsJSValue`
 //!       → `src/jsc/resolver_jsc.rs`
 //!   - `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming`
 //!       → `src/runtime/webcore/wasm_streaming.rs`
 //!   - `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure`
 //!       → `src/runtime/webview/ChromeProcess.rs`
-//!   - `Bun__JSSourceMap__find`
-//!       → `src/sourcemap_jsc/JSSourceMap.rs`
-//!   - `Bun__Process__send`
-//!       → `bun_jsc::virtual_machine_exports`
 
 use core::ffi::c_void;
 
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame,
-};
+use bun_jsc::{JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
 //
@@ -40,15 +34,8 @@ pub(crate) fn is_main_thread_vm() -> bool {
     VirtualMachine::get().as_mut().is_main_thread
 }
 
-/// `export fn Bun__drainMicrotasksFromJS(global, callframe) callconv(jsc.conv) JSValue`
-///
-/// Returns plain `JSValue` (not `JsResult`) so the generated thunk is a bare
-/// deref+call with no `ExceptionValidationScope`.
-/// `drain_microtasks()` runs arbitrary microtasks; wrapping in a
-/// scope would trip `assert_exception_presence_matches(false)` if one left an
-/// exception pending while we return `UNDEFINED`.
-// HOST_EXPORT(Bun__drainMicrotasksFromJS)
-pub(crate) fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSValue {
+pub(crate) fn drain_microtasks(cx: &mut JsScope<'_>) {
+    let global = cx.global();
     // Hot path (~2×/request via cork callback chain): pass the incoming
     // `global` straight through instead of re-deriving it via
     // TLS→vm→event_loop→vm→global (4 dependent loads — perf root-cause #1).
@@ -59,7 +46,6 @@ pub(crate) fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame)
     let _ = vm
         .event_loop_mut()
         .drain_microtasks_with_global(global, jsc_vm);
-    JSValue::UNDEFINED
 }
 
 /// `export fn Bun__logUnhandledException(exception: JSValue) void { get().runErrorHandler(exception, null); }`
@@ -292,12 +278,9 @@ mod sql_hooks {
 
 // ─── entry-point promise reactions (used by `--print`) ───────────────────────
 
-// HOST_EXPORT(Bun__onResolveEntryPointResult)
-pub(crate) fn on_resolve_entry_point_result(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> bun_jsc::JsResult<JSValue> {
-    let result = callframe.argument(0);
+pub(crate) fn on_resolve_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
+    let global = cx.global();
+    let result = result.to_js();
     // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
     // `message_with_type_and_level` (it always resolves the per-VM console via
     // `vm_console(global)`), so null is fine.
@@ -315,12 +298,9 @@ pub(crate) fn on_resolve_entry_point_result(
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
 
-// HOST_EXPORT(Bun__onRejectEntryPointResult)
-pub(crate) fn on_reject_entry_point_result(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> bun_jsc::JsResult<JSValue> {
-    let result = callframe.argument(0);
+pub(crate) fn on_reject_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
+    let global = cx.global();
+    let result = result.to_js();
     // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
     // `message_with_type_and_level` (it always resolves the per-VM console via
     // `vm_console(global)`), so null is fine.
@@ -340,6 +320,3 @@ pub(crate) fn on_reject_entry_point_result(
 
 // `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure` — exported from
 // `crate::webview::chrome_process` (mod webview is declared in lib.rs).
-//
-// `Bun__JSSourceMap__find` — exported from `bun_sourcemap_jsc::js_source_map`
-// via `#[bun_jsc::host_fn(export = ...)]`.

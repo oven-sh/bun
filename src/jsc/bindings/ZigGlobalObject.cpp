@@ -68,8 +68,13 @@
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "BunObject.h"
+#include "GeneratedBlob.h"
 #include "GeneratedBunObject.h"
 #include "GeneratedCrypto.h"
+#include "GeneratedHtmlRewriter.h"
+#include "GeneratedPrompt.h"
+#include "GeneratedResolveMessage.h"
+#include "GeneratedResponse.h"
 #include "GeneratedTextDecoder.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
@@ -136,7 +141,6 @@
 #include "streams/JSReadableStreamBYOBRequest.h"
 #include "streams/JSReadableStreamDefaultController.h"
 #include "streams/JSReadableStreamDefaultReader.h"
-#include "JSSink.h"
 #include "JSSocketAddressDTO.h"
 #include "JSReactElement.h"
 #include "BunMarkdownMeta.h"
@@ -178,7 +182,6 @@
 #include "WebCoreJSBuiltins.h"
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
-#include "ZigGeneratedClasses.h"
 #include "ZigSourceProvider.h"
 #include "UtilInspect.h"
 #include "Base64Helpers.h"
@@ -237,8 +240,6 @@
 #include <wtf/NumberOfCores.h>
 
 using namespace Bun;
-
-BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeAbortError);
 
@@ -2250,66 +2251,10 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_NapiClassStructure), [](LazyClassStructure::Initializer& init) {
              init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->functionPrototype()));
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSFileSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
-             auto* structure = JSFileSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSFileSinkConstructor::create(init.vm, init.global, JSFileSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSArrayBufferSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::ArrayBufferSink);
-             auto* structure = JSArrayBufferSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSArrayBufferSinkConstructor::create(init.vm, init.global, JSArrayBufferSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPResponseSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTTPResponseSink);
-             auto* structure = JSHTTPResponseSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSHTTPResponseSinkConstructor::create(init.vm, init.global, JSHTTPResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSNetworkSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::NetworkSink);
-             auto* structure = JSNetworkSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSNetworkSinkConstructor::create(init.vm, init.global, JSNetworkSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSFetchRequestBodySinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FetchRequestBodySink);
-             auto* structure = JSFetchRequestBodySink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSFetchRequestBodySinkConstructor::create(init.vm, init.global, JSFetchRequestBodySinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTMLRewriterSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTMLRewriterSink);
-             auto* structure = JSHTMLRewriterSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSHTMLRewriterSinkConstructor::create(init.vm, init.global, JSHTMLRewriterSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSBufferClassStructure), [](LazyClassStructure::Initializer& init) {
              auto* prototype = WebCore::createBufferPrototype(init.vm, init.global);
              auto* structure = WebCore::createBufferStructure(init.vm, init.global, JSValue(prototype));
              auto* constructor = WebCore::createBufferConstructor(init.vm, init.global, prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPSResponseSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTTPSResponseSink);
-             auto* structure = JSHTTPSResponseSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSHTTPSResponseSinkConstructor::create(init.vm, init.global, JSHTTPSResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
              init.setPrototype(prototype);
              init.setStructure(structure);
              init.setConstructor(constructor);
@@ -2527,10 +2472,6 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_NativePromiseContextStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPResponseController), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             auto* structure = createJSSinkControllerStructure(init.vm, init.owner, WebCore::SinkID::HTTPResponseSink);
-             init.set(structure);
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_importMetaObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
          } },
@@ -2620,22 +2561,6 @@ void GlobalObject::finishCreation(VM& vm)
              }
 
              init.set(toJS<IDLInterface<SubtleCrypto>>(*init.owner, global, global.m_subtleCrypto).getObject());
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSArrayBufferControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::ArrayBufferSink);
-             init.set(prototype);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSFileSinkControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::FileSink);
-             init.set(prototype);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPSResponseControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::HTTPSResponseSink);
-             init.set(prototype);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSFetchTaskletChunkedRequestControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::NetworkSink);
-             init.set(prototype);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_performanceObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
@@ -2758,8 +2683,6 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<Structure>& init) {
             init.set(Bun::createModuleGraphFrameStructure(init.vm, init.owner));
         });
-
-    this->initGeneratedLazyClasses();
 
     m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
         init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
@@ -2918,24 +2841,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     return JSValue::encode(jsUndefined());
 }
 
-EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
+enum class JSClassID : int32_t {
+#include "JSClasses+enum.h"
+};
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionInherits, (JSGlobalObject*, CallFrame* callFrame))
 {
-    auto& vm = this->vm();
-    auto* readableStream = dynamicDowncast<WebCore::JSReadableStream>(stream);
-    if (!readableStream) [[unlikely]]
-        return JSC::JSValue::encode(JSC::Exception::create(vm, createTypeError(this, "Expected a ReadableStream"_s)));
-    // The native caller (JSSinkController__assignToStream) expects any failure returned as the
-    // encoded Exception cell, never left pending on the VM.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue result = Bun::WebStreams::assignToStream(this, readableStream, controller);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        // Hand the Exception cell back to the native caller. A termination that has left script is
-        // taken (the caller stands down on the cell); beneath script it stays for JSC to unwind.
-        scope.clearExceptionExceptTermination();
-        Bun__VM__takeTerminationOutsideScript(this);
-        return JSC::JSValue::encode(exception);
+    JSValue value = callFrame->argument(1);
+    switch (static_cast<JSClassID>(callFrame->uncheckedArgument(0).asInt32())) {
+    case JSClassID::Blob:
+        return JSValue::encode(jsBoolean(value.inherits<Bun::Bindgen::Generated::JSBlob>()));
+    case JSClassID::ReadableStream:
+        return JSValue::encode(jsBoolean(value.inherits<JSReadableStream>()));
+    case JSClassID::WritableStream:
+        return JSValue::encode(jsBoolean(value.inherits<JSWritableStream>()));
+    case JSClassID::TransformStream:
+        return JSValue::encode(jsBoolean(value.inherits<JSTransformStream>()));
+    case JSClassID::ArrayBuffer:
+        return JSValue::encode(jsBoolean(value.inherits<JSArrayBuffer>()));
     }
-    return JSC::JSValue::encode(result);
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 JSC::JSFunction* GlobalObject::utilInspectFunction()
@@ -3015,10 +2940,6 @@ JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
         [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
 }
 
-BUN_DECLARE_HOST_FUNCTION(WebCore__alert);
-BUN_DECLARE_HOST_FUNCTION(WebCore__prompt);
-BUN_DECLARE_HOST_FUNCTION(WebCore__confirm);
-
 JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 {
     return uncheckedDowncast<Zig::GlobalObject>(globalObject)->globalThis();
@@ -3057,8 +2978,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_esmRegistryEvaluatedKeys, 1, functionEsmRegistryEvaluatedKeys },
         { BuiltinName::k_esmRegistryHasEvaluated, 2, functionEsmRegistryHasEvaluated },
         { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
-        { BuiltinName::k_requireCommonJS, 5, Bun::jsFunctionRequireCommonJS },
-        { BuiltinName::k_requireNativeModule, 1, Bun::jsFunctionRequireNativeModule },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
         { BuiltinName::k_inherits, 1, jsFunctionInherits },
@@ -3092,6 +3011,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.createInternalModuleByIdPrivateName(), 1, InternalModuleRegistry::jsCreateInternalModuleById, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // A stack taken while a module loads has the frame of one of these two. putDirectNativeFunction names them "anonymous".
+    putDirectNativeFunction(vm, this, builtinNames.requireCommonJSPrivateName(), 5, Bun::jsFunctionRequireCommonJS, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectNativeFunction(vm, this, builtinNames.requireNativeModulePrivateName(), 1, Bun::jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectNativeFunction(vm, this,
         builtinNames.createCommonJSModulePrivateName(),
@@ -3404,7 +3326,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     // when downcast<> calls the virtual isWebCoreJSClientData() on garbage.
     WebCore::clientData(visitor.collector().heap().vm())->httpHeaderIdentifiers().template visit<Visitor>(visitor);
 
-    thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
@@ -4814,7 +4735,6 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
     destroyVM(vm);
 }
 
-#include "ZigGeneratedClasses+lazyStructureImpl.h"
 #include "ZigGlobalObject.lut.h"
 
 const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &bunGlobalObjectTable, nullptr,

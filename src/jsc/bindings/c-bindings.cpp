@@ -487,6 +487,9 @@ extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* at
 #endif // !OS(WINDOWS)
 
 #define LSHPACK_MAX_HEADER_SIZE 65536
+// ls-hpack is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts.
+static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(lsxpack_header_t, chain_next_idx) == sizeof(char*) + 24,
+    "LSXPACK_MAX_STRLEN must be UINT32_MAX");
 
 // Lazily heap-allocated so it doesn't land in the .tls section on Windows
 // (PE has no TLS BSS; a static thread_local char[65536] ships as 64 KB of

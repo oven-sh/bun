@@ -600,8 +600,8 @@ describe("HTMLRewriter", () => {
     });
 
     // A `type: 'direct'` source whose `pull()` throws synchronously leaves the
-    // JS controller's `m_sinkPtr` set after `readDirectStream` returns with an
-    // exception; `end_from_stream` must null it (via `JSSink::detach`) before
+    // JS controller attached to the pipe after `readDirectStream` returns with an
+    // exception; `end_from_stream` must detach it (via `SourceHandle::detach`) before
     // the pipe can be freed so the controller's destructor doesn't dispatch
     // into freed memory.
     it("a direct ReadableStream whose pull() throws synchronously rejects the body", async () => {
@@ -1844,6 +1844,19 @@ describe("HTMLRewriter", () => {
       return rw;
     }));
 
+  it("rejects a selector that is nested too deeply", async () => {
+    const nested = (open, depth) => open.repeat(depth) + "b" + ")".repeat(depth);
+    for (const open of [":not(", ":not(/*)*/", ":not(.a\\)", `:not([a=")"]`, `:not([a='\\')']`]) {
+      expect(() => new HTMLRewriter().on(nested(open, 10_000), {})).toThrow("Selector is nested too deeply.");
+    }
+    expect(() => new HTMLRewriter().on(nested(":not(", 32), {})).not.toThrow();
+    const selector = `b:not(p:nth-child(2)), ${Array(100).fill("p:nth-child(1)").join(", ")}, [a="${"(".repeat(100)}"]`;
+    const res = new HTMLRewriter()
+      .on(selector, { element: e => void e.remove() })
+      .transform(new Response("<b></b><i></i>"));
+    expect(await res.text()).toBe("<i></i>");
+  });
+
   it("selector tests", async () => {
     const checkSelector = async (selector, input, expected) => {
       const res = new HTMLRewriter()
@@ -2982,6 +2995,25 @@ describe("doctype publicId/systemId distinguish empty from absent", () => {
   });
 });
 
+it("element.attributes[Symbol.iterator] is named [Symbol.iterator], and is writable, configurable and not enumerable", () => {
+  let descriptor;
+  new HTMLRewriter()
+    .on("p", {
+      element(el) {
+        descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el.attributes), Symbol.iterator);
+      },
+    })
+    .transform("<p a=b></p>");
+  const { value, ...attributes } = descriptor;
+  expect({ name: value.name, length: value.length, ...attributes }).toEqual({
+    name: "[Symbol.iterator]",
+    length: 0,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+});
+
 describe("invalid arguments throw instead of returning an error value", () => {
   it("setAttribute with a forbidden character in the name rejects the body", async () => {
     const res = new HTMLRewriter()
@@ -3049,6 +3081,53 @@ describe("invalid arguments throw instead of returning an error value", () => {
     expect(err).toBeInstanceOf(TypeError);
     expect(err.message).toBe("Expected a function");
   });
+});
+
+it("a missing argument is treated as undefined", () => {
+  const outcome = fn => {
+    try {
+      return { returned: fn() };
+    } catch (e) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+  };
+  const missing = {};
+  const given = {};
+  const compare = (name, object, methods, ...first) => {
+    for (const method of methods) {
+      const label = `${name}.${method}(${first})`;
+      missing[label] = outcome(() => object[method](...first));
+      given[label] = outcome(() => object[method](...first, undefined));
+    }
+  };
+  let detached;
+  new HTMLRewriter()
+    .on("p", {
+      element(el) {
+        detached = el;
+        compare("element", el, ["before", "after", "replace", "prepend", "append", "setInnerContent"]);
+        compare("element", el, ["getAttribute", "hasAttribute", "removeAttribute", "setAttribute", "onEndTag"]);
+        compare("element", el, ["setAttribute"], "a");
+        el.onEndTag(tag => compare("endTag", tag, ["before", "after"]));
+      },
+      text: chunk => compare("text", chunk, ["before", "after", "replace"]),
+      comments: comment => compare("comment", comment, ["before", "after", "replace"]),
+    })
+    .onDocument({ end: end => compare("end", end, ["append"]) })
+    .transform("<p>t<!--c--></p>");
+  compare("detached", detached, ["onEndTag"]);
+
+  expect(missing).toEqual(given);
+  expect(new Set(Object.keys(missing).map(label => label.split(".")[0]))).toEqual(
+    new Set(["element", "endTag", "text", "comment", "end", "detached"]),
+  );
+  expect(missing["element.before()"]).toEqual({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "Expected string",
+  });
+  expect(missing["element.onEndTag()"]).toEqual({ name: "TypeError", code: undefined, message: "Expected a function" });
+  expect(missing["detached.onEndTag()"]).toEqual({ returned: null });
 });
 
 describe("tagName, endTag.name, and comment.text setters", () => {

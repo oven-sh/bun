@@ -4,6 +4,8 @@
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/FrameTracers.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
 
 #include "headers-handwritten.h"
 #include "BunClientData.h"
@@ -28,12 +30,29 @@
 
 extern "C" void Bun__napi_register_cleanup_zig(napi_env env);
 extern "C" void Bun__napi_threadsafe_function_env_teardown(void* tsfn);
+extern "C" void Bun__napi_run_finalizers_after_teardown_wait(napi_env env);
 extern "C" void Bun__napi_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
 namespace Zig {
 class NapiRef;
 }
+
+// What the value constructors/accessors Node gates with CHECK_ENV only run under (NAPI_PREAMBLE_NO_PENDING_CHECK
+// in napi.cpp, `ungated!` in napi_body.rs), and the V8 constructors that return a Local: callable with an exception
+// pending (stashed for the call; only then, since the restore is unconditional) and never where a worker.terminate()
+// / node:vm timeout is delivered (DeferTraps: the next JSC exception check after the call delivers it, as in Node).
+// No JS or addon code may run under it.
+struct NapiUngatedScope {
+    explicit NapiUngatedScope(JSC::VM& vm)
+        : deferTraps(vm)
+    {
+        if (vm.exceptionForInspection()) [[unlikely]]
+            suspended.emplace(vm);
+    }
+    std::optional<JSC::SuspendExceptionScope> suspended;
+    JSC::DeferTraps deferTraps;
+};
 
 namespace Napi {
 
@@ -220,6 +239,17 @@ public:
         m_cleanupHooks = Napi::HookSet();
         clearExceptionsBetweenFinalizers();
 
+        // An execute() that is still running can use what a finalizer frees. The VM's teardown waits for the thread
+        // pool, so the finalizers run after that wait. Node settles its thread pool requests before them too.
+        if (m_asyncWorkOnThreadPool.load()) {
+            Bun__napi_run_finalizers_after_teardown_wait(this);
+            return;
+        }
+        runFinalizers();
+    }
+
+    void runFinalizers()
+    {
         m_isFinishingFinalizers = true;
         // A cleanup hook may itself have leaked an exception; the first
         // finalizer starts clean too.
@@ -259,6 +289,11 @@ public:
         instanceData = nullptr;
         clearExceptionsBetweenFinalizers();
     }
+
+    // JS thread, when async work goes to the thread pool.
+    void asyncWorkEnteredThreadPool() { m_asyncWorkOnThreadPool++; }
+    // Pool thread, once execute() has returned or the work was cancelled.
+    void asyncWorkLeftThreadPool() { m_asyncWorkOnThreadPool--; }
 
     // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
     // by the Rust side, added and removed on the JS thread only: at creation,
@@ -518,6 +553,23 @@ public:
         return m_napiModule.nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception;
     }
 
+    // Node's NAPI_PREAMBLE entry check, in its order. The VM's slot is read raw: a JSC exception check would service
+    // the traps and deliver a worker.terminate() under addon frames, where V8 never does. A termination that is
+    // already pending answers as the closed gate does.
+    inline napi_status entryStatus(JSC::TopExceptionScope& scope) const
+    {
+        if (m_pendingException) [[unlikely]] {
+            return napi_pending_exception;
+        }
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            return m_vm.isTerminationException(exception) ? cannotCallIntoJSStatus() : napi_pending_exception;
+        }
+        if (!canCallIntoJS()) [[unlikely]] {
+            return cannotCallIntoJSStatus();
+        }
+        return napi_ok;
+    }
+
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
     napi_extended_error_info m_lastNapiErrorInfo = {
@@ -623,6 +675,7 @@ private:
     WTF::Lock m_threadSafeFunctionsLock;
     WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);
     bool m_threadSafeFunctionsTornDown WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock) = false;
+    std::atomic<unsigned> m_asyncWorkOnThreadPool { 0 };
 
     // Drop any pending exception -- VM-scope or env-scope -- between
     // finalizers run from cleanup(). Used by cleanup() only. Defined

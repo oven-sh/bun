@@ -75,6 +75,16 @@ function detectASAN(): boolean {
   return basename(process.execPath).includes("bun-asan");
 }
 
+// A release build is not one. `--revision` can't tell for a debug build, which prints "-debug" either way.
+export const isCanary = detectCanary();
+
+function detectCanary(): boolean {
+  try {
+    return require("bun:internal-for-testing").crash_handler.getFeatureData().is_canary;
+  } catch {}
+  return Bun.spawnSync({ cmd: [process.execPath, "--revision"] }).stdout.includes("canary");
+}
+
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
   // Windows spells PATH `Path`. `{ ...bunEnv, PATH }` would then hold both, and which one a child
@@ -205,6 +215,22 @@ await new Promise((resolve, reject) => filler.on("connect", resolve).on("error",
 
 export function nodeExe(): string | null {
   return which("node") || null;
+}
+
+/**
+ * `nodeExe()`, or null when that Node.js is older than `version` or does not run. For a reference run whose expected
+ * output is that of a later release: the macOS CI hosts can have an older Node.js than the one Bun reports.
+ */
+export function nodeExeAtLeast(version: string): string | null {
+  const node = nodeExe();
+  if (!node) return null;
+  try {
+    const probe = spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+    return probe.exitCode === 0 && Bun.semver.satisfies(probe.stdout.toString().trim(), `>=${version}`) ? node : null;
+  } catch {
+    // A file that cannot be started at all: a script whose interpreter is gone, a binary of another architecture.
+    return null;
+  }
 }
 
 let abiMatchingNode: Promise<string> | undefined;

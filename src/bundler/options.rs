@@ -255,9 +255,6 @@ const DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[
 /// `bun_bundler::options` so `use bun_bundler::options::TargetExt;` makes
 /// `.bake_graph()` etc. available on the single canonical type.
 pub trait TargetExt: Copy {
-    // `fromJS` lives in `bun_bundler_jsc::options_jsc::target_from_js`
-    // (PORTING.md "*_jsc alias" rule).
-
     fn bake_graph(self) -> crate::bake_types::Graph;
     fn out_extensions(self) -> StringHashMap<&'static [u8]>;
 
@@ -554,7 +551,9 @@ pub fn get_loader_and_virtual_source<'a>(
         }
     }
 
-    let is_main = strings::eql_long(specifier, jsc_vm.main(), true);
+    let is_main = jsc_vm
+        .main()
+        .is_some_and(|main| strings::eql_long(specifier, main, true));
 
     let dir = path.name().dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
@@ -773,20 +772,6 @@ impl ESMConditions {
             import: import_condition_map,
             require: require_condition_map,
             style: style_condition_map,
-        })
-    }
-
-    pub fn clone(&self) -> Result<ESMConditions, bun_alloc::AllocError> {
-        let default = self.default.clone()?;
-        let import = self.import.clone()?;
-        let require = self.require.clone()?;
-        let style = self.style.clone()?;
-
-        Ok(ESMConditions {
-            default,
-            import,
-            require,
-            style,
         })
     }
 
@@ -1951,9 +1936,10 @@ impl<'a> BundleOptions<'a> {
 
         // Reborrow the raw `*mut Log`
         // for the duration of this call only.
+        let top_level_dir = fs.top_level_dir();
         opts.external = init_external_modules(
             &mut fs.fs,
-            fs.top_level_dir,
+            top_level_dir,
             &transform
                 .external
                 .iter()
@@ -2512,6 +2498,34 @@ impl PathTemplate {
             &self.placeholder.target,
             sanitize_parent_dirs,
         )
+    }
+
+    /// Max output path length. A `PathBuffer` also needs room for a `.map` or `.jsc` suffix and the NUL.
+    pub(crate) const MAX_OUTPUT_PATH_LEN: usize = bun_paths::MAX_PATH_BYTES - 1 - ".map".len();
+
+    /// Logs an error and returns `false` when `output_path` exceeds `MAX_OUTPUT_PATH_LEN`.
+    pub(crate) fn check_output_path(
+        &self,
+        log: &mut bun_ast::Log,
+        input: &[u8],
+        output_path: &[u8],
+    ) -> bool {
+        if output_path.len() <= Self::MAX_OUTPUT_PATH_LEN {
+            return true;
+        }
+        log.add_range_error_fmt_with_note(
+            None,
+            bun_ast::Range::NONE,
+            format_args!(
+                "Output path for {} is too long ({} bytes, the limit on this platform is {})",
+                bun_core::fmt::quote(input),
+                output_path.len(),
+                Self::MAX_OUTPUT_PATH_LEN,
+            ),
+            format_args!("naming template is {}", bun_core::fmt::quote(&self.data)),
+            bun_ast::Range::NONE,
+        );
+        false
     }
 }
 

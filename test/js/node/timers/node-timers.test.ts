@@ -33,7 +33,7 @@ it("node.js util.promisify(setTimeout) works", async () => {
 });
 
 it("node.js util.promisify(setInterval) works", async () => {
-  const setInterval = promisify(globalThis.setInterval);
+  const setInterval = promisify(globalThis.setInterval) as unknown as typeof promises.setInterval;
   var runCount = 0;
   const start = performance.now();
   for await (const run of setInterval(1)) {
@@ -118,7 +118,7 @@ it("timers.promises === timers/promises", async () => {
   expect(ns.default).toBe(promises);
 });
 
-type TimerWithDestroyed = Timer & { _destroyed: boolean };
+type TimerWithDestroyed = NodeJS.Timeout & NodeJS.Immediate & { _destroyed: boolean };
 
 describe("_destroyed", () => {
   it("is false by default", () => {
@@ -227,8 +227,8 @@ describe("clear", () => {
   it("interval/timeout do not affect immediates", async () => {
     const mockedCb = mock();
     const immediate = setImmediate(mockedCb);
-    clearTimeout(immediate);
-    clearInterval(immediate);
+    clearTimeout(immediate as any);
+    clearInterval(immediate as any);
 
     await Bun.sleep(1);
     expect(mockedCb).toHaveBeenCalledTimes(1);
@@ -348,6 +348,45 @@ describe("_idleStart", () => {
     expect(t1._idleStart).toBe(-Number.MAX_VALUE);
     clearTimeout(t1);
   });
+});
+
+it.each([
+  ["Timeout", () => setTimeout(() => {}, 1000)],
+  ["Immediate", () => setImmediate(() => {})],
+] as const)("new %s() throws", (name, create) => {
+  using timer = create();
+  expect(timer.constructor.name).toBe(name);
+  // @ts-expect-error
+  expect(() => new timer.constructor()).toThrow(
+    expect.objectContaining({ name: "TypeError", code: "ERR_ILLEGAL_CONSTRUCTOR", message: "Illegal constructor" }),
+  );
+});
+
+describe("symbol-keyed methods", () => {
+  const timeout = setTimeout(() => {}, 1000);
+  const immediate = setImmediate(() => {});
+  clearTimeout(timeout);
+  clearImmediate(immediate);
+
+  it.each([
+    ["Timeout", Symbol.dispose, timeout],
+    ["Timeout", Symbol.toPrimitive, timeout],
+    ["Immediate", Symbol.dispose, immediate],
+    // Not in Node.
+    ["Immediate", Symbol.toPrimitive, immediate],
+  ] as const)(
+    "%s.prototype[%p] has no name and no parameters, and is writable, configurable and not enumerable",
+    (name, symbol, timer) => {
+      const { value, ...attributes } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer), symbol)!;
+      expect({ name: value.name, length: value.length, ...attributes }).toEqual({
+        name: "",
+        length: 0,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+    },
+  );
 });
 
 describe.each(["with", "without"])("setImmediate %s timers running", mode => {

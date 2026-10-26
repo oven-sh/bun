@@ -137,7 +137,7 @@ impl InputPathSet {
                 &self.paths.keys()[self.index_of_same_file(abs)?]
             }
         };
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
         let mut rel: Box<[u8]> = Box::from(resolve_path::relative(top_level_dir, input));
         resolve_path::platform_to_posix_in_place(&mut rel);
         Some(rel)
@@ -357,7 +357,7 @@ pub struct OutputRoot {
 
 /// Empty `root_path` is the working directory.
 pub fn resolve_output_root(root_path: &[u8]) -> OutputRoot {
-    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
     let mut abs_buf = bun_paths::path_buffer_pool::get();
     let abs = resolve_path::join_abs_string_buf::<platform::Auto>(
         top_level_dir,

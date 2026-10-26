@@ -10,6 +10,7 @@ use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
     JsResult, SystemError,
@@ -264,21 +265,34 @@ fn get_argv(
 
 /// Bun.spawn() calls this.
 pub(crate) fn spawn(
-    cx: &bun_jsc::JsThread<'_>,
-    args: JSValue,
-    secondary_args_value: Option<JSValue>,
+    cx: &mut JsScope<'_>,
+    cmd_or_options: JsLocal<'_>,
+    options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync(false, cx, args, secondary_args_value, &mut None)
+    spawn_maybe_sync(
+        false,
+        &cx.js_thread(),
+        cmd_or_options.to_js(),
+        options.to_js(),
+        &mut None,
+    )
 }
 
 /// Bun.spawnSync() calls this.
 pub(crate) fn spawn_sync(
-    cx: &bun_jsc::JsThread<'_>,
-    args: JSValue,
-    secondary_args_value: Option<JSValue>,
+    cx: &mut JsScope<'_>,
+    cmd_or_options: JsLocal<'_>,
+    options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
+    let cx = &cx.js_thread();
     let mut bun_test_deadline: Option<Timespec> = None;
-    let result = spawn_maybe_sync(true, cx, args, secondary_args_value, &mut bun_test_deadline);
+    let result = spawn_maybe_sync(
+        true,
+        cx,
+        cmd_or_options.to_js(),
+        options.to_js(),
+        &mut bun_test_deadline,
+    );
     // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
     if let Some(deadline) = bun_test_deadline
         && result.is_ok()
@@ -337,7 +351,7 @@ fn spawn_maybe_sync(
     is_sync: bool,
     cx: &bun_jsc::JsThread<'_>,
     args_: JSValue,
-    secondary_args_value: Option<JSValue>,
+    secondary_args_value: JSValue,
     bun_test_deadline: &mut Option<Timespec>,
 ) -> JsResult<JSValue> {
     if is_sync {
@@ -363,7 +377,7 @@ fn spawn_maybe_sync(
     // outlives this call frame.
     let jsc_vm: &mut jsc::VirtualMachineRef = cx.vm().as_mut();
 
-    let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
     let mut user_specified_cwd = false;
 
     let mut stdio: [Stdio; 3] = [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit];
@@ -419,7 +433,7 @@ fn spawn_maybe_sync(
         let args_type = args.js_type();
         if args_type.is_array() {
             cmd_value = args;
-            args = secondary_args_value.unwrap_or_default();
+            args = secondary_args_value;
         } else if !args.is_object() {
             return Err(cx
                 .global()
@@ -798,12 +812,12 @@ fn spawn_maybe_sync(
                 if let Some(terminal_val) = args.get_truthy(cx.global(), "terminal")? {
                     // Check if it's an existing Terminal object
                     if let Some(terminal) = terminal_body::js::from_js(terminal_val) {
-                        // `from_js` returns the live `m_ctx` pointer borrowed
+                        // `from_js` returns the live `Terminal` pointer borrowed
                         // from the JS wrapper; it stays valid for as long as
                         // `terminal_val` is reachable (kept alive below via
                         // `terminal_js_value`), so the `BackRef` invariant
                         // (pointee outlives holder) holds for this scope.
-                        // SAFETY: `terminal` is the wrapper's live `m_ctx` heap pointer
+                        // SAFETY: `terminal` is the wrapper's live heap pointer
                         // (write provenance from its original allocation).
                         let term = unsafe { bun_ptr::BackRef::from_raw_mut(terminal.as_ptr()) };
                         if term.is_closed() {
@@ -834,7 +848,7 @@ fn spawn_maybe_sync(
                         // Create a new terminal from options
                         let term_options =
                             TerminalOptions::parse_from_js(cx.global(), terminal_val)?;
-                        match Terminal::create_from_spawn(cx.global(), &term_options) {
+                        match Terminal::create_from_spawn(cx, &term_options) {
                             Ok(created) => terminal_info.0 = Some(created),
                             Err(err) => {
                                 return Err(match err {
@@ -1569,11 +1583,8 @@ fn spawn_maybe_sync(
     }
 
     let out = if !is_sync {
-        // `subprocess_ptr` came from `heap::alloc` above and has not yet been
-        // wrapped; ownership transfers to the C++ JS cell (released via
-        // `SubprocessClass__finalize`). Use the raw-ptr entrypoint instead of
-        // the by-value `JsClass::to_js` (which would re-box).
-        SubprocessT::to_js_from_ptr(subprocess_ptr, cx.global())
+        // The JS wrapper adopts the ref `subprocess_ptr` was allocated with.
+        SubprocessT::to_js_nonnull(subprocess_nn, cx.global())
     } else {
         JSValue::ZERO
     };
@@ -1837,7 +1848,10 @@ fn spawn_maybe_sync(
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
             let bun_test_timeout: Timespec = if bun_test_fired {
                 Timespec::EPOCH
-            } else if let Some(runner) = crate::test_runner::jest::Jest::runner() {
+            } else if jsc_vm.is_main_thread
+                && let Some(runner) = crate::test_runner::jest::Jest::runner()
+            {
+                // The test runner and its deadlines belong to the main thread.
                 runner.get_active_timeout()
             } else {
                 Timespec::EPOCH
@@ -1932,8 +1946,8 @@ fn spawn_maybe_sync(
 
     subprocess.update_has_pending_activity();
 
-    let signal_code = SubprocessT::get_signal_code(subprocess, cx.global());
-    let exit_code = SubprocessT::get_exit_code(subprocess, cx.global());
+    let signal_code = subprocess.signal_code_to_js(cx.global());
+    let exit_code = subprocess.exit_code_to_js();
     let read_error = subprocess
         .stdout
         .with_mut(|s| s.take_read_error())

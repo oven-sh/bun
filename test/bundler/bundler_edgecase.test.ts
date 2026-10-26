@@ -27,6 +27,52 @@ describe("bundler", () => {
       stdout: "object",
     },
   });
+  // A CommonJS module with only hoistable statements still needs a `require_*` wrapper symbol.
+  itBundled("edgecase/StatementlessCommonJSModuleRequire", {
+    files: {
+      "/entry.ts": /* js */ `
+        const b = require('./b.cjs');
+        console.log(typeof b);
+      `,
+      "/b.cjs": `;`,
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  itBundled("edgecase/HoistableOnlyCommonJSModule", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { B } from './b.cjs';
+        console.log(typeof B);
+      `,
+      "/b.cjs": `function foo() {}\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
+  // These packages parse as ESM, and a default import makes the linker wrap them as CommonJS.
+  itBundled("edgecase/HoistableOnlyUnwrapCommonJSPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        import Def from 'scheduler/empty.js';
+        console.log(typeof Def);
+      `,
+      "/node_modules/scheduler/empty.js": `function foo() {}\n`,
+      "/node_modules/scheduler/package.json": `{"name":"scheduler","version":"1.0.0"}`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("require_empty");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
   itBundled("edgecase/NestedRedirectToABuiltin", {
     files: {
       "/entry.js": /* js */ `
@@ -3701,6 +3747,45 @@ describe("bundler", () => {
     },
     120_000,
   );
+  // esbuild reports the same error for both cycles.
+  itBundled("edgecase/ExportStarAmbiguityCycleIntoBarrel", {
+    files: {
+      "/entry.js": `import { x } from "./barrel.js"; console.log(x);`,
+      "/barrel.js": `export * from "./a.js"; export * from "./b.js";`,
+      "/a.js": `export const x = 1;`,
+      "/b.js": `export { x } from "./barrel.js";`,
+    },
+    backend: "cli",
+    bundleErrors: {
+      "/b.js": ['Ambiguous import "x" has multiple matching exports'],
+    },
+  });
+  itBundled("edgecase/ExportStarAmbiguityCycleAcrossBarrels", {
+    files: {
+      "/entry.js": `import { x } from "./barrel1.js"; console.log(x);`,
+      "/a.js": `export const x = 1;`,
+      "/barrel1.js": `export * from "./a.js"; export * from "./b1.js";`,
+      "/b1.js": `export { x } from "./barrel2.js";`,
+      "/barrel2.js": `export * from "./a.js"; export * from "./b2.js";`,
+      "/b2.js": `export { x } from "./barrel1.js";`,
+    },
+    backend: "cli",
+    bundleErrors: {
+      "/b2.js": ['Ambiguous import "x" has multiple matching exports'],
+    },
+  });
+  // Two candidates that resolve through the same re-export aren't a cycle.
+  itBundled("edgecase/ExportStarAmbiguityAlternativesShareReExport", {
+    files: {
+      "/entry.js": `import { x } from "./barrel.js"; console.log(x);`,
+      "/barrel.js": `export * from "./a.js"; export * from "./b.js"; export * from "./c.js";`,
+      "/a.js": `export const x = 1;`,
+      "/b.js": `export { x } from "./shared.js";`,
+      "/c.js": `export { x } from "./shared.js";`,
+      "/shared.js": `export { x } from "./a.js";`,
+    },
+    run: { stdout: "1" },
+  });
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `

@@ -1,41 +1,30 @@
 use core::ffi::{c_char, c_int};
-use core::mem;
 
 use bun_zlib as c; // bun.zlib — C zlib FFI (NodeMode, z_stream, ReturnCode, FlushValue, deflate*, inflate*)
 
 use crate::node::node_zlib_binding::Error;
 
-// ─── gated: JsClass payload + host fns ────────────────────────────────────
-// `NativeZlib` carries `#[bun_jsc::JsClass]` and its methods are
-// `#[bun_jsc::host_fn]`s; field types (`Strong`, `WorkPoolTask`) are not yet
-// exported with the expected shapes. The pure-FFI `Context` (zlib state
-// machine) is hoisted below as the non-JSC body.
-
 mod _impl {
     use super::*;
     use core::cell::Cell;
 
-    use bun_jsc::{
-        CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
-    };
+    use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+    use bun_jsc::{JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
+    use bun_ptr::RefPtr;
 
-    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
+    use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive};
     use crate::node::util::validators;
 
     /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-    /// (see `CompressionStream::write` in node_zlib_binding.rs).
+    /// (see `CompressionStreamImpl::write` in node_zlib_binding.rs).
     /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
-    // `mod js { write_callback_*, error_callback_*, ... }` is emitted by
-    // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
-
-    #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
     pub(crate) struct NativeZlib {
         pub(crate) ref_count: Cell<u32>,
-        // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
+        // The global outlives this payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread delivers a finished write to the VM.
@@ -53,50 +42,17 @@ mod _impl {
         pub task: JsCell<WorkPoolTask>,
     }
 
-    // write / runFromJSThread / writeSync / reset / close / setOnError / getOnError /
-    // finalize are provided as inherent methods on
-    // `CompressionStream::<NativeZlib>` in node_zlib_binding.rs (a generic mixin
-    // struct, not a trait); `__compression_stream_mixin_reexports!` re-exports the
-    // same JS-exposed surface (write / writeSync / reset / close / setOnError /
-    // getOnError / finalize); runFromJSThread and emitError stay internal.
+    // `CompressionStreamImpl` (node_zlib_binding.rs) has write, writeSync, reset, close and onerror.
 
     impl NativeZlib {
-        // NB: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive emits
-        // the constructor shim that calls `<NativeZlib>::constructor(g, f)` directly.
-        pub(crate) fn constructor(
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<Box<Self>> {
-            let arguments = frame.arguments_undef::<4>();
-
-            let mode = arguments.ptr[0];
-            if !mode.is_number() {
-                return Err(global.throw_invalid_argument_type_value("mode", "number", mode));
-            }
-            let mode_double = mode.as_number();
-            if mode_double % 1.0 != 0.0 {
-                return Err(global.throw_invalid_argument_type_value("mode", "integer", mode));
-            }
-            let mode_int: i64 = mode_double as i64;
-            if mode_int < 1 || mode_int > 7 {
-                return Err(global.throw_range_error(
-                    mode_int,
-                    bun_jsc::RangeErrorOptions {
-                        field_name: b"mode",
-                        min: 1,
-                        max: 7,
-                        msg: b"",
-                    },
-                ));
-            }
-
+        pub(crate) fn constructor(cx: &mut JsScope<'_>, mode: u8) -> *mut Self {
             let stream = Context {
-                mode: c::NodeMode::from_int(mode_int as u8),
+                mode: c::NodeMode::from_int(mode),
                 ..Default::default()
             };
-            Ok(Box::new(Self {
+            RefPtr::new(Self {
                 ref_count: Cell::new(1),
-                global_this: bun_ptr::BackRef::new(global),
+                global_this: bun_ptr::BackRef::new(cx.global()),
                 ticket: Cell::new(None),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
@@ -110,45 +66,38 @@ mod _impl {
                     node: Default::default(),
                     callback: noop_task_callback,
                 }),
-            }))
+            })
+            .into_raw()
         }
 
         //// adding this didnt help much but leaving it here to compare the number with later
         pub(crate) fn estimated_size(&self) -> usize {
             // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
             const INTERNAL_STATE_SIZE: usize = 3309;
-            mem::size_of::<Self>() + INTERNAL_STATE_SIZE
+            INTERNAL_STATE_SIZE
         }
 
-        #[bun_jsc::host_fn(method)]
-        pub(crate) fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-            let arguments = frame.arguments_undef::<7>();
-            let this_value = frame.this();
-
-            if arguments.len != 7 {
-                return Err(global
-                .err(
-                    bun_jsc::ErrorCode::MISSING_ARGS,
-                    format_args!(
-                        "init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)"
-                    ),
-                )
-                .throw());
-            }
+        pub(crate) fn init(
+            &self,
+            this_value: JsWrapper<'_, Self>,
+            cx: &mut JsScope<'_>,
+            window_bits: i32,
+            level: i32,
+            mem_level: i32,
+            strategy: i32,
+            write_state: JsLocal<'_>,
+            process_callback: JsLocal<'_>,
+            dictionary: JsLocal<'_>,
+        ) -> JsResult<()> {
+            let global = cx.global();
+            let this_value = this_value.to_js();
             // Racing an in-flight async write would alias `&mut Context`
             // across threads; a closed `Context` cannot be re-initialized.
-            CompressionStream::<Self>::throw_unless_idle(self, global)?;
+            self.throw_unless_idle(global)?;
 
-            let window_bits =
-                validators::validate_int32(global, arguments.ptr[0], "windowBits", None, None)?;
-            let level = validators::validate_int32(global, arguments.ptr[1], "level", None, None)?;
-            let mem_level =
-                validators::validate_int32(global, arguments.ptr[2], "memLevel", None, None)?;
-            let strategy =
-                validators::validate_int32(global, arguments.ptr[3], "strategy", None, None)?;
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_result_value = arguments.ptr[4];
+            let write_result_value = write_state.to_js();
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
                     "writeResult",
@@ -173,14 +122,14 @@ mod _impl {
                     .throw());
             }
             let write_callback =
-                validators::validate_function(global, "writeCallback", arguments.ptr[5])?;
+                validators::validate_function(global, "writeCallback", process_callback.to_js())?;
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
             // the call to `stream.init` below (E0716 otherwise).
             let dictionary_buf;
-            let dictionary = if arguments.ptr[6].is_undefined() {
+            let dictionary = if dictionary.is_undefined() {
                 None
             } else {
-                let dictionary_value = arguments.ptr[6];
+                let dictionary_value = dictionary.to_js();
                 dictionary_buf = match dictionary_value.as_array_buffer(global) {
                     Some(buf) => buf,
                     None => {
@@ -222,41 +171,29 @@ mod _impl {
                 self.closed.set(true);
             }
 
-            Ok(JSValue::UNDEFINED)
+            Ok(())
         }
 
-        #[bun_jsc::host_fn(method)]
         pub(crate) fn params(
             &self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            let arguments = frame.arguments_undef::<2>();
-
-            if arguments.len != 2 {
-                return Err(global
-                    .err(
-                        bun_jsc::ErrorCode::MISSING_ARGS,
-                        format_args!("params(level, strategy)"),
-                    )
-                    .throw());
-            }
+            this_value: JsWrapper<'_, Self>,
+            cx: &mut JsScope<'_>,
+            level: i32,
+            strategy: i32,
+        ) -> JsResult<()> {
+            let global = cx.global();
             // `set_params` calls `deflateParams` on the same `z_stream` an
             // in-flight async write's `deflate()` is using.
-            CompressionStream::<Self>::throw_unless_idle(self, global)?;
-
-            let level = validators::validate_int32(global, arguments.ptr[0], "level", None, None)?;
-            let strategy =
-                validators::validate_int32(global, arguments.ptr[1], "strategy", None, None)?;
+            self.throw_unless_idle(global)?;
 
             let err = self.stream.with_mut(|s| s.set_params(level, strategy));
             if err.is_error() {
-                // R-2: `&self` over `Cell`/`JsCell` fields — `emit_error` →
+                // `&self` over `Cell`/`JsCell` fields — `emit_error` →
                 // `run_callback` may re-enter `close()`/`reset()` via a fresh
-                // `&Self` from `m_ctx`; interior mutability makes that sound.
-                CompressionStream::<Self>::emit_error(self, global, frame.this(), err);
+                // `&Self`; interior mutability makes that sound.
+                self.emit_error(global, this_value.to_js(), err);
             }
-            Ok(JSValue::UNDEFINED)
+            Ok(())
         }
     }
 
@@ -267,8 +204,7 @@ mod _impl {
         }
     }
 
-    crate::__impl_compression_stream!(NativeZlib, super::Context, "NativeZlib");
-    crate::__compression_stream_mixin_reexports!(NativeZlib);
+    crate::__impl_compression_stream!(NativeZlib, super::Context, js_NativeZlib);
 } // mod _impl
 
 pub(crate) use _impl::NativeZlib;
@@ -277,7 +213,7 @@ pub(crate) use _impl::NativeZlib;
 
 pub(crate) struct Context {
     pub(crate) mode: c::NodeMode,
-    pub(crate) state: c::z_stream,
+    pub(crate) state: c::ZStream,
     pub(crate) err: c::ReturnCode,
     pub flush: c::FlushValue,
     pub dictionary: Vec<u8>,
@@ -288,7 +224,7 @@ impl Default for Context {
     fn default() -> Self {
         Self {
             mode: c::NodeMode::NONE,
-            state: bun_core::ffi::zeroed::<c::z_stream>(),
+            state: c::ZStream::new(),
             err: c::ReturnCode::Ok,
             flush: c::FlushValue::NoFlush,
             dictionary: Vec::new(),
@@ -335,28 +271,14 @@ impl Context {
 
         match self.mode {
             NONE => unreachable!(),
-            // SAFETY: FFI — `state` is a valid #[repr(C)] z_stream; zlibVersion() returns a static C string.
-            DEFLATE | GZIP | DEFLATERAW => unsafe {
-                self.err = c::deflateInit2_(
-                    &raw mut self.state,
-                    level,
-                    8,
-                    window_bits_actual,
-                    mem_level,
-                    strategy,
-                    c::zlibVersion().cast(),
-                    c_int::try_from(mem::size_of::<c::z_stream>()).expect("int cast"),
-                );
-            },
-            // SAFETY: FFI — `state` is a valid #[repr(C)] z_stream; zlibVersion() returns a static C string.
-            INFLATE | GUNZIP | UNZIP | INFLATERAW => unsafe {
-                self.err = c::inflateInit2_(
-                    &raw mut self.state,
-                    window_bits_actual,
-                    c::zlibVersion().cast(),
-                    c_int::try_from(mem::size_of::<c::z_stream>()).expect("int cast"),
-                );
-            },
+            DEFLATE | GZIP | DEFLATERAW => {
+                self.err =
+                    self.state
+                        .deflate_init(level, 8, window_bits_actual, mem_level, strategy);
+            }
+            INFLATE | GUNZIP | UNZIP | INFLATERAW => {
+                self.err = self.state.inflate_init(window_bits_actual);
+            }
             BROTLI_DECODE | BROTLI_ENCODE => unreachable!(),
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
         }
@@ -383,11 +305,11 @@ impl Context {
         match self.mode {
             // SAFETY: FFI — state is an initialized deflate stream; dict_ptr/dict_len borrow the Context-owned dictionary copy.
             DEFLATE | DEFLATERAW => unsafe {
-                self.err = c::deflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
+                self.err = c::deflateSetDictionary(self.state.as_ptr(), dict_ptr, dict_len);
             },
             // SAFETY: FFI — state is an initialized inflate stream; dict_ptr/dict_len borrow the Context-owned dictionary copy.
             INFLATERAW => unsafe {
-                self.err = c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
+                self.err = c::inflateSetDictionary(self.state.as_ptr(), dict_ptr, dict_len);
             },
             _ => {}
         }
@@ -407,7 +329,7 @@ impl Context {
                 // are 0 (next_out non-null) so the internal deflate(Z_BLOCK) returns
                 // Z_BUF_ERROR without touching any previously installed caller buffer.
                 unsafe {
-                    self.err = c::deflateParams(&raw mut self.state, level, strategy);
+                    self.err = c::deflateParams(self.state.as_ptr(), level, strategy);
                 }
             }
             _ => {}
@@ -420,8 +342,8 @@ impl Context {
 
     fn error_for_message(&self, default: &'static core::ffi::CStr) -> Error {
         let mut message: *const c_char = default.as_ptr();
-        if !self.state.err_msg.is_null() {
-            message = self.state.err_msg;
+        if !self.state.err_msg().is_null() {
+            message = self.state.err_msg();
         }
         Error {
             msg: message,
@@ -447,11 +369,11 @@ impl Context {
         match self.mode {
             // SAFETY: FFI — state was initialized as a deflate stream by deflateInit2_.
             DEFLATE | DEFLATERAW | GZIP => unsafe {
-                self.err = c::deflateReset(&raw mut self.state);
+                self.err = c::deflateReset(self.state.as_ptr());
             },
             // SAFETY: FFI — state was initialized as an inflate stream by inflateInit2_.
             INFLATE | INFLATERAW | GUNZIP => unsafe {
-                self.err = c::inflateReset(&raw mut self.state);
+                self.err = c::inflateReset(self.state.as_ptr());
             },
             _ => {}
         }
@@ -462,22 +384,16 @@ impl Context {
     }
 
     pub(crate) fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
-        self.state.avail_in = match &in_ {
-            Some(p) => u32::try_from(p.len()).expect("int cast"),
-            None => 0,
+        let (next_in, avail_in) = match in_ {
+            Some(p) => (p.as_ptr(), u32::try_from(p.len()).expect("int cast")),
+            None => (core::ptr::null(), 0),
         };
-        self.state.next_in = match in_ {
-            Some(p) => p.as_ptr(),
-            None => core::ptr::null(),
+        self.state.set_input(next_in, avail_in);
+        let (next_out, avail_out) = match out {
+            Some(p) => (p.as_mut_ptr(), u32::try_from(p.len()).expect("int cast")),
+            None => (core::ptr::null_mut(), 0),
         };
-        self.state.avail_out = match &out {
-            Some(p) => u32::try_from(p.len()).expect("int cast"),
-            None => 0,
-        };
-        self.state.next_out = match out {
-            Some(p) => p.as_mut_ptr(),
-            None => core::ptr::null_mut(),
-        };
+        self.state.set_output(next_out, avail_out);
     }
 
     pub(crate) fn flush_value_is_valid(flush: u32) -> bool {
@@ -511,8 +427,8 @@ impl Context {
                 return self.do_work_deflate();
             }
             UNZIP => {
-                if self.state.avail_in > 0 {
-                    next_expected_header_byte = Some(self.state.next_in.cast::<u8>());
+                if self.state.avail_in() > 0 {
+                    next_expected_header_byte = Some(self.state.next_in());
                 }
                 if self.gzip_id_bytes_read == 0 {
                     let Some(p) = next_expected_header_byte else {
@@ -524,7 +440,7 @@ impl Context {
                         // SAFETY: advancing within the input buffer; only dereferenced
                         // below after confirming avail_in > 1.
                         next_expected_header_byte = Some(unsafe { p.add(1) });
-                        if self.state.avail_in == 1 {
+                        if self.state.avail_in() == 1 {
                             // The only available byte was already read.
                             return self.do_work_inflate();
                         }
@@ -560,12 +476,12 @@ impl Context {
 
     fn do_work_deflate(&mut self) {
         // SAFETY: FFI — state is an initialized deflate stream.
-        self.err = unsafe { c::deflate(&raw mut self.state, self.flush) };
+        self.err = unsafe { c::deflate(self.state.as_ptr(), self.flush) };
     }
 
     fn do_work_inflate(&mut self) {
         // SAFETY: FFI — state is an initialized inflate stream.
-        self.err = unsafe { c::inflate(&raw mut self.state, self.flush) };
+        self.err = unsafe { c::inflate(self.state.as_ptr(), self.flush) };
 
         if self.mode != c::NodeMode::INFLATERAW
             && self.err == c::ReturnCode::NeedDict
@@ -578,38 +494,38 @@ impl Context {
                 (dict.as_ptr(), u32::try_from(dict.len()).expect("int cast"))
             };
             // SAFETY: FFI — state is an initialized inflate stream; dict is the Context-owned copy.
-            self.err = unsafe { c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len) };
+            self.err = unsafe { c::inflateSetDictionary(self.state.as_ptr(), dict_ptr, dict_len) };
 
             if self.err == c::ReturnCode::Ok {
                 // SAFETY: FFI — state is an initialized inflate stream.
-                self.err = unsafe { c::inflate(&raw mut self.state, self.flush) };
+                self.err = unsafe { c::inflate(self.state.as_ptr(), self.flush) };
             } else if self.err == c::ReturnCode::DataError {
                 self.err = c::ReturnCode::NeedDict;
             }
         }
-        while self.state.avail_in > 0
+        while self.state.avail_in() > 0
             && self.mode == c::NodeMode::GUNZIP
             && self.err == c::ReturnCode::StreamEnd
             // SAFETY: avail_in > 0 ⇒ next_in points to ≥1 readable byte.
-            && unsafe { *self.state.next_in } != 0
+            && unsafe { *self.state.next_in() } != 0
         {
             // Bytes remain in input buffer. Perhaps this is another compressed member in the same archive, or just trailing garbage.
             // Trailing zero bytes are okay, though, since they are frequently used for padding.
             let _ = self.reset();
             // SAFETY: FFI — state was just re-initialized by reset().
-            self.err = unsafe { c::inflate(&raw mut self.state, self.flush) };
+            self.err = unsafe { c::inflate(self.state.as_ptr(), self.flush) };
         }
     }
 
     pub(crate) fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
-        *avail_in = self.state.avail_in;
-        *avail_out = self.state.avail_out;
+        *avail_in = self.state.avail_in();
+        *avail_out = self.state.avail_out();
     }
 
     pub(crate) fn get_error_info(&self) -> Error {
         match self.err {
             c::ReturnCode::Ok | c::ReturnCode::BufError => {
-                if self.state.avail_out != 0 && self.flush == c::FlushValue::Finish {
+                if self.state.avail_out() != 0 && self.flush == c::FlushValue::Finish {
                     return self.error_for_message(c"unexpected end of file");
                 }
             }
@@ -634,11 +550,11 @@ impl Context {
         match self.mode {
             // SAFETY: FFI — state was initialized as a deflate stream by deflateInit2_.
             DEFLATE | DEFLATERAW | GZIP => unsafe {
-                status = c::deflateEnd(&raw mut self.state);
+                status = c::deflateEnd(self.state.as_ptr());
             },
             // SAFETY: FFI — state was initialized as an inflate stream by inflateInit2_.
             INFLATE | INFLATERAW | GUNZIP | UNZIP => unsafe {
-                status = c::inflateEnd(&raw mut self.state);
+                status = c::inflateEnd(self.state.as_ptr());
             },
             NONE => {}
             BROTLI_ENCODE | BROTLI_DECODE => {}

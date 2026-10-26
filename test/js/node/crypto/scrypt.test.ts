@@ -137,3 +137,33 @@ test("scryptSync reads its buffers only after every argument has been coerced", 
   expect(passwordBytes.byteLength).toBe(0);
   expect(key).toStrictEqual(scryptSync("", "salt", 16, { N: 1024 }));
 });
+
+test("scrypt takes a proxy of a function as its callback", async () => {
+  for (const options of [[], [{}]]) {
+    const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+    scrypt("p", "s", 4, ...options, new Proxy((err, key) => (err ? reject(err) : resolve(key)), {}));
+    expect(await promise).toStrictEqual(scryptSync("p", "s", 4));
+  }
+});
+
+test("scrypt reports its arguments and options as Node does", () => {
+  const received = "Received type string ('x')";
+  for (const name of ["N", "cost", "r", "blockSize", "p", "parallelization", "maxmem"]) {
+    expect(() => scryptSync("p", "s", 1, { [name]: "x" })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "${name}" argument must be of type number. ${received}`,
+      }),
+    );
+  }
+  // @ts-expect-error
+  expect(() => scryptSync("p", "s", "x")).toThrow(`The "keylen" argument must be of type number. ${received}`);
+  // @ts-expect-error
+  expect(() => scryptSync(5, "s", 1)).toThrow(
+    'The "password" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type number (5)',
+  );
+  // @ts-expect-error
+  expect(() => scrypt("p", "s", 1, () => {}, 5)).toThrow(
+    'The "callback" argument must be of type function. Received type number (5)',
+  );
+});

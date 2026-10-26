@@ -163,6 +163,18 @@ pub struct TSConfigJSON {
     pub experimental_decorators: bool,
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
+
+    /// The files that `Resolver::load_tsconfig` read for this configuration: the file of the
+    /// directory, then each file that the one before it extends. A re-read of the directory
+    /// keeps the configuration while each file has these bytes.
+    pub(crate) sources: Vec<SourceFile>,
+}
+
+/// One file of `TSConfigJSON::sources`.
+pub(crate) struct SourceFile {
+    pub(crate) path: Box<[u8]>,
+    /// `None`: the file could not be read.
+    pub(crate) contents: Option<Box<[u8]>>,
 }
 
 impl Default for TSConfigJSON {
@@ -179,6 +191,7 @@ impl Default for TSConfigJSON {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: None,
+            sources: Vec::new(),
         }
     }
 }

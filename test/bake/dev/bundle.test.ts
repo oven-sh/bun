@@ -1926,3 +1926,54 @@ devTest("recovers from an unresolved css url() and html script src longer than t
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+
+// A deleted file drops its directory from the resolver's cache. The directories below it were cached with what they
+// took from it.
+devTest("a new package.json reaches a file in a subdirectory after a file next to it is deleted", {
+  framework: minimalFramework,
+  files: {
+    "pkg/package.json": JSON.stringify({ name: "pkg", imports: { "#lib": "./a.js" } }),
+    "pkg/a.js": `export default "a";`,
+    "pkg/b.js": `export default "b";`,
+    "pkg/deleted.js": `export {};`,
+    "pkg/root.js": `
+      import lib from "#lib";
+      import "./deleted.js";
+      export const root = lib;
+    `,
+    "pkg/src/sub.js": `
+      import lib from "#lib";
+      export const sub = lib;
+    `,
+    "routes/index.ts": `
+      import { root } from "../pkg/root.js";
+      import { sub } from "../pkg/src/sub.js";
+      export default function (req, meta) {
+        return new Response("root imports " + root + ", src/sub imports " + sub);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("root imports a, src/sub imports a");
+
+    fs.writeFileSync(dev.join("pkg/package.json"), JSON.stringify({ name: "pkg", imports: { "#lib": "./b.js" } }));
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write(
+        "pkg/root.js",
+        `
+          import lib from "#lib";
+          export const root = lib;
+        `,
+      );
+      await dev.delete("pkg/deleted.js");
+    }
+    // The first build after the delete can resolve "#lib" before or after it sees that the file is gone.
+    {
+      await using batch = await dev.batchChanges();
+      await dev.patch("pkg/root.js", { find: "export", replace: "/* saved */ export" });
+      await dev.patch("pkg/src/sub.js", { find: "export", replace: "/* saved */ export" });
+    }
+    await dev.fetch("/").equals("root imports b, src/sub imports b");
+  },
+});

@@ -25,7 +25,8 @@ pub type Index = IndexType;
 // `&mut DirInfo` is ever materialized concurrently with a read — writes happen
 // only inside `dir_info_uncached` while filling a freshly-`put` slot, before
 // any handle to that slot escapes. All access is additionally serialized under
-// the resolver mutex.
+// the resolver mutex. The one field that changes later is `entries`, which is
+// atomic: see `ListingIndex`.
 //
 // `as_ptr()` exposes the raw `*mut` for the few callers that still need it
 // (the `dir_info_uncached` fill path and `MatchResult.dir_info` round-trip).
@@ -134,7 +135,7 @@ pub struct DirInfo {
 
     // lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_path: &'static [u8],
-    pub(crate) entries: Index,
+    pub(crate) entries: ListingIndex,
     /// Is there a "package.json" file?
     // `NonNull` (not `&'static`) preserves mut-provenance. Read via `.package_json()`.
     pub package_json: Option<NonNull<PackageJSON>>,
@@ -148,6 +149,38 @@ pub struct DirInfo {
     pub(crate) flags: Flags,
 }
 
+// One slot per directory that any resolver of the process reads, never freed.
+const _: () = assert!(core::mem::size_of::<DirInfo>() == 104);
+
+/// `DirInfo::entries`: where the listing of the directory is in `RealFS::entries`. A bust drops
+/// the listing. A re-read that finds the directory as it was keeps the slot, because its
+/// subdirectories hold the index of the slot, and stores the index of the new listing here.
+#[derive(Default)]
+pub(crate) struct ListingIndex(core::sync::atomic::AtomicU32);
+
+impl ListingIndex {
+    const OVERFLOW_SHIFT: u32 = 31;
+
+    pub(crate) fn new(index: Index) -> Self {
+        Self(core::sync::atomic::AtomicU32::new(Self::bits(index)))
+    }
+
+    #[inline]
+    pub(crate) fn get(&self) -> Index {
+        let bits = self.0.load(core::sync::atomic::Ordering::Relaxed);
+        Index::new(bits, bits >> Self::OVERFLOW_SHIFT != 0)
+    }
+
+    pub(crate) fn set(&self, index: Index) {
+        self.0
+            .store(Self::bits(index), core::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn bits(index: Index) -> u32 {
+        index.index() | (u32::from(index.is_overflow()) << Self::OVERFLOW_SHIFT)
+    }
+}
+
 impl Default for DirInfo {
     fn default() -> Self {
         Self {
@@ -159,7 +192,7 @@ impl Default for DirInfo {
             package_json_for_module_type: None,
             package_json_for_dependencies: None,
             abs_path: b"",
-            entries: Index::default(),
+            entries: ListingIndex::default(),
             package_json: None,
             tsconfig_json: None,
             abs_real_path: b"",
@@ -183,6 +216,51 @@ fn arena_ref<T>(p: NonNull<T>) -> &'static T {
 }
 
 impl DirInfo {
+    /// Whether a re-read of a busted directory (`self`) left it as `before`, the slot it had when
+    /// it was busted. A subdirectory copies the pointers and `InsideNodeModules` when it is
+    /// filled, and reads the rest through `parent` and `enclosing_browser_scope` later. So when
+    /// this is true the directory keeps `before`, and what was filled below it still holds. Every
+    /// field is named here so that a new one does not compile until it has an answer.
+    pub(crate) fn is_same_after_reread(&self, before: &DirInfo) -> bool {
+        fn same<T>(a: Option<&'static T>, b: Option<&'static T>) -> bool {
+            a.map(core::ptr::from_ref) == b.map(core::ptr::from_ref)
+        }
+        let DirInfo {
+            parent,
+            enclosing_browser_scope,
+            package_json_for_browser_field,
+            enclosing_tsconfig_json,
+            enclosing_package_json,
+            package_json_for_module_type,
+            package_json_for_dependencies,
+            // The key is the same path.
+            abs_path: _,
+            // A re-read has a new listing.
+            entries: _,
+            package_json,
+            tsconfig_json,
+            abs_real_path,
+            flags,
+        } = self;
+        *parent == before.parent
+            && *enclosing_browser_scope == before.enclosing_browser_scope
+            && same(
+                *package_json_for_browser_field,
+                before.package_json_for_browser_field,
+            )
+            && same(*enclosing_tsconfig_json, before.enclosing_tsconfig_json)
+            && same(*enclosing_package_json, before.enclosing_package_json)
+            && same(
+                *package_json_for_module_type,
+                before.package_json_for_module_type,
+            )
+            && *package_json_for_dependencies == before.package_json_for_dependencies
+            && *package_json == before.package_json
+            && *tsconfig_json == before.tsconfig_json
+            && *abs_real_path == before.abs_real_path
+            && *flags == before.flags
+    }
+
     /// Is there a "node_modules" subdirectory?
     #[inline]
     pub(crate) fn has_node_modules(&self) -> bool {
@@ -242,7 +320,7 @@ impl DirInfo {
     pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
         fs::FileSystem::instance()
             .fs
-            .entries_at_locked(self.entries, generation)?
+            .entries_at_locked(self.entries.get(), generation)?
             .as_entries()
     }
 
@@ -263,7 +341,7 @@ impl DirInfo {
         // `MutexGuard` stores the mutex by raw pointer, so holding it does not
         // keep `rfs` borrowed.
         let _lock = rfs.entries_mutex.lock_guard();
-        rfs.entries_at_locked(self.entries, generation)?
+        rfs.entries_at_locked(self.entries.get(), generation)?
             .as_entries()?
             .get(query)
     }
@@ -276,7 +354,7 @@ impl DirInfo {
         fs::FileSystem::instance()
             .fs
             .entries
-            .at_index(self.entries)?
+            .at_index(self.entries.get())?
             .as_entries()
     }
 
@@ -376,6 +454,186 @@ pub(crate) unsafe fn slot_ptr_at(index: Index) -> Option<*mut DirInfo> {
                 .add(index.index() as usize)
         })
     }
+}
+
+/// A slot that a bust took out of the index. A lookup of its key settles it: see
+/// `Resolver::dir_info_cached_miss`.
+#[derive(Clone, Copy)]
+pub(crate) struct Parked {
+    pub(crate) slot: Index,
+    /// True: this directory was busted. It is read again and compared with the slot.
+    /// False: a directory above it was. The slot is good while its parent has the slot it had.
+    pub(crate) busted: bool,
+}
+
+type ParkedMap = std::collections::HashMap<
+    u64,
+    Parked,
+    core::hash::BuildHasherDefault<allocators::IdentityU64Hasher>,
+>;
+
+/// By the hash of the key, as in the index. Every access holds `RealFS::entries_mutex`, which
+/// also keeps a fill from writing the slots that are read here.
+static PARKED: bun_threading::Guarded<ParkedMap> = bun_threading::Guarded::new(
+    ParkedMap::with_hasher(core::hash::BuildHasherDefault::new()),
+);
+
+/// `PARKED.len()`, for `any_parked`.
+static PARKED_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Whether a bust left a slot out of the index. False in a process that never busts.
+#[inline]
+pub(crate) fn any_parked() -> bool {
+    PARKED_COUNT.load(core::sync::atomic::Ordering::Relaxed) != 0
+}
+
+/// Whether `abs_path` names a directory below `dir`. Either can end in a separator.
+fn is_below(abs_path: &[u8], dir: &[u8]) -> bool {
+    let is_separator = |byte: u8| bun_paths::Platform::AUTO.is_separator(byte);
+    let dir = match dir.split_last() {
+        Some((&last, rest)) if is_separator(last) => rest,
+        _ => dir,
+    };
+    abs_path.len() > dir.len() + 1 && abs_path.starts_with(dir) && is_separator(abs_path[dir.len()])
+}
+
+/// Takes the directory `key` out of the index, with every directory below it: each one holds
+/// what it took from the directory above it when it was filled. Returns whether `key` was in
+/// the index, as `BSSMapInner::remove` does.
+///
+/// The caller holds `RealFS::entries_mutex`.
+pub(crate) fn bust(map: &mut HashMap, key: &[u8]) -> bool {
+    let (hash, unpublished) = map.unpublish(key);
+    let mut parked = PARKED.lock();
+    let slot = unpublished
+        .filter(|it| it.index() != NOT_FOUND.index() && it.index() != UNASSIGNED.index());
+    let Some(slot) = slot else {
+        // A bust of a directory above this one parked it. Now it is busted too.
+        let was_parked = parked
+            .get_mut(&hash)
+            .is_some_and(|it| !core::mem::replace(&mut it.busted, true));
+        return unpublished.is_some() || was_parked;
+    };
+    parked.insert(hash, Parked { slot, busted: true });
+    map.unpublish_where(
+        |info| is_below(info.abs_path, key),
+        |hash, slot| {
+            parked.insert(
+                hash,
+                Parked {
+                    slot,
+                    busted: false,
+                },
+            );
+        },
+    );
+    PARKED_COUNT.store(parked.len(), core::sync::atomic::Ordering::Relaxed);
+    true
+}
+
+/// The slot that a bust took out of the index for the key with this hash, if one did. The
+/// caller publishes the slot again or leaves it out for good.
+///
+/// The caller holds `RealFS::entries_mutex`.
+pub(crate) fn take_parked(hash: u64) -> Option<Parked> {
+    let mut parked = PARKED.lock();
+    let taken = parked.remove(&hash)?;
+    PARKED_COUNT.store(parked.len(), core::sync::atomic::Ordering::Relaxed);
+    Some(taken)
+}
+
+/// Leaves every parked directory below `dir` out of the index for good: `dir` is not what it
+/// was when they were filled.
+///
+/// The caller holds `RealFS::entries_mutex`.
+pub(crate) fn discard_parked_below(dir: &[u8]) {
+    let mut parked = PARKED.lock();
+    parked.retain(|_, it| {
+        // SAFETY: a parked slot was assigned by `put`. `entries_mutex` is held: see `PARKED`.
+        let slot = unsafe { slot_ptr_at(it.slot) };
+        // SAFETY: `slot_ptr_at` returns a pointer to an initialized slot.
+        !slot.is_some_and(|slot| is_below(unsafe { (*slot).abs_path }, dir))
+    });
+    PARKED_COUNT.store(parked.len(), core::sync::atomic::Ordering::Relaxed);
+}
+
+/// A file that the tsconfig.json of a cached directory extends.
+pub(crate) struct ExtendedFile {
+    pub(crate) path: Box<[u8]>,
+    pub(crate) seen: Seen,
+}
+
+/// What the configurations that extend a file read from it.
+pub(crate) enum Seen {
+    Read(Box<[u8]>),
+    Unreadable,
+    /// Two of them read different bytes, so one of them is not what the file has now.
+    Differs,
+}
+
+impl Seen {
+    pub(crate) fn of(read: Option<Box<[u8]>>) -> Self {
+        read.map_or(Seen::Unreadable, Seen::Read)
+    }
+
+    pub(crate) fn is(&self, read: Option<&[u8]>) -> bool {
+        match (self, read) {
+            (Seen::Read(seen), Some(read)) => **seen == *read,
+            (Seen::Unreadable, None) => true,
+            _ => false,
+        }
+    }
+}
+
+type ExtendedMap = std::collections::HashMap<
+    u64,
+    Vec<ExtendedFile>,
+    core::hash::BuildHasherDefault<allocators::IdentityU64Hasher>,
+>;
+
+/// By the hash of the key of the directory that has the file. A re-read of a busted directory
+/// leaves its slot as it is when its own configuration did not change. A change to one of these
+/// files is what tells it that a directory below it is still not to be published as it was.
+/// Every access holds `RealFS::entries_mutex`.
+static EXTENDED: bun_threading::Guarded<ExtendedMap> = bun_threading::Guarded::new(
+    ExtendedMap::with_hasher(core::hash::BuildHasherDefault::new()),
+);
+
+/// `EXTENDED.len()`, for `any_extended`.
+static EXTENDED_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Whether any cached tsconfig.json extends another file.
+#[inline]
+pub(crate) fn any_extended() -> bool {
+    EXTENDED_COUNT.load(core::sync::atomic::Ordering::Relaxed) != 0
+}
+
+/// Records what a tsconfig.json that was just loaded read from `path`, a file it extends.
+/// `dir_hash` is the key hash of the directory of `path`.
+pub(crate) fn note_extended(dir_hash: u64, path: &[u8], read: Option<&[u8]>) {
+    let mut extended = EXTENDED.lock();
+    let files = extended.entry(dir_hash).or_default();
+    match files.iter_mut().find(|it| *it.path == *path) {
+        Some(file) => {
+            if !file.seen.is(read) {
+                file.seen = Seen::Differs;
+            }
+        }
+        None => files.push(ExtendedFile {
+            path: Box::from(path),
+            seen: Seen::of(read.map(Box::from)),
+        }),
+    }
+    EXTENDED_COUNT.store(extended.len(), core::sync::atomic::Ordering::Relaxed);
+}
+
+/// The extended files in the directory with this key hash. `put_extended` gives them back.
+pub(crate) fn take_extended(dir_hash: u64) -> Option<Vec<ExtendedFile>> {
+    EXTENDED.lock().remove(&dir_hash)
+}
+
+pub(crate) fn put_extended(dir_hash: u64, files: Vec<ExtendedFile>) {
+    EXTENDED.lock().insert(dir_hash, files);
 }
 
 bitflags::bitflags! {

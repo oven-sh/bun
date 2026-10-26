@@ -2196,7 +2196,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     /// is never needed by callers, only the hash. `#[inline(always)]` + the
     /// const-generic branch fold to identical codegen at each monomorphization.
     #[inline(always)]
-    fn key_hash(denormalized_key: &[u8]) -> u64 {
+    pub fn key_hash(denormalized_key: &[u8]) -> u64 {
         let key = if REMOVE_TRAILING_SLASHES {
             trim_right(denormalized_key, SEP_STR.as_bytes())
         } else {
@@ -2311,6 +2311,55 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _guard = self.mutex.lock();
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
+    }
+
+    /// [`remove`](Self::remove) that also returns the hash of the key and what the key mapped
+    /// to: a slot, `NOT_FOUND` or `UNASSIGNED`. A slot stays allocated, so
+    /// [`publish`](Self::publish) can map the hash to it again.
+    pub fn unpublish(&mut self, denormalized_key: &[u8]) -> (u64, Option<IndexType>) {
+        let _guard = self.mutex.lock();
+        let hash = Self::key_hash(denormalized_key);
+        (hash, self.index.remove(&hash))
+    }
+
+    /// Unmaps every key whose slot satisfies `pred` and passes its hash and slot to `unpublished`.
+    /// A key that maps to `NOT_FOUND` or `UNASSIGNED` has no slot and stays.
+    pub fn unpublish_where(
+        &mut self,
+        mut pred: impl FnMut(&ValueType) -> bool,
+        mut unpublished: impl FnMut(u64, IndexType),
+    ) {
+        let _guard = self.mutex.lock();
+        let Self {
+            index,
+            overflow_list,
+            backing_buf,
+            ..
+        } = self;
+        index.retain(|&hash, &mut slot| {
+            if slot.index() == NOT_FOUND.index() || slot.index() == UNASSIGNED.index() {
+                return true;
+            }
+            let value: &ValueType = if slot.is_overflow() {
+                overflow_list.at_index_mut(slot)
+            } else {
+                // SAFETY: a non-sentinel, non-overflow index was assigned by `put`, which
+                // initialized this slot via `.write()`.
+                unsafe { backing_buf[slot.index() as usize].assume_init_ref() }
+            };
+            if !pred(value) {
+                return true;
+            }
+            unpublished(hash, slot);
+            false
+        });
+    }
+
+    /// Maps `hash` to a slot that [`unpublish`](Self::unpublish) or
+    /// [`unpublish_where`](Self::unpublish_where) returned.
+    pub fn publish(&mut self, hash: u64, slot: IndexType) {
+        let _guard = self.mutex.lock();
+        self.index.insert(hash, slot);
     }
 }
 

@@ -94,6 +94,9 @@ pub struct PackageJSON {
     pub config: Option<Box<StringArrayHashMap<&'static [u8]>>>,
 
     pub(crate) package_manager_package_id: PackageID,
+    /// Whether this parse read the dependency groups (`IncludeDependencies::Main` or `Local`).
+    /// A parse that did not cannot stand in for one that has to.
+    pub(crate) parsed_dependencies: bool,
     pub dependencies: DependencyMap,
     /// Used instead of `dependencies` for a package in node_modules, so that auto-install only
     /// parses the row it looks up. Each range is where a group's rows are in `json_tape`.
@@ -151,6 +154,7 @@ impl Default for PackageJSON {
             scripts: None,
             config: None,
             package_manager_package_id: INVALID_PACKAGE_ID,
+            parsed_dependencies: false,
             dependencies: DependencyMap::default(),
             installed_dependency_rows: Default::default(),
             side_effects: SideEffects::default(),
@@ -393,8 +397,24 @@ impl PackageJSON {
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
     ) -> Option<PackageJSON> {
-        let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
+        let (package_json_path, entry_contents) = Self::read(r, input_path, dirname_fd)?;
+        Self::parse_contents::<INCLUDE_DEPENDENCIES>(
+            r,
+            package_json_path,
+            entry_contents,
+            package_id,
+            include_scripts_,
+        )
+    }
 
+    /// The path and the bytes of the package.json of the directory `input_path`. Apart from
+    /// [`parse_contents`](Self::parse_contents) so that a re-read of the directory can compare the
+    /// bytes with those of the parse it already has.
+    pub(crate) fn read(
+        r: &mut resolver::Resolver<'_>,
+        input_path: &[u8],
+        dirname_fd: Fd,
+    ) -> Option<(&'static [u8], Box<[u8]>)> {
         // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
         // (see `Resolver::fs()` note in lib.rs). `fs` and `log` are DISTINCT
         // singletons so the two `&mut` projections below do not alias each other,
@@ -473,6 +493,25 @@ impl PackageJSON {
             ));
         }
 
+        Some((package_json_path, entry_contents))
+    }
+
+    /// [`parse`](Self::parse) for bytes that [`read`](Self::read) returned.
+    pub(crate) fn parse_contents<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
+        r: &mut resolver::Resolver<'_>,
+        package_json_path: &'static [u8],
+        entry_contents: Box<[u8]>,
+        package_id: Option<PackageID>,
+        include_scripts_: IncludeScripts,
+    ) -> Option<PackageJSON> {
+        let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
+
+        // SAFETY: see `read`: `r.fs()` and `r.log()` are distinct singletons, and nothing else
+        // retags either while these are live.
+        let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
+        // SAFETY: see above.
+        let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
+
         // `bun_ast::Source.path` is the lightweight `bun_paths::fs::Path<'static>` (no
         // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
         // source directly from the interned path.
@@ -528,6 +567,7 @@ impl PackageJSON {
             scripts: None,
             config: None,
             package_manager_package_id: INVALID_PACKAGE_ID,
+            parsed_dependencies: false,
             dependencies: DependencyMap::default(),
             installed_dependency_rows: Default::default(),
             side_effects: SideEffects::Unspecified,
@@ -814,6 +854,7 @@ impl PackageJSON {
         if INCLUDE_DEPENDENCIES == IncludeDependencies::Main
             || INCLUDE_DEPENDENCIES == IncludeDependencies::Local
         {
+            package_json.parsed_dependencies = true;
             'update_dependencies: {
                 if let Some(pkg) = package_id {
                     package_json.package_manager_package_id = pkg;

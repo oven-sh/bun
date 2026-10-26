@@ -1196,14 +1196,13 @@ pub mod fs {
 
         /// Evicts `file_path` from the directory-entry cache; returns whether
         /// an entry was removed.
-        pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
-            // `entries` is the process-global
-            // BSSMap singleton and `remove` mutates it; callers (transpiler /
-            // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
-            // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
-            // invariant. No caller already holds it (no re-entry from
-            // `read_directory`/`dir_info_cached_maybe_log`).
-            let _g = self.entries_mutex.lock_guard();
+        ///
+        /// The caller holds `entries_mutex`: `entries` is the process-global
+        /// BSSMap singleton, and the callers of `Resolver::bust_dir_cache`
+        /// (transpiler / hot-reloader / VM) reach it without `RESOLVER_MUTEX`.
+        /// `bust_dir_cache` evicts the directory from its own cache under the
+        /// same lock.
+        pub(crate) fn bust_entries_cache_locked(&mut self, file_path: &[u8]) -> bool {
             self.entries.remove(file_path)
         }
 

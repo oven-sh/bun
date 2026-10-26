@@ -2476,11 +2476,18 @@ impl<'a> Resolver<'a> {
     }
 
     /// Bust the directory cache for the given path, which may end in a separator.
+    ///
+    /// The cached directories below the path leave the index too: each one holds what it took
+    /// from the directory above it. The next lookup of one puts it back as it is, unless a
+    /// directory between it and the path, or the path, is different when it is read again.
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
-        let first_bust = self.fs_mut().fs.bust_entries_cache(path);
-        let second_bust = self.dir_cache_mut().remove(path);
+        let rfs = &mut self.fs_mut().fs;
+        // The guard keeps the mutex by raw pointer, so `self` is free again below.
+        let _entries_lock = rfs.entries_mutex.lock_guard();
+        let first_bust = rfs.bust_entries_cache_locked(path);
+        let second_bust = DirInfo::bust(self.dir_cache_mut(), path);
         bun_core::scoped_log!(
             ResolverDev,
             "Bust {} = {}, {}",
@@ -3433,6 +3440,31 @@ impl<'a> Resolver<'a> {
         // the `dir_info_uncached` call, mirroring `dir_info_cached_miss`: the
         // route loaders iterate the `DirEntry.data` map under this lock.
         let _entries_unlock = rfs!().entries_mutex.lock_guard();
+
+        // The slot that this directory had when it was busted: see `fill_dir_info`.
+        let mut before_bust: Option<allocators::IndexType> = None;
+        if DirInfo::any_parked()
+            && let Some(parked) = DirInfo::take_parked(dir_cache_info_result.hash)
+        {
+            // SAFETY: a parked index was assigned by `put`; `entries_mutex` held.
+            let slot = unsafe { DirInfo::slot_ptr_at(parked.slot) }
+                .map(|slot| unsafe { DirInfoRef::from_raw(slot) })
+                // A slot that this function filled has no parent. One that `dir_info_cached`
+                // filled is not what this function fills: it stays out of the index.
+                .filter(|slot| slot.parent == allocators::NOT_FOUND);
+            match slot {
+                Some(_) if parked.busted => before_bust = Some(parked.slot),
+                // A bust of a directory above this one took it out of the index, and it took
+                // nothing from that directory.
+                Some(slot) => {
+                    self.dir_cache_mut()
+                        .publish(dir_cache_info_result.hash, parked.slot);
+                    return Ok(Some(slot));
+                }
+                None => DirInfo::discard_parked_below(dir_path),
+            }
+        }
+
         let mut cached_dir_entry_result = rfs!().entries.get_or_put(dir_path)?;
 
         // NOTE: always assigned by either the cached-hit arm or the
@@ -3545,18 +3577,6 @@ impl<'a> Resolver<'a> {
                 .expect("unreachable");
         }
 
-        // We must initialize it as empty so that the result index is correct.
-        // This is important so that browser_scope has a valid index.
-        // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
-        let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
-            DirInfo::put_slot(
-                self.dir_cache(),
-                &mut dir_cache_info_result,
-                DirInfo::DirInfo::default(),
-            )
-        }
-        .expect("unreachable");
-
         // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
         // which gets overwritten on the next auto-install resolution. `dir_info_uncached` stores
         // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
@@ -3566,12 +3586,12 @@ impl<'a> Resolver<'a> {
         // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
         // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
         let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
-        self.dir_info_uncached(
-            dir_info_ptr,
+        let dir_info_ptr: *mut DirInfo::DirInfo = self.fill_dir_info(
+            &mut dir_cache_info_result,
+            before_bust,
             dir_entries_dir,
             // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
             dir_entries_option,
-            dir_cache_info_result,
             cached_dir_entry_result.index,
             // Packages in the global disk cache are top-level, we shouldn't try
             // to check for a parent package.json
@@ -4057,11 +4077,8 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub(crate) fn parse_tsconfig(
-        &mut self,
-        file: &[u8],
-        dirname_fd: FD,
-    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
+    /// The bytes of a configuration file.
+    fn read_config_file(&mut self, file: &[u8], dirname_fd: FD) -> crate::CrateResult<Vec<u8>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
@@ -4080,6 +4097,32 @@ impl<'a> Resolver<'a> {
         let _close_guard = scopeguard::guard(entry, |mut e| {
             let _ = e.close_fd();
         });
+        // `use_shared_buffer = false` above, so `entry_contents` is
+        // `Contents::Owned`/`Empty`.
+        Ok(match entry_contents {
+            crate::cache::Contents::Owned(v) => v,
+            crate::cache::Contents::Empty => Vec::new(),
+            other => other.as_slice().to_vec(),
+        })
+    }
+
+    /// `sources` gets the file, for `TSConfigJSON::sources`.
+    pub(crate) fn parse_tsconfig(
+        &mut self,
+        file: &[u8],
+        dirname_fd: FD,
+        sources: &mut Vec<crate::tsconfig_json::SourceFile>,
+    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
+        let contents = match self.read_config_file(file, dirname_fd) {
+            Ok(contents) => contents,
+            Err(err) => {
+                sources.push(crate::tsconfig_json::SourceFile {
+                    path: Box::from(file),
+                    contents: None,
+                });
+                return Err(err);
+            }
+        };
 
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
@@ -4090,27 +4133,27 @@ impl<'a> Resolver<'a> {
             .append_slice(file)
             .expect("unreachable");
 
-        // `use_shared_buffer = false` above, so `entry_contents` is
-        // `Contents::Owned`/`Empty`. `TSConfigJSON` owns `Box<[u8]>` copies of
-        // every field, so the source bytes are dead once `parse` returns and
-        // can be dropped with the local `Source`.
-        let contents = match entry_contents {
-            crate::cache::Contents::Owned(v) => v,
-            crate::cache::Contents::Empty => Vec::new(),
-            other => other.as_slice().to_vec(),
-        };
-
-        let source = bun_ast::Source::init_path_string_owned(key_path, contents);
-        let file_dir = source.path.source_dir();
+        let mut source = bun_ast::Source::init_path_string_owned(key_path, contents);
 
         // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from `self.caches`,
         // narrow `&mut` for this call only.
-        let mut result =
-            match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
-            {
-                Some(r) => r,
-                None => return Ok(None),
-            };
+        let parsed =
+            TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json);
+        // `TSConfigJSON` owns `Box<[u8]>` copies of every field, so nothing reads the source
+        // bytes once `parse` returns.
+        sources.push(crate::tsconfig_json::SourceFile {
+            path: Box::from(key_path),
+            contents: Some(
+                core::mem::take(&mut source.contents)
+                    .into_owned()
+                    .into_boxed_slice(),
+            ),
+        });
+        let file_dir = source.path.source_dir();
+        let mut result = match parsed? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
 
         // `baseUrl` can be longer than a path buffer. Joins against it are checked, so a long one never matches.
         if result.has_base_url() {
@@ -4145,13 +4188,32 @@ impl<'a> Resolver<'a> {
         unsafe { (*BIN_FOLDERS.get()).assume_init_ref().const_slice() }
     }
 
+    /// `before_bust`: the parse that the directory had when it was busted. The re-read keeps it
+    /// when the file has the same bytes, so that the directory compares equal to its slot
+    /// (`DirInfo::is_same_after_reread`) and the parse is not made and kept a second time. The
+    /// options of the resolver that made it stay, as they do for a directory that is not busted.
     pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
+        before_bust: Option<NonNull<PackageJSON>>,
     ) -> crate::CrateResult<Option<core::ptr::NonNull<PackageJSON>>> {
         use crate::package_json::{IncludeDependencies, IncludeScripts};
+        let Some((path, contents)) = PackageJSON::read(self, file, dirname_fd) else {
+            return Ok(None);
+        };
+        if let Some(kept) = before_bust {
+            // SAFETY: interned for the life of the process: see `intern_package_json`.
+            let before = unsafe { kept.as_ref() };
+            if before.source_contents == contents
+                && (!ALLOW_DEPENDENCIES
+                    || (before.parsed_dependencies
+                        && package_id.is_none_or(|id| id == before.package_manager_package_id)))
+            {
+                return Ok(Some(kept));
+            }
+        }
         // NOTE: `IncludeDependencies` is a
         // const generic on `PackageJSON::parse`, `IncludeScripts` is runtime (it only
         // gates one branch).
@@ -4161,18 +4223,18 @@ impl<'a> Resolver<'a> {
             IncludeScripts::IgnoreScripts
         };
         let pkg = if ALLOW_DEPENDENCIES {
-            PackageJSON::parse::<{ IncludeDependencies::Local }>(
+            PackageJSON::parse_contents::<{ IncludeDependencies::Local }>(
                 self,
-                file,
-                dirname_fd,
+                path,
+                contents,
                 package_id,
                 include_scripts,
             )
         } else {
-            PackageJSON::parse::<{ IncludeDependencies::None }>(
+            PackageJSON::parse_contents::<{ IncludeDependencies::None }>(
                 self,
-                file,
-                dirname_fd,
+                path,
+                contents,
                 package_id,
                 include_scripts,
             )
@@ -4487,6 +4549,37 @@ impl<'a> Resolver<'a> {
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
             queue_slice_len -= 1;
 
+            // The slot that this directory had when it was busted: see `fill_dir_info`.
+            let mut before_bust: Option<allocators::IndexType> = None;
+            if DirInfo::any_parked()
+                && let Some(parked) = DirInfo::take_parked(queue_top.result.hash)
+            {
+                // SAFETY: a parked index was assigned by `put`; resolver mutex held.
+                let slot = unsafe { DirInfo::slot_ptr_at(parked.slot) }
+                    .map(|slot| unsafe { DirInfoRef::from_raw(slot) });
+                if parked.busted {
+                    before_bust = Some(parked.slot);
+                } else if let Some(slot) = slot
+                    && slot.parent == top_parent.index
+                {
+                    // A bust of a directory above this one took it out of the index. What is
+                    // above it now has the slots it had then, so this one is as it was filled.
+                    self.dir_cache_mut()
+                        .publish(queue_top.result.hash, parked.slot);
+                    top_parent = allocators::Result {
+                        hash: queue_top.result.hash,
+                        index: parked.slot,
+                        status: allocators::ItemStatus::Exists,
+                    };
+                    if queue_slice_len == 0 {
+                        return Ok(Some(slot));
+                    }
+                    continue;
+                } else {
+                    DirInfo::discard_parked_below(queue_top_unsafe_path);
+                }
+            }
+
             let open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
             } else {
@@ -4547,6 +4640,9 @@ impl<'a> Resolver<'a> {
                             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
                                 || err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                             {
+                                if DirInfo::any_parked() {
+                                    DirInfo::discard_parked_below(queue_top_unsafe_path);
+                                }
                                 return Ok(None);
                             }
                             // A permission-denied ancestor (sandboxed drive roots, x-only
@@ -4577,6 +4673,9 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
+                            if DirInfo::any_parked() {
+                                DirInfo::discard_parked_below(queue_top_unsafe_path);
+                            }
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
@@ -4759,29 +4858,18 @@ impl<'a> Resolver<'a> {
                 )?;
             }
 
-            // We must initialize it as empty so that the result index is correct.
-            // This is important so that browser_scope has a valid index.
-            // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
-            // Both slot pointers are rooted at the singleton, so the map
-            // reborrows inside `dir_info_uncached` cannot pop them.
-            let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
-                DirInfo::put_slot(
-                    self.dir_cache(),
-                    &mut queue_top.result,
-                    DirInfo::DirInfo::default(),
-                )
-            }?;
             // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
-            // `put`; resolver mutex held.
+            // `put`; resolver mutex held. The pointer is rooted at the singleton,
+            // so the map reborrows inside `fill_dir_info` cannot pop it.
             let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
                 .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
-            self.dir_info_uncached(
-                dir_info_ptr,
+            let dir_info_ptr: *mut DirInfo::DirInfo = self.fill_dir_info(
+                &mut queue_top.result,
+                before_bust,
                 dir_path,
                 // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and outlives the resolver.
                 dir_entries_option,
-                queue_top.result,
                 cached_dir_entry_result.index,
                 parent_dir_ptr,
                 top_parent.index,
@@ -6153,6 +6241,91 @@ impl<'a> Resolver<'a> {
         None
     }
 
+    /// Fills a slot for a directory that is not in the index, and puts it in the index.
+    ///
+    /// `before_bust` is the slot that the directory had when `bust_dir_cache` took it out of the
+    /// index. The directories below it hold the index of that slot and what they took from it.
+    /// So when the directory is as that slot has it, that slot goes back with the new listing,
+    /// and they are still right. When it is not, it gets a new slot, and those that the bust
+    /// took out with it stay out: the next lookup of one reads it again.
+    fn fill_dir_info(
+        &mut self,
+        result: &mut allocators::Result,
+        before_bust: Option<allocators::IndexType>,
+        path: &'static [u8],
+        entries: *mut Fs::file_system::real_fs::EntriesOption,
+        dir_entry_index: allocators::IndexType,
+        parent: Option<DirInfoRef>,
+        parent_index: allocators::IndexType,
+        fd: FD,
+        package_id: Option<Install::PackageID>,
+    ) -> crate::CrateResult<*mut DirInfo::DirInfo> {
+        let Some(before_index) = before_bust else {
+            // We must initialize it as empty so that the result index is correct.
+            // This is important so that browser_scope has a valid index.
+            // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
+            let slot = unsafe {
+                DirInfo::put_slot(self.dir_cache(), result, DirInfo::DirInfo::default())
+            }?;
+            self.dir_info_uncached(
+                slot,
+                path,
+                entries,
+                *result,
+                dir_entry_index,
+                parent,
+                parent_index,
+                fd,
+                package_id,
+                None,
+            )?;
+            return Ok(slot);
+        };
+
+        // SAFETY: a parked index was assigned by `put`; resolver mutex held.
+        let before_ptr = unsafe { DirInfo::slot_ptr_at(before_index) }.expect("slot of a bust");
+        // SAFETY: a slot of the singleton.
+        let before = unsafe { DirInfoRef::from_raw(before_ptr) };
+        let mut reread = DirInfo::DirInfo::default();
+        self.dir_info_uncached(
+            &raw mut reread,
+            path,
+            entries,
+            // A directory that is its own browser scope has the index of its slot.
+            allocators::Result {
+                index: before_index,
+                ..*result
+            },
+            dir_entry_index,
+            parent,
+            parent_index,
+            fd,
+            package_id,
+            Some(before),
+        )?;
+        let same = reread.is_same_after_reread(&before);
+        if self.extended_file_changed(result.hash) || !same {
+            DirInfo::discard_parked_below(path);
+        }
+        if same {
+            before.entries.set(reread.entries.get());
+            self.dir_cache_mut().publish(result.hash, before_index);
+            result.index = before_index;
+            return Ok(before_ptr);
+        }
+        // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
+        let slot = unsafe { DirInfo::put_slot(self.dir_cache(), result, reread) }?;
+        // SAFETY: `put_slot` returned a pointer to the slot it initialized, and nothing else
+        // has it yet.
+        let info = unsafe { &mut *slot };
+        if info.enclosing_browser_scope == before_index {
+            info.enclosing_browser_scope = result.index;
+        }
+        Ok(slot)
+    }
+
+    /// `before_bust`: the slot that the directory had when it was busted. Its package.json and
+    /// tsconfig.json parses are kept when the files are as they were.
     fn dir_info_uncached(
         &mut self,
         info: *mut DirInfo::DirInfo,
@@ -6164,6 +6337,7 @@ impl<'a> Resolver<'a> {
         parent_index: allocators::IndexType,
         fd: FD,
         package_id: Option<Install::PackageID>,
+        before_bust: Option<DirInfoRef>,
     ) -> crate::CrateResult<()> {
         let result = _result;
 
@@ -6200,7 +6374,7 @@ impl<'a> Resolver<'a> {
             abs_path: path,
             // .abs_real_path = path,
             parent: parent_index,
-            entries: dir_entry_index,
+            entries: DirInfo::ListingIndex::new(dir_entry_index),
             ..Default::default()
         };
 
@@ -6445,6 +6619,7 @@ impl<'a> Resolver<'a> {
                                 FD::INVALID
                             },
                             package_id,
+                            before_bust.and_then(|it| it.package_json),
                         )
                         .ok()
                         .flatten()
@@ -6457,6 +6632,7 @@ impl<'a> Resolver<'a> {
                                 FD::INVALID
                             },
                             None,
+                            before_bust.and_then(|it| it.package_json),
                         )
                         .ok()
                         .flatten()
@@ -6528,23 +6704,40 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
-                let fd = if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                    fd
+                let kept = before_bust
+                    .and_then(|it| it.tsconfig_json)
+                    .filter(|it| self.tsconfig_sources_unchanged(it.as_ptr(), tsconfigpath));
+                if kept.is_some() {
+                    info.tsconfig_json = kept;
                 } else {
-                    FD::ZERO
-                };
-                // It is for the resolvers that read it. What is wrong with it is not an error of
-                // one that reads another in its place.
-                let (mut ignored, log) = (bun_ast::Log::init(), self.log);
-                if self.opts.tsconfig_override.is_some() {
-                    self.log = NonNull::from(&mut ignored);
+                    let fd = if FeatureFlags::STORE_FILE_DESCRIPTORS {
+                        fd
+                    } else {
+                        FD::ZERO
+                    };
+                    // It is for the resolvers that read it. What is wrong with it is not an error of
+                    // one that reads another in its place.
+                    let (mut ignored, log) = (bun_ast::Log::init(), self.log);
+                    if self.opts.tsconfig_override.is_some() {
+                        self.log = NonNull::from(&mut ignored);
+                    }
+                    let loaded = self.load_tsconfig(tsconfigpath, fd);
+                    self.log = log;
+                    let loaded = loaded?;
+                    if let Some(it) = &loaded {
+                        for extended in it.sources.iter().skip(1) {
+                            DirInfo::note_extended(
+                                DirInfo::HashMap::key_hash(Dirname::dirname(&extended.path)),
+                                &extended.path,
+                                extended.contents.as_deref(),
+                            );
+                        }
+                    }
+                    // A leaked Box, interned into DirInfo: it outlives the resolver.
+                    info.tsconfig_json = loaded.map(|it| {
+                        NonNull::new(bun_core::heap::into_raw(it)).expect("heap::alloc is non-null")
+                    });
                 }
-                let loaded = self.load_tsconfig(tsconfigpath, fd);
-                self.log = log;
-                // A leaked Box, interned into DirInfo: it outlives the resolver.
-                info.tsconfig_json = loaded?.map(|it| {
-                    NonNull::new(bun_core::heap::into_raw(it)).expect("heap::alloc is non-null")
-                });
                 info.enclosing_tsconfig_json = info.tsconfig_json();
             }
         }
@@ -6558,8 +6751,12 @@ impl<'a> Resolver<'a> {
         tsconfigpath: &[u8],
         fd: FD,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
-        let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(tsconfigpath, fd)
-        {
+        let mut sources = Vec::new();
+        let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(
+            tsconfigpath,
+            fd,
+            &mut sources,
+        ) {
             Ok(v) => v.map(bun_core::heap::into_raw),
             Err(err) => {
                 let pretty = tsconfigpath;
@@ -6605,7 +6802,7 @@ impl<'a> Resolver<'a> {
                     bun_paths::Platform::AUTO,
                 ) {
                     Some(abs_path) => self
-                        .parse_tsconfig(abs_path, FD::INVALID)
+                        .parse_tsconfig(abs_path, FD::INVALID, &mut sources)
                         .map_err(|err| (err, abs_path)),
                     None => Err((
                         crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
@@ -6690,9 +6887,46 @@ impl<'a> Resolver<'a> {
             }
             // SAFETY: from `parse_tsconfig` (heap::into_raw) above; the walk is over, so this
             // is the only pointer to it.
-            return Ok(Some(unsafe { bun_core::heap::take(merged_config) }));
+            let mut merged_config = unsafe { bun_core::heap::take(merged_config) };
+            merged_config.sources = sources;
+            return Ok(Some(merged_config));
         }
         Ok(None)
+    }
+
+    /// Whether each file that `config` was read from has the bytes it had then, and the first one
+    /// is `path`: a re-read of the directory then keeps `config`.
+    fn tsconfig_sources_unchanged(&mut self, config: *const TSConfigJSON, path: &[u8]) -> bool {
+        // SAFETY: interned into a `DirInfo` slot for the life of the process.
+        let sources = unsafe { &(*config).sources };
+        sources.first().is_some_and(|first| *first.path == *path)
+            && sources.iter().all(|file| {
+                let read = self.read_config_file(&file.path, FD::INVALID).ok();
+                read.as_deref() == file.contents.as_deref()
+            })
+    }
+
+    /// Whether a file in the directory with this key hash, which the tsconfig.json of another
+    /// directory extends, is not what that one read. The directories below this one that a bust
+    /// parked are not published again then.
+    fn extended_file_changed(&mut self, dir_hash: u64) -> bool {
+        if !DirInfo::any_extended() {
+            return false;
+        }
+        let Some(mut files) = DirInfo::take_extended(dir_hash) else {
+            return false;
+        };
+        let mut changed = false;
+        for file in &mut files {
+            let read = self
+                .read_config_file(&file.path, FD::INVALID)
+                .ok()
+                .map(Vec::into_boxed_slice);
+            changed |= !file.seen.is(read.as_deref());
+            file.seen = DirInfo::Seen::of(read);
+        }
+        DirInfo::put_extended(dir_hash, files);
+        changed
     }
 
     /// `opts.tsconfig_override`, which this resolver and its workers read in place of the

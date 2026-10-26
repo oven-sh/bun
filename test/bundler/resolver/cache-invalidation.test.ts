@@ -392,4 +392,47 @@ describe("resolver cache invalidation", () => {
     const text3 = await result3.outputs[0].text();
     expect(text3).toContain("recreated");
   });
+
+  // A build whose entry point does not exist drops the directory of the entry point from the cache. The directories
+  // below it were cached with what they took from it.
+  test.each([
+    [
+      "imports",
+      { name: "app", imports: { "#lib": "./a.js" } },
+      { name: "app", imports: { "#lib": "./b.js" } },
+      /from [ab]/,
+      "from a",
+      "from b",
+    ],
+    [
+      "type",
+      { name: "app" },
+      { name: "app", type: "module" },
+      /__toESM\(require_dep\(\)(, 1)?\)/,
+      "__toESM(require_dep())",
+      "__toESM(require_dep(), 1)",
+    ],
+  ])('a new package.json "%s" reaches the files of a subdirectory', async (_, before, after, printed, old, updated) => {
+    const source = `import dep from "dep"; import lib from "#lib"; console.log(dep, lib);`;
+    using dir = tempDir("cache-test-config-subdir", {
+      "package.json": JSON.stringify({ imports: { "#lib": "./a.js" }, ...before }),
+      "a.js": `export default "from a";`,
+      "b.js": `export default "from b";`,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js" }),
+      "node_modules/dep/index.js": `exports.__esModule = true; exports.default = function dep() {};`,
+      "root.js": source,
+      "src/sub.js": source,
+    });
+    const root = String(dir);
+    const built = async (file: string) => {
+      const result = await Bun.build({ entrypoints: [path.join(root, file)] });
+      return printed.exec(await result.outputs[0].text())?.[0];
+    };
+    expect({ root: await built("root.js"), sub: await built("src/sub.js") }).toEqual({ root: old, sub: old });
+
+    await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ imports: { "#lib": "./a.js" }, ...after }));
+    const failed = await Bun.build({ entrypoints: [path.join(root, "not-there.js")], throw: false });
+    expect(failed.success).toBe(false);
+    expect({ root: await built("root.js"), sub: await built("src/sub.js") }).toEqual({ root: updated, sub: updated });
+  });
 });

@@ -1332,3 +1332,40 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   expect(await stdout("still running")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
+
+// The resolver caches, for each directory, pointers to the package.json and the tsconfig.json of the directories above it.
+it.each([
+  ["tsconfig.json", "@lib", (target: string) => JSON.stringify({ compilerOptions: { paths: { "@lib": [target] } } })],
+  ["package.json", "#lib", (target: string) => JSON.stringify({ name: "app", imports: { "#lib": target } })],
+])("--hot applies a new %s to the files of a subdirectory", async (config, alias, contents) => {
+  const main = (run: string) => `
+    import { root } from "./root.ts";
+    import { sub } from "./src/sub.ts";
+    console.log("${run} run: root imports " + root + ", src/sub imports " + sub);
+  `;
+  using dir = tempDir("hot-config-edit", {
+    [config]: contents("./a.ts"),
+    "a.ts": `export default "a";`,
+    "b.ts": `export default "b";`,
+    "root.ts": `import lib from "${alias}";\nexport const root = lib;`,
+    "src/sub.ts": `import lib from "${alias}";\nexport const sub = lib;`,
+    "main.ts": main("first"),
+  });
+  const cwd = String(dir);
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout("first run: root imports a, src/sub imports a\n")).toBe(true);
+
+  // By rename: kqueue reports a directory only when one of its entries is replaced.
+  writeHotFileAtomicSync(join(cwd, config), contents("./b.ts"));
+  writeFileSync(join(cwd, "main.ts"), main("second") + "process.exit(0);\n");
+  expect(await stdout("second run: root imports b, src/sub imports b\n")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});

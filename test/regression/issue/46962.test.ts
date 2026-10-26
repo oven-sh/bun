@@ -71,7 +71,7 @@ test.concurrent("global commands skip the empty dependency name that bun 1.4.3 w
     expect(stderr).not.toContain("Lockfile is malformed");
     const lines = stdout.split("\n");
     expect(lines[0]).toEndWith(" node_modules (1 installed)");
-    expect(lines.slice(1)).toEqual(["└── other@../../../other", ""]);
+    expect(lines.slice(1).map(posix)).toEqual(["└── other@../../../other", ""]);
     expect(exitCode).toBe(0);
   }
   {

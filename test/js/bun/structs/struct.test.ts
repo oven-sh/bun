@@ -154,22 +154,25 @@ describe("struct", () => {
     expect(() => S.prototype.get.call(Object.create(T.prototype))).toThrow(TypeError);
   });
 
-  test("prototype and constructor are locked down", () => {
+  test("the prototype is sealed as soon as the struct is defined", () => {
     struct S {
       v;
       m() {}
     }
-    new S();
     expect(Object.isExtensible(S.prototype)).toBe(false);
     expect(() => {
       "use strict";
       (S.prototype as any).extra = 1;
     }).toThrow(TypeError);
+    new S();
     expect(() => Object.setPrototypeOf(new S(), {})).toThrow(TypeError);
   });
 
-  test("fields cannot have initializers", () => {
-    expect(() => new Function("struct S { x = 1; }")).toThrow(SyntaxError);
+  test("field initializers are accepted", () => {
+    struct S {
+      x = 1;
+    }
+    expect(new S().x).toBe(1);
   });
 
   test("struct stays usable as an identifier", () => {

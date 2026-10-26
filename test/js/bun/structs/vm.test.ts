@@ -256,7 +256,7 @@ p.x`);
       ["first", "second"],
     );
     expect(fn(2, 3)).toBe(5);
-    expect(() => vm.compileFunction("struct Bad { a = 1; }")).toThrow(SyntaxError);
+    expect(() => vm.compileFunction("struct Bad { constructor() {} constructor() {} }")).toThrow(SyntaxError);
   });
 
   test("struct syntax in a vm.SourceTextModule", async () => {
@@ -278,11 +278,44 @@ p.x`);
   });
 
   test("an invalid struct declaration is a SyntaxError", () => {
-    expect(() => vm.runInNewContext("struct S { x = 1; }")).toThrow(SyntaxError);
-    expect(() => vm.runInNewContext("struct S { [name]; }")).toThrow(SyntaxError);
-    expect(() => new vm.Script("shared struct S { x = 1; }")).toThrow(SyntaxError);
+    expect(() => vm.runInNewContext("struct S { constructor() {} constructor() {} }")).toThrow(SyntaxError);
+    expect(() => vm.runInNewContext("struct S { #a; #a; }")).toThrow(SyntaxError);
+    expect(() => new vm.Script("shared struct S { m() {} }")).toThrow(SyntaxError);
+    expect(() => new vm.Script("shared struct S { #p = 1; }")).toThrow(SyntaxError);
     // Not struct syntax at all, still raised by the engine.
     expect(() => vm.runInNewContext("struct S {")).toThrow(SyntaxError);
+  });
+
+  test("field initializers, computed names and private names in vm sources", () => {
+    expect(
+      vm.runInNewContext(
+        `
+        const key = "k";
+        struct S {
+          a = 1;
+          [key] = this.a + 1;
+          #p = 3;
+          get p() { return this.#p; }
+          m() { return this.a; }
+        }
+        const s = new S();
+        [Object.keys(s).join(), s.k, s.p, s.m(), Object.isExtensible(s)].join();
+        `,
+      ),
+    ).toBe("a,k,2,3,1,false");
+  });
+
+  test("methods of a struct defined in a context are not generic either", () => {
+    expect(
+      vm.runInNewContext(
+        `
+        struct S { m() { return 1; } *g() { yield 2; } }
+        let threw = false;
+        try { S.prototype.m.call({}); } catch (e) { threw = e instanceof TypeError; }
+        [threw, new S().m(), [...S.prototype.g.call({})].join()].join();
+        `,
+      ),
+    ).toBe("true,1,2");
   });
 
   test("a source that only mentions the word runs unchanged", () => {

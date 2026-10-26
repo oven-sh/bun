@@ -355,6 +355,8 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     }
     const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
     if (isAsync) {
+      // A stale module is refused before its body runs, so the next load evaluates it.
+      if (mod) mod.state = State.Stale;
       throw new AsyncImportError(id);
     }
     if (!mod) {

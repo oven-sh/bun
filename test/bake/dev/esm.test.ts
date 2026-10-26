@@ -362,6 +362,52 @@ devTest("cannot require a module with top level await", {
     });
   },
 });
+devTest("import() evaluates a module with top-level await after require() refused it", {
+  framework: minimalFramework,
+  files: {
+    // CommonJS, so that the next load evaluates it again after it threw.
+    "flaky.ts": `
+      if (!globalThis.flakyThrew) {
+        globalThis.flakyThrew = true;
+        throw new Error("flaky failed");
+      }
+      module.exports = { flaky: "flaky" };
+    `,
+    "tla.ts": `
+      import { flaky } from "./flaky";
+      await 0;
+      export const tla = "tla(" + flaky + ")";
+    `,
+    "routes/index.ts": `
+      export default async function () {
+        const steps = [];
+        // "flaky" throws the first time. The body of "tla" does not run, and "tla" is stale.
+        try {
+          await import("../tla");
+          steps.push("loaded");
+        } catch (e) {
+          steps.push(e.message);
+        }
+        try {
+          require("../tla");
+          steps.push("required");
+        } catch (e) {
+          steps.push(e.message);
+        }
+        const ns = await import("../tla");
+        steps.push(ns === null ? "null" : ns.tla);
+        return Response.json(steps);
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toEqual([
+      "flaky failed",
+      `Cannot require "tla.ts" because "tla.ts" uses top-level await, but 'require' is a synchronous operation.`,
+      "tla(flaky)",
+    ]);
+  },
+});
 devTest("function that is assigned to should become a live binding", {
   files: {
     "index.html": emptyHtmlFile({

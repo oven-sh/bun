@@ -1250,8 +1250,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     namespace_ref = p.store_name_in_ref(name);
                 }
 
-                let import_record_index =
-                    p.add_import_record(ImportKind::Stmt, path.loc, path.text);
+                let import_record_index = p.add_import_record(
+                    ImportKind::Stmt,
+                    path.loc,
+                    path.text,
+                    // TODO: import assertions
+                    // path.assertions
+                );
 
                 if path.is_macro {
                     p.log().add_error(
@@ -1265,8 +1270,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc,
                         b"cannot use export statement with \"type\" attribute",
                     );
-                } else if let Some(loader) = path.loader {
-                    p.set_import_record_loader(import_record_index, loader);
+                } else if path.loader == Some(bun_ast::Loader::Css) {
+                    p.set_import_record_loader(import_record_index, bun_ast::Loader::Css);
                 }
 
                 if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
@@ -1328,9 +1333,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
                     if !parsed_path.is_macro
                         && parsed_path.import_tag == ImportRecordTag::None
-                        && let Some(loader) = parsed_path.loader
+                        && parsed_path.loader == Some(bun_ast::Loader::Css)
                     {
-                        p.set_import_record_loader(import_record_index, loader);
+                        p.set_import_record_loader(import_record_index, bun_ast::Loader::Css);
                     }
                     let path_name = fs::PathName::init(parsed_path.text);
                     let namespace_ref = {

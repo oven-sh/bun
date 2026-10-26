@@ -350,8 +350,13 @@ export var __cssModule = css => {
   return sheet;
 };
 
-// Resolves a chunk-relative asset `url()` in that CSS against the chunk.
-export var __cssUrl = (url, base) => (base ? new globalThis.URL(url, base).href : url);
+// Resolves a chunk-relative asset `url()` in that CSS against the chunk. The result is valid in `url()` with or without quotes.
+export var __cssUrl = (url, base) => {
+  try {
+    url = new globalThis.URL(url, base).href;
+  } catch {}
+  return url.replace(/[ "'()\\]/g, "\\$&");
+};
 
 // The chunk's URL in IIFE and CommonJS output. `currentScript` is only set while the chunk loads.
 export var __scriptUrl = /* @__PURE__ */ (() => {

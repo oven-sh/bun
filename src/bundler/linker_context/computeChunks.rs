@@ -435,8 +435,7 @@ pub(crate) fn compute_chunks<'a>(
         }
     }
 
-    // Sort the chunks for determinism. This matters because we use chunk indices
-    // as sorting keys in a few places.
+    // Order the chunks for determinism: a chunk index is a sort key and a hash input in a few places.
     let mut sorted_chunks: Vec<Chunk> = 'sort_chunks: {
         let mut sorted_chunks = Vec::<Chunk>::init_capacity(
             js_chunks.count() + css_chunks.count() + html_chunks.count(),
@@ -512,22 +511,14 @@ pub(crate) fn compute_chunks<'a>(
         }
 
         if css_chunks.count() > 0 {
-            let sorted_css_keys: &mut [u64] = temp.alloc_slice_copy(css_chunks.keys());
-            index_sort::sort_slice_unstable_by(sorted_css_keys, |a, b| a.cmp(b));
-
-            // A map from the index in `css_chunks` to it's final index in `sorted_chunks`
-            let remapped_css_indexes: &mut [u32] =
-                temp.alloc_slice_fill_copy(css_chunks.count(), 0u32);
-
             // Use sorted_chunks.len as the starting index because HTML chunks
             // may be interleaved with JS chunks, so js_chunks.count() would be
             // incorrect when HTML entry points are present.
-            for (sorted_index, &key) in (sorted_chunks.len() as usize..).zip(sorted_css_keys.iter())
-            {
-                let index = css_chunks.get_index(&key).expect("unreachable");
-                let owned = core::mem::take(&mut css_chunks.values_mut()[index]);
-                sorted_chunks.append_assume_capacity(owned);
-                remapped_css_indexes[index] = u32::try_from(sorted_index).expect("int cast");
+            let first_css_chunk = u32::try_from(sorted_chunks.len()).expect("int cast");
+
+            // CSS chunks keep entry point order, the insertion order of `css_chunks`: a key is a hash, not an order.
+            for css_chunk in css_chunks.values_mut() {
+                sorted_chunks.append_assume_capacity(core::mem::take(css_chunk));
             }
 
             // Update all affected JS chunks to point at the correct CSS chunk index.
@@ -536,7 +527,7 @@ pub(crate) fn compute_chunks<'a>(
                     &mut sorted_chunks.slice_mut()[js_index as usize].content
                 {
                     for idx in js.css_chunks.iter_mut() {
-                        *idx = remapped_css_indexes[*idx as usize];
+                        *idx += first_css_chunk;
                     }
                 }
             }

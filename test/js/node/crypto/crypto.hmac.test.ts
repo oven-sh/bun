@@ -25,7 +25,7 @@ describe("crypto.Hmac", () => {
     expect(instance instanceof Hmac).toBe(true);
   });
 
-  test("_flush should not set finalized", async () => {
+  test("digest() after the stream ends returns an empty result", async () => {
     const s = new PassThrough();
     const h = createHmac("sha1", "hi");
 
@@ -35,9 +35,7 @@ describe("crypto.Hmac", () => {
       .on("data", c => {
         expect(c).toBe("f2a1c2327e7bf3297b3f494716666a30cf1ddf3f");
 
-        // _flush should not set finalized, but
-        // buffer shoule be empty because m_ctx.reset()
-        // was called
+        // _flush took the digest and finalized the Hmac.
         expect(h.digest("hex")).toBe("");
         resolve();
       })
@@ -440,6 +438,85 @@ describe("crypto.Hmac", () => {
       }
     }
   });
+
+  describe("digest(encoding) when converting the encoding finalizes the Hmac", () => {
+    // HMAC of "x" with the key "k".
+    const hmacs = {
+      sha512:
+        "38fbcb094b99f9a73d862d0cb2b01f9882259c562fbae7f3e39fe05ebf1dcb7a" +
+        "67580d8ca23dd2a0de710c3563d988018ae1424e5b2d2de34dd4f4ede3c7fc4c",
+      sha1: "cb00131fcec602a8fc84413a2a70154d8c06a0d2",
+    };
+    // Each one is an encoding argument that runs `convert` when digest() converts it to a string.
+    const hooks: Record<string, (convert: () => string) => object> = {
+      "toString": convert => ({ toString: convert }),
+      "Symbol.toPrimitive": convert => ({ [Symbol.toPrimitive]: convert }),
+      "valueOf": convert => ({ toString: null, valueOf: convert }),
+      "Proxy get trap": convert =>
+        new Proxy(
+          {},
+          {
+            get(_, key) {
+              if (key !== "toString") return undefined;
+              const encoding = convert();
+              return () => encoding;
+            },
+          },
+        ),
+    };
+    const finalizers: Record<string, (h: Hmac) => string> = {
+      "digest()": h => h.digest("hex"),
+      "end()": h => (h.end(), h.read().toString("hex")),
+    };
+    const emptyResults = { hex: "", latin1: "", base64: "", buffer: Buffer.alloc(0) };
+
+    test("the outer call returns an empty result", () => {
+      for (const [algorithm, hmac] of Object.entries(hmacs)) {
+        for (const [hook, makeEncoding] of Object.entries(hooks)) {
+          for (const [finalizer, finalize] of Object.entries(finalizers)) {
+            for (const [encoding, empty] of Object.entries(emptyResults)) {
+              const row = `${algorithm}, ${hook} calls ${finalizer} and returns "${encoding}"`;
+              const h = createHmac(algorithm, "k").update("x");
+              let conversions = 0;
+              let inner: string | undefined;
+              const encodingArgument = makeEncoding(() => {
+                conversions++;
+                inner = finalize(h);
+                return encoding;
+              });
+
+              const outer = (h as any).digest(encodingArgument);
+              expect({ row, outer, inner, conversions }).toEqual({ row, outer: empty, inner: hmac, conversions: 1 });
+
+              // The Hmac is finalized: digest() does not convert the encoding again.
+              (h as any).digest(encodingArgument);
+              expect({ row, digest: h.digest("hex"), conversions }).toEqual({ row, digest: "", conversions: 1 });
+              expect(() => h.update("y")).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_HASH_FINALIZED" }));
+            }
+          }
+        }
+      }
+    });
+
+    test("every outer call of a nested conversion returns an empty result", () => {
+      const h = createHmac("sha512", "k").update("x");
+      let inner: string | undefined;
+      let middle: string | undefined;
+      const outer = (h as any).digest({
+        toString() {
+          middle = (h as any).digest({
+            toString() {
+              inner = h.digest("hex");
+              return "hex";
+            },
+          });
+          return "hex";
+        },
+      });
+      expect({ outer, middle, inner }).toEqual({ outer: "", middle: "", inner: hmacs.sha512 });
+    });
+  });
+
   test("Invalid digest", async () => {
     expect(() => createHmac("sha7", "key")).toThrow("Invalid digest: sha7");
   });

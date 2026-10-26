@@ -224,12 +224,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     }
 
     unsigned char mdValue[EVP_MAX_MD_SIZE];
-    ncrypto::Buffer<void> mdBuffer {
-        .data = mdValue,
-        .len = sizeof(mdValue),
-    };
+    // The encoding's toString() above can call digest() and free m_ctx. Encode only the bytes HMAC_Final wrote, like Node: https://github.com/nodejs/node/blob/6737aa35b8e28b7af5ea57261a46090857f77b36/src/crypto/crypto_hmac.cc#L138-L147
+    size_t mdLen = 0;
 
     if (hmac->m_ctx) {
+        ncrypto::Buffer<void> mdBuffer {
+            .data = mdValue,
+            .len = sizeof(mdValue),
+        };
         if (!hmac->m_ctx.digestInto(&mdBuffer)) {
             hmac->m_ctx.reset();
             hmac->m_sizeForGC = 0;
@@ -238,13 +240,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         }
         hmac->m_ctx.reset();
         hmac->m_sizeForGC = 0;
+        mdLen = mdBuffer.len;
     }
 
-    // We shouldn't set finalized if coming from _flush, but this
-    // works because m_ctx is reset after digest
+    // Hmac.prototype._flush finalizes here too, like Node's: https://github.com/nodejs/node/blob/6737aa35b8e28b7af5ea57261a46090857f77b36/lib/internal/crypto/hash.js#L231-L236
     hmac->m_finalized = true;
 
-    RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(mdBuffer.data), mdBuffer.len }, encoding));
+    RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { mdValue, mdLen }, encoding));
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

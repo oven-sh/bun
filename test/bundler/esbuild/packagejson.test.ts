@@ -2460,4 +2460,132 @@ describe("bundler", () => {
       stdout: "browser",
     },
   });
+  // The browser map is probed for an entry file before the file is loaded, and
+  // the probe adds implicit extensions. It adds them in the order of the load
+  // that follows, so the key it finds is the key of the file the load picks.
+  // "main" is loaded in its own order (".js" first, no ".mjs") for `import`
+  // and for `require`, so both statements get the entry of that one file.
+  itBundled("packagejson/BrowserMapMainFieldNoExtProbeOrder", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import mjs from 'keys-mjs-js'
+        import cjs from 'keys-cjs-js'
+        import dir from 'main-is-dir'
+        import local from './local-pkg'
+        console.log('keys .mjs .js:', mjs, '|', require('keys-mjs-js'))
+        console.log('keys .cjs .js:', cjs, '|', require('keys-cjs-js'))
+        console.log('directory main:', dir, '|', require('main-is-dir'))
+        console.log('relative import:', local, '|', require('./local-pkg'))
+      `,
+      "/Users/user/project/node_modules/keys-mjs-js/package.json": `{"main":"./main","browser":{"./main.mjs":"./for-mjs.js","./main.js":"./for-js.js"}}`,
+      "/Users/user/project/node_modules/keys-mjs-js/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/node_modules/keys-mjs-js/main.mjs": `export default 'main.mjs'`,
+      "/Users/user/project/node_modules/keys-mjs-js/for-mjs.js": `module.exports = 'entry of main.mjs'`,
+      "/Users/user/project/node_modules/keys-mjs-js/for-js.js": `module.exports = 'entry of main.js'`,
+      "/Users/user/project/node_modules/keys-cjs-js/package.json": `{"main":"./main","browser":{"./main.cjs":"./for-cjs.js","./main.js":"./for-js.js"}}`,
+      "/Users/user/project/node_modules/keys-cjs-js/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/node_modules/keys-cjs-js/main.cjs": `module.exports = 'main.cjs'`,
+      "/Users/user/project/node_modules/keys-cjs-js/for-cjs.js": `module.exports = 'entry of main.cjs'`,
+      "/Users/user/project/node_modules/keys-cjs-js/for-js.js": `module.exports = 'entry of main.js'`,
+      "/Users/user/project/node_modules/main-is-dir/package.json": `{"main":"./lib","browser":{"./lib/index.mjs":"./for-mjs.js","./lib/index.js":"./for-js.js"}}`,
+      "/Users/user/project/node_modules/main-is-dir/lib/index.js": `module.exports = 'lib/index.js'`,
+      "/Users/user/project/node_modules/main-is-dir/lib/index.mjs": `export default 'lib/index.mjs'`,
+      "/Users/user/project/node_modules/main-is-dir/for-mjs.js": `module.exports = 'entry of lib/index.mjs'`,
+      "/Users/user/project/node_modules/main-is-dir/for-js.js": `module.exports = 'entry of lib/index.js'`,
+      "/Users/user/project/src/local-pkg/package.json": `{"main":"./main","browser":{"./main.mjs":"./for-mjs.js","./main.js":"./for-js.js"}}`,
+      "/Users/user/project/src/local-pkg/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/src/local-pkg/main.mjs": `export default 'main.mjs'`,
+      "/Users/user/project/src/local-pkg/for-mjs.js": `module.exports = 'entry of main.mjs'`,
+      "/Users/user/project/src/local-pkg/for-js.js": `module.exports = 'entry of main.js'`,
+    },
+    target: "browser",
+    run: {
+      stdout: `
+        keys .mjs .js: entry of main.js | entry of main.js
+        keys .cjs .js: entry of main.js | entry of main.js
+        directory main: entry of lib/index.js | entry of lib/index.js
+        relative import: entry of main.js | entry of main.js
+      `,
+    },
+  });
+  // A key for a file that "main" does not load does not apply, even when it is
+  // the only key that an implicit extension can reach.
+  itBundled("packagejson/BrowserMapMainFieldNoExtKeyOfOtherFile", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import only from 'only-mjs-key'
+        import disabled from 'mjs-key-disabled'
+        console.log('only a .mjs key:', only, '|', require('only-mjs-key'))
+        console.log('.mjs key is false:', disabled, '|', require('mjs-key-disabled'))
+      `,
+      "/Users/user/project/node_modules/only-mjs-key/package.json": `{"main":"./main","browser":{"./main.mjs":"./for-mjs.js"}}`,
+      "/Users/user/project/node_modules/only-mjs-key/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/node_modules/only-mjs-key/main.mjs": `export default 'main.mjs'`,
+      "/Users/user/project/node_modules/only-mjs-key/for-mjs.js": `module.exports = 'entry of main.mjs'`,
+      "/Users/user/project/node_modules/mjs-key-disabled/package.json": `{"main":"./main","browser":{"./main.mjs":false,"./main.js":"./for-js.js"}}`,
+      "/Users/user/project/node_modules/mjs-key-disabled/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/node_modules/mjs-key-disabled/main.mjs": `export default 'main.mjs'`,
+      "/Users/user/project/node_modules/mjs-key-disabled/for-js.js": `module.exports = 'entry of main.js'`,
+    },
+    target: "browser",
+    run: {
+      stdout: `
+        only a .mjs key: main.js | main.js
+        .mjs key is false: entry of main.js | entry of main.js
+      `,
+    },
+  });
+  // A package with "module" loads its "main", or its implicit index, in the
+  // "main" order for `require`, and keeps that file as the fallback of an
+  // `import`. The probe uses the same order, so a bundle that has both
+  // statements holds one copy of the package.
+  itBundled("packagejson/BrowserMapModuleFallbackNoExtProbeOrder", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import main from 'module-and-main'
+        import index from 'module-and-index'
+        console.log('module and main:', main, '|', require('module-and-main'))
+        console.log('module and index:', index, '|', require('module-and-index'))
+      `,
+      "/Users/user/project/node_modules/module-and-main/package.json": `{"module":"./esm.js","main":"./main","browser":{"./main.cjs":"./for-cjs.js","./main.js":"./for-js.js"}}`,
+      "/Users/user/project/node_modules/module-and-main/esm.js": `export default 'esm.js'`,
+      "/Users/user/project/node_modules/module-and-main/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/node_modules/module-and-main/main.cjs": `module.exports = 'main.cjs'`,
+      "/Users/user/project/node_modules/module-and-main/for-cjs.js": `module.exports = 'entry of main.cjs'`,
+      "/Users/user/project/node_modules/module-and-main/for-js.js": `module.exports = 'entry of main.js'`,
+      "/Users/user/project/node_modules/module-and-index/package.json": `{"module":"./esm.js","browser":{"./index.cjs":"./for-cjs.js","./index.js":"./for-js.js"}}`,
+      "/Users/user/project/node_modules/module-and-index/esm.js": `export default 'esm.js'`,
+      "/Users/user/project/node_modules/module-and-index/index.js": `module.exports = 'index.js'`,
+      "/Users/user/project/node_modules/module-and-index/index.cjs": `module.exports = 'index.cjs'`,
+      "/Users/user/project/node_modules/module-and-index/for-cjs.js": `module.exports = 'entry of index.cjs'`,
+      "/Users/user/project/node_modules/module-and-index/for-js.js": `module.exports = 'entry of index.js'`,
+    },
+    target: "browser",
+    run: {
+      stdout: `
+        module and main: entry of main.js | entry of main.js
+        module and index: entry of index.js | entry of index.js
+      `,
+    },
+  });
+  // A package with no main field loads its implicit index in the order of the
+  // import kind: `import` loads index.mjs and `require` loads index.js. The
+  // probe follows that order too, so each statement gets the entry of its file.
+  itBundled("packagejson/BrowserMapImplicitIndexProbeOrder", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import value from 'demo-pkg'
+        console.log(value, '|', require('demo-pkg'))
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": `{"browser":{"./index.mjs":"./for-mjs.js","./index.js":"./for-js.js"}}`,
+      "/Users/user/project/node_modules/demo-pkg/index.js": `module.exports = 'index.js'`,
+      "/Users/user/project/node_modules/demo-pkg/index.mjs": `export default 'index.mjs'`,
+      "/Users/user/project/node_modules/demo-pkg/for-mjs.js": `module.exports = 'entry of index.mjs'`,
+      "/Users/user/project/node_modules/demo-pkg/for-js.js": `module.exports = 'entry of index.js'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "entry of index.mjs | entry of index.js",
+    },
+  });
 });

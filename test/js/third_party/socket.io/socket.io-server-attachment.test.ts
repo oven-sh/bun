@@ -25,7 +25,7 @@ describe.skip("server attachment", () => {
           try {
             expect(res.headers["content-type"]).toBe("application/javascript; charset=utf-8");
             expect(res.headers.etag).toBe('"' + clientVersion + '"');
-            expect(res.headers["x-sourcemap"]).toBe(undefined);
+            expect(res.headers["x-sourcemap"] as string | undefined).toBe(undefined);
             expect(res.text).toMatch(/engine\.io/);
             expect(res.status).toBe(200);
             success(done, io);

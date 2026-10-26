@@ -134,12 +134,27 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-        if (!backingBuffer->isShared())
+
+        std::span<const uint8_t> input = buffer->span();
+
+        // A pin stops transfer(), not resize() or a WebAssembly.Memory grow(), which a callback can call.
+        WTF::Vector<uint8_t> owned;
+        bool copied = !input.empty() && (backingBuffer->isResizableNonShared() || backingBuffer->isWasmMemory());
+        if (copied) {
+            if (!owned.tryAppend(input)) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            input = owned.span();
+        }
+
+        bool pinned = !copied && !backingBuffer->isShared();
+        if (pinned)
             backingBuffer->pin();
 
-        JSValue result = parser->impl()->execute(globalObject, reinterpret_cast<const char*>(buffer->vector()), buffer->byteLength());
+        JSValue result = parser->impl()->execute(globalObject, reinterpret_cast<const char*>(input.data()), input.size());
 
-        if (!backingBuffer->isShared())
+        if (pinned)
             backingBuffer->unpin();
         RETURN_IF_EXCEPTION(scope, {});
 

@@ -1,0 +1,3 @@
+<script lang="ts">
+const a   = <div/>;
+</script>

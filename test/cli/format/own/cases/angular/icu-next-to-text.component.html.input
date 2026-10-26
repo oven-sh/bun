@@ -1,0 +1,6 @@
+<span i18n>Updated {minutes, plural, =0 {just now} =1 {one minute ago} other {{{minutes}} minutes ago}}<
+/span>
+<ng-template>{gender, select, male {male} female {female} ot    *ngIf=" something?true:false    " [(ngModel)]="canSave">Warning!</span>
+her {other}}</ng-template>
+{,e
+,}

@@ -177,21 +177,16 @@ public:
         finish(sessionId);
         if (m_sb.is8Bit()) [[likely]] {
             auto s = m_sb.span8();
-            // OR-accumulate: all bytes < 0x80 → no high bit → valid ASCII.
-            // One pass, no branching. Commands are typically <512B.
-            Latin1Character acc = 0;
-            for (auto c : s)
-                acc |= c;
-            if (!(acc & 0x80)) [[likely]] {
+            if (charactersAreAllASCII(s)) [[likely]] {
                 sink(reinterpret_cast<const char*>(s.data()), s.size());
                 sink("\0", 1);
                 return;
             }
         }
-        // Non-ASCII path: transcode. The CString has its own NUL terminator
-        // at data()[length()], so length()+1 covers the frame delimiter.
+        // Non-ASCII path: transcode. The NUL terminator is the frame delimiter.
         auto utf8 = m_sb.toString().utf8();
-        sink(utf8.data(), utf8.length() + 1);
+        auto bytes = byteCast<char>(utf8.spanIncludingNullTerminator());
+        sink(bytes.data(), bytes.size());
     }
 
 private:
@@ -234,9 +229,7 @@ enum class Method : uint8_t {
     TargetCreateTarget,
     TargetAttachToTarget,
     PageEnable,
-    RuntimeEnable,
     // User-facing ops — responses settle (or errors reject) a slot.
-    TargetCloseTarget,
     PageNavigate,
     PageReload,
     // Chained from Page.loadEventFired: Runtime.evaluate("document.title")
@@ -253,7 +246,6 @@ enum class Method : uint8_t {
     InputDispatchMouseEvent,
     InputDispatchKeyEvent,
     InputInsertText,
-    InputDispatchScrollEvent,
     EmulationSetDeviceMetricsOverride,
     // Selector ops — two-phase. Runtime.evaluate runs the rAF-polled
     // actionability check page-side; response chains into the actual

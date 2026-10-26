@@ -320,10 +320,24 @@ impl SelectedPackages {
     }
 }
 
-/// A directory of a "workspaces" entry doesn't open. That ends the run, as it ends `bun install`.
-fn exit_on_walk_error(err: &bun_sys::Error) -> ! {
-    Output::err_generic("{}", (err,));
-    Global::exit(1);
+/// What an error from the walk of a "workspaces" entry means for the run. Returns if the walk
+/// continues.
+fn on_walk_error(err: &bun_sys::Error) {
+    if err.syscall == bun_sys::Tag::open {
+        match err.get_errno() {
+            // A symlink loop leads nowhere, like a symlink to nothing. It is no package.
+            bun_sys::E::ELOOP => return,
+            // The walker reports a path that's too long for it as a failed `open`. That one
+            // package is skipped.
+            bun_sys::E::ENAMETOOLONG => {}
+            // A directory that doesn't open ends the run, as it ends `bun install`.
+            _ => {
+                Output::err_generic("{}", (err,));
+                Global::exit(1);
+            }
+        }
+    }
+    bun_core::pretty_errorln!("Error: {}", err);
 }
 
 // Heap-allocated so the walker keeps its address while the `PackageFilterIterator` moves. Held as
@@ -390,7 +404,7 @@ impl<'a> PackageFilterIterator<'a> {
         let mut iter: GlobWalkerIterator =
             glob::walk::Iterator::new(unsafe { &mut *walker.0.as_ptr() });
         if let Err(err) = iter.init()? {
-            exit_on_walk_error(&err);
+            on_walk_error(&err);
         }
         Ok(ActiveWalk {
             iter,
@@ -429,15 +443,7 @@ impl<'a> PackageFilterIterator<'a> {
                     self.active = None;
                     self.pattern_idx += 1;
                 }
-                // The walker also reports a path that's too long for it as a failed `open`. That
-                // one package is skipped.
-                Err(err)
-                    if err.syscall == bun_sys::Tag::open
-                        && err.get_errno() != bun_sys::E::ENAMETOOLONG =>
-                {
-                    exit_on_walk_error(&err)
-                }
-                Err(err) => bun_core::pretty_errorln!("Error: {}", err),
+                Err(err) => on_walk_error(&err),
             }
         }
     }

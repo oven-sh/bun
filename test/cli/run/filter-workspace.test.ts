@@ -1229,13 +1229,25 @@ describe.concurrent('a "workspaces" entry whose directory does not open', () => 
     expect(await run(String(dir))).toEqual(ranLib);
   });
 
-  test.skipIf(isWindows)("a symlink to itself is skipped", async () => {
-    using dir = fixture(["loop/*", "packages/*"]);
-    symlinkSync("loop", join(String(dir), "loop"));
+  // Windows: what a junction to itself does when it is opened has not been checked.
+  describe.skipIf(isWindows)("a symlink to itself", () => {
+    // `<root>` is the absolute path of the project.
+    test.each([["loop/*"], ["loop"], ["<root>/loop/*"], ["<root>/loop"]])("is skipped for %j", async entry => {
+      using dir = fixture(["packages/*"]);
+      symlinkSync("loop", join(String(dir), "loop"));
+      const workspaces = [entry.replace("<root>", String(dir)), "packages/*"];
+      await Bun.write(join(String(dir), "package.json"), JSON.stringify({ name: "ws", workspaces }));
 
-    expect(await run(String(dir))).toEqual(ranLib);
-    await runBunInstall(bunEnv, String(dir));
-    expect(Object.values<string>(parseLockfile(String(dir)).workspace_paths)).toEqual(["packages/lib"]);
+      expect(await run(String(dir))).toEqual(ranLib);
+    });
+
+    test("is skipped by bun install too", async () => {
+      using dir = fixture(["loop/*", "packages/*"]);
+      symlinkSync("loop", join(String(dir), "loop"));
+
+      await runBunInstall(bunEnv, String(dir));
+      expect(Object.values<string>(parseLockfile(String(dir)).workspace_paths)).toEqual(["packages/lib"]);
+    });
   });
 
   test("bun install skips the same symlink to nothing", async () => {
@@ -1258,7 +1270,7 @@ describe.concurrent('a "workspaces" entry whose directory does not open', () => 
     expect(await run(String(dir))).toEqual({ ran: ["elsewhere", "packages/lib"], stderr: "", exitCode: 0 });
   });
 
-  // root reads any directory.
+  // Windows: a mode of 000 does not stop a directory from being read. root reads any directory.
   test.skipIf(isWindows || process.getuid?.() === 0)("a directory that cannot be read ends the run", async () => {
     using dir = fixture(["packages/*"]);
     const secret = join(String(dir), "packages", "secret");
@@ -1745,6 +1757,40 @@ describe.concurrent.skipIf(isWindows)("workspace paths longer than the path buff
     expect(stdout).toContain("ok present: ok-ran");
     expect(exitCode).toBe(0);
   });
+
+  test("reports a member whose directory path is too long and still runs the other members", async () => {
+    using base = tempDir("filter-long-member-dir", {});
+    const root = makeDirectoryOfLength(String(base), MAX_PATH_BYTES - 196);
+    makeTreeSync(root, workspace);
+    // 14 bytes more than the buffer holds. A path that long exists only relative to a directory inside it.
+    const name = Buffer.alloc(200, "x").toString();
+    const mkdir = (command: string) => Bun.spawnSync({ cmd: [command, name], cwd: join(root, "packages") });
+    expect(mkdir("mkdir").exitCode).toBe(0);
+    try {
+      const { stdout, stderr, exitCode } = await runFilter(root);
+      expect(stderr).toContain("ENAMETOOLONG");
+      expect(stdout).toContain("ok present: ok-ran");
+      expect(exitCode).toBe(0);
+    } finally {
+      mkdir("rmdir");
+    }
+  });
+
+  test.each([["/*"], [""]])(
+    "reports an absolute entry that is too long and still runs the members, for %j",
+    async tail => {
+      const entry = "/" + Buffer.alloc(MAX_PATH_BYTES, "a").toString() + tail;
+      using root = tempDir("filter-long-entry", {
+        ...workspace,
+        "package.json": JSON.stringify({ name: "ws", workspaces: [entry, "packages/*"] }),
+      });
+
+      const { stdout, stderr, exitCode } = await runFilter(String(root));
+      expect(stderr).toContain("ENAMETOOLONG");
+      expect(stdout).toContain("ok present: ok-ran");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("finds the workspace root above a cwd whose own package.json path is too long", async () => {
     using root = tempDir("filter-long-cwd", workspace);

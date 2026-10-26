@@ -28,6 +28,7 @@
 // #include "JSDocument.h"
 #include "JSEvent.h"
 #include "JSEventTarget.h"
+#include "ModuleGraph.h"
 #include "WebCoreJSClientData.h"
 // #include "JSExecState.h"
 // #include "JSExecStateInstrumentation.h"
@@ -173,7 +174,10 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     if (!globalObject)
         return;
 
-    JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
+    // A WebAssembly GC object doesn't have a realm.
+    JSGlobalObject* lexicalGlobalObject = jsFunction->realmMayBeNull();
+    if (!lexicalGlobalObject)
+        return;
 
     JSValue handleEventFunction = jsFunction;
 
@@ -201,6 +205,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     }
 
     Ref<JSEventListener> protectedThis(*this);
+    Bun::ModuleGraphContextScope moduleGraphContext(scriptExecutionContext);
 
     MarkedArgumentBuffer args;
     args.append(toJS(lexicalGlobalObject, globalObject, &event));

@@ -5,10 +5,8 @@
     non_upper_case_globals,
     deprecated
 )]
-// bun_ptr is a T0 foundation crate that bun_threading and bun_collections
-// depend on; importing either to satisfy disallowed-types would create a
-// dependency cycle.
-#![allow(clippy::disallowed_types)]
+// Tests lock std's Mutex: bun_threading depends on this crate.
+#![cfg_attr(test, allow(clippy::disallowed_types))]
 #![warn(unused_must_use)]
 //! The `ptr` module contains smart pointer types that are used throughout Bun.
 //!
@@ -207,21 +205,6 @@ impl<T> BackRef<T, Root> {
     pub fn this_ptr(&self) -> ThisPtr<T> {
         // SAFETY: see above.
         unsafe { ThisPtr::new(self.0.as_ptr()) }
-    }
-
-    /// Wrap the root pointer of a live heap allocation.
-    ///
-    /// # Safety
-    /// [`BackRef::from_raw`]'s contract, and `p` is what `Box::into_raw` /
-    /// `heap::into_raw` returned for an allocation that stays live while the
-    /// result is held.
-    #[inline]
-    pub const unsafe fn from_root(p: *mut T) -> Self {
-        // SAFETY: caller contract — `p` is non-null.
-        BackRef(
-            unsafe { core::ptr::NonNull::new_unchecked(p) },
-            core::marker::PhantomData,
-        )
     }
 }
 
@@ -434,7 +417,7 @@ pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T
 //     bare `&'static [u8]` carries no proof, so a refactor can silently feed
 //     it a stack slice.
 //   • Population B (~24) — bytes are owned by a value with a `Drop` that runs
-//     before process exit (UserOptions arena, FetchTasklet, JSC slice, SSL
+//     before process exit (FetchTasklet, JSC slice, SSL
 //     session). The widen is unsound the moment the value escapes the holder.
 //
 // `Interned` is the type-level proof that a `&'static [u8]` came from
@@ -449,7 +432,7 @@ pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T
 // inherited via auto-traits (no `unsafe impl` needed).
 //
 // This does NOT cover `&'static mut [u8]` / `&'static mut T` forges (e.g.
-// `FileReader::pending_view`, `Decompressor::seat` output, `CmdHandle::cmd_mut`)
+// `Decompressor::seat` output, `CmdHandle::cmd_mut`)
 // — those are tracked under the sibling `static-widen-mut` pattern and want a
 // raw-pointer field or a future `RawSliceMut<T>`.
 // ─────────────────────────────────────────────────────────────────────────────

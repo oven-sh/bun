@@ -11,6 +11,7 @@ export type Shape = {
 };
 
 const later = () => new Promise<void>(r => setImmediate(r));
+const never = () => new Promise<never>(() => {});
 
 function direct(t: Tally, pull: (c: ReadableStreamDirectController) => void | Promise<void>): ReadableStream {
   return new ReadableStream({
@@ -125,6 +126,24 @@ export const shapes: Record<string, Shape> = {
         } catch {}
       }),
   },
+  "sync pull: write, close(), then write() and flush() in the same call": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, c => {
+        c.write("hello world");
+        c.close();
+        // The reader path reports 0 bytes, a native sink throws: neither delivers the chunk.
+        for (const late of [() => c.write(" ignored"), () => c.flush()]) {
+          try {
+            late();
+          } catch {}
+        }
+      }),
+  },
+  "sync pull: write, end(), then close(error) in the same call": {
+    expect: { body: "hello world" },
+    make: t => direct(t, c => (c.write("hello world"), c.end(), c.close(new Error("too late to matter")))),
+  },
   "end(value) is a clean close, unlike close(error)": {
     oneShotOnly: true,
     expect: { body: "hello world" },
@@ -132,6 +151,37 @@ export const shapes: Record<string, Shape> = {
       direct(t, c => {
         c.write("hello world");
         Promise.resolve(new Error("not a failure")).then(v => (c.end as any)(v));
+      }),
+  },
+  // pull() keeps running after its own end()/close(error). The stream is over at that call: no consumer waits for pull() to return.
+  "async pull: write, await, write, end(), then never returns": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello ");
+        await later();
+        c.write("world");
+        c.end();
+        await never();
+      }),
+  },
+  "async pull: write, end(), then never returns": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello world");
+        c.end();
+        await never();
+      }),
+  },
+  "async pull: write, await, close(error), then never returns": {
+    expect: { error: "source failed" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello ");
+        await later();
+        c.close(new Error("source failed"));
+        await never();
       }),
   },
   "async pull: rejects after close() already ran": {
@@ -182,6 +232,17 @@ export const shapes: Record<string, Shape> = {
         c.close(new Error("source failed"));
       }),
   },
+  // The consumer's rejection is the only report: a stray unhandled rejection fails the test run.
+  "sync pull: close(error), then throws it": {
+    expect: { error: "source failed" },
+    make: t =>
+      direct(t, c => {
+        const error = new Error("source failed");
+        c.write("partial");
+        c.close(error);
+        throw error;
+      }),
+  },
 };
 
 // Each falsy argument as the first close(): a clean close, not close(error).
@@ -203,7 +264,7 @@ for (const [label, arg] of [
 }
 
 const decoder = new TextDecoder();
-const text = (v: unknown) => (typeof v === "string" ? v : decoder.decode(v as ArrayBufferView));
+const text = (v: unknown) => (typeof v === "string" ? v : decoder.decode(v as NodeJS.ArrayBufferView));
 
 /** In-process consumers: each takes a stream and resolves to its full text (or rejects). */
 export const consumers: Record<string, (s: ReadableStream) => Promise<string>> = {

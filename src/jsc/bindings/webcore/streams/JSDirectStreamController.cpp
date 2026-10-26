@@ -402,13 +402,10 @@ static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamContr
         if (length > 0) {
             String value = string->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            accumulator.rope.append(value);
-            if (accumulator.rope.hasOverflowed()) [[unlikely]] {
+            if (!accumulator.tryAppendString(value)) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            accumulator.hasString = true;
-            accumulator.estimatedLength += length;
         }
         return jsNumber(length);
     }
@@ -427,17 +424,25 @@ static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamContr
     if (byteLength > 0) {
         accumulator.hasBuffer = true;
         JSString* ropeString = nullptr;
-        if (!accumulator.rope.isEmpty()) {
-            ropeString = jsString(vm, accumulator.rope.toString());
+        if (accumulator.hasRope()) {
+            String rope = accumulator.tryRopeString();
+            if (rope.isNull()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            ropeString = jsString(vm, WTF::move(rope));
             RETURN_IF_EXCEPTION(scope, {});
         }
-        // GC-allocation is done; the barrier container is only mutated under the cell lock.
-        Locker locker { controller->cellLock() };
-        if (ropeString) {
-            accumulator.pieces.append(WriteBarrier<Unknown>(vm, controller, ropeString));
-            accumulator.rope.clear();
+        // GC-allocation is done; the barrier container is only mutated under the cell lock, and the throw waits for the unlock.
+        bool appended;
+        {
+            Locker locker { controller->cellLock() };
+            appended = accumulator.tryAppendPieces(locker, vm, controller, ropeString, chunk);
         }
-        accumulator.pieces.append(WriteBarrier<Unknown>(vm, controller, chunk));
+        if (!appended) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
     }
     accumulator.estimatedLength += byteLength;
     return jsNumber(byteLength);
@@ -484,11 +489,11 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Pure-string rope: the ONLY arm of the direct Text sink that strips a leading BOM.
     if (hasString && !hasBuffer) {
-        if (Bun::WebStreams::exceedsStringLimit(accumulator.rope.length())) [[unlikely]] {
+        String rope = accumulator.tryRopeString();
+        if (rope.isNull()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return String();
         }
-        String rope = accumulator.rope.toString();
         if (rope.length() && rope[0] == 0xFEFF)
             return rope.substring(1);
         return rope;
@@ -526,8 +531,12 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
             return String();
         }
     }
-    if (!accumulator.rope.isEmpty()) {
-        String rope = accumulator.rope.toString();
+    if (accumulator.hasRope()) {
+        String rope = accumulator.tryRopeString();
+        if (rope.isNull()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return String();
+        }
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
         if (!Bun::WebStreams::appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {
@@ -621,28 +630,33 @@ static JSValue flushDirectSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDire
     return {};
 }
 
-// `sink.close(error)`: the Text/Array sinks fulfill their closing promise with the partial result.
-static void closeDirectSinkForError(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
+// Called when the stream errors. Nothing reads the sink's text or array after that, so just free them.
+static void closeDirectSinkForError(JSC::VM& vm, JSDirectStreamController* controller, JSValue error)
 {
     switch (controller->m_sinkKind) {
     case DirectSinkKind::ArrayBuffer:
         controller->freeBuffer();
         return;
-    case DirectSinkKind::Text:
-        if (!controller->m_calledDone)
-            endTextSink(vm, globalObject, controller);
-        return;
-    case DirectSinkKind::Array:
-        if (!controller->m_calledDone)
-            endArraySink(vm, globalObject, controller);
-        return;
+    case DirectSinkKind::Text: {
+        if (controller->m_calledDone)
+            return;
+        controller->m_calledDone = true;
+        Locker locker { controller->cellLock() };
+        controller->m_textAccumulator.reset(locker);
+        break;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    case DirectSinkKind::Array:
+        if (controller->m_calledDone)
+            return;
+        controller->m_calledDone = true;
+        controller->m_array.clear();
+        break;
+    }
+    if (auto* closingPromise = controller->closingPromise().get())
+        closingPromise->rejectAsHandled(vm, error);
 }
 
-// Errors the stream with `error`: rejects the pending read, errors the stream, tears the sink down,
-// then runs the user's close(error) hook. The stream is fully errored before anything that can throw
-// (the sink teardown, the hook) runs, so a throw from those propagates with the stream consistent.
+// Errors the stream with `error`, frees the sink, then runs the user's close(error) hook.
 bool JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue error)
 {
     auto& vm = getVM(globalObject);
@@ -672,8 +686,7 @@ bool JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
     // (end() arming the final chunk leaves the stream Readable), so doing it again would double it.
     if (wasClosed)
         return delivered;
-    closeDirectSinkForError(vm, globalObject, this);
-    RETURN_IF_EXCEPTION(scope, false);
+    closeDirectSinkForError(vm, this, error);
     if (source) {
         source->close(globalObject, error);
         RETURN_IF_EXCEPTION(scope, false);
@@ -724,7 +737,7 @@ static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirec
     return {};
 }
 
-JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool readRequestQueued)
+bool JSDirectStreamController::onPull(JSGlobalObject* globalObject, JSPromise* readPromise)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -737,32 +750,38 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
         m_finalChunk.clear();
         auto* stream = m_stream.get();
         // A queued read request (for-await/tee/pipeTo) takes the chunk through its own
-        // chunkSteps; a promise-backed read gets it wrapped in the returned promise.
+        // chunkSteps; a promise-backed read is fulfilled with it.
         if (stream && readableStreamHasDefaultReader(stream) && readableStreamGetNumReadRequests(stream) > 0) {
             readableStreamFulfillReadRequest(globalObject, stream, chunk, false);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, false);
             readableStreamCloseIfPossible(globalObject, stream);
-            RETURN_IF_EXCEPTION(scope, {});
-            return jsUndefined();
+            RETURN_IF_EXCEPTION(scope, false);
+            return false;
         }
-        JSObject* result = createIteratorResultObject(globalObject, chunk, false);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
-        promise->fulfill(vm, result);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (readPromise) {
+            JSObject* result = createIteratorResultObject(globalObject, chunk, false);
+            RETURN_IF_EXCEPTION(scope, false);
+            readPromise->fulfill(vm, result);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
         if (stream) {
             readableStreamCloseIfPossible(globalObject, stream);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, false);
         }
-        return promise;
+        return true;
     }
 
     auto* stream = m_stream.get();
     if (!stream || stream->m_state != ReadableStreamState::Readable || m_closed)
-        return jsUndefined();
+        return false;
     // Re-entrant pull while a pull is already running.
     if (m_deferClose == -1)
-        return jsUndefined();
+        return false;
+    // Refuse before pull() runs, or a close() that pull() defers is lost with the read.
+    if (readPromise && m_pendingRead && readableStreamReadRequestsFull(stream)) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return false;
+    }
 
     int8_t deferredClose = 0;
     int8_t deferredFlush = 0;
@@ -781,16 +800,18 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
         m_deferClose = 0;
         m_deferFlush = 0;
         // A VM termination from the pull, or a failure while registering the reaction.
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, false);
 
         if (!abrupt.isEmpty()) {
             // A synchronous throw from pull errors the stream, which settles a queued read
             // request through its errorSteps; a promise-backed read gets the rejection here.
             handleError(globalObject, abrupt);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (readRequestQueued)
-                return jsUndefined();
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, abrupt));
+            RETURN_IF_EXCEPTION(scope, false);
+            if (readPromise) {
+                rejectPromise(globalObject, readPromise, abrupt);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            return true;
         }
     } else {
         // A new read arrived while an async pull is pending: the fulfillment reaction will
@@ -804,30 +825,31 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
     // A queued read request was already settled by the stream's error/close steps.
     stream = m_stream.get();
     if (!stream || stream->m_state != ReadableStreamState::Readable) {
-        if (readRequestQueued)
-            return jsUndefined();
-        if (auto* pendingRead = m_pendingRead.get())
-            return pendingRead;
-        if (stream && stream->m_state == ReadableStreamState::Errored)
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, stream->m_storedError.get()));
+        if (!readPromise)
+            return true;
+        if (stream && stream->m_state == ReadableStreamState::Errored) {
+            JSValue storedError = stream->m_storedError.get();
+            rejectPromise(globalObject, readPromise, storedError ? storedError : jsUndefined());
+            RETURN_IF_EXCEPTION(scope, false);
+            return true;
+        }
         JSObject* doneResult = createIteratorResultObject(globalObject, jsUndefined(), true);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto* doneP = JSPromise::create(vm, globalObject->promiseStructure());
-        doneP->fulfill(vm, doneResult);
-        return doneP;
+        RETURN_IF_EXCEPTION(scope, false);
+        readPromise->fulfill(vm, doneResult);
+        RETURN_IF_EXCEPTION(scope, false);
+        return true;
     }
 
     // Register the consumer before replaying what pull() deferred. A queued read request is
-    // already registered; a promise made for it here would swallow that delivery unobserved.
-    JSPromise* promiseToReturn = nullptr;
-    if (!readRequestQueued) {
-        promiseToReturn = JSPromise::create(vm, globalObject->promiseStructure());
+    // already registered.
+    if (readPromise) {
         if (!m_pendingRead)
-            m_pendingRead.set(vm, this, promiseToReturn);
+            m_pendingRead.set(vm, this, readPromise);
         else {
             auto* runtime = JSStreamsRuntime::from(globalObject);
-            auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::Promise, promiseToReturn);
-            readableStreamAddReadRequest(vm, stream, readRequest);
+            auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::Promise, readPromise);
+            readableStreamAddReadRequest(globalObject, stream, readRequest);
+            RETURN_IF_EXCEPTION(scope, false);
         }
     }
 
@@ -835,14 +857,14 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
         JSValue reason = m_deferCloseReason.get();
         m_deferCloseReason.clear();
         onClose(globalObject, reason);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, false);
     } else if (deferredFlush == 1 || !m_buffer.isEmpty()) {
         // Bytes written before this read (outside pull, or by a producer now parked on
         // backpressure) go to the consumer just registered.
         onFlush(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, false);
     }
-    return promiseToReturn ? JSValue(promiseToReturn) : jsUndefined();
+    return true;
 }
 
 void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue reason)
@@ -1117,7 +1139,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectEndOfTickFlush, (JSGlobalOb
 }
 
 // The FIVE public own methods are JSBoundFunctions over these [bound-convention] targets.
-// Once m_closed is set they no-op: a late call from an in-flight pull() must not throw.
+// Once the source ended the stream they no-op: a late call from an in-flight pull() must not
+// throw, and a call that follows end()/close() inside the same pull() must not reach the sink
+// before the deferred close drains it.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectWrite, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
@@ -1125,7 +1149,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectWrite, (JSGlobalObject *
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(0));
     if (!controller) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    if (controller->m_closed)
+    if (controller->sourceEnded())
         return JSValue::encode(jsNumber(0));
     JSDirectStreamController::StagedBytesScope stagedBytes(vm, controller);
     JSValue wrote = writeToDirectSink(globalObject, controller, callFrame->argument(1));
@@ -1151,7 +1175,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectClose, (JSGlobalObject *
 {
     auto& vm = getVM(globalObject);
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(0));
-    if (!controller || controller->m_closed) [[unlikely]]
+    if (!controller || controller->sourceEnded()) [[unlikely]]
         return JSValue::encode(jsUndefined());
     return enterStreams(globalObject, [&] { controller->onClose(globalObject, callFrame->argument(1)); }, [&](JSValue error) {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1165,7 +1189,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectFlush, (JSGlobalObject *
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(0));
-    if (!controller || controller->m_closed) [[unlikely]]
+    if (!controller || controller->sourceEnded()) [[unlikely]]
         return JSValue::encode(jsUndefined());
     controller->onFlush(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1183,7 +1207,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectError, (JSGlobalObject *
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(0));
-    if (!controller || controller->m_closed) [[unlikely]]
+    if (!controller || controller->sourceEnded()) [[unlikely]]
         return JSValue::encode(jsUndefined());
     controller->handleError(globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});

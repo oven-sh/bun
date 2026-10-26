@@ -27,6 +27,52 @@ describe("bundler", () => {
       stdout: "object",
     },
   });
+  // A CommonJS module with only hoistable statements still needs a `require_*` wrapper symbol.
+  itBundled("edgecase/StatementlessCommonJSModuleRequire", {
+    files: {
+      "/entry.ts": /* js */ `
+        const b = require('./b.cjs');
+        console.log(typeof b);
+      `,
+      "/b.cjs": `;`,
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  itBundled("edgecase/HoistableOnlyCommonJSModule", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { B } from './b.cjs';
+        console.log(typeof B);
+      `,
+      "/b.cjs": `function foo() {}\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
+  // These packages parse as ESM, and a default import makes the linker wrap them as CommonJS.
+  itBundled("edgecase/HoistableOnlyUnwrapCommonJSPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        import Def from 'scheduler/empty.js';
+        console.log(typeof Def);
+      `,
+      "/node_modules/scheduler/empty.js": `function foo() {}\n`,
+      "/node_modules/scheduler/package.json": `{"name":"scheduler","version":"1.0.0"}`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("require_empty");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
   itBundled("edgecase/NestedRedirectToABuiltin", {
     files: {
       "/entry.js": /* js */ `
@@ -2518,6 +2564,40 @@ describe("bundler", () => {
     },
   });
 
+  // `--target=bun` does not lower `using`, and the declaration stays inside
+  // the `__esm` wrapper. A module whose other statements all hoist still
+  // needs that wrapper, even when the initializer could move out of it.
+  itBundled("edgecase/UsingWithHoistableInitializerKeepsWrapper", {
+    files: {
+      "/entry.ts": `
+        const { f } = await import("./async.ts");
+        console.log(f());
+        try {
+          await import("./sync.ts");
+        } catch (error) {
+          console.log(error instanceof TypeError);
+        }
+      `,
+      "/async.ts": `
+        await using a = null;
+        export function f() { return "f"; }
+      `,
+      "/sync.ts": `
+        using b = 1;
+        export function g() {}
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: "f\ntrue",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("await init_async()");
+      expect(out).toContain("init_sync()");
+    },
+  });
+
   itBundled("edgecase/UsingDisposeThrowDoesntMask", {
     files: {
       "/entry.ts": `
@@ -3498,6 +3578,23 @@ describe("bundler", () => {
       `);
     },
   });
+  itBundled("edgecase/PrefixOperatorAtOutputStart", {
+    files: {
+      "/entry.js": `
+        ++globalThis.x;
+        +globalThis.y;
+      `,
+    },
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        ++globalThis.x;
+        +globalThis.y;
+        "
+      `);
+    },
+  });
   itBundled("edgecase/NonAsciiIdentifierPreserved", {
     files: {
       "/entry.js": /* js */ `
@@ -3636,6 +3733,45 @@ describe("bundler", () => {
     },
     120_000,
   );
+  // esbuild reports the same error for both cycles.
+  itBundled("edgecase/ExportStarAmbiguityCycleIntoBarrel", {
+    files: {
+      "/entry.js": `import { x } from "./barrel.js"; console.log(x);`,
+      "/barrel.js": `export * from "./a.js"; export * from "./b.js";`,
+      "/a.js": `export const x = 1;`,
+      "/b.js": `export { x } from "./barrel.js";`,
+    },
+    backend: "cli",
+    bundleErrors: {
+      "/b.js": ['Ambiguous import "x" has multiple matching exports'],
+    },
+  });
+  itBundled("edgecase/ExportStarAmbiguityCycleAcrossBarrels", {
+    files: {
+      "/entry.js": `import { x } from "./barrel1.js"; console.log(x);`,
+      "/a.js": `export const x = 1;`,
+      "/barrel1.js": `export * from "./a.js"; export * from "./b1.js";`,
+      "/b1.js": `export { x } from "./barrel2.js";`,
+      "/barrel2.js": `export * from "./a.js"; export * from "./b2.js";`,
+      "/b2.js": `export { x } from "./barrel1.js";`,
+    },
+    backend: "cli",
+    bundleErrors: {
+      "/b2.js": ['Ambiguous import "x" has multiple matching exports'],
+    },
+  });
+  // Two candidates that resolve through the same re-export aren't a cycle.
+  itBundled("edgecase/ExportStarAmbiguityAlternativesShareReExport", {
+    files: {
+      "/entry.js": `import { x } from "./barrel.js"; console.log(x);`,
+      "/barrel.js": `export * from "./a.js"; export * from "./b.js"; export * from "./c.js";`,
+      "/a.js": `export const x = 1;`,
+      "/b.js": `export { x } from "./shared.js";`,
+      "/c.js": `export { x } from "./shared.js";`,
+      "/shared.js": `export { x } from "./a.js";`,
+    },
+    run: { stdout: "1" },
+  });
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `
@@ -4136,6 +4272,111 @@ describe("bundler", () => {
     },
     format: "cjs",
     run: { file: "/check.js", stdout: `{"x":1} true` },
+  });
+
+  // Standard decorator lowering declares `var _init`, `var _dec` and a WeakMap per
+  // accessor or `#private` next to each class. Every class needs its own.
+  itBundled("edgecase/StandardDecoratorTemporariesPerClass", {
+    files: {
+      "/entry.js": /* js */ `
+        function Field(_, _c) {}
+        function AccessorDecorator(_, c) {
+          return { init: () => c.name, get: () => c.name };
+        }
+        class Entity { @Field id; }
+        class Action { @AccessorDecorator accessor success; }
+        console.log(new Entity().id);
+
+        const inject = target => (_, ctx) => v => target + ":" + ctx.name + "=" + v;
+        class Test1 { @inject("test1") field1 = "a"; }
+        class Test2 { @inject("test2") field2 = "b"; }
+        console.log(new Test1().field1, new Test2().field2);
+      `,
+    },
+    run: { stdout: "undefined\ntest1:field1=a test2:field2=b" },
+  });
+  // One decorated class per file: only the bundle puts them in one scope.
+  itBundled("edgecase/StandardDecoratorTemporariesAcrossFiles", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a";
+        import { B } from "./b";
+        import { Entity } from "./ent";
+        import { Action } from "./act";
+        new Action();
+        console.log(a.x, new B().x, a.read(), new B().read(), new Entity().id);
+      `,
+      "/a.js": /* js */ `
+        function dec(_, _c) {}
+        export class A { @dec accessor x = "A.x"; @dec #p = "A.#p"; read() { return this.#p; } }
+        export const a = new A();
+      `,
+      "/b.js": /* js */ `
+        function dec(_, _c) {}
+        export class B { @dec accessor x = "B.x"; @dec #p = "B.#p"; read() { return this.#p; } }
+      `,
+      "/ent.js": /* js */ `
+        function Field(_, _c) {}
+        export class Entity { @Field id; }
+      `,
+      "/act.js": /* js */ `
+        function Acc(_, _c) { return { init: () => "success" }; }
+        export class Action { @Acc accessor status; }
+      `,
+    },
+    run: { stdout: "A.x B.x A.#p B.#p undefined" },
+  });
+  // A `var` in a block belongs to the enclosing function.
+  for (const minifyIdentifiers of [false, true]) {
+    itBundled(`edgecase/StandardDecoratorTemporariesInSiblingBlocks${minifyIdentifiers ? "Minified" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          function dec(_, _c) {}
+          function make() {
+            let A, B;
+            { A = class { @dec accessor x = "a"; }; }
+            { B = class { @dec accessor x = "b"; }; }
+            return [new A().x, new B().x];
+          }
+          let C, D;
+          { C = class { @dec accessor x = "c"; }; }
+          { D = class { @dec accessor x = "d"; }; }
+          console.log(...make(), new C().x, new D().x);
+        `,
+      },
+      minifyIdentifiers,
+      run: { stdout: "a b c d" },
+    });
+  }
+  // The `var`s of a class in a parameter default are declared outside the function.
+  itBundled("edgecase/StandardDecoratorTemporariesInParameterDefaults", {
+    files: {
+      "/entry.js": /* js */ `
+        function dec(_, _c) {}
+        function f(C = class { @dec accessor x = "f"; }) { return C; }
+        function g(C = class { @dec accessor x = "g"; }) { return C; }
+        const F = f(), G = g();
+        console.log(new F().x, new G().x);
+      `,
+    },
+    run: { stdout: "f g" },
+  });
+  // `recv.#m()` on a lowered private method captures the receiver in a `var _obj`
+  // inside the calling method.
+  itBundled("edgecase/StandardDecoratorReceiverTemporaryVsUserBinding", {
+    files: {
+      "/entry.js": /* js */ `
+        const _obj = "user";
+        function dec(_, _c) {}
+        class A {
+          @dec #m() { return "m"; }
+          call(o) { return o.get().#m() + " " + _obj; }
+        }
+        const a = new A();
+        console.log(a.call({ get: () => a }));
+      `,
+    },
+    run: { stdout: "m user" },
   });
 });
 

@@ -49,9 +49,8 @@ impl Dialect {
     }
 }
 
-/// True if every node, token and comment of the file has `start` and `end`. espree's and oxlint's do.
-/// typescript-estree's don't, but without an ESLint or oxlint config there's no parser to match, and JavaScript plugins
-/// get them: see src/lint/js_plugin/layouts.rs.
+/// True if every node, token and comment of the file has `start` and `end`, as with espree and oxlint. Without an
+/// ESLint or oxlint config, typescript-estree's get them too: see src/lint/js_plugin/layouts.rs.
 #[inline]
 pub(crate) fn has_start_end(file: &File) -> bool {
     let language = file.language();

@@ -75,8 +75,7 @@ public:
     bool isOxlint() const { return m_flags & 16; }
     // See `shortens_nodes` in src/lint/js_plugin/ast.rs.
     bool shortensNodes() const { return m_flags & 256; }
-    // Every node, token and comment has `start` and `end`. Always with espree and oxlint. With typescript-estree's: there's no
-    // ESLint or oxlint config to match, so they get them too.
+    // Every node, token and comment has `start` and `end`: `has_start_end` in src/lint/estree/mod.rs.
     bool hasStartEnd() const { return m_flags & 512; }
 
     // The index where each line starts. The first is 0.

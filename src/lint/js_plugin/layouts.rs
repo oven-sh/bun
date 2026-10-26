@@ -6,8 +6,7 @@
 //!   converter computes the range itself, `range` comes right after `type`. See [`alternates`].
 //! - oxlint: `type`, the fields in the order of oxc's structs, `start`, `end`, `range`, `parent`. `loc` is inherited. A
 //!   JavaScript file has the same nodes as a TypeScript file, with `null` for whatever is absent.
-//! - Without an ESLint or oxlint config, a TypeScript file has typescript-estree's nodes with `start` and `end` before
-//!   `range`, so that a rule written for espree or oxlint finds them in every file.
+//! - Without an ESLint or oxlint config: typescript-estree's, with `start` and `end` before `range`.
 //!
 //! The orders were read off the nodes that espree 11, typescript-estree 8.71.1 and oxlint 1.87 produce for 63,000
 //! files.

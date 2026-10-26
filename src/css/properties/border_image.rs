@@ -621,6 +621,12 @@ impl BorderImageHandler {
     #[inline(never)]
     fn flushes_before(&self, property: &Property, targets: &css::targets::Targets) -> bool {
         let prefixed_image = self.source.as_ref().is_some_and(Image::has_vendor_prefix);
+        // A buffered image that some target skips is no fallback: the new value gets generated ones.
+        let fallback = !self.flushed_properties.is_empty()
+            || self
+                .source
+                .as_ref()
+                .is_none_or(|v| reads_everywhere(v, targets));
         if let Property::BorderImage((val, vp)) = property {
             // A prefixed property behind an unprefixed value wins in engines that read both.
             if self.vendor_prefix.contains(VendorPrefix::NONE) && !vp.contains(VendorPrefix::NONE) {
@@ -632,16 +638,17 @@ impl BorderImageHandler {
                 || self.outset.as_ref().is_some_and(|v| !v.eql(&val.outset))
                 || self.repeat.as_ref().is_some_and(|v| !v.eql(&val.repeat));
             let plain = self.vendor_prefix == VendorPrefix::NONE && !prefixed_image;
-            // Only an unprefixed value that every target reads replaces what is buffered.
+            // Only an unprefixed value that every target reads replaces a fallback.
             return differs
                 && !(plain
-                    && reads_everywhere(&val.source, targets)
-                    && targets.browsers.is_none_or(|b| {
-                        val.slice.is_compatible(&b)
-                            && val.width.is_compatible(&b)
-                            && val.outset.is_compatible(&b)
-                            && val.repeat.is_compatible(&b)
-                    }));
+                    && (!fallback
+                        || (reads_everywhere(&val.source, targets)
+                            && targets.browsers.is_none_or(|b| {
+                                val.slice.is_compatible(&b)
+                                    && val.width.is_compatible(&b)
+                                    && val.outset.is_compatible(&b)
+                                    && val.repeat.is_compatible(&b)
+                            }))));
         }
 
         // A longhand joins the buffered value only where every target that reads one reads both.
@@ -660,7 +667,7 @@ impl BorderImageHandler {
                     || self
                         .source
                         .as_ref()
-                        .is_some_and(|v| !v.eql(val) && !reads_everywhere(val, targets))
+                        .is_some_and(|v| fallback && !v.eql(val) && !reads_everywhere(val, targets))
             }
             Property::BorderImageSlice(val) => hidden || keeps_fallback!(self.slice, val, targets),
             Property::BorderImageWidth(val) => hidden || keeps_fallback!(self.width, val, targets),

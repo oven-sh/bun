@@ -2795,7 +2795,7 @@ describe("css tests", () => {
     `,
     );
 
-    // Two values that not every target reads: the first one gets the generated fallbacks, as in lightningcss.
+    // A buffered value that some target skips is no fallback: the later one gets the generated ones.
     prefix_test(
       `
       .foo {
@@ -2805,8 +2805,28 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        border-image: linear-gradient(#ff614d, #773ac1) 1;
-        border-image: linear-gradient(lab(63.3267% 61.5741 45.4137), lab(38.5245% 47.42 -61.5911)) 1;
+        border-image: linear-gradient(#ff0f0e, #7773ff) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    // Behind a written fallback there are no generated ones, so it stays.
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(oklch(70% 0.2 30), oklch(50% 0.2 300)) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(oklch(70% .2 30), oklch(50% .2 300)) 1;
         border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
       }
     `,

@@ -1010,7 +1010,10 @@ describe("Bun.build", () => {
       frames.push(typeof data === "string" ? { text: data } : data.toString());
       if (frames.length === 2) bothFrames.resolve();
     };
+    ws.onerror = ws.onclose = event =>
+      bothFrames.reject(new Error(`WebSocket ${event.type} after ${frames.length} frames`));
     await bothFrames.promise;
+    ws.onerror = ws.onclose = null;
     ws.close();
 
     let written = "";
@@ -1023,9 +1026,15 @@ describe("Bun.build", () => {
           written += chunk.toString();
           if (written.length >= text.length) allWritten.resolve();
         },
+        close: () => allWritten.reject(new Error(`closed after ${written.length} bytes`)),
+        error: (_, error) => allWritten.reject(error),
       },
     });
-    const socket = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: { data() {}, error: (_, error) => allWritten.reject(error) },
+    });
     socket.write(artifact);
     await allWritten.promise;
     socket.end();
@@ -1048,11 +1057,12 @@ describe("Bun.build", () => {
     const [onDisk] = (await Bun.build({ entrypoints, outdir: String(dir) })).outputs;
     await Bun.write(onDisk, "replaced");
 
+    await using child = Bun.spawn(echo);
     expect({
       frames,
       written,
       redis: commands.includes(text),
-      spawn: await Bun.spawn(echo).stdout.text(),
+      spawn: await child.stdout.text(),
       spawnSync: Bun.spawnSync(echo).stdout.toString(),
       destination: readFileSync(onDisk.path, "utf-8"),
     }).toEqual({

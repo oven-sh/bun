@@ -330,8 +330,8 @@ describe("an inlined env value that is not UTF-8", () => {
     over: [2, 65533, 65533, "\uFFFD"],
     stray: [3, 65533, "b", true],
   };
-  // PUB_OVER and PUB_STRAY have a byte that starts no sequence. The printer writes that byte of a literal as Latin-1, so
-  // only a fold has the text of those two.
+  // PUB_OVER and PUB_STRAY have a byte that starts no sequence. The printer writes that byte of a literal as it is, and
+  // Bun reads it as Latin-1 when it loads the bundle. So only a fold has the text of those two.
   const { over: _over, stray: _stray, ...textOfLiterals } = text;
 
   const files = {

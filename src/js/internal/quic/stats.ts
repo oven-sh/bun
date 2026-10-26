@@ -6,17 +6,10 @@ const { inspect } = require("node:util");
 const JSONStringify = JSON.stringify;
 const TypedArrayPrototypeSubarray = uncurryThis(Uint8Array.prototype.subarray);
 
-const { kFinishClose, kInspect, kPrivateConstructor } = require("internal/quic/symbols");
-
-function ERR_ILLEGAL_CONSTRUCTOR() {
-  return $ERR_ILLEGAL_CONSTRUCTOR();
-}
-function ERR_INVALID_THIS(type) {
-  return $ERR_INVALID_THIS(type);
-}
-function ERR_INVALID_ARG_TYPE(name, expected, actual) {
-  return $ERR_INVALID_ARG_TYPE(name, expected, actual);
-}
+const symbols = require("internal/quic/symbols");
+const kFinishClose: typeof symbols.kFinishClose = symbols.kFinishClose;
+const kInspect: typeof symbols.kInspect = symbols.kInspect;
+const kPrivateConstructor: typeof symbols.kPrivateConstructor = symbols.kPrivateConstructor;
 
 const {
   IDX_STATS_ENDPOINT_CREATED_AT,
@@ -100,7 +93,7 @@ let isQuicStreamStats;
 
 function assertIsPrivateConstructor(privateSymbol) {
   if (privateSymbol !== kPrivateConstructor) {
-    throw new ERR_ILLEGAL_CONSTRUCTOR();
+    throw $ERR_ILLEGAL_CONSTRUCTOR();
   }
 }
 
@@ -117,7 +110,7 @@ class QuicEndpointStats {
 
     assertIsQuicEndpointStats = function (val) {
       if (!isQuicEndpointStats(val)) {
-        throw new ERR_INVALID_THIS("QuicEndpointStats");
+        throw $ERR_INVALID_THIS("QuicEndpointStats");
       }
     };
   }
@@ -129,7 +122,7 @@ class QuicEndpointStats {
   constructor(privateSymbol, buffer) {
     assertIsPrivateConstructor(privateSymbol);
     if (!isArrayBuffer(buffer)) {
-      throw new ERR_INVALID_ARG_TYPE("buffer", ["ArrayBuffer"], buffer);
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["ArrayBuffer"], buffer);
     }
     this.#handle = new BigUint64Array(buffer);
   }
@@ -386,7 +379,7 @@ class QuicSessionStats {
 
     assertIsQuicSessionStats = function (val) {
       if (!isQuicSessionStats(val)) {
-        throw new ERR_INVALID_THIS("QuicSessionStats");
+        throw $ERR_INVALID_THIS("QuicSessionStats");
       }
     };
   }
@@ -776,7 +769,7 @@ class QuicStreamStats {
 
     assertIsQuicStreamStats = function (val) {
       if (!isQuicStreamStats(val)) {
-        throw new ERR_INVALID_THIS("QuicStreamStats");
+        throw $ERR_INVALID_THIS("QuicStreamStats");
       }
     };
   }

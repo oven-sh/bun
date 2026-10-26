@@ -52,6 +52,6 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
   // rust_plan, rust_rustc, rust_build_script
   registerRustRules(n, cfg);
 
-  // host_tool_cc (darwin cross), shim_crt_decompress (musl + rust-lld)
+  // host_tool_cc (darwin cross)
   registerShimRules(n, cfg);
 }

@@ -18,6 +18,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { versionScriptPath } from "./flags.ts";
 
 export type BinaryFormat = "elf" | "macho" | "pe";
 
@@ -116,6 +117,8 @@ export interface BinaryExpectations {
     rwxLoad: false;
     relro: boolean;
     bindNow: boolean;
+    /** A PT_TLS segment. Absent on Android: bun targets API 28, bionic has ELF TLS from 29, so every thread-local is emulated. */
+    tlsSegment: boolean;
   };
   pe?: {
     /** Exact set of IMAGE_DLL_CHARACTERISTICS_* names. */
@@ -131,8 +134,8 @@ export interface BinaryExpectations {
   /**
    * The profile executable keeps a symbol table and debug sections (ELF; on
    * Mach-O debug info lives in the dSYM, on PE in the PDB). `compressed`:
-   * the DWARF sections carry SHF_COMPRESSED (at link, or post-link with
-   * rust-lld — flags.ts --compress-debug-sections).
+   * the DWARF sections carry SHF_COMPRESSED (flags.ts
+   * --compress-debug-sections).
    */
   debugInfo?: { symtab: boolean; debugSections: boolean; compressed: boolean };
 }
@@ -165,6 +168,14 @@ export function versionScriptGlobals(path: string): { patterns: string[]; demang
     (inCxx ? demangledPatterns : patterns).push(s);
   }
   return { patterns, demangledPatterns };
+}
+
+/** A version script's `global:` block in the form lld's `--export-dynamic-symbol-list` reads. */
+export function exportList(versionScript: string): string {
+  const { patterns, demangledPatterns } = versionScriptGlobals(versionScript);
+  const lines = patterns.map(p => `  ${p};`);
+  if (demangledPatterns.length > 0) lines.push('  extern "C++" {', ...demangledPatterns.map(p => `    ${p};`), "  };");
+  return `{\n${lines.join("\n")}\n};\n`;
 }
 
 /** One symbol per line, `#`/`;` comments and blank lines skipped (symbols.txt, symbols.def bodies). */
@@ -242,6 +253,17 @@ function runtimeInitializers(cfg: Config): string[] {
     // (FreeBSD::IsAArch64OutlineAtomicsDefault), so both our objects and the
     // prebuilt WebKit's call the __aarch64_* helpers that bring these in.
     initializers.push("init_have_lse_atomics", "__init_cpu_features");
+  }
+  if (cfg.fuzzilli && gnu) {
+    // -fsanitize-coverage: the constructor that hands the guards to
+    // FuzzilliREPRL.cpp (one for the binary, bun's objects and the -coverage
+    // WebKit's share it), and the two of clang's runtime, which the flag
+    // links (flags.ts).
+    initializers.push(
+      "sancov.module_ctor_trace_pc_guard",
+      "_GLOBAL__sub_I_sanitizer_common_libcdep.cpp",
+      "_GLOBAL__sub_I_ubsan_init_standalone.cpp",
+    );
   }
   return initializers;
 }
@@ -359,7 +381,14 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     cfg.webkit === "local" && cfg.linux && cfg.abi !== "android"
       ? ["libicudata.so.*", "libicui18n.so.*", "libicuuc.so.*"]
       : [];
-  const allowedLibs = [...sanitizerLibs, ...localWebKitLibs, ...(cfg.abi === "android" ? ["liblog.so"] : [])];
+  // --fuzzilli=on: clang's coverage runtime needs it.
+  const coverageLibs = cfg.fuzzilli && cfg.linux && cfg.abi === "gnu" ? ["libresolv.so.2"] : [];
+  const allowedLibs = [
+    ...sanitizerLibs,
+    ...coverageLibs,
+    ...localWebKitLibs,
+    ...(cfg.abi === "android" ? ["liblog.so"] : []),
+  ];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
 
   switch (format) {
@@ -407,7 +436,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
 
       return {
         format,
-        exports: { versionScript: src(cfg.freebsd ? "linker-freebsd.lds" : "linker.lds"), exact: [], patterns: [] },
+        exports: { versionScript: versionScriptPath(cfg), exact: [], patterns: [] },
         neededLibs: { names: neededLibs, exact: pinned, allowed: allowedLibs },
         ...(pinned && { maxSymbolVersions, versionNames }),
         forbiddenImports: forbiddenImports(cfg),
@@ -422,6 +451,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           rwxLoad: false,
           relro: false,
           bindNow: false,
+          tlsSegment: !android,
         },
         debugInfo: { symtab: true, debugSections: true, compressed: true },
       };

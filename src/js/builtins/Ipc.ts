@@ -1,4 +1,9 @@
 // have to use jsdoc type definitions because bundle-functions is based on regex
+interface DgramSocketFields {
+  type: import("node:dgram").SocketType;
+}
+type IpcHandle =
+  import("node:net").Server | import("node:net").Socket | (import("node:dgram").Socket & DgramSocketFields);
 /**
  * @typedef {Object} Serialized
  * @property {"NODE_HANDLE"} cmd
@@ -12,7 +17,7 @@
  * @param {Handle} handle
  * @returns {[unknown, Serialized] | null}
  */
-export function serialize(message, handle, options) {
+export function serialize(message, handle: IpcHandle, options) {
   const net = require("node:net");
   if (handle instanceof net.Server) {
     const native = handle._handle;
@@ -49,7 +54,7 @@ export function serialize(message, handle, options) {
  * @returns {void}
  */
 export function parseHandle(target, serialized, fd) {
-  const emit = $newRustFunction("ipc.rs", "emitHandleIPCMessage", 3);
+  const emit = $bindgen("ipc_host.bind.ts", "emitHandleIPCMessage");
   const net = require("node:net");
   // const dgram = require("node:dgram");
   switch (serialized.type) {

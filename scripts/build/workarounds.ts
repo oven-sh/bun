@@ -93,26 +93,6 @@ export const workarounds: Workaround[] = [
       `the post-edit re-sign.`,
   },
   {
-    id: "rust-lld-musl-crt-zlib",
-    issue: "https://github.com/rust-lang/rust/issues/data-compression-not-enabled",
-    description:
-      "rust-lld is built without LLVM_ENABLE_ZLIB. Alpine's musl CRT objects ship with " +
-      "ELFCOMPRESS_ZLIB debug sections, which rust-lld rejects at input parse time. " +
-      "Decompress them via objcopy and prepend a -B search path.",
-    // Only exercised when the rust-lld swap actually fired on a musl link.
-    applies: cfg => cfg.linux && cfg.abi === "musl" && cfg.rustLld !== undefined && cfg.ld === cfg.rustLld,
-    expectedToBeFixed: cfg => {
-      // Only matters while the rust-lld swap in resolveConfig() fires, i.e.
-      // while rustc's LLVM major is ahead of clang's — when clang's ld.lld
-      // (built with zlib) reads rustc's bitcode, rust-lld is never selected
-      // and the compressed CRTs are a non-issue.
-      return !cfg.rustLlvmNewer;
-    },
-    cleanup:
-      `Delete needsMuslCrtDecompress(), MUSL_CRT_OBJECTS, the shim_crt_decompress rule, and the ` +
-      `musl block in emitShims() (scripts/build/shims.ts), and this entry.`,
-  },
-  {
     id: "android-posix-spawn-setsid-const",
     issue: "https://github.com/rust-lang/libc/pull/5104",
     description:

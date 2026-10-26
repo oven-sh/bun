@@ -284,7 +284,7 @@ describe("express.text()", function () {
         verify: function (req, res, buf) {
           if (buf[0] !== 0x20) return;
           var err = new Error("no leading space");
-          err.status = 400;
+          (err as any).status = 400;
           throw err;
         },
       });

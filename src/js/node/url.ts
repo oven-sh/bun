@@ -30,6 +30,26 @@ const { domainToASCII, domainToUnicode, idnaToASCII, urlToHttpOptions } = requir
 const { validateString, validateObject } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
+interface Url {
+  protocol: string | null;
+  slashes: boolean | null;
+  auth: string | null;
+  host: string | null;
+  port: string | null;
+  hostname: string | null;
+  hash: string | null;
+  search: string | null;
+  query: string | Record<string, string | string[]> | null;
+  pathname: string | null;
+  path: string | null;
+  href: string | null;
+  parse(url: string, parseQueryString?: boolean, slashesDenoteHost?: boolean): this;
+  format(): string;
+  resolve(relative: string | URL | Url): string;
+  resolveObject(relative: string | Url): Url;
+  parseHost(): void;
+}
+
 function Url() {
   this.protocol = null;
   this.slashes = null;
@@ -44,7 +64,7 @@ function Url() {
   this.path = null;
   this.href = null;
 }
-Url.prototype = {};
+Url.prototype = {} as Url;
 
 // Reference: RFC 3986, RFC 1808, RFC 2396
 
@@ -105,7 +125,7 @@ const { isInsideNodeModules } = require("internal/shared");
 let urlParseWarned = false;
 
 function urlParse(
-  url: string | URL | typeof Url, // really has unknown type but intellisense is nice
+  url: string | URL | Url, // really has unknown type but intellisense is nice
   parseQueryString?: boolean,
   slashesDenoteHost?: boolean,
 ) {
@@ -170,7 +190,8 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
           break;
         case Char.HASH:
           hasHash = true;
-        // Fall through
+          split = true;
+          break;
         case Char.QUESTION_MARK:
           split = true;
           break;
@@ -572,7 +593,7 @@ function getHostname(self, rest, hostname: string, url) {
 }
 
 // format a parsed object into a url string
-declare function urlFormat(urlObject: string | URL | Url, options?: object): string;
+function urlFormat(urlObject: string | URL | Url, options?: object): string;
 function urlFormat(urlObject: unknown, options?: unknown) {
   /*
    * ensure it's an object, and not a string url.
@@ -743,7 +764,7 @@ function urlResolveObject(source, relative) {
 
 Url.prototype.resolveObject = function resolveObject(relative) {
   if (typeof relative === "string") {
-    var rel = new Url();
+    var rel: Url = new Url();
     rel.parse(relative, false, true);
     relative = rel;
   }
@@ -817,7 +838,7 @@ Url.prototype.resolveObject = function resolveObject(relative) {
       !hostlessProtocol[relativeProtocol]
     ) {
       let relPath = (relative.pathname || "").split("/");
-      while (relPath.length && !(relative.host = relPath.shift())) {}
+      while (relPath.length && !(relative.host = relPath.shift()!)) {}
       relative.host ||= "";
       relative.hostname ||= "";
       if (relPath[0] !== "") relPath.unshift("");
@@ -1057,7 +1078,7 @@ Url.prototype.resolveObject = function resolveObject(relative) {
 
 Url.prototype.parseHost = function parseHost() {
   var host = this.host;
-  var port = portPattern.exec(host);
+  var port: RegExpExecArray | string | null = portPattern.exec(host);
   if (port) {
     port = port[0];
     if (port !== ":") {

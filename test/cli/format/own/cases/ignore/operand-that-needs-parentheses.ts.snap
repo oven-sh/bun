@@ -1,0 +1,65 @@
+------------------
+{ printWidth: 80 }
+------------------
+x =
+  (a   as   B) && // prettier-ignore
+  y;
+x =
+  (a % b) * // prettier-ignore
+  c;
+x =
+  (a   &&   b) || // prettier-ignore
+  c;
+x = c || /* prettier-ignore */ (a   &&   b) || d;
+f(
+  (a   as   B) && // prettier-ignore
+    y,
+);
+x = {
+  a:
+    // prettier-ignore
+    (b . c = d),
+};
+(a, /* prettier-ignore */ (b   =   c));
+x = y ? /* prettier-ignore */ (b   =   1) : c;
+x = y ? c : /* prettier-ignore */ (b   =   1);
+x = y
+  ? b   =   1 // prettier-ignore
+  : c;
+x = a   as   B // prettier-ignore
+  ? c
+  : d;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+x =
+  (a   as   B) && // prettier-ignore
+  y;
+x =
+  (a % b) * // prettier-ignore
+  c;
+x =
+  (a   &&   b) || // prettier-ignore
+  c;
+x = c || /* prettier-ignore */ (a   &&   b) || d;
+f(
+  (a   as   B) && // prettier-ignore
+    y,
+);
+x = {
+  a:
+    // prettier-ignore
+    (b . c = d),
+};
+(a, /* prettier-ignore */ (b   =   c));
+x = y ? /* prettier-ignore */ (b   =   1) : c;
+x = y ? c : /* prettier-ignore */ (b   =   1);
+x = y
+  ? b   =   1 // prettier-ignore
+  : c;
+x = a   as   B // prettier-ignore
+  ? c
+  : d;
+
+===================== End =====================

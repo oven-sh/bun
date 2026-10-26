@@ -1,4 +1,4 @@
-//! Entry point for the standalone `bun_shim_impl.exe` PE.
+//! Entry point for the standalone `bun-shim-impl.exe` PE.
 //!
 //! `bun_shim_impl.rs` is `#![cfg(windows)]` at module scope and its `main()`
 //! returns `!`, so it can't be the bin root directly. This file:

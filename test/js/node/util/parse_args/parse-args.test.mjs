@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, expectRssDeltaBelow, isDebug } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
 import { parseArgs } from "node:util";
 
 describe("parseArgs", () => {
@@ -1107,26 +1107,29 @@ describe("parseArgs extra tests", () => {
       expect(Object.keys(result.values)).toHaveLength(1000);
     });
 
-    test("100 mixed several times", () => {
-      // Only a debug build is too slow for 1000 iterations (about 10 s). CI's ASAN lane is a release build.
-      const iterations = isDebug ? 100 : 1000;
+    test("48 mixed several times, with a garbage collection pending at each call", () => {
+      // Bun.gc() only requests a collection, which starts at the next allocation slow path. The config is built once,
+      // so nothing allocates between the request and parseArgs, and the collection runs inside parseArgs.
+      // bun 1.0.14-canary.20231201.1 kept its tokens where the GC cannot see them. This loop crashes it in 296 of 300
+      // runs. Do not build the args in the loop (6 of 100 runs) or use more than 65 distinct keys (2 of 40 runs).
+      const config = {
+        allowPositionals: true,
+        strict: false,
+        args: ""
+          .padStart(48)
+          .split("")
+          .map((_, i) => {
+            if (i % 17 === 0) return `-abc`;
+            if (i % 7 === 0) return `-${String.fromCharCode(97) + ((i / 10) | 0)}`;
+            return `--arg${i}`;
+          }),
+      };
       let result;
-      for (let i = 0; i < iterations; ++i) {
-        result = parseArgs({
-          allowPositionals: true,
-          strict: false,
-          args: ""
-            .padStart(100)
-            .split("")
-            .map((_, i) => {
-              if (i % 17 === 0) return `-abc`;
-              if (i % 7 === 0) return `-${String.fromCharCode(97) + ((i / 10) | 0)}`;
-              return `--arg${i}`;
-            }),
-        });
+      for (let i = 0; i < 500; ++i) {
+        result = parseArgs(config);
         Bun.gc();
       }
-      expect(Object.keys(result.values)).toHaveLength(93);
+      expect(Object.keys(result.values)).toHaveLength(47);
     });
   });
 

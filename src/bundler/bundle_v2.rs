@@ -6056,6 +6056,10 @@ pub mod bv2_impl {
                                     (*parts_col.add(record.source_index.get() as usize)).len()
                                 } == 0
                                 {
+                                    // The path is the record's only link to the stylesheet from here on.
+                                    record.set_module_path(
+                                        sources[record.source_index.get() as usize].path,
+                                    );
                                     record.source_index = Index::INVALID;
                                     // The importer isn't bundled again when the stylesheet is fixed, so its
                                     // output must treat this import the same as a stylesheet that didn't fail.

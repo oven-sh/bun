@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { Dev, devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -725,6 +725,51 @@ devTest("an error in a stylesheet reaches a page through an @import that another
     expect(await load()).toEqual(["3px", "3px"]);
   },
 });
+// A page that is bundled together with its stylesheet has its link tag linked by index, so the
+// import keeps the text that was written. When the stylesheet fails, that link is removed.
+for (const href of ["main.css", "/main.css", "./main.css"]) {
+  devTest(`a page recovers after it was rebuilt together with its broken stylesheet (href="${href}")`, {
+    files: {
+      "index.html": emptyHtmlFile({ styles: [href] }),
+      "main.css": `.main { width: 1px; }`,
+    },
+    async test(dev) {
+      await breakStylesheetWithItsImporter(dev, {
+        stylesheet: "main.css",
+        importer: "index.html",
+        editedImporter: emptyHtmlFile({ styles: [href], body: "<p>edited</p>" }),
+      });
+    },
+  });
+}
+// The same for an import that a plugin resolved: it is linked by index and keeps its specifier.
+devTest("a page recovers after its script was rebuilt together with a broken stylesheet that a plugin resolved", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./alias-plugin.ts"]
+    `,
+    "alias-plugin.ts": `
+      import * as path from "path";
+      export default {
+        name: "alias-plugin",
+        setup(build) {
+          build.onResolve({ filter: /^aliased-css$/ }, args => ({ path: path.join(args.resolveDir, "real.css") }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["main.ts"] }),
+    "main.ts": `import "aliased-css";`,
+    "real.css": `.main { width: 1px; }`,
+  },
+  async test(dev) {
+    await breakStylesheetWithItsImporter(dev, {
+      stylesheet: "real.css",
+      importer: "main.ts",
+      editedImporter: `import "aliased-css"; console.log("edited");`,
+    });
+  },
+});
 devTest("css import before create", {
   files: {
     "index.html": emptyHtmlFile({
@@ -810,6 +855,34 @@ devTest("css import before create project relative", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
+
+/**
+ * One bundle has a syntax error in the stylesheet and an edit of the file that imports it.
+ * The page fails while the stylesheet is broken, and has the stylesheet again once it is fixed.
+ */
+async function breakStylesheetWithItsImporter(
+  dev: Dev,
+  { stylesheet, importer, editedImporter }: { stylesheet: string; importer: string; editedImporter: string },
+) {
+  // The status of the page, or the width of ".main" in its stylesheet.
+  const load = async () => {
+    const page = await dev.fetch("/");
+    const html = await page.text();
+    if (page.status !== 200) return page.status;
+    const asset = html.match(/\/_bun\/asset\/\w+\.css/)?.[0];
+    if (!asset) return "no stylesheet";
+    return (await dev.fetch(asset).text()).match(/\.main \{[^}]*width: (\w+)/)?.[1];
+  };
+  expect(await load()).toBe("1px");
+  {
+    await using batch = await dev.batchChanges({ errors: null });
+    await dev.write(stylesheet, `.main { width: 2px; }}}`);
+    await dev.write(importer, editedImporter);
+  }
+  expect(await load()).toBe(500);
+  await dev.write(stylesheet, `.main { width: 3px; }`, { errors: null });
+  expect(await load()).toBe("3px");
+}
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

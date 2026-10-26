@@ -221,9 +221,7 @@ impl<'a> Graph<'a> {
         &mut self.build_graphs[target]
     }
 
-    /// The source that has the module id of `path`, for an importer of `importer_target`.
-    /// `process_resolve_queue` files a source under the target of its importer. So the map of a server
-    /// target can give the server copy or the SSR copy of a path, and `pretty` tells which one it is.
+    /// The source with the module id `path.pretty`: a path map of a server target can hold the server copy or the SSR copy.
     pub(crate) fn source_of_module(
         &self,
         importer_target: options::Target,

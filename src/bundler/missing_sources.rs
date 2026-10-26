@@ -57,8 +57,7 @@ impl Noted {
             return self.by_index.contains(&record.source_index.get());
         }
         let path = &record.path;
-        // `resolve_import_records` gives a record that it binds to a module the id of that module in `pretty`.
-        // An external import can hold the path of the file, and its `pretty` is still its `text`.
+        // Only a record that names a module has an id in `pretty`: an external import keeps `pretty == text`.
         if path.pretty == path.text {
             return false;
         }
@@ -137,8 +136,7 @@ fn report_importer(this: &mut BundleV2, dev: DevServerHandle, importer: usize, b
         record.path.is_disabled = true;
         record.source_index = Index::INVALID;
         record.flags.insert(import_record::Flags::WAS_UNRESOLVED);
-        // The specifier can resolve again while the file is missing: a plugin gave the path, or the
-        // resolver still has the old directory listing. So the watch is for the file.
+        // The watch is for the file: a plugin or an old directory listing can resolve the specifier while the file is missing.
         bun_core::handle_oom(dev.track_resolution_failure(
             source.path.text,
             missing_file,

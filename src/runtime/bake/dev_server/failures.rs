@@ -333,8 +333,7 @@ impl DevServer {
         let mut watch_for_route_file = false;
         let file_is_missing = matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound");
         if file_is_missing {
-            // Special-case files being deleted: an importer that resolves again reports them, and
-            // `missing_sources::report` fails an importer that this build already bound to the file.
+            // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
                     self.server_graph.on_file_deleted(abs_path, bv2)?

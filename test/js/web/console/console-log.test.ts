@@ -341,6 +341,50 @@ it.concurrent("console.log throws what the inspect hook of an argument past the 
   });
 });
 
+it.concurrent("console.timeLog throws what the inspect hook of an argument past the 255th throws", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const hook = Symbol.for("nodejs.util.inspect.custom");
+       const values = Array.from({ length: 301 }, (_, i) => i);
+       values[299] = {
+         [hook]() {
+           throw new Error("from argument 299");
+         },
+       };
+       let laterHookRan = false;
+       values[300] = {
+         [hook]() {
+           laterHookRan = true;
+           return "";
+         },
+       };
+       console.time("timer");
+       try {
+         console.timeLog("timer", ...values);
+       } catch (e) {
+         console.log(e.message);
+       }
+       console.log("the hook of argument 300 ran:", laterHookRan);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout,
+    // The arguments before the one that throws are already written. Only white space follows them.
+    stderr: stderr.replace(/^\[.+?s\]/, "[elapsed]").trimEnd(),
+    exitCode,
+  }).toEqual({
+    stdout: "from argument 299\nthe hook of argument 300 ran: false\n",
+    stderr: "[elapsed] timer " + Array.from({ length: 299 }, (_, i) => i).join(" "),
+    exitCode: 0,
+  });
+});
+
 it.concurrent("console.log prints every argument of a call with 70000 arguments", async () => {
   // More arguments than a 16-bit count can hold.
   await using proc = Bun.spawn({

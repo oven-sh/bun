@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test";
 import { readdirSync } from "node:fs";
-import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
+import { itBundled, type BundlerTestBundleAPI, type BundlerTestInput } from "./expectBundled";
 
 const fakeReactNodeModules = {
   "/node_modules/react/index.js": /* js */ `
@@ -1474,32 +1474,75 @@ describe("bundler", () => {
   });
   // `export * from` a file that stays CommonJS reads each name at run time, as
   // in any other package. The import of such a name is not `undefined`.
-  for (const [name, pkg, commonjs] of [
-    ["Chained", "react", `exports.a = exports.b = () => "f";`],
+  const chained = `exports.a = exports.b = () => "f";`;
+  const exportStarOfCommonJS = (
+    pkg: string,
+    commonjs: string,
+    barrel = "bar.js",
+    packageJson = `{ "name": "${pkg}", "type": "module" }`,
+  ) => ({
+    "/entry.js": /* js */ `
+      import { a } from "${pkg}/${barrel}";
+      console.log(a());
+    `,
+    [`/node_modules/${pkg}/package.json`]: packageJson,
+    [`/node_modules/${pkg}/${barrel}`]: `export * from "./rt.cjs";`,
+    [`/node_modules/${pkg}/rt.cjs`]: commonjs,
+  });
+  const exportStarOfCommonJSCases: Record<string, Partial<BundlerTestInput>> = {
+    Chained: { files: exportStarOfCommonJS("react", chained) },
     // tsc writes `exports.b = exports.a = void 0;` at the top of a CommonJS file.
-    [
-      "TscPrelude",
-      "react",
-      `"use strict"; exports.b = exports.a = void 0; exports.a = () => "f"; exports.b = () => "f";`,
-    ],
-    ["Scheduler", "scheduler", `exports.a = exports.b = () => "f";`],
+    TscPrelude: {
+      files: exportStarOfCommonJS(
+        "react",
+        `"use strict"; exports.b = exports.a = void 0; exports.a = () => "f"; exports.b = () => "f";`,
+      ),
+    },
+    Scheduler: { files: exportStarOfCommonJS("scheduler", chained) },
     // This file converts to an ES module, so the bundler sees each name.
-    ["Converted", "react", `exports.a = () => "f"; exports.b = () => "f";`],
-  ] as const) {
+    Converted: { files: exportStarOfCommonJS("react", `exports.a = () => "f"; exports.b = () => "f";`) },
+    Mjs: { files: exportStarOfCommonJS("react", chained, "bar.mjs", `{ "name": "react" }`) },
+    Iife: { files: exportStarOfCommonJS("react", chained), format: "iife" },
+    Minified: {
+      files: exportStarOfCommonJS("react", chained),
+      minifySyntax: true,
+      minifyIdentifiers: true,
+      minifyWhitespace: true,
+    },
+    Cli: { files: exportStarOfCommonJS("react", chained), backend: "cli" },
+    Splitting: {
+      files: exportStarOfCommonJS("react", chained),
+      splitting: true,
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "f" },
+    },
+  };
+  for (const [name, options] of Object.entries(exportStarOfCommonJSCases)) {
     itBundled(`cjs2esm/ESModuleInUnwrappedPackageExportStarOfCommonJS${name}`, {
-      files: {
-        "/entry.js": /* js */ `
-          import { a } from "${pkg}/bar.js";
-          console.log(a());
-        `,
-        [`/node_modules/${pkg}/package.json`]: `{ "name": "${pkg}", "type": "module" }`,
-        [`/node_modules/${pkg}/bar.js`]: `export * from "./rt.cjs";`,
-        [`/node_modules/${pkg}/rt.cjs`]: commonjs,
-      },
+      files: {},
       target: "node",
       run: { stdout: "f" },
+      ...options,
     });
   }
+  // A `require()` of a CommonJS file that converts to an ES module gets the
+  // interop object of an ES module, with `__esModule: true`. The file did not
+  // set it. A `require()` in a `try` block of any file reads the same object.
+  itBundled("cjs2esm/ESModuleInUnwrappedPackageRequiresConvertedCommonJS", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        import { made } from "react";
+        console.log(made);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        const m = require("./impl.cjs");
+        export const made = (m.__esModule ? m.default : m).make("A");
+      `,
+      "/node_modules/react/impl.cjs": `exports.make = x => "F" + x;`,
+    },
+    run: { stdout: "FA" },
+  });
   // `import` next to `exports.x = ...` links the same way in and out of the list.
   itBundled("cjs2esm/ImportAndExportsAssignmentInUnwrappedPackage", {
     files: {
@@ -1521,33 +1564,61 @@ describe("bundler", () => {
     },
     run: { stdout: "5 5" },
   });
-  // A JSON or text file of an unwrapped package is not CommonJS either.
+  // A JSON or text file of an unwrapped package is not CommonJS either. Its
+  // namespace has sorted keys, as in `bun run`, and the `default` of a text
+  // file is its string.
   itBundled("cjs2esm/LazyExportInUnwrappedPackage", {
     files: {
       "/entry.js": /* js */ `
         import notice from "react/NOTICE.txt";
         import pkg from "react/package.json";
+        import * as ns from "react/package.json";
         const { version } = require("react/package.json");
-        console.log(typeof notice, notice, Object.keys(pkg).join(","), version);
+        console.log(typeof notice, notice, Object.keys(pkg).join(","), Object.keys(ns).join(","), version);
       `,
       "/node_modules/react/NOTICE.txt": `notice`,
-      "/node_modules/react/package.json": `{ "name": "react", "version": "19.0.0" }`,
+      "/node_modules/react/package.json": `{ "version": "19.0.0", "name": "react" }`,
     },
-    run: { stdout: "string notice name,version 19.0.0" },
+    run: { stdout: "string notice version,name default,name,version 19.0.0" },
   });
   itBundled("cjs2esm/LazyExportInUnwrappedPackageSplitDynamicImport", {
     files: {
       "/entry.js": /* js */ `
         import pkg from "react/package.json";
         const m = await import("react/package.json");
-        console.log(Object.keys(pkg).join(","), m.default === pkg, Object.keys(m).join(","));
+        const text = await import("react/NOTICE.txt");
+        console.log(Object.keys(pkg).join(","), m.default === pkg, Object.keys(m).join(","), typeof text.default);
       `,
-      "/node_modules/react/package.json": `{ "name": "react", "version": "19.0.0" }`,
+      "/node_modules/react/NOTICE.txt": `notice`,
+      "/node_modules/react/package.json": `{ "version": "19.0.0", "name": "react" }`,
     },
     outdir: "/out",
     splitting: true,
-    run: { file: "/out/entry.js", stdout: "name,version true default,name,version" },
+    run: { file: "/out/entry.js", stdout: "version,name true default,name,version string" },
   });
+  // React and react-dom below 18 are not on the unwrap list: a `require()` in
+  // one of their files stays a call of a CommonJS wrapper.
+  for (const [version, cjs2esm] of [
+    ["17.0.2", { unhandled: ["/node_modules/react/impl.js"] }],
+    ["18.0.0", true],
+  ] as const) {
+    itBundled(`cjs2esm/UnwrapListStartsAtReact18_${version}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { version } from "react";
+          console.log(version);
+        `,
+        "/node_modules/react/package.json": `{ "name": "react", "version": "${version}", "main": "index.js" }`,
+        "/node_modules/react/index.js": /* js */ `
+          const impl = require("./impl.js");
+          exports.version = impl.version;
+        `,
+        "/node_modules/react/impl.js": `exports.version = "${version}";`,
+      },
+      cjs2esm,
+      run: { stdout: version },
+    });
+  }
   itBundled("cjs2esm/ModuleExportsRenamingNoDeopt", {
     files: {
       "/entry.js": /* js */ `
@@ -2932,8 +3003,8 @@ describe("bundler", () => {
       stdout: "18.3.1 18.3.1 18.3.1 html",
     },
   });
-  // `FORCE_CJS_TO_ESM` is path based. A real ES module in the react family has
-  // no lifted exports, so its `import()` keeps the plain namespace.
+  // A real ES module in the react family is not on the unwrap list, so its
+  // `import()` keeps the plain namespace.
   itBundled("cjs2esm/DynamicImportOfRealEsmInReactFamilyUnaffected", {
     files: {
       "/entry.mjs": /* js */ `

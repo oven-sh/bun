@@ -1042,13 +1042,13 @@ mod border_handler_body {
             }};
         }
 
-        let all_valid = block_start.is_valid()
+        // lightningcss always writes `border` here, and that resets `border-image`.
+        if block_start.is_valid()
             && block_end.is_valid()
             && inline_start.is_valid()
-            && inline_end.is_valid();
-
-        // lightningcss always writes `border` here, and that resets `border-image`.
-        if all_valid && f.border_shorthand_safe {
+            && inline_end.is_valid()
+            && f.border_shorthand_safe
+        {
             let top_eq_bottom = block_start.eql(block_end);
             let left_eq_right = inline_start.eql(inline_end);
             let top_eq_left = block_start.eql(inline_start);
@@ -1150,22 +1150,24 @@ mod border_handler_body {
                     fc_prop!(f, $inline_end_prop, inline_end.to_border(f.arena));
                 }, lead);
             }
-        } else if all_valid
-            && !$is_logical
-            && !(is_eq!(width) || is_eq!(style) || is_eq!(color))
-            && !(block_start.eql(block_end) && inline_start.eql(inline_end))
-        {
-            // Four side shorthands are shorter than three four-value shorthands.
-            fc_prop!(f, $block_start_prop, block_start.to_border(f.arena));
-            fc_prop!(f, $block_end_prop, block_end.to_border(f.arena));
-            fc_prop!(f, $inline_start_prop, inline_start.to_border(f.arena));
-            fc_prop!(f, $inline_end_prop, inline_end.to_border(f.arena));
         } else {
-            // Complete, unequal logical sides are shorter as `border-block` and `border-inline`.
-            let all_equal = block_start.eql(block_end)
-                && block_start.eql(inline_start)
-                && block_start.eql(inline_end);
-            if !$is_logical || !all_valid || all_equal {
+            // Four complete sides that may not merge into `border` print as sides where that is shorter.
+            let rects = f.border_shorthand_safe
+                || !(block_start.is_valid()
+                    && block_end.is_valid()
+                    && inline_start.is_valid()
+                    && inline_end.is_valid())
+                || if $is_logical {
+                    block_start.eql(block_end)
+                        && block_start.eql(inline_start)
+                        && block_start.eql(inline_end)
+                } else {
+                    is_eq!(width)
+                        || is_eq!(style)
+                        || is_eq!(color)
+                        || (block_start.eql(block_end) && inline_start.eql(inline_end))
+                };
+            if rects {
                 shorthand!(BorderStyle, BorderStyle, style);
                 shorthand!(BorderWidth, BorderWidth, width);
                 shorthand!(BorderColor, BorderColor, color);

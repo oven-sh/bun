@@ -589,6 +589,7 @@ impl BorderImageHandler {
     }
 
     /// The next `border-image` output is a complete unprefixed shorthand that every target reads.
+    #[inline(never)]
     pub(crate) fn will_flush_shorthand(&self, targets: &css::targets::Targets) -> bool {
         self.has_any
             && self.flushed_properties.is_empty()

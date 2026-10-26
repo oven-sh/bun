@@ -1551,6 +1551,18 @@ impl RewriterPipe {
         }
     }
 
+    /// From here on the handlers are called as in an unarmed pipe: in the context of whatever delivers the input.
+    fn disarm_async_context(&self) {
+        self.async_context_armed.set(false);
+        if let Some(cell) = self.cell.try_get() {
+            js_HTMLRewriterTransform::async_context_set_cached(
+                cell,
+                &self.global,
+                JSValue::UNDEFINED,
+            );
+        }
+    }
+
     /// The async context of the `transform()` call, for the handler calls of an armed pipe.
     fn async_context(&self) -> JSValue {
         debug_assert!(self.sync_only_noun.get().is_none());
@@ -2268,6 +2280,11 @@ fn call_in_transform_context(
     this_object: JSValue,
     args: &[JSValue],
 ) -> JsResult<JSValue> {
+    // What a handler awaits in the context of a disposed `Bun.ModuleGraph` never settles, and the rewrite would park on it.
+    if !global.bun_vm().is_context_live(sink.script_context) {
+        sink.disarm_async_context();
+        return callback.call(global, this_object, args);
+    }
     callback.call_in_async_context(global, sink.async_context(), this_object, args)
 }
 

@@ -3926,6 +3926,17 @@ describe("content handlers run in the async context of transform()", () => {
             .transform(input);
         }
         export const fetches = url => fetch(url);
+        export function rewriteWithAsyncHandler(input, say) {
+          return new HTMLRewriter()
+            .on("p", {
+              async element() {
+                say("element");
+                await new Promise(resolve => setImmediate(resolve));
+                say("resumed");
+              },
+            })
+            .transform(input);
+        }
       `,
     });
     // A graph, its instance of rewrite.mjs, and a `say` that records the context it is called in.
@@ -3966,6 +3977,31 @@ describe("content handlers run in the async context of transform()", () => {
       release(0);
       await res.text();
       expect(said).toEqual([...Array(pieces).fill("element in the host"), "end in the host"]);
+    });
+
+    // What a handler awaits in the context of a disposed graph never settles, and the rewrite would park on it.
+    it("a disposed graph's handlers do not run in its context, and its rewrite of the host's body still ends", async () => {
+      const { release, releaseAll, document } = gated();
+      const { graph, said, say, module } = await graphOf();
+      const resumed = Promise.withResolvers();
+      let disposedAt;
+      await withFetched(document, async input => {
+        // The host's stream: it does not end with the graph.
+        void input.body;
+        const res = graph.run(() =>
+          module.rewriteWithAsyncHandler(input, what => {
+            say(what, () => {});
+            if (what === "resumed") resumed.resolve();
+          }),
+        );
+        release(0);
+        await resumed.promise;
+        graph.dispose();
+        disposedAt = said.length;
+        releaseAll();
+        await res.text().catch(() => {});
+      });
+      expect(said.slice(disposedAt).filter(what => what.endsWith("in the graph"))).toEqual([]);
     });
   });
 

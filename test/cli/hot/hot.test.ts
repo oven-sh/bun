@@ -1186,6 +1186,54 @@ it.each(importedFolders)("reloads when a file of a folder imported %s is renamed
   expect(await runner.exited).toBe(0);
 });
 
+// Only inotify reports a removed file to the watch of its folder alone. The reloader finds the file in the folder's
+// cached listing, which it busts and the importer's resolver then reads again, without the file. A reloader that looks
+// the file up after its bust still reloads in about half of the runs, so this repeats.
+it.skipIf(!isLinux).each([1, 2, 3, 4, 5, 6, 7, 8])(
+  "reloads when a file is removed from a folder the importer keeps resolving in, run %d",
+  async () => {
+    const main = `
+      import { a } from "./packages/lib/a";
+      import { c } from "./packages/lib/c";
+      console.log("loaded", a, c);
+      // A timer outlives a reload, so one chain of them keeps resolving.
+      globalThis.resolving ??= (function resolve() {
+        const end = performance.now() + 15;
+        while (performance.now() < end) Bun.resolveSync("./packages/lib/a", import.meta.dir);
+        return setTimeout(resolve, 0);
+      })();
+    `;
+    const exportsItsName = `export const c = import.meta.file;`;
+    using dir = tempDir("hot-folder-resolving", {
+      "main.ts": main,
+      "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+      "packages/lib/a.ts": `export const a = "a.ts";`,
+      "packages/lib/c.ts": exportsItsName,
+      "packages/lib/c.js": exportsItsName,
+    });
+    const root = String(dir);
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stdout = follow(runner.stdout);
+    const failed = failedReload(runner.stderr);
+    const loaded = (output: string) => Promise.race([stdout(output), failed]);
+    expect(await loaded("loaded a.ts c.ts\n")).toBe(true);
+
+    unlinkSync(join(root, "packages", "lib", "c.ts"));
+    expect(await loaded("loaded a.ts c.js\n")).toBe(true);
+
+    writeFileSync(join(root, "main.ts"), main + `process.exit(0);\n`);
+    expect(await failed).not.toContain("error: ");
+    expect(await runner.exited).toBe(0);
+  },
+);
+
 it.each(importedFolders)("imports a file created in a folder imported %s", async (_, lib) => {
   const main = (names: string[]) =>
     names.map(name => `import { ${name} } from "${lib}/${name}";\n`).join("") +

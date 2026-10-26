@@ -765,20 +765,36 @@ where
         self.tombstones.get(key).copied()
     }
 
-    /// Returns `key`'s cached listing, or `None` if it isn't cached or the cached result is a read error.
-    /// Resolver threads rewrite the cache under `entries_mutex`. The `DirEntry` is never freed.
+    /// `key`'s cached listing, or else its tombstone, and in `found` its entry for each of `names`.
     #[cfg(not(windows))]
-    fn cached_dir_entry(
+    fn listing_and_entries<'a>(
+        &mut self,
         rfs: &mut Fs::file_system::RealFS,
         key: &[u8],
+        names: impl Iterator<Item = &'a [u8]>,
+        found: &mut [Option<&'static Fs::Entry>],
     ) -> Option<*mut Fs::DirEntry> {
-        let _entries_lock = rfs.entries_mutex.lock_guard();
-        match rfs.entries.get(key) {
+        // One section for both: a resolver thread reads a busted listing again in place.
+        let entries_lock = rfs.entries_mutex.lock_guard();
+        let cached = match rfs.entries.get(key) {
             Some(Fs::EntriesOption::Entries(existing)) => {
                 Some(std::ptr::from_mut::<Fs::DirEntry>(*existing))
             }
             _ => None,
+        };
+        let listing = cached.or_else(|| self.get_tombstone(key));
+        if let Some(listing) = listing {
+            // SAFETY: never freed, and `entries_mutex` is held while its map is read.
+            let listing: &'static Fs::DirEntry = unsafe { &*listing };
+            for (slot, name) in found.iter_mut().zip(names) {
+                *slot = listing.get(name).map(|lookup| lookup.entry());
+            }
         }
+        drop(entries_lock);
+        if let Some(cached) = cached {
+            self.put_tombstone(key, cached);
+        }
+        listing
     }
 
     pub(crate) fn on_error(_: &mut Self, err: &bun_sys::Error) {
@@ -959,12 +975,12 @@ where
 
                         let affected_len: usize = 'brk: {
                             if IS_KQUEUE {
-                                if let Some(existing) = Self::cached_dir_entry(rfs, file_path) {
-                                    self.put_tombstone(file_path, existing);
-                                    entries_option = Some(existing);
-                                } else if let Some(existing) = self.get_tombstone(file_path) {
-                                    entries_option = Some(existing);
-                                }
+                                entries_option = self.listing_and_entries(
+                                    rfs,
+                                    file_path,
+                                    core::iter::empty(),
+                                    &mut [],
+                                );
 
                                 if event.op.contains(WatchOp::WRITE) {
                                     // Check if the entrypoint now exists after an atomic save.
@@ -1049,13 +1065,23 @@ where
                             break 'brk affected_inotify.len();
                         };
 
-                        if affected_len > 0 && !IS_KQUEUE {
-                            if let Some(existing) = Self::cached_dir_entry(rfs, file_path) {
-                                self.put_tombstone(file_path, existing);
-                                entries_option = Some(existing);
-                            } else if let Some(existing) = self.get_tombstone(file_path) {
-                                entries_option = Some(existing);
-                            }
+                        // Read before the bust: the next read of the listing drops a removed name.
+                        let mut affected_entries: [Option<&'static Fs::Entry>; 128] = [None; 128];
+                        if affected_len > 0 {
+                            let names = (0..affected_len).map(|i| {
+                                if IS_KQUEUE {
+                                    affected_kqueue[i]
+                                } else {
+                                    affected_inotify[i]
+                                        .map_or(b"".as_slice(), |name| name.as_bytes())
+                                }
+                            });
+                            entries_option = self.listing_and_entries(
+                                rfs,
+                                file_path,
+                                names,
+                                &mut affected_entries,
+                            );
                         }
 
                         let _ = self.ctx_mut().bust_dir_cache(
@@ -1110,12 +1136,7 @@ where
                             }
                         }
 
-                        if let Some(dir_ent) = entries_option {
-                            // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
-                            // both outlive this loop iteration. Shared access only —
-                            // `get()` takes `&self` and per-entry mutation below goes
-                            // through the entry's own mutex + cells.
-                            let dir_ent = unsafe { &*dir_ent };
+                        if entries_option.is_some() {
                             let mut last_file_hash: bun_watcher::HashType =
                                 bun_watcher::HashType::MAX;
 
@@ -1148,18 +1169,10 @@ where
                                     let path_string: bun_ptr::Interned;
                                     let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
-                                        // Probe `.data` under `entries_mutex`; a
-                                        // resolver at a newer generation rewrites
-                                        // the map in place under that lock. The
-                                        // entry pointer stays valid after unlock
-                                        // (EntryStore-owned).
-                                        let looked_up = {
-                                            let _entries_lock = rfs.entries_mutex.lock_guard();
-                                            dir_ent.get(changed_name)
-                                        };
-                                        if let Some(file_ent) = looked_up {
+                                        if let Some(ent) =
+                                            affected_entries.get(i).copied().flatten()
+                                        {
                                             // reset the file descriptor
-                                            let ent = file_ent.entry();
                                             {
                                                 // Every cached-`Entry` rewrite takes
                                                 // the per-entry mutex.

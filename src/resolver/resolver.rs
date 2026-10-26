@@ -6246,7 +6246,26 @@ impl<'a> Resolver<'a> {
         let Some(parent_entries) = parent.get_entries_ref_locked(self.generation) else {
             return b"";
         };
-        let Some(lookup) = parent_entries.get(base) else {
+        let mut lookup = parent_entries.get(base);
+        // A directory that opened and that the listing does not name was made after the
+        // listing was read. Below a link the name is what gives the real path, so the
+        // listing is read again. One with no names can be of a directory that cannot be
+        // listed, which a read that fails would expire.
+        if lookup.is_none()
+            && fd.is_valid()
+            && !parent.abs_real_path.is_empty()
+            && parent_entries.data.count() > 0
+        {
+            // SAFETY: `rfs_ptr` points at the process-global RealFS; `entries_mutex` held.
+            let slot = unsafe { &mut *rfs_ptr }.entries.at_index(parent.entries);
+            if let Some(Fs::file_system::real_fs::EntriesOption::Entries(listing)) = slot {
+                listing.generation = Fs::GENERATION_STALE;
+            }
+            lookup = parent
+                .get_entries_ref_locked(self.generation)
+                .and_then(|reread| reread.get(base));
+        }
+        let Some(lookup) = lookup else {
             return b"";
         };
         let entry = lookup.entry();

@@ -2961,6 +2961,10 @@ impl RunCommand {
             restart_on_change::restart(clear_terminal);
         }
         restart_on_change::restart_when(path, clear_terminal, || {
+            #[cfg(target_os = "macos")]
+            if bun_io::ParentDeathWatchdog::parent_is_gone() {
+                Global::exit(bun_io::ParentDeathWatchdog::EXIT_CODE as u32);
+            }
             candidates.look().is_ok_and(|now| now != before)
         });
     }

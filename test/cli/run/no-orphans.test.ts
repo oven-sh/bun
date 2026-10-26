@@ -234,6 +234,40 @@ test.concurrent.skipIf(!isPosix || !isRoot)(
   },
 );
 
+// A `--watch` start that waits for its entry file blocks without an event
+// loop, so nothing watches the parent for it on macOS: the wait has to look.
+test.concurrent.skipIf(!isPosix)(
+  "BUN_FEATURE_FLAG_NO_ORPHANS=1: a --watch start that waits for its entry file exits with its parent",
+  async () => {
+    using dir = tempDir("no-orphans-watch-wait", {});
+    const sh = Bun.spawn({
+      // `$!` is bun's pid. The trailing `wait` keeps sh a process of its own.
+      cmd: ["/bin/sh", "-c", `"${bunExe()}" --watch missing.mjs & echo $!; wait`],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const readUntil = async (stream: ReadableStream<Uint8Array>, needle: string) => {
+      let text = "";
+      for await (const chunk of stream) {
+        text += Buffer.from(chunk).toString();
+        if (text.includes(needle)) return text;
+      }
+      throw new Error(`closed before ${JSON.stringify(needle)}: ${JSON.stringify(text)}`);
+    };
+    const bunPid = Number((await readUntil(sh.stdout, "\n")).trim());
+    expect(bunPid).toBeGreaterThan(0);
+    await readUntil(sh.stderr, "Bun restarts when");
+
+    process.kill(sh.pid!, "SIGKILL");
+    await sh.exited;
+    const died = await waitUntilDead(bunPid, 10000);
+    reap(bunPid);
+    expect(died).toBe(true);
+  },
+);
+
 test.concurrent.skipIf(!isSupported)("BUN_FEATURE_FLAG_NO_ORPHANS=0 is treated as unset", async () => {
   const { sh, bunPid, grandchildPid } = await spawnTree("0");
   process.kill(sh.pid!, "SIGKILL");

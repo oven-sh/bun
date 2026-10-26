@@ -1,6 +1,5 @@
 #include "config.h"
 #include "JSCompressionStreamShared.h"
-#include "BunClientData.h"
 
 #include "ErrorCode.h"
 #include "GeneratedSink.h"
@@ -14,7 +13,6 @@
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <cmath>
 #include <limits>
 #include <wtf/text/MakeString.h>
@@ -343,7 +341,7 @@ NEVER_INLINE void nativeCodecContinue(JSGlobalObject* globalObject, JSTransformS
     if (!coder) [[unlikely]]
         RELEASE_AND_RETURN(scope, settleCodecChunk(globalObject, stream, JSValue()));
     if (stream->m_codecChunkOffThread) {
-        // A step already on the pool re-dispatches itself from deliverAsync while there is room.
+        // A step already on the pool re-dispatches itself from its completion while there is room.
         if (stream->m_asyncCodecInFlight)
             return;
         RELEASE_AND_RETURN(scope, dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false));
@@ -438,54 +436,83 @@ static CodecStepResult deliverAsyncOutput(JSGlobalObject* globalObject, JSTransf
     return step;
 }
 
-// JS-thread completion of an off-thread step. `out` borrows the coder's buffer, so it is
-// consumed BEFORE m_asyncCodecInFlight is cleared and the coder may be released or
-// re-dispatched. Entered from the event loop with no JS above it (a TopExceptionScope, and
-// atStreamsBoundary for the delivery): a failed delivery is the pending chunk's rejection.
-extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamCell, const uint8_t* out, size_t outLen, bool more, JSC::EncodedJSValue error)
+// The promise an off-thread step settles. Its reaction is registered here: it runs in the async context that is current now.
+extern "C" JSC::EncodedJSValue Bun__CompressionStream__stepPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamCell)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* stream = dynamicDowncast<JSTransformStream>(JSValue::decode(streamCell));
-    ASSERT(stream);
-    if (!stream) [[unlikely]]
-        return;
+    auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->performPromiseThenWithContext(vm, globalObject, runtime->onCodecStepFulfilled(), runtime->onCodecStepRejected(), jsUndefined(), JSValue::decode(streamCell));
+    return JSValue::encode(promise);
+}
+
+// JS-thread completion of an off-thread step. `out` borrows the coder's buffer, so it is
+// consumed BEFORE m_asyncCodecInFlight is cleared and the coder may be released or
+// re-dispatched. A failed delivery, or the codec error `thrown`, is the pending chunk's rejection.
+static void completeStepOffThread(JSGlobalObject* globalObject, JSTransformStream* stream, bool more, JSValue thrown)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_asyncCodecInFlight);
 
     CodecStepResult step;
     step.more = more;
-    JSValue thrown;
-    if (error) {
-        thrown = JSValue::decode(error);
-    } else if (outLen && stream->m_codecPromise) {
-        atStreamsBoundary(globalObject, [&] { step = deliverAsyncOutput(globalObject, stream, out, outLen, more); }, [&](JSValue error) { thrown = error; });
-        if (scope.exception()) [[unlikely]] {
-            // VM termination: the chunk stays pending; teardown's finalizer releases the coder.
-            Bun__VM__takeTerminationOutsideScript(globalObject);
-            stream->m_asyncCodecInFlight = false;
-            return;
-        }
+    if (void* coder = thrown ? nullptr : coderOf(stream)) {
+        size_t outLen = 0;
+        const uint8_t* out = CompressionStreamCoder__stepOutput(coder, &outLen);
+        if (outLen && stream->m_codecPromise)
+            atStreamsBoundary(globalObject, [&] { step = deliverAsyncOutput(globalObject, stream, out, outLen, more); }, [&](JSValue error) { thrown = error; });
+        CompressionStreamCoder__releaseStepOutput(coder);
     }
 
     stream->m_asyncCodecInFlight = false;
+    // VM termination: the chunk stays pending; teardown's finalizer releases the coder.
+    RETURN_IF_EXCEPTION(scope, );
     // A terminal abandoned the chunk while this step ran (the delivery above may have been it).
     if (!stream->m_codecPromise) {
         nativeTransformReleaseStateIfIdle(stream);
         return;
     }
     if (thrown)
-        settleCodecChunk(globalObject, stream, thrown);
-    else if (!step.more)
-        settlePendingChunk(globalObject, stream, consumerFull(stream, step) && stream->m_nativeSinkController ? CodecOutcome::DoneSinkFull : CodecOutcome::Done);
-    else if (!consumerFull(stream, step)) {
-        if (void* coder = coderOf(stream)) [[likely]]
-            dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false);
-        else
-            settleCodecChunk(globalObject, stream, JSValue());
-    }
+        RELEASE_AND_RETURN(scope, settleCodecChunk(globalObject, stream, thrown));
+    if (!step.more)
+        RELEASE_AND_RETURN(scope, settlePendingChunk(globalObject, stream, consumerFull(stream, step) && stream->m_nativeSinkController ? CodecOutcome::DoneSinkFull : CodecOutcome::Done));
     // Otherwise the consumer continues the chunk once it has room.
-    scope.assertNoException();
+    if (consumerFull(stream, step))
+        return;
+    if (void* coder = coderOf(stream)) [[likely]]
+        RELEASE_AND_RETURN(scope, dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false));
+    RELEASE_AND_RETURN(scope, settleCodecChunk(globalObject, stream, JSValue()));
 }
 
 } // namespace WebStreams
 } // namespace Bun
+
+namespace WebCore {
+
+using namespace JSC;
+using namespace Bun::WebStreams;
+
+// [reaction-convention]: handler(whether the chunk needs another step, stream) and handler(codecError, stream).
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onCodecStepFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(CompressionStreams, jsWebStreamsHandler_onCodecStepFulfilled);
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    completeStepOffThread(globalObject, uncheckedDowncast<JSTransformStream>(callFrame->argument(1)), callFrame->argument(0).isTrue(), JSValue());
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onCodecStepRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(CompressionStreams, jsWebStreamsHandler_onCodecStepRejected);
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    completeStepOffThread(globalObject, uncheckedDowncast<JSTransformStream>(callFrame->argument(1)), false, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+} // namespace WebCore

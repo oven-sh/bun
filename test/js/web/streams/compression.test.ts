@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import { addAbortSignal } from "node:stream";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
@@ -459,7 +460,7 @@ describe("CompressionStream and DecompressionStream", () => {
       await drained;
     });
 
-    // Async-codec × native-sink: deliverAsync's m_nativeSinkController arm. The other
+    // Async-codec × native-sink: the step completion's m_nativeSinkController arm. The other
     // >128KB tests drain via Response().arrayBuffer() (no native sink); the
     // other Bun.serve tests enqueue ≤64KB (below the async threshold).
     test("CompressionStream('gzip') -> native HTTP response sink handles a single >128KB chunk", async () => {
@@ -480,6 +481,223 @@ describe("CompressionStream and DecompressionStream", () => {
       const out = Buffer.from(await new Response(res.body!.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
       expect(out.byteLength).toBe(big.byteLength);
       expect(Buffer.compare(out, Buffer.from(big.buffer))).toBe(0);
+    });
+
+    // A thread-pool step completes in the async context that is current when it is dispatched: the
+    // write's for a chunk's first step, the read's for a step that a read asks for, the one the stream
+    // was made in for a step that a native sink asks for, the step before's otherwise. A step on the JS
+    // thread runs in the same context. The difference is when: a thread-pool step completes from a later
+    // task, as a JS transform() that enqueues after an await does. (Node's codec delivers in the async
+    // context of the constructor instead.)
+    describe("AsyncLocalStorage", () => {
+      const als = new AsyncLocalStorage<string>();
+      const threshold = 128 * 1024;
+      const turn = () => new Promise(resolve => setImmediate(resolve));
+      const inStore = <T>(store: string | undefined, fn: () => T) => (store ? als.run(store, fn) : fn());
+      // <p> elements of 1 KiB. A stored (level 0) gzip member of them is as long as they are.
+      const paragraphs = (count: number) =>
+        Buffer.alloc(count * 1024, "<p>" + Buffer.alloc(1017, "x").toString() + "</p>");
+      const stored = [140, 280, 420].map(count => zlib.gzipSync(paragraphs(count), { level: 0 }));
+      // Over 128 KiB compressed, and its first 128 KiB inflate to over 2 MiB (20 MiB): that chunk takes
+      // many steps.
+      const comment = "<!--" + Buffer.from(randomBytes(140 * 1024)).toString("base64") + "-->";
+      const [expanding, expandingMore] = [2048, 20480].map(count =>
+        zlib.gzipSync(Buffer.concat([paragraphs(count), Buffer.from(comment)])),
+      );
+
+      // The chunks to write: `count` of `size` bytes, then what is left.
+      const slices = (input: Uint8Array, size: number, count: number) => [
+        ...Array.from({ length: count }, (_, i) => input.subarray(i * size, (i + 1) * size)),
+        input.subarray(count * size),
+      ];
+      const kinds = {
+        "CompressionStream": {
+          make: () => new CompressionStream("gzip"),
+          chunks: (size: number, count = 1) => Array.from({ length: count }, () => randomBytes(size)),
+        },
+        "DecompressionStream": {
+          make: () => new DecompressionStream("gzip"),
+          chunks: (size: number, count = 1) => slices(stored[count - 1], size, count),
+        },
+        "DecompressionStream, a chunk of many steps": {
+          make: () => new DecompressionStream("gzip"),
+          chunks: (size: number) => slices(expanding, size, 1),
+        },
+      };
+      type Kind = keyof typeof kinds;
+
+      type Consume = (readable: ReadableStream<Uint8Array>, note: () => void) => Promise<unknown>;
+      const consumers: Record<string, Consume> = {
+        "a sink's write()": (readable, note) => readable.pipeTo(new WritableStream({ write: note })),
+        "a sink's write() that awaits": (readable, note) =>
+          readable.pipeTo(new WritableStream({ write: () => (note(), turn()) })),
+        "a sink's size()": (readable, note) => readable.pipeTo(new WritableStream({}, { size: () => (note(), 1) })),
+        "a piped transform()": (readable, note) =>
+          readable.pipeThrough(new TransformStream({ transform: note })).pipeTo(new WritableStream()),
+        "a sink behind tee()": (readable, note) => {
+          const [left, right] = readable.tee();
+          return Promise.all([left.pipeTo(new WritableStream({ write: note })), right.pipeTo(new WritableStream())]);
+        },
+      };
+      const rewriter = (element: () => unknown) => new HTMLRewriter().on("p", { element });
+
+      // The stores `consume` is called in, in order and without repeats. The stream is made in the store
+      // `made` and consumed in `read`; chunk i is written in `wrote[i]` (the last one for the rest).
+      // A turn passes after each of them: a stream that has not started yet codes a chunk in its start
+      // steps, and a pipe that is not waiting yet takes a chunk from the queue, in its own store.
+      // With `turning`, the event loop runs inside that store until each write has settled.
+      type Stores = { made?: string; read?: string; wrote: (string | undefined)[]; turning?: string };
+      async function storesSeen(kind: Kind, size: number, consume: Consume, { made, read, wrote, turning }: Stores) {
+        const seen: string[] = [];
+        const stream = inStore(made, kinds[kind].make);
+        await turn();
+        const consumed = inStore(read, () =>
+          consume(stream.readable as ReadableStream<Uint8Array>, () => {
+            const store = als.getStore() ?? "none";
+            if (seen.at(-1) !== store) seen.push(store);
+          }),
+        );
+        await turn();
+        const writer = stream.writable.getWriter();
+        for (const [i, chunk] of kinds[kind].chunks(size, wrote.length).entries()) {
+          const written = inStore(wrote[Math.min(i, wrote.length - 1)], () => writer.write(chunk));
+          // An expect().resolves that nothing awaits runs the event loop until the promise settles. Only
+          // an event loop that runs under script can give a completion a store that is not its own.
+          if (turning) {
+            als.run(turning, () => void expect(written).resolves.toBeUndefined());
+            expect(Bun.peek.status(written)).toBe("fulfilled");
+          }
+          await written;
+          await turn();
+        }
+        await inStore(wrote.at(-1), () => writer.close());
+        await consumed;
+        return seen;
+      }
+      const onBothSidesOfTheThreshold = async (kind: Kind, consume: Consume, stores: Stores) => ({
+        jsThread: await storesSeen(kind, threshold, consume, stores),
+        threadPool: await storesSeen(kind, threshold + 1, consume, stores),
+      });
+
+      const arrangements = {
+        "made, read and written in one store": { made: "wrote", read: "wrote", wrote: ["wrote"] },
+        "made outside any store": { read: "wrote", wrote: ["wrote"] },
+        "made, read and written in three stores": { made: "made", read: "read", wrote: ["wrote"] },
+      };
+
+      describe.each(Object.keys(kinds) as Kind[])("%s", kind => {
+        // Only a step on the thread pool needs the event loop.
+        test("a chunk of 128 KiB is coded on the JS thread, one byte more on the thread pool", async () => {
+          async function settlesWithoutTheEventLoop(size: number) {
+            const stream = kinds[kind].make();
+            await turn();
+            const consumed = stream.readable.pipeTo(new WritableStream());
+            const writer = stream.writable.getWriter();
+            const [first, ...rest] = kinds[kind].chunks(size);
+            const written = writer.write(first);
+            for (let i = 0; i < 1000; i++) await null;
+            const settled = Bun.peek.status(written) === "fulfilled";
+            for (const chunk of rest) await writer.write(chunk);
+            await writer.close();
+            await consumed;
+            return settled;
+          }
+          expect({
+            jsThread: await settlesWithoutTheEventLoop(threshold),
+            threadPool: await settlesWithoutTheEventLoop(threshold + 1),
+          }).toEqual({ jsThread: true, threadPool: false });
+        });
+
+        describe.each(Object.keys(arrangements) as (keyof typeof arrangements)[])("%s", arrangement => {
+          test.each(Object.keys(consumers))("%s runs in the store of the write", async consumer => {
+            expect(await onBothSidesOfTheThreshold(kind, consumers[consumer], arrangements[arrangement])).toEqual({
+              jsThread: ["wrote"],
+              threadPool: ["wrote"],
+            });
+          });
+        });
+      });
+
+      test.each(["CompressionStream", "DecompressionStream"] as const)(
+        "%s: of three chunks written in three stores, the output of each reaches a sink in the store of its own write",
+        async kind => {
+          const stores = { made: "made", read: "read", wrote: ["first", "second", "third"] };
+          expect(await onBothSidesOfTheThreshold(kind, consumers["a sink's write()"], stores)).toEqual({
+            jsThread: ["first", "second", "third"],
+            threadPool: ["first", "second", "third"],
+          });
+        },
+      );
+
+      test.each(Object.keys(kinds) as Kind[])(
+        "%s: a chunk written outside any store reaches a sink in no store, also when the event loop runs inside a store",
+        async kind => {
+          const stores = { made: "made", read: "read", wrote: [undefined], turning: "turning" };
+          expect(await onBothSidesOfTheThreshold(kind, consumers["a sink's write()"], stores)).toEqual({
+            jsThread: ["none"],
+            threadPool: ["none"],
+          });
+        },
+      );
+
+      // On the JS thread the step is done inside the read that asks for it: a pipe that starts later takes
+      // its output from the queue, in the pipe's own store.
+      test("a step that a read asks for reaches a sink that waits for it in the store of that read", async () => {
+        async function storesOfLaterOutput(size: number) {
+          const stream = als.run("made", kinds.DecompressionStream.make);
+          await turn();
+          const writer = stream.writable.getWriter();
+          als.run("wrote", () => writer.write(expandingMore.subarray(0, size)));
+          // With nothing reading, the chunk parks after an output. The read that the queue then serves at
+          // once asks for the chunk's next step. A read that has to wait spends an output: there are 160.
+          const reader = stream.readable.getReader();
+          for (let turns = 256; ; turns *= 2) {
+            for (let i = 0; i < turns; i++) await turn();
+            const read = als.run("read", () => reader.read());
+            if (Bun.peek.status(read) === "fulfilled") break;
+            await read;
+          }
+          reader.releaseLock();
+          const seen: string[] = [];
+          const three = Promise.withResolvers<void>();
+          const note = () => void (seen.push(als.getStore() ?? "none") === 3 && three.resolve());
+          const piped = als.run("piped", () => stream.readable.pipeTo(new WritableStream({ write: note })));
+          await three.promise;
+          await Promise.allSettled([writer.abort(), piped]);
+          return seen.slice(0, 3);
+        }
+        expect({
+          jsThread: await storesOfLaterOutput(threshold),
+          threadPool: await storesOfLaterOutput(threshold + 1),
+        }).toEqual({ jsThread: ["piped", "piped", "piped"], threadPool: ["read", "read", "read"] });
+      });
+
+      // A native sink takes the output straight from the step: no readable side, no pipe. A handler
+      // that awaits makes the rewriter drain microtasks inside that delivery. When the rewriter's reader
+      // falls behind, the sink asks for the chunk's next steps itself. Those run in the store the
+      // stream was made in: here, the store of the write.
+      type Handler = (note: () => void) => () => unknown;
+      const [calls, awaits]: Handler[] = [note => note, note => async () => (note(), await null)];
+      const buffers = (rewritten: Response) => rewritten.arrayBuffer();
+      const fallsBehind = async (rewritten: Response) => {
+        const reader = rewritten.body!.getReader();
+        while (!(await reader.read()).done) await turn();
+      };
+      test.each([
+        ["", "DecompressionStream, a chunk of many steps", calls, buffers],
+        [" that awaits", "DecompressionStream", awaits, buffers],
+        [" whose reader falls behind", "DecompressionStream, a chunk of many steps", calls, fallsBehind],
+      ] as const)(
+        "an HTMLRewriter handler%s over new Response(decompressed) runs in the store of the write",
+        async (_, kind, handler, read) => {
+          const rewrite: Consume = (readable, note) => read(rewriter(handler(note)).transform(new Response(readable)));
+          const oneStore = arrangements["made, read and written in one store"];
+          expect(await onBothSidesOfTheThreshold(kind, rewrite, oneStore)).toEqual({
+            jsThread: ["wrote"],
+            threadPool: ["wrote"],
+          });
+        },
+      );
     });
   });
 });

@@ -21,7 +21,9 @@ use core::ptr::{self, NonNull};
 
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong};
+use bun_jsc::{
+    ErrorCode, JSGlobalObject, JSPromiseStrong, JSUint8Array, JSValue, PinnedArrayBuffer,
+};
 
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
@@ -141,9 +143,12 @@ pub(crate) struct CompressionStreamCoder {
     high_water_mark: usize,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
-    /// The context of the script that made the stream: its off-thread steps belong to it, also
-    /// the ones a native sink asks for.
+    /// The output of the off-thread step that settled last, parked until its delivery has used it.
+    step_output: Vec<u8>,
+    /// The context of the script that made the stream: it owns a chunk that is written with no script on the stack.
     context: bun_jsc::ContextId,
+    /// The context of the write of the chunk that is on the thread pool: every step of that chunk belongs to it.
+    chunk_context: bun_jsc::ContextId,
 }
 
 // SAFETY: the z_stream / Brotli*Instance / ZSTD_*Ctx handles are single-owner
@@ -287,6 +292,9 @@ impl CompressionStreamCoder {
                 Backend::ZstdDecode(p)
             }
         };
+        let context = bun_jsc::virtual_machine::VirtualMachine::get()
+            .context_of_caller()
+            .id();
         Ok(Box::new(Self {
             backend,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
@@ -295,9 +303,9 @@ impl CompressionStreamCoder {
             zstd_head_len: 0,
             high_water_mark,
             pending: None,
-            context: bun_jsc::virtual_machine::VirtualMachine::get()
-                .context_of_caller()
-                .id(),
+            step_output: Vec::new(),
+            context,
+            chunk_context: context,
         }))
     }
 
@@ -948,16 +956,11 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
 // ─── off-thread path (chunks > kAsyncCodecThreshold) ───────────────────────
 
 unsafe extern "C" {
-    /// JS-thread completion in `JSCompressionStreamShared.cpp`: consumes
-    /// `out[..out_len]` before anything may release or re-dispatch the coder.
-    fn Bun__CompressionStream__deliverAsync(
+    /// The promise a step settles, in `JSCompressionStreamShared.cpp`: its reaction is the step's JS-thread completion.
+    fn Bun__CompressionStream__stepPromise(
         global: &JSGlobalObject,
         stream_cell: JSValue,
-        out: *const u8,
-        out_len: usize,
-        more: bool,
-        error: JSValue,
-    );
+    ) -> JSValue;
 }
 
 /// One step of a large `CompressionStream`/`DecompressionStream` chunk, run
@@ -980,11 +983,8 @@ unsafe impl Send for CompressionAsyncCtx {}
 
 #[derive(bun_jsc::JsAffine)]
 pub(crate) struct CompressionAsyncJs {
-    /// GC root for the `JSTransformStream` cell; its `m_asyncCodecInFlight`
-    /// flag defers the eager ClearAlgorithms release while this task holds it,
-    /// and its `m_codecPromise` WriteBarrier keeps the pending
-    /// transform-algorithm promise alive.
-    stream: Strong,
+    /// GC root for the step's promise. Its reaction holds the `JSTransformStream` cell until it has completed the step.
+    step: JSPromiseStrong,
     _pin: Option<PinnedArrayBuffer>,
 }
 
@@ -1005,26 +1005,22 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
 
     fn then(
         this: Self,
-        js: CompressionAsyncJs,
+        mut js: CompressionAsyncJs,
         cx: &bun_jsc::JsThread<'_>,
     ) -> bun_jsc::JsResult<()> {
         let global = cx.global();
-        let (out, out_len, err) = match &this.error {
-            None => (this.out.as_ptr(), this.out.len(), JSValue::ZERO),
-            Some(e) => (core::ptr::null(), 0, codec_error_to_js(global, e)),
-        };
-        // SAFETY: FFI into `JSCompressionStreamShared.cpp`; see above.
-        unsafe {
-            Bun__CompressionStream__deliverAsync(
-                global,
-                js.stream.get(),
-                out,
-                out_len,
-                this.more,
-                err,
-            )
-        };
-        Ok(())
+        match &this.error {
+            None => {
+                let coder = this.coder.as_ptr();
+                // SAFETY: the pool is done with the coder; until the next step only the JS thread touches it.
+                unsafe {
+                    debug_assert!((*coder).step_output.capacity() == 0);
+                    (*coder).step_output = this.out;
+                }
+                js.step.resolve(global, JSValue::js_boolean(this.more))
+            }
+            Some(e) => js.step.reject(global, Ok(codec_error_to_js(global, e))),
+        }
     }
 }
 
@@ -1045,6 +1041,22 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
         CompressionStreams,
         CompressionStreamCoder__transformAsync
     );
+    let vm = global.bun_vm();
+    // SAFETY: `this` is the live coder owned by the calling JS cell, with no step on the pool.
+    let owner = unsafe {
+        debug_assert!((*this).step_output.capacity() == 0);
+        // A chunk's steps are its writer's: the script that wrote it, or the stream's maker for a write with no script on the stack.
+        if !input.is_null() {
+            (*this).chunk_context = if vm.jsc_vm().is_entered() {
+                vm.context_of_caller().id()
+            } else {
+                (*this).context
+            };
+        }
+        (*this).chunk_context
+    };
+    let entered = vm.enter_context(owner);
+    let cx = global.js_thread(entered.context());
     let fallback = if input.is_null() {
         &[][..]
     } else {
@@ -1053,18 +1065,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
     let (input, pin) = AsyncInput::new(global, chunk, fallback);
-    // Called by script, the step is that script's; asked for by a native sink, it is the
-    // stream's maker's.
-    let vm = global.bun_vm();
-    let entered = if vm.jsc_vm().is_entered() {
-        None
-    } else {
-        // SAFETY: `this` is the live coder owned by the calling JS cell.
-        Some(vm.enter_context(unsafe { (*this).context }))
-    };
-    let cx = global.js_thread(match &entered {
-        Some(scope) => scope.context(),
-        None => vm.context_of_caller(),
+    let mut step = JSPromiseStrong::empty();
+    // SAFETY: FFI into `JSCompressionStreamShared.cpp`. Called inside `entered`: the reaction runs as the chunk's writer.
+    step.set(global, unsafe {
+        Bun__CompressionStream__stepPromise(global, stream_cell)
     });
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,
@@ -1077,9 +1081,26 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
             more: false,
             error: None,
         },
-        CompressionAsyncJs {
-            stream: Strong::create(stream_cell, global),
-            _pin: pin,
-        },
+        CompressionAsyncJs { step, _pin: pin },
     );
+}
+
+/// The output of the off-thread step that settled last. Valid until `CompressionStreamCoder__releaseStepOutput`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn CompressionStreamCoder__stepOutput(
+    this: *mut CompressionStreamCoder,
+    len: &mut usize,
+) -> *const u8 {
+    // SAFETY: `this` is the live coder owned by the calling JS cell, with no step on the pool.
+    let out = unsafe { &(*this).step_output };
+    *len = out.len();
+    out.as_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn CompressionStreamCoder__releaseStepOutput(
+    this: *mut CompressionStreamCoder,
+) {
+    // SAFETY: as in `CompressionStreamCoder__stepOutput`.
+    unsafe { (*this).step_output = Vec::new() };
 }

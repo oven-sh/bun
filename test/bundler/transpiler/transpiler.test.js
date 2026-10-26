@@ -6373,6 +6373,133 @@ it.concurrent.each([
   expect(exitCode).toBe(0);
 });
 
+// The module of the macro writes a file when it loads, so the test sees if `macro: false` loaded it.
+it.concurrent("macro: false throws where the code calls a macro and does not load the macro", async () => {
+  using dir = tempDir("transpiler-macro-false", {
+    "macro.ts": `
+      import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
+
+      writeFileSync(join(import.meta.dir, "loaded.txt"), "loaded");
+
+      export function answer() {
+        return 42;
+      }
+    `,
+    "index.ts": `
+      import { existsSync } from "node:fs";
+      import { join } from "node:path";
+
+      const macro = join(import.meta.dir, "macro.ts");
+      const importMacro = "import { answer } from " + JSON.stringify(macro) + ' with { type: "macro" };\\n';
+      const call = importMacro + "export const a = answer();\\n";
+      const unused = importMacro + "export const a = 1;\\n";
+      const loaded = () => existsSync(join(import.meta.dir, "loaded.txt"));
+      const message = async run => {
+        try {
+          await run();
+          return "no error";
+        } catch (error) {
+          return error.message;
+        }
+      };
+
+      const off = new Bun.Transpiler({ loader: "ts", macro: false });
+      const withFalse = {
+        transformSync: await message(() => off.transformSync(call)),
+        transform: await message(() => off.transform(call)),
+        scan: await message(() => off.scan(call)),
+        scanImports: off.scanImports(call).map(entry => entry.path === macro),
+        unusedImport: off.transformSync(unused),
+        loaded: loaded(),
+      };
+      const withTrue = {
+        transformSync: new Bun.Transpiler({ loader: "ts", macro: true }).transformSync(call),
+        loaded: loaded(),
+      };
+      const withNoOption = new Bun.Transpiler({ loader: "ts" }).transformSync(call);
+      console.log(JSON.stringify({ withFalse, withTrue, withNoOption }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds log each macro call to stdout first.
+  expect({ result: stdout.trim().split("\n").at(-1), stderr: stderr.trim() }).toEqual({
+    result: JSON.stringify({
+      withFalse: {
+        transformSync: "Macros are disabled",
+        transform: "Macros are disabled",
+        scan: "Macros are disabled",
+        scanImports: [true],
+        unusedImport: "export const a = 1;\n",
+        loaded: false,
+      },
+      withTrue: { transformSync: "export const a = 42;\n", loaded: true },
+      withNoOption: "export const a = 42;\n",
+    }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+describe("minify option", () => {
+  const code = `
+    function add(first, second) {
+      return first + second;
+    }
+    console.log(add(1, 2) === undefined);
+  `;
+  const plain = "function add(first, second) {\n  return first + second;\n}\nconsole.log(add(1, 2) === undefined);\n";
+  const minified = "function e(n,d){return n+d}console.log(e(1,2)===void 0);";
+  const whitespace = "function add(first,second){return first+second}console.log(add(1,2)===undefined);";
+  const transform = options => new Bun.Transpiler({ loader: "js", ...options }).transformSync(code);
+
+  it("true turns on the three kinds of minification, and an object turns on each kind that it sets to true", () => {
+    expect({
+      true: transform({ minify: true }),
+      threeFlags: transform({ minify: { whitespace: true, syntax: true, identifiers: true } }),
+      whitespace: transform({ minify: { whitespace: true } }),
+      syntax: transform({ minify: { syntax: true } }),
+      identifiers: transform({ minify: { identifiers: true } }),
+      noFlag: transform({ minify: {} }),
+      false: transform({ minify: false }),
+    }).toEqual({
+      true: minified,
+      threeFlags: minified,
+      whitespace,
+      syntax: "function add(first, second) {\n  return first + second;\n}\nconsole.log(add(1, 2) === void 0);\n",
+      identifiers: "function e(n, d) {\n  return n + d;\n}\nconsole.log(e(1, 2) === undefined);\n",
+      noFlag: plain,
+      false: plain,
+    });
+  });
+
+  it("takes priority over minifyWhitespace", () => {
+    expect({
+      minifyWhitespace: transform({ minifyWhitespace: true }),
+      thenFalse: transform({ minifyWhitespace: true, minify: false }),
+      thenWhitespaceFalse: transform({ minifyWhitespace: true, minify: { whitespace: false } }),
+      thenNoFlag: transform({ minifyWhitespace: true, minify: {} }),
+      offThenTrue: transform({ minifyWhitespace: false, minify: true }),
+      offThenWhitespaceTrue: transform({ minifyWhitespace: false, minify: { whitespace: true } }),
+    }).toEqual({
+      minifyWhitespace: whitespace,
+      thenFalse: plain,
+      thenWhitespaceFalse: plain,
+      thenNoFlag: whitespace,
+      offThenTrue: minified,
+      offThenWhitespaceTrue: whitespace,
+    });
+  });
+});
+
 // A numeric literal property name like `1e999` overflows to the number Infinity, which the
 // printer emits as "1/0" / "1 / 0". That is not valid syntax in property-name position, so such
 // keys must be printed as computed properties instead.

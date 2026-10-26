@@ -2905,6 +2905,30 @@ declare module "bun" {
   type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
 
   /**
+   * A loader for one call of {@link Transpiler.transform} or
+   * {@link Transpiler.transformSync}.
+   *
+   * A {@link JavaScriptLoader} transpiles the code. The other loaders print
+   * an ES module from data:
+   *
+   * - `"json"`, `"jsonc"`, `"json5"`, `"toml"`, `"yaml"` and `"xml"` parse
+   *   the input. The default export of the module is the parsed value.
+   * - `"text"` makes the input the default export, as a string.
+   * - `"md"` renders the Markdown. The default export is the HTML, as a string.
+   *
+   * The `loader` option of the constructor takes a {@link JavaScriptLoader}
+   * only.
+   *
+   * @example
+   * ```ts
+   * const transpiler = new Bun.Transpiler();
+   * transpiler.transformSync("Hello, Bun!", "text");
+   * // export default "Hello, Bun!";
+   * ```
+   */
+  type TranspilerLoader = JavaScriptLoader | "json" | "jsonc" | "json5" | "toml" | "yaml" | "xml" | "text" | "md";
+
+  /**
    * Fast deep-equality check two objects.
    *
    * This also powers expect().toEqual in `bun:test`
@@ -3004,8 +3028,17 @@ declare module "bun" {
      *    import UserQuery from "./UserQuery.graphql";
      *    const query = UserQuery;
      *    ```
+     *
+     *    Pass `false` to turn macros off. By default, `transform()`,
+     *    `transformSync()` and `scan()` run a macro when the code calls a
+     *    function that it imports `with { type: "macro" }`. With `false`,
+     *    they fail with `Macros are disabled` at that call, and Bun does
+     *    not load the module of the macro. A macro runs code while Bun
+     *    transpiles, so pass `false` for code that you do not trust.
+     *
+     *    `true` is the same as no `macro` option.
      */
-    macro?: MacroMap;
+    macro?: MacroMap | boolean;
 
     autoImportJSX?: boolean;
     allowBunRuntime?: boolean;
@@ -3023,6 +3056,40 @@ declare module "bun" {
      * Minify whitespace and comments from the output.
      */
     minifyWhitespace?: boolean;
+    /**
+     * Minify the output.
+     *
+     * `true` turns on the three kinds of minification: `whitespace`, `syntax`
+     * and `identifiers`. An object turns on each kind that it sets to `true`.
+     *
+     * `minify` takes priority over {@link TranspilerOptions.minifyWhitespace}.
+     * With `minify: false` or `minify: { whitespace: false }`, the output
+     * keeps its whitespace.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * const transpiler = new Bun.Transpiler({ loader: "js", minify: true });
+     * transpiler.transformSync(`
+     *   function add(first, second) {
+     *     return first + second;
+     *   }
+     *   console.log(add(1, 2) === undefined);
+     * `);
+     * // function e(n,d){return n+d}console.log(e(1,2)===void 0);
+     * ```
+     */
+    minify?:
+      | boolean
+      | {
+          /** Remove whitespace, like {@link TranspilerOptions.minifyWhitespace}. */
+          whitespace?: boolean;
+          /** Rewrite code into a shorter form that does the same, such as `undefined` into `void 0`. */
+          syntax?: boolean;
+          /** Rename variables, functions and parameters that the code does not export to shorter names. */
+          identifiers?: boolean;
+        };
     /**
      * **Experimental**
      *
@@ -3091,13 +3158,13 @@ declare module "bun" {
      * This function does not resolve imports.
      * @param code The code to transpile
      */
-    transform(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): Promise<string>;
+    transform(code: Bun.StringOrBuffer, loader?: TranspilerLoader): Promise<string>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
      */
-    transformSync(code: Bun.StringOrBuffer, loader: JavaScriptLoader, ctx: object): string;
+    transformSync(code: Bun.StringOrBuffer, loader: TranspilerLoader, ctx: object): string;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
@@ -3111,11 +3178,12 @@ declare module "bun" {
      * This function does not resolve imports.
      * @param code The code to transpile
      */
-    transformSync(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): string;
+    transformSync(code: Bun.StringOrBuffer, loader?: TranspilerLoader): string;
 
     /**
      * Get a list of import paths and paths from a TypeScript, JSX, TSX, or JavaScript file.
      * @param code The code to scan
+     * @param loader The loader for this call. The default is the `loader` option of the constructor.
      * @example
      * ```js
      * const {imports, exports} = transpiler.scan(`
@@ -3127,11 +3195,12 @@ declare module "bun" {
      * console.log(exports); // ["hello"]
      * ```
      */
-    scan(code: Bun.StringOrBuffer): { exports: string[]; imports: Import[] };
+    scan(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): { exports: string[]; imports: Import[] };
 
     /**
      *  Get a list of import paths from a TypeScript, JSX, TSX, or JavaScript file.
      * @param code The code to scan
+     * @param loader The loader for this call. The default is the `loader` option of the constructor.
      * @example
      * ```js
      * const imports = transpiler.scanImports(`
@@ -3144,7 +3213,7 @@ declare module "bun" {
      * ```
      * This is a fast path which performs less work than `scan`.
      */
-    scanImports(code: Bun.StringOrBuffer): Import[];
+    scanImports(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): Import[];
   }
 
   type ImportKind =

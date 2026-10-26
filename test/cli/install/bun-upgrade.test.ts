@@ -301,6 +301,25 @@ describe.concurrent(() => {
     expect(exitCode).toBe(0);
   });
 
+  it("takes the flags that choose the CA store", async () => {
+    // With `--stable`, an upgrade that goes ahead asks the local server.
+    using server = startReleaseServer({ tagName: "bun-v9.9.9" });
+    using stagingRoot = tempDir("bun-upgrade-ca-store", {});
+    await using proc = spawn({
+      cmd: [standInExe, "upgrade", "--stable", "--use-openssl-ca", "--use-bundled-ca"],
+      cwd: standInDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, BUN_TMPDIR: String(stagingRoot) },
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(out).toBe("");
+    expect(err).toBe("error: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca\n");
+    expect(exitCode).toBe(1);
+  });
+
   it("two valid arguments, should succeed", async () => {
     // `--stable --profile` are both recognised flags; argument validation must
     // let them through. Only profile assets are served, so reaching the version
@@ -460,7 +479,7 @@ it.concurrent("verifies the downloaded release archive against the digest report
     return {
       stderr,
       exitCode,
-      // Whatever the upgrade staged before it gave up.
+      // Returns whatever the upgrade staged before it gave up.
       staged: readdirSync(String(stagingRoot)),
       downloadUrl: `https://${server.hostname}:${server.port}/download/${releaseAsset}`,
     };

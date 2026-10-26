@@ -84,7 +84,6 @@ pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Optio
                         min: i128::from(min),
                         max: i128::from(max),
                         field_name: b"compress.level",
-                        always_allow_zero: false,
                     },
                 )?)
             }

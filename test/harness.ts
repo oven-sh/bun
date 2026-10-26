@@ -75,8 +75,21 @@ function detectASAN(): boolean {
   return basename(process.execPath).includes("bun-asan");
 }
 
+// A release build is not one. `--revision` can't tell for a debug build, which prints "-debug" either way.
+export const isCanary = detectCanary();
+
+function detectCanary(): boolean {
+  try {
+    return require("bun:internal-for-testing").crash_handler.getFeatureData().is_canary;
+  } catch {}
+  return Bun.spawnSync({ cmd: [process.execPath, "--revision"] }).stdout.includes("canary");
+}
+
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
+  // Windows spells PATH `Path`. `{ ...bunEnv, PATH }` would then hold both, and which one a child
+  // process gets depends on the other variables.
+  ...(isWindows && { Path: undefined, PATH: process.env.PATH }),
   // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
   // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
   JSC_useJIT: undefined,
@@ -163,23 +176,34 @@ export function bunExe() {
  * kernel drops every later SYN. Needs listen(2) with the smallest backlog that admits
  * exactly one connection (macOS treats 0 as unlimited), which Bun's own listeners do
  * not expose, so the listener is a raw libc socket.
+ *
+ * On macOS the listener is bound to lo0. With SYN cookies on (net.inet.tcp.syncookie),
+ * XNU answers the SYN for a full accept queue and resets the connection when its ACK
+ * arrives, except for a listener bound to a loopback interface, which gets no SYN cookies.
  */
 export const blackholePortSource = `
 const net = require("node:net");
 const { dlopen, ptr } = require("bun:ffi");
 const darwin = process.platform === "darwin";
 const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
-  socket:      { args: ["int", "int", "int"],  returns: "int" },
-  bind:        { args: ["int", "ptr", "int"],  returns: "int" },
-  listen:      { args: ["int", "int"],         returns: "int" },
-  getsockname: { args: ["int", "ptr", "ptr"],  returns: "int" },
+  socket:         { args: ["int", "int", "int"],               returns: "int" },
+  if_nametoindex: { args: ["ptr"],                             returns: "u32" },
+  setsockopt:     { args: ["int", "int", "int", "ptr", "int"], returns: "int" },
+  bind:           { args: ["int", "ptr", "int"],               returns: "int" },
+  listen:         { args: ["int", "int"],                      returns: "int" },
+  getsockname:    { args: ["int", "ptr", "ptr"],               returns: "int" },
 });
-const AF_INET = 2, SOCK_STREAM = 1;
+const AF_INET = 2, SOCK_STREAM = 1, IPPROTO_IP = 0, IP_BOUND_IF = 25;
 const addr = new Uint8Array(16);
 if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
 addr.set([127, 0, 0, 1], 4);
 const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
-if (fd < 0 || libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
+if (fd < 0) throw new Error("socket failed");
+if (darwin) {
+  const lo0 = new Uint32Array([libc.symbols.if_nametoindex(ptr(Buffer.from("lo0\\0")))]);
+  if (lo0[0] === 0 || libc.symbols.setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, ptr(lo0), 4) !== 0) throw new Error("IP_BOUND_IF failed");
+}
+if (libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
 const len = new Uint32Array([16]);
 if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
 const port = (addr[2] << 8) | addr[3];
@@ -191,6 +215,22 @@ await new Promise((resolve, reject) => filler.on("connect", resolve).on("error",
 
 export function nodeExe(): string | null {
   return which("node") || null;
+}
+
+/**
+ * `nodeExe()`, or null when that Node.js is older than `version` or does not run. For a reference run whose expected
+ * output is that of a later release: the macOS CI hosts can have an older Node.js than the one Bun reports.
+ */
+export function nodeExeAtLeast(version: string): string | null {
+  const node = nodeExe();
+  if (!node) return null;
+  try {
+    const probe = spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+    return probe.exitCode === 0 && Bun.semver.satisfies(probe.stdout.toString().trim(), `>=${version}`) ? node : null;
+  } catch {
+    // A file that cannot be started at all: a script whose interpreter is gone, a binary of another architecture.
+    return null;
+  }
 }
 
 let abiMatchingNode: Promise<string> | undefined;
@@ -513,10 +553,7 @@ export function hideFromStackTrace(block: CallableFunction) {
 
 export type DirectoryTree = {
   [name: string]:
-    | string
-    | Buffer
-    | DirectoryTree
-    | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
+    string | Buffer | DirectoryTree | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
 };
 
 export async function makeTree(base: string, tree: DirectoryTree) {
@@ -600,10 +637,29 @@ export function tempDirWithFiles(
 
 class DisposableString extends String {
   [Symbol.dispose]() {
-    fs.rmSync(this + "", { recursive: true, force: true });
+    // On Windows a process that was just killed can hold the folder for a moment: a child that a job
+    // object ends after its parent, for one. `rmSync` does not act on `maxRetries`.
+    const deadline = Date.now() + 5000;
+    while (true) {
+      try {
+        fs.rmSync(this + "", { recursive: true, force: true });
+        return;
+      } catch (error: any) {
+        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        sleepSync(50);
+      }
+    }
   }
-  [Symbol.asyncDispose]() {
-    return fs.promises.rm(this + "", { recursive: true, force: true });
+  async [Symbol.asyncDispose]() {
+    const deadline = Date.now() + 5000;
+    while (true) {
+      try {
+        return await fs.promises.rm(this + "", { recursive: true, force: true });
+      } catch (error: any) {
+        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        await Bun.sleep(50);
+      }
+    }
   }
 }
 
@@ -1331,6 +1387,13 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 }
+
+/** Can `ensure(service)` from test/docker/index.ts provide this service here? Same order as `ensure()`. */
+export function isDockerServiceEnabled(service: string): boolean {
+  // isDockerEnabled() throws on Linux CI without docker, so it comes last.
+  return !!process.env["BUN_TEST_SERVICE_" + service] || !!process.env.BUN_DOCKER_COORDINATOR || isDockerEnabled();
+}
+
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);
   let error: unknown;
@@ -1415,10 +1478,7 @@ export async function describeWithContainer(
     }
   }
 
-  // Skip only when no env override, no coordinator, and docker is unavailable.
-  // isDockerEnabled() may throw when docker is required but absent, so the
-  // env-override and coordinator checks must short-circuit before it.
-  if (!process.env["BUN_TEST_SERVICE_" + actualService] && !process.env.BUN_DOCKER_COORDINATOR && !isDockerEnabled()) {
+  if (!isDockerServiceEnabled(actualService)) {
     describe.todo(label);
     return;
   }
@@ -1636,21 +1696,24 @@ export function joinP(...paths: string[]) {
  * we need to do case-insensitive stuff within our Bun.spawn implementation
  *
  * Windows has case-insensitive environment variables, so sometimes an
- * object like { Path: "...", PATH: "..." } will be passed. Bun lets
- * the first one win, but we really want the LAST one to win.
+ * object like { Path: "...", PATH: "..." } will be passed. Which one a
+ * child gets depends on the other variables, but we really want the LAST
+ * one to win.
  *
  * This is mostly needed if you want to override env vars, such like:
  *   env: {
- *     ...bunEnv,
+ *     ...env,
  *     PATH: "my path override here",
  *   }
  * becomes
  *   env: mergeWindowEnvs([
- *     bunEnv,
+ *     env,
  *     {
  *       PATH: "my path override here",
  *     },
  *   ])
+ *
+ * bunEnv spells PATH that way on every platform and does not need it for that.
  */
 export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   const keys: Record<string, string | undefined> = {};
@@ -1774,6 +1837,14 @@ export async function pack(cwd: string, env: NodeJS.Dict<string>, ...args: strin
   expect(exitCode).toBe(0);
 
   return { out, err };
+}
+
+/** Writes `<packageDir>/node_modules/.bin/<name>`: a command that prints `says`. */
+export function writeBinCommand(packageDir: string, name: string, says: string) {
+  const bin = join(packageDir, "node_modules", ".bin");
+  fs.mkdirSync(bin, { recursive: true });
+  if (isWindows) fs.writeFileSync(join(bin, `${name}.cmd`), `@echo ${says}\r\n`);
+  else fs.writeFileSync(join(bin, name), `#!/bin/sh\necho ${says}\n`, { mode: 0o755 });
 }
 
 // If you need to modify, clone it
@@ -2504,3 +2575,58 @@ export const dtUnknownReaddir = {
     return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
   },
 };
+
+/**
+ * Hexadecimal, octal and binary integers as text, each with its exact value. Most lie between two
+ * doubles: 600 from a fixed seed, then ties, neighbours of ties and the edge of `Infinity`.
+ */
+export function integersThatNeedRounding(): [string, bigint][] {
+  // prefix, digits to draw from, longest
+  const prefixes: [string, string, number][] = [
+    ["0x", "0123456789abcdefABCDEF", 40],
+    ["0X", "0123456789abcdef", 40],
+    ["0o", "01234567", 50],
+    ["0b", "01", 140],
+  ];
+  const cases: [string, bigint][] = [];
+  const add = (prefix: string, digits: string) =>
+    cases.push([prefix + digits, BigInt(prefix.toLowerCase() + digits.replaceAll("_", ""))]);
+  let state = 12345;
+  const random = (below: number) => {
+    state = (state + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) % below;
+  };
+  for (let i = 0; i < 600; i++) {
+    const [prefix, alphabet, longest] = prefixes[random(prefixes.length)];
+    let digits = "";
+    for (let length = 1 + random(longest); length > 0; length--) digits += alphabet[random(alphabet.length)];
+    add(prefix, digits);
+  }
+  const edges = [
+    // halfway between two doubles, and one off either side of halfway
+    2n ** 53n + 1n,
+    2n ** 53n + 3n,
+    2n ** 64n + 2n ** 11n,
+    2n ** 64n + 2n ** 11n + 1n,
+    2n ** 64n + 3n * 2n ** 11n,
+    2n ** 200n + 2n ** 147n - 1n,
+    2n ** 200n + 2n ** 147n,
+    2n ** 200n + 2n ** 147n + 1n,
+    // the largest values that are finite, and the first that are not
+    2n ** 1024n - 2n ** 970n - 1n,
+    2n ** 1024n - 2n ** 970n,
+    2n ** 1024n,
+    2n ** 5000n,
+    0n,
+    2n ** 64n - 1n,
+  ];
+  for (const [prefix, alphabet] of prefixes) {
+    const radix = new Set(alphabet.toLowerCase()).size;
+    for (const edge of edges) add(prefix, edge.toString(radix));
+  }
+  add("0x", Buffer.alloc(100, "0").toString() + "b3c8bf81fdf2247");
+  add("0x", "b3c8_bf81_fdf2_247");
+  return cases;
+}

@@ -41,7 +41,8 @@ pub struct Bin {
     pub tag: Tag,
     pub(crate) _padding_tag: [u8; 3],
 
-    // Written to disk byte for byte: `Value::init_*` sets all bytes, a `Value { .. }` literal not.
+    // Written to disk byte for byte. `Value::init_*` sets every byte, but a `Value { .. }` literal
+    // doesn't.
     pub(crate) value: Value,
 }
 
@@ -642,14 +643,15 @@ impl<'a> NamesIterator<'a> {
     }
 }
 
-/// The order in which the packages of one `node_modules` link their bins; the first link stays.
+/// The order in which the packages in one `node_modules` link their bins. The first package to link
+/// a name keeps it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct LinkOrder<'a> {
-    /// Neither the root package nor a workspace member declares the dependency.
+    /// True if neither the root package nor a workspace declares the dependency.
     transitive: bool,
     /// A workspace, `file:` or `link:` directory, not a registry, tarball or git package.
     local_directory: bool,
-    dependency_name: &'a [u8],
+    pub(crate) dependency_name: &'a [u8],
 }
 
 impl<'a> LinkOrder<'a> {
@@ -671,12 +673,13 @@ impl<'a> LinkOrder<'a> {
         }
     }
 
-    /// Whether a dependency of the root package or of a workspace member counts as direct.
+    /// Returns true if a dependency of the root package or of a workspace counts as direct.
     pub(crate) fn declares(behavior: Behavior) -> bool {
         behavior.is_prod() || behavior.is_dev() || behavior.is_optional() || behavior.is_workspace()
     }
 
-    /// By package: a hoisted package keeps the id of the first dependency that reached it.
+    /// Compares by package, because a hoisted package keeps the id of the first dependency that
+    /// reached it.
     pub(crate) fn direct_packages(lockfile: &Lockfile) -> Result<DynamicBitSet, AllocError> {
         let pkgs = lockfile.packages.slice();
         let mut direct = DynamicBitSet::init_empty(pkgs.len())?;
@@ -714,7 +717,8 @@ pub struct PriorityQueueContext {
 
 impl PriorityQueueContext {
     fn link_order(&self, dependency_id: DependencyID) -> LinkOrder<'_> {
-        // Read anew on every compare: the buffers and the package list can grow during the install.
+        // Read these again on every comparison, because the buffers and the package list can grow
+        // during the install.
         let lockfile = self.lockfile.get();
         let package_id = lockfile.buffers.resolutions.as_slice()[dependency_id as usize] as usize;
         LinkOrder::new(
@@ -762,13 +766,6 @@ fn normalized_bin_name(name: &[u8]) -> &[u8] {
 /// point a bin link at (and chmod) an arbitrary file on disk (the bug class
 /// npm fixed as CVE-2019-16775).
 pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
-    if path::is_absolute(target) {
-        return true;
-    }
-    // The OS ends a path at a NUL, so `..\0x` is one component below but opens `..`.
-    if strings::contains_char(target, 0) {
-        return true;
-    }
     // Windows drive-relative paths (`C:foo`, `C:..\evil`) are not "absolute"
     // (no separator after the colon) and their `C:..` component is not a bare
     // `..`, so they would slip past the depth walk below while still resolving
@@ -780,6 +777,20 @@ pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
         .next()
         .is_some_and(|first| strings::contains_char(first, b':'))
     {
+        return true;
+    }
+    path_climbs_out(target)
+}
+
+/// Returns true if `target` is absolute, or if its `..` components lead above the directory it
+/// starts in.
+pub(crate) fn path_climbs_out(target: &[u8]) -> bool {
+    if path::is_absolute(target) {
+        return true;
+    }
+    // The OS stops reading a path at a NUL byte, so `..\0x` would open `..` even though the loop
+    // below counts it as an ordinary name.
+    if strings::contains_char(target, 0) {
         return true;
     }
     let mut depth: isize = 0;
@@ -841,6 +852,10 @@ pub struct Linker<'a> {
     pub abs_dest_buf: &'a mut [u8],
     pub rel_buf: &'a mut [u8],
 
+    /// Whether `node_modules_path` is a symlink (see `LinkedNodeModules`). `None` means not checked
+    /// yet. Behind a symlink, a directory that has a bin's name is kept, and linking fails.
+    pub is_behind_link: Option<bool>,
+
     pub err: Option<Error>,
     pub skipped_due_to_missing_bin: bool,
 }
@@ -859,13 +874,21 @@ fn exec_mode() -> Mode {
 }
 
 impl<'a> Linker<'a> {
-    /// libc reads the umask by setting it: call this while the process has one thread.
+    /// libc can only read the umask by setting it, so call this while the process has a single
+    /// thread.
     pub fn ensure_umask() {
         #[cfg(not(windows))]
         exec_mode();
     }
 
-    /// The global bin dir also holds what is not bun's: only a link into `global_owner` goes.
+    fn is_behind_link(known: &mut Option<bool>, node_modules_path: &mut AbsPath) -> bool {
+        *known.get_or_insert_with(|| {
+            crate::prune::LinkedNodeModules::is_at(node_modules_path.slice_z()) == Some(true)
+        })
+    }
+
+    /// The global bin directory also has files that Bun didn't create, so only a link into
+    /// `global_owner` is removed.
     fn unlink_bin_or_shim(abs_dest: &ZStr, global_owner: Option<&[u8]>) {
         #[cfg(not(windows))]
         {
@@ -907,7 +930,8 @@ impl<'a> Linker<'a> {
         }
     }
 
-    /// Whether the symlink at `abs_dest` with the text `link` leads into `abs_dir`. Lexical.
+    /// Returns true if the symlink at `abs_dest` with the target `link` points into `abs_dir`. The
+    /// check is lexical.
     #[cfg(not(windows))]
     pub(crate) fn link_leads_into(abs_dest: &ZStr, link: &[u8], abs_dir: &[u8]) -> bool {
         let mut resolved_buf = path::path_buffer_pool::get();
@@ -936,14 +960,6 @@ impl<'a> Linker<'a> {
         debug_assert!(abs_target.as_bytes()[abs_target.as_bytes().len() - 1] != SEP);
         debug_assert!(abs_dest.as_bytes()[abs_dest.as_bytes().len() - 1] != SEP);
 
-        if let Some(seen) = self.seen.as_deref() {
-            // Skip seen destinations for this tree
-            // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
-            if seen.contains_key(abs_dest.as_bytes()) {
-                return;
-            }
-        }
-
         // Skip if the target does not exist. This is important because placing a dangling
         // shim in path might break a postinstall
         #[cfg(not(windows))]
@@ -951,17 +967,29 @@ impl<'a> Linker<'a> {
             self.skipped_due_to_missing_bin = true;
             return;
         };
-        #[cfg(windows)]
-        if !sys::exists(abs_target) {
-            self.skipped_due_to_missing_bin = true;
-            return;
-        }
 
         if target_needs_resolved_containment_check {
             #[cfg(not(windows))]
             if self.resolved_target_parent_escapes_package_dir(abs_target) {
                 return;
             }
+        }
+
+        if let Some(seen) = self.seen.as_deref() {
+            // Skip seen destinations for this tree
+            // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
+            if seen.contains_key(abs_dest.as_bytes()) {
+                // The name is taken, and `bunx <this package>` starts the file itself.
+                #[cfg(not(windows))]
+                Self::make_executable(abs_target, &target_stat);
+                return;
+            }
+        }
+
+        #[cfg(windows)]
+        if !sys::exists(abs_target) {
+            self.skipped_due_to_missing_bin = true;
+            return;
         }
 
         if let Some(seen) = self.seen.as_deref_mut() {
@@ -983,11 +1011,15 @@ impl<'a> Linker<'a> {
             },
         };
 
-        // The other bins of the package are still linked; the first error is reported.
+        // The package's other bins are still linked, and the first error is reported.
         if let Err(err) = result {
             self.err.get_or_insert(err);
             #[cfg(windows)]
-            Self::unlink_bin_or_shim(abs_dest, global.then_some(&b""[..]));
+            Self::unlink_bin_or_shim(
+                abs_dest,
+                (global || Self::is_behind_link(&mut self.is_behind_link, self.node_modules_path))
+                    .then_some(&b""[..]),
+            );
             if let Some(seen) = self.seen.as_deref_mut() {
                 seen.remove(abs_dest.as_bytes());
             }
@@ -995,13 +1027,16 @@ impl<'a> Linker<'a> {
         }
 
         #[cfg(not(windows))]
-        {
-            let mode = exec_mode();
-            if (target_stat.st_mode as Mode) & 0o777 != mode {
-                let _ = sys::lchmod(abs_target, mode);
-            }
-            Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
+        Self::make_executable(abs_target, &target_stat);
+    }
+
+    #[cfg(not(windows))]
+    fn make_executable(abs_target: &ZStr, target_stat: &sys::Stat) {
+        let mode = exec_mode();
+        if (target_stat.st_mode as Mode) & 0o777 != mode {
+            let _ = sys::lchmod(abs_target, mode);
         }
+        Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
     }
 
     #[cfg(not(windows))]
@@ -1181,7 +1216,8 @@ impl<'a> Linker<'a> {
         let abs_dest_w_len = abs_dest_w.len();
         let exe_suffix = w!(".exe\x00");
         dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
-        let global_exe_exists = global
+        let foreign_exe_exists = (global
+            || Self::is_behind_link(&mut self.is_behind_link, self.node_modules_path))
             && sys::exists_os_path(
                 bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len()),
                 false,
@@ -1195,7 +1231,7 @@ impl<'a> Linker<'a> {
             bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
 
         // An `.exe` without its `.bunx` is a program, `bun.exe` for one.
-        if global_exe_exists && !sys::exists_os_path(abs_bunx_file, false) {
+        if foreign_exe_exists && !sys::exists_os_path(abs_bunx_file, false) {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::EEXIST));
         }
 
@@ -1230,7 +1266,8 @@ impl<'a> Linker<'a> {
             abs_target.as_bytes(),
         );
 
-        // The shim resolves `bin_path` against its directory's parent; other targets are absolute.
+        // The shim resolves `bin_path` relative to the parent of its directory. Other targets are
+        // absolute.
         let (bin_path, is_absolute_target): (&[u8], bool) =
             match strings::without_prefix_if_possible_comptime(rel_target.as_bytes(), b"..\\") {
                 Some(rel_to_parent) => (rel_to_parent, false),
@@ -1320,12 +1357,13 @@ impl<'a> Linker<'a> {
             return Err(err.into());
         }
 
-        // The name is taken or the directory is read-only: what is there decides.
+        // Either the name is taken or the directory is read-only. Look at what's there to find out.
         let mut existing = path::path_buffer_pool::get();
         match sys::readlink(abs_dest, existing.as_mut_slice()) {
             Ok(len) if existing[..len] == *rel_target.as_bytes() => return Ok(()),
             Ok(len) => {
-                // The global bin dir also holds what bun did not put there, `bun` itself for one.
+                // The global bin directory also has files that Bun didn't put there, such as `bun`
+                // itself.
                 if global
                     && !Self::link_leads_into(
                         abs_dest,
@@ -1342,12 +1380,25 @@ impl<'a> Linker<'a> {
                 sys::Errno::EINVAL if global => {
                     return Err(Error::Sys(bun_errno::SystemErrno::EEXIST));
                 }
+                // pnpm writes its commands as files, so a file is replaced. `unlink` fails on a directory.
+                sys::Errno::EINVAL
+                    if Self::is_behind_link(&mut self.is_behind_link, self.node_modules_path) =>
+                {
+                    // If an existing entry isn't the problem, linking would just fail again.
+                    if errno != sys::Errno::EEXIST {
+                        return Err(err.into());
+                    }
+                    if sys::unlink(abs_dest).is_err() {
+                        return Err(Error::Sys(bun_errno::SystemErrno::EEXIST));
+                    }
+                }
                 sys::Errno::EINVAL => {
                     let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
                 }
                 // Removed in the meantime.
                 sys::Errno::ENOENT if errno == sys::Errno::EEXIST => {}
-                // A free name in a writable directory: no symlinks here (Android's shared storage).
+                // The name is free and the directory is writable, so this file system doesn't
+                // support symlinks (e.g. Android's shared storage).
                 sys::Errno::ENOENT
                     if !global
                         && sys::access(
@@ -1358,7 +1409,7 @@ impl<'a> Linker<'a> {
                 {
                     bun_core::run_once! {{
                         bun_core::warn!(
-                            "{}: symlinks cannot be created in {}, skipping the links to package binaries",
+                            "{}: cannot create symlinks in {}, skipping bin links",
                             bstr::BStr::new(err.name()),
                             bstr::BStr::new(abs_dest_dir),
                         );
@@ -1609,7 +1660,8 @@ impl<'a> Linker<'a> {
         Some(off)
     }
 
-    /// `abs_dest_buf` starts with the `dir_len` bytes of the bin dir. `None` (and `err`): no room.
+    /// `abs_dest_buf` starts with the `dir_len` bytes of the bin directory. If the name doesn't
+    /// fit, sets `err` and returns `None`.
     fn append_dest<'b>(&mut self, dir_len: usize, name: &[u8]) -> Option<&'b ZStr> {
         let len = dir_len + name.len();
         if len >= self.abs_dest_buf.len() {
@@ -1643,7 +1695,7 @@ impl<'a> Linker<'a> {
         let mut resolved_target_pool_buf = path::path_buffer_pool::get();
         let resolved_target_buf = resolved_target_pool_buf.as_mut_slice();
 
-        // `false`: the name does not fit.
+        // Returns false if the name doesn't fit.
         let mut link_named = |this: &mut Self, name: &[u8], target: &[u8]| -> bool {
             if name.is_empty() || target.is_empty() || bin_target_escapes_package_dir(target) {
                 return true;
@@ -1708,7 +1760,10 @@ impl<'a> Linker<'a> {
                 let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                     Ok(d) => sys::Dir::from_fd(d),
                     // https://github.com/npm/cli/blob/366c07e2f3cb9d1c6ddbd03e624a4d73fbd2676e/node_modules/bin-links/lib/link-gently.js#L43
-                    Err(err) if err.get_errno() == sys::Errno::ENOENT => return,
+                    Err(err) if err.get_errno() == sys::Errno::ENOENT => {
+                        self.skipped_due_to_missing_bin = true;
+                        return;
+                    }
                     Err(err) => {
                         self.err = Some(err.into());
                         return;
@@ -1752,7 +1807,7 @@ impl<'a> Linker<'a> {
 
         debug_assert!(bin.tag != Tag::None);
 
-        // `false`: the name does not fit.
+        // Returns false if the name doesn't fit.
         let unlink_name = |this: &mut Self, name: &[u8]| -> bool {
             let Some(abs_dest) = this.append_dest(dest_dir_len, name) else {
                 return false;
@@ -1819,5 +1874,108 @@ impl<'a> Linker<'a> {
                 }
             }
         }
+    }
+}
+
+/// The installers only link the bins of packages that the command names or installs. This links
+/// the bins of the remaining global packages, skipping any name that is already taken.
+pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr) {
+    let pkgs = lockfile.packages.slice();
+    let (Some(dependencies), Some(resolutions)) = (
+        pkgs.items_dependencies().first(),
+        pkgs.items_resolutions().first(),
+    ) else {
+        return;
+    };
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = dependencies.get(lockfile.buffers.dependencies.as_slice());
+    let resolutions = resolutions.get(lockfile.buffers.resolutions.as_slice());
+    let placed: Vec<(&[u8], crate::PackageID)> = (dependencies.iter().zip(resolutions))
+        .map(|(dependency, &package_id)| (dependency.name.slice(string_buf), package_id))
+        .collect();
+    link_free_bins(lockfile, b"node_modules", Some(global_bin_path), &placed);
+}
+
+/// Adds every entry of the `bin_path` folder to `seen`. The linker skips destinations in `seen`,
+/// so it leaves those entries untouched.
+fn see_names_in(bin_path: &[u8], seen: &mut StringHashMap<()>) -> sys::Maybe<()> {
+    let bin_path = strings::without_trailing_slash(bin_path);
+    let bin_dir = sys::Dir::open(bin_path)?;
+    let mut iter = sys::iterate_dir(bin_dir.fd());
+    while let Some(entry) = iter.next().unwrap_or(None) {
+        let name = entry.name.slice_u8();
+        #[cfg(windows)]
+        let name = (name.strip_suffix(b".bunx"))
+            .or_else(|| name.strip_suffix(b".exe"))
+            .unwrap_or(name);
+        let _ = seen.put(&[bin_path, &[SEP][..], name].concat(), ());
+    }
+    Ok(())
+}
+
+/// Calls `see_names_in` on the `.bin` folder of `node_modules`. A missing `.bin` adds nothing.
+pub(crate) fn see_linked_names(node_modules: &[u8], seen: &mut StringHashMap<()>) {
+    let node_modules = strings::without_trailing_slash(node_modules);
+    let _ = see_names_in(&[node_modules, &[SEP][..], &b".bin"[..]].concat(), seen);
+}
+
+/// Links the bins of the packages in `placed`, in order, skipping names that are already taken.
+/// `placed` pairs each package with its folder name in `node_modules`.
+pub(crate) fn link_free_bins(
+    lockfile: &Lockfile,
+    node_modules: &[u8],
+    global_bin_path: Option<&ZStr>,
+    placed: &[(&[u8], crate::PackageID)],
+) {
+    // Two copies of the same path, because the linker reads `target_node_modules_path` while it
+    // holds `node_modules_path` by `&mut`.
+    let abs_node_modules = || -> Option<AbsPath> {
+        let mut dir = AbsPath::init_top_level_dir();
+        dir.try_append(node_modules).ok()?;
+        Some(dir)
+    };
+    let (Some(target_node_modules_path), Some(mut node_modules_path)) =
+        (abs_node_modules(), abs_node_modules())
+    else {
+        return;
+    };
+
+    let mut seen: StringHashMap<()> = StringHashMap::default();
+    match global_bin_path {
+        // The linker creates a missing `.bin`, but never a missing global bin folder.
+        Some(bin_path) if see_names_in(bin_path.as_bytes(), &mut seen).is_err() => return,
+        Some(_) => {}
+        None => see_linked_names(node_modules_path.slice(), &mut seen),
+    }
+
+    let mut abs_target_buf = path::path_buffer_pool::get();
+    let mut abs_dest_buf = path::path_buffer_pool::get();
+    let mut rel_buf = path::path_buffer_pool::get();
+    for &(folder, package_id) in placed {
+        let Some(&bin) = lockfile.packages.items_bin().get(package_id as usize) else {
+            continue;
+        };
+        if bin.tag == Tag::None {
+            continue;
+        }
+        let package_name = strings::StringOrTinyString::init(folder);
+        Linker {
+            bin,
+            target_node_modules_path: &raw const target_node_modules_path,
+            target_package_name: package_name,
+            seen: Some(&mut seen),
+            node_modules_path: &mut node_modules_path,
+            package_name,
+            global_bin_path: global_bin_path.unwrap_or(ZStr::EMPTY),
+            string_buf: lockfile.buffers.string_bytes.as_slice(),
+            extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
+            abs_target_buf: abs_target_buf.as_mut_slice(),
+            abs_dest_buf: abs_dest_buf.as_mut_slice(),
+            rel_buf: rel_buf.as_mut_slice(),
+            is_behind_link: Some(false),
+            err: None,
+            skipped_due_to_missing_bin: false,
+        }
+        .link(global_bin_path.is_some());
     }
 }

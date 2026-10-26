@@ -287,7 +287,7 @@ var access = function access(path, mode, callback?) {
     }
     callback = wrapFsCallback(callback);
     fs.readCb(
-      (err, bytesRead) => (err ? callback(err) : callback(null, bytesRead, buffer)),
+      (err, bytesRead) => (err ? callback(err, 0, buffer) : callback(null, bytesRead, buffer)),
       fd,
       buffer,
       offset,
@@ -297,7 +297,7 @@ var access = function access(path, mode, callback?) {
   },
   write = function write(fd, buffer, offsetOrOptions, length?, position?, callback?) {
     function onWritten(err, bytesWritten) {
-      if (err) callback(err);
+      if (err) callback(err, 0, buffer);
       else callback(null, bytesWritten, buffer);
     }
 
@@ -593,7 +593,7 @@ var access = function access(path, mode, callback?) {
     callback = ensureCallback(callback);
 
     fs.writevCb(
-      (err, bytesWritten) => (err ? callback(err) : callback(null, bytesWritten, buffers)),
+      (err, bytesWritten) => (err ? callback(err, 0, buffers) : callback(null, bytesWritten, buffers)),
       fd,
       buffers,
       position,
@@ -608,7 +608,12 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.readvCb((err, bytesRead) => (err ? callback(err) : callback(null, bytesRead, buffers)), fd, buffers, position);
+    fs.readvCb(
+      (err, bytesRead) => (err ? callback(err, 0, buffers) : callback(null, bytesRead, buffers)),
+      fd,
+      buffers,
+      position,
+    );
   },
   readvSync = fs.readvSync.bind(fs),
   Dirent = fs.Dirent,
@@ -693,7 +698,6 @@ function encodeRealpathResult(result, encoding) {
   return asBuffer.toString(encoding);
 }
 
-let assertEncodingForWindows: any = undefined;
 const realpathSync: typeof import("node:fs").realpathSync =
   process.platform !== "win32"
     ? (fs.realpathSync.bind(fs) as any)
@@ -703,9 +707,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
-              encoding,
-            );
+            $bindgen("node_util_binding.bind.ts", "assertEncodingValid")(encoding);
           }
         }
         // This function is ported 1:1 from node.js, to emulate how it is unable to
@@ -824,9 +826,7 @@ const realpath: typeof import("node:fs").realpath =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
-              encoding,
-            );
+            $bindgen("node_util_binding.bind.ts", "assertEncodingValid")(encoding);
           }
         }
         if (p instanceof URL) {

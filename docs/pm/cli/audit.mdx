@@ -101,6 +101,7 @@ Fixed 3 vulnerabilities in 3 packages
 ```
 
 - **blocked by a dependent's range** — no safe version fits a dependent's declared range. If the range is your own (a `package.json` dependency, a catalog entry, or an `overrides` rule, reported as `package.json overrides ...`), `bun audit fix --latest` gets past it. Otherwise, update the dependent or add an [`overrides`](/pm/overrides) entry.
+- The `peerDependencies` range of a dependency never keeps a vulnerable version of a package that your root `package.json` depends on. Bun upgrades your copy and also lists the package under **blocked by a dependent's range** with the dependent marked `(peer)`.
 - **no published version fixes** — every version Bun would install is vulnerable. Replace the package, or silence the advisory with the printed `--ignore` command.
 - If no newer version is safe but an older one is, Bun downgrades and marks the row `(downgrade)`. Bun only downgrades within the installed major version (within the installed minor version below 1.0.0), with or without `--latest`. When an advisory covers every `2.x` release, Bun lists the package under **no published version fixes** instead of installing a `1.x` release.
 - Bun still installs a safe version newer than `--minimum-release-age` and marks the row `(newer than --minimum-release-age)`.
@@ -123,4 +124,4 @@ Same as `bun audit fix`, but ranges in your own `package.json` files, catalogs, 
 
 `0` if no vulnerabilities remain after Bun applies `--audit-level` and `--ignore`, `1` otherwise. For `bun audit fix`, this is based on the re-audit after installing (or the plan, with `--dry-run`).
 
-If the registry request fails, both commands print `audit request failed` to stderr and exit `1`. The same goes for a response that is not an advisory report (for example, a registry or proxy that answers the audit request with an HTML page or an error object): a response Bun cannot read never counts as a clean audit.
+If the registry request fails, both commands print an error to stderr and exit `1`. The same goes for a response that is not an advisory report (for example, a registry or proxy that answers the audit request with an HTML page, an error object or an empty body): a response Bun cannot read never counts as a clean audit.

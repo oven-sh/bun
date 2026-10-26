@@ -44,6 +44,7 @@ impl PackageManager {
     ///
     /// The cache directory is opened lazily here only when
     /// `options.enable.manifest_cache` is set (the only branch that reads it).
+    #[inline]
     pub fn manifest_disk_cache_ctx(&mut self) -> crate::package_manifest_map::DiskCacheCtx {
         let enable_manifest_cache = self.options.enable.manifest_cache();
         crate::package_manifest_map::DiskCacheCtx {
@@ -59,6 +60,59 @@ impl PackageManager {
     pub(crate) fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
         get_temporary_directory(self)
     }
+
+    /// Prints `why` and exits. Auto-install only logs `why`, and the import that needed the
+    /// directory then throws it.
+    pub(crate) fn exit_or_log(&mut self, why: &DirectoryError) {
+        if !self.options.runtime_auto_install {
+            Output::err_generic("{}", (why,));
+            Global::exit(1);
+        }
+        self.log_mut()
+            .add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{why}"));
+    }
+}
+
+/// Why a directory that the package manager needs could not be opened. `Display` gives the
+/// message that the user sees.
+#[derive(thiserror::Error, Debug)]
+pub enum DirectoryError {
+    #[error("cannot write files: {}", bun_fmt::s(.0.name()))]
+    OpenCache(sys::Error),
+    #[error("cannot access tempdir: {}", bun_fmt::s(.0.name()))]
+    OpenTemporary(sys::Error),
+    #[error(
+        "{} accessing temporary directory. set $BUN_TMPDIR or $BUN_INSTALL",
+        bun_fmt::s(.0.name())
+    )]
+    ProbeTemporary(sys::Error),
+    #[error(
+        "cannot write files to cache directory \"{}\": {}",
+        bun_fmt::s(.cache),
+        bun_fmt::s(.err.name())
+    )]
+    WriteCache { cache: Box<[u8]>, err: sys::Error },
+    #[cfg(windows)]
+    #[error(
+        "{}: failed to read temporary directory path: '{}'",
+        bun_fmt::s(.err.name()),
+        bun_fmt::s(.path)
+    )]
+    TemporaryPath {
+        path: &'static [u8],
+        err: sys::Error,
+    },
+    #[error("failed to find a global directory for package caching and global link directories")]
+    NoGlobal,
+    #[error("{}: failed to open global directory", .0.name())]
+    OpenGlobal(crate::Error),
+    #[error(
+        "{}: failed to open global link dir node_modules at '{global_dir}'",
+        bun_fmt::s(.err.name())
+    )]
+    OpenGlobalLink { global_dir: Fd, err: sys::Error },
+    #[error("{}: failed to get full path of global directory", bun_fmt::s(.0.name()))]
+    GlobalLinkPath(sys::Error),
 }
 
 // ───────────────────────────── cache directory ────────────────────────────────
@@ -69,9 +123,19 @@ impl PackageManager {
 /// use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
 #[inline]
 pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
+    try_get_cache_directory(this).unwrap_or_else(|why| {
+        Output::err_generic("{}", (why,));
+        Global::crash();
+    })
+}
+
+/// Like `get_cache_directory`, but returns the error instead of crashing. Auto-install calls this
+/// first, because `get_cache_directory` cannot fail once the directory is open.
+#[inline]
+pub fn try_get_cache_directory(this: &mut PackageManager) -> Result<Fd, DirectoryError> {
     // SAFETY: `&mut PackageManager` is exclusive over every field the raw
     // path projects.
-    unsafe { get_cache_directory_raw(this) }
+    unsafe { get_cache_directory_raw(this) }.map_err(DirectoryError::OpenCache)
 }
 
 /// Raw-pointer entry for callers that hold a disjoint `&mut this.manifests`
@@ -85,19 +149,19 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
 /// `this` must be valid for reads and writes for the call's duration, and the
 /// caller must hold no live borrow that overlaps the fields listed above.
 #[inline]
-pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
+pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> sys::Maybe<Fd> {
     // SAFETY: caller contract — `cache_directory` is disjoint from any
     // borrow the caller holds.
     if let Some(d) = unsafe { (*this).cache_directory.as_ref() } {
-        return d.fd();
+        return Ok(d.fd());
     }
     // SAFETY: caller contract — `this` is valid and no live borrow overlaps
     // `options.enable`/`options.cache_directory`/`env`/`cache_directory_path`.
-    let d = unsafe { ensure_cache_directory(this) };
+    let d = unsafe { ensure_cache_directory(this) }?;
     let fd = d.fd();
     // SAFETY: as above; single writer.
     unsafe { (*this).cache_directory = Some(d) };
-    fd
+    Ok(fd)
 }
 
 #[inline]
@@ -112,13 +176,24 @@ pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPa
 
 #[inline]
 pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryDirectory {
+    try_get_temporary_directory(this).unwrap_or_else(|why| {
+        Output::err_generic("{}", (why,));
+        Global::crash();
+    })
+}
+
+/// Like `get_temporary_directory`, but returns the error instead of crashing. A failure is not
+/// cached, so the next call tries again.
+pub fn try_get_temporary_directory(
+    this: &mut PackageManager,
+) -> Result<&'static TemporaryDirectory, DirectoryError> {
     // Split get/set so the closure doesn't need to capture `this`.
     if let Some(td) = GET_TEMPORARY_DIRECTORY_ONCE.get() {
-        return td;
+        return Ok(td);
     }
-    let td = get_temporary_directory_run(this);
+    let td = get_temporary_directory_run(this)?;
     let _ = GET_TEMPORARY_DIRECTORY_ONCE.set(td);
-    GET_TEMPORARY_DIRECTORY_ONCE.get().expect("just set")
+    Ok(GET_TEMPORARY_DIRECTORY_ONCE.get().expect("just set"))
 }
 
 pub struct TemporaryDirectory {
@@ -143,8 +218,10 @@ const _: fn() = || {
 static GET_TEMPORARY_DIRECTORY_ONCE: std::sync::OnceLock<TemporaryDirectory> =
     std::sync::OnceLock::new();
 
-fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirectory {
-    let cache_directory_fd = get_cache_directory(manager);
+fn get_temporary_directory_run(
+    manager: &mut PackageManager,
+) -> Result<TemporaryDirectory, DirectoryError> {
+    let cache_directory_fd = try_get_cache_directory(manager)?;
     let cache_directory = Dir::borrow(&cache_directory_fd);
     // The chosen tempdir must be on the same filesystem as the cache directory
     // This makes renameat() work
@@ -162,13 +239,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     Default::default(),
                 ) {
                     Ok(d) => d,
-                    Err(err) => {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error<r>: bun is unable to access tempdir: {}",
-                            bun_fmt::s(err.name())
-                        );
-                        Global::crash();
-                    }
+                    Err(err) => return Err(DirectoryError::OpenTemporary(err)),
                 }
             }
         };
@@ -206,29 +277,19 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                         Default::default(),
                     ) {
                         Ok(d) => d,
-                        Err(err) => {
-                            bun_core::pretty_errorln!(
-                                "<r><red>error<r>: bun is unable to access tempdir: {}",
-                                bun_fmt::s(err.name())
-                            );
-                            Global::crash();
-                        }
+                        Err(err) => return Err(DirectoryError::OpenTemporary(err)),
                     };
 
                     if verbose_install() {
                         bun_core::pretty_errorln!(
-                            "<r><yellow>warn<r>: bun is unable to access tempdir: {}, using fallback",
+                            "<r><yellow>warn<r>: cannot access tempdir: {}, using fallback",
                             bun_fmt::s(err2.name())
                         );
                     }
 
                     continue 'brk;
                 }
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: {} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>",
-                    bun_fmt::s(err2.name())
-                );
-                Global::crash();
+                return Err(DirectoryError::ProbeTemporary(err2));
             }
         };
         let _ = file.close(); // close error is non-actionable
@@ -243,11 +304,10 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     tempdir = match cache_directory.make_open_path(b".tmp", Default::default()) {
                         Ok(d) => d,
                         Err(err2) => {
-                            bun_core::pretty_errorln!(
-                                "<r><red>error<r>: bun is unable to write files to tempdir: {}",
-                                bun_fmt::s(err2.name())
-                            );
-                            Global::crash();
+                            return Err(DirectoryError::WriteCache {
+                                cache: manager.cache_directory_path.as_bytes().into(),
+                                err: err2,
+                            });
                         }
                     };
 
@@ -261,11 +321,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     continue 'brk;
                 }
 
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: {} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>",
-                    bun_fmt::s(err.name())
-                );
-                Global::crash();
+                return Err(DirectoryError::ProbeTemporary(err));
             }
         }
         let _ = cache_directory.delete_file_z(tmpname);
@@ -293,12 +349,10 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     let temp_dir_path = match sys::get_fd_path_z(Fd::from_std_dir(&tempdir), &mut buf) {
         Ok(p) => p,
         Err(err) => {
-            Output::err(
+            return Err(DirectoryError::TemporaryPath {
+                path: temp_dir_name,
                 err,
-                "Failed to read temporary directory path: '{}'",
-                (bun_fmt::s(temp_dir_name),),
-            );
-            Global::exit(1);
+            });
         }
     };
 
@@ -313,12 +367,12 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         temp_dir_name
     };
 
-    TemporaryDirectory {
+    Ok(TemporaryDirectory {
         handle: tempdir,
         name,
         #[cfg(windows)]
         path: ZBox::from_bytes(temp_dir_path.as_bytes()),
-    }
+    })
 }
 
 /// # Safety
@@ -329,7 +383,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
 /// `options.scope`) remain valid.
 #[cold]
 #[inline(never)]
-unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
+unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
     loop {
         // SAFETY: field projections through the caller-provided provenance
         // root; see fn safety contract. Project `enable` narrowly so callers
@@ -347,7 +401,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             });
 
             match opened {
-                Ok(d) => return d,
+                Ok(d) => return Ok(d),
                 Err(_) => {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
                     // any `&options.{registries,scope}` the caller may hold.
@@ -368,44 +422,41 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
                 ))
         };
 
-        match Dir::cwd().make_open_path(b"node_modules/.cache", Default::default()) {
-            Ok(d) => return d,
-            Err(err) => {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: bun is unable to write files: {}",
-                    bun_fmt::s(err.name())
-                );
-                Global::crash();
-            }
-        }
+        return Dir::cwd().make_open_path(b"node_modules/.cache", Default::default());
     }
 }
 
 pub struct CacheDir {
     pub path: Vec<u8>,
-    /// Nothing names a cache directory: `path` is below the working directory, whoever owns that.
+    /// True if no cache directory is configured, so `path` is below the working directory, whoever
+    /// owns that.
     pub is_cwd_fallback: bool,
 }
 
-/// An empty variable counts as unset: `abs(&[b""])` is the project directory.
+/// An empty variable counts as unset, because `abs(&[b""])` would be the project directory.
 pub fn fetch_cache_directory_path(
     env: &mut DotEnvLoader,
     configured: Option<&[u8]>,
 ) -> sys::Maybe<CacheDir> {
     const CWD_FALLBACK: &[u8] = b"node_modules/.bun-cache";
-    let parts: &[&[u8]] = if let Some(dir) = env
-        .get(b"BUN_INSTALL_CACHE_DIR")
-        .filter(|dir| !dir.is_empty())
-    {
+    let variable = |name: &[u8]| {
+        env.get(name)
+            .filter(|dir| !dir.is_empty())
+            .map(options::expand_home)
+    };
+    let from_env = variable(b"BUN_INSTALL_CACHE_DIR");
+    let bun_install = variable(b"BUN_INSTALL");
+    let home = env_var::XDG_CACHE_HOME
+        .get_not_empty()
+        .or_else(|| env_var::HOME.get_not_empty())
+        .map(options::expand_home);
+    let parts: &[&[u8]] = if let Some(dir) = from_env.as_deref() {
         &[dir]
     } else if let Some(dir) = configured.filter(|dir| !dir.is_empty()) {
         &[dir]
-    } else if let Some(dir) = env.get(b"BUN_INSTALL").filter(|dir| !dir.is_empty()) {
+    } else if let Some(dir) = bun_install.as_deref() {
         &[dir, b"install/", b"cache/"]
-    } else if let Some(dir) = env_var::XDG_CACHE_HOME
-        .get_not_empty()
-        .or_else(|| env_var::HOME.get_not_empty())
-    {
+    } else if let Some(dir) = home.as_deref() {
         &[dir, b".bun/", b"install/", b"cache/"]
     } else {
         &[CWD_FALLBACK]
@@ -423,12 +474,13 @@ pub fn fetch_cache_directory_path(
 
 // ─────────────────────── cached folder name printers ──────────────────────────
 
-/// What an entry of the cache root is, by name. Every writer into it is listed at its variant.
+/// What kind of entry something in the cache root is, going by its name. Each variant lists the
+/// code that writes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheEntryKind {
     /// `<name>@<version>...`, `@G@...`, `@GH@...`, `@T@...` (the printers below).
     Package,
-    /// `@<scope>`: holds scoped `Package` and `Index` entries.
+    /// `@<scope>`. Contains the scoped `Package` and `Index` entries.
     Scope,
     /// `<name>/<version>...` symlinks to `Package` directories (`ExtractTarball::extract`).
     Index,
@@ -700,7 +752,8 @@ pub fn cached_npm_package_folder_name_print<'a>(
     };
     w.put(b"@@");
     w.put(&scope_url.hostname[..visible_len]);
-    // The host alone names `https://host/`. A port, a path or http is another registry on it.
+    // The host alone stands for `https://host/`. With a port, a path or http, it's a different
+    // registry on that host.
     if visible_len < scope_url.hostname.len()
         || !scope_url.is_https()
         || !scope_url.port.is_empty()
@@ -781,7 +834,8 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
-/// `@T@sha512-<first 16 digest bytes as hex>@@@1`: a path or URL holds other bytes tomorrow.
+/// Prints `@T@sha512-<first 16 digest bytes as hex>@@@1`. The name uses the digest because a path
+/// or URL can serve different bytes tomorrow.
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     integrity: &Integrity,
@@ -816,7 +870,8 @@ pub fn cached_tarball_folder_name_print<'a>(
     w.finish_z()
 }
 
-/// Empty, which callers treat as a cache miss, for a row that this run gives its integrity.
+/// Returns an empty name, which callers treat as a cache miss, for a dependency that only gets its
+/// integrity during this run.
 pub fn cached_tarball_folder_name(
     this: &PackageManager,
     integrity: &Integrity,
@@ -850,7 +905,8 @@ pub fn cached_tarball_folder_name(
 }
 
 impl PackageManager {
-    /// Whether what this run reads from a `file:` path or URL can become the integrity in bun.lock.
+    /// Returns true if what this run reads from a `file:` path or URL can become the integrity in
+    /// bun.lock.
     pub(crate) fn pins_tarballs(&self) -> bool {
         self.options.do_.save_lockfile() && self.options.offline != options::OfflineMode::Offline
     }
@@ -861,7 +917,8 @@ impl PackageManager {
             && !self.options.do_.contains(options::Do::VERIFY_INTEGRITY)
     }
 
-    /// `named_here`: the names on the command line are about the package.json `dependency` is in.
+    /// `named_here` means the names on the command line refer to the package.json that `dependency`
+    /// is in.
     pub(crate) fn repins_tarball(
         &self,
         dependency: &Dependency,
@@ -945,54 +1002,44 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
 /// the singleton is ever dropped). Callers must not close the returned `Fd`;
 /// use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
 pub fn global_link_dir(this: &mut PackageManager) -> Fd {
+    try_global_link_dir(this).unwrap_or_else(|why| {
+        Output::err_generic("{}", (why,));
+        Global::exit(1);
+    })
+}
+
+/// Like `global_link_dir`, but returns the error instead of exiting.
+pub fn try_global_link_dir(this: &mut PackageManager) -> Result<Fd, DirectoryError> {
     if let Some(d) = this.global_link_dir.as_ref() {
-        return d.fd();
+        return Ok(d.fd());
     }
 
     let global_dir = match options::open_global_dir(this.options.explicit_global_directory) {
         Ok(d) => Dir::from_fd(d),
-        Err(crate::Error::NoGlobalDirectoryFound) => {
-            Output::err_generic(
-                "failed to find a global directory for package caching and global link directories",
-                (),
-            );
-            Global::exit(1);
-        }
-        Err(err) => {
-            Output::err(err, "failed to open the global directory", ());
-            Global::exit(1);
-        }
+        Err(crate::Error::NoGlobalDirectoryFound) => return Err(DirectoryError::NoGlobal),
+        Err(err) => return Err(DirectoryError::OpenGlobal(err)),
     };
     let link_dir = match global_dir.make_open_path(b"node_modules", Default::default()) {
         Ok(d) => d,
         Err(err) => {
-            Output::err(
-                err,
-                "failed to open global link dir node_modules at '{}'",
-                (global_dir.fd(),),
-            );
-            Global::exit(1);
+            // The error message prints this descriptor, and a debug build looks up its path, so
+            // the directory has to stay open.
+            let global_dir = this.global_dir.insert(global_dir).fd();
+            return Err(DirectoryError::OpenGlobalLink { global_dir, err });
         }
     };
     let link_fd = link_dir.fd();
-    this.global_dir = Some(global_dir);
-    this.global_link_dir = Some(link_dir);
     let mut buf = bun_paths::path_buffer_pool::get();
     let path_ = match sys::get_fd_path(link_fd, &mut buf) {
         Ok(p) => p,
-        Err(err) => {
-            Output::err(
-                err,
-                "failed to get the full path of the global directory",
-                (),
-            );
-            Global::exit(1);
-        }
+        Err(err) => return Err(DirectoryError::GlobalLinkPath(err)),
     };
     this.global_link_dir_path = Box::<[u8]>::from(bun_core::handle_oom(
         FileSystem::instance().dirname_store().append(path_),
     ));
-    link_fd
+    this.global_dir = Some(global_dir);
+    this.global_link_dir = Some(link_dir);
+    Ok(link_fd)
 }
 
 pub fn global_link_dir_path(this: &mut PackageManager) -> &[u8] {
@@ -1017,7 +1064,16 @@ pub fn path_for_cached_npm_path<'a>(
         version,
         None,
     );
-    if !is_package_in_cache(this, folder_name, ResolutionTag::Npm) {
+    path_for_cached_folder(this, buf, folder_name, ResolutionTag::Npm)
+}
+
+fn path_for_cached_folder<'a>(
+    this: &mut PackageManager,
+    buf: &'a mut PathBuffer,
+    folder_name: &ZStr,
+    tag: ResolutionTag,
+) -> Result<&'a mut [u8], Error> {
+    if !is_package_in_cache(this, folder_name, tag) {
         return Err(Error::FileNotFound);
     }
     let len = path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
@@ -1046,6 +1102,15 @@ pub fn path_for_resolution<'a>(
             let package_name = this.lockfile.str(&package_name_).to_vec();
 
             path_for_cached_npm_path(this, buf, &package_name, npm.version)
+        }
+        ResolutionTag::Github => {
+            let folder_name = cached_github_folder_name(this, resolution.github(), None);
+            path_for_cached_folder(this, buf, folder_name, resolution.tag)
+        }
+        ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+            let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
+            let folder_name = cached_tarball_folder_name(this, &integrity, resolution, None);
+            path_for_cached_folder(this, buf, folder_name, resolution.tag)
         }
         _ => Ok(&mut buf.0[..0]),
     }
@@ -1104,13 +1169,13 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Fd::cwd();
         }
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-            // Opened first: under `--no-verify` the name depends on what the cache holds.
+            // Open it first, because with `--no-verify` the name depends on what's in the cache.
             cache_dir = get_cache_directory(manager);
             cache_dir_subpath =
                 cached_tarball_folder_name(manager, integrity, resolution, patch_hash);
             if cache_dir_subpath.is_empty() {
                 Output::err_generic(
-                    "the lockfile does not record an integrity for <b>{}@{}<r>, run <cyan>bun install<r> first",
+                    "no integrity in lockfile for <b>{}@{}<r>, run <cyan>bun install<r> first",
                     (
                         bun_fmt::s(name),
                         bun_fmt::for_terminal(resolution.fmt(

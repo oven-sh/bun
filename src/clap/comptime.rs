@@ -546,6 +546,7 @@ impl<Id> ComptimeClap<Id> {
             short_aliases: opt.short_aliases,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
             unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
+            ignored_long_flags: opt.ignored_long_flags,
         };
 
         while let Some(arg) = stream.next()? {
@@ -641,6 +642,15 @@ impl<Id> ComptimeClap<Id> {
             bstr::BStr::new(name),
         );
         &self.multi_options[param.id]
+    }
+
+    pub(crate) fn has(&self, name: &[u8]) -> bool {
+        let param = self.table.find(name);
+        match param.takes_value {
+            Values::None => self.flags[param.id],
+            Values::One | Values::OneOptional => self.single_options[param.id].is_some(),
+            Values::Many => !self.multi_options[param.id].is_empty(),
+        }
     }
 
     pub(crate) fn positionals(&self) -> &[&'static [u8]] {

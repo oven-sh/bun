@@ -12,14 +12,14 @@ use std::borrow::Cow;
 
 type Names = Vec<Box<[u8]>>;
 
-/// A text of the options that can be a pattern.
+/// A string from the options that can be a glob pattern.
 struct Glob {
-    written: Box<[u8]>,
+    pattern_text: Box<[u8]>,
     minimatch: Minimatch,
 }
 
 struct ForbidOption {
-    /// The name of the prop, or a pattern for it.
+    /// The prop's name, or a pattern for it.
     key: Glob,
     is_pattern: bool,
     allowed_for: Names,
@@ -32,7 +32,7 @@ struct ForbidOption {
 /// Disallow certain props on components.
 pub struct ForbidComponentProps {
     forbid: Vec<ForbidOption>,
-    /// Upstream's `Map`, as places in `forbid`: a key stays where it came first, with what came last.
+    /// Upstream's `Map`, as indices into `forbid`. A repeated key keeps its first position but takes the last value.
     map: Vec<usize>,
     /// `forbid: []`
     is_empty_list: bool,
@@ -76,11 +76,11 @@ impl Rule for ForbidComponentProps {
         }
         let mut map: Vec<usize> = Vec::new();
         {
-            let mut places: FxHashMap<&[u8], usize> = FxHashMap::default();
+            let mut slot_by_key: FxHashMap<&[u8], usize> = FxHashMap::default();
             for (at, it) in forbid.iter().enumerate() {
                 let next = map.len();
-                let place = *places.entry(&it.key.written).or_insert(next);
-                match map.get_mut(place) {
+                let slot = *slot_by_key.entry(&it.key.pattern_text).or_insert(next);
+                match map.get_mut(slot) {
                     Some(last) => *last = at,
                     None => map.push(at),
                 }
@@ -90,7 +90,7 @@ impl Rule for ForbidComponentProps {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // oxlint takes an empty list for none.
+        // oxlint treats an empty list like a missing one.
         let has_work = if file.language().is_oxlint { is_jsx(file) } else { !self.is_empty_list };
         has_work.then_some(())
     }
@@ -110,7 +110,7 @@ impl Rule for ForbidComponentProps {
             };
             let prop_name = match strings::split_once_char(name, b':') {
                 None => name,
-                // Of `a:b` it is `b` for oxlint. Upstream finds no text there.
+                // For `a:b` oxlint uses `b`. Upstream gets no name there.
                 Some(it) if is_oxlint => it.1,
                 Some(_) => continue,
             };
@@ -120,7 +120,7 @@ impl Rule for ForbidComponentProps {
             if !option.is_forbidden(tag.get_or_insert_with(|| tag_of(jsx, is_oxlint)).as_deref(), is_oxlint) {
                 continue;
             }
-            // oxlint points at the name.
+            // oxlint reports the name.
             let span = if is_oxlint { key.span(cx.file()) } else { attribute.span() };
             match option.message.as_deref().filter(|it| is_oxlint || !it.is_empty()) {
                 Some(message) if is_oxlint => cx.report(span, CUSTOM).data("message", message.to_vec()),
@@ -134,9 +134,9 @@ impl Rule for ForbidComponentProps {
 
 impl ForbidComponentProps {
     fn get_prop_options(&self, prop: &[u8], is_oxlint: bool) -> Option<&ForbidOption> {
-        let is_named = |it: &&ForbidOption| *it.key.written == *prop;
+        let is_named = |it: &&ForbidOption| *it.key.pattern_text == *prop;
         let matches = |it: &&ForbidOption| it.is_pattern && it.key.matches(prop, is_oxlint);
-        // For oxlint the first that matches counts, a name or a pattern.
+        // For oxlint the first match wins, whether it's a name or a pattern.
         if is_oxlint {
             return self.forbid.iter().find(|it| if it.is_pattern { matches(it) } else { is_named(it) });
         }
@@ -146,13 +146,13 @@ impl ForbidComponentProps {
 }
 
 impl Glob {
-    fn new(written: &[u8]) -> Glob {
-        Glob { written: written.into(), minimatch: Minimatch::new(written) }
+    fn new(pattern_text: &[u8]) -> Glob {
+        Glob { pattern_text: pattern_text.into(), minimatch: Minimatch::new(pattern_text) }
     }
 
     fn matches(&self, name: &[u8], is_oxlint: bool) -> bool {
-        // oxlint has the crate `fast-glob`.
-        if is_oxlint { glob_match(&self.written, name) } else { self.minimatch.matches(name) }
+        // oxlint uses the `fast-glob` crate.
+        if is_oxlint { glob_match(&self.pattern_text, name) } else { self.minimatch.matches(name) }
     }
 }
 
@@ -169,7 +169,7 @@ impl ForbidOption {
         }
     }
 
-    /// `tag` is `None` for what is like no text.
+    /// `tag` is `None` for a tag that can't equal any string.
     fn is_forbidden(&self, tag: Option<&[u8]>, is_oxlint: bool) -> bool {
         let is_in = |names: &Names| tag.is_some_and(|tag| names.iter().any(|it| **it == *tag));
         let matches_any =
@@ -182,9 +182,9 @@ impl ForbidOption {
     }
 }
 
-/// Whether the element with that name is a component.
+/// True if the element with that name is a component.
 fn is_component(name: Expr<'_>, is_oxlint: bool) -> bool {
-    // oxlint asks for a capital of ASCII.
+    // oxlint checks for an ASCII capital.
     if is_oxlint {
         return get_component_name(name).is_some_and(is_react_component_name);
     }
@@ -194,18 +194,18 @@ fn is_component(name: Expr<'_>, is_oxlint: bool) -> bool {
         first <= 0xFFFF && name.get(..size).is_some_and(|it| !text::is_upper_case(it))
     };
     match name.kind() {
-        // Upstream finds no text there.
+        // Upstream gets no name there.
         ExprKind::String(name) if strings::contains_char(name.bytes(), b':') => true,
         _ => get_component_name(name).is_some_and(|it| !is_dom_node(it)),
     }
 }
 
-/// What the lists of the options are asked for.
+/// Returns the tag name that the options' lists are matched against.
 fn tag_of(jsx: Jsx<'_>, is_oxlint: bool) -> Option<Cow<'_, [u8]>> {
     match jsx.tag()?.kind() {
-        // Upstream has a node for `<a:b>`,
+        // For `<a:b>` upstream has a node instead of a name,
         ExprKind::String(name) if !is_oxlint && strings::contains_char(name.bytes(), b':') => None,
-        // and reads the `name` of an `object` that has none.
+        // and for `<a.b.c>` it reads the `name` of an `object` that has none.
         ExprKind::Dot { obj, name, .. } if !is_oxlint && obj.tag() == ExprTag::Dot => {
             Some(Cow::Owned([&b"undefined."[..], name.bytes()].concat()))
         }
@@ -213,7 +213,7 @@ fn tag_of(jsx: Jsx<'_>, is_oxlint: bool) -> Option<Cow<'_, [u8]>> {
     }
 }
 
-/// ESLint puts `data` into a text of the options as well.
+/// ESLint interpolates `data` into a message from the options too.
 #[cold]
 pub(crate) fn custom_message(message: &[u8], prop: &[u8]) -> Vec<u8> {
     match std::str::from_utf8(message) {
@@ -222,7 +222,7 @@ pub(crate) fn custom_message(message: &[u8], prop: &[u8]) -> Vec<u8> {
     }
 }
 
-/// The last name of the name of an element: by it one sees whether it is a component.
+/// Returns the last part of an element's name, which decides whether it's a component.
 fn get_component_name(name: Expr<'_>) -> Option<&[u8]> {
     match name.kind() {
         ExprKind::Ident(name) => Some(name.bytes()),

@@ -187,7 +187,8 @@ describe.each([
 
   /** Dials a new server as "localhost". With `env`, the URL is in `urlVariable` and not in the options. */
   async function dial([query, options, env]: Row) {
-    const server = await startServer("127.0.0.1");
+    // "localhost" is dialed as ::1 and then 127.0.0.1, so the mock has to own the port in both families.
+    const server = await startServer(isIPv6() ? "::" : "127.0.0.1");
     const url = `${scheme}://u@localhost:${server.port}/db${query}`;
     const variables = { ...env, ...(env && { [urlVariable]: url }) };
     // The constructor reads the environment.

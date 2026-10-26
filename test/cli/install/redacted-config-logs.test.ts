@@ -1,6 +1,6 @@
 import { iniInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, hostedGitRepository, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 test("registry url password is sent as Basic auth and left out of request error output", async () => {
@@ -58,7 +58,7 @@ test("url password is masked in the verbose request line", async () => {
 
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(err).toContain(`GET http://user:**********@${server.hostname}:${server.port}/pkg`);
+  expect(err).toContain(`GET http://***@${server.hostname}:${server.port}/pkg`);
   expect(err).not.toContain("secretpass");
   expect(out).not.toContain("secretpass");
   expect(exitCode).toBe(0);
@@ -177,14 +177,14 @@ describe.concurrent("bun install masks the configured registry URL in the messag
       title: "manifest URL outside the registry directory (dependency)",
       registry: `http://127.0.0.1:1/${token}/`,
       files: { "package.json": packageJson({ dependencies: { innocent: "npm:..@1.0.0" } }) },
-      expected: `error: Invalid dependency name ".."\n`,
+      expected: `error: invalid dependency name ".."\n`,
       exitCode: 1,
     },
     {
       title: "manifest URL outside the registry directory (optional dependency)",
       registry: `http://127.0.0.1:1/${token}/`,
       files: { "package.json": packageJson({ optionalDependencies: { innocent: "npm:..@1.0.0" } }) },
-      expected: `warn: Invalid dependency name ".."\n`,
+      expected: `warn: invalid dependency name ".."\n`,
       exitCode: 0,
     },
     {
@@ -206,8 +206,8 @@ describe.concurrent("bun install masks the configured registry URL in the messag
       registry: `htp://127.0.0.1:1/${token}/`,
       files: {
         "package.json": packageJson({ dependencies: { pkg: "1.0.0" } }),
-        // An empty URL in bun.lock stands for the configured registry's
-        // default tarball location, so no manifest is fetched first.
+        // An empty URL in bun.lock means the default tarball location of the configured registry, so no manifest is
+        // fetched first.
         "bun.lock": JSON.stringify({
           lockfileVersion: 1,
           workspaces: { "": { name: "app", dependencies: { pkg: "1.0.0" } } },
@@ -248,7 +248,7 @@ describe.concurrent("redact", async () => {
     {
       title: "url password",
       bunfig: `install.registry = "https://user:pass@registry.org`,
-      expected: `"https://user:****@registry.org`,
+      expected: `"https://*********@registry.org`,
     },
     {
       // A userinfo password that happens to start with a redacted keyword must not
@@ -262,7 +262,7 @@ describe.concurrent("redact", async () => {
     {
       title: "empty url password",
       bunfig: `install.registry = "https://user:@registry.org`,
-      expected: `"https://user:@registry.org`,
+      expected: `"https://*****@registry.org`,
     },
     {
       title: "small string",
@@ -311,7 +311,7 @@ describe.concurrent("redact", async () => {
     {
       title: "_auth zero length",
       npmrc: "//registry.npmjs.org/:_auth=",
-      expected: "supplies no credentials",
+      expected: "ignoring empty _auth value",
     },
     {
       // The unknown-option warning names the option but never echoes the line, so no
@@ -319,31 +319,31 @@ describe.concurrent("redact", async () => {
       // underscore. These rows pin that the warning prints and the value does not.
       title: "quoted _authToken key",
       npmrc: '"//registry.npmjs.org/:_authtoken"=npm_notarealtokenvalue',
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "npm_notarealtokenvalue",
     },
     {
       title: "quoted _auth key",
       npmrc: 'registry=https://registry.example.com/api/\n"//registry.example.com/:_auth_"=does-not-decode',
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "does-not-decode",
     },
     {
       title: "quoted password key",
       npmrc: '"//registry.npmjs.org/:password"=SUPERSECRETVALUE',
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "SUPERSECRETVALUE",
     },
     {
       title: "misspelt option without the underscore",
       npmrc: "//registry.npmjs.org/:authToken=npm_notarealtokenvalue",
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "npm_notarealtokenvalue",
     },
     {
       title: "misspelt _authToken key",
       npmrc: "//registry.npmjs.org/:_authtoken=npm_notarealtokenvalue",
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "npm_notarealtokenvalue",
     },
     // Lines that are not `//host/…:option=value` never reach the unknown-option
@@ -504,7 +504,7 @@ describe.concurrent("bun install masks secrets in the registry-supplied URL it p
     return { err, exitCode };
   }
 
-  const masked = (server: Registry) => `http://carol:******@${server.hostname}:${server.port}`;
+  const masked = (server: Registry) => `http://***@${server.hostname}:${server.port}`;
   // A tarball request sends the URL's userinfo as an Authorization header, so its URL is echoed without it.
   const tarballHost = (server: Registry) => `http://${server.hostname}:${server.port}`;
 
@@ -546,8 +546,8 @@ describe.concurrent("bun install masks secrets in the registry-supplied URL it p
 
   test("dist.tarball URL recorded in the lockfile, downloaded by the isolated linker", async () => {
     await using server = startRegistry();
-    // What a previous install writes to bun.lock for an npm package whose
-    // dist.tarball is not the registry's default tarball location.
+    // Returns what a previous install writes to bun.lock for an npm package whose dist.tarball isn't the registry's
+    // default tarball location.
     const tarball = `http://carol:${password}@${server.hostname}:${server.port}/cdn/tarball-pkg-1.0.0.tgz?token=${token}`;
     const { err, exitCode } = await install(server, ["--linker", "isolated"], {
       "package.json": JSON.stringify({ name: "app", dependencies: { "tarball-pkg": "1.0.0" } }),
@@ -634,10 +634,10 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
   const spec = ({ hostname, port }: Host, query = `?token=${token}`) =>
     `http://carol:${password}@${hostname}:${port}/cdn/direct-1.0.0.tgz${query}`;
   const masked = ({ hostname, port }: Host, query = "?token=***") =>
-    `http://carol:******@${hostname}:${port}/cdn/direct-1.0.0.tgz${query}`;
+    `http://***@${hostname}:${port}/cdn/direct-1.0.0.tgz${query}`;
 
   const packageJson = (dependency: string) => JSON.stringify({ name: "app", dependencies: { direct: dependency } });
-  // What a previous install of `packageJson(dependency)` writes to bun.lock.
+  // Returns what a previous install of `packageJson(dependency)` writes to bun.lock.
   const bunLock = (dependency: string) =>
     JSON.stringify({
       lockfileVersion: 1,
@@ -795,8 +795,8 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
   });
 
   test("git URL specifier", async () => {
-    // The clone fails at once (the connection is closed before TLS starts);
-    // what is being tested is how the specifier is echoed afterwards.
+    // The clone fails immediately, because the connection is closed before TLS starts. The test is about how the
+    // specifier is printed afterwards.
     using server = startClosingServer();
     using dir = tempDir("redacted-resolution-git", {
       "package.json": JSON.stringify({
@@ -807,7 +807,7 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
 
     const { out, err, exitCode } = await run(String(dir), server, ["install"]);
     expect(err).toContain(
-      `error: repo@git+https://carol:******@${server.hostname}:${server.port}/org/repo.git failed to resolve\n`,
+      `error: repo@git+https://***@${server.hostname}:${server.port}/org/repo.git failed to resolve\n`,
     );
     expectNoSecrets(out, err);
     expect(exitCode).toBe(1);
@@ -822,16 +822,16 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     return Bun.serve({ port: 0, fetch: () => new Response(tarball) });
   }
 
-  // `bun add <url>` has no name for the dependency until the package is read,
-  // so the URL stands in for the name in every message about it.
+  // `bun add <url>` has no name for the dependency until the package is read, so every message about it uses the URL
+  // instead.
   test("bun add <git url> that cannot be cloned", async () => {
     using server = startClosingServer();
     using dir = tempDir("redacted-name-git", emptyProject);
-    const url = (pw: string) => `git+https://carol:${pw}@${server.hostname}:${server.port}/org/repo.git`;
+    const url = (userinfo: string) => `git+https://${userinfo}@${server.hostname}:${server.port}/org/repo.git`;
 
-    const { out, err, exitCode } = await run(String(dir), server, ["add", url(password)]);
-    expect(err).toContain(`error: "git clone" for "${url("******")}" failed\n`);
-    expect(err).toContain(` cloning repository for ${url("******")}\n`);
+    const { out, err, exitCode } = await run(String(dir), server, ["add", url(`carol:${password}`)]);
+    expect(err).toContain(`error: "git clone" for "${url("***")}" failed\n`);
+    expect(err).toContain(` cloning repository for ${url("***")}\n`);
     expectNoSecrets(out, err);
     expect(exitCode).toBe(1);
   });
@@ -860,11 +860,11 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     using server = startClosingServer();
     using dir = tempDir("redacted-name-download", emptyProject);
     // No `.tgz` and no path: the URL is both the name and the resolution.
-    const url = (pw: string) => `http://carol:${pw}@${server.hostname}:${server.port}`;
+    const url = (userinfo: string) => `http://${userinfo}@${server.hostname}:${server.port}`;
 
-    const { out, err, exitCode } = await run(String(dir), server, ["add", "--verbose", url(password)]);
-    expect(err).toContain(` downloading tarball ${url("******")}@${url("******")}. Retrying 1/`);
-    expect(err).toContain(` downloading tarball ${url("******")}@${url("******")}\n`);
+    const { out, err, exitCode } = await run(String(dir), server, ["add", "--verbose", url(`carol:${password}`)]);
+    expect(err).toContain(` downloading tarball ${url("***")}@${url("***")}. Retrying 1/`);
+    expect(err).toContain(` downloading tarball ${url("***")}@${url("***")}\n`);
     expectNoSecrets(out, err);
     expect(exitCode).toBe(1);
   });
@@ -883,15 +883,15 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
 
   test("bun add --offline", async () => {
     using dir = tempDir("redacted-name-offline", emptyProject);
-    const git = (pw: string) => `git+https://carol:${pw}@localhost:1/org/repo.git`;
+    const git = (userinfo: string) => `git+https://${userinfo}@localhost:1/org/repo.git`;
 
     const tarball = await run(String(dir), nowhere, ["add", "--offline", spec(nowhere, "")]);
     expect(tarball.err).toContain(`error: --offline: "${masked(nowhere, "")}" is not in the cache\n`);
     expectNoSecrets(tarball.out, tarball.err);
     expect(tarball.exitCode).toBe(1);
 
-    const repo = await run(String(dir), nowhere, ["add", "--offline", git(password)]);
-    expect(repo.err).toContain(`error: --offline: git repository for "${git("******")}" is not in the cache\n`);
+    const repo = await run(String(dir), nowhere, ["add", "--offline", git(`carol:${password}`)]);
+    expect(repo.err).toContain(`error: --offline: git repository for "${git("***")}" is not in the cache\n`);
     expectNoSecrets(repo.out, repo.err);
     expect(repo.exitCode).toBe(1);
   });
@@ -908,23 +908,31 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
 
   // The URL does not start the argument in the first two forms.
   test.each([
-    (pw: string) => `@https://carol:${pw}@localhost:1/org/repo`,
-    (pw: string) => `x@npm:y@https://carol:${pw}@localhost:1/org/repo`,
-    (pw: string) => `ftp://carol:${pw}@localhost:1/org/repo`,
+    (userinfo: string) => `@https://${userinfo}@localhost:1/org/repo`,
+    (userinfo: string) => `x@npm:y@https://${userinfo}@localhost:1/org/repo`,
+    (userinfo: string) => `ftp://${userinfo}@localhost:1/org/repo`,
   ])("bun add of an argument that is not a dependency: %#", async argument => {
     using dir = tempDir("redacted-unrecognised", emptyProject);
 
-    const { out, err, exitCode } = await run(String(dir), nowhere, ["add", argument(password)]);
-    expect(err).toContain(`error: unrecognised dependency format: ${argument("******")}\n`);
+    const { out, err, exitCode } = await run(String(dir), nowhere, ["add", argument(`carol:${password}`)]);
+    expect(err).toContain(`error: unrecognised dependency format: ${argument("***")}\n`);
     expectNoSecrets(out, err);
     expect(exitCode).toBe(1);
   });
 
-  test("a password with an @ in it is masked up to the host", async () => {
-    using dir = tempDir("redacted-at-in-password", emptyProject);
+  test.each([
+    // The userinfo ends at the last `@` in front of the path.
+    ["ftp://carol:s3@cret@localhost:1/org/repo", "ftp://***@localhost:1/org/repo"],
+    ["ftp://ca%20rol:s3%20cret@localhost:1/org/repo", "ftp://***@localhost:1/org/repo"],
+    // The URL ends at a space: what follows it is not its host.
+    ["ftp://localhost:1 lib@1.0.0", "ftp://localhost:1 lib@1.0.0"],
+    ["ftp://localhost failed for lib@1.0.0", "ftp://localhost failed for lib@1.0.0"],
+    ["ftp://localhost: lib@1.0.0", "ftp://localhost: lib@1.0.0"],
+  ])("where the userinfo of %s ends", async (argument, printed) => {
+    using dir = tempDir("redacted-userinfo-end", emptyProject);
 
-    const { err, exitCode } = await run(String(dir), nowhere, ["add", "ftp://carol:s3@cret@localhost:1/org/repo"]);
-    expect(err).toContain("error: unrecognised dependency format: ftp://carol:*******@localhost:1/org/repo\n");
+    const { err, exitCode } = await run(String(dir), nowhere, ["add", argument]);
+    expect(err).toContain(`error: unrecognised dependency format: ${printed}\n`);
     expect(exitCode).toBe(1);
   });
 
@@ -971,25 +979,25 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     });
 
     const { out, err, exitCode } = await run(String(dir), nowhere, ["install"]);
-    expect(err).toContain(`error: Invalid dependency name "${masked(nowhere)}"\n`);
+    expect(err).toContain(`error: invalid dependency name "${masked(nowhere)}"\n`);
     expect(err).toContain(`error: ${masked(nowhere)}@1.0.0 failed to resolve\n`);
     expectNoSecrets(out, err);
     expect(exitCode).toBe(1);
   });
 
   test("a catalog: specifier that holds a URL", async () => {
-    const catalog = (pw: string) => `https://carol:${pw}@localhost:1/x`;
+    const catalog = (userinfo: string) => `https://${userinfo}@localhost:1/x`;
     using dir = tempDir("redacted-catalog-name", {
       "package.json": JSON.stringify({
         name: "app",
         workspaces: ["packages/*"],
-        dependencies: { x: `catalog:${catalog(password)}` },
+        dependencies: { x: `catalog:${catalog(`carol:${password}`)}` },
       }),
     });
 
     const { out, err, exitCode } = await run(String(dir), nowhere, ["install"]);
     expect(err).toContain(
-      `error: x@catalog:${catalog("******")}: there is no catalog named "${catalog("******")}" in the root package.json\n`,
+      `error: x@catalog:${catalog("***")}: there is no catalog named "${catalog("***")}" in the root package.json\n`,
     );
     expectNoSecrets(out, err);
     expect(exitCode).toBe(1);
@@ -997,7 +1005,7 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
 
   // The package that declares a refused dependency is named by its resolution.
   test.each([
-    ["file:./inner.tgz", "local tarball dependencies are only allowed in the package.json files of this project"],
+    ["file:./inner.tgz", "local tarballs are only allowed in this project's package.json files"],
     ["link:../../inner", "only the root package.json, a workspace, or a top-level override may link to a path"],
   ])("a dependency on %s declared by a tarball", async (inner, reason) => {
     await using server = await serveTarballOf(
@@ -1049,16 +1057,16 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     expect(follows.exitCode).toBe(0);
   });
 
-  test("bun pm migrate names the entries it cannot take over", async () => {
+  test("bun pm migrate lists the entries that it can't migrate", async () => {
     using yarn = tempDir("redacted-migrate-yarn", {
       "package.json": packageJson(spec(nowhere)),
       "yarn.lock": `# yarn lockfile v1\n\n\n"direct@${spec(nowhere)}":\n  version "1.0.0"\n`,
     });
-    const fromYarn = await run(String(yarn), nowhere, ["pm", "migrate"]);
+    const fromYarn = await run(String(yarn), nowhere, ["pm", "migrate", "--verbose"]);
     expect(fromYarn.err).toContain(
-      `warn: skipped "direct@${masked(nowhere)}" from yarn.lock: missing "resolved" field\n`,
+      `warn: skipping "direct@${masked(nowhere)}" from yarn.lock: missing "resolved" field\n`,
     );
-    expect(fromYarn.err).toContain(`warn: yarn.lock has no entry for "direct@${masked(nowhere)}"; bun resolves it\n`);
+    expect(fromYarn.err).toContain(`warn: yarn.lock missing "direct@${masked(nowhere)}", resolving it\n`);
     expectNoSecrets(fromYarn.out, fromYarn.err);
     expect(fromYarn.exitCode).toBe(0);
 
@@ -1092,15 +1100,15 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
         packages: { "": { name: "app", dependencies: { direct: spec(nowhere) } } },
       }),
     });
-    const fromNpm = await run(String(npm), nowhere, ["pm", "migrate"]);
+    const fromNpm = await run(String(npm), nowhere, ["pm", "migrate", "--verbose"]);
     expect(fromNpm.err).toContain(
-      `warn: skipped "direct@${masked(nowhere)}" from package-lock.json: no entry for this dependency of "."\n`,
+      `warn: skipping "direct@${masked(nowhere)}" from package-lock.json: no entry for this dependency of "."\n`,
     );
     expectNoSecrets(fromNpm.out, fromNpm.err);
     expect(fromNpm.exitCode).toBe(0);
   });
 
-  // The registry chooses `dist.tarball`. It can hold credentials of its own.
+  // The registry chooses `dist.tarball`, which can contain its own credentials.
   function startRegistry(tarballHost: Host) {
     const version = (v: string) => ({
       name: "direct",
@@ -1147,13 +1155,196 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
   });
 });
 
-// bun requests nothing from a registry URL that is not http(s), and says which URL that was.
+// Either half of the userinfo can be the part that must not be printed.
+describe.concurrent("the userinfo of a git URL is masked as a whole", () => {
+  const word = "s3cretword";
+
+  async function run(cwd: string, env: NodeJS.Dict<string>, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  test.each([
+    [word, "***"],
+    [`${word}:`, "***"],
+    [`${word}:x-oauth-basic`, "***"],
+    [`x-access-token:${word}`, "***"],
+    [`git:${word}`, "***"],
+    ["deploy", "***"],
+    // The account of an ssh server.
+    ["git", "git"],
+  ])("%s", async (userinfo, printed) => {
+    using repo = await hostedGitRepository([`https://${userinfo}@example.com/org/lib`], {
+      "package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+    });
+    const dependency = `git+https://${userinfo}@example.com/org/lib`;
+    using dir = tempDir("redacted-git-userinfo", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { lib: dependency } }),
+    });
+    const cwd = String(dir);
+    const resolution = `lib@git+https://${printed}@example.com/org/lib#${repo.sha}`;
+
+    const install = await run(cwd, repo.env, ["install"]);
+    expect(install.out).toContain(`\n+ ${resolution}\n`);
+    expect(install.exitCode).toBe(0);
+
+    const ls = await run(cwd, repo.env, ["pm", "ls"]);
+    expect(ls.out).toContain(`── ${resolution}\n`);
+    expect(ls.exitCode).toBe(0);
+
+    const why = await run(cwd, repo.env, ["why", "lib"]);
+    expect(why.out).toContain(`${resolution}\n`);
+    expect(why.out).toContain(`(requires git+https://${printed}@example.com/org/lib)\n`);
+    expect(why.exitCode).toBe(0);
+
+    const missing = await run(cwd, repo.env, ["add", `${dependency}#missing`]);
+    expect(missing.err).toContain(`found for "git+https://${printed}@example.com/org/lib#missing" (`);
+    expect(missing.exitCode).toBe(1);
+
+    for (const { out, err } of [install, ls, why, missing]) {
+      expect(out + err).not.toContain(word);
+    }
+
+    // The files keep what was written, because the next install needs it.
+    expect(await Bun.file(join(cwd, "package.json")).json()).toEqual({
+      name: "app",
+      dependencies: { lib: dependency },
+    });
+    expect(await Bun.file(join(cwd, "bun.lock")).text()).toContain(`"lib@${dependency}#${repo.sha}"`);
+  });
+
+  // git names the URL it wants a password for, and bun passes on what git says.
+  test.skipIf(isWindows)("git's own output", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("", { status: 401, headers: { "www-authenticate": 'Basic realm="git"' } }),
+    });
+    using dir = tempDir("redacted-git-userinfo-stderr", {
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { lib: `git+http://${word}@127.0.0.1:${server.port}/org/lib.git` },
+      }),
+    });
+
+    const env = { ...bunEnv, GIT_CONFIG_NOSYSTEM: "1", GIT_ASKPASS: "false", GIT_TERMINAL_PROMPT: "0" };
+    const { out, err, exitCode } = await run(String(dir), env, ["install"]);
+    expect(err).toContain(`could not read Password for 'http://***@127.0.0.1:${server.port}'`);
+    expect(out + err).not.toContain(word);
+    expect(exitCode).toBe(1);
+  });
+
+  // When no form of the URL can be cloned, each is named above what git said of it.
+  test.skipIf(isWindows)("every form of a URL that cannot be cloned", async () => {
+    const url = (scheme: string, userinfo: string) => `${scheme}://${userinfo}@example.com/org/lib.git`;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      // git prints a text/plain answer behind "remote: "
+      fetch: () =>
+        new Response(`No ${url("https", `user:${word}`)} here.\n`, {
+          status: 403,
+          headers: { "content-type": "text/plain" },
+        }),
+    });
+    using dir = tempDir("redacted-git-userinfo-forms", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { lib: `git+${url("ssh", `user:${word}`)}` } }),
+    });
+
+    const env = {
+      ...bunEnv,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: `url.http://user:${word}@127.0.0.1:${server.port}/.insteadOf`,
+      GIT_CONFIG_VALUE_0: `https://user:${word}@example.com/`,
+      GIT_SSH_COMMAND: "sh -c 'echo \"Permission denied (publickey).\" >&2; exit 255'",
+      GIT_TERMINAL_PROMPT: "0",
+    };
+    const { out, err, exitCode } = await run(String(dir), env, ["install"]);
+    expect(err.split("\n").filter(line => line.startsWith("git clone "))).toEqual([
+      `git clone ${url("https", "***")}`,
+      `git clone ${url("ssh", "***")}`,
+    ]);
+    expect(err).toContain(`remote: No ${url("https", "***")} here.\n`);
+    expect(err).toContain("Permission denied (publickey).\n");
+    expect(out + err).not.toContain(word);
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun patch accepts an entry from the list that it prints", async () => {
+    const url = (userinfo: string, repo: string) => `git+https://${userinfo}@example.com/org/${repo}`;
+    using repo = await hostedGitRepository([url(word, "one").slice(4), url(word, "two").slice(4)], {
+      "package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+    });
+    using dir = tempDir("redacted-git-userinfo-patch-list", {
+      "package.json": JSON.stringify({ name: "app", workspaces: ["other"], dependencies: { lib: url(word, "one") } }),
+      "other/package.json": JSON.stringify({ name: "other", dependencies: { lib: url(word, "two") } }),
+    });
+    const cwd = String(dir);
+    const entries = ["one", "two"].map(name => `lib@${url("***", name)}#${repo.sha}`);
+
+    const install = await run(cwd, repo.env, ["install"]);
+    expect(install.exitCode).toBe(0);
+
+    const ambiguous = await run(cwd, repo.env, ["patch", "lib"]);
+    expect(ambiguous.err).toContain(`from the following list:\n  ${entries[0]}\n  ${entries[1]}\n`);
+    expect(ambiguous.out + ambiguous.err).not.toContain(word);
+    expect(ambiguous.exitCode).toBe(1);
+
+    const chosen = await run(cwd, repo.env, ["patch", entries[1]]);
+    expect(chosen.out).toContain("To patch lib, edit the following folder:");
+    expect(chosen.out + chosen.err).not.toContain(word);
+    expect(chosen.exitCode).toBe(0);
+  });
+
+  test("bun patch", async () => {
+    const userinfo = `x-access-token:${word}`;
+    using repo = await hostedGitRepository([`https://${userinfo}@example.com/org/lib`], {
+      "package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+    });
+    using dir = tempDir("redacted-git-userinfo-patch", {
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { lib: `git+https://${userinfo}@example.com/org/lib` },
+      }),
+    });
+    const cwd = String(dir);
+    const key = `lib@git+https://***@example.com/org/lib#${repo.sha}`;
+    const patch = `patches/lib@git+https%3A%2F%2Fexample.com%2Forg%2Flib#${repo.sha}.patch`;
+    const commit = ["patch", "--commit", "node_modules/lib"];
+
+    const steps = [await run(cwd, repo.env, ["install"]), await run(cwd, repo.env, ["patch", "lib"])];
+    await Bun.write(join(cwd, "node_modules", "lib", "added.js"), "1;\n");
+    steps.push(await run(cwd, repo.env, [...commit, "--dry-run"]));
+    expect(steps[2].out).toContain(`would write ${patch} and add ${key} to patchedDependencies\n`);
+    steps.push(await run(cwd, repo.env, commit));
+    expect(await Bun.file(join(cwd, patch)).exists()).toBe(true);
+    // The patch is of the installed package.
+    steps.push(await run(cwd, repo.env, ["install", "--force"]));
+    expect(steps[4].err).not.toContain("no longer applies");
+    expect(await Bun.file(join(cwd, "node_modules", "lib", "added.js")).exists()).toBe(true);
+
+    for (const { out, err, exitCode } of steps) {
+      expect(out + err).not.toContain(word);
+      expect(exitCode).toBe(0);
+    }
+  });
+});
+
+// Bun doesn't send requests to a registry URL that isn't http(s), and it prints which URL that was.
 describe.concurrent("a registry URL that bun refuses is echoed without its password", () => {
   const password = "hunter2";
   const refused = [
-    (pw: string, host: string) => `htps://user:${pw}@${host}/`,
-    (pw: string, host: string) => `user:${pw}@${host}/`,
-    (pw: string, host: string) => `//user:${pw}@${host}/`,
+    (userinfo: string, host: string) => `htps://${userinfo}@${host}/`,
+    (userinfo: string, host: string) => `${userinfo}@${host}/`,
+    (userinfo: string, host: string) => `//${userinfo}@${host}/`,
   ];
 
   async function run(cwd: string, registry: string, args: string[]) {
@@ -1172,9 +1363,9 @@ describe.concurrent("a registry URL that bun refuses is echoed without its passw
 
   test.each(refused)("--registry: %#", async url => {
     using dir = tempDir("redacted-registry-flag", { "package.json": JSON.stringify({ name: "app" }) });
-    const args = ["install", "--registry", url(password, "localhost:1")];
+    const args = ["install", "--registry", url(`user:${password}`, "localhost:1")];
     expect(await run(String(dir), "http://localhost:1/", args)).toEqual({
-      err: `error: Registry URL must start with 'https://' or 'http://': "${url("*******", "localhost:1")}"\n`,
+      err: `error: Registry URL must start with 'https://' or 'http://': "${url("***", "localhost:1")}"\n`,
       exitCode: 1,
     });
   });
@@ -1184,17 +1375,17 @@ describe.concurrent("a registry URL that bun refuses is echoed without its passw
       "package.json": JSON.stringify({
         name: "app",
         version: "1.0.0",
-        publishConfig: { registry: url(password, "localhost:1") },
+        publishConfig: { registry: url(`user:${password}`, "localhost:1") },
       }),
     });
     expect(await run(String(dir), "http://localhost:1/", ["publish", "--dry-run"])).toEqual({
-      err: `error: invalid \`registry\` value in \`publishConfig\`: "${url("*******", "localhost:1")}", expected a URL starting with 'https://' or 'http://'\n`,
+      err: `error: invalid \`registry\` value in \`publishConfig\`: "${url("***", "localhost:1")}", expected a URL starting with 'https://' or 'http://'\n`,
       exitCode: 1,
     });
   });
 
   test("a scope's registry without a scheme", async () => {
-    // The default registry has nothing to report, so that `bun audit` goes on to the scope's.
+    // The default registry has nothing to report, so `bun audit` continues with the scope's registry.
     await using server = Bun.serve({
       port: 0,
       fetch: req => (req.method === "POST" ? Response.json({}) : new Response("{}", { status: 404 })),
@@ -1204,7 +1395,7 @@ describe.concurrent("a registry URL that bun refuses is echoed without its passw
       "package.json": JSON.stringify({ name: "app", dependencies: { "@foo/pkg": "1.0.0" } }),
       "bunfig.toml": `[install.scopes]\nfoo = "user:${password}@${host}/"\n`,
     };
-    const masked = `user:*******@${host}`;
+    const masked = `***@${host}`;
 
     using unlocked = tempDir("redacted-scope-registry", files);
     const resolve = await run(String(unlocked), `http://${host}/`, ["install"]);

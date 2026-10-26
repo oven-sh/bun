@@ -25,9 +25,10 @@ afterAll(() => {
 describe.concurrent("npmrc", async () => {
   const isBase64Encoded = (opt: string) => opt === "_auth" || opt === "_password";
 
-  // A cache and a user config directory (`<packageDir>/home_dir`, absent unless the case creates it) per
-  // install. These cases delete the bunfig.toml that names a cache, so they would share $BUN_INSTALL_CACHE_DIR,
-  // and an install whose credentials the registry refuses succeeds from what an earlier case downloaded.
+  // Each install gets its own cache and user config directory (`<packageDir>/home_dir`, which doesn't exist unless the
+  // case creates it). These cases delete the bunfig.toml that configures a cache, so they would share
+  // $BUN_INSTALL_CACHE_DIR, and an install whose credentials the registry refuses would succeed with what an earlier
+  // case downloaded.
   function installEnv(packageDir: string, extra: Record<string, string> = {}) {
     const home = join(packageDir, "home_dir");
     return {
@@ -183,14 +184,14 @@ registry = http://localhost:${registry.port}/
     // bunEnv spreads process.env, and CI runners commonly export XDG_CONFIG_HOME or
     // (via actions/setup-node) NPM_CONFIG_USERCONFIG, so both are removed here and each
     // case passes back exactly the variables it is testing.
-    async function publish(dir: string, envOverride: Record<string, string>, ...args: string[]) {
+    async function bun(dir: string, envOverride: Record<string, string>, ...cmd: string[]) {
       const spawnEnv: typeof env = { ...env, HOME: join(dir, "home"), USERPROFILE: join(dir, "home") };
       delete spawnEnv.XDG_CONFIG_HOME;
       delete spawnEnv.NPM_CONFIG_USERCONFIG;
       delete spawnEnv.npm_config_userconfig;
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "publish", ...args],
+        cmd: [bunExe(), ...cmd],
         cwd: join(dir, "pkg"),
         env: { ...spawnEnv, ...envOverride },
         stdout: "pipe",
@@ -199,6 +200,8 @@ registry = http://localhost:${registry.port}/
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     }
+    const publish = (dir: string, envOverride: Record<string, string>, ...args: string[]) =>
+      bun(dir, envOverride, "publish", ...args);
 
     // `publish --dry-run` never contacts the registry, but it still requires a token
     // for it and prints which registry it picked up, so it shows which .npmrc was read.
@@ -277,7 +280,7 @@ registry = http://localhost:${registry.port}/
       expect(result).toEqual(usesRegistry(1));
     });
 
-    // npm has no user config at all when `userconfig` names a missing file; it does not go back to ~/.npmrc.
+    // npm has no user config at all if `userconfig` points to a missing file. It doesn't fall back to ~/.npmrc.
     it.concurrent("does not fall back to $HOME/.npmrc when $NPM_CONFIG_USERCONFIG does not exist", async () => {
       using dir = tempDir("npmrc-userconfig-missing", { ...pkg, "home/.npmrc": npmrc(1) });
       const result = await publishDryRun(String(dir), {
@@ -286,6 +289,34 @@ registry = http://localhost:${registry.port}/
       expect(result.stderr).toContain("missing authentication");
       expect(result.exitCode).toBe(1);
     });
+
+    // Dotfiles often point it at $XDG_CONFIG_HOME/npm/npmrc, which need not be there.
+    it.concurrent("bun install prints nothing when $NPM_CONFIG_USERCONFIG does not exist", async () => {
+      using dir = tempDir("npmrc-userconfig-missing-install", { ...pkg, "home/.keep": "" });
+      const missing = join(String(dir), "elsewhere", "missing.npmrc");
+      const result = await bun(String(dir), { NPM_CONFIG_USERCONFIG: missing }, "install");
+      expect(result.stderr).not.toContain("warn:");
+      expect(result.stderr).not.toContain("error:");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it.skipIf(isWindows)("bun install prints nothing when $NPM_CONFIG_USERCONFIG is a directory", async () => {
+      using dir = tempDir("npmrc-userconfig-directory", { ...pkg, "home/.keep": "", "elsewhere/ci.npmrc/.keep": "" });
+      const directory = join(String(dir), "elsewhere", "ci.npmrc");
+      const result = await bun(String(dir), { NPM_CONFIG_USERCONFIG: directory }, "install");
+      expect(result.stderr).not.toContain("warn:");
+      expect(result.stderr).not.toContain("error:");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it.concurrent.each(["NPM_CONFIG_USERCONFIG", "npm_config_userconfig"])(
+      "a leading ~/ in $%s is the home directory",
+      async name => {
+        using dir = tempDir("npmrc-userconfig-home", { ...pkg, "home/.npmrc": npmrc(1), "home/ci.npmrc": npmrc(2) });
+        const result = await publishDryRun(String(dir), { [name]: "~/ci.npmrc" });
+        expect(result).toEqual(usesRegistry(2));
+      },
+    );
 
     it.concurrent("resolves a relative $NPM_CONFIG_USERCONFIG against the directory bun was started in", async () => {
       using dir = tempDir("npmrc-userconfig-relative", {
@@ -656,7 +687,7 @@ ${Object.keys(opts)
       dotEnv: { SECRET_AUTH: "" },
     },
     (stdout: string, stderr: string, exitCode: number) => {
-      expect(stderr).toContain("supplies no credentials");
+      expect(stderr).toContain("ignoring empty _auth value");
       // The empty `_auth` is dropped, so the request carries no credentials and the registry refuses it.
       expect(stderr).toContain("error: @needs-auth/test-pkg@1.0.0 failed to resolve");
       expect(exitCode).toBe(1);
@@ -666,8 +697,7 @@ ${Object.keys(opts)
   describe("empty _auth across the home and project .npmrc", () => {
     const blob = Buffer.from("alice:s3cret").toString("base64");
 
-    // Returns whether the empty-`_auth` diagnostic was printed; the install itself
-    // must still succeed either way.
+    // Returns true if the empty-`_auth` diagnostic was printed. The install itself has to succeed either way.
     async function diagnosed(homeNpmrc: string, projectNpmrc: string) {
       using dir = tempDir("npmrc-empty-auth-two-files", {
         "home/.npmrc": homeNpmrc,
@@ -686,7 +716,7 @@ ${Object.keys(opts)
 
       const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(exitCode).toBe(0);
-      return stderr.includes("supplies no credentials");
+      return stderr.includes("ignoring empty _auth value");
     }
 
     test("a home line is diagnosed against a registry the project declares", async () => {
@@ -764,7 +794,7 @@ registry=https://somehost.com/org1/npm/registry/
       ["full address with a path", "http://[2001:db8::1]:4873/npm/registry/", "//[2001:db8::1]:4873/npm/registry/"],
       ["key without the trailing slash", "http://[::1]:4873/", "//[::1]:4873"],
       ["host-root key for a registry under a path", "http://[::1]:4873/npm/registry/", "//[::1]:4873/"],
-      // The address ends in the scheme's default port digits; they are not a port.
+      // The address ends in the digits of the scheme's default port, but they aren't a port.
       ["address whose last group spells the default port", "http://[::80]/", "//[::80]/"],
     ])("_authToken is applied: %s", (_, registryUrl, key) => {
       const result = loadNpmrc(`registry=${registryUrl}\n${key}:_authToken=v6-token\n`);
@@ -839,7 +869,7 @@ registry=https://somehost.com/org1/npm/registry/
       expect(result.default_registry_token).toBe("");
     });
 
-    // No scheme is invented for `//`: bun requests no such URL, so the credential goes nowhere.
+    // No scheme is made up for `//`. Bun never requests such a URL, so the credential isn't sent anywhere.
     test.each([
       ["http://", "http://registry.example.com/npm/"],
       ["//", "registry.example.com/npm/"],
@@ -1098,7 +1128,7 @@ registry=https://:TOK@somehost.com/
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("supplies no credentials");
+    expect(stderr).toContain("ignoring empty _auth value");
     expect(exitCode).toBe(0);
   });
 
@@ -1271,8 +1301,8 @@ registry=https://:TOK@somehost.com/
       expect(exitCode).toBe(0);
     });
 
-    // No local identity in these values, so the credential goes to the registry as
-    // written and the registry answers; main gave up with "missing authentication".
+    // These values contain no local identity, so the credential is sent to the registry as written, and the registry
+    // responds. It used to give up with "missing authentication".
     test.each([
       ["opaque", "!!not-base64!!"],
       ["blank username", Buffer.from(":s3cret").toString("base64")],
@@ -1471,7 +1501,7 @@ describe("scoped registry routing", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    // The install fails (probe does not exist); we only care where it asked.
+    // The install fails, because probe doesn't exist. Only the host that was asked matters.
     const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(exitCode).not.toBe(0);
 
@@ -1575,8 +1605,8 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install", "--no-cache"],
       cwd: String(dir),
-      // An empty home: the developer's own `.npmrc` declares a `registry=` that
-      // would replace the one under test.
+      // Uses an empty home directory, because the developer's own `.npmrc` may have a `registry=` that would replace
+      // the one being tested.
       env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
       stdout: "pipe",
       stderr: "pipe",
@@ -1786,7 +1816,7 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
   describe("a trailing slash makes a distinct config path", () => {
     const password = Buffer.from("verysecure").toString("base64");
 
-    // The slashed line comes first, so file order cannot be what picks it.
+    // The line with the slash comes first, so file order can't be the reason that it's picked.
     it("the slashed path is deeper than its unslashed twin", async () => {
       const auth = await probeAuthorization(
         host => `//${host}/api/v4/:_authToken=SLASH\n//${host}/api/v4:_authToken=NOSLASH`,
@@ -2002,7 +2032,7 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
     });
 
     it("sends a decodable _auth verbatim rather than re-encoding it", async () => {
-      // Unpadded: a decode/re-encode round trip would add the `=`.
+      // Unpadded, so that decoding and re-encoding it would add the `=`.
       const value = "YWI6Y2Q";
       const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${value}`);
       expect(auth).toBe(`Basic ${value}`);
@@ -2149,16 +2179,15 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
       expect(seen).toEqual({ path: "/api/npm=1/@myorg%2fpkg", auth: null });
     });
 
-    // A marker is matched as spelled, as a `.npmrc` line is: a case variant is a
-    // misspelling, stripped from the path and never adopted.
+    // A marker has to match exactly, like a `.npmrc` line. A different case is a misspelling, which is stripped from
+    // the path and never used.
     it("strips an embedded _AuthToken spelled with a capital without adopting it", async () => {
       const seen = await probeEmbedded("/api/:_AuthToken=T", () => "");
       expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: null });
     });
 
-    // A `:word=` run at the very end of the path is the one place yarn writes a
-    // credential; a misspelt name there is still a credential, stripped and never
-    // adopted. main's blunt colon split removed it too.
+    // A `:word=` at the very end of the path is the one place where Yarn writes a credential. A misspelled name there
+    // is still a credential, so it's stripped and never used.
     it.each(["/api/:_passwd=SECRET", "/api/:authtoken=SECRET"])(
       "strips a misspelt credential segment %s at the end of the path without adopting it",
       async registryPath => {
@@ -2167,8 +2196,8 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
       },
     );
 
-    // A `:word=` or `_word=` segment anywhere else is a plain path segment: npm has
-    // no heuristic for it, and stripping it lost the rest of the registry path.
+    // A `:word=` or `_word=` segment anywhere else is an ordinary path segment. npm has no heuristic for it, and
+    // stripping it used to lose the rest of the registry path.
     it.each([
       ["/a:b=c/npm/", "/a:b=c/npm/@myorg%2fpkg"],
       ["/api/_v=1/npm/", "/api/_v=1/npm/@myorg%2fpkg"],
@@ -2183,8 +2212,8 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
       expect(seen).toEqual({ path: "/a:b=c/npm/@myorg%2fpkg", auth: null });
     });
 
-    // The default registry reaches the scope builder from a `.npmrc` `registry=` line,
-    // `$NPM_CONFIG_REGISTRY` and bunfig's string form as well; the strip is the same.
+    // The default registry can also come from a `registry=` line in `.npmrc`, from `$NPM_CONFIG_REGISTRY`, or from
+    // bunfig's string form. The credential is stripped the same way.
     it.each(["default", "env", "bunfig"] as const)(
       "strips an embedded _authToken from a %s registry URL",
       async source => {
@@ -2193,8 +2222,8 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
       },
     );
 
-    // `--registry` used to bypass the scope builder; with a trailing slash after the
-    // marker the token went out in every request path.
+    // `--registry` used to bypass the scope builder. With a trailing slash after the marker, the token was sent in
+    // every request path.
     it("strips an embedded _authToken from a --registry URL with a trailing slash", async () => {
       const seen = await probeEmbedded("/api/:_authToken=S/", () => "", "", { cli: true });
       expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer S" });
@@ -2230,8 +2259,8 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
       expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer FROM_NPMRC" });
     });
 
-    // main only stripped the marker while looking for a credential to adopt; with
-    // userinfo already in the URL it skipped the scan and the token shipped in the path.
+    // The marker used to be stripped only while looking for a credential to use. With userinfo already in the URL, the
+    // scan was skipped and the token was sent in the path.
     it("strips an embedded _authToken from the path when the URL also carries userinfo", async () => {
       const seen = await probeEmbedded("/api/:_authToken=EMBEDDED", () => "", "u:p@");
       expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${btoa("u:p")}` });
@@ -2249,8 +2278,8 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
       expect(seen).toEqual({ path: "/a:b/c/@myorg%2fpkg", auth: null });
     });
 
-    // An empty marker supplies nothing: it is stripped from the path, but it must not
-    // end the scan or shadow the credential the .npmrc supplies.
+    // An empty marker supplies no credential. It's stripped from the path, but it must not end the scan or hide the
+    // credential from .npmrc.
     it("an empty embedded _auth does not discard the .npmrc credential", async () => {
       const seen = await probeEmbedded("/api/:_auth=", host => `//${host}/:_auth=b3BhcXVlYmxvYg`);
       expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Basic b3BhcXVlYmxvYg" });
@@ -2284,8 +2313,8 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
       expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${Buffer.from("u:p:q").toString("base64")}` });
     });
 
-    // `_authToken` ends what is read, not what is stripped: a segment to its left is
-    // still a secret, and leaving it behind puts it in the request path.
+    // `_authToken` ends what's read, but not what's stripped. A segment to its left is still a secret, and leaving it
+    // there would put it in the request path.
     it("strips a _password written to the left of the _authToken it loses to", async () => {
       const seen = await probeEmbedded("/api/:_password=cA==:_authToken=T", () => "");
       expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
@@ -2296,10 +2325,9 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
       expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
     });
 
-    // The rightmost terminal marker is the one that is read; a second one to its left
-    // is stripped but never recorded, so it cannot outrank the first.
-    // The `_auth` values are ones a base64 round trip would change, so the header
-    // proves the value went out as written.
+    // Only the rightmost terminal marker is read. A second one to its left is stripped but never recorded, so it can't
+    // take precedence over the first. A base64 round trip would change these `_auth` values, so the header proves that
+    // the value was sent as written.
     it.each([
       ["an opaque value", "opaque-blob"],
       ["a blank password", btoa("u:")],
@@ -2564,17 +2592,17 @@ describe(".npmrc diagnostics", () => {
 
   it("warns about an unknown option name without printing its value", async () => {
     const stderr = await stderrOf(`registry=https://example.com/\n//example.com/:_authtoken=SECRETTOKEN\n`);
-    expect(stderr).toContain("_authtoken is not a known .npmrc option");
+    expect(stderr).toContain("ignoring unknown .npmrc option _authtoken");
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 
   it("names the file and line of an unknown option", async () => {
     const stderr = await stderrOf(`registry=https://example.com/\n\n//example.com/:_authtoken=SECRETTOKEN\n`);
-    expect(stderr).toMatch(/_authtoken is not a known .npmrc option[^\n]*\n\s+at .npmrc:3:/);
+    expect(stderr).toMatch(/ignoring unknown .npmrc option _authtoken[^\n]*\n\s+at \S+[\\/]\.npmrc:3:/);
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 
-  it("says nothing about an unknown option under --silent", async () => {
+  it("prints nothing about an unknown option with --silent", async () => {
     const stderr = await stderrOf(`registry=https://example.com/\n//example.com/:_authtoken=SECRETTOKEN\n`, undefined, [
       "--silent",
     ]);
@@ -2595,7 +2623,7 @@ describe(".npmrc diagnostics", () => {
     expect(stderr).toBe("No packages! Deleted empty lockfile\n");
   });
 
-  it("says nothing about a key that matches once normalized", async () => {
+  it("prints nothing about a key that matches once it's normalized", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM:443/:_authToken=SECRETTOKEN\n`);
     expect(stderr).toBe("No packages! Deleted empty lockfile\n");
   });
@@ -3420,8 +3448,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     expect(lockfile).toContain(`${oldRegistry.origin}${tarballPath}`);
     oldRegistry.requests.length = 0;
 
-    // The registry moves; the user keeps credentials for both hosts, as npm
-    // needs them to for the same lockfile.
+    // The registry moves, and the user keeps credentials for both hosts, which npm also needs for the same lockfile.
     await Bun.write(
       join(String(dir), ".npmrc"),
       [
@@ -3818,7 +3845,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     );
   });
 
-  // A tab or another control byte never reaches the wire: the HTTP client refuses the URL, as before.
+  // A tab or another control byte is never sent, because the HTTP client refuses the URL, as before.
   test.each(["/npm/team-a/.\t./team-b/x.tgz", "/npm/team-a/%2e\t%2e/team-b/x.tgz"])(
     "a dist.tarball at %s is not requested at all",
     async tarballPath => {
@@ -3926,7 +3953,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     expect(exitCode).toBe(0);
   });
 
-  // `_auth` goes out as `Basic <value>` verbatim at request time too.
+  // At request time, `_auth` is also sent verbatim as `Basic <value>`.
   test("an _auth line applies to a --registry registry and its tarball", async () => {
     const blob = "opaque-blob";
     using registry = mockRegistry(`Basic ${blob}`);
@@ -3985,8 +4012,8 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     expect(exitCode).toBe(0);
   });
 
-  // Bun's docs long showed the key with a scheme; npm never writes one, but it must keep
-  // working. The scheme is dropped when the line is read.
+  // Bun's docs showed the key with a scheme for a long time. npm never writes one, but it has to keep working. The
+  // scheme is dropped when the line is read.
   test("a key written with a scheme, as Bun's docs showed it, still applies", async () => {
     using registry = mockRegistry("Bearer docs-token");
     using dir = tempDir("npmrc-url-auth-scheme-key", {
@@ -4010,7 +4037,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     using dir = tempDir("npmrc-url-auth-decoded-userinfo", {
       "package.json": packageJson,
       "bunfig.toml": `[install]\nregistry = "http://carol:p%40ss%3Aw@${registry.host}/"\n`,
-      // Rule 3 below: the line on the registry's own key stays behind the credential of bunfig.toml.
+      // Rule 3 below: the credential in bunfig.toml takes precedence over the line for the registry's own key.
       ".npmrc": `//${registry.host}/:_authToken=line-token\n`,
     });
 
@@ -4044,7 +4071,7 @@ registry = { url = "${registry.origin}/", token = "bunfig-token" }
     expect(exitCode).toBe(0);
   });
 
-  // A credential carried over to an env registry never goes from https to http.
+  // A credential that's carried over to a registry from the environment never goes from https to http.
   test("an env registry that downgrades the bunfig registry from https to http gets no carried-over token", async () => {
     const seen: Array<string | null> = [];
     using plain = Bun.serve({
@@ -4079,13 +4106,13 @@ registry = { url = "https://${host}/", token = "https-only" }
     const { stderr, exitCode } = await install(String(dir));
 
     expect(registry.requests).toEqual([{ path: manifestPath, auth: null }]);
-    expect(stderr).toContain("_authtoken is not a known .npmrc option");
+    expect(stderr).toContain("ignoring unknown .npmrc option _authtoken");
     expect(stderr).not.toContain("typo-token");
     expect(exitCode).toBe(1);
   });
 
-  // A lockfile row is data, like a manifest: it can send bun to any URL, and bun presents there only what
-  // the user keyed to that URL, and only over https.
+  // A lockfile entry is data, like a manifest. It can send Bun to any URL, and Bun only sends what the user configured
+  // for that URL, and only over https.
   describe.each(["hoisted", "isolated"])("a bun.lock row names the tarball URL (--linker %s)", linker => {
     const lockfile = (url: string) =>
       JSON.stringify({
@@ -4210,7 +4237,7 @@ registry = { url = "https://${host}/", token = "https-only" }
     expect({ moved, exitCode }).toEqual({ moved: [auth], exitCode: 0 });
   });
 
-  // The URL in the message is the one that was requested, and no spelling of a credential survives in it.
+  // The message has the URL that was requested, without any form of the credential.
   test("the 401 line of a tarball prints the resolved URL without its userinfo", async () => {
     using cdn = mockRegistry("Bearer nobody-has-this", { secure: true, tarballPath: "/npm/b/x.tgz" });
     using registry = mockRegistry("Bearer registry-token", {
@@ -4268,8 +4295,8 @@ describe.concurrent("which credential a registry gets", () => {
     return seen;
   }
 
-  // A credential written into a registry URL stands, whoever wrote the URL, except in a `.npmrc` `registry=`
-  // line: npm reads none there, so any line for the URL replaces it.
+  // A credential that's written into a registry URL is used, no matter who wrote the URL, except in a `registry=` line
+  // in `.npmrc`. npm doesn't read credentials there, so any line for the URL replaces it.
   const inUrl: [string, string][] = [
     ["u:p@", `Basic ${btoa("u:p")}`],
     ["u@", `Basic ${btoa("u:")}`],
@@ -4328,8 +4355,8 @@ describe.concurrent("which credential a registry gets", () => {
     expect(seen).toEqual(["Bearer user-token"]);
   });
 
-  // It used to be dropped unless it started with a lowercase `http://` or `https://`, and the next layer's
-  // registry (nothing listens on it here) served the install without a word.
+  // It used to be dropped unless it started with a lowercase `http://` or `https://`, and the next layer's registry
+  // (nothing listens on it here) silently served the install.
   test.each(["HTTP://", "Http://", " http://"])("$BUN_CONFIG_REGISTRY=%shost/reg/ is the registry", async scheme => {
     const seen = await authorizationOf(host => ({
       files: {
@@ -4342,8 +4369,8 @@ describe.concurrent("which credential a registry gets", () => {
   });
 });
 
-// What is configured as a credential is written into `Authorization` as it is, so a CR or LF in it ends the
-// header line and whatever follows goes out as more header lines, or as a second request.
+// A configured credential is written into `Authorization` as it is. A CR or LF in it would end the header line, and
+// whatever follows would be sent as more header lines or as a second request.
 describe.concurrent("a credential that holds a CR, LF or NUL", () => {
   const injected = "abc\r\nX-Injected: 1";
   type Config = { files: Record<string, string>; args?: string[]; env?: Record<string, string> };
@@ -4393,7 +4420,7 @@ describe.concurrent("a credential that holds a CR, LF or NUL", () => {
   const keys: [string, (host: string) => string][] = [
     ["the registry's own key", host => `//${host}/npm/`],
     ["an ancestor of the registry's key", host => `//${host}/`],
-    // Only a tarball could summon it, and none does: the command fails all the same.
+    // Only a tarball could use it, and none does. The command fails anyway.
     ["the key of a host that is never contacted", () => "//unrelated.invalid/files/"],
   ];
   const table = options.flatMap(([option, linesFor]) =>
@@ -4507,7 +4534,7 @@ describe.concurrent("a credential that holds a CR, LF or NUL", () => {
     expect(exitCode).toBe(1);
   });
 
-  // `echo user:pass | base64`: the newline is inside the base64, not in the header. It is sent as written, as always.
+  // `echo user:pass | base64`: the newline is inside the base64, not in the header. It's sent as written, as always.
   test("an _auth that decodes to text with a newline is not refused", async () => {
     const { seen, exitCode } = await install(host => ({
       files: {
@@ -4609,14 +4636,15 @@ describe.concurrent("a registry URL that is neither http nor https gets no reque
   test.each(table)("%s, registry = %s", async (_, __, route, registryFor) => {
     const result = await run(route.cmd, host => ({
       "bunfig.toml": `[install]\nregistry = "${registryFor(host)}"\n`,
-      // An ancestor key: the walk finds it for every path on the host.
+      // A key for an ancestor path, which the walk finds for every path on the host.
       ".npmrc": `//${host}/:_authToken=line-token\n`,
       ...route.files?.(registryFor(host)),
     }));
     expect(result).toEqual({ connections: 0, received: [], exitCode: 1 });
   });
 
-  // The value is the registry, however unusable: the one bunfig.toml names must not get the request instead.
+  // The value is the registry, even though it's unusable. The request must not go to the registry in bunfig.toml
+  // instead.
   test.each(routes)("%s, $BUN_CONFIG_REGISTRY = htp://host/reg/", async (_, route) => {
     const result = await run(
       route.cmd,
@@ -4630,7 +4658,7 @@ describe.concurrent("a registry URL that is neither http nor https gets no reque
     expect(result).toEqual({ connections: 0, received: [], exitCode: 1 });
   });
 
-  // `bun audit` skips a scoped registry that has no audit endpoint; this one has no usable URL.
+  // `bun audit` skips a scoped registry that has no audit endpoint. This one has no usable URL.
   test("bun audit fails for a scoped registry too", async () => {
     await using defaultRegistry = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.json({}) });
     const result = await run(["audit"], host => ({
@@ -4724,7 +4752,7 @@ describe.concurrent("registry credentials from $VAR env references", () => {
     const { stderr, exitCode } = await install(String(dir), {});
     expect(auths).toEqual([null]);
     expect(stderr).toContain("$UNSET_TOKEN_41044");
-    expect(stderr).toContain("is not set");
+    expect(stderr).toContain("references unset variable");
     expect(exitCode).not.toBe(0);
   });
 
@@ -4814,8 +4842,8 @@ describe.concurrent("registry credentials from $VAR env references", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  // .npmrc values never go through $VAR substitution: a decoded _password
-  // that happens to start with "$" is a literal.
+  // .npmrc values never go through $VAR substitution, so a decoded _password that happens to start with "$" is a
+  // literal.
   test("a .npmrc _password that decodes to a $-prefixed value is sent verbatim", async () => {
     const auths: (string | null)[] = [];
     await using server = authLoggingRegistry(auths);
@@ -4964,7 +4992,7 @@ describe.concurrent("registry credentials from $VAR env references", () => {
     });
     const { stderr, exitCode } = await install(String(dir), {});
     expect(auths).toEqual(["Bearer $UNSET_TOKEN_41044"]);
-    expect(stderr).not.toContain("is not set");
+    expect(stderr).not.toContain("unset variable");
     expect(exitCode).not.toBe(0);
   });
 });
@@ -5119,7 +5147,7 @@ registry=http://127.0.0.1:4873/ ; default registry
 
   // A CI .npmrc written for npm must skip scripts here too.
   test.concurrent.each(["ignore-scripts=1", "ignore-scripts=True", "ignore-scripts=", "ignore-scripts=true # CI"])(
-    "%s: bun install runs no script",
+    "%s: bun install doesn't run any script",
     async line => {
       using dir = tempDir("npmrc-ignore-scripts", {
         "package.json": JSON.stringify({
@@ -5205,12 +5233,17 @@ describe.concurrent("`ca` and `cafile` are one setting: a layer that sets either
   });
 });
 
-// A config file that is there and cannot be read must not be skipped in silence: without its `registry=` and
-// `_authToken`, every package name goes to the public registry. Not concurrent: `unprivilegedSpawnOptions` may change
-// and restore the modes of directories above the test's own.
-describe.skipIf(isWindows)("unreadable config files", () => {
+// Like npm, Bun skips a config file that it can't read, e.g. a root-owned ~/.npmrc in a Docker image that runs as another
+// user. Not concurrent: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+describe.skipIf(isWindows)("unreadable config files are skipped", () => {
   /** Runs bun in `<dir>/project` with `<dir>/home` as the home directory, as a user that file modes apply to. */
-  async function run(cmd: string[], prepare: (dir: string, lock: (path: string) => void) => void, xdg = false) {
+  async function run(
+    cmd: string[],
+    prepare: (dir: string, lock: (path: string) => void) => void,
+    xdg = false,
+    registry?: string,
+    extra: Record<string, string> = {},
+  ) {
     using dir = tempDir("npmrc-unreadable", {
       // No dependencies, so no network.
       "project/package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
@@ -5236,6 +5269,8 @@ describe.skipIf(isWindows)("unreadable config files", () => {
           HOME: join(String(dir), "home"),
           XDG_CONFIG_HOME: xdg ? join(String(dir), "xdg") : undefined,
           BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+          BUN_CONFIG_REGISTRY: registry,
+          ...extra,
         },
         stdout: "pipe",
         stderr: "pipe",
@@ -5249,42 +5284,80 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     }
   }
 
-  const files: [name: string, path: string, message: string][] = [
-    ["./.npmrc", "project/.npmrc", "The registry and auth settings in .npmrc are not applied."],
-    ["~/.npmrc", "home/.npmrc", "home/.npmrc are not applied."],
-    ["./bunfig.toml", "project/bunfig.toml", "project/bunfig.toml are not applied."],
-    ["~/.bunfig.toml", "home/.bunfig.toml", "home/.bunfig.toml are not applied."],
-    ["$XDG_CONFIG_HOME/.bunfig.toml", "xdg/.bunfig.toml", "xdg/.bunfig.toml are not applied."],
+  const files: [name: string, path: string][] = [
+    ["./.npmrc", "project/.npmrc"],
+    ["~/.npmrc", "home/.npmrc"],
+    ["./bunfig.toml", "project/bunfig.toml"],
+    ["~/.bunfig.toml", "home/.bunfig.toml"],
+    ["$XDG_CONFIG_HOME/.bunfig.toml", "xdg/.bunfig.toml"],
   ];
 
-  test.each(files)("%s is a directory", async (_, path, message) => {
-    const { stderr, exitCode } = await run(["install"], dir => mkdirSync(join(dir, path)), path.startsWith("xdg"));
-    expect(stderr).toContain("warn: EISDIR");
-    expect(stderr).toContain(message);
-    expect(exitCode).toBe(0);
-  });
+  /** `prepare` for a file that exists but can't be read. */
+  const mode000 = (path: string) => (dir: string, lock: (path: string) => void) => {
+    writeFileSync(join(dir, path), "");
+    lock(path);
+  };
 
-  test.each(files)("--silent says nothing about %s", async (_, path) => {
-    const silent = await run(["install", "--silent"], dir => mkdirSync(join(dir, path)), path.startsWith("xdg"));
-    expect(silent).toEqual({ stdout: "", stderr: "", exitCode: 0 });
-  });
-
-  test.each(files)("%s has mode 000", async (_, path, message) => {
-    const { stderr, exitCode } = await run(
-      ["install"],
-      (dir, lock) => {
-        writeFileSync(join(dir, path), "");
-        lock(path);
-      },
-      path.startsWith("xdg"),
+  function withDependency(dir: string) {
+    mkdirSync(join(dir, "project/dep"));
+    writeFileSync(join(dir, "project/dep/package.json"), JSON.stringify({ name: "dep", version: "1.0.0" }));
+    writeFileSync(
+      join(dir, "project/package.json"),
+      JSON.stringify({ name: "app", dependencies: { dep: "file:./dep" } }),
     );
-    expect(stderr).toContain("warn: EACCES");
-    expect(stderr).toContain(message);
+  }
+
+  function expectInstalled({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof run>>) {
+    expect(stderr).not.toContain("warn:");
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("1 package installed");
     expect(exitCode).toBe(0);
+  }
+
+  test.each(files)("bun install works when %s has mode 000", async (_, path) => {
+    const prepare = (dir: string, lock: (path: string) => void) => {
+      withDependency(dir);
+      mode000(path)(dir, lock);
+    };
+    expectInstalled(await run(["install"], prepare, path.startsWith("xdg")));
   });
 
-  // `sudo -u nobody bun ...` with the HOME of the caller, `USER nobody` in a container with HOME=/root: EACCES comes from
-  // the directory, and whether the file exists is not known. The file is there in these tests, which changes nothing.
+  // Docker creates a directory for a `-v` mount of `~/.npmrc` if the host doesn't have the file.
+  test.each(files)("bun install works when %s is a directory", async (_, path) => {
+    const prepare = (dir: string) => {
+      withDependency(dir);
+      mkdirSync(join(dir, path));
+    };
+    expectInstalled(await run(["install"], prepare, path.startsWith("xdg")));
+  });
+
+  test("bun install works when $NPM_CONFIG_USERCONFIG has mode 000", async () => {
+    const prepare = (dir: string, lock: (path: string) => void) => {
+      withDependency(dir);
+      mode000("home/ci.npmrc")(dir, lock);
+    };
+    expectInstalled(await run(["install"], prepare, false, undefined, { NPM_CONFIG_USERCONFIG: "../home/ci.npmrc" }));
+  });
+
+  test.each(["a.js", "run a.js", "run s", "-e console.log('ran')"])(
+    "bun %s prints nothing about ./bunfig.toml with mode 000",
+    async cmd => {
+      const result = await run(cmd.split(" "), (dir, lock) => {
+        writeFileSync(join(dir, "project/a.js"), "console.log('ran')");
+        writeFileSync(join(dir, "project/package.json"), JSON.stringify({ scripts: { s: "echo ran" } }));
+        mode000("project/bunfig.toml")(dir, lock);
+      });
+      expect({ ...result, stderr: result.stderr.replace("$ echo ran\n", "") }).toEqual({
+        stdout: "ran\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // `sudo -u nobody bun ...` with the caller's HOME, or `USER nobody` in a container with HOME=/root. EACCES comes from
+  // the directory, so there's no way to know whether the file exists. It does exist in these tests, which makes no
+  // difference.
   test.each([
     ["~/.npmrc", "home/.npmrc"],
     ["~/.bunfig.toml", "home/.bunfig.toml"],
@@ -5303,8 +5376,8 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Linux only: macOS has no getcwd system call, and its libc cannot find the path of such a directory.
-  test.skipIf(!isLinux)("nothing is said about ./bunfig.toml in a directory that cannot be searched", async () => {
+  // Linux only. macOS has no getcwd system call, and its libc can't find the path of such a directory.
+  test.skipIf(!isLinux)("nothing is printed about ./bunfig.toml in a directory that cannot be searched", async () => {
     const result = await run(["-e", "console.log(1)"], (dir, lock) => {
       writeFileSync(join(dir, "project/bunfig.toml"), "");
       lock("project");
@@ -5313,35 +5386,86 @@ describe.skipIf(isWindows)("unreadable config files", () => {
   });
 
   // The package.json beside it is refused first, so this is the one message.
-  test.skipIf(!isLinux)("nothing is said about ./.npmrc in a directory that cannot be searched", async () => {
+  test.skipIf(!isLinux)("nothing is printed about ./.npmrc in a directory that cannot be searched", async () => {
     const { stderr, exitCode } = await run(["install"], (dir, lock) => {
       writeFileSync(join(dir, "project/.npmrc"), "");
       lock("project");
     });
     expect(stderr).toContain("package.json");
-    expect(stderr).not.toContain("not applied");
+    expect(stderr).not.toContain(".npmrc");
     expect(exitCode).toBe(1);
   });
 
-  test("--silent hides the warning about a .npmrc", async () => {
-    const { stderr, exitCode } = await run(["install", "--silent"], (dir, lock) => {
-      writeFileSync(join(dir, "project/.npmrc"), "");
-      lock("project/.npmrc");
-    });
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  });
-
-  test("nothing is said when no config file exists", async () => {
+  test("nothing is printed when no config file exists", async () => {
     const { stderr, exitCode } = await run(["install"], () => {});
     expect(stderr).not.toContain("warn:");
     expect(exitCode).toBe(0);
   });
 });
 
+// Env files and CI matrices shared between platforms hand such values to every one of them.
+describe.concurrent("a config path that can't contain a file counts as a missing file", () => {
+  /** `bun install` in `<dir>/project`, with `<dir>/home` as the home directory unless `extra` says otherwise. */
+  async function install(extra: Record<string, string>, files: Record<string, string> = {}) {
+    using dir = tempDir("config-folder", {
+      "project/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+      "project/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "home/.keep": "",
+      ...files,
+    });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(String(dir), "project"),
+      env: {
+        ...env,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: undefined,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        ...extra,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return {
+      complaints: stderr.split("\n").filter(line => /^(warn|error):/.test(line)),
+      lockfile: readdirSync(join(String(dir), "project")).filter(name => name.startsWith("bun.lock")),
+      exitCode,
+    };
+  }
+
+  const binaryLockfile = { "home/.bunfig.toml": "[install]\nsaveTextLockfile = false\n" };
+
+  test.each(["", "relative/folder"])(
+    "XDG_CONFIG_HOME=%j: the home directory's .bunfig.toml is read",
+    async XDG_CONFIG_HOME => {
+      expect(await install({ XDG_CONFIG_HOME }, binaryLockfile)).toEqual({
+        complaints: [],
+        lockfile: ["bun.lockb"],
+        exitCode: 0,
+      });
+    },
+  );
+
+  const share = "\\\\127.0.0.1\\nope\\x";
+  test
+    .skipIf(!isWindows)
+    .each([
+      { XDG_CONFIG_HOME: "/home/u/.config" },
+      { USERPROFILE: "/home/u" },
+      { XDG_CONFIG_HOME: share },
+      { USERPROFILE: share },
+      { NPM_CONFIG_USERCONFIG: share },
+    ])("%j", async extra => {
+    expect(await install(extra)).toEqual({ complaints: [], lockfile: ["bun.lock"], exitCode: 0 });
+  });
+});
+
 // A WHATWG parse reads such bytes as U+FFFD and serialises that as %EF%BF%BD: a request for something else than was named.
 describe.concurrent("bytes that are not valid UTF-8 are not read as U+FFFD", () => {
-  // Latin-1 text: a stray continuation byte and a lone 0x9B.
+  // Latin-1 text with a stray continuation byte and a lone 0x9B.
   const bad = Buffer.from([0x82, 0x41, 0x9b, 0x41]);
   const bytes = (...parts: (string | Buffer)[]) => Buffer.concat(parts.map(part => Buffer.from(part as string)));
   const packageJson = (...dependencies: (string | Buffer)[]) =>
@@ -5413,8 +5537,9 @@ describe.concurrent("bytes that are not valid UTF-8 are not read as U+FFFD", () 
     expect(exitCode).toBe(1);
   });
 
-  // No key is computed for it: the key would come from the parse, the request from the bytes as written.
-  test("such a tarball URL gets no .npmrc line of its own", async () => {
+  // No key is computed for it, because the key would come from the parsed URL and the request from the bytes as
+  // written.
+  test("such a tarball URL doesn't get its own .npmrc line", async () => {
     using cdn = rawServer({ secure: true });
     using registry = rawServer({
       manifest(_, line) {

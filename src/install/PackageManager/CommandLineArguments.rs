@@ -10,6 +10,7 @@
 //! - bun link
 //! - bun audit
 
+use crate::bun_schema::api::BunInstall;
 use crate::package_install;
 use crate::package_manager_real::PackageManagerCommand;
 use crate::package_manager_real::Subcommand;
@@ -50,7 +51,7 @@ fn parse_platform_flag<T: Npm::NegatableEnum>(
                 let name = value.strip_prefix(b"!").unwrap_or(value);
                 if T::lookup_name(name).is_none() {
                     Output::err_generic(
-                        "Invalid {}: '{}'. Valid values are: *, any, {}. Use !name to negate.",
+                        "invalid {}: '{}'. valid values: *, any, {}. use !name to negate",
                         (what, bstr::BStr::new(value), valid_names),
                     );
                     Global::crash();
@@ -63,7 +64,8 @@ fn parse_platform_flag<T: Npm::NegatableEnum>(
 }
 
 type ParamType = clap::Param<clap::Help>;
-/// Slices, joined on use: a param is 96 bytes and most are shared by 17 commands.
+/// A list of slices that's joined on use, because a param is 96 bytes and most params are shared by
+/// 17 commands.
 type ParamTable = &'static [&'static [ParamType]];
 
 // `bun_clap::concat_params!` is a const-fn slice concat over `Param<Help>`.
@@ -81,9 +83,10 @@ const BACKEND_PARAM: ParamType = clap::param!(
     "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\""
 );
 
-// The valueless flags of `AUTO_PARAMS` (runtime/cli/Arguments.rs) no table here has; ignored.
+// The flags of `AUTO_PARAMS` (runtime/cli/Arguments.rs) that take no value and that no table here
+// has. They're ignored.
 const RUNTIME_FLAGS_PARAM: ParamType = clap::param!(
-    "-b, --bun/--no-orphans/--workspaces/--parallel/--sequential/--no-exit-on-error/--version/--revision/--watch/--hot/--no-clear-screen/--smol/--cpu-prof/--cpu-prof-md/--heap-prof/--heap-prof-md/--if-present/--no-install/--prefer-latest/--experimental-http2-fetch/--experimental-http3-fetch/--insecure-http-parser/--experimental-stream-iter/--expose-gc/--no-deprecation/--throw-deprecation/--no-warnings/--trace-warnings/--trace-deprecation/--pending-deprecation/--zero-fill-buffers/--use-system-ca/--use-openssl-ca/--use-bundled-ca/--tls-min-v1.0/--tls-min-v1.1/--tls-min-v1.2/--tls-min-v1.3/--tls-max-v1.2/--tls-max-v1.3/--redis-preconnect/--sql-preconnect/--no-addons/--no-ffi-cc/--trace-events-enabled/--trace-env/--trace-env-js-stack/--trace-env-native-stack/--trace-exit/--expose-internals/--preserve-symlinks/--preserve-symlinks-main/--no-macros/--jsx-side-effects/--ignore-dce-annotations"
+    "-b, --bun/--no-orphans/--workspaces/--parallel/--sequential/--no-exit-on-error/--version/--revision/--watch/--hot/--no-clear-screen/--smol/--cpu-prof/--cpu-prof-md/--heap-prof/--heap-prof-md/--if-present/--no-install/--prefer-latest/--experimental-http2-fetch/--experimental-http3-fetch/--insecure-http-parser/--experimental-stream-iter/--expose-gc/--no-deprecation/--throw-deprecation/--no-warnings/--trace-warnings/--trace-deprecation/--pending-deprecation/--zero-fill-buffers/--tls-min-v1.0/--tls-min-v1.1/--tls-min-v1.2/--tls-min-v1.3/--tls-max-v1.2/--tls-max-v1.3/--redis-preconnect/--sql-preconnect/--no-addons/--no-ffi-cc/--trace-events-enabled/--trace-env/--trace-env-js-stack/--trace-env-native-stack/--trace-exit/--expose-internals/--preserve-symlinks/--preserve-symlinks-main/--no-macros/--jsx-side-effects/--ignore-dce-annotations"
 );
 
 const SHARED_HEAD_PARAMS: &[ParamType] = &[
@@ -178,6 +181,13 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--libc <STR>...                       Override libc for optional dependencies (e.g., glibc, musl, * for all)"
     ),
+    clap::param!(
+        "--use-system-ca                       Use the system's trusted certificate authorities"
+    ),
+    clap::param!(
+        "--use-openssl-ca                      Use OpenSSL's default CA store instead of the bundled one"
+    ),
+    clap::param!("--use-bundled-ca                      Use bundled CA store"),
     clap::param!("-h, --help                            Print this help menu"),
     RUNTIME_FLAGS_PARAM,
 ];
@@ -332,6 +342,184 @@ pub(crate) static PM_PARAMS: ParamTable = &[
         clap::param!("<POS> ...                         "),
     ],
 ];
+
+/// Flags in `PM_PARAMS` that only some `bun pm` subcommands accept. `parse` rejects them for every
+/// other subcommand.
+const PM_SUBCOMMAND_FLAGS: &[(&[u8], &[&[u8]])] = &[
+    (b"cache", &[b"--max-age"]),
+    (
+        b"diff",
+        &[
+            b"--diff",
+            b"--json",
+            b"--raw",
+            b"--unformatted",
+            b"--unminify",
+            b"--minify",
+            b"--ignore-space",
+            b"--name-only",
+            b"--stat",
+            b"--unified",
+        ],
+    ),
+    (b"licenses", &[b"--json", b"--filter", b"--dev", b"--long"]),
+    (b"ls", &[b"--all", b"--trusted", b"--depth"]),
+    (b"pack", &[b"--destination", b"--filename", b"--gzip-level"]),
+    (b"pkg", &[b"--json"]),
+    (b"trust", &[b"--all"]),
+    (
+        b"version",
+        &[
+            b"--git-tag-version",
+            b"--no-git-tag-version",
+            b"--allow-same-version",
+            b"--message",
+            b"--preid",
+        ],
+    ),
+    (b"view", &[b"--json"]),
+    (b"why", &[b"--top", b"--depth"]),
+];
+
+/// How `bun install`, `add`, `remove` and `update` treat a flag that belongs to npm, yarn or pnpm.
+#[derive(Clone, Copy)]
+enum ForeignFlag {
+    /// Means the same as this Bun flag, so it is rewritten to it.
+    AliasOf(&'static [u8]),
+    /// Asks for something Bun always does, whatever its configuration, so the flag is ignored.
+    Satisfied,
+}
+use ForeignFlag::{AliasOf, Satisfied};
+
+/// An entry written as `--name=value` also matches `--name value`. A flag that isn't listed here
+/// or in `IGNORED_FOREIGN_FLAGS`, and isn't one of Bun's own, is an error.
+const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
+    (b"--save-dev", AliasOf(b"--dev")),
+    (b"--save-exact", AliasOf(b"--exact")),
+    (b"--save-optional", AliasOf(b"--optional")),
+    (b"--save-peer", AliasOf(b"--peer")),
+    (b"--save-catalog", AliasOf(b"--catalog")),
+    (b"--location=global", AliasOf(b"--global")),
+    (b"--no-optional", AliasOf(b"--omit=optional")),
+    (b"--ignore-optional", AliasOf(b"--omit=optional")),
+    // Not `--production`, because `--production` also freezes the lockfile.
+    (b"--only=prod", AliasOf(b"--omit=dev")),
+    (b"--only=production", AliasOf(b"--omit=dev")),
+    (b"--production=true", AliasOf(b"--production")),
+    (b"--package-lock-only", AliasOf(b"--lockfile-only")),
+    (b"--immutable", AliasOf(b"--frozen-lockfile")),
+    (b"--shamefully-hoist", AliasOf(b"--linker=hoisted")),
+    (b"--progress=false", AliasOf(b"--no-progress")),
+    (b"--loglevel=silent", AliasOf(b"--silent")),
+    (b"--loglevel=error", AliasOf(b"--quiet")),
+    (b"--loglevel=warn", AliasOf(b"--quiet")),
+    (b"--loglevel=notice", Satisfied),
+    (b"--loglevel=http", Satisfied),
+    (b"--loglevel=info", Satisfied),
+    (b"--loglevel=verbose", AliasOf(b"--verbose")),
+    (b"--loglevel=silly", AliasOf(b"--verbose")),
+    // `bun install` never audits, prints funding messages, or checks for a newer version of itself.
+    (b"--no-audit", Satisfied),
+    (b"--audit=false", Satisfied),
+    (b"--no-fund", Satisfied),
+    (b"--fund=false", Satisfied),
+    (b"--no-update-notifier", Satisfied),
+    (b"--update-notifier=false", Satisfied),
+    // Bun only warns about conflicting peer dependencies, does not check `engines`, runs scripts as
+    // the current user, and never prompts.
+    (b"--legacy-peer-deps", Satisfied),
+    (b"--ignore-engines", Satisfied),
+    (b"--unsafe-perm", Satisfied),
+    (b"--non-interactive", Satisfied),
+    (b"--prefer-frozen-lockfile", Satisfied),
+    (b"--install-strategy=hoisted", AliasOf(b"--linker=hoisted")),
+    (b"--install-strategy=linked", AliasOf(b"--linker=isolated")),
+    (b"--node-linker=hoisted", AliasOf(b"--linker=hoisted")),
+    (b"--node-linker=node-modules", AliasOf(b"--linker=hoisted")),
+    (b"--node-linker=isolated", AliasOf(b"--linker=isolated")),
+    (b"--node-linker=pnpm", AliasOf(b"--linker=isolated")),
+];
+
+/// Flags of npm, yarn and pnpm that Bun has no equivalent for. `bun install`, `add`, `remove`,
+/// `update` and `bunx` skip them, like Bun 1.4 and earlier did, so scripts written for those tools
+/// keep working.
+const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
+    #[rustfmt::skip]
+    flags: &[
+    b"aggregate-output", b"all", b"allow-same-version", b"audit", b"auto-dedupe",
+    b"auto-install-peers", b"bin-links", b"cached", b"caret", b"changeset", b"check-cache",
+    b"check-files", b"check-resolutions", b"ci", b"color", b"dangerously-allow-all-builds",
+    b"dangerously-allow-all-scripts", b"dedupe-peer-dependents", b"default-rc", b"disable-pnp",
+    b"emoji", b"enable-pnp", b"engine-strict", b"fail-if-no-match", b"fix-lockfile", b"fixed",
+    b"flat", b"focus", b"foreground-scripts", b"format-package-lock", b"frozen-store", b"fund",
+    b"global-style", b"har", b"hoist", b"ignore-manifest-check", b"ignore-platform",
+    b"ignore-pnpmfile", b"ignore-workspace", b"ignore-workspace-root-check", b"immutable-cache",
+    b"include-github-actions", b"include-workspace-root", b"inline-builds", b"install-links", b"iwr",
+    b"json", b"legacy-bundling", b"link-duplicates", b"link-workspace-packages",
+    b"lockfile", b"long", b"merge-git-branch-lockfiles", b"no-frozen-lockfile", b"no-immutable",
+    b"no-prefer-frozen-lockfile", b"no-production", b"no-proxy", b"node-version-check",
+    b"omit-lockfile-registry-resolved", b"package-lock", b"parseable", b"patches", b"pnp",
+    b"prefer-dedupe", b"prefer-online", b"prefer-workspace-packages", b"progress", b"pure-lockfile",
+    b"rebuild-bundle", b"recursive", b"refresh-lockfile", b"resolution-only",
+    b"resolve-peers-from-workspace-root", b"reverse", b"runtime", b"save-build", b"save-bundle",
+    b"save-types", b"scripts-prepend-node-path", b"shared-workspace-lockfile",
+    b"shrinkwrap", b"side-effects-cache", b"skip-integrity-check", b"sort", b"stream",
+    b"strict-allow-scripts", b"strict-peer-dependencies", b"strict-peer-deps", b"strict-semver",
+    b"strict-ssl", b"symlink", b"tilde", b"timing", b"trust-lockfile", b"unicode",
+    b"update-checksums", b"update-notifier", b"use-running-store-server", b"use-stderr",
+    b"use-store-server", b"verify-store-integrity", b"workspace-root", b"workspaces-update", b"ws",
+    b"yes",
+    // These are in `FOREIGN_FLAGS` too, which doesn't match them if they have a value.
+    b"ignore-engines", b"ignore-optional", b"immutable", b"legacy-peer-deps", b"non-interactive",
+    b"package-lock-only", b"prefer-frozen-lockfile", b"save-catalog", b"save-dev", b"save-exact",
+    b"save-optional", b"save-peer", b"save-prod", b"shamefully-hoist", b"unsafe-perm",
+    ],
+    #[rustfmt::skip]
+    options: &[
+    b"allow-build", b"allow-directory", b"allow-file", b"allow-git", b"allow-remote",
+    b"allow-scripts", b"also", b"before", b"cache", b"cache-folder", b"cache-max",
+    b"cache-min", b"cert", b"changed-files-ignore-pattern", b"child-concurrency", b"dir",
+    b"enjoy-by", b"fetch-min-speed-ki-bps", b"fetch-retries", b"fetch-retry-factor", b"fetch-retry-maxtimeout",
+    b"fetch-retry-mintimeout", b"fetch-timeout", b"fetch-warn-timeout-ms", b"filter-prod",
+    b"global-folder", b"global-pnpmfile", b"globalconfig", b"hoist-pattern", b"http-proxy",
+    b"https-proxy", b"include", b"install-strategy", b"key", b"link-folder", b"local-address",
+    b"location", b"lockfile-dir", b"lockfile-version", b"loglevel", b"logs-dir", b"logs-max",
+    b"maxsockets", b"merge-git-branch-lockfiles-branch-pattern", b"min-release-age", b"mode",
+    b"mutex", b"network-timeout", b"node-gyp", b"node-linker", b"node-options",
+    b"noproxy", b"npmrc-auth-file", b"only", b"otp", b"package-import-method", b"pnpmfile",
+    b"pnpr-server", b"preferred-cache-folder", b"prefix", b"proxy", b"public-hoist-pattern",
+    b"replace-registry-host", b"reporter", b"save-catalog-name", b"save-prefix", b"scope",
+    b"script-shell", b"state-dir", b"store-dir", b"tag", b"test-pattern", b"umask", b"use-yarnrc",
+    b"user-agent", b"userconfig", b"virtual-store-dir", b"workspace", b"workspace-concurrency",
+    b"workspace-packages",
+    ],
+    // pnpm's `--config.<setting>=<value>`.
+    prefixes: &[b"config."],
+};
+
+/// Only `bunx` skips these. They are the flags of `npx` and `pnpm dlx`, and the flags of npm that
+/// `bun add` has too.
+const IGNORED_NPX_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
+    #[rustfmt::skip]
+    flags: &[
+    // The value of `--call` is what to run.
+    b"always-spawn", b"call", b"ignore-existing", b"local", b"shell-auto-fallback", b"shell-mode",
+    b"dry-run", b"force", b"global", b"if-present", b"ignore-scripts", b"prefer-offline",
+    b"production", b"save", b"workspaces",
+    ],
+    #[rustfmt::skip]
+    options: &[b"node-arg", b"npm", b"shell", b"cpu", b"libc", b"omit", b"os"],
+    prefixes: &[],
+};
+
+/// npm's one-letter flags that `bunx` doesn't have.
+const FOREIGN_SHORT_FLAGS: &[u8] = b"acdfglqsyBDEHOPS?";
+/// The ones that take a value. pnpm's `-w` takes none, so `bunx` only skips them as `-w=value`.
+const FOREIGN_SHORT_OPTIONS: &[u8] = b"mwCL";
+
+/// `bun update` accepts these flags too, but there they select which dependencies to update, so no
+/// entry in `FOREIGN_FLAGS` is rewritten to them for `bun update`.
+const UPDATE_FILTERS: &[&[u8]] = &[b"--dev", b"--production"];
 
 pub(crate) static ADD_PARAMS: ParamTable = &[
     SHARED_PARAMS,
@@ -517,6 +705,9 @@ static PUBLISH_PARAMS: ParamTable = &[
         clap::param!(
             "-r, --recursive                        Publish every workspace package whose version is not on the registry"
         ),
+        clap::param!("--provenance <STR>?"),
+        clap::param!("--no-provenance"),
+        clap::param!("--provenance-file <STR>"),
     ],
 ];
 
@@ -655,7 +846,8 @@ pub struct CommandLineArguments {
     pub(crate) pack_gzip_level: Option<&'static [u8]>,
 
     pub(crate) dependency_group: Options::DependencyGroup,
-    /// `--dev`, `--optional`, `--peer` or `--save-prod`: an entry another group has moves.
+    /// True if `--dev`, `--optional`, `--peer` or `--save-prod` was passed. An entry that's in
+    /// another group then moves.
     pub(crate) names_group: bool,
 
     pub(crate) omit: Option<Omit>,
@@ -682,7 +874,7 @@ pub struct CommandLineArguments {
     pub(crate) node_linker: Option<Options::NodeLinker>,
 
     pub(crate) minimum_release_age_ms: Option<f64>,
-    /// As typed: each value is a comma-separated list.
+    /// As typed. Each value is a comma-separated list.
     pub(crate) minimum_release_age_excludes: &'static [&'static [u8]],
 
     // `bun pm version` options
@@ -695,6 +887,10 @@ pub struct CommandLineArguments {
     pub top_only: bool,
     /// Also `bun update --depth 0`.
     pub(crate) depth: Option<usize>,
+
+    // `bun pm ls` and `bun pm trust` options
+    pub all: bool,
+    pub trusted_only: bool,
 
     // `bun pm licenses` options
     pub dev_only: bool,
@@ -1206,6 +1402,54 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         Output::flush();
     }
 
+    /// `bun run` runs `bun x` where a script says `npx`, so `bunx` skips the flags of the other
+    /// package managers, and Bun's own flags without a value. Returns `None` if `arg` is neither.
+    /// Otherwise returns whether `next`, the argument after `arg`, is its value.
+    pub fn bunx_skips_flag(arg: &[u8], next: &[u8]) -> Option<bool> {
+        let name_end = strings::index_of_char_usize(arg, b'=').unwrap_or(arg.len());
+        let has_value = name_end < arg.len();
+        let value_is_next_arg = if let Some(name) = arg[..name_end].strip_prefix(b"--") {
+            // These choose a registry, its certificates or its credentials.
+            let setting = name.strip_prefix(b"config.").unwrap_or(name);
+            if matches!(
+                setting,
+                b"userconfig"
+                    | b"globalconfig"
+                    | b"npmrc-auth-file"
+                    | b"use-yarnrc"
+                    | b"replace-registry-host"
+                    | b"pnpr-server"
+                    | b"ca"
+                    | b"cafile"
+            ) || setting.starts_with(b"//")
+                || setting.ends_with(b":registry")
+            {
+                return None;
+            }
+            let is_own_flag = |name: &[u8]| {
+                (ADD_PARAMS.iter().copied().flatten()).any(|param| {
+                    param.takes_value == clap::Values::None && param.names.matches_long(name)
+                })
+            };
+            IGNORED_NPX_FLAGS
+                .value_is_next_arg(name, next, is_own_flag)
+                .or_else(|| IGNORED_FOREIGN_FLAGS.value_is_next_arg(name, next, is_own_flag))
+                .or_else(|| (is_own_flag(name) && !has_value).then_some(false))?
+        } else {
+            let is_flag = |letter: &u8| strings::contains_char(FOREIGN_SHORT_FLAGS, *letter);
+            match arg[..name_end].strip_prefix(b"-")? {
+                [letter] if has_value && strings::contains_char(FOREIGN_SHORT_OPTIONS, *letter) => {
+                    false
+                }
+                // `-dd`, `-yq`
+                letters if !letters.is_empty() && letters.iter().all(is_flag) => false,
+                _ => return None,
+            }
+        };
+        // Its value is a flag for node.
+        Some((value_is_next_arg || arg == b"--node-arg") && !has_value)
+    }
+
     pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, crate::Error> {
         Output::set_is_verbose(Output::is_verbose());
         crate::bin::Linker::ensure_umask();
@@ -1229,13 +1473,42 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Subcommand::Audit => AUDIT_PARAMS,
             Subcommand::Info => INFO_PARAMS,
         };
-        // `clap::parse` interns what it builds from a table under the table's address.
+        // `clap::parse` caches what it builds from a table, keyed by the table's address.
         let params: &'static [ParamType] = table.concat().leak();
         debug_assert!(
             (RUNTIME_FLAGS_PARAM.names.long_aliases.iter())
                 .all(|alias| params.iter().all(|param| param.names.long != Some(*alias))),
             "RUNTIME_FLAGS_PARAM shadows a flag of this command",
         );
+
+        let has = |name: &[u8]| params.iter().any(|param| param.names.matches_long(name));
+        let foreign_flags: &[(&[u8], ForeignFlag)] = match subcommand {
+            Subcommand::Install | Subcommand::Add | Subcommand::Remove | Subcommand::Update => {
+                FOREIGN_FLAGS
+            }
+            _ => &[],
+        };
+        // A foreign flag is skipped if the command has its own flag of that name, and an alias only
+        // applies if the command accepts the Bun flag it maps to.
+        let rewrites: Vec<(&'static [u8], &'static [u8])> = (foreign_flags.iter())
+            .filter(|(flag, _)| !has(&flag[2..]))
+            .filter_map(|&(flag, kind)| match kind {
+                AliasOf(own) => {
+                    let name_end = strings::index_of_char_usize(own, b'=').unwrap_or(own.len());
+                    let is_filter =
+                        subcommand == Subcommand::Update && UPDATE_FILTERS.contains(&own);
+                    if has(&own[2..name_end]) && !is_filter {
+                        Some((flag, own))
+                    } else {
+                        // `--save-*` only picks the group a new dependency is saved to, so a
+                        // command that adds no dependency ignores it.
+                        flag.starts_with(b"--save-")
+                            .then_some((flag, b"".as_slice()))
+                    }
+                }
+                Satisfied => Some((flag, b"".as_slice())),
+            })
+            .collect();
 
         let mut diag = clap::Diagnostic::default();
 
@@ -1245,13 +1518,20 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         // `'static`; inner `&[u8]` are argv-backed and already `'static`. CLI args
         // are parsed twice by `update`, `link` and `unlink`: the first `Args` stays.
         static PARSED_ARGS: OnceLock<clap::Args<clap::Help>> = OnceLock::new();
+        static REWRITES: OnceLock<Vec<(&'static [u8], &'static [u8])>> = OnceLock::new();
         let first_parse;
         let args: &'static clap::Args<clap::Help> = match clap::parse::<clap::Help>(
             params,
             clap::ParseOptions {
                 diagnostic: Some(&mut diag),
                 stop_after_positional_at: 0,
+                short_aliases: REWRITES.get_or_init(|| rewrites),
                 unknown_long_flags_are_errors: true,
+                ignored_long_flags: if foreign_flags.is_empty() {
+                    Default::default()
+                } else {
+                    IGNORED_FOREIGN_FLAGS
+                },
                 ..Default::default()
             },
         ) {
@@ -1328,6 +1608,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
 
         cli.cache_dir = args.option(b"--cache-dir");
         cli.ca_file_name = args.option(b"--cafile").unwrap_or_default();
+        Global::set_ca_store_from_flags(|flag| args.flag(flag));
 
         if let Some(network_concurrency) = args.option(b"--network-concurrency") {
             cli.network_concurrency =
@@ -1453,6 +1734,12 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 });
             }
 
+            cli.publish_config.provenance_flag = match args.option(b"--provenance") {
+                _ if args.option(b"--provenance-file").is_some() => Some(true),
+                Some(value) => Some(bun_ini::npm_config_bool(value)),
+                None => args.flag(b"--no-provenance").then_some(false),
+            };
+
             cli.tolerate_republish = args.flag(b"--tolerate-republish");
             cli.recursive = args.flag(b"--recursive");
         }
@@ -1481,7 +1768,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                     Some(l) => l,
                     None => {
                         Output::err_generic(
-                            "invalid `--audit-level` value: '{}'. Valid values are: low, moderate, high, critical",
+                            "invalid `--audit-level` value: '{}'. valid values: low, moderate, high, critical",
                             (bstr::BStr::new(level),),
                         );
                         Global::crash();
@@ -1532,7 +1819,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if let Some(concurrency) = args.option(b"--concurrent-scripts") {
-            // 0 is the default, as in bunfig.toml: with a limit of 0 no script starts.
+            // 0 means the default, like in bunfig.toml. With a real limit of 0, no script would
+            // ever start.
             cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10)
                 .ok()
                 .filter(|&n| n != 0);
@@ -1571,6 +1859,21 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 Global::crash();
             }
         }
+
+        // `FileSystem::init` only takes effect once, so `initial_top_level_dir()` stays the
+        // directory the command was run in, even after `PackageManager::init` changes directory.
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let cwd = bun_core::getcwd(&mut cwd_buf)?.as_bytes();
+        let start_dir = bun_paths::fs::FileSystem::init(cwd).initial_top_level_dir();
+        // Every `parse` call reads the same `PARSED_ARGS`, so these paths are resolved only once.
+        static TYPED_PATHS: OnceLock<[Box<[u8]>; 3]> = OnceLock::new();
+        let [config, cache_dir, ca_file_name] = TYPED_PATHS.get_or_init(|| {
+            [cli.config, cli.cache_dir, Some(cli.ca_file_name)]
+                .map(|path| BunInstall::resolve_path(start_dir, path.unwrap_or_default()))
+        });
+        cli.config = cli.config.map(|_| &**config);
+        cli.cache_dir = cli.cache_dir.map(|_| &**cache_dir);
+        cli.ca_file_name = &**ca_file_name;
 
         if subcommand == Subcommand::Update {
             cli.latest = args.flag(b"--latest");
@@ -1717,6 +2020,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.allow_same_version = args.flag(b"--allow-same-version");
             cli.preid = args.option(b"--preid").unwrap_or_default();
             cli.message = args.option(b"--message");
+            cli.all = args.flag(b"--all");
+            cli.trusted_only = args.flag(b"--trusted");
             cli.dev_only = args.flag(b"--dev");
             cli.long = args.flag(b"--long");
             cli.diff_args = args.options(b"--diff").to_vec();
@@ -1727,6 +2032,28 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 [first, ..] => *first,
                 [] => b"",
             };
+            let flags_of: &[u8] = if pm_command == b"list" {
+                b"ls"
+            } else {
+                pm_command
+            };
+            for &flag in PM_SUBCOMMAND_FLAGS.iter().flat_map(|(_, flags)| *flags) {
+                let takes_it = || {
+                    (PM_SUBCOMMAND_FLAGS.iter())
+                        .filter(move |(_, flags)| flags.contains(&flag))
+                        .map(|(name, _)| *name)
+                };
+                if args.has(flag) && !takes_it().any(|name| name == flags_of) {
+                    let commands: Vec<String> = takes_it()
+                        .map(|name| format!("`bun pm {}`", bstr::BStr::new(name)))
+                        .collect();
+                    Output::err_generic(
+                        "{} is only supported by {}",
+                        (bstr::BStr::new(flag), commands.join(", ")),
+                    );
+                    Global::exit(1);
+                }
+            }
             cli.no_project_ok = match pm_command {
                 b"" | b"diff" | b"view" | b"cache" | b"whoami" | b"default-trusted" => true,
                 b"bin" | b"ls" | b"list" => cli.global,

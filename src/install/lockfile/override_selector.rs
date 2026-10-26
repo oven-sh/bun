@@ -39,6 +39,8 @@ pub(crate) fn parse_package_segment(segment: &[u8]) -> Result<PackageSelector<'_
     }
     let range = range.unwrap_or(b"");
     // `npm:^1` is the range `^1`. `npm:other` and `npm:other@^1` are aliases and keep the prefix.
+    // Unlike `dependency::without_npm_protocol`, this also reads `npm:1` and `npm:x` as ranges,
+    // because an override key only selects versions and never names a package to fetch.
     let range = match range.strip_prefix(b"npm:") {
         Some(rest) if rest.is_empty() || VersionTag::infer(rest) == VersionTag::Npm => rest,
         _ => range,
@@ -65,7 +67,8 @@ pub(crate) fn parse_selector(key: &[u8]) -> Result<Selector<'_>, SelectorError> 
     parse_yarn_path(key)
 }
 
-/// pnpm's `parent>child` delimiter (`/[^ |@]>/`): the first `>` not after a space, `|`, `@`, or the `:` of yarn's `name@npm:>=1`.
+/// Finds pnpm's `parent>child` delimiter (`/[^ |@]>/`): the first `>` that doesn't come after a
+/// space, `|`, `@`, or the `:` in Yarn's `name@npm:>=1`.
 fn pnpm_delimiter(key: &[u8]) -> Option<usize> {
     let mut from = 1;
     while from < key.len() {

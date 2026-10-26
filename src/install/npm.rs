@@ -20,6 +20,7 @@ use crate::bin::{self, Bin};
 use crate::bun_fs::FileSystem;
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
+use crate::package_manager::directories;
 use crate::{
     Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash,
     VersionSlice, initialize_mini_store as initialize_store,
@@ -98,7 +99,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let mut req =
         manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
 
-    let res = match req.send_sync(&mut response_buf) {
+    let res = match manager.send_with_retries(&mut req, &mut response_buf) {
         Ok(res) => res,
         Err(bun_http::Error::Alloc(bun_alloc::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
@@ -183,7 +184,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
             ""
         },
         bun_fmt::escape_control_chars(res.status_text()),
-        bun_fmt::redacted_npm_url(req.url.href),
+        bun_fmt::EscapeControlChars(bun_fmt::redacted_npm_url(req.url.href)),
     );
 
     if res.status_code() == 404
@@ -191,8 +192,8 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     {
         bun_core::pretty_errorln!(
             "\n - '{}@{}' does not exist in this registry",
-            bstr::BStr::new(package_name),
-            bstr::BStr::new(package_version),
+            bun_fmt::escape_control_chars(package_name),
+            bun_fmt::escape_control_chars(package_version),
         );
     } else if let Some(msg) = &message {
         if OTP_RESPONSE {
@@ -259,11 +260,13 @@ pub mod registry {
     struct EmbeddedAuth<'a> {
         /// In the order of `EMBEDDED_OPTIONS`.
         values: [Option<&'a [u8]>; 4],
-        /// The scan hit a token or an `_auth`, which ends it; nothing after it is read.
+        /// True if the scan found a token or an `_auth`. That ends the scan, and nothing after it
+        /// is read.
         terminal: bool,
     }
 
-    /// `(start, index in EMBEDDED_OPTIONS)`. Anchored on the whole marker: base64 values hold `/`.
+    /// Returns `(start, index in EMBEDDED_OPTIONS)`. Matches the whole marker, because base64
+    /// values can contain `/`.
     fn last_embedded_marker(pathname: &[u8]) -> Option<(usize, usize)> {
         (0..pathname.len())
             .rev()
@@ -275,7 +278,8 @@ pub mod registry {
             })
     }
 
-    /// A trailing `:<word>=` of no known option is a misspelt credential: stripped, never adopted.
+    /// A trailing `:<word>=` that isn't a known option is a misspelled credential. It's stripped
+    /// and never used.
     fn trailing_misspelt_marker(pathname: &[u8]) -> Option<usize> {
         let unslashed = pathname.strip_suffix(b"/").unwrap_or(pathname);
         let start = strings::last_index_of_char(unslashed, b'/')? + 1;
@@ -291,12 +295,13 @@ pub mod registry {
         shaped.then_some(start)
     }
 
-    /// Stripped whether or not adopted: left there, the secret ships in every request path.
+    /// The credentials are stripped whether or not they're used. If they stayed, the secret would
+    /// be sent in every request path.
     fn parse_embedded_auth<'a>(url: &mut URL<'a>) -> EmbeddedAuth<'a> {
         let mut out = EmbeddedAuth::default();
         let mut pathname: &'a [u8] = url.pathname;
 
-        // Right to left: the credentials are appended after the path.
+        // Scan from right to left, because the credentials are appended after the path.
         loop {
             let start = if let Some((start, option)) = last_embedded_marker(pathname) {
                 let value = &pathname[start + 1 + EMBEDDED_OPTIONS[option].len()..];
@@ -307,7 +312,7 @@ pub mod registry {
                     out.values[option] = Some(value);
                     out.terminal = option < 2;
                 }
-                // `/<name>=` leaves the slash that closes the path; `:<name>=` follows that slash.
+                // `/<name>=` keeps the slash that ends the path. `:<name>=` comes after that slash.
                 if pathname[start] == b'/' {
                     pathname = &pathname[..start + 1];
                     continue;
@@ -350,7 +355,8 @@ pub mod registry {
             bun_semver::semver_string::Builder::string_hash(str)
         }
 
-        /// The one place a credential leaves a `Scope`, so the one that refuses a non-http(s) URL.
+        /// This is the only place where a credential leaves a `Scope`, so it's where a URL that
+        /// isn't http(s) is refused.
         pub fn authorization_parts(&self, url: &URL) -> Option<(&'static [u8], &[u8])> {
             if !url.has_http_like_protocol() {
                 None
@@ -363,7 +369,7 @@ pub mod registry {
             }
         }
 
-        /// Raw bytes: a credential need not be UTF-8.
+        /// Returns raw bytes, because a credential doesn't have to be UTF-8.
         pub fn authorization(&self, url: &URL) -> Option<Vec<u8>> {
             self.authorization_parts(url)
                 .map(|(scheme, value)| [scheme, value].concat())
@@ -408,7 +414,8 @@ pub mod registry {
             &name[1..]
         }
 
-        /// `env`: `None` for a registry that package data names: no variable is expanded into it.
+        /// `env` is `None` for a registry URL that comes from package data, so that no environment
+        /// variable is expanded into it.
         pub(crate) fn from_api(
             name: &[u8],
             registry: api::NpmRegistry,
@@ -430,7 +437,8 @@ pub mod registry {
             })
         }
 
-        /// The one builder of a `Scope`: checks the final bytes that go into `Authorization`.
+        /// The only function that builds a `Scope`. It checks the final bytes that go into
+        /// `Authorization`.
         fn build(
             name: &[u8],
             mut registry: api::NpmRegistry,
@@ -448,7 +456,8 @@ pub mod registry {
                 }
             }
 
-            // The config loaders split literal strings; an expanded $ENV_VAR is split here.
+            // The config loaders split literal strings. A URL that came from an expanded $ENV_VAR
+            // is split here.
             let from_url = api::NpmRegistry::from_url(&registry.url);
             registry.url = from_url.url;
             if !registry.has_credentials() {
@@ -464,7 +473,8 @@ pub mod registry {
                 ("username", &mut registry.username),
                 ("password", &mut registry.password),
             ] {
-                // Anything else after the `$` is no variable name: a password that starts so.
+                // Anything else after the `$` isn't a variable name, so it's a password that starts
+                // with `$`.
                 if field.len() < 2
                     || field[0] != b'$'
                     || !(field[1..].iter()).all(|c| c.is_ascii_alphanumeric() || *c == b'_')
@@ -480,9 +490,9 @@ pub mod registry {
                             .at_least(bun_ast::Level::Warn)
                         {
                             bun_core::warn!(
-                                "registry {} references <b>{}<r>, but that environment variable is not set; treating it as no credential",
+                                "registry {} references unset variable <b>{}<r>, ignoring credential",
                                 what,
-                                bstr::BStr::new(&**field),
+                                bun_fmt::escape_control_chars(&**field),
                             );
                         }
                         *field = Box::default();
@@ -521,12 +531,13 @@ pub mod registry {
                         }
                     }
 
-                    // Sent verbatim; the decode only derives `user` for `bun pm whoami`.
+                    // Sent verbatim. It's only decoded to get `user` for `bun pm whoami`.
                     if !registry.auth.is_empty() {
                         let mut decoded = vec![0u8; bun_base64::decode_len(&registry.auth)];
                         let result = bun_base64::decode(&mut decoded, &registry.auth);
                         decoded.truncate(result.count);
-                        // A blank username or password is a real pattern: no identity then.
+                        // A blank username or password is a real pattern. There's no identity to
+                        // report then.
                         if result.is_successful()
                             && strings::index_of_char_usize(&decoded, b':')
                                 .is_some_and(|colon| colon > 0 && colon + 1 < decoded.len())
@@ -577,11 +588,12 @@ pub mod registry {
     // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.
     pub type Map = HashMap<u64, Scope, bun_collections::IdentityContext<u64>>;
 
-    /// One `.npmrc` credential key. It carries no scheme: it applies to `http` and `https` alike.
+    /// One credential key from `.npmrc`. It has no scheme, so it applies to both `http` and
+    /// `https`.
     pub(crate) struct UrlAuth {
         /// npm's config key, already normalized by `bun_ini` (`host/path/`).
         pub(crate) key: Box<[u8]>,
-        /// Only the credential fields are meaningful; `url` is empty.
+        /// Only the credential fields are set. `url` is empty.
         pub(crate) credentials: Scope,
     }
 
@@ -604,7 +616,8 @@ pub mod registry {
             }))
         }
 
-        /// npm's walk. `url` is a WHATWG serialisation: `Scope::url`, `normalize_tarball_url`.
+        /// Walks the path like npm does. `url` must be a WHATWG serialization, from `Scope::url` or
+        /// `normalize_tarball_url`.
         pub(crate) fn find_entry<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a UrlAuth> {
             if list.is_empty() || !url.has_http_like_protocol() {
                 return None;
@@ -615,7 +628,8 @@ pub mod registry {
         }
     }
 
-    /// `dist.tarball` as npm's `new URL()` serialises it; `None` if one parse cannot settle it.
+    /// Returns `dist.tarball` as npm's `new URL()` serializes it, or `None` if parsing it once
+    /// doesn't give a stable result.
     pub fn normalize_tarball_url(raw: &[u8]) -> Option<Box<[u8]>> {
         // The parse would read bytes that are not UTF-8 as U+FFFD, which names another resource.
         if raw.iter().any(|&b| b <= 0x20 || b == 0x7f) || !strings::is_valid_utf8(raw) {
@@ -678,9 +692,24 @@ pub mod registry {
         NotFound,
     }
 
-    /// 300 seconds is what registry.npmjs.org sends, the most that is honoured, and the default.
+    /// How long a cached manifest stays fresh, in seconds. This is the `max-age` that
+    /// registry.npmjs.org sends, the default without one, and the longest one that is honored.
+    const MAX_MANIFEST_AGE: u32 = 300;
+
+    fn seconds_from_now(seconds: u32) -> u32 {
+        (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast") as u32)
+            .saturating_add(seconds)
+    }
+
+    /// True for a cached manifest that was written while the system clock was set in the future.
+    /// `past` is any earlier time. It settles the usual case without reading the clock.
+    pub(crate) fn expires_too_late(expiry: u32, past: u32) -> bool {
+        expiry > past.saturating_add(MAX_MANIFEST_AGE)
+            && expiry > seconds_from_now(MAX_MANIFEST_AGE)
+    }
+
     pub(crate) fn manifest_expiry(headers: &picohttp::HeaderList) -> u32 {
-        let mut max_age: u64 = 300;
+        let mut max_age = u64::from(MAX_MANIFEST_AGE);
         for directive in strings::split(headers.get(b"cache-control").unwrap_or(b""), b",") {
             let directive = directive.trim_ascii();
             if strings::eql_case_insensitive_ascii(directive, b"no-cache", true)
@@ -692,8 +721,7 @@ pub mod registry {
                 max_age = max_age.min(seconds.unwrap_or(0));
             }
         }
-        (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast") as u32)
-            .saturating_add(max_age as u32)
+        seconds_from_now(max_age as u32)
     }
 
     pub(crate) fn get_package_metadata(
@@ -738,11 +766,14 @@ pub mod registry {
             manifest_expiry(&response.headers),
             is_extended_manifest,
         )? {
-            if package_manager.options.enable.manifest_cache() {
+            // If the cache cannot be written, the manifest is still used. It is just not saved.
+            if package_manager.options.enable.manifest_cache()
+                && let Ok(temp_dir) = directories::try_get_temporary_directory(package_manager)
+            {
                 package_manifest::Serializer::save_async(
                     &package,
                     scope,
-                    package_manager.get_temporary_directory().handle.fd,
+                    temp_dir.handle.fd,
                     package_manager.get_cache_directory(),
                 );
             }
@@ -833,9 +864,11 @@ pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &JSON::E::JsonV
     this.combine()
 }
 
-/// Only the registry's full document has `libc`. By name alone: macOS locks `libc` for Linux too.
+/// Only the registry's full document has `libc`. This goes by the name alone, because a lockfile
+/// written on macOS records `libc` for Linux too.
 pub(crate) fn name_suggests_libc(name: &[u8]) -> bool {
-    // Not `gnu`: it is also in `signup`, and comes after `linux` where it means glibc.
+    // `gnu` isn't checked, because it's also in `signup`, and where it means glibc it comes after
+    // `linux`.
     strings::contains(name, b"linux")
         || strings::contains(name, b"musl")
         || strings::contains(name, b"glibc")
@@ -904,10 +937,12 @@ pub struct PackageVersion {
     /// `"cpu"` field in package.json
     pub(crate) cpu: Architecture,
 
-    /// `"libc"` field in package.json; only in the full document, see `name_suggests_libc`.
+    /// The `"libc"` field in package.json. It's only in the full document. See
+    /// `name_suggests_libc`.
     pub(crate) libc: Libc,
 
-    /// `hasInstallScript` field in registry API.
+    /// The `hasInstallScript` field of the registry API. It is derived from `scripts` when the
+    /// registry's document has those instead.
     pub(crate) has_install_script: bool,
     pub(crate) _padding_tail: [u8; 2],
 
@@ -1045,7 +1080,7 @@ pub struct NpmPackage {
     pub(crate) versions_buf: VersionSlice,
     pub(crate) string_lists_buf: ExternalStringList,
 
-    // The full document was fetched: `publish_timestamp_ms` and `libc` are populated.
+    // True if the full document was fetched, so `publish_timestamp_ms` and `libc` are populated.
     pub(crate) has_extended_manifest: bool,
     pub(crate) _padding_tail: [u8; 7],
 }
@@ -1104,8 +1139,6 @@ impl PackageManifest {
 pub mod package_manifest {
     use super::*;
     use bun_io::Write as _;
-
-    // bindings — see bun_install_jsc::npm_jsc::ManifestBindings (deleted *_jsc alias)
 
     pub struct Serializer;
 
@@ -1368,7 +1401,8 @@ pub mod package_manifest {
                 if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
                     return Ok(());
                 }
-                // Keep the entry present throughout: rename over it below instead of unlinking it.
+                // Keep the entry in place the whole time: rename over it below instead of unlinking
+                // it first.
                 bun_sys::linkat_tmpfile(file.handle, tmpdir, tmp_path)?;
             }
 
@@ -1430,7 +1464,8 @@ pub mod package_manifest {
             }
         }
 
-        /// No install waits for the file; the process does, in `finish_saves_at_exit`.
+        /// The install doesn't wait for the file to be written. The process does, in
+        /// `finish_saves_at_exit`.
         pub(crate) fn save_async(
             this: &PackageManifest,
             scope: &registry::Scope,
@@ -1562,16 +1597,12 @@ pub mod package_manifest {
                 return Ok(None);
             };
 
-            'delete: {
-                match Self::load_by_file(scope, &cache_file) {
-                    Ok(Some(m)) if m.name() == name => return Ok(Some(m)),
-                    Ok(_) | Err(_) => break 'delete,
-                }
-            }
-
-            // delete the outdated/invalid manifest
-            bun_sys::unlinkat(cache_dir, file_name)?;
-            Ok(None)
+            // A file that cannot be used is not deleted. Another version of bun may have written
+            // it, and the next download of the manifest replaces it.
+            Ok(Self::load_by_file(scope, &cache_file)
+                .ok()
+                .flatten()
+                .filter(|manifest| manifest.name() == name))
         }
 
         pub fn load_by_file(
@@ -1609,8 +1640,6 @@ pub mod package_manifest {
             let mut pkg_stream = bun_io::FixedBufferStream::new(bytes);
             pkg_stream.pos = Self::HEADER_BYTES.len();
 
-            let mut package_manifest = PackageManifest::default();
-
             let registry_hash = pkg_stream.read_int_le::<u64>()?;
             if scope.url_hash != registry_hash {
                 return Ok(None);
@@ -1622,7 +1651,7 @@ pub mod package_manifest {
             }
 
             // Keep the order in sync with `Serializer::write` and SIZES_FIELDS.
-            {
+            let pkg = {
                 pkg_stream.pos = pkg_stream
                     .pos
                     .next_multiple_of(core::mem::align_of::<NpmPackage>());
@@ -1631,38 +1660,75 @@ pub mod package_manifest {
                 if !matches!(bytes.get(flag_at).copied(), Some(0 | 1)) {
                     return Ok(None);
                 }
-                package_manifest.pkg = pkg_stream.read_struct::<NpmPackage>()?;
-            }
-            package_manifest.string_buf = Self::read_array::<u8>(&mut pkg_stream)?.into();
-            package_manifest.versions =
-                Self::read_array::<Semver::Version>(&mut pkg_stream)?.into();
-            package_manifest.external_strings =
-                Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.external_strings_for_versions =
-                Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.package_versions = {
-                let raw = Self::read_array_bytes::<PackageVersion>(&mut pkg_stream)?;
-                let bin_tag_at =
-                    core::mem::offset_of!(PackageVersion, bin) + core::mem::offset_of!(Bin, tag);
+                pkg_stream.read_struct::<NpmPackage>()?
+            };
+            let string_buf = Self::read_array::<u8>(&mut pkg_stream)?;
+            let versions = Self::read_array::<Semver::Version>(&mut pkg_stream)?;
+            let external_strings = Self::read_array::<ExternalString>(&mut pkg_stream)?;
+            let external_strings_for_versions =
+                Self::read_array::<ExternalString>(&mut pkg_stream)?;
+            let raw_package_versions = Self::read_array_bytes::<PackageVersion>(&mut pkg_stream)?;
+            let extern_strings_bin_entries = Self::read_array::<ExternalString>(&mut pkg_stream)?;
+            let bundled_deps_buf = Self::read_array::<PackageNameHash>(&mut pkg_stream)?;
+
+            // The file is ignored if a list of the package points outside its array. A version's
+            // lists are checked later, by `is_in_bounds`. A string outside the buffer reads as "".
+            let string = |s: &SemverString| s.is_within(string_buf);
+            let package_versions = {
+                let bin_at = core::mem::offset_of!(PackageVersion, bin);
+                let bin_tag_at = bin_at + core::mem::offset_of!(Bin, tag);
+                let bin_value_at = bin_at + core::mem::offset_of!(Bin, value);
                 let install_script_at = core::mem::offset_of!(PackageVersion, has_install_script);
-                for raw_pkg in raw
+                for raw_pkg in raw_package_versions
                     .as_chunks::<{ core::mem::size_of::<PackageVersion>() }>()
                     .0
                 {
-                    if !matches!(raw_pkg[bin_tag_at], 0..=4)
-                        || !matches!(raw_pkg[install_script_at], 0 | 1)
-                    {
+                    let is_bin_valid = match raw_pkg[bin_tag_at] {
+                        0..=3 => true,
+                        4 => {
+                            let names_and_paths =
+                                bun_io::FixedBufferStream::new(&raw_pkg[bin_value_at..])
+                                    .read_struct::<ExternalStringList>()?;
+                            names_and_paths.len.is_multiple_of(2)
+                                && names_and_paths.is_within(extern_strings_bin_entries)
+                        }
+                        _ => false,
+                    };
+                    if !is_bin_valid || !matches!(raw_pkg[install_script_at], 0 | 1) {
                         return Ok(None);
                     }
                 }
-                Self::array_from_bytes::<PackageVersion>(raw).into()
+                Self::array_from_bytes::<PackageVersion>(raw_package_versions)
             };
-            package_manifest.extern_strings_bin_entries =
-                Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.bundled_deps_buf =
-                Self::read_array::<PackageNameHash>(&mut pkg_stream)?.into();
+            let version_map = |map: &ExternVersionMap| {
+                map.keys.len == map.values.len
+                    && map.keys.is_within(versions)
+                    && map.values.is_within(package_versions)
+            };
+            let is_in_bounds = version_map(&pkg.releases)
+                && version_map(&pkg.prereleases)
+                && pkg.dist_tags.tags.len == pkg.dist_tags.versions.len
+                && pkg.dist_tags.tags.is_within(external_strings)
+                && pkg.dist_tags.versions.is_within(versions)
+                && pkg.versions_buf.is_within(versions)
+                && pkg.string_lists_buf.is_within(external_strings)
+                && [pkg.last_modified, pkg.etag, pkg.modified, pkg.name.value]
+                    .iter()
+                    .all(string);
+            if !is_in_bounds {
+                return Ok(None);
+            }
 
-            Ok(Some(package_manifest))
+            Ok(Some(PackageManifest {
+                pkg,
+                string_buf: string_buf.into(),
+                versions: versions.into(),
+                external_strings: external_strings.into(),
+                external_strings_for_versions: external_strings_for_versions.into(),
+                package_versions: package_versions.into(),
+                extern_strings_bin_entries: extern_strings_bin_entries.into(),
+                bundled_deps_buf: bundled_deps_buf.into(),
+            }))
         }
     }
 }
@@ -1672,6 +1738,26 @@ pub mod package_manifest {
 impl PackageManifest {
     pub(crate) fn str<'a>(&'a self, external: &'a ExternalString) -> &'a [u8] {
         external.slice(&self.string_buf)
+    }
+
+    /// Returns true if every list of `version` points inside its array. This is checked right
+    /// before `Package::from_npm` reads the lists, so loading a manifest doesn't check unused
+    /// versions.
+    pub(crate) fn is_in_bounds(&self, version: &PackageVersion) -> bool {
+        [
+            &version.dependencies,
+            &version.optional_dependencies,
+            &version.peer_dependencies,
+            &version.dev_dependencies,
+            &version.engines,
+        ]
+        .into_iter()
+        .all(|map| {
+            map.name.len == map.value.len
+                && map.name.is_within(&self.external_strings)
+                && map.value.is_within(&self.external_strings_for_versions)
+        }) && (version.all_dependencies_bundled()
+            || (version.bundled_dependencies).is_within(&self.bundled_deps_buf))
     }
 }
 
@@ -1689,9 +1775,25 @@ impl FindResult<'_> {
             .slice(&manifest.string_buf)
             .to_vec()
     }
+
+    pub fn integrity(&self) -> Integrity {
+        self.package.integrity
+    }
+
+    pub fn is_newer_than(
+        &self,
+        manifest: &PackageManifest,
+        current: Semver::Version,
+        current_buf: &[u8],
+    ) -> bool {
+        self.version
+            .order(current, &manifest.string_buf, current_buf)
+            .is_gt()
+    }
 }
 
-/// pnpm's grammar: `name` exempts a package, `name@1.2.3 || 1.2.4` only those versions.
+/// Uses pnpm's grammar: `name` exempts a package, and `name@1.2.3 || 1.2.4` only exempts those
+/// versions.
 pub struct MinimumReleaseAgeExcludes(Vec<(&'static [u8], Option<Semver::Version>)>);
 
 impl MinimumReleaseAgeExcludes {
@@ -1715,9 +1817,9 @@ impl MinimumReleaseAgeExcludes {
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
-                            "Ignoring minimumReleaseAgeExcludes entry {}: expected a package name or exact versions, e.g. \"{name}@1.2.3\" or \"{name}@1.2.3 || 1.2.4\"",
-                            bun_fmt::quote(entry),
-                            name = bstr::BStr::new(name),
+                            "ignoring minimumReleaseAgeExcludes entry {}: expected a package name or exact versions, e.g. \"{name}@1.2.3\" or \"{name}@1.2.3 || 1.2.4\"",
+                            bun_fmt::EscapeControlChars(bun_fmt::quote(entry)),
+                            name = bun_fmt::escape_control_chars(name),
                         ),
                     );
                     break;
@@ -1773,13 +1875,18 @@ impl PackageManifest {
         self.pkg.prereleases.keys.get(&self.versions)
     }
 
-    /// Like `npm view`: an exact dist-tag name wins, else the best range match.
+    /// Like `npm view`: an exact dist-tag name wins, and otherwise the best match for the range.
     pub fn find_by_spec(&self, spec: &[u8]) -> Result<FindResult<'_>, Error> {
         use crate::dependency::{Tag, TagExt as _};
         let spec: &[u8] = if spec.is_empty() { b"latest" } else { spec };
         // Checked before classifying because published tag names like `v12-lts` read as a range.
         if let Some((_, version)) = self.dist_tags().find(|(tag, _)| *tag == spec) {
             return self.find_by_version(version).ok_or(Error::DistTagNotFound);
+        }
+        // Both pick the version that `bun add` would install. `latest` only gets here when the
+        // manifest has no such tag.
+        if spec == b"*" || spec == b"latest" {
+            return (self.find_any_version(None, None).unwrap()).ok_or(Error::NoMatchingVersion);
         }
         match Tag::infer(spec) {
             Tag::DistTag => Err(Error::DistTagNotFound),
@@ -1791,7 +1898,8 @@ impl PackageManifest {
                     spec
                 };
                 let query = Semver::query::parse(range, SlicedString::init(range, range))?;
-                // Only unknown words (e.g. `npm:x@1`): the lenient parser made a match-all group.
+                // The spec only has unknown words (e.g. `npm:x@1`), which the lenient parser turned
+                // into a group that matches everything.
                 if query.is_empty() {
                     return Err(Error::NoMatchingVersion);
                 }
@@ -1819,7 +1927,7 @@ impl PackageManifest {
         self.find_by_version(version)
     }
 
-    /// Whether every version of this package bypasses the minimum release age.
+    /// Returns true if every version of this package bypasses the minimum release age.
     pub(crate) fn should_exclude_from_age_filter(
         &self,
         exclusions: Option<&MinimumReleaseAgeExcludes>,
@@ -1882,7 +1990,8 @@ impl PackageManifest {
                     }
                     continue;
                 }
-                // Listed versions count as stable: no age gate; they replace an unstable fallback.
+                // Listed versions count as stable, so they skip the age gate and replace an
+                // unstable fallback.
                 if exclusions.is_some_and(|e| e.excludes_version(self.name(), version)) {
                     best_version = Some(FindResult { version, package });
                     break;
@@ -1933,6 +2042,7 @@ pub enum FindVersionError {
     AllVersionsTooRecent,
 }
 
+#[derive(Clone, Copy)]
 pub enum FindVersionResult<'a> {
     Found(FindResult<'a>),
     FoundWithFilter {
@@ -1963,6 +2073,12 @@ impl<'a> FindVersionResult<'a> {
     }
 }
 
+/// Returns true if the text of a range is npm's `*`, which `find_any_version` resolves. npm goes by
+/// the text: `x` and `>=0.0.0` are ranges like any other.
+pub(crate) fn is_any_version_range(literal: &[u8]) -> bool {
+    literal == b"*" || literal.ends_with(b"@*")
+}
+
 impl PackageManifest {
     pub(crate) fn find_for_dependency(
         &self,
@@ -1973,8 +2089,7 @@ impl PackageManifest {
     ) -> FindVersionResult<'_> {
         let literal = version.literal.slice(buf);
         if version.tag == crate::dependency::Tag::Npm {
-            // npm goes by the text: `x` and `>=0.0.0` are ranges like any other.
-            if literal == b"*" || literal.ends_with(b"@*") {
+            if is_any_version_range(literal) {
                 return self.find_any_version(minimum_release_age_ms, exclusions);
             }
             return self.find_best_version_with_filter(
@@ -1984,7 +2099,8 @@ impl PackageManifest {
                 exclusions,
             );
         }
-        // Nobody wrote `latest` (`bun add pkg`): as npm, not followed onto a deprecated version.
+        // Nobody wrote `latest` explicitly (`bun add pkg`), so like npm, don't follow the tag to a
+        // deprecated version.
         if literal.is_empty()
             && (self.find_by_dist_tag(b"latest"))
                 .is_some_and(|latest| !latest.package.deprecated.is_empty())
@@ -1998,7 +2114,8 @@ impl PackageManifest {
         )
     }
 
-    /// npm's `*`: `latest`, even a prerelease, unless it is deprecated; else the highest release.
+    /// Resolves npm's `*`: `latest`, even if it's a prerelease, unless it's deprecated. Otherwise
+    /// the highest release.
     pub(crate) fn find_any_version(
         &self,
         minimum_release_age_ms: Option<f64>,
@@ -2228,7 +2345,7 @@ impl PackageManifest {
             return self.find_by_version(exact);
         }
 
-        // As npm-pick-manifest: a deprecated version is picked only when every match is deprecated.
+        // Like npm-pick-manifest, only pick a deprecated version if every match is deprecated.
         if let Some(result) = self.find_by_dist_tag(b"latest") {
             if result.package.deprecated.is_empty()
                 && (group.is_empty()
@@ -2279,7 +2396,7 @@ const DEPENDENCY_GROUPS: [DependencyGroup; 3] = [
     DependencyGroup::PEER,
 ];
 
-/// npm accepts both spellings; `bundleDependencies` is the documented one.
+/// npm accepts both spellings. `bundleDependencies` is the documented one.
 fn bundled_dependencies_field(
     version_obj: Option<&JSON::E::ObjectJSON>,
 ) -> Option<&JSON::E::JsonValue> {
@@ -2297,7 +2414,8 @@ fn deprecation_message(version_obj: Option<&JSON::E::ObjectJSON>) -> Option<&[u8
     }
 }
 
-/// As npm: no time passes minimum-release-age (0), one that is not a date never does.
+/// Like npm: a version with no time passes minimum-release-age (0), and a time that isn't a date
+/// never does.
 fn publish_timestamp_ms(time: &JSON::E::JsonValue) -> f64 {
     use JSON::E::JsonValue;
     match time {
@@ -2413,7 +2531,8 @@ impl PackageManifest {
             };
 
             let versions = versions_obj.get().properties();
-            // A package that deprecates many versions repeats one sentence: stored once per run.
+            // A package that deprecates many versions repeats the same sentence, so it's stored
+            // once per run of equal messages.
             let mut prev_deprecated: &[u8] = b"";
             for prop in versions {
                 let version_name = prop.key.slice();
@@ -2428,7 +2547,7 @@ impl PackageManifest {
                             prop.key_loc,
                             format_args!(
                                 "Skipping version {} of {}: not a valid semver version",
-                                bun_fmt::quote(version_name),
+                                bun_fmt::EscapeControlChars(bun_fmt::quote(version_name)),
                                 bun_fmt::quote(expected_name),
                             ),
                         );
@@ -2754,6 +2873,17 @@ impl PackageManifest {
                     version_obj.and_then(|o| o.get(b"hasInstallScript"))
                 {
                     package_version.has_install_script = *val;
+                } else if let Some(scripts) = version_obj
+                    .and_then(|o| o.get(b"scripts"))
+                    .and_then(|scripts| scripts.as_object())
+                {
+                    // The full manifest has `scripts` instead of the field. The registry and npm
+                    // derive the field from them in the same way.
+                    package_version.has_install_script =
+                        [&b"preinstall"[..], b"install", b"postinstall"]
+                            .iter()
+                            .filter_map(|name| scripts.get(name)?.as_str())
+                            .any(|script| !script.is_empty());
                 }
 
                 if let Some(message) = deprecation_message(version_obj) {
@@ -2932,9 +3062,9 @@ impl PackageManifest {
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
-                                    "Unsupported or malformed integrity hash in registry metadata for {}@{}; its tarball will not be verified",
+                                    "Unsupported or malformed integrity hash in registry metadata for {}@{}, tarball will not be verified",
                                     bstr::BStr::new(expected_name),
-                                    bstr::BStr::new(version_name),
+                                    bun_fmt::escape_control_chars(version_name),
                                 ),
                             );
                         }

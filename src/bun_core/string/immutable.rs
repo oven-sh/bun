@@ -34,9 +34,12 @@ pub use whitespace::{
 };
 #[path = "immutable/icu_collation.rs"]
 mod icu_collation;
+#[path = "immutable/icu_normalize.rs"]
+mod icu_normalize;
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
 pub use icu_collation::{locale_compare, locale_compare_numeric_base};
+pub use icu_normalize::{NormalizationForm, normalize};
 #[path = "immutable/utf16_offsets.rs"]
 mod utf16_offsets;
 pub use utf16_offsets::Utf16OffsetTable;
@@ -50,6 +53,7 @@ pub const fn is_regexp_word_byte(byte: u8) -> bool {
 }
 #[path = "immutable/wtf8_text.rs"]
 mod wtf8_text;
+use wtf8_text::wtf8_decoded_units;
 pub use wtf8_text::{
     Wtf8Codepoints, codepoint_len_utf16, push_codepoint_wtf8_joined, push_wtf8,
     push_wtf8_well_formed, utf8_decoded_len_utf16, utf8_lossy_len_utf16, wtf8_codepoint_at,
@@ -518,7 +522,7 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
 // Secret-redaction scanners are canonical in crate::strings_impl (only callers
 // live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
 pub(crate) use crate::strings_impl::{
-    find_authority_password, find_url_password, is_uuid, next_url_password, starts_with_npm_secret,
+    find_authority_userinfo, find_url_userinfo, is_uuid, next_url_userinfo, starts_with_npm_secret,
     starts_with_secret, starts_with_uuid,
 };
 
@@ -1900,6 +1904,13 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: fire-and-forget
         ranges = new_ranges;
     }
+    if current_line <= target_line {
+        let _ = ranges.push(LineRange {
+            start: prev_end,
+            // Wrapping cast.
+            end: text.len() as u32,
+        }); // OOM/capacity: fire-and-forget
+    }
 
     ranges
 }
@@ -1984,18 +1995,22 @@ pub fn order_t<T: Ord>(a: &[T], b: &[T]) -> Ordering {
 }
 
 /// `a < b`, `a === b` or `a > b` of JavaScript, for UTF-8 and WTF-8: the order of the UTF-16 code
-/// units, which is not [`order`] where a character outside the BMP meets one from U+D800.
+/// units, which is not [`order`] where a character outside the BMP meets one from U+D800. Other
+/// bytes are what `TextDecoder` makes of them, so it is a total order of all texts.
 pub fn order_utf16(a: &[u8], b: &[u8]) -> Ordering {
     let common = a.iter().zip(b).take_while(|(x, y)| x == y).count();
-    match (a.get(common), b.get(common)) {
-        (Some(0xF0..), Some(0xEE | 0xEF)) => Ordering::Less,
-        (Some(0xEE | 0xEF), Some(0xF0..)) => Ordering::Greater,
-        // U+D000 to U+D7FF, or a lone surrogate, which can be after the first unit of the other.
-        (Some(0xF0..), Some(0xED)) | (Some(0xED), Some(0xF0..)) => {
-            wtf8_to_utf16_alloc(&a[common..]).cmp(&wtf8_to_utf16_alloc(&b[common..]))
-        }
-        (x, y) => x.cmp(&y),
+    let (x, y) = (a.get(common), b.get(common));
+    let is_ascii = |byte: Option<&u8>| byte.is_none_or(u8::is_ascii);
+    if is_ascii(x) && is_ascii(y) && is_ascii(a[..common].last()) {
+        return x.cmp(&y);
     }
+    // From the start of the sequence that the first difference may be part of: a lead byte starts one in every text.
+    let before = &a[common.saturating_sub(3)..common];
+    let start = match before.iter().rposition(|byte| !(0x80..0xC0).contains(byte)) {
+        Some(at) if before[at] >= 0xC0 => common - (before.len() - at),
+        _ => common,
+    };
+    wtf8_decoded_units(&a[start..]).cmp(wtf8_decoded_units(&b[start..]))
 }
 
 pub fn cmp_strings_asc(_: (), a: &[u8], b: &[u8]) -> bool {
@@ -2027,17 +2042,6 @@ pub fn to_ascii_hex_value(character: u8) -> u8 {
 pub use exact_size_matcher::ExactSizeMatcher;
 
 pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
-
-pub fn left_has_any_in_right(to_check: &[&[u8]], against: &[&[u8]]) -> bool {
-    for check in to_check {
-        for item in against {
-            if eql_long(check, item, true) {
-                return true;
-            }
-        }
-    }
-    false
-}
 
 /// Returns true if the input has the prefix and the next character is not an identifier character
 /// Also returns true if the input ends with the prefix (i.e. EOF)
@@ -2864,6 +2868,19 @@ mod tests {
             (b"\xED\xBF\xBF", &[0xDFFF]),
             (b"\xEE\x80\x80", &[0xE000]),
             (b"\xEF\xBF\xBF", &[0xFFFF]),
+            // Not valid UTF-8.
+            (b"\xF0A", &[0xFFFD, 0x41]),
+            (b"\xF1\x80\x80\x80", &[0xD8C0, 0xDC00]),
+            (b"\xF0\x9F\x98", &[0xFFFD]),
+            (b"\xF0\x9F\x98\x80", &[0xD83D, 0xDE00]),
+            (b"\xF0\x9F\x98b", &[0xFFFD, 0x62]),
+            (b"\xF0\x9FA", &[0xFFFD, 0x41]),
+            (b"\xEF\xBF\xBDc", &[0xFFFD, 0x63]),
+            (b"\x80", &[0xFFFD]),
+            (b"\x80\x80", &[0xFFFD, 0xFFFD]),
+            (b"\xC3\xA9", &[0xE9]),
+            (b"\xC3", &[0xFFFD]),
+            (b"\xFF", &[0xFFFD]),
         ];
         for (a, a_units) in texts {
             for (b, b_units) in texts {

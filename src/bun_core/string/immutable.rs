@@ -55,11 +55,10 @@ pub const fn is_regexp_word_byte(byte: u8) -> bool {
 mod wtf8_text;
 use wtf8_text::wtf8_decoded_units;
 pub use wtf8_text::{
-    Wtf8CheckedUnits, Wtf8CodeUnitAt, Wtf8Codepoints, codepoint_len_utf16,
-    push_codepoint_wtf8_joined, push_wtf8, push_wtf8_well_formed, utf8_decoded_len_utf16,
-    utf8_lossy_len_utf16, wtf8_checked_len_utf16, wtf8_checked_units, wtf8_code_unit_at,
-    wtf8_codepoint_at, wtf8_codepoint_count, wtf8_codepoints, wtf8_first_codepoint,
-    wtf8_has_surrogate, wtf8_len_utf16, wtf8_offset_of_utf16_index, wtf8_pair_across,
+    Wtf8CodeUnitAt, Wtf8Codepoints, codepoint_len_utf16, push_codepoint_wtf8_joined, push_wtf8,
+    push_wtf8_well_formed, utf8_decoded_len_utf16, utf8_lossy_len_utf16, wtf8_code_unit_at,
+    wtf8_codepoint_at, wtf8_codepoint_count, wtf8_codepoints, wtf8_decoded_len_utf16,
+    wtf8_first_codepoint, wtf8_has_surrogate, wtf8_len_utf16, wtf8_offset_of_utf16_index,
     wtf8_slice_by_utf16, wtf8_to_utf16, wtf16_to_wtf8,
 };
 
@@ -2000,71 +1999,36 @@ pub fn order_t<T: Ord>(a: &[T], b: &[T]) -> Ordering {
 /// units, which is not [`order`] where a character outside the BMP meets one from U+D800. Other
 /// bytes are what `TextDecoder` makes of them, so it is a total order of all texts.
 pub fn order_utf16(a: &[u8], b: &[u8]) -> Ordering {
-    match first_difference(a, b) {
-        (_, Some(order)) => order,
-        (common, None) => {
-            let start = sequence_start(a, common);
-            wtf8_decoded_units(&a[start..]).cmp(wtf8_decoded_units(&b[start..]))
-        }
-    }
-}
-
-/// [`order_utf16`], or `None` if an ill-formed byte is at or before the first difference.
-pub fn checked_order_utf16(a: &[u8], b: &[u8]) -> Option<Ordering> {
-    let (common, order) = first_difference(a, b);
-    // A shared non-ASCII prefix is decoded too: an ill-formed byte in it shifts what a printer reads.
-    let start = match (first_non_ascii(&a[..common]), order) {
-        (None, Some(order)) => return Some(order),
-        (None, None) => sequence_start(a, common),
-        (Some(at), _) => at as usize,
-    };
-    let (mut left, mut right) = (
-        wtf8_checked_units(&a[start..]),
-        wtf8_checked_units(&b[start..]),
-    );
-    loop {
-        let (x, y) = (left.next().map(|it| it.1), right.next().map(|it| it.1));
-        if left.ill_formed() || right.ill_formed() {
-            return None;
-        }
-        if x != y || x.is_none() {
-            return Some(x.cmp(&y));
-        }
-    }
-}
-
-/// Code-unit order of WTF-8 `text` against UTF-16 `units`. `None` as in [`checked_order_utf16`].
-pub fn checked_order_wtf8_utf16(text: &[u8], units: &[u16]) -> Option<Ordering> {
-    let mut left = wtf8_checked_units(text);
-    let mut right = units.iter().copied();
-    loop {
-        let x = left.next().map(|it| it.1);
-        if left.ill_formed() {
-            return None;
-        }
-        let y = right.next();
-        if x != y || x.is_none() {
-            return Some(x.cmp(&y));
-        }
-    }
-}
-
-/// Length of the common prefix, and the order if the first difference is between ASCII or an end.
-fn first_difference(a: &[u8], b: &[u8]) -> (usize, Option<Ordering>) {
-    let common = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let common = common_prefix_len(a, b);
     let (x, y) = (a.get(common), b.get(common));
     let is_ascii = |byte: Option<&u8>| byte.is_none_or(u8::is_ascii);
-    let order = (is_ascii(x) && is_ascii(y) && is_ascii(a[..common].last())).then(|| x.cmp(&y));
-    (common, order)
-}
-
-/// Start of the sequence that the byte at `common` may be part of. A lead byte always starts one.
-fn sequence_start(a: &[u8], common: usize) -> usize {
+    if is_ascii(x) && is_ascii(y) && is_ascii(a[..common].last()) {
+        return x.cmp(&y);
+    }
+    // From the start of the sequence that the first difference may be part of: a lead byte starts one in every text.
     let before = &a[common.saturating_sub(3)..common];
-    match before.iter().rposition(|byte| !(0x80..0xC0).contains(byte)) {
+    let start = match before.iter().rposition(|byte| !(0x80..0xC0).contains(byte)) {
         Some(at) if before[at] >= 0xC0 => common - (before.len() - at),
         _ => common,
-    }
+    };
+    wtf8_decoded_units(&a[start..]).cmp(wtf8_decoded_units(&b[start..]))
+}
+
+/// [`order_utf16`] of `text` against the UTF-16 code units `units`.
+pub fn order_wtf8_utf16(text: &[u8], units: &[u16]) -> Ordering {
+    wtf8_decoded_units(text).cmp(units.iter().copied())
+}
+
+/// How many bytes `a` and `b` both start with. Blocks are compared first: `==` of two slices is memcmp.
+#[inline]
+fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
+    let blocks = a.chunks_exact(64).zip(b.chunks_exact(64));
+    let same = 64 * blocks.take_while(|(x, y)| x == y).count();
+    same + a[same..]
+        .iter()
+        .zip(&b[same..])
+        .take_while(|(x, y)| x == y)
+        .count()
 }
 
 pub fn cmp_strings_asc(_: (), a: &[u8], b: &[u8]) -> bool {
@@ -2906,6 +2870,22 @@ mod tests {
     }
 
     #[test]
+    fn common_prefix_len_is_where_two_texts_first_differ() {
+        let text: Vec<u8> = (0..1000u32).map(|i| (i % 251) as u8).collect();
+        for len in [0, 1, 63, 64, 65, 127, 128, 129, 999, 1000] {
+            for at in [0, 1, 7, 62, 63, 64, 65, 127, 128, 500, 998, 999] {
+                if at < len {
+                    let mut other = text[..len].to_vec();
+                    other[at] ^= 1;
+                    assert_eq!(super::common_prefix_len(&text[..len], &other), at);
+                    assert_eq!(super::common_prefix_len(&other, &text), at);
+                }
+            }
+            assert_eq!(super::common_prefix_len(&text[..len], &text), len);
+        }
+    }
+
+    #[test]
     fn order_utf16_is_the_order_of_the_code_units() {
         // Each with the units that it is: lone surrogates, and what is around them in both orders.
         let texts: &[(&[u8], &[u16])] = &[
@@ -2943,50 +2923,37 @@ mod tests {
                     a_units.cmp(b_units),
                     "{a:x?} {b:x?}"
                 );
-                // The checked order is the same, or none where it depends on an ill-formed byte.
-                let is_wtf8 = |text| super::wtf8_checked_len_utf16(text).is_some();
-                match super::checked_order_utf16(a, b) {
-                    Some(order) => assert_eq!(order, a_units.cmp(b_units), "{a:x?} {b:x?}"),
-                    None => assert!(!is_wtf8(a) || !is_wtf8(b), "{a:x?} {b:x?}"),
+            }
+        }
+        // The same after a long text that both start with, and against the other text in UTF-16.
+        let starts: [Vec<u8>; 6] = [
+            [&b"a".repeat(300)[..], b"\xED\xA0\xBD"].concat(),
+            b"a".repeat(300),
+            "é".repeat(300).into_bytes(),
+            "a€😀".repeat(100).into_bytes(),
+            [&b"a".repeat(200)[..], b"\xE2\x82", &b"b".repeat(200)[..]].concat(),
+            [&b"a".repeat(200)[..], b"\xFF", &b"b".repeat(200)[..]].concat(),
+        ];
+        for start in &starts {
+            for (a, _) in texts {
+                for (b, _) in texts {
+                    let (long_a, long_b) = ([&start[..], a].concat(), [&start[..], b].concat());
+                    let long_b_units: Vec<u16> = super::wtf8_decoded_units(&long_b).collect();
+                    let expected =
+                        super::wtf8_decoded_units(&long_a).cmp(long_b_units.iter().copied());
+                    assert_eq!(
+                        super::order_utf16(&long_a, &long_b),
+                        expected,
+                        "{a:x?} {b:x?}"
+                    );
+                    assert_eq!(
+                        super::order_wtf8_utf16(&long_a, &long_b_units),
+                        expected,
+                        "{a:x?} {b:x?}"
+                    );
                 }
             }
         }
-        // What is after the first difference is not looked at. What is before it is.
-        use std::cmp::Ordering;
-        for (a, b, order) in [
-            (&b"a\xFF"[..], &b"b\xFF"[..], Some(Ordering::Less)),
-            (b"\xC3\xA9\xFF", b"\xC3\xA8\xFF", Some(Ordering::Greater)),
-            (b"\xC3\xA9a\xFF", b"\xC3\xA9b\xFF", Some(Ordering::Less)),
-            (b"\xFFaa", b"\xFFab", None),
-            (b"\xFFa", b"\xFFb", None),
-            (b"\xC3\xA9\xFF", b"\xC3\xA9", None),
-            (b"\xFF", b"\xC3\xA9", None),
-            (b"\xE2\x41\x42", b"\xE2\x41\x43", None),
-            (b"\xE2\x41", b"\xE2\x82\xAC", None),
-        ] {
-            assert_eq!(super::checked_order_utf16(a, b), order, "{a:x?} {b:x?}");
-        }
-        // WTF-8 against UTF-16 is the same order.
-        for (a, a_units) in texts {
-            for (_, b_units) in texts {
-                match super::checked_order_wtf8_utf16(a, b_units) {
-                    Some(order) => assert_eq!(order, a_units.cmp(b_units), "{a:x?} {b_units:x?}"),
-                    None => assert!(super::wtf8_checked_len_utf16(a).is_none(), "{a:x?}"),
-                }
-            }
-        }
-        assert_eq!(
-            super::checked_order_wtf8_utf16("é😀".as_bytes(), &[0xE9, 0xD83D, 0xDE00]),
-            Some(Ordering::Equal)
-        );
-        assert_eq!(
-            super::checked_order_wtf8_utf16(b"a\xFF", &[0x62]),
-            Some(Ordering::Less)
-        );
-        assert_eq!(
-            super::checked_order_wtf8_utf16(b"a\xFF", &[0x61, 0x62]),
-            None
-        );
     }
 
     #[test]

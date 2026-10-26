@@ -122,13 +122,10 @@ mod _impl {
             // across threads; a closed `Context` cannot be re-initialized.
             self.throw_unless_idle(global)?;
 
-            let write_state_value = write_state.convert(global)?.to_js();
+            let write_state = write_state.convert(global)?;
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            if write_state_value
-                .as_array_buffer(global)
-                .is_none_or(|buf| buf.byte_len < 2 * size_of::<u32>())
-            {
+            if write_state.as_array_buffer(global).byte_len < 2 * size_of::<u32>() {
                 return Err(global
                     .err(
                         jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -136,13 +133,9 @@ mod _impl {
                     )
                     .throw());
             }
-            js::write_result_set_cached(this_value, global, write_state_value);
+            js::write_result_set_cached(this_value, global, write_state.to_js());
 
-            let write_js_callback = validators::validate_function(
-                global,
-                "processCallback",
-                process_callback.convert(global)?.to_js(),
-            )?;
+            let write_js_callback = process_callback.convert(global)?.to_js();
             js::write_callback_set_cached(
                 this_value,
                 global,
@@ -174,9 +167,8 @@ mod _impl {
                 return Ok(false);
             }
 
-            let mut params_ = Some(init_params_array.convert(global)?.as_array_buffer(global));
-            let params_: &mut [u32] = params_.as_mut().map_or(&mut [], jsc::ArrayBuffer::as_u32);
-            for (i, &x) in params_.iter().enumerate() {
+            let mut params_ = init_params_array.convert(global)?.as_array_buffer(global);
+            for (i, &x) in params_.as_u32().iter().enumerate() {
                 if x == u32::MAX {
                     continue;
                 }

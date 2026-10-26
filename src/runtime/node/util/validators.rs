@@ -322,17 +322,6 @@ pub(crate) fn validate_boolean_array(
     Ok(i)
 }
 
-pub(crate) fn validate_function(
-    global: &JSGlobalObject,
-    name: &str,
-    value: JSValue,
-) -> JsResult<JSValue> {
-    if !value.is_function() {
-        return Err(global.throw_invalid_argument_type_value(name, "function", value));
-    }
-    Ok(value)
-}
-
 /// Rust has no field reflection; enums opt in via this trait.
 /// Implementors should typically `#[derive(strum::EnumString, strum::VariantNames)]`
 /// and provide `VALUES_INFO` as the `|`-joined variant names.

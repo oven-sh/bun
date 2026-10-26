@@ -66,7 +66,6 @@ mod _impl {
     use bun_ptr::RefPtr;
 
     use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive, Error};
-    use crate::node::util::validators;
 
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
     // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
@@ -165,11 +164,8 @@ mod _impl {
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_result_value = write_result.convert(global_this)?.to_js();
-            if write_result_value
-                .as_array_buffer(global_this)
-                .is_none_or(|buf| buf.byte_len < 2 * size_of::<u32>())
-            {
+            let write_result = write_result.convert(global_this)?;
+            if write_result.as_array_buffer(global_this).byte_len < 2 * size_of::<u32>() {
                 return Err(global_this
                     .err(
                         ErrorCode::INVALID_ARG_VALUE,
@@ -177,16 +173,12 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_callback = validators::validate_function(
-                global_this,
-                "writeCallback",
-                write_callback.convert(global_this)?.to_js(),
-            )?;
+            let write_callback = write_callback.convert(global_this)?.to_js();
 
             // Validate `params` before any native state is initialized so the
             // error path needs no cleanup. `as_u32` reinterprets the view's
             // bytes, so the element type must actually be Uint32Array.
-            let mut params_buf = Some(params.convert(global_this)?.as_array_buffer(global_this));
+            let mut params_buf = params.convert(global_this)?.as_array_buffer(global_this);
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
             // outlives the `stream.init` call below (E0716 otherwise).
@@ -195,7 +187,7 @@ mod _impl {
                 .map(|buffer| buffer.as_array_buffer(global_this));
             let dictionary = dictionary_buf.as_ref().map(|buf| buf.byte_slice());
 
-            js::write_result_set_cached(this_value, global_this, write_result_value);
+            js::write_result_set_cached(this_value, global_this, write_result.to_js());
 
             js::write_callback_set_cached(
                 this_value,
@@ -209,9 +201,7 @@ mod _impl {
                 return Ok(false);
             }
 
-            let params_: &mut [u32] = params_buf
-                .as_mut()
-                .map_or(&mut [], bun_jsc::ArrayBuffer::as_u32);
+            let params_ = params_buf.as_u32();
 
             for (i, &d) in params_.iter().enumerate() {
                 // (d == -1) {

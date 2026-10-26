@@ -34,13 +34,14 @@ const write = {
   },
 } as const;
 const int32 = b.i32.validateInteger();
+// `init` first refuses a stream that is busy or closed, so these are `.deferred`.
 const uint32Array = b.cell("JSC::JSUint32Array", "JavaScriptCore/JSTypedArrays.h", {
   rustPath: "bun_jsc::bindgen::BufferSource",
   tsType: "Uint32Array",
 }).deferred;
 const callback = b.callable.deferred;
 const dictionary = b.bufferSource.allowShared.optional.deferred;
-const bufferSource = ["Buffer", "TypedArray", "DataView"];
+const dictionaryExpected = ["Buffer", "TypedArray", "DataView"];
 
 /** The native handle of a `node:zlib` stream: `kHandle` in `src/js/node/zlib.ts`. */
 const compressionStream = <Init extends object, Params extends object>(
@@ -80,7 +81,7 @@ export const NativeZlib = compressionStream(
       writeCallback: callback,
       dictionary,
     },
-    expected: { writeResult: ["Uint32Array"], writeCallback: ["function"], dictionary: bufferSource },
+    expected: { writeResult: ["Uint32Array"], writeCallback: ["function"], dictionary: dictionaryExpected },
   },
   { ...method, args: { level: int32, strategy: int32 } },
 );
@@ -99,7 +100,7 @@ export const NativeBrotli = compressionStream(
       params: ["Uint32Array"],
       writeResult: ["Uint32Array"],
       writeCallback: ["function"],
-      dictionary: bufferSource,
+      dictionary: dictionaryExpected,
     },
     returns: b.bool,
   },
@@ -121,7 +122,7 @@ export const NativeZstd = compressionStream(
       initParamsArray: ["Uint32Array"],
       writeState: ["Uint32Array"],
       processCallback: ["function"],
-      dictionary: bufferSource,
+      dictionary: dictionaryExpected,
     },
     returns: b.bool,
   },

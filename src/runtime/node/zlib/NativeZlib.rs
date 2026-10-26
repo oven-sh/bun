@@ -13,7 +13,6 @@ mod _impl {
     use bun_ptr::RefPtr;
 
     use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive};
-    use crate::node::util::validators;
 
     /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
     /// (see `CompressionStreamImpl::write` in node_zlib_binding.rs).
@@ -97,11 +96,8 @@ mod _impl {
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_result_value = write_result.convert(global)?.to_js();
-            if write_result_value
-                .as_array_buffer(global)
-                .is_none_or(|buf| buf.byte_len < 2 * size_of::<u32>())
-            {
+            let write_result = write_result.convert(global)?;
+            if write_result.as_array_buffer(global).byte_len < 2 * size_of::<u32>() {
                 return Err(global
                     .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -109,11 +105,7 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_callback = validators::validate_function(
-                global,
-                "writeCallback",
-                write_callback.convert(global)?.to_js(),
-            )?;
+            let write_callback = write_callback.convert(global)?.to_js();
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
             // the call to `stream.init` below (E0716 otherwise).
             let dictionary_buf = dictionary
@@ -133,7 +125,7 @@ mod _impl {
                 ));
             }
 
-            js::write_result_set_cached(this_value, global, write_result_value);
+            js::write_result_set_cached(this_value, global, write_result.to_js());
             js::write_callback_set_cached(
                 this_value,
                 global,

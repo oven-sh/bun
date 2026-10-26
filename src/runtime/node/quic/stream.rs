@@ -151,6 +151,9 @@ pub(crate) struct QuicStream {
     headers_received: Cell<bool>,
     headers_sent: Cell<bool>,
     headers_refused: Cell<bool>,
+    /// lsquic took a queued header block that isn't the stream's first, and has given no write event since.
+    /// It can still hold part of the block, and it would put body bytes into that block's frame. lsquic 4.11.0 refuses them itself.
+    may_hold_queued_block: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
     priority: Cell<(u8, bool)>,
     /// (nul-joined pairs, pair count, eos, frameless).
@@ -202,6 +205,7 @@ impl QuicStream {
             headers_received: Cell::new(false),
             headers_sent: Cell::new(false),
             headers_refused: Cell::new(false),
+            may_hold_queued_block: Cell::new(false),
             priority: Cell::new(DEFAULT_PRIORITY),
             pending_headers: JsCell::new(Vec::new()),
             trailers_requested: Cell::new(false),
@@ -350,6 +354,16 @@ impl QuicStream {
         result
     }
 
+    /// lsquic took the header block that ends the write side.
+    fn end_with_header_block(&self, s: lsquic::Stream) {
+        self.with_state(|st| {
+            st.fin_sent = 1;
+            st.write_ended = 1;
+        });
+        s.shutdown(1);
+        self.discard_outbound();
+    }
+
     /// lsquic can only queue a HEADERS frame behind sent data if the stream has flow-control credit for the frame's own header.
     fn must_wait_for_credit(&self, s: lsquic::Stream, frameless: bool) -> bool {
         !frameless && self.headers_sent.get() && s.write_avail() == 0
@@ -364,16 +378,17 @@ impl QuicStream {
             }
             let (bytes, count, eos, _) = self.pending_headers.with_mut(|q| q.remove(0));
             self.wrote_to_lsquic.set(true);
+            // lsquic keeps a body behind the first header block of a stream itself.
+            let first = !self.headers_sent.get();
             match self.put_header_block(s, &bytes, count, eos, frameless) {
-                SendHeaders::Sent if eos => {
-                    self.with_state(|st| {
-                        st.fin_sent = 1;
-                        st.write_ended = 1;
-                    });
-                    s.shutdown(1);
-                }
+                SendHeaders::Sent if eos => self.end_with_header_block(s),
                 // lsquic only buffers the block, and the flush in drain_outbound needs a write event.
-                SendHeaders::Sent => want_write = true,
+                SendHeaders::Sent => {
+                    want_write = true;
+                    if !first {
+                        self.may_hold_queued_block.set(true);
+                    }
+                }
                 SendHeaders::Retry => {
                     self.pending_headers
                         .with_mut(|q| q.insert(0, (bytes, count, eos, frameless)));
@@ -683,7 +698,7 @@ impl QuicStream {
         if self.send_pending_headers(s) {
             return;
         }
-        while !self.outbound.get().data.is_empty() {
+        while !self.may_hold_queued_block.get() && !self.outbound.get().data.is_empty() {
             // lsquic copies what it accepts. Move the queue out of the cell so no borrow spans the call.
             let mut data = self.outbound.with_mut(|o| core::mem::take(&mut o.data));
             let offered = data.as_slices().0.len();
@@ -1199,11 +1214,7 @@ impl QuicStream {
                     self.wrote_to_lsquic.set(true);
                     self.with_state(|s| s.has_outbound = 1);
                     if eos {
-                        self.with_state(|s| {
-                            s.fin_sent = 1;
-                            s.write_ended = 1;
-                        });
-                        s.shutdown(1);
+                        self.end_with_header_block(s);
                         if let Some(session) = self.session_ref() {
                             session.schedule_process();
                         }
@@ -1231,8 +1242,11 @@ impl QuicStream {
         self.pending_headers
             .with_mut(|q| q.push((bytes, header_count, eos, frameless)));
         self.with_state(|s| s.has_outbound = 1);
-        if open.is_some() {
-            self.note_write_blocked();
+        if let Some(s) = open {
+            // A block that waits for lsquic to send the one before it isn't blocked by flow control.
+            if self.must_wait_for_credit(s, frameless) {
+                self.note_write_blocked();
+            }
             self.kick_write();
         }
         Ok(JSValue::js_boolean(true))
@@ -1411,6 +1425,8 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
 
 lsquic_callback! {
     pub(super) fn on_stream_write(qs: &QuicStream, _s: *mut lsquic::lsquic_stream) {
+        // lsquic keeps the write events to itself while it sends a header block that it holds.
+        qs.may_hold_queued_block.set(false);
         qs.drain_outbound();
     }
 

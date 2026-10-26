@@ -15,7 +15,7 @@ import type { Dependency, DirectBuild } from "../source.ts";
 import { depBuildDir, depSourceDir } from "../source.ts";
 import { lsxpackDefines } from "./lshpack.ts";
 
-const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
+export const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
 
 // gQUIC (Google QUIC, pre-IETF) sources are excluded — Bun only negotiates
 // IETF QUIC. The unconditional engine/global references to gQUIC vtables are

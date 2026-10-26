@@ -70,6 +70,86 @@ describe("QuicStream.destroy after the app ended the send side", () => {
     expect(chunks).toBeGreaterThan(0);
     expect(await gotHeaders.promise).toBe("200");
   });
+
+  // A request that waited for the server's stream limit opens while an upload of higher priority keeps the
+  // connection busy, so its stream gets no write event yet. lsquic has the request's header block by then,
+  // and it keeps the body behind a stream's first header block by itself.
+  test("doesn't reset a request whose stream opens behind an upload", async () => {
+    const limit = 1 << 30;
+    let resets = 0;
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.onreset = () => void resets++;
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: {
+          maxIdleTimeout: 10,
+          // The third request of the client waits for one of these.
+          initialMaxStreamsBidi: 2,
+          // Flow control never stops the upload, so it keeps the streams of lower priority waiting.
+          initialMaxData: limit,
+          initialMaxStreamDataBidiRemote: limit,
+        },
+        async onheaders(this: any) {
+          try {
+            for await (const _ of this);
+            this.sendHeaders({ ":status": "204" }, { terminal: true });
+          } catch {}
+        },
+      },
+    );
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 10 },
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    await client.opened;
+    const request = (method: string, path: string) => ({
+      ":method": method,
+      ":path": path,
+      ":scheme": "https",
+      ":authority": "localhost",
+    });
+    const status = Promise.withResolvers<string>();
+    const streams: any[] = [];
+    const open = (options: object): Promise<any> =>
+      client.createBidirectionalStream(options as any).then((stream: any) => {
+        streams.push(stream);
+        stream.closed.catch(() => {});
+        return stream;
+      });
+    try {
+      await open({ headers: request("POST", "/upload"), body: new Uint8Array(4 << 20), priority: "high" });
+      await open({ headers: request("GET", "/quick") });
+      const waiting = await open({});
+      waiting.sendHeaders(request("POST", "/waiting"));
+      waiting.writer.writeSync(new TextEncoder().encode("hello"));
+      waiting.writer.endSync();
+      await waiting.opened;
+      waiting.destroy();
+      // The client sends a reset at once, so the server has it before it answers a request that opens later.
+      const later = await open({
+        headers: request("GET", "/later"),
+        onheaders: (headers: any) => status.resolve(headers[":status"]),
+      });
+      // A request that a closed connection ends gets no response.
+      later.closed.then(
+        () => status.resolve("closed"),
+        (error: any) => status.resolve(`error ${error?.code}`),
+      );
+      expect({ later: await status.promise, resets }).toEqual({ later: "204", resets: 0 });
+    } finally {
+      // close() waits for a stream that's still open.
+      for (const stream of streams) stream.destroy();
+      client.close();
+    }
+  });
 });
 
 // H3 header octets are latin1 on the wire (as node's StringBytes LATIN1 write
@@ -719,71 +799,112 @@ describe("HTTP/3 header blocks that follow another header block", () => {
     }
   });
 
-  // lsquic keeps the part of a header block that the congestion window has no room for, and takes no
-  // other header block for that stream until it has sent that part. The blocks that a server sends while
-  // it answers the requests of one read share the window, so the later streams of a burst run out of it.
-  test("every stream of a burst gets the response that follows its interim response", async () => {
-    const streams = 24;
-    // About 6 KB a stream: together several times lsquic's initial window of 32 packets.
-    const link = Array.from({ length: 128 }, (_, i) => `</assets/chunk-${i}.js>; rel=preload; as=script`).join(", ");
-    // Opening the streams can block the event loop for longer than the 1-second idle timeout of the other tests.
-    const maxIdleTimeout = 30;
-    const sent: boolean[] = [];
-    await using server = await listen(
-      async serverSession => {
-        serverSession.onstream = (stream: any) => {
-          stream.closed.catch(() => {});
-        };
-        await serverSession.closed.catch(() => {});
-      },
-      {
-        sni: { "*": { keys: [key], certs: [cert] } },
-        transportParams: { maxIdleTimeout, initialMaxStreamsBidi: streams },
-        onheaders(this: any) {
-          sent.push(this.sendInformationalHeaders({ ":status": "103", link }), this.sendHeaders({ ":status": "200" }));
-          this.writer.writeSync(encoder.encode("hello"));
-          this.writer.endSync();
+  // lsquic keeps the part of a header block that it can't send yet, and takes no other header block for
+  // that stream until it has sent that part. The blocks that a server sends while it answers the requests
+  // of one read share the congestion window, so the later streams of a burst run out of it. A stream's own
+  // flow-control window holds a block back in the same way, and that wait is reported as blocked.
+  test.each([
+    {
+      limit: "the congestion window",
+      streams: 24,
+      window: {},
+      // About 6 KB a stream: together several times lsquic's initial window of 32 packets.
+      link: Array.from({ length: 128 }, (_, i) => `</assets/chunk-${i}.js>; rel=preload; as=script`).join(", "),
+      field: "",
+      creditWait: false,
+    },
+    {
+      limit: "each stream's flow-control window",
+      // lsquic takes 10 packets from calls outside of a write event, however small the congestion window is.
+      // So the interim response of each of these streams uses up the stream's window in the call that sends it.
+      streams: 2,
+      window: { initialMaxStreamDataBidiLocal: 4096 },
+      // Bytes that Huffman coding doesn't shorten. Neither block fits in the window.
+      link: Buffer.alloc(4200, "~").toString(),
+      field: Buffer.alloc(6000, "~").toString(),
+      creditWait: true,
+    },
+  ])(
+    "every stream of a burst gets the response that follows its interim response, behind $limit",
+    async ({ streams, window, link, field, creditWait }) => {
+      // Opening the streams can block the event loop for longer than the 1-second idle timeout of the other tests.
+      const maxIdleTimeout = 30;
+      const sent: boolean[] = [];
+      const reportedBlocked = new Set<unknown>();
+      await using server = await listen(
+        async serverSession => {
+          serverSession.onstream = (stream: any) => {
+            stream.closed.catch(() => {});
+          };
+          await serverSession.closed.catch(() => {});
         },
-      },
-    );
-    const client = await connectTo(server, maxIdleTimeout);
-    // What one stream gets. A stream that the server had to reset ends with the error's code.
-    async function response() {
-      const events: string[] = [];
-      const stream: any = await client.createBidirectionalStream({
-        headers: request("/"),
-        oninfo: (headers: Record<string, string>) =>
-          void events.push(
-            `info ${headers[":status"]} ${headers.link === link ? "with its link" : "without its link"}`,
-          ),
-        onheaders: (headers: Record<string, string>) => void events.push("headers " + headers[":status"]),
-      } as any);
-      stream.closed.catch(() => {});
-      let body = "";
-      try {
-        for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
-        events.push("body " + body);
-      } catch (error: any) {
-        events.push("error " + error.code);
+        {
+          sni: { "*": { keys: [key], certs: [cert] } },
+          transportParams: { maxIdleTimeout, initialMaxStreamsBidi: streams },
+          onheaders(this: any) {
+            this.onblocked = () => void reportedBlocked.add(this);
+            sent.push(
+              this.sendInformationalHeaders({ ":status": "103", link }),
+              this.sendHeaders(field ? { ":status": "200", "x-field": field } : { ":status": "200" }),
+            );
+            this.writer.writeSync(encoder.encode("hello"));
+            this.writer.endSync();
+          },
+        },
+      );
+      await using endpoint = new QuicEndpoint();
+      const client = await connect(server.address!, {
+        endpoint,
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout, ...window },
+        onerror() {},
+      } as SessionOptions);
+      client.closed.catch(() => {});
+      await client.opened;
+      // What one stream gets. A stream that the server had to reset ends with the error's code.
+      async function response() {
+        const events: string[] = [];
+        const intact = (got: string | undefined, want: string) => ((got ?? "") === want ? "intact" : "damaged");
+        const stream: any = await client.createBidirectionalStream({
+          headers: request("/"),
+          oninfo: (headers: Record<string, string>) =>
+            void events.push(`info ${headers[":status"]} ${intact(headers.link, link)}`),
+          onheaders: (headers: Record<string, string>) =>
+            void events.push(`headers ${headers[":status"]} ${intact(headers["x-field"], field)}`),
+        } as any);
+        stream.closed.catch(() => {});
+        let body = "";
+        try {
+          for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+          events.push("body " + body);
+        } catch (error: any) {
+          events.push("error " + error.code);
+        }
+        return events.join(", ");
       }
-      return events.join(", ");
-    }
-    const responses = await Promise.all(Array.from({ length: streams }, response));
-    client.close();
-    const complete = "info 103 with its link, headers 200, body hello";
-    expect({ refused: sent.filter(taken => !taken).length, responses }).toEqual({
-      refused: 0,
-      responses: Array.from({ length: streams }, () => complete),
-    });
-  });
+      const responses = await Promise.all(Array.from({ length: streams }, response));
+      if (!client.destroyed) client.close().catch(() => {});
+      expect({
+        refused: sent.filter(taken => !taken).length,
+        // A body that the congestion window holds back can report its stream too.
+        blocked: creditWait ? reportedBlocked.size : undefined,
+        responses,
+      }).toEqual({
+        refused: 0,
+        blocked: creditWait ? streams : undefined,
+        responses: Array.from({ length: streams }, () => "info 103 intact, headers 200 intact, body hello"),
+      });
+    },
+  );
 
   // One block of this size is more than the window, so lsquic still holds part of it when the calls
   // that follow it in the same turn are made.
   describe.concurrent("behind a block that's larger than the congestion window", () => {
     // About 175 KB as a header block. lsquic's initial window is 32 packets.
     const value = Buffer.alloc(2000, "v").toString();
-    const large = (headers: Record<string, string>) => {
-      for (let i = 0; i < 100; i++) headers[`x-large-${i}`] = value;
+    const large = (headers: Record<string, string>, fields = 100) => {
+      for (let i = 0; i < fields; i++) headers[`x-large-${i}`] = value;
       return headers;
     };
     // The receiver drops the fields that go over the default of 16 KB.
@@ -813,8 +934,8 @@ describe("HTTP/3 header blocks that follow another header block", () => {
         onerror() {},
       } as SessionOptions);
     // close() waits for a stream that a failed expectation left open.
-    function closeWith(client: any, stream: any) {
-      stream?.destroy();
+    function closeWith(client: any, ...streams: any[]) {
+      for (const stream of streams) stream?.destroy();
       client.close();
     }
 
@@ -838,31 +959,21 @@ describe("HTTP/3 header blocks that follow another header block", () => {
         ["info 103 +100", "headers 204"],
       ],
       [
-        // lsquic holds the rest of the block until the peer has acknowledged part of it, which takes longer than a turn of the event loop.
-        "a response that's sent a turn later",
-        async stream => {
-          const hinted = stream.sendInformationalHeaders(hint());
-          await new Promise(resolve => setImmediate(resolve));
-          return [hinted, stream.sendHeaders({ ":status": "204" }, { terminal: true })];
-        },
-        [true, true],
-        ["info 103 +100", "headers 204"],
-      ],
-      [
-        // The response is queued behind two blocks. lsquic still holds the second one when it has sent the first.
-        "a second large interim response, a response and its body",
+        // lsquic holds each of these blocks in turn. A block that it refuses goes back to the front of the queue.
+        "three large interim responses in order, a response and its body",
         stream => {
           const sent = [
-            stream.sendInformationalHeaders(hint()),
-            stream.sendInformationalHeaders(hint()),
+            stream.sendInformationalHeaders(large({ ":status": "100" })),
+            stream.sendInformationalHeaders(large({ ":status": "102" })),
+            stream.sendInformationalHeaders(large({ ":status": "103" })),
             stream.sendHeaders({ ":status": "200" }),
           ];
           stream.writer.writeSync(encoder.encode("hello"));
           stream.writer.endSync();
           return sent;
         },
-        [true, true, true],
-        ["info 103 +100", "info 103 +100", "headers 200"],
+        [true, true, true, true],
+        ["info 100 +100", "info 102 +100", "info 103 +100", "headers 200"],
         "hello",
       ],
       [
@@ -899,19 +1010,40 @@ describe("HTTP/3 header blocks that follow another header block", () => {
         ["headers 200 +100", "trailers abc123"],
       ],
       [
-        // One call sends 128 fields at most. That block isn't queued, so the next call can still answer.
-        "a response after one that can't be sent",
+        // A terminal block ends the stream, so nothing can follow it. lsquic would put a body that's still
+        // queued into the frame of the block that it holds part of.
+        "a large terminal response, and not the body that was written after it",
+        stream => {
+          const sent = [
+            stream.sendInformationalHeaders(hint()),
+            stream.sendHeaders(large({ ":status": "200" }), { terminal: true }),
+          ];
+          stream.writer.writeSync(encoder.encode("hello"));
+          stream.writer.endSync();
+          return sent;
+        },
+        [true, true],
+        ["info 103 +100", "headers 200 +100"],
+      ],
+      [
+        // One call sends 128 fields at most. That block isn't queued, so the next call can still answer,
+        // and the body belongs to the block that was taken.
+        "a response and its body after a response that can't be sent",
         stream => {
           const tooMany: Record<string, string> = { ":status": "200" };
           for (let i = 0; i < 128; i++) tooMany[`x-field-${i}`] = "v";
-          return [
+          const sent = [
             stream.sendInformationalHeaders(hint()),
             stream.sendHeaders(tooMany),
-            stream.sendHeaders({ ":status": "500" }, { terminal: true }),
+            stream.sendHeaders({ ":status": "500" }),
           ];
+          stream.writer.writeSync(encoder.encode("oops"));
+          stream.writer.endSync();
+          return sent;
         },
         [true, false, true],
         ["info 103 +100", "headers 500"],
+        "oops",
       ],
       [
         "a large response with no body, but not a block after it",
@@ -1009,7 +1141,7 @@ describe("HTTP/3 header blocks that follow another header block", () => {
         const sent = [stream.sendHeaders(large(request("/trailers"))), stream.sendTrailers({ "x-checksum": "abc123" })];
         // Without the trailers the request never ends, and neither does the stream.
         expect({ pending: stream.pending, sent }).toEqual({ pending: !opened, sent: [true, true] });
-        // The server never sees a stream that the client had to reset.
+        // A stream that the client had to reset ends here with the code of the reset.
         expect(await closed).toBe("closed");
         expect({ server: await served.promise, seen }).toEqual({
           server: "closed",
@@ -1017,6 +1149,129 @@ describe("HTTP/3 header blocks that follow another header block", () => {
         });
       } finally {
         closeWith(client, stream);
+      }
+    });
+
+    // What a request gets in order: its header blocks, then its body or the code of the error that ended it.
+    // `streams` gets the stream, for closeWith().
+    async function exchange(client: any, path: string, streams: any[], oninfo?: () => void) {
+      const events: string[] = [];
+      try {
+        const stream = await client.createBidirectionalStream({
+          headers: request(path),
+          oninfo: (block: Record<string, string>) => {
+            events.push(label("info", block));
+            oninfo?.();
+          },
+          onheaders: (block: Record<string, string>) => void events.push(label("headers", block)),
+          ontrailers: (block: Record<string, string>) => void events.push(label("trailers", block)),
+        });
+        streams.push(stream);
+        stream.closed.catch(() => {});
+        let body = "";
+        for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+        events.push("body " + body);
+      } catch (error: any) {
+        events.push("error " + error.code);
+      }
+      return events;
+    }
+    const serveSession = async (serverSession: any) => {
+      serverSession.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+      };
+      await serverSession.closed.catch(() => {});
+    };
+    const next = (stream: any) => void stream.sendHeaders({ ":status": "204" }, { terminal: true });
+
+    // The response has flow-control credit. It waits for lsquic to send the block before it, and that
+    // doesn't make its stream blocked.
+    test("a response that waits behind a large interim response doesn't report its stream as blocked", async () => {
+      let blocked = 0;
+      const answered = Promise.withResolvers<boolean[]>();
+      await using server = await listen(serveSession, {
+        ...tls,
+        onheaders(this: any) {
+          this.onblocked = () => void blocked++;
+          answered.resolve([
+            this.sendInformationalHeaders(hint()),
+            this.sendHeaders({ ":status": "204" }, { terminal: true }),
+          ]);
+        },
+      });
+      await using endpoint = new QuicEndpoint();
+      const client = await connectWith(endpoint, server);
+      const streams: any[] = [];
+      try {
+        await client.opened;
+        const exchanged = exchange(client, "/", streams);
+        // The stream of a response that the server doesn't take never ends.
+        expect(await answered.promise).toEqual([true, true]);
+        const events = await exchanged;
+        expect({ blocked, events }).toEqual({ blocked: 0, events: ["info 103 +100", "headers 204", "body "] });
+      } finally {
+        closeWith(client, ...streams);
+      }
+    });
+
+    // The response leaves the queue in the write event that sends the end of the interim response, and lsquic
+    // then holds most of it. destroy() can't deliver the body behind that part, so it resets the stream.
+    test("destroy() resets only its own stream while lsquic holds part of a response that was queued", async () => {
+      let responding: any;
+      await using server = await listen(serveSession, {
+        ...tls,
+        onheaders(this: any, block: Record<string, string>) {
+          if (block[":path"] === "/next") return next(this);
+          responding = this;
+          // Smaller than the response, so lsquic can't have sent all of the response when the client has this block.
+          this.sendInformationalHeaders(large({ ":status": "103" }, 40));
+          this.sendHeaders(large({ ":status": "200" }));
+          this.writer.writeSync(encoder.encode("hello"));
+          this.writer.endSync();
+        },
+      });
+      await using endpoint = new QuicEndpoint();
+      const client = await connectWith(endpoint, server);
+      const streams: any[] = [];
+      try {
+        await client.opened;
+        const destroyed = await exchange(client, "/", streams, () => responding.destroy());
+        // A body inside the response's frame makes the client close the whole connection.
+        expect({ destroyed, next: await exchange(client, "/next", streams) }).toEqual({
+          destroyed: ["info 103 +40", "error ERR_QUIC_STREAM_RESET"],
+          next: ["headers 204", "body "],
+        });
+      } finally {
+        closeWith(client, ...streams);
+      }
+    });
+
+    // lsquic takes these trailers at once and holds the part that the window has no room for. They end the
+    // stream ahead of the body, so the body is dropped, and destroy() has nothing to put into their frame.
+    test("destroy() after large trailers that went ahead of the body leaves the connection open", async () => {
+      await using server = await listen(serveSession, {
+        ...tls,
+        onheaders(this: any, block: Record<string, string>) {
+          if (block[":path"] === "/next") return next(this);
+          this.sendHeaders({ ":status": "200" });
+          this.writer.writeSync(encoder.encode("hello"));
+          this.writer.endSync();
+          this.sendTrailers(large({ "x-checksum": "abc123" }));
+          this.destroy();
+        },
+      });
+      await using endpoint = new QuicEndpoint();
+      const client = await connectWith(endpoint, server);
+      const streams: any[] = [];
+      try {
+        await client.opened;
+        const destroyed = await exchange(client, "/", streams);
+        expect({ destroyed, next: await exchange(client, "/next", streams) }).toEqual({
+          destroyed: ["headers 200", "trailers abc123 +100", "body "],
+          next: ["headers 204", "body "],
+        });
+      } finally {
+        closeWith(client, ...streams);
       }
     });
   });

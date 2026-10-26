@@ -891,6 +891,11 @@ pub(crate) fn resolve_sync(
     do_resolve_with_args::<false>(global_this, &module_id, &parent, mode)
 }
 
+/// `bun:internal-for-testing`: see `bun_resolver::dir_info::slots_used`.
+pub(crate) fn resolver_dir_info_slots_used() -> usize {
+    bun_resolver::dir_info::slots_used()
+}
+
 pub(crate) fn resolve(
     cx: &mut JsScope<'_>,
     module_id: Option<BunString>,

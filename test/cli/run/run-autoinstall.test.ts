@@ -1160,8 +1160,7 @@ function noteLines(stderr: string) {
 // belong to the dependency auto-install enqueues on the root, whose errors used
 // to go to a callback that never reported them, so they printed a bare
 // "Cannot find package". Each one now prints the same line `bun install` does,
-// exactly once: the runtime retries a failed resolve after busting its
-// directory cache, and the retry reports the same failure again.
+// exactly once, also when the resolver looks the package up again after the miss.
 describe.concurrent("auto-install reports why a package could not be resolved", () => {
   test("version the registry does not have", async () => {
     using r = registryWithOneFreshVersion();
@@ -1442,6 +1441,44 @@ describe.concurrent("auto-install of a package whose tarball ships a node_module
     ]);
     expect(exitCode).toBe(0);
   });
+});
+
+// The resolver knows a package of the cache by its package id. A lookup that misses and then finds
+// a new folder in that package must not forget the id: the package then looks for its dependencies
+// in the node_modules folders above the cache, like a package that was installed there.
+test.concurrent("a package that loads a file from a new folder of its own still finds its dependencies", async () => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-new-folder-in-package", {
+    "project/index.js": `
+      const fs = require("fs");
+      const path = require("path");
+      const entry = require.resolve("one-fixed-dep");
+      const asPackage = require("module").createRequire(entry);
+      const resolved = specifier => {
+        try {
+          return path.relative(process.env.BUN_INSTALL_CACHE_DIR, asPackage.resolve(specifier)).split(path.sep).slice(1).join("/");
+        } catch (e) {
+          return e.code;
+        }
+      };
+      const before = resolved("./gen/file.js");
+      fs.mkdirSync(path.join(path.dirname(entry), "gen"));
+      fs.writeFileSync(path.join(path.dirname(entry), "gen", "file.js"), "");
+      console.log(JSON.stringify([before, resolved("./gen/file.js"), resolved("no-deps")]));
+    `,
+    "project/package.json": JSON.stringify({ name: "project", dependencies: { "one-fixed-dep": "1.0.0" } }),
+    "project/bunfig.toml": registry.bunfig,
+    "elsewhere/node_modules/.keep": "",
+  });
+  const { stdout, stderr, exitCode } = await runAutoInstallWithEnv(
+    { BUN_INSTALL_CACHE_DIR: join(String(dir), "elsewhere", "cache") },
+    join(String(dir), "project"),
+    "index.js",
+  );
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe('["MODULE_NOT_FOUND","gen/file.js","index.js"]\n');
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("--install=fallback to install missing packages", async () => {

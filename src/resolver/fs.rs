@@ -252,7 +252,11 @@ impl Entry {
                 self.need_stat.store(false, Ordering::Release);
             }
         }
-        self.cache().kind
+        let kind = self.cache().kind;
+        if crate::resolver::replay_armed() {
+            crate::resolver::record_entry_kind(self.dir, self.base(), kind);
+        }
+        kind
     }
 
     ///
@@ -613,7 +617,7 @@ impl DirEntry {
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let Some(&result_ptr) = self.data.get(query) else {
-            // A resolution in progress records its negatives; see `Resolver::bust_touched_dirs`.
+            // Recorded only by the replay after a miss; see `Resolver::recheck_after_miss`.
             crate::resolver::record_missing_entry(self.dir, query_);
             return None;
         };

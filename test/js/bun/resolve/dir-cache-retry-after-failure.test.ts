@@ -1,16 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { mkdirSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 // The resolver caches every directory it reads, including the ones it did not
 // find, for the life of the process and shares that cache between the runtime,
 // every Worker, and every Bun.build() call. A lookup that failed because a
 // file was not written yet used to stay failed after the file appeared: the
-// retry only dropped the importer's own directory. Now a miss checks on disk
-// each directory and entry the lookup did not find, drops the cached
-// directories that changed, and resolves once more. A module file that
-// disappeared from a cached listing drops its directory when the read fails.
+// retry only dropped the importer's own directory. Now a miss runs the lookup
+// once more to collect what it read from the cache, checks each of those facts
+// on disk, drops the cached directories that changed, and resolves again.
 //
 // Each test runs one group of the fixture in its own process.
 const files = {
@@ -65,7 +64,7 @@ const files = {
     import fs from "node:fs";
     import path from "node:path";
     import { createRequire } from "node:module";
-    import { pathToFileURL } from "node:url";
+    import { fileURLToPath, pathToFileURL } from "node:url";
     import { Worker } from "node:worker_threads";
     const require = createRequire(import.meta.url);
     const helper = require.resolve("./helper.cjs");
@@ -152,6 +151,32 @@ const files = {
         res("L1", () => require.resolve("other-pkg", opts));
         write(path.join("other", "node_modules", "other-pkg", "index.js"), "");
         res("L2", () => require.resolve("other-pkg", opts));
+        // The same when the "paths" root itself does not exist at the first call.
+        const late = { paths: [path.resolve("late-root")] };
+        res("L3", () => require.resolve("late-pkg", late));
+        write(path.join("late-root", "node_modules", "late-pkg", "index.js"), "");
+        res("L4", () => require.resolve("late-pkg", late));
+
+        // A file two and three new directory levels deep. The run that misses reads the
+        // new directories on its way, after it looked for the file.
+        res("DL1", () => require.resolve("./deep/a/f.cjs"));
+        write(path.join("deep", "a", "f.cjs"), "");
+        res("DL2", () => require.resolve("./deep/a/f.cjs"));
+        res("DL3", () => require.resolve("./deeper/a/b/f.cjs"));
+        write(path.join("deeper", "a", "b", "f.cjs"), "");
+        res("DL4", () => require.resolve("./deeper/a/b/f.cjs"));
+        res("DL5", () => require.resolve(path.resolve("deepest", "a", "f.cjs")));
+        write(path.join("deepest", "a", "f.cjs"), "");
+        res("DL6", () => require.resolve(path.resolve("deepest", "a", "f.cjs")));
+
+        // A new directory whose "main" points into a directory that was read before it.
+        // The run after the first check reads the package.json, and misses again one step on.
+        fs.mkdirSync("chain-lib");
+        res("CH1", () => require.resolve("./chain-lib/x.cjs"));
+        res("CH2", () => require.resolve("./chain"));
+        write(path.join("chain", "package.json"), JSON.stringify({ main: "../chain-lib/x.cjs" }));
+        write(path.join("chain-lib", "x.cjs"), "");
+        res("CH3", () => require.resolve("./chain"));
 
         // What stays missing keeps failing, and what resolved keeps resolving.
         res("M1", () => require.resolve("never-installed"));
@@ -167,6 +192,30 @@ const files = {
         res("N1", () => require.resolve("linked-pkg"));
         fs.symlinkSync(path.resolve("vendor", "linked-pkg"), nm("linked-pkg"));
         res("N2", () => require.resolve("linked-pkg"));
+        // A link whose target does not exist yet. Its directory is read for the
+        // first time with the link in it, so the listing has the name all along.
+        fs.mkdirSync(path.join("links", "node_modules"), { recursive: true });
+        fs.symlinkSync(path.join("..", "late-target", "lib.cjs"), path.join("links", "late-link.cjs"));
+        fs.symlinkSync(path.join("..", "..", "late-target", "pkg"), path.join("links", "node_modules", "late-linked"));
+        const links = requireFrom("links");
+        res("N3", () => links.resolve("./late-link.cjs"));
+        res("N4", () => links.resolve("./late-link"));
+        res("N5", () => links.resolve("late-linked"));
+        write(path.join("late-target", "lib.cjs"), "");
+        write(path.join("late-target", "pkg", "index.js"), "");
+        res("N6", () => links.resolve("./late-link.cjs"));
+        res("N7", () => links.resolve("./late-link"));
+        res("N8", () => links.resolve("late-linked"));
+      },
+
+      async callers() {
+        // The other ways to ask the resolver.
+        res("MR1", () => fileURLToPath(import.meta.resolve("late-a")));
+        write(nm("late-a", "index.js"), "");
+        res("MR2", () => fileURLToPath(import.meta.resolve("late-a")));
+        res("BR1", () => Bun.resolveSync("late-b", root));
+        write(nm("late-b", "index.js"), "");
+        res("BR2", () => Bun.resolveSync("late-b", root));
       },
 
       async nodepath() {
@@ -240,39 +289,65 @@ const files = {
         write(nm("pkg", "extra.js"), "module.exports = { v: 2 };");
         console.log("D2", req("pkg/extra.js"));
         write(nm("pkg", "more.js"), "module.exports = { v: 3 };");
+        // Then both threads add files to one directory and to the package, and each
+        // resolves its own file at once. They find the same cached directories stale at
+        // the same time, and only one of them is the one that drops a directory.
+        fs.mkdirSync("shared-dir");
+        write("steps.cjs", \`
+          const fs = require("node:fs");
+          const path = require("node:path");
+          module.exports = id => {
+            let failed = 0;
+            for (let i = 0; i < 25; i++) {
+              try {
+                const file = path.resolve("shared-dir", "f" + id + "-" + i + ".cjs");
+                fs.writeFileSync(file, "");
+                require.resolve(file);
+                fs.writeFileSync(path.join("node_modules", "pkg", "m" + id + "-" + i + ".js"), "");
+                require.resolve("pkg/m" + id + "-" + i + ".js");
+              } catch {
+                failed++;
+              }
+            }
+            return failed;
+          };
+        \`);
+        const steps = path.resolve("steps.cjs");
+        const started = new Int32Array(new SharedArrayBuffer(4));
         const worker = new Worker(
-          'const req = require(' + JSON.stringify(helper) + '); postMessage(req("pkg/more.js"));',
-          { eval: true },
+          'const { parentPort, workerData } = require("node:worker_threads");' +
+            "const req = require(" +
+            JSON.stringify(helper) +
+            ");" +
+            'parentPort.postMessage(req("pkg/more.js"));' +
+            'parentPort.once("message", () => {' +
+            "  Atomics.store(workerData.started, 0, 1);" +
+            "  Atomics.notify(workerData.started, 0);" +
+            "  parentPort.postMessage(require(" +
+            JSON.stringify(steps) +
+            ")(1));" +
+            "});",
+          { eval: true, workerData: { started } },
         );
-        const fromWorker = await new Promise((resolve, reject) => {
-          worker.on("message", resolve);
-          worker.on("error", reject);
-          worker.on("exit", code => reject(new Error("worker exited with " + code + " before posting")));
-        });
-        console.log("D3", fromWorker);
+        const fromWorker = () =>
+          new Promise((resolve, reject) => {
+            worker.once("message", resolve);
+            worker.once("error", reject);
+            worker.once("exit", code => reject(new Error("worker exited with " + code + " before posting")));
+          });
+        console.log("D3", await fromWorker());
+        const theirs = fromWorker();
+        worker.postMessage("go");
+        Atomics.wait(started, 0, 0);
+        const mine = require(steps)(0);
+        console.log("steps that failed, of 25 in each thread:", mine, await theirs);
         await worker.terminate();
       },
 
-      async reinstall() {
-        // The package is replaced with a version whose entry file has another
-        // name. The stale listing still names the old file, so the first load
-        // fails reading it and drops the directory. The next one resolves again.
-        const install = (version, main) => {
-          fs.rmSync(nm("pkg2"), { recursive: true, force: true });
-          write(nm("pkg2", "package.json"), JSON.stringify({ name: "pkg2", version, main }));
-          write(nm("pkg2", main), "module.exports = { v: " + JSON.stringify(version) + " };");
-        };
-        install("1.0.0", "lib1.js");
-        console.log("E1", req("pkg2"));
-        install("2.0.0", "lib2.js");
-        for (const k in require.cache) delete require.cache[k];
-        console.log("E2", req("pkg2"));
-        console.log("E3", req("pkg2"));
-      },
-
       async manifest() {
-        // A miss through a package.json's "imports" or "exports" map checks
-        // whether the file still has the bytes that were parsed.
+        // A miss reads again the package.json of one directory: the parent of what the
+        // specifier names, which is the importer's directory for "#alias" and for a
+        // bare name of one segment.
         // "#alias" added to the package.json next to the importer.
         write(path.join("m1", "package.json"), JSON.stringify({ name: "m1", imports: {} }));
         write(path.join("m1", "impl.cjs"), "");
@@ -280,40 +355,131 @@ const files = {
         res("S1", () => m1.resolve("#alias"));
         write(path.join("m1", "package.json"), JSON.stringify({ name: "m1", imports: { "#alias": "./impl.cjs" } }));
         res("S2", () => m1.resolve("#alias"));
-        // The same with the package.json above the importer, and no "imports" at first.
-        write(path.join("m2", "package.json"), JSON.stringify({ name: "m2" }));
-        write(path.join("m2", "impl.cjs"), "");
-        fs.mkdirSync(path.join("m2", "src", "deep"), { recursive: true });
-        const m2 = requireFrom(path.join("m2", "src", "deep"));
-        res("T1", () => m2.resolve("#alias"));
-        write(path.join("m2", "package.json"), JSON.stringify({ name: "m2", imports: { "#alias": "./impl.cjs" } }));
-        res("T2", () => m2.resolve("#alias"));
-        // A subpath added to the "exports" of an installed package.
-        write(nm("m3", "package.json"), JSON.stringify({ name: "m3", exports: { ".": "./i.cjs" } }));
-        write(nm("m3", "i.cjs"), "");
-        write(nm("m3", "sub.cjs"), "");
-        res("U1", () => require.resolve("m3/sub"));
-        write(nm("m3", "package.json"), JSON.stringify({ name: "m3", exports: { ".": "./i.cjs", "./sub": "./sub.cjs" } }));
-        res("U2", () => require.resolve("m3/sub"));
-        // A package that imports itself by name, from below its root.
-        write(path.join("m4", "package.json"), JSON.stringify({ name: "m4", exports: { ".": "./i.cjs" } }));
-        write(path.join("m4", "sub.cjs"), "");
-        fs.mkdirSync(path.join("m4", "src"));
-        const m4 = requireFrom(path.join("m4", "src"));
-        res("V1", () => m4.resolve("m4/sub"));
-        write(path.join("m4", "package.json"), JSON.stringify({ name: "m4", exports: { ".": "./i.cjs", "./sub": "./sub.cjs" } }));
-        res("V2", () => m4.resolve("m4/sub"));
-        // A package.json with the alias created between the importer and the old one.
-        write(path.join("m5", "package.json"), JSON.stringify({ name: "m5" }));
-        write(path.join("m5", "inner", "impl.cjs"), "");
-        fs.mkdirSync(path.join("m5", "inner", "src"));
-        const m5 = requireFrom(path.join("m5", "inner", "src"));
-        res("X1", () => m5.resolve("#alias"));
-        write(path.join("m5", "inner", "package.json"), JSON.stringify({ name: "inner", imports: { "#alias": "./impl.cjs" } }));
-        res("X2", () => m5.resolve("#alias"));
+        // A package that imports itself by name, once the package.json next to the
+        // importer has that name and an "exports" map.
+        write(path.join("m6", "package.json"), JSON.stringify({ name: "not-yet" }));
+        write(path.join("m6", "feature.cjs"), "");
+        const m6 = requireFrom("m6");
+        res("SR1", () => m6.resolve("m6"));
+        write(path.join("m6", "package.json"), JSON.stringify({ name: "m6", exports: { ".": "./feature.cjs" } }));
+        res("SR2", () => m6.resolve("m6"));
         // A map that did not change keeps failing.
         res("W1", () => m1.resolve("#other"));
-        res("W2", () => require.resolve("m3/hidden"));
+      },
+
+      async unreadable() {
+        // A directory that could not be opened when it was first read.
+        write(path.join("locked", "a.cjs"), "");
+        fs.chmodSync("locked", 0o000);
+        res("UR1", () => require.resolve("./locked/a.cjs"));
+        res("UR2", () => require.resolve("./locked/a.cjs"));
+        fs.chmodSync("locked", 0o755);
+        res("UR3", () => require.resolve("./locked/a.cjs"));
+      },
+
+      async kind() {
+        // The kind of an entry is cached from its first stat(). Here a name changes
+        // its kind after its directory was read.
+        const kinds = requireFrom("kinds");
+        // A directory with the name of a file, then that file.
+        fs.mkdirSync(path.join("kinds", "a.cjs"), { recursive: true });
+        res("KD1", () => kinds.resolve("./a.cjs"));
+        fs.rmdirSync(path.join("kinds", "a.cjs"));
+        write(path.join("kinds", "a.cjs"), "");
+        res("KD2", () => kinds.resolve("./a.cjs"));
+        // A file where a directory is looked up, then that directory.
+        write(path.join("kinds", "b"), "");
+        res("KD3", () => kinds.resolve("./b/index.cjs"));
+        fs.rmSync(path.join("kinds", "b"));
+        write(path.join("kinds", "b", "index.cjs"), "");
+        res("KD4", () => kinds.resolve("./b/index.cjs"));
+      },
+
+      async config() {
+        // A tsconfig.json is read with its directory, not by the lookup that
+        // misses. A miss reads again the one of the importer's directory, and each
+        // file it extends.
+        const aliased = (name, target) =>
+          JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { [name]: [target] } } });
+        const project = name => {
+          write(path.join(name, "src", "lib", "utils.cjs"), "");
+          return requireFrom(path.join(name, "src"));
+        };
+        // Created in the importing directory.
+        const c1 = project("c1");
+        res("Y1", () => c1.resolve("c1-utils"));
+        write(path.join("c1", "src", "tsconfig.json"), aliased("c1-utils", "./lib/utils.cjs"));
+        res("Y2", () => c1.resolve("c1-utils"));
+        // An alias added to the one that is there.
+        write(path.join("c3", "src", "tsconfig.json"), JSON.stringify({ compilerOptions: { baseUrl: "." } }));
+        const c3 = project("c3");
+        res("Y5", () => c3.resolve("c3-utils"));
+        write(path.join("c3", "src", "tsconfig.json"), aliased("c3-utils", "./lib/utils.cjs"));
+        res("Y6", () => c3.resolve("c3-utils"));
+        // An alias added to the file that it extends.
+        write(path.join("c4", "base.json"), JSON.stringify({ compilerOptions: { baseUrl: "." } }));
+        write(path.join("c4", "src", "tsconfig.json"), JSON.stringify({ extends: "../base.json" }));
+        const c4 = project("c4");
+        res("Y7", () => c4.resolve("c4-utils"));
+        write(path.join("c4", "base.json"), aliased("c4-utils", "./src/lib/utils.cjs"));
+        res("Y8", () => c4.resolve("c4-utils"));
+        // A jsconfig.json.
+        const c5 = project("c5");
+        res("Y9", () => c5.resolve("c5-utils"));
+        write(path.join("c5", "src", "jsconfig.json"), aliased("c5-utils", "./lib/utils.cjs"));
+        res("Y10", () => c5.resolve("c5-utils"));
+        // One that was read while half written.
+        write(path.join("c6", "src", "tsconfig.json"), '{ "compilerOptions": ');
+        const c6 = project("c6");
+        res("Y11", () => c6.resolve("c6-utils"));
+        write(path.join("c6", "src", "tsconfig.json"), aliased("c6-utils", "./lib/utils.cjs"));
+        res("Y12", () => c6.resolve("c6-utils"));
+        // One that did not change keeps failing.
+        res("Y15", () => c1.resolve("c1-other"));
+        res("Y16", () => c3.resolve("c3-other"));
+      },
+
+      async steady() {
+        // The test wrote these files before this process started, and nothing
+        // changes on disk here. So no miss may drop a directory: a directory that
+        // is dropped is read again, and its package.json parsed again, into memory
+        // that is never freed.
+        const { resolverDirInfoSlotsUsed } = require("bun:internal-for-testing");
+        const s1 = requireFrom("s1");
+        const s2 = requireFrom("s2");
+        const s3 = requireFrom(path.join("s3", "src"));
+        const s5 = requireFrom(path.join("s5", "src"));
+        const misses = [
+          // A package that is not installed, and a file that an installed one does not have.
+          ["Z1", () => require.resolve("never-installed")],
+          ["Z2", () => require.resolve("s0/hidden")],
+          // A file that is not there, by a relative and by an absolute path.
+          ["Z3", () => require.resolve("./nope.cjs")],
+          ["Z4", () => require.resolve(path.resolve("nope.cjs"))],
+          // The package.json next to the importer has a byte order mark, which the loader strips.
+          ["Z5", () => s1.resolve("#x")],
+          // The same in UTF-16.
+          ["Z6", () => s2.resolve("#x")],
+          // A package.json that does not parse, above the importer.
+          ["Z7", () => s3.resolve("#x")],
+          // The tsconfig.json next to the importer has a byte order mark, and extends a file
+          // that is not there.
+          ["Z8", () => s5.resolve("s5-utils")],
+          // A path below a file.
+          ["Z9", () => require.resolve("./s6.cjs/sub")],
+          // A link whose target is not there.
+          ["Z10", () => require.resolve("./s7.cjs")],
+        ];
+        for (const [label, miss] of misses) res(label, miss);
+        const before = resolverDirInfoSlotsUsed();
+        for (let round = 0; round < 20; round++) {
+          for (const [, miss] of misses) {
+            try {
+              miss();
+            } catch {}
+          }
+        }
+        console.log("directories read again by 200 more misses:", resolverDirInfoSlotsUsed() - before);
       },
 
       async build() {
@@ -347,6 +513,11 @@ const files = {
         await build("G5a", "dpk5");
         installInto(".", "dpk5");
         await build("G5b", "dpk5");
+        // A CSS url() with a fragment: looked up as written, then without the fragment.
+        write(path.join("g6", "ent.css"), 'a { background: url("./late.svg#frag"); }');
+        await build("G6a", path.join("g6", "ent.css"));
+        write(path.join("g6", "late.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>");
+        await build("G6b", path.join("g6", "ent.css"));
       },
     };
 
@@ -393,6 +564,17 @@ describe.concurrent("a failed resolution sees files and packages created after t
       K2 OK lib/index.js
       L1 ERR MODULE_NOT_FOUND
       L2 OK other/node_modules/other-pkg/index.js
+      L3 ERR MODULE_NOT_FOUND
+      L4 OK late-root/node_modules/late-pkg/index.js
+      DL1 ERR MODULE_NOT_FOUND
+      DL2 OK deep/a/f.cjs
+      DL3 ERR MODULE_NOT_FOUND
+      DL4 OK deeper/a/b/f.cjs
+      DL5 ERR MODULE_NOT_FOUND
+      DL6 OK deepest/a/f.cjs
+      CH1 ERR MODULE_NOT_FOUND
+      CH2 ERR MODULE_NOT_FOUND
+      CH3 OK chain-lib/x.cjs
       M1 ERR MODULE_NOT_FOUND
       M2 ERR MODULE_NOT_FOUND
       M3 ERR MODULE_NOT_FOUND
@@ -403,18 +585,27 @@ describe.concurrent("a failed resolution sees files and packages created after t
     `);
   });
 
-  test.skipIf(isWindows)("a package symlinked in after the miss", async () => {
-    expect(await runGroup("symlink")).toMatchInlineSnapshot(`
+  test.skipIf(isWindows)(
+    "a package symlinked in after the miss, and a link whose target is written later",
+    async () => {
+      expect(await runGroup("symlink")).toMatchInlineSnapshot(`
       {
         "exitCode": 0,
         "stderr": "",
         "stdout": 
       "N1 ERR MODULE_NOT_FOUND
-      N2 OK vendor/linked-pkg/index.js"
+      N2 OK vendor/linked-pkg/index.js
+      N3 ERR MODULE_NOT_FOUND
+      N4 ERR MODULE_NOT_FOUND
+      N5 ERR MODULE_NOT_FOUND
+      N6 OK late-target/lib.cjs
+      N7 OK late-target/lib.cjs
+      N8 OK late-target/pkg/index.js"
       ,
       }
     `);
-  });
+    },
+  );
 
   test("tsconfig paths aliases onto directories that gain files later", async () => {
     expect(await runGroup("tsconfig")).toMatchInlineSnapshot(`
@@ -446,6 +637,21 @@ describe.concurrent("a failed resolution sees files and packages created after t
       "R1 OK 1
       R2 OK 2
       R3 OK 3"
+      ,
+      }
+    `);
+  });
+
+  test("import.meta.resolve() and Bun.resolveSync() of a package created after the miss", async () => {
+    expect(await runGroup("callers")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "MR1 ERR ERR_MODULE_NOT_FOUND
+      MR2 OK node_modules/late-a/index.js
+      BR1 ERR ERR_MODULE_NOT_FOUND
+      BR2 OK node_modules/late-b/index.js"
       ,
       }
     `);
@@ -492,27 +698,14 @@ describe.concurrent("a failed resolution sees files and packages created after t
         "stdout": 
       "D1 OK 1
       D2 OK 2
-      D3 OK 3"
+      D3 OK 3
+      steps that failed, of 25 in each thread: 0 0"
       ,
       }
     `);
   });
 
-  test("a package replaced on disk with another entry file", async () => {
-    expect(await runGroup("reinstall")).toMatchInlineSnapshot(`
-      {
-        "exitCode": 0,
-        "stderr": "",
-        "stdout": 
-      "E1 OK 1.0.0
-      E2 ERR ENOENT reading "<dir>/node_modules/pkg2/lib1.js"
-      E3 OK 2.0.0"
-      ,
-      }
-    `);
-  });
-
-  test("an imports or exports entry added to a package.json after the miss", async () => {
+  test("an imports or exports entry added to the package.json next to the importer", async () => {
     expect(await runGroup("manifest")).toMatchInlineSnapshot(`
       {
         "exitCode": 0,
@@ -520,19 +713,159 @@ describe.concurrent("a failed resolution sees files and packages created after t
         "stdout": 
       "S1 ERR MODULE_NOT_FOUND
       S2 OK m1/impl.cjs
-      T1 ERR MODULE_NOT_FOUND
-      T2 OK m2/impl.cjs
-      U1 ERR MODULE_NOT_FOUND
-      U2 OK node_modules/m3/sub.cjs
-      V1 ERR MODULE_NOT_FOUND
-      V2 OK m4/sub.cjs
-      X1 ERR MODULE_NOT_FOUND
-      X2 OK m5/inner/impl.cjs
-      W1 ERR MODULE_NOT_FOUND
-      W2 ERR MODULE_NOT_FOUND"
+      SR1 ERR MODULE_NOT_FOUND
+      SR2 OK m6/feature.cjs
+      W1 ERR MODULE_NOT_FOUND"
       ,
       }
     `);
+  });
+
+  // Permissions do not stop the superuser, and Windows has no such mode.
+  test.skipIf(isWindows || process.getuid?.() === 0)("a directory that could not be read at first", async () => {
+    expect(await runGroup("unreadable")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "UR1 ERR MODULE_NOT_FOUND
+      UR2 ERR MODULE_NOT_FOUND
+      UR3 OK locked/a.cjs"
+      ,
+      }
+    `);
+  });
+
+  test("a name that changes its kind after the miss", async () => {
+    expect(await runGroup("kind")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "KD1 ERR MODULE_NOT_FOUND
+      KD2 OK kinds/a.cjs
+      KD3 ERR MODULE_NOT_FOUND
+      KD4 OK kinds/b/index.cjs"
+      ,
+      }
+    `);
+  });
+
+  test("a tsconfig.json created or changed next to the importer after the miss", async () => {
+    expect(await runGroup("config")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "Y1 ERR MODULE_NOT_FOUND
+      Y2 OK c1/src/lib/utils.cjs
+      Y5 ERR MODULE_NOT_FOUND
+      Y6 OK c3/src/lib/utils.cjs
+      Y7 ERR MODULE_NOT_FOUND
+      Y8 OK c4/src/lib/utils.cjs
+      Y9 ERR MODULE_NOT_FOUND
+      Y10 OK c5/src/lib/utils.cjs
+      Y11 ERR MODULE_NOT_FOUND
+      Y12 OK c6/src/lib/utils.cjs
+      Y15 ERR MODULE_NOT_FOUND
+      Y16 ERR MODULE_NOT_FOUND"
+      ,
+      }
+    `);
+  });
+
+  test("a miss drops no directory when nothing changed on disk", async () => {
+    const steadyFiles = (dir: string) => {
+      const write = (file: string, contents: string | Buffer) => {
+        mkdirSync(dirname(join(dir, file)), { recursive: true });
+        writeFileSync(join(dir, file), contents);
+      };
+      write("node_modules/s0/package.json", JSON.stringify({ name: "s0", exports: { ".": "./i.cjs" } }));
+      write("node_modules/s0/i.cjs", "");
+      const manifest = (name: string) => "\uFEFF" + JSON.stringify({ name, imports: { "#y": "./y.cjs" } });
+      write("s1/package.json", manifest("s1"));
+      write("s2/package.json", Buffer.from(manifest("s2"), "utf16le"));
+      write("s3/package.json", `{ "name": "s3", `);
+      mkdirSync(join(dir, "s3", "src"));
+      const paths = { "s5-utils": ["./nowhere.cjs"] };
+      write(
+        "s5/src/tsconfig.json",
+        "\uFEFF" + JSON.stringify({ extends: "./nowhere.json", compilerOptions: { baseUrl: ".", paths } }),
+      );
+      write("s6.cjs", "");
+      // Not every Windows user may create a link. Without it the lookup misses all the same.
+      try {
+        symlinkSync("nowhere.cjs", join(dir, "s7.cjs"));
+      } catch {}
+    };
+    expect(await runGroup("steady", undefined, steadyFiles)).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "Z1 ERR MODULE_NOT_FOUND
+      Z2 ERR MODULE_NOT_FOUND
+      Z3 ERR MODULE_NOT_FOUND
+      Z4 ERR MODULE_NOT_FOUND
+      Z5 ERR MODULE_NOT_FOUND
+      Z6 ERR MODULE_NOT_FOUND
+      Z7 ERR MODULE_NOT_FOUND
+      Z8 ERR MODULE_NOT_FOUND
+      Z9 ERR MODULE_NOT_FOUND
+      Z10 ERR MODULE_NOT_FOUND
+      directories read again by 200 more misses: 0"
+      ,
+      }
+    `);
+  });
+
+  // A watcher drops the directory that changed. The directories below it still point at
+  // the entry that was dropped, so a lookup that walks up from them reads the old package.json.
+  // Windows is left out: its watcher can start to listen after the first run has printed.
+  test.skipIf(isWindows)("bun --hot: an imports entry added to a package.json above the importer", async () => {
+    using dir = tempDir("dir-cache-retry-hot", {
+      "node_modules/.keep": "",
+      "package.json": JSON.stringify({ name: "hot-alias" }),
+      "impl.cjs": `module.exports = "impl";`,
+      "src/x.cjs": `
+        let found;
+        try {
+          found = "OK " + require("#alias");
+        } catch (e) {
+          found = "ERR " + e.code;
+        }
+        module.exports = found;
+      `,
+      "server.js": `console.log("run 1: " + require("./src/x.cjs"));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "server.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    const line = async (pattern: RegExp) => {
+      for (;;) {
+        const found = output.match(pattern);
+        if (found) return found[0];
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`bun --hot exited before ${pattern}. Output:\n${output}`);
+        output += decoder.decode(value, { stream: true });
+      }
+    };
+    expect(await line(/run 1: .*/)).toBe("run 1: ERR MODULE_NOT_FOUND");
+
+    // A rename, so that the watcher sees a change of the directory.
+    const manifest = join(String(dir), "package.json");
+    writeFileSync(manifest + ".tmp", JSON.stringify({ name: "hot-alias", imports: { "#alias": "./impl.cjs" } }));
+    renameSync(manifest + ".tmp", manifest);
+    writeFileSync(join(String(dir), "server.js"), `console.log("run 2: " + require("./src/x.cjs"));`);
+    expect(await line(/run 2: .*/)).toBe("run 2: OK impl");
   });
 
   test("Bun.build() after the package was installed", async () => {
@@ -550,7 +883,9 @@ describe.concurrent("a failed resolution sees files and packages created after t
       G4a ERR Could not resolve: "dpk4". Maybe you need to "bun install"?
       G4b OK 1
       G5a ERR ModuleNotFound resolving "dpk5" (entry point)
-      G5b OK 1"
+      G5b OK 1
+      G6a ERR Could not resolve: "./late.svg#frag"
+      G6b OK 1"
       ,
       }
     `);

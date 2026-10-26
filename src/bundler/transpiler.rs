@@ -333,7 +333,19 @@ impl<'a> Transpiler<'a> {
 
     fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         let top_level_dir = self.fs().top_level_dir();
-        let first = match self.resolver.resolve_with_framework(
+        // The lookup as a package is expected to miss for `bun build index.ts`: one check for both.
+        self.resolver
+            .with_deferred_miss_check(top_level_dir, entry_point, |resolver| {
+                Self::resolve_entry_point_once(resolver, top_level_dir, entry_point)
+            })
+    }
+
+    fn resolve_entry_point_once(
+        resolver: &mut Resolver<'a>,
+        top_level_dir: &[u8],
+        entry_point: &[u8],
+    ) -> crate::Result<resolver::Result> {
+        let first = match resolver.resolve_with_framework(
             top_level_dir,
             entry_point,
             bun_ast::ImportKind::EntryPointBuild,
@@ -358,7 +370,7 @@ impl<'a> Transpiler<'a> {
             prefixed.extend_from_slice(entry_point);
             // `Resolver::resolve` interns the path internally,
             // so the heap buffer can drop after the call.
-            if let Ok(r) = self.resolver.resolve(
+            if let Ok(r) = resolver.resolve(
                 top_level_dir,
                 &prefixed,
                 bun_ast::ImportKind::EntryPointBuild,
@@ -1307,18 +1319,6 @@ impl<'a> Transpiler<'a> {
             ) {
                 Ok(e) => e,
                 Err(err) => {
-                    // The cached listing that produced this path is stale.
-                    if matches!(
-                        err,
-                        resolver::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                            | resolver::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
-                    ) {
-                        if let Some(dir) = bun_paths::dirname(path.text) {
-                            self.resolver.bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(dir),
-                            );
-                        }
-                    }
                     let _ = log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,

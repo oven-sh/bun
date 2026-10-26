@@ -2312,6 +2312,12 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
     }
+
+    /// How many slots were given out. `remove` frees none: a key that is put again takes a new one.
+    pub fn slots_used(&mut self) -> usize {
+        let _guard = self.mutex.lock();
+        self.backing_buf_used as usize + self.overflow_list.len() as usize
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

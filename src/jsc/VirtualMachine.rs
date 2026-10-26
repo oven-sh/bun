@@ -5589,7 +5589,7 @@ impl VirtualMachine {
                     }
                 }
             };
-            // `log` dies with this frame. Deduplicated: `_resolve`'s retry can log a failure twice.
+            // `log` dies with this frame. One note for each text.
             let mut notes = core::mem::take(&mut msg.notes).into_vec();
             for (i, logged) in log.msgs.iter().enumerate() {
                 if Some(i) == resolve_msg_index

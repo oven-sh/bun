@@ -1,6 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { isLinux, tempDir } from "harness";
+import { isLinux } from "harness";
 import {
   closeSync,
   existsSync,
@@ -13,10 +13,10 @@ import {
   writeSync,
 } from "node:fs";
 import { join } from "node:path";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { devServerTestingDir, devTest, emptyHtmlFile } from "../bake-harness";
 
 // Outside the dev server's root, so that the watcher does not report its own trace file.
-const watcherTrace = join(tempDir("dev-server-watcher-trace", { "trace.log": "" }), "trace.log");
+const watcherTrace = join(devServerTestingDir, "hot-watcher-trace.log");
 
 devTest("import.meta.hot.accept basic", {
   files: {

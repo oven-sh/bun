@@ -1569,6 +1569,9 @@ if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
 }
 
+/** Holds the root directory of each test. */
+export const devServerTestingDir = tempDir;
+
 // react-server-dom-bun's only published build was compiled against this react build. RSC
 // packages only pair with the exact react they were built for, so pin all three instead of
 // tracking the daily-moving `experimental` dist-tag (whose 2026-07-01 build broke the suite).

@@ -4043,7 +4043,7 @@
         },
         "migrate": {
           "name": "migrate",
-          "description": "migrate another package manager's lockfile, or an existing bun.lock to the current lockfileVersion, without installing anything",
+          "description": "migrate another package manager's lockfile, or bump the lockfileVersion of an existing bun.lock, without installing anything",
           "flags": [],
           "positionalArgs": []
         },

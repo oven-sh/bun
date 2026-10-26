@@ -11,7 +11,9 @@ use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
     package_json_write_back, package_manager_options::LogLevel, setup_global_dir,
 };
-use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
+use bun_install::{
+    DependencyID, PackageID, PackageManager, ResolutionTag, TextLockfile, migration,
+};
 use bun_paths::{self as Path, AutoAbsPath};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
@@ -166,23 +168,59 @@ impl PackageManagerCommand {
     /// version a fresh lockfile gets, with every row unchanged.
     fn migrate_text_lockfile_version(pm: &mut PackageManager, log_level: LogLevel) -> ! {
         let dry_run = pm.options.dry_run;
+        let not_silent = log_level != LogLevel::Silent;
         let pm_raw: *mut PackageManager = pm;
+        let log: *mut bun_ast::Log = pm.log;
+        // SAFETY: `pm.log` is the live log of this command. Nothing else holds it.
+        let warnings_before = unsafe { (*log).warnings };
         let mut load_lockfile = pm.load_lockfile_from_cwd::<false>();
         Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "migrate");
-        let lockfile: &Lockfile = load_lockfile.ok().lockfile;
+        let lockfile: &mut Lockfile = load_lockfile.ok_mut().lockfile;
         let from = lockfile.text_lockfile_version();
-        let to = match lockfile.fresh_text_lockfile_version() {
-            Ok(to) => to,
+        // After the error that names the entry: what `bun install` does with the file.
+        let held = || -> ! {
+            if from != TextLockfile::Version::V1 {
+                bun_core::note!(
+                    "the next 'bun install' writes bun.lock at lockfileVersion 1 (it is now {})",
+                    from as u32
+                );
+            }
+            Output::flush();
+            Global::exit(1);
+        };
+        // The v1 parser drops an integrity hash it cannot read, with a warning. Version 2
+        // rejects it, and a re-save would write the entry without the hash.
+        // SAFETY: as above.
+        if unsafe { (*log).warnings } > warnings_before {
+            if not_silent {
+                Output::flush();
+                // SAFETY: as above.
+                let _ = unsafe { (*log).print(std::ptr::from_mut(Output::error_writer())) };
+            }
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: bun.lock is held at lockfileVersion 1: version 2 rejects the entry the warning above names"
+            );
+            held();
+        }
+        let to = match lockfile.restamp_text_lockfile_version() {
+            Ok((_, to)) => to,
             Err(blocker) => {
                 bun_core::pretty_errorln!(
-                    "<r><red>error<r>: bun.lock stays at lockfileVersion {}: {}",
-                    from as u32,
-                    blocker,
+                    "<r><red>error<r>: bun.lock is held at lockfileVersion 1: {}",
+                    blocker
                 );
-                Global::exit(1);
+                match blocker.kind {
+                    TextLockfile::VersionBlockerKind::MissingIntegrity { .. } => bun_core::note!(
+                        "version 2 needs an integrity hash for a tarball that is not under {}, whatever registry the reader has configured. Add \"integrity\" to the entry in bun.lock, or delete the entry and run 'bun install' to resolve it again",
+                        Npm::Registry::DEFAULT_URL
+                    ),
+                    TextLockfile::VersionBlockerKind::UnsafeGitTag { .. } => bun_core::note!(
+                        "delete the entry from bun.lock and run 'bun install' to resolve it again"
+                    ),
+                }
+                held();
             }
         };
-        let not_silent = log_level != LogLevel::Silent;
         if from == to {
             if not_silent {
                 bun_core::prettyln!("bun.lock is already at lockfileVersion {}", to as u32);
@@ -201,12 +239,11 @@ impl PackageManagerCommand {
             Output::flush();
             Global::exit(0);
         }
-        let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
+        let lf: *mut Lockfile = &raw mut *lockfile;
         // SAFETY: `load_lockfile` is `Ok` (errors exited above). `save_to_disk` reads only its
         // scalar fields, never `ok.lockfile`, and `options` is a field of `pm` outside the
         // lockfile, so `*lf` is the sole live view of the lockfile.
         unsafe {
-            (*lf).set_text_lockfile_version(to);
             (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
         }
         if not_silent {
@@ -828,13 +865,16 @@ impl PackageManagerCommand {
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"migrate") {
             let log_level = pm.options.log_level;
-            if !pm.options.enable.force_save_lockfile() {
+            // `--force` itself, not `Enable::FORCE_SAVE_LOCKFILE`: bunfig `install.lockfile.save`
+            // sets that bit too and must not pick the path.
+            if !pm.options.force {
                 if bun_sys::exists_z(bun_core::zstr!("bun.lock")) {
                     Self::migrate_text_lockfile_version(pm, log_level);
                 }
                 if bun_sys::exists_z(bun_core::zstr!("bun.lockb")) {
-                    bun_core::pretty_errorln!(
-                        "<r><red>error<r>: bun.lockb already exists\nrun with --force to overwrite",
+                    bun_core::pretty_errorln!("<r><red>error<r>: bun.lockb already exists");
+                    bun_core::note!(
+                        "run 'bun install --save-text-lockfile --frozen-lockfile --lockfile-only' to convert it to bun.lock, or pass --force to overwrite it from another package manager's lockfile"
                     );
                     Global::exit(1);
                 }

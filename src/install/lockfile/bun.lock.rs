@@ -131,41 +131,36 @@ impl Version {
     }
 }
 
-/// The first written package that holds a lockfile at v1. `Display` uses the
-/// wording of the v2 parser's error.
-pub struct VersionBlocker<'a> {
-    buf: &'a [u8],
-    name: String,
-    kind: VersionBlockerKind,
+/// The first written package that holds a lockfile at v1. It owns its text
+/// so the caller can change the lockfile after it reads the error.
+pub struct VersionBlocker {
+    /// `name@version` for an npm package, the name alone for a git one.
+    package: Box<[u8]>,
+    pub kind: VersionBlockerKind,
 }
 
-enum VersionBlockerKind {
-    /// An off-registry npm tarball with no supported integrity hash.
-    MissingIntegrity {
-        version: Semver::Version,
-        url: String,
-    },
+pub enum VersionBlockerKind {
+    /// An npm tarball outside the default registry with no supported integrity hash.
+    MissingIntegrity { url: Box<[u8]> },
     /// A git `.bun-tag` that is not a safe path component.
-    UnsafeGitTag { tag: String },
+    UnsafeGitTag { tag: Box<[u8]> },
 }
 
-impl core::fmt::Display for VersionBlocker<'_> {
+impl core::fmt::Display for VersionBlocker {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let buf = self.buf;
-        let name = bun_core::fmt::escape_control_chars(self.name.slice(buf));
+        let package = bun_core::fmt::for_terminal(bstr::BStr::new(&self.package));
         match &self.kind {
-            VersionBlockerKind::MissingIntegrity { version, url } => write!(
+            VersionBlockerKind::MissingIntegrity { url } => write!(
                 f,
-                "Missing integrity hash for npm package resolved to a tarball URL outside the configured registry: \"{}@{}\" resolves to {}",
-                name,
-                version.fmt(buf),
-                bun_core::fmt::escape_control_chars(url.slice(buf)),
+                "Missing integrity hash for npm package resolved to a tarball URL outside the default registry: \"{}\" resolves to {}",
+                package,
+                bun_core::fmt::for_terminal(bstr::BStr::new(url)),
             ),
             VersionBlockerKind::UnsafeGitTag { tag } => write!(
                 f,
                 "Invalid git dependency tag: \"{}\" has \"bun-tag\": \"{}\"",
-                name,
-                bun_core::fmt::escape_control_chars(tag.slice(buf)),
+                package,
+                bun_core::fmt::for_terminal(bstr::BStr::new(tag)),
             ),
         }
     }
@@ -248,7 +243,7 @@ impl Stringifier {
 
     /// The version a lockfile with no prior version is stamped (v2, or v3 with
     /// scoped override rules). `Err` names the first written package that holds it at v1.
-    pub(crate) fn fresh_version(lockfile: &BinaryLockfile) -> Result<Version, VersionBlocker<'_>> {
+    pub(crate) fn fresh_version(lockfile: &BinaryLockfile) -> Result<Version, VersionBlocker> {
         let has_scoped = lockfile.overrides.has_scoped();
         let buf = lockfile.buffers.string_bytes.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
@@ -273,7 +268,7 @@ impl Stringifier {
                 }
                 let i = pkg_id as usize;
                 let res = &pkg_resolutions[i];
-                let name = pkg_names[i];
+                let name = pkg_names[i].slice(buf);
                 match res.tag {
                     ResolutionTag::Npm => {
                         if pkg_metas[i].integrity.tag.is_supported() {
@@ -296,12 +291,14 @@ impl Stringifier {
                         let url = npm.url.slice(buf);
                         if !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
                             return Err(VersionBlocker {
-                                buf,
-                                name,
-                                kind: VersionBlockerKind::MissingIntegrity {
-                                    version: npm.version,
-                                    url: npm.url,
-                                },
+                                package: format!(
+                                    "{}@{}",
+                                    bstr::BStr::new(name),
+                                    npm.version.fmt(buf)
+                                )
+                                .into_bytes()
+                                .into_boxed_slice(),
+                                kind: VersionBlockerKind::MissingIntegrity { url: url.into() },
                             });
                         }
                     }
@@ -310,12 +307,11 @@ impl Stringifier {
                         // staying at v1 keeps it loading. (A `github` tag is
                         // rejected at every version, so no lockfile version can
                         // round-trip an unsafe one — nothing to gate here.)
-                        let tag = res.repository().resolved;
-                        if !crate::repository::is_safe_resolved_tag(tag.slice(buf)) {
+                        let tag = res.repository().resolved.slice(buf);
+                        if !crate::repository::is_safe_resolved_tag(tag) {
                             return Err(VersionBlocker {
-                                buf,
-                                name,
-                                kind: VersionBlockerKind::UnsafeGitTag { tag },
+                                package: name.into(),
+                                kind: VersionBlockerKind::UnsafeGitTag { tag: tag.into() },
                             });
                         }
                     }

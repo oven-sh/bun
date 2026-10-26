@@ -2040,16 +2040,14 @@ impl Lockfile {
         self.text_lockfile_version
     }
 
-    /// The `lockfileVersion` a fresh write gets (v2, or v3 with scoped override rules).
-    /// `Err` names the package that holds it at v1.
-    pub fn fresh_text_lockfile_version(
-        &self,
-    ) -> Result<bun_lock::Version, bun_lock::VersionBlocker<'_>> {
-        TextLockfile::Stringifier::fresh_version(self)
-    }
-
-    pub fn set_text_lockfile_version(&mut self, version: bun_lock::Version) {
-        self.text_lockfile_version = version;
+    /// Stamp the `lockfileVersion` a fresh write gets (v2, or v3 with scoped override
+    /// rules) and return `(from, to)`. `Err` names the package that holds it at v1.
+    pub fn restamp_text_lockfile_version(
+        &mut self,
+    ) -> Result<(bun_lock::Version, bun_lock::Version), bun_lock::VersionBlocker> {
+        let to = TextLockfile::Stringifier::fresh_version(self)?;
+        let from = core::mem::replace(&mut self.text_lockfile_version, to);
+        Ok((from, to))
     }
 
     /// Returns false when the lockfile on disk already had exactly these bytes and was left untouched.

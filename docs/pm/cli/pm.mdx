@@ -443,9 +443,9 @@ bun pm migrate
 
 Pass `--dry-run` to run the migration without writing `bun.lock` or `package.json`.
 
-When a `bun.lock` already exists, `bun pm migrate` rewrites it at the current `lockfileVersion`. Every package entry stays as it is and nothing is resolved again. A `bun.lock` that is already at the current version is left untouched. Pass `--force` to overwrite an existing `bun.lock` from another package manager's lockfile instead.
+When a `bun.lock` already exists, `bun pm migrate` rewrites it at the `lockfileVersion` a fresh write produces (2, or 3 with scoped override rules). Every package entry stays as it is and nothing is resolved again. A `bun.lock` already at that version is left untouched. `lockfileVersion` 2 and 3 need Bun v1.4.0 or later to read, so run this once every Bun that reads the lockfile is at least v1.4.0. Pass `--force` to overwrite an existing `bun.lock` from another package manager's lockfile instead.
 
-The command exits with an error and leaves `bun.lock` at its version when an entry would not pass the stricter checks of the newer version: an npm package resolved to a tarball URL outside the default registry with no integrity hash, or a git dependency with an unsafe `bun-tag`. The error names the package.
+The command exits with an error and leaves `bun.lock` as it is when an entry would not pass the stricter checks of version 2: an npm package resolved to a tarball URL outside the default npm registry with no integrity hash, a git dependency with an unsafe `bun-tag`, or an integrity hash Bun cannot read. The error names the entry. Add the missing `integrity` to the entry, or delete the entry and run `bun install` to resolve it again.
 
 ## untrusted
 

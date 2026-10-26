@@ -373,6 +373,32 @@ const messages: Record<string, Message> = {
     printed: value => `warn: skipping "dep@^1.0.0" from yarn.lock: invalid version "1.0.0_${value}"\n`,
     exitCode: 0,
   },
+  "a bun.lock tarball URL that holds the lockfile at version 1": {
+    files: value => ({
+      "package.json": JSON.stringify({ ...app, dependencies: { dep: "1.0.0" } }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { ...app, dependencies: { dep: "1.0.0" } } },
+        packages: { dep: ["dep@1.0.0", `http://127.0.0.1:1/dep/-/dep-${value}.tgz`, {}, ""] },
+      }),
+    }),
+    command: ["pm", "migrate"],
+    printed: value => `"dep@1.0.0" resolves to http://127.0.0.1:1/dep/-/dep-${value}.tgz\n`,
+    exitCode: 1,
+  },
+  "a bun.lock git tag that holds the lockfile at version 1": {
+    files: value => ({
+      "package.json": JSON.stringify({ ...app, dependencies: { dep: "git+ssh://git@127.0.0.1:1/dep.git#main" } }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { ...app, dependencies: { dep: "git+ssh://git@127.0.0.1:1/dep.git#main" } } },
+        packages: { dep: ["dep@git+ssh://git@127.0.0.1:1/dep.git#main", {}, `../${value}`] },
+      }),
+    }),
+    command: ["pm", "migrate"],
+    printed: value => `"dep" has "bun-tag": "../${value}"\n`,
+    exitCode: 1,
+  },
   "the version that `bun pm version` starts from": {
     files: value => ({ "package.json": JSON.stringify({ ...app, version: `1.0.0-${value}` }) }),
     command: ["pm", "version"],

@@ -644,9 +644,11 @@ pub struct Location {
     pub line_text: Option<Cow<'static, [u8]>>,
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
-    pub length: usize,
+    pub length: u32,
     // TODO: document or remove
     pub offset: usize,
+    /// 0-based column (UTF-16 units) at which a windowed `line_text` starts.
+    pub line_text_start_column: u32,
 
     /// 1-based line number.
     /// Line <= 0 means there is no line and column information.
@@ -675,6 +677,7 @@ impl Clone for Location {
             length: self.length,
             line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
             offset: self.offset,
+            line_text_start_column: self.line_text_start_column,
         }
     }
 }
@@ -687,6 +690,7 @@ impl Default for Location {
             line_text: None,
             length: 0,
             offset: 0,
+            line_text_start_column: 0,
             line: 0,
             column: 0,
         }
@@ -765,6 +769,7 @@ impl Location {
             length: self.length,
             line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
             offset: self.offset,
+            line_text_start_column: self.line_text_start_column,
         }
     }
 
@@ -783,9 +788,10 @@ impl Location {
             namespace: Cow::Borrowed(namespace),
             line,
             column,
-            length: length as usize,
+            length,
             line_text: line_text.map(Cow::Borrowed),
             offset: length as usize,
+            line_text_start_column: 0,
         }
     }
 
@@ -819,6 +825,7 @@ impl Location {
                     length: 0,
                     line_text: Some(Cow::Borrowed(b"")),
                     offset: 0,
+                    line_text_start_column: 0,
                 });
             }
             let data = match tracker {
@@ -826,12 +833,11 @@ impl Location {
                 None => source.init_error_position(r.loc),
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
-            // Window a long line to ~120 bytes around the error. Bounds are
-            // BYTE offsets; the gate keeps the original shape (no left trim for
-            // an error in the last 80 bytes) so `write_format`'s caret aligns.
+            // An error in the last 80 bytes keeps the whole line: bake's overlay pads by `column`.
             let offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
+            let mut line_text_start_column = 0;
             if full_line.len() > 80 + offset_in_line {
                 let mut lo = offset_in_line.saturating_sub(40);
                 let mut hi = (offset_in_line + 80).min(full_line.len());
@@ -843,6 +849,14 @@ impl Location {
                 {
                     hi += 1;
                 }
+                if lo > 0 {
+                    // Same counter as `column_count`, over the kept bytes only.
+                    let mut kept = ErrorPositionState::default();
+                    kept.advance(full_line, lo, offset_in_line);
+                    line_text_start_column =
+                        u32::try_from(data.column_count.saturating_sub(kept.column_number))
+                            .expect("int cast");
+                }
                 full_line = &full_line[lo..hi];
             }
 
@@ -852,18 +866,14 @@ impl Location {
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
                 length: if r.len > -1 {
-                    u32::try_from(r.len).expect("int cast") as usize
+                    u32::try_from(r.len).expect("int cast")
                 } else {
                     1
                 },
-                // `source_backing` in `Transpiler::parse_*` is RAII and
-                // drops on the parse-error path *before* `process_fetch_log`
-                // clones the `Msg` into a `BuildMessage`, so own the bytes here
-                // instead of borrowing `source.contents`. `full_line` is
-                // bounded (≤ ~120 bytes) and only materialized on diagnostic
-                // paths.
-                line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
+                // Owned: `source.contents` can be freed before this `Msg` is cloned.
+                line_text: Some(Cow::Owned(full_line.to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
+                line_text_start_column,
             });
         }
         None
@@ -970,7 +980,6 @@ impl Data {
         to: &mut impl fmt::Write,
         kind: Kind,
         redact_sensitive_information: bool,
-        long_lines: LongLines,
     ) -> fmt::Result {
         if self.text.is_empty() {
             return Ok(());
@@ -1014,12 +1023,12 @@ impl Data {
                     bun_core::strings::split(line_text, b"\n").collect();
                 let line_text = lines_before.pop().unwrap_or_default();
                 if location.column > 0 && !line_text.is_empty() {
-                    let column = usize::try_from(location.column - 1).expect("int cast");
-                    let (line_text, column) = match long_lines {
-                        LongLines::Cut => excerpt_around_column(line_text, column),
-                        LongLines::Whole => (line_text, column),
-                    };
-                    let mut line_offset_for_second_line: usize = width_before(line_text, column);
+                    let mut line_offset_for_second_line: usize = width_before(
+                        line_text,
+                        usize::try_from(location.column - 1)
+                            .expect("int cast")
+                            .saturating_sub(location.line_text_start_column as usize),
+                    );
                     let gutter = bun_core::fmt::digit_count(location.line);
                     for (line, text) in
                         (location.line - lines_before.len() as i32..).zip(lines_before)
@@ -1139,44 +1148,6 @@ fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
         to.write_char(b as char)?;
     }
     Ok(())
-}
-
-/// What `Data::write_format` does with a source line of more than `MAX_EXCERPT_LEN` bytes.
-#[derive(Copy, Clone)]
-pub(crate) enum LongLines {
-    /// Prints the part around the caret.
-    Cut,
-    Whole,
-}
-
-const MAX_EXCERPT_LEN: usize = 120;
-/// The excerpt starts this many bytes before the caret, or earlier when the line ends first.
-const EXCERPT_LEN_BEFORE_CARET: usize = 40;
-
-/// The part of `line` to print for a caret at the 0-based `column`, and the caret's column in it.
-fn excerpt_around_column(line: &[u8], column: usize) -> (&[u8], usize) {
-    use bun_core::strings;
-    if line.len() <= MAX_EXCERPT_LEN {
-        // The creator of the location may have cut the start of the line off and kept `column`.
-        return (line, column.min(MAX_EXCERPT_LEN));
-    }
-    let caret = strings::wtf8_offset_of_utf16_index(line, column as u32);
-    let start = caret.saturating_sub(EXCERPT_LEN_BEFORE_CARET);
-    let mut hi = (start + MAX_EXCERPT_LEN).min(line.len());
-    let mut lo = hi - MAX_EXCERPT_LEN;
-    // A UTF-8 sequence has at most 3 continuation bytes.
-    for _ in 0..3 {
-        if !strings::is_on_char_boundary(line, lo) {
-            lo -= 1;
-        }
-        if !strings::is_on_char_boundary(line, hi) {
-            hi += 1;
-        }
-    }
-    (
-        bun_core::trim_right(&line[lo..hi], b" \r\n\t"),
-        strings::wtf8_len_utf16(&line[lo..caret]) as usize,
-    )
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1308,37 +1279,14 @@ impl Msg {
 
     // No explicit Drop body needed beyond field drops.
 
-    /// Writes the message and its notes, each under its source line. A long source line is cut to the part around the caret.
     pub fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
         to: &mut impl fmt::Write,
-    ) -> fmt::Result {
-        // A cut can drop the key that marks a secret, so a redacted line stays whole.
-        let long_lines = match self.redact_sensitive_information {
-            true => LongLines::Whole,
-            false => LongLines::Cut,
-        };
-        self.write_format_with::<ENABLE_ANSI_COLORS>(to, long_lines)
-    }
-
-    /// [`Msg::write_format`] without the cut, for a caller that decides itself how much of a long line to show.
-    pub fn write_format_uncut<const ENABLE_ANSI_COLORS: bool>(
-        &self,
-        to: &mut impl fmt::Write,
-    ) -> fmt::Result {
-        self.write_format_with::<ENABLE_ANSI_COLORS>(to, LongLines::Whole)
-    }
-
-    fn write_format_with<const ENABLE_ANSI_COLORS: bool>(
-        &self,
-        to: &mut impl fmt::Write,
-        long_lines: LongLines,
     ) -> fmt::Result {
         self.data.write_format::<ENABLE_ANSI_COLORS>(
             to,
             self.kind,
             self.redact_sensitive_information,
-            long_lines,
         )?;
 
         if !self.notes.is_empty() {
@@ -1351,7 +1299,6 @@ impl Msg {
                 to,
                 Kind::Note,
                 self.redact_sensitive_information,
-                long_lines,
             )?;
         }
         Ok(())
@@ -2624,11 +2571,7 @@ impl ErrorPositionState {
 
     fn to_error_position(self, line_end: usize) -> ErrorPosition {
         ErrorPosition {
-            line_start: if self.line_start > 0 {
-                self.line_start - 1
-            } else {
-                self.line_start
-            },
+            line_start: self.line_start,
             line_end,
             line_count: self.line_count,
             column_count: self.column_number,

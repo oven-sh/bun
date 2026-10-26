@@ -733,7 +733,7 @@ fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
         location: (!reported.path.is_empty()).then(|| bun_ast::Location {
             file: Cow::Owned(bun_sema_driver::host::to_native(&reported.path).to_vec()),
             line_text: line_text(),
-            length: reported.end.saturating_sub(reported.start) as usize,
+            length: reported.end.saturating_sub(reported.start),
             offset: reported.start as usize,
             line: reported.line as i32,
             column: reported.column as i32,

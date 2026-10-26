@@ -560,24 +560,6 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("--pretty prints a line of more than 120 bytes whole, under the line before it", async () => {
-    // Bun's other errors print only the part of such a line around the error.
-    const long = `const a = [${repeat("1, ", 50)}1]; const s: string = a.length;`;
-    const column = long.indexOf("s:");
-    using dir = project({ "index.ts": `const ok = 1;\n${long}\nexport {};\n` });
-    const { stdout, exitCode } = await check(dir, ["--pretty"]);
-    expect(stdout).toBe(
-      [
-        `1 | const ok = 1;`,
-        `2 | ${long}`,
-        `${" ".repeat(4 + column)}^`,
-        `error: TS2322: Type 'number' is not assignable to type 'string'.`,
-        `    at index.ts:2:${column + 1}`,
-      ].join("\n"),
-    );
-    expect(exitCode).toBe(1);
-  });
-
   test("AI agents get tagged output with source excerpts and no colors", async () => {
     using dir = project({
       "index.ts": `export function f(a: number) {\n  return a.lenght;\n}\n`,

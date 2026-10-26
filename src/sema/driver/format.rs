@@ -165,8 +165,8 @@ fn write_pretty(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], s
     let message = to_msg(d, style);
     let to = &mut bun_core::fmt::VecWriter(out);
     let _ = match style.color {
-        true => message.write_format_uncut::<true>(to),
-        false => message.write_format_uncut::<false>(to),
+        true => message.write_format::<true>(to),
+        false => message.write_format::<false>(to),
     };
     out.push(b'\n');
     if !duplicates.is_empty() {

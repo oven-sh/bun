@@ -141,53 +141,6 @@ test("bunfig password value is masked in config error output", async () => {
   expect(coloredExit).toBe(1);
 });
 
-test("bunfig token is masked when its key is further from the error than one printed excerpt", async () => {
-  // The logger prints about 120 bytes around the caret of a long line. The
-  // `token` key is 154 bytes to the left of the caret here, and the redaction
-  // has to see that key to know that the string is a secret.
-  const secret = Buffer.alloc(143, "secretvalue").toString();
-  const masked = Buffer.alloc(143, "*").toString();
-  using dir = tempDir("redacted-bunfig-long-line", {
-    "bunfig.toml": `[install]\ntoken = "${secret}" ]\n`,
-    "package.json": "{}",
-  });
-
-  await using plain = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [plainOut, plainErr, plainExit] = await Promise.all([plain.stdout.text(), plain.stderr.text(), plain.exited]);
-
-  expect(plainOut).not.toContain("secretvalue");
-  expect(plainErr).not.toContain("secretvalue");
-  expect(plainErr).toContain(`2 | token = "${masked}" ]`);
-
-  await using colored = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [coloredOut, coloredErr, coloredExit] = await Promise.all([
-    colored.stdout.text(),
-    colored.stderr.text(),
-    colored.exited,
-  ]);
-
-  expect(coloredOut).not.toContain("secretvalue");
-  expect(coloredErr).not.toContain("secretvalue");
-  expect(coloredErr).toContain(`"${masked}"`);
-
-  expect(plainExit).toBe(1);
-  expect(coloredExit).toBe(1);
-});
-
 // The config loaders split user:password@ off a registry URL, but a token
 // written as a path segment stays part of it, and these messages echo that
 // URL (or the manifest / tarball URL built from it) when no request can be

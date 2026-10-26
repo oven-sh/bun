@@ -5084,9 +5084,7 @@ pub(crate) fn write(
 
 const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 
-/// The descriptor that a sink on `fd` writes to, and whether its writer owns it. A pipe or tty
-/// that the caller keeps is written through a duplicate: a uv handle takes the descriptor it is
-/// given, and `uv_close` closes it.
+/// `uv_close` closes the fd that its pipe or tty handle was given, so one the caller keeps is duplicated.
 #[cfg(windows)]
 fn windows_sink_fd(
     fd: Fd,

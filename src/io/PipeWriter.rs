@@ -2073,9 +2073,7 @@ pub trait WindowsStreamingWriterParent: WindowsWriterParent {
 #[cfg(windows)]
 pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
     pub source: Option<Source>,
-    /// Whether `close()` closes the fd of a file source. If the caller keeps the fd (`false`), the
-    /// file stays open. A pipe or tty handle is always closed: give the writer a duplicate of one
-    /// that the caller keeps.
+    /// Whether `close()` closes the fd of a file source. It always closes a pipe or tty handle.
     pub owns_fd: bool,
     pub parent: *mut Parent,
     pub is_done: bool,

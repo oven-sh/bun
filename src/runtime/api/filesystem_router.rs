@@ -205,19 +205,25 @@ impl FileSystemRouter {
                                 continue 'outer;
                             }
                         }
-                        let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
+                        // The path as walked. `Entry.dir` is where the listing was first read.
+                        let abs_parts: [&[u8]; 2] = [dir_ref.abs_path, entry.base()];
                         // `abs()` writes into a thread-local buffer; copy out
                         // before recursing (recursion overwrites it).
                         let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(&full_path),
-                        );
-                        // Behind a link `Entry.dir` is the real directory, and the bust above by it
-                        // reaches a listing that the path walked has not read yet. The walk goes on
-                        // as walked: the real path repeats below a link back into this tree.
-                        let walked_parts: [&[u8]; 2] = [dir_ref.abs_path, entry.base()];
-                        let walked_path = vm.fs().abs(&walked_parts).to_vec();
-                        Self::bust_dir_cache_recursive(&walked_path);
+                        let child = strings::paths::without_trailing_slash_windows_path(&full_path);
+                        // Twice for a path marked missing: it is read once that mark is busted.
+                        for _ in 0..2 {
+                            // Behind a link a bust reaches a listing only by a path that was read.
+                            let found = matches!(
+                                vm.as_mut().transpiler.resolver.read_dir_info(child),
+                                Ok(Some(_))
+                            );
+                            let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(child);
+                            if found {
+                                break;
+                            }
+                        }
+                        Self::bust_dir_cache_recursive(&full_path);
                     }
                 }
             }

@@ -166,7 +166,7 @@ class TestReporterSession extends InspectorSession {
 }
 
 describe.if(isPosix)("TestReporter inspector protocol", () => {
-  let proc: Subprocess | undefined;
+  let proc: Subprocess<"ignore", "pipe", "pipe"> | undefined;
   let socket: ReturnType<typeof connect> extends Promise<infer T> ? T : never;
 
   afterEach(() => {

@@ -1,350 +1,136 @@
-/**
- * This is the public API for `bind.ts` files
- * It is aliased as `import {} from 'bindgen'`
- * @see https://bun.com/docs/project/bindgen
- */
+// What a `.bind.ts` file imports as `b`: docs/project/bindgen.mdx
 
 import {
-  dictionaryImpl,
-  isFunc,
-  isType,
-  oneOfImpl,
-  registerFunction,
-  TypeImpl,
-  type TypeKind,
-} from "./bindgen-lib-internal";
+  AnyType,
+  ArrayType,
+  BoolType,
+  BufferSourceType,
+  type BytesOptions,
+  ByteSpanType,
+  BytesType,
+  CellClass,
+  type ClassOptions,
+  ClassType,
+  type DictionaryOptions,
+  DictionaryType,
+  DoubleType,
+  EnumerationType,
+  type EnumerationValues,
+  FunctionDefinition,
+  type FunctionOptions,
+  integers,
+  type MemberOptions,
+  ModuleDefinition,
+  NamespaceDefinition,
+  type NamespaceOptions,
+  NativePromiseContextType,
+  PromisePtrType,
+  RecordResultType,
+  RefType,
+  type SignatureOptions,
+  StringType,
+  type Type,
+  UnionType,
+  UnitType,
+  type ValueOptions,
+} from "./bindgen-lib-internal.ts";
 
-/** A type definition for argument parsing. See `bindgen.md` for usage details. */
-export type Type<
-  /** T = JavaScript type that the Type represents */
-  T,
-  /** K = "kind" a string pertaining to the `t.<K>` that created this type. affects method listing */
-  K extends TypeKind = TypeKind,
-  /** F = "flags" defining if the value is optional. null = not set, false = required, true = optional. */
-  F extends TypeFlag = null,
-> = F extends null
-  ? Props<T, K>
-  : F extends true
-    ? {
-        [isType]: true | [T, K, F];
-        nonNull: Type<T, K, "opt-nonnull">;
-      }
-    : { [isType]: true | [T, K, F] };
+export type { Capability, Type } from "./bindgen-lib-internal.ts";
+export { null_ as null, undefined_ as undefined };
 
-type TypeFlag = boolean | "opt-nonnull" | null;
+/** Strict: only a boolean. `.loose` for `ToBoolean`. */
+export const bool = new BoolType();
 
-// This needs to be exported to avoid error TS4023.
-export interface BaseTypeProps<T, K extends TypeKind> {
-  [isType]: true | [T, K];
-  /**
-   * Optional means the value may be omitted from a parameter definition.
-   * Parameters are required by default.
-   */
-  optional: Type<T | undefined, K, true>;
-  /**
-   * When this is used as a dictionary value, this makes that parameter
-   * required. Dictionary entries are optional by default.
-   */
-  required: Type<Exclude<T, undefined>, K, false>;
+/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. As a result, `b.u64.asBigInt`. */
+export const { u8, u16, i32, u32, u64, usize } = integers;
 
-  /** Implies `optional`, this sets a default value if omitted */
-  default(def: T): Type<T, K, true>;
-}
+/** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. As a result, `b.f64.asDate`. */
+export const f64 = new DoubleType();
 
-interface NumericTypeProps<T, K extends TypeKind> extends BaseTypeProps<T, K> {
-  /**
-   * Applies [Clamp] semantics
-   * https://webidl.spec.whatwg.org/#Clamp
-   * If a custom numeric range is provided, it will be used instead of the built-in clamp rules.
-   */
-  clamp(min?: T, max?: T): Type<T, K>;
-  /**
-   * Applies [EnforceRange] semantics
-   * https://webidl.spec.whatwg.org/#EnforceRange
-   * If a custom numeric range is provided, it will be used instead of the built-in enforce rules.
-   */
-  enforceRange(min?: T, max?: T): Type<T, K>;
+/** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. As a result, `b.string.local`. */
+export const string = new StringType();
 
-  /**
-   * Equivalent to calling Node.js' `validateInteger(val, prop, min, max)`
-   */
-  validateInteger(min?: T, max?: T): Type<T, K>;
-}
+/** The JS value itself, as a `JsLocal<'a>`. */
+export const any = new AnyType();
 
-interface I32TypeProps extends NumericTypeProps<number, "i32"> {
-  /**
-   * Equivalent to calling Node.js' `validateInt32(val, prop, min, max)`
-   */
-  validateInt32(min?: number, max?: number): Type<number, "i32">;
-}
+/** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */
+export { callableType as callable } from "./bindgen-lib-internal.ts";
 
-interface U32TypeProps extends NumericTypeProps<number, "u32"> {
-  /**
-   * Equivalent to calling Node.js' `validateUint32(val, prop, min, max)`
-   */
-  validateUint32(min?: number, max?: number): Type<number, "u32">;
-}
+/** An object, as a `JsLocal<'a, JSObject>`. */
+export { objectType as object } from "./bindgen-lib-internal.ts";
 
-interface F64TypeProps extends NumericTypeProps<number, "f64"> {
-  /**
-   * Throws an error if the input is non-finite (NaN, ±Infinity)
-   */
-  finite: Type<number, "f64">;
-  /**
-   * Equivalent to calling Node.js' `validateNumber(val, prop, min, max)`
-   */
-  validateNumber(min?: number, max?: number): Type<number, "f64">;
-}
+/** An array, as a `JsLocal<'a, JSArray>`: `b.array(T)` converts its elements. */
+export { jsArrayType as jsArray } from "./bindgen-lib-internal.ts";
+export { class_ as class };
 
-// If an entry does not exist, then `BaseTypeProps` is assumed.
-// T = JavaScript type that the Type represents
-interface TypePropsMap<T> {
-  // Integer types are always numbers, so T is not passed
-  ["u8"]: NumericTypeProps<number, "u8">;
-  ["i8"]: NumericTypeProps<number, "i8">;
-  ["u16"]: NumericTypeProps<number, "u16">;
-  ["i16"]: NumericTypeProps<number, "i16">;
-  ["u32"]: U32TypeProps;
-  ["i32"]: I32TypeProps;
-  ["u64"]: NumericTypeProps<number, "u64">;
-  ["i64"]: NumericTypeProps<number, "i64">;
-  // F64 is always a number, so T is not passed.
-  ["f64"]: F64TypeProps;
-}
+/** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
+export const bufferSource = new BufferSourceType();
 
-type PropertyMapKeys = keyof TypePropsMap<any>;
-type Props<T, K extends TypeKind> = K extends PropertyMapKeys ? TypePropsMap<T>[K] : BaseTypeProps<T, K>;
+/** Bytes that C++ passes to one of a class's `calledFromCpp`. */
+export const byteSpan = new ByteSpanType();
 
-export type AcceptedDictionaryTypeKind = Exclude<TypeKind, "globalObject" | "virtualMachine">;
+/** An internal field that holds one `JSCell` subclass: `b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h")`. */
+export const cell = (cpp: string, header: string) => new CellClass(cpp, header);
 
-function builtinType<T>() {
-  return <K extends TypeKind>(kind: K) => new TypeImpl(kind, undefined as any, {}) as Type<T, any> as Type<T, K>;
-}
+/** The bytes of a string, a buffer or a `Blob`: which of them, what becomes of anything else, and how the body holds them. */
+export const bytes = (options: BytesOptions) => new BytesType(options);
 
-/** Contains all primitive types provided by the bindings generator */
-export namespace t {
-  /**
-   * Can only be used as an argument type. The generated host function passes the
-   * `JSGlobalObject*` for this argument.
-   */
-  export const globalObject = builtinType<never>()("globalObject");
-  /**
-   * Can only be used as an argument type. The generated host function passes the
-   * `JSGlobalObject*` for this argument; the native side takes its `VirtualMachine` from it.
-   */
-  export const virtualMachine = builtinType<never>()("virtualMachine");
+/** The native `Blob` behind a JS `Blob`. */
+export const blob = new RefType(
+  "Bun::Bindgen::IDLBlobRef",
+  "globalThis.Blob",
+  "bun_jsc::webcore_types::Blob",
+  "Bindgen/IDLConvertBlob.h",
+  [{ cpp: "Bun::Bindgen::Generated::JSBlob" }],
+  null,
+);
 
-  /**
-   * Provides the raw JSValue from the JavaScriptCore API. Avoid using this if
-   * possible. This indicates the bindings generator is incapable of processing
-   * your use case.
-   */
-  export const any = builtinType<unknown>()("any");
-  /** Void function type */
-  export const undefined = builtinType<undefined>()("undefined");
-  /** Does not throw on parse. Equivalent to `!!value` */
-  export const boolean = builtinType<boolean>()("boolean");
-  /** Throws if the value is not a boolean. */
-  export const strictBoolean = builtinType<boolean>()("strictBoolean");
+/** The context of a promise reaction that `JSValue::then` was given: a `*mut` of the type at `rustPath`. */
+export const promisePtr = (rustPath: string) => new PromisePtrType(rustPath);
 
-  /**
-   * Equivalent to IDL's `unrestricted double`, allowing NaN and Infinity.
-   * To restrict to finite values, use `f64.finite`.
-   */
-  export const f64 = builtinType<number>()("f64");
+/** The context of a promise reaction that is a `NativePromiseContext` cell: what `take` hands back, an `Option<NonNull<..>>` of the type at `rustPath`. */
+export const nativePromiseContext = (rustPath: string) => new NativePromiseContextType(rustPath);
 
-  export const u8 = builtinType<number>()("u8");
-  export const u16 = builtinType<number>()("u16");
-  export const u32 = builtinType<number>()("u32");
-  export const u64 = builtinType<number>()("u64");
-  export const i8 = builtinType<number>()("i8");
-  export const i16 = builtinType<number>()("i16");
-  export const i32 = builtinType<number>()("i32");
-  export const i64 = builtinType<number>()("i64");
-  export const usize = builtinType<number>()("usize");
+/** `null` or `undefined`, as an alternative of a union. */
+const null_ = new UnitType("null");
+/** `undefined`, as an alternative of a union. */
+const undefined_ = new UnitType("undefined");
 
-  /**
-   * The DOMString type corresponds to strings.
-   *
-   * @note A DOMString value might include unmatched surrogate code points.
-   * Use USVString if this is not desirable.
-   *
-   * @see https://webidl.spec.whatwg.org/#idl-DOMString
-   */
-  export const DOMString = builtinType<string>()("DOMString");
-  /**
-   * The {@link USVString} type corresponds to scalar value strings. Depending on the
-   * context, these can be treated as sequences of code units or scalar values.
-   *
-   * Specifications should only use USVString for APIs that perform text
-   * processing and need a string of scalar values to operate on. Most APIs that
-   * use strings should instead be using {@link DOMString}, which does not make any
-   * interpretations of the code units in the string. When in doubt, use
-   * {@link DOMString}
-   *
-   * @see https://webidl.spec.whatwg.org/#idl-USVString
-   */
-  export const USVString = builtinType<string>()("USVString");
-  /**
-   * The ByteString type corresponds to byte sequences.
-   *
-   * WARNING: Specifications should only use ByteString for interfacing with
-   * protocols that use bytes and strings interchangeably, such as HTTP. In
-   * general, strings should be represented with {@link DOMString} values, even
-   * if it is expected that values of the string will always be in ASCII or some
-   * 8-bit character encoding. Sequences or frozen arrays with octet or byte
-   * elements, {@link Uint8Array}, or {@link Int8Array} should be used for
-   * holding 8-bit data rather than `ByteString`.
-   *
-   * https://webidl.spec.whatwg.org/#idl-ByteString
-   */
-  export const ByteString = builtinType<string>()("ByteString");
-  /**
-   * DOMString but encoded as `[]const u8`
-   *
-   * ```ts
-   * // foo.bind.ts
-   * import { fn, t } from "bindgen";
-   *
-   * export const foo = fn({
-   *   args: { bar: t.UTF8String },
-   * })
-   * ```
-   *
-   * ```rust
-   * pub fn foo(bar: &[u8]) {
-   *     // ...
-   * }
-   * ```
-   */
-  export const UTF8String = builtinType<string>()("UTF8String");
+export const array = (element: Type) => new ArrayType(element);
 
-  /** An array or iterable type of T */
-  export function sequence<T>(itemType: Type<T>): Type<Iterable<T>, "sequence"> {
-    return new TypeImpl("sequence", {
-      element: itemType as TypeImpl,
-      repr: "slice",
-    });
-  }
+/** A result only: an object with a property for each `(key, value)` the body gives. */
+export const record = (value: Type) => new RecordResultType(value);
 
-  /** Object with arbitrary keys but a specific value type */
-  export function record<V>(valueType: Type<V>): Type<Record<string, V>, "record"> {
-    return new TypeImpl("record", {
-      value: valueType as TypeImpl,
-      repr: "kv-slices",
-    });
-  }
+// A named type is called what it is exported as: `export const Formatter = b.enumeration([..])`.
 
-  /**
-   * Reference a type by string name instead of by object reference.  This is
-   * required in some siutations like {@link Request} which can take an existing
-   * request object in as itself.
-   */
-  export function ref<T>(name: string): Type<T> {
-    return new TypeImpl("ref", name);
-  }
+/** An array in place of a value lists several spellings of it; the first is the one given back to JS. `{ RgbArray: "[rgb]" }` names the variants. */
+export const enumeration = (values: EnumerationValues) => new EnumerationType(values);
 
-  /**
-   * Reference an external class type that is not defined with `bindgen`,
-   * from either WebCore, JavaScriptCore, or Bun.
-   */
-  export function externalClass<T>(name: string): Type<T> {
-    return new TypeImpl("ref", name);
-  }
+export const dictionary = (members: Record<string, Type | MemberOptions>, options?: DictionaryOptions) =>
+  new DictionaryType(members, options);
 
-  export function oneOf<T extends Type<any>[]>(
-    ...types: T
-  ): Type<
-    {
-      [K in keyof T]: T[K] extends Type<infer U> ? U : never;
-    }[number],
-    "oneOf"
-  > {
-    return oneOfImpl(types as unknown[] as TypeImpl[]);
-  }
+/** A value goes to the first alternative, in written order, that takes its kind. */
+export const union = (alternatives: Record<string, Type>) => new UnionType(alternatives);
 
-  export function dictionary<R extends Record<string, Type<any, AcceptedDictionaryTypeKind, true | null>>>(
-    fields: R,
-  ): Type<
-    {
-      [K in keyof R]?: R[K] extends Type<infer T, any, any> ? T : never;
-    },
-    "dictionary"
-  > {
-    return dictionaryImpl(fields as Record<string, any>);
-  }
+/** A JS class whose state is the Rust struct at `options.rustPath`, stored inside the wrapper object. */
+const class_ = (options: ClassOptions) => new ClassType(options);
 
-  /** Create an enum from a list of strings. */
-  export function stringEnum<T extends string[]>(
-    ...values: T
-  ): Type<
-    {
-      [K in keyof T]: K;
-    }[number],
-    "stringEnum"
-  > {
-    return new TypeImpl("stringEnum", values.sort());
-  }
-}
+/** The class being declared, in its own signatures: a `JsWrapper<'a, Self>`. */
+export { selfType as self } from "./bindgen-lib-internal.ts";
 
-interface FuncOptionsWithVariant extends FuncMetadata {
-  /**
-   * Declare a function with multiple overloads. Each overload gets its own
-   * native function named "name`n`" where `n` is the 1-based index of the
-   * overload.
-   *
-   * ## Example
-   * ```ts
-   * // foo.bind.ts
-   * import { fn } from "bindgen";
-   *
-   * export const foo = fn({
-   *   variants: [
-   *     {
-   *       args: { a: t.i32 },
-   *       ret: t.i32,
-   *     },
-   *     {
-   *       args: { a: t.i32, b: t.i32 },
-   *       ret: t.boolean,
-   *     }
-   *  ]
-   * });
-   * ```
-   *
-   * ```rust
-   * pub fn foo1(a: i32) -> i32 {
-   *     a
-   * }
-   *
-   * pub fn foo2(a: i32, b: i32) -> bool {
-   *     a == b
-   * }
-   * ```
-   */
-  variants: FuncVariant[];
-}
-type FuncWithoutOverloads = FuncMetadata & FuncVariant;
-export type FuncOptions = FuncOptionsWithVariant | FuncWithoutOverloads;
+export const fn = (options: FunctionOptions) => new FunctionDefinition([options], options);
 
-export interface FuncMetadata {
-  /**
-   * TODO:
-   * Automatically generate code to expose this function on a well-known object
-   */
-  exposedOn?: ExposedOn;
-}
+/** What a Rust function returns. `$bindgen` calls it. */
+export const value = (options: ValueOptions) => new FunctionDefinition([options], {}, true);
 
-export type FuncReference = { [isFunc]: true };
+/** One JS function, several signatures, told apart by the kinds of their arguments. */
+export const overloads = (...signatures: FunctionOptions[]) => new FunctionDefinition(signatures, signatures[0]);
 
-export type ExposedOn = "JSGlobalObject" | "BunObject";
+/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions, or with `{ call: "satisfies" }` a function that does what that one does. An array is the overloads of one function. */
+export const namespace = (
+  functions: Record<string, SignatureOptions | readonly SignatureOptions[]>,
+  options?: NamespaceOptions,
+) => new NamespaceDefinition(functions, options);
 
-export interface FuncVariant {
-  /** Ordered record. Cannot include ".required" types since required is the default. */
-  args: Record<string, Type<any, any, true | null>>;
-  ret: Type<any>;
-}
-
-export function fn(opts: FuncOptions) {
-  return registerFunction(opts) as FuncReference;
-}
+/** `export default b.module({ rustPath: "crate::node::os" })`: where the file's Rust functions are. */
+export const module = (options: { rustPath: string }) => new ModuleDefinition(options);

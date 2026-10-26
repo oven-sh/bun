@@ -612,6 +612,12 @@ export function add(a, b) {}
       example(["    ```sh", "    npm install", "      nested", "    ```"]),
       example(["  ```sh", "  npm install", "    nested", "  ```"]),
     ],
+    [
+      "an indented fence around a line that is indented less, with keepUnparsableExampleIndent",
+      keep,
+      example(["    ```sh", "    npm install", "  x", "    ```"]),
+      example(["  ```sh", "      npm install", "    x", "  ```"]),
+    ],
   ])("%s is stable when the output is formatted again", async (_, options, input, printed) => {
     const first = await format({ ...bunfig(options), "a.js": input });
     expect(first.files["a.js"]).toBe(printed);

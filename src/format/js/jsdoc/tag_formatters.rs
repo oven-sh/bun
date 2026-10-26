@@ -215,7 +215,8 @@ impl JsdocFormatter<'_> {
         }
     }
 
-    /// The code of a fence is indented like the fence: what is in front of the fence comes off the code.
+    /// The code of a fence is indented like the fence: what is in front of the fence comes off the code, if every
+    /// line has it.
     fn format_example_fenced_block(
         &mut self,
         fence_indent: &[u8],
@@ -233,7 +234,11 @@ impl JsdocFormatter<'_> {
             };
             match formatted {
                 Some(formatted) => self.push_formatted_code_lines(&formatted, indent),
-                None => self.push_raw_code_lines(inner_code, fence_indent, indent),
+                None => self.push_raw_code_lines(
+                    inner_code,
+                    indent_of_every_line(inner_code, fence_indent),
+                    indent,
+                ),
             }
         }
         self.content_lines.push([indent, closing_fence].concat());

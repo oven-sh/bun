@@ -142,6 +142,10 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     return send(sessionId ? { id, error, sessionId } : { id, error });
   }
 
+  // Recorded ahead of the session check, so __fake_mouse_events() also shows
+  // a mouse event that arrived without a sessionId.
+  if (method === "Input.dispatchMouseEvent") mouseEvents.push({ type: params.type, x: params.x, y: params.y });
+
   // The browser endpoint carries Target.* and Browser.* only. Every other
   // domain lives on a target's session, so Chrome answers a command that
   // arrives with no sessionId the same way it answers an unknown method.
@@ -186,9 +190,6 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     }
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
-    case "Input.dispatchMouseEvent":
-      mouseEvents.push({ type: params.type, x: params.x, y: params.y });
-      return reply({});
     case "Runtime.evaluate": {
       if (params.expression === "document.title") {
         if (noTitleReply) return;

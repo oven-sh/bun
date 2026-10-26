@@ -11,6 +11,7 @@
 // { resolved } or { rejected: message }.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync } from "node:fs";
 import { join } from "node:path";
 
 const fixture = join(import.meta.dir, "fake-chrome-fixture.ts");
@@ -38,10 +39,10 @@ const prelude = /* js */ `
   const big = ${BIG};
 `;
 
-async function runScenario(body: string): Promise<unknown> {
+async function runScenario(body: string, env: Record<string, string> = {}): Promise<unknown> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", prelude + body],
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -684,6 +685,51 @@ test.concurrent("bun test --isolate retires the transport with the file that spa
   ]);
   expect(stderr).toContain(" 2 pass");
   expect(exitCode).toBe(0);
+});
+
+// With no `url`, `path` or `argv`, the backend first tries the browser that a
+// DevToolsActivePort file names, over a WebSocket, and spawns its own when
+// that handshake fails. What an open view asked for in the meantime has to
+// reach the spawned browser, and nothing of a view closed in the meantime
+// may. The fallback spawn takes no argv, so a wrapper script stands in for
+// Chrome to name the fixture; a shell script, hence not on Windows.
+const posixOnly = isWindows ? test.skip : test.concurrent;
+
+posixOnly("the spawn fallback after a stale DevToolsActivePort serves open views only", async () => {
+  using dir = tempDir("webview-stale-port", {
+    "chrome.sh": `#!/bin/sh\nexec "${bunExe()}" "$@" "${fixture}"\n`,
+  });
+  const chrome = join(String(dir), "chrome.sh");
+  chmodSync(chrome, 0o755);
+  const result = await runScenario(
+    `
+    // Refuses the WebSocket upgrade, like the port of a Chrome that is gone.
+    const stale = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(null, { status: 400 }) });
+    // Where Chrome keeps the file under $HOME, on Linux and on macOS.
+    for (const profile of [".config/google-chrome", "Library/Application Support/Google/Chrome"]) {
+      await Bun.write(
+        process.env.HOME + "/" + profile + "/DevToolsActivePort",
+        stale.port + "\\n/devtools/browser/stale\\n",
+      );
+    }
+    const autoDetect = () => new Bun.WebView({ backend: "chrome", width: 100, height: 100 });
+    const keep = autoDetect();
+    const closed = autoDetect();
+    const click = outcome(closed.click(7, 7));
+    closed.close();
+    const navigated = await outcome(keep.navigate("http://fake/keep"));
+    print({ click: await click, navigated, url: keep.url, mouse: await keep.evaluate("__fake_mouse_events()") });
+    keep.close();
+    stale.stop(true);
+  `,
+    { HOME: String(dir), BUN_CHROME_PATH: chrome },
+  );
+  expect(result).toEqual({
+    click: { rejected: "WebView closed" },
+    navigated: {}, // resolves undefined
+    url: "http://fake/keep",
+    mouse: [],
+  });
 });
 
 // On POSIX fd 3 and fd 4 are one socket, so losing a single direction is not

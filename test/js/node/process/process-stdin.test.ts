@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { exec } from "node:child_process";
+import { promises as fsPromises, writeSync } from "node:fs";
+import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -516,9 +519,56 @@ describe.each([
   });
 });
 
+// The ways to let go of Bun.stdin.stream() without a cancel. Each one reads the first line into `got`.
+// The source stops at the release, as it does when process.stdin pauses, and the next reader makes it read again.
+const streamDoors = {
+  "a break out of for await (console)": {
+    first: "one\n",
+    seen: ["console:one"],
+    door: `for await (const line of console) { got.push("console:" + line); break; }`,
+  },
+  "reader.releaseLock()": {
+    first: "one\n",
+    seen: ["reader:one"],
+    door: `
+      {
+        const reader = Bun.stdin.stream().getReader();
+        got.push("reader:" + Buffer.from((await reader.read()).value).toString().trim());
+        reader.releaseLock();
+      }
+    `,
+  },
+  "a break out of stream.values({ preventCancel: true })": {
+    first: "one\n",
+    seen: ["values:one"],
+    door: `
+      for await (const chunk of Bun.stdin.stream().values({ preventCancel: true })) {
+        got.push("values:" + Buffer.from(chunk).toString().trim());
+        break;
+      }
+    `,
+  },
+  "an aborted pipeTo() with preventCancel": {
+    first: "one\n",
+    seen: ["pipeTo:one"],
+    door: `
+      {
+        const abort = new AbortController();
+        const sink = new WritableStream({
+          write(chunk) {
+            got.push("pipeTo:" + Buffer.from(chunk).toString().trim());
+            abort.abort();
+          },
+        });
+        await Bun.stdin.stream().pipeTo(sink, { preventCancel: true, signal: abort.signal }).catch(() => {});
+      }
+    `,
+  },
+};
+
 // The children above have a top-level await, which keeps them alive. These do not: the next reader has to
 // keep the process alive until stdin ends, and it has to stop when it lets go of stdin too.
-describe("the next reader of stdin after process.stdin lets go of it", () => {
+describe("the next reader of stdin after process.stdin or a stream reader lets go of it", () => {
   // Not concurrent, for the same reason as the tests above.
   const doors = {
     "pause()": { first: "", seen: [], door: `process.stdin.pause();` },
@@ -634,7 +684,7 @@ describe("the next reader of stdin after process.stdin lets go of it", () => {
     return { stdout, stderr: await stderr, exitCode: await proc.exited, signalCode: proc.signalCode };
   }
 
-  describe.each(Object.entries(doors))("%s", (_, { first, seen, door }) => {
+  describe.each(Object.entries({ ...doors, ...streamDoors }))("%s", (_, { first, seen, door }) => {
     const steps: [string | null, string][] = first ? [[null, first]] : [];
 
     test.each(Object.entries(consumers))("%s reads the rest of stdin", async (_, { all }) => {
@@ -699,6 +749,27 @@ describe("the next reader of stdin after process.stdin lets go of it", () => {
     ];
     expect(await run(child(door, consumers["the console iterator"].all), steps, { shellPipe: true })).toEqual({
       stdout: "READY\n" + JSON.stringify([...seen, "two", "three"]) + "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("process.stdin.unref() after a stream reader let go stays for the next reader", async () => {
+    const { first, seen, door } = streamDoors["a break out of for await (console)"];
+    const script = `
+      const got = [];
+      (async () => {
+        ${door}
+        process.stdin.unref();
+        const reader = Bun.stdin.stream().getReader();
+        console.log(JSON.stringify(got));
+        await reader.read();
+        console.log("unexpected read");
+      })();
+    `;
+    expect(await run(script, [[null, first]], { end: false })).toEqual({
+      stdout: JSON.stringify(seen) + "\n",
       stderr: "",
       exitCode: 0,
       signalCode: null,
@@ -833,6 +904,467 @@ describe("the next reader of stdin after process.stdin lets go of it", () => {
     await waitFor("GOT ");
     expect(output).toContain('GOT ["rl:one","two","three"]');
     expect(await proc.exited).toBe(0);
+  });
+});
+
+// Input that arrives while nothing holds the stream stays on fd 0 for the next reader of that descriptor: a dialog,
+// a synchronous read, a child process.
+describe("input that arrives after a stream reader let go of stdin", () => {
+  // Not concurrent: concurrent children in this file turned the Windows lanes red before.
+  // The other ways to end a console loop early.
+  const consoleEnds = {
+    "a return": `got.push("console:" + (await (async () => { for await (const line of console) return line; })()));`,
+    "a throw in the loop body": `
+      try {
+        for await (const line of console) {
+          got.push("console:" + line);
+          throw new Error("stop");
+        }
+      } catch {}
+    `,
+    "iterator.return()": `
+      {
+        const iterator = console[Symbol.asyncIterator]();
+        got.push("console:" + (await iterator.next()).value);
+        await iterator.return();
+      }
+    `,
+    "iterator.throw()": `
+      {
+        const iterator = console[Symbol.asyncIterator]();
+        got.push("console:" + (await iterator.next()).value);
+        await iterator.throw(new Error("stop")).catch(() => {});
+      }
+    `,
+  };
+
+  const prelude = `
+    import fs from "node:fs";
+    const got = [];
+    // A child whose test is gone must not wait for an answer.
+    process.on("disconnect", () => process.exit(1));
+    // The test answers after it wrote more input, so that input is on stdin when this resolves.
+    const ask = question => new Promise(resolve => { process.once("message", resolve); process.send(question); });
+    // One line of fd 0, one byte per read, so the read takes nothing of the next line.
+    function readLineSync() {
+      const byte = Buffer.alloc(1);
+      let line = "";
+      while (fs.readSync(0, byte) === 1 && byte[0] !== 10) line += String.fromCharCode(byte[0]);
+      return line;
+    }
+  `;
+
+  // Runs `script` with `first` on its stdin. When the child asks `question` through process.send(), the test writes
+  // `answers[question]` to the child's stdin and then answers. After the answer to `end` it closes the child's stdin.
+  // When the child prints a key of `output`, the test writes that value: a read that lost a line gets this one and
+  // does not hang. With `fifo` the child's stdin is a FIFO, as in `cmd | bun script`, and not a socket.
+  async function drive(
+    script: string,
+    answers: Record<string, string | undefined>,
+    {
+      first = "one\n",
+      output = {},
+      end,
+      fifo = false,
+    }: { first?: string; output?: Record<string, string>; end?: string; fifo?: boolean } = {},
+  ) {
+    const ignoreEpipe = (e: any) => {
+      if (e?.code !== "EPIPE") throw e;
+    };
+    using dir = fifo ? tempDir("stdin-fifo", {}) : undefined;
+    const path = join(String(dir), "stdin");
+    if (fifo) mkfifo(path);
+    let writer: fsPromises.FileHandle | undefined;
+    // Resolves when a socket took all of `input`. A write to the FIFO is in the pipe when it returns.
+    const write = async (input: string) => {
+      try {
+        if (writer) writeSync(writer.fd, input);
+        else {
+          proc.stdin!.write(input);
+          await proc.stdin!.flush();
+        }
+      } catch (e) {
+        ignoreEpipe(e);
+      }
+    };
+    const close = async () => {
+      if (writer) await writer.close();
+      else Promise.resolve(proc.stdin!.end()).catch(ignoreEpipe);
+    };
+    await using proc = Bun.spawn({
+      cmd: fifo
+        ? ["sh", "-c", 'exec "$0" -e "$1" < "$2"', bunExe(), prelude + script, path]
+        : [bunExe(), "-e", prelude + script],
+      stdin: fifo ? "ignore" : "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+      async ipc(question: string, child) {
+        const input = answers[question];
+        if (question === end) {
+          // The child may read none of it before the answer, so the test does not wait for the socket here.
+          if (input) void write(input);
+          await close();
+        } else if (input) {
+          await write(input);
+        }
+        child.send("ok");
+      },
+    });
+    const stderr = proc.stderr.text();
+    if (fifo) writer = await fsPromises.open(path, "w");
+    try {
+      if (first) await write(first);
+      const decoder = new TextDecoder();
+      let stdout = "";
+      const pending = new Set(Object.keys(output));
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        for (const marker of pending) {
+          if (stdout.includes(marker)) {
+            pending.delete(marker);
+            void write(output[marker]);
+          }
+        }
+      }
+      return { stdout, stderr: await stderr, exitCode: await proc.exited };
+    } finally {
+      await writer?.close().catch(() => {});
+    }
+  }
+
+  // "two" arrives after the door, and the event loop runs twice while nothing reads stdin.
+  const lateLine = (door: string, read: string) => `
+    ${door}
+    await ask("let go");
+    await ask("turn");
+    console.log("READING");
+    ${read}
+    for await (const line of console) { got.push("console:" + line); break; }
+    console.log(JSON.stringify(got));
+    process.exit(0);
+  `;
+
+  test.each(Object.entries(streamDoors))(
+    "a synchronous read of fd 0 gets the line that arrives after %s",
+    async (_, { seen, door }) => {
+      const script = lateLine(door, `got.push("sync:" + readLineSync());`);
+      expect(await drive(script, { "let go": "two\n" }, { output: { "READING\n": "three\n" } })).toEqual({
+        stdout: "READING\n" + JSON.stringify([...seen, "sync:two", "console:three"]) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.each(Object.entries(consoleEnds))(
+    "a synchronous read of fd 0 gets the line that arrives after a console loop ends with %s",
+    async (_, door) => {
+      const script = lateLine(door, `got.push("sync:" + readLineSync());`);
+      expect(await drive(script, { "let go": "two\n" }, { output: { "READING\n": "three\n" } })).toEqual({
+        stdout: "READING\n" + JSON.stringify(["console:one", "sync:two", "console:three"]) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test("confirm() reads the answer that arrives after a console loop ended", async () => {
+    const { door } = streamDoors["a break out of for await (console)"];
+    const script = lateLine(door, `got.push("confirm:" + confirm("ok?"));`);
+    expect(await drive(script, { "let go": "y\n" }, { output: { "READING\n": "three\n" } })).toEqual({
+      stdout: "READING\nok? [y/N] " + JSON.stringify(["console:one", "confirm:true", "console:three"]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("every byte that arrives after a console loop ended stays on stdin", async () => {
+    // 20,000 lines of 10 bytes: more than the source reads ahead, and the order shows in the hash.
+    const late = Array.from({ length: 20_000 }, (_, i) => String(i).padStart(9, "0") + "\n").join("");
+    const script = `
+      for await (const line of console) break;
+      await ask("let go");
+      await ask("turn");
+      const hash = new Bun.CryptoHasher("sha1");
+      const chunk = Buffer.alloc(65536);
+      let bytes = 0;
+      for (let n; (n = fs.readSync(0, chunk)) > 0; bytes += n) hash.update(chunk.subarray(0, n));
+      console.log(JSON.stringify({ bytes, sha1: hash.digest("hex") }));
+      process.exit(0);
+    `;
+    expect(await drive(script, { "let go": late }, { end: "let go" })).toEqual({
+      stdout:
+        JSON.stringify({ bytes: late.length, sha1: new Bun.CryptoHasher("sha1").update(late).digest("hex") }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Each new reader makes the stopped source read again. That read has a limit, or every loop adds a chunk to the
+  // buffer of the source.
+  test("console loops that end early do not read more of stdin each time", async () => {
+    const loops = 300;
+    const feed = Buffer.alloc(8 * 1024 * 1024, "123456789\n").toString();
+    const script = `
+      await ask("feed");
+      let lines = 0;
+      for (let i = 0; i < ${loops}; i++) {
+        for await (const line of console) {
+          lines++;
+          break;
+        }
+      }
+      // What the stream did not take is still on stdin.
+      const chunk = Buffer.alloc(65536);
+      let left = 0;
+      for (let n; (n = fs.readSync(0, chunk)) > 0; ) left += n;
+      console.log(JSON.stringify({ lines, taken: ${"one\n".length + feed.length} - left }));
+      process.exit(0);
+    `;
+    const { stdout, stderr, exitCode } = await drive(script, { feed }, { end: "feed" });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const { lines, taken } = JSON.parse(stdout);
+    expect(lines).toBe(loops);
+    expect(taken).toBeLessThan(1024 * 1024);
+  });
+
+  // The read loop goes on after a chunk of 131,072 bytes or more. A release inside the delivery of that chunk has
+  // to end the loop. Linux only: a socket of macOS does not hold that much, so the chunk cannot be put there whole.
+  test.skipIf(!isLinux)("a release inside the delivery of a large chunk leaves the next chunk on stdin", async () => {
+    const chunk = Buffer.alloc(131072, "1234567\n").toString();
+    const script = `
+      await ask("first chunk");
+      const reader = Bun.stdin.stream().getReader();
+      const first = (await reader.read()).value.length;
+      // Still inside the delivery of the first chunk. The test writes the second chunk, and this takes 1 byte of it.
+      fs.writeSync(1, "INSIDE\\n");
+      fs.readSync(0, Buffer.alloc(1));
+      reader.releaseLock();
+      await ask("turn");
+      await ask("turn");
+      const rest = Buffer.alloc(65536);
+      let left = 0;
+      for (let n; (n = fs.readSync(0, rest)) > 0; ) left += n;
+      console.log(JSON.stringify({ first, left }));
+      process.exit(0);
+    `;
+    expect(
+      await drive(script, { "first chunk": chunk }, { first: "", output: { "INSIDE\n": chunk }, end: "turn" }),
+    ).toEqual({
+      stdout: "INSIDE\n" + JSON.stringify({ first: chunk.length, left: chunk.length - 1 }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The price of the stop: the source does not watch stdin, so it learns that stdin ended from its next reader.
+  test("a stopped stream sees the end of stdin when its next reader attaches", async () => {
+    const { seen, door } = streamDoors["a break out of for await (console)"];
+    const script = `
+      import { finished } from "node:stream/promises";
+      ${door}
+      let ended = false;
+      const end = finished(Bun.stdin.stream()).then(() => (ended = true));
+      await ask("let go");
+      await ask("turn");
+      got.push("ended while stopped: " + ended);
+      got.push("done: " + (await Bun.stdin.stream().getReader().read()).done);
+      await end;
+      got.push("ended: " + ended);
+      console.log(JSON.stringify(got));
+      process.exit(0);
+    `;
+    expect(await drive(script, {}, { end: "let go" })).toEqual({
+      stdout: JSON.stringify([...seen, "ended while stopped: false", "done: true", "ended: true"]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  describe.skipIf(isWindows)("stdin is a FIFO", () => {
+    const { seen, door } = streamDoors["reader.releaseLock()"];
+
+    test("a synchronous read of fd 0 gets the line that arrives next", async () => {
+      const script = lateLine(door, `got.push("sync:" + readLineSync());`);
+      expect(await drive(script, { "let go": "two\n" }, { output: { "READING\n": "three\n" }, fifo: true })).toEqual({
+        stdout: "READING\n" + JSON.stringify([...seen, "sync:two", "console:three"]) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The writer goes away while the source is stopped. The next reader gets what it left and then the end.
+    // Linux only: kqueue doesn't tell a FIFO reader that the last writer closed.
+    test.skipIf(!isLinux)("the next reader reads the rest after the writer closed", async () => {
+      const script = `
+        ${door}
+        await ask("let go");
+        await ask("turn");
+        for await (const line of console) got.push(line);
+        console.log(JSON.stringify(got));
+        process.exit(0);
+      `;
+      expect(await drive(script, { "let go": "two\nthree" }, { end: "let go", fifo: true })).toEqual({
+        stdout: JSON.stringify([...seen, "two", "three"]) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // The child reads the terminal through its event loop, as an editor or a REPL does. A parent that still reads
+  // takes some of the lines. Not on Windows: the source of a console does not stop at a release there.
+  test.skipIf(isWindows).each(["a break out of for await (console)", "reader.releaseLock()"] as const)(
+    "on a terminal, a child process gets every line after %s",
+    async name => {
+      using dir = tempDir("stdin-release-terminal", {
+        "child.js": `
+          console.log("CHILD-READY");
+          process.stdin.on("data", chunk => {
+            const line = chunk.toString().trim();
+            console.log("child got " + line);
+            if (line === "end") process.exit(0);
+          });
+        `,
+        "parent.js": `
+          const got = [];
+          ${streamDoors[name].door}
+          const child = Bun.spawn({ cmd: [process.execPath, "child.js"], stdio: ["inherit", "inherit", "inherit"] });
+          await child.exited;
+          console.log("PARENT-DONE " + JSON.stringify(got));
+        `,
+      });
+      const decoder = new TextDecoder();
+      let output = "";
+      let waiting: { marker: string; resolve: () => void } | undefined;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        terminal: {
+          data(_terminal, chunk) {
+            output += decoder.decode(chunk, { stream: true });
+            if (waiting && output.includes(waiting.marker)) waiting.resolve();
+          },
+        },
+      });
+      await using terminal = proc.terminal!;
+      function waitFor(marker: string) {
+        return new Promise<void>((resolve, reject) => {
+          waiting = { marker, resolve };
+          proc.exited.then(code =>
+            reject(new Error(`child exited with ${code} before ${marker}; output=${JSON.stringify(output)}`)),
+          );
+          if (output.includes(marker)) resolve();
+        });
+      }
+      terminal.write("one\r");
+      await waitFor("CHILD-READY");
+      for (const line of ["l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "end"]) {
+        terminal.write(line + "\r");
+        await waitFor("child got " + line);
+      }
+      await waitFor("PARENT-DONE");
+      expect(output).toContain(`PARENT-DONE ${JSON.stringify(streamDoors[name].seen)}`);
+      expect(await proc.exited).toBe(0);
+    },
+  );
+
+  // Only a stream of this process's stdin, stdout or stderr stops at a release. Any other pipe is read to its end:
+  // the source has to see the writer close it, or its descriptor stays open.
+  test("a released reader of a child's stdout still sees the pipe end", async () => {
+    const script = `
+      import { finished } from "node:stream/promises";
+      const child = Bun.spawn({
+        cmd: [process.execPath, "-e", "console.log('one'); process.stdin.on('data', () => {});"],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = child.stdout.getReader();
+      console.log(Buffer.from((await reader.read()).value).toString().trim());
+      reader.releaseLock();
+      // The child exits at the end of its stdin, and it writes nothing more.
+      await child.stdin.end();
+      await finished(child.stdout);
+      console.log("ended");
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], stdout: "pipe", stderr: "pipe", env: bunEnv });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "one\nended\n", stderr: "", exitCode: 0 });
+  });
+
+  // The same for a pipe that is not fd 0, 1 or 2. The child reads it through Bun.file(fd), as it reads stdin.
+  // Linux only: the pipe is a FIFO, and kqueue doesn't tell its reader that the last writer closed.
+  test.skipIf(!isLinux)("a released reader of Bun.file(fd) over a pipe still sees the pipe end", async () => {
+    using dir = tempDir("stdin-scope-fifo", {});
+    const path = join(String(dir), "pipe");
+    mkfifo(path);
+    const script = `
+      import fs from "node:fs";
+      import { finished } from "node:stream/promises";
+      const stream = Bun.file(fs.openSync(process.argv[1], "r")).stream();
+      const reader = stream.getReader();
+      console.log(Buffer.from((await reader.read()).value).toString().trim());
+      reader.releaseLock();
+      console.log("released");
+      await finished(stream);
+      console.log("ended");
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script, path], stdout: "pipe", stderr: "pipe", env: bunEnv });
+    const stderr = proc.stderr.text();
+    const writer = await fsPromises.open(path, "w");
+    let stdout = "";
+    const decoder = new TextDecoder();
+    let closed = false;
+    try {
+      writeSync(writer.fd, "one\n");
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        // The writer closes the pipe only after the child released its reader.
+        if (!closed && stdout.includes("released\n")) {
+          closed = true;
+          await writer.close();
+        }
+      }
+    } finally {
+      if (!closed) await writer.close();
+    }
+    expect({ stdout, stderr: await stderr, exitCode: await proc.exited }).toEqual({
+      stdout: "one\nreleased\nended\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A source that reads on after a release drops its ref, or a released reader of a silent child holds the process.
+  test("a released reader of a child's stdout lets the process exit", async () => {
+    const script = `
+      (async () => {
+        // The child stays until its stdin ends, and that is when this process is gone.
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "console.log('one'); process.stdin.on('data', () => {});"],
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const reader = child.stdout.getReader();
+        const read = reader.read();
+        // Now only the source keeps the process alive.
+        child.unref();
+        console.log(Buffer.from((await read).value).toString().trim());
+        reader.releaseLock();
+      })();
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], stdout: "pipe", stderr: "pipe", env: bunEnv });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "one\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });
 

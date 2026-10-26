@@ -363,6 +363,33 @@ describe.skipIf(isASAN)("given a symbol that returns a cstring", () => {
       expect(exitCode).toBe(0);
     });
   }
+
+  // The same answers as a dlopen() symbol gives: see "a C string that is not valid UTF-8" in ffi.test.js.
+  it("decodes bytes that are not valid UTF-8 with U+FFFD", () => {
+    using dir = tempDir("bun-ffi-cc-cstring-invalid", {
+      "echo.c": /* c */ `const char* echo(const char* s) { return s; }`,
+    });
+    const { symbols, close } = cc({
+      source: path.join(String(dir), "echo.c"),
+      symbols: { echo: { args: ["ptr"], returns: "cstring" } },
+    });
+    try {
+      const codePoints = (string: string) =>
+        Array.from(string, character => character.codePointAt(0)!.toString(16)).join(" ");
+      // Kept in an array so that the bytes stay alive while C reads them.
+      const inputs = ["61 c3 a9 62", "61 e9 62", "61 c3 a9 62 ff", "e6 97 a5 e6 9c ac e8"].map(hex =>
+        Buffer.from(hex.replaceAll(" ", "") + "00", "hex"),
+      );
+      expect(inputs.map(bytes => codePoints(String(symbols.echo(ptr(bytes)))))).toEqual([
+        "61 e9 62",
+        "61 fffd 62",
+        "61 e9 62 fffd",
+        "65e5 672c fffd",
+      ]);
+    } finally {
+      close();
+    }
+  });
 });
 
 describe.skip("given a ping(cstr) function", () => {

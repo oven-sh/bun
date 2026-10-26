@@ -164,6 +164,7 @@ const ffiFixtures = [
   "ffi-canary.js",
   "ffi-conversion-errors-host.js",
   "ffi-conversion-errors.js",
+  "ffi-cstring-invalid-utf8.js",
   "ffi-fuzz-signatures.js",
   "ffi-hooks-and-owner.js",
   "ffi-host-path.js",

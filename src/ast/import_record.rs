@@ -110,7 +110,7 @@ bitflags::bitflags! {
 
         /// `with { type: "css" }`: a CSS module script. Browser builds export a
         /// constructed `CSSStyleSheet` instead of adding the file to the page CSS.
-        const CSS_MODULE_SCRIPT = 1 << 19;
+        const CSS_MODULE_SCRIPT = 1 << 29;
     }
 }
 

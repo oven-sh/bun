@@ -721,9 +721,9 @@ test("bun build of a macro call next to a property read of the same import", asy
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toContain("console.log(m.name, 42);");
-  expect(exitCode).toBe(0);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain('error: "m" is a macro import and is not defined at runtime');
+  expect(exitCode).toBe(1);
 });
 
 test("bun build reports a macro result that is nested too deeply", async () => {

@@ -5988,6 +5988,19 @@ pub mod bv2_impl {
                     //
                     // Actual empty files will contain a part exporting an empty object.
                     if part_list.len() != 0 {
+                        // Resolution can set `source_index` and leave the path as written (a plugin, or a
+                        // target already in the bundle): https://github.com/oven-sh/bun/issues/20877
+                        // The path of any other kind of target is printed, for example an asset URL.
+                        for record in import_records.as_mut_slice() {
+                            if !record.source_index.is_valid() {
+                                continue;
+                            }
+                            let resolved = record.source_index.get() as usize;
+                            let loader = loaders[resolved];
+                            if loader.is_javascript_like() || loader.is_css() {
+                                record.path = sources[resolved].path;
+                            }
+                        }
                         if maybe_css.is_some() {
                             // CSS has restrictions on what files can be imported.
                             // This means the file can become an error after
@@ -6034,13 +6047,6 @@ pub mod bv2_impl {
                                     Index::init(u32::try_from(index).expect("int cast")),
                                     (),
                                 )?;
-                                // A plugin or an earlier import can resolve a record and leave its path as written.
-                                for record in import_records.as_mut_slice() {
-                                    if !record.path.is_disabled && record.source_index.is_valid() {
-                                        record.path =
-                                            sources[record.source_index.get() as usize].path;
-                                    }
-                                }
                             } else {
                                 js_files.push(Index::init(u32::try_from(index).expect("int cast")));
 

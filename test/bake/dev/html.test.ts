@@ -517,7 +517,9 @@ devTest("editing a file imported from outside the project root hot-reloads", {
   },
 });
 // One watch batch that holds an html file and a file it references makes both
-// entry points of one rebuild. https://github.com/oven-sh/bun/issues/20877
+// entry points of one rebuild. https://github.com/oven-sh/bun/issues/22263
+// The client connects after the rebuild, because a client that is connected gets
+// the html file as a hot update. https://github.com/oven-sh/bun/issues/31908
 devTest("html file and its scripts rebuilt together load by their module ids", {
   files: {
     "index.html": emptyHtmlFile({
@@ -582,7 +584,7 @@ devTest("script that fails in the same rebuild as its html file comes back once 
         `,
       );
     }
-    // Not a page request: on a release build that bundles the whole route again.
+    // Not a page request: that bundles the whole route again.
     await dev.output.waitForLine(/Could not resolve: "\.\/missing\.ts"/);
     await dev.write(
       "first.ts",
@@ -591,7 +593,7 @@ devTest("script that fails in the same rebuild as its html file comes back once 
         console.log("first fixed " + value);
       `,
     );
-    // previously: the script bundle of the page held second.ts only
+    // previously: Failed to load bundled module './first.ts'
     await using c = await dev.client("/");
     await c.expectMessage("first fixed dep", "second");
     await dev.fetch("/").expect.toInclude("<h1>World</h1>");
@@ -623,7 +625,7 @@ devTest("stylesheet that fails in the same rebuild as its html file comes back o
         `,
       );
     }
-    // Not a page request: on a release build that bundles the whole route again.
+    // Not a page request: that bundles the whole route again.
     await dev.output.waitForLine(/Unexpected end of input/);
     await dev.write(
       "styles.css",
@@ -703,5 +705,134 @@ devTest("stylesheet that an onResolve plugin resolves comes back after a failed 
     // previously: the page had no stylesheet
     await using c = await dev.client("/");
     await c.style("body").color.expect.toBe("red");
+  },
+});
+devTest("html link to a file that a stylesheet of the same rebuild also uses keeps its asset URL", {
+  files: {
+    "index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./styles.css"><link rel="icon" href="./shared.txt"></head><body><h1>Hello</h1></body></html>`,
+    "styles.css": `
+      body {
+        background: url(./shared.txt);
+        color: red;
+      }
+    `,
+    "shared.txt": "SHARED",
+  },
+  async test(dev) {
+    const iconHref = async () => (await dev.fetch("/").text()).match(/<link rel="icon" href="([^"]+)"/)?.[1];
+    expect(await iconHref()).toStartWith("/_bun/asset/");
+    {
+      await using _batch = await dev.batchChanges();
+      // The padding makes the stylesheet finish first, so shared.txt is in the rebuild before index.html resolves it.
+      await dev.write(
+        "index.html",
+        `<!DOCTYPE html><html><head><link rel="stylesheet" href="./styles.css"><link rel="icon" href="./shared.txt"></head><body><h1>World</h1><!--${Buffer.alloc(256 * 1024, "x").toString()}--></body></html>`,
+        { dedent: false },
+      );
+      await dev.write(
+        "styles.css",
+        `
+          body {
+            background: url(./shared.txt);
+            color: blue;
+          }
+        `,
+      );
+    }
+    const href = await iconHref();
+    expect(href).toStartWith("/_bun/asset/");
+    await dev.fetch(href!).expect.toBe("SHARED");
+    await dev.fetch("/").expect.toInclude("<h1>World</h1>");
+  },
+});
+devTest("html file and a saved script that start to use the same script in one rebuild", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["./first.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "first.ts": `
+      import "./dep.ts";
+      console.log("first");
+    `,
+    "dep.ts": `
+      console.log("dep v1");
+    `,
+    "second.ts": `
+      console.log("second");
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+    {
+      await using _batch = await dev.batchChanges();
+      // The padding makes dep.ts finish first, so second.ts is in the rebuild before index.html resolves it.
+      await dev.write(
+        "index.html",
+        emptyHtmlFile({ scripts: ["./first.ts", "./second.ts"], body: "<h1>World</h1>" }) +
+          `<!--${Buffer.alloc(256 * 1024, "x").toString()}-->`,
+        { dedent: false },
+      );
+      await dev.write(
+        "dep.ts",
+        `
+          import "./second.ts";
+          console.log("dep v2");
+        `,
+      );
+    }
+    // previously: Failed to load bundled module './second.ts'
+    await using c = await dev.client("/");
+    await c.expectMessage("second", "dep v2", "first");
+  },
+});
+// Vim saves a file this way: the script is gone for a moment, the rebuild of the html file fails,
+// and the next rebuild holds both files. https://github.com/oven-sh/bun/issues/20877
+devTest("script that is removed and written again loads by its module id", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["./main.js"],
+      body: "<h1>Hello</h1>",
+    }),
+    "main.js": `
+      console.log("v1");
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+    await dev.delete("main.js", { errors: null });
+    await dev.output.waitForLine(/Could not resolve: "\.\/main\.js"/);
+    await dev.write("main.js", `console.log("v2");`);
+    // previously: Failed to load bundled module './main.js'
+    await using c = await dev.client("/");
+    await c.expectMessage("v2");
+  },
+});
+devTest("html routes that share a script and are first bundled together", {
+  files: {
+    "a.html": emptyHtmlFile({ scripts: ["./ab.ts", "./ac.ts"] }),
+    "b.html": emptyHtmlFile({ scripts: ["./ab.ts", "./bc.ts"] }),
+    "c.html": emptyHtmlFile({ scripts: ["./ac.ts", "./bc.ts"] }),
+    "ab.ts": `console.log("ab");`,
+    "ac.ts": `console.log("ac");`,
+    "bc.ts": `console.log("bc");`,
+  },
+  async test(dev) {
+    // The first request starts a bundle. The two other routes wait and are bundled together,
+    // and each pair of routes shares one script.
+    const responses = await Promise.all([dev.fetch("/a"), dev.fetch("/b"), dev.fetch("/c")]);
+    expect(responses.map(response => response.status)).toEqual([200, 200, 200]);
+    for (const [route, messages] of [
+      ["/a", ["ab", "ac"]],
+      ["/b", ["ab", "bc"]],
+      ["/c", ["ac", "bc"]],
+    ] as const) {
+      // previously: Failed to load bundled module './bc.ts'
+      await using c = await dev.client(route);
+      await c.expectMessage(...messages);
+    }
   },
 });

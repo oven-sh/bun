@@ -810,6 +810,92 @@ devTest("css import before create project relative", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
+// Two `[serve.static]` plugins: one that declines an import, and one that answers with the path.
+const resolvePlugin = {
+  "bunfig.toml": `
+    [serve.static]
+    plugins = ["./plugin.ts"]
+  `,
+  "plugin.ts": `
+    import path from "node:path";
+    export default {
+      name: "resolve-some",
+      setup(build) {
+        build.onResolve({ filter: /declined\\.\\w+$/ }, () => undefined);
+        build.onResolve({ filter: /answered\\.\\w+$/ }, args => ({
+          path: path.resolve(path.dirname(args.importer), args.path),
+        }));
+      },
+    };
+  `,
+};
+devTest("stylesheet that a script imports through an onResolve plugin comes back after a failed first build", {
+  files: {
+    ...resolvePlugin,
+    "index.html": emptyHtmlFile({
+      scripts: ["./app.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "app.ts": `
+      import "./declined.css";
+      import "./answered.css";
+      console.log("app");
+    `,
+    "declined.css": `
+      h1 {
+        color: red;
+      }}
+    `,
+    "answered.css": `
+      body {
+        color: red;
+      }}
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("declined.css", `h1 { color: red; }`, { errors: null });
+    await dev.write("answered.css", `body { color: blue; }`);
+    // previously: the page had no stylesheet
+    await using c = await dev.client("/");
+    await c.expectMessage("app");
+    await c.style("h1").color.expect.toBe("red");
+    await c.style("body").color.expect.toBe("#00f");
+  },
+});
+devTest("stylesheet imported through an onResolve plugin follows its edits", {
+  files: {
+    ...resolvePlugin,
+    "index.html": emptyHtmlFile({
+      styles: ["./main.css"],
+      body: "<h1>Hello</h1>",
+    }),
+    "main.css": `
+      @import "./declined.css";
+      @import "./answered.css";
+    `,
+    "declined.css": `
+      h1 {
+        color: red;
+      }
+    `,
+    "answered.css": `
+      body {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("h1").color.expect.toBe("red");
+    await c.style("body").color.expect.toBe("red");
+    // previously: the edit did not reach the page
+    await dev.write("declined.css", `h1 { color: blue; }`);
+    await c.style("h1").color.expect.toBe("#00f");
+    await dev.write("answered.css", `body { color: blue; }`);
+    await c.style("body").color.expect.toBe("#00f");
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

@@ -366,6 +366,334 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
+// A tab has no code for a file that failed to build before the tab loaded it. A module that imports
+// such a file cannot run in the tab. The tab keeps the build error on screen and loads the page again
+// at the next build. It used to report "a bug in Bun's bundler" and reload at once.
+const brokenFile = `export const broken = ;`;
+const brokenFileError = "broken.ts:1:23: error: Unexpected ;";
+const acceptingModule = (text: string) => `
+  ${text}
+  import.meta.hot.accept();
+`;
+const pageWithScript = {
+  "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+  "index.ts": acceptingModule(`console.log("index v1");`),
+};
+const importsBrokenFile = (version: string) =>
+  acceptingModule(`import { broken } from "./broken"; console.log("index ${version} " + broken);`);
+const fixBrokenFile = (dev: Dev) => dev.write("broken.ts", `export const broken = 1;`);
+
+devTest("a tab shows the build error of a new file that a saved module imports", {
+  files: { ...pageWithScript, "broken.ts": brokenFile },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index v1");
+    await dev.write("index.ts", importsBrokenFile("v2"), { errors: [brokenFileError] });
+    await c.expectReload(() => fixBrokenFile(dev));
+    await c.expectMessage("index v2 1");
+
+    // The tab now has code for broken.ts, so a save above a later error in it is a hot update, as before.
+    await dev.write("broken.ts", brokenFile, { errors: [brokenFileError] });
+    await dev.write("index.ts", importsBrokenFile("v3"), { errors: [brokenFileError] });
+    await c.expectMessage("index v3 1");
+    await dev.write("broken.ts", `export const broken = 2;`);
+    await c.expectMessage("index v3 2");
+  },
+});
+// The order of #22528. The failure is an import that does not resolve, and the directory watcher ends it.
+devTest("a tab shows the unresolved import of a new file that a saved module imports", {
+  files: { ...pageWithScript, "clip.ts": `import { label } from "./label"; export const clip = "clip " + label;` },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index v1");
+    await dev.write("index.ts", acceptingModule(`import { clip } from "./clip"; console.log("index v2 " + clip);`), {
+      errors: ['clip.ts:1:23: error: Could not resolve: "./label"'],
+    });
+    await c.expectReload(async () => {
+      await dev.write("label.ts", `export const label = "here";`);
+    });
+    await c.expectMessage("index v2 clip here");
+  },
+});
+// The build error names the file as the module id does: with its directories, for a loader that is not JavaScript.
+devTest("a tab shows the build error of a JSON file in a directory that a saved module imports", {
+  files: { ...pageWithScript, "data/values/broken.json": `{ "value": ` },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index v1");
+    await dev.write(
+      "index.ts",
+      acceptingModule(`import data from "./data/values/broken.json"; console.log("index v2 " + data.value);`),
+      { errors: ["data/values/broken.json:1:10: error: Unexpected end of file"] },
+    );
+    await c.expectReload(async () => {
+      await dev.write("data/values/broken.json", `{ "value": 1 }`);
+    });
+    await c.expectMessage("index v2 1");
+  },
+});
+for (const [how, importer, files] of [
+  ["requires", `const { broken } = require("./broken"); console.log("index v2 " + broken);`, {}],
+  ["awaits with import()", `const { broken } = await import("./broken"); console.log("index v2 " + broken);`, {}],
+  [
+    "imports through a CommonJS module",
+    `import common from "./common.cjs"; console.log("index v2 " + common.broken);`,
+    { "common.cjs": `module.exports = require("./broken.ts");` },
+  ],
+] as const) {
+  devTest(`a tab shows the build error of a new file that a saved module ${how}`, {
+    files: { ...pageWithScript, "broken.ts": brokenFile, ...files },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("index v1");
+      await dev.write("index.ts", acceptingModule(importer), { errors: [brokenFileError] });
+      await c.expectReload(() => fixBrokenFile(dev));
+      await c.expectMessage("index v2 1");
+    },
+  });
+}
+// The next build with code for the tab ends the wait, whatever it fixes. The tab that loads then has no
+// build error listed: the dev server sends it again when a later build parses broken.ts again.
+devTest("a tab that waits above a build error loads the page again when the import is removed", {
+  files: { ...pageWithScript, "broken.ts": brokenFile },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index v1");
+    await dev.write("index.ts", importsBrokenFile("v2"), { errors: [brokenFileError] });
+    await c.expectReload(async () => {
+      await dev.write("index.ts", acceptingModule(`console.log("index v3");`), { errors: null });
+    });
+    await c.expectMessage("index v3");
+    await c.expectErrorOverlay([]);
+    await dev.write("index.ts", importsBrokenFile("v4"), { errors: [brokenFileError] });
+    await c.expectReload(() => fixBrokenFile(dev));
+    await c.expectMessage("index v4 1");
+  },
+});
+// A request for a failed page bundles the page and its modules again, unless BUN_ASSUME_PERFECT_INCREMENTAL is set.
+// The tab must not run side.ts again under the modules that it has.
+devTest("a tab that waits above a build error does not run the modules that a request bundles again", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": acceptingModule(`import "./side"; import { leaf } from "./leaf"; console.log("index " + leaf);`),
+    "side.ts": `console.log("side");`,
+    "leaf.ts": `export const leaf = "leaf";`,
+    "broken.ts": brokenFile,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("side", "index leaf");
+    await dev.write("leaf.ts", `import { broken } from "./broken"; export const leaf = "leaf " + broken;`, {
+      errors: [brokenFileError],
+    });
+    await c.expectReload(async () => {
+      expect((await dev.fetch("/")).status).toBe(500);
+    });
+    await c.expectErrorOverlay([brokenFileError]);
+    await c.expectReload(() => fixBrokenFile(dev));
+    await c.expectMessage("side", "index leaf 1");
+  },
+});
+// The fix of a stylesheet has no code for the tab. The tab loads the page again when the build error that it
+// waits for leaves the list, and at no other build without code.
+devTest("a tab that waits above a build error loads the page again when a build without code fixes the error", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], styles: ["page.css"] }),
+    "index.ts": acceptingModule(`console.log("index v1");`),
+    "page.css": `body { color: red; }`,
+    "broken.css": `@import "./index.ts";`,
+  },
+  async test(dev) {
+    const errors = ['broken.css:1:1: error: Cannot import a ".ts" file into a CSS file'];
+    await using c = await dev.client("/", { errors: [] });
+    await c.expectMessage("index v1");
+    await dev.write("index.ts", acceptingModule(`require("./broken.css"); throw new Error("index v2 throws");`), {
+      errors,
+    });
+    await dev.write("page.css", `body { color: blue; }`, { errors });
+    await c.expectReload(async () => {
+      await dev.write("broken.css", `.fixed { margin: 0; }`, { errors: null });
+    });
+    // The page that loads throws, and its tab waits for nothing.
+    await dev.write("page.css", `body { color: green; }`, { errors: null });
+    await c.style("body").color.expect.toBe("green");
+  },
+});
+// Nothing on screen would say why the tab waits, so it reports the import and loads the build error page at once.
+devTest("a tab whose page removed the error overlay does not wait above a build error", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": acceptingModule(`
+      console.log("index v1");
+      console.error = error => console.log("reported: " + error.message);
+      import.meta.hot.dispose(() => { document.body.innerHTML = ""; });
+    `),
+    "broken.ts": brokenFile,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index v1");
+    await c.expectReload(async () => {
+      await dev.write("index.ts", importsBrokenFile("v2"), { errors: [brokenFileError] });
+    });
+    await c.expectMessage("reported: Cannot load 'broken.ts' because it has a build error.");
+    await c.expectReload(() => fixBrokenFile(dev));
+    await c.expectMessage("index v2 1");
+  },
+});
+// The dispose callback of widget.ts takes away what the timer of ticker.ts uses. Until the reload, the errors
+// of that timer come from the update that waits.
+devTest("a tab that waits above a build error does not report the errors of the page it left half updated", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `import "./widget"; import "./ticker";`,
+    "widget.ts": acceptingModule(`
+      globalThis.widget = { ticks: 0 };
+      console.log("widget v1");
+      import.meta.hot.dispose(() => { globalThis.widget = null; });
+    `),
+    "ticker.ts": `
+      let ticksWithoutWidget = 0;
+      (function tick() {
+        setTimeout(tick, 10);
+        if (globalThis.widget === null && ++ticksWithoutWidget === 5) console.log("5 ticks without the widget");
+        globalThis.widget.ticks++;
+      })();
+    `,
+    "broken.ts": brokenFile,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: [] });
+    await c.expectMessage("widget v1");
+    await c.js`
+      globalThis.errorReports = 0;
+      const trueFetch = globalThis.fetch;
+      globalThis.fetch = (url, init) => {
+        if (String(url).includes("report_error")) globalThis.errorReports++;
+        return trueFetch(url, init);
+      };
+    `;
+    await dev.write(
+      "widget.ts",
+      acceptingModule(
+        `import { broken } from "./broken"; globalThis.widget = { ticks: broken }; console.log("widget v2");`,
+      ),
+      { errors: [brokenFileError] },
+    );
+    await c.expectMessage("5 ticks without the widget");
+    expect(await c.js<number>`globalThis.errorReports`).toBe(0);
+    await c.expectReload(() => fixBrokenFile(dev));
+    await c.expectMessage("widget v2");
+  },
+});
+devTest("code that catches the import of a file with a build error gets that as the message", {
+  files: { ...pageWithScript, "broken.ts": brokenFile },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: [] });
+    await c.expectMessage("index v1");
+    await dev.write(
+      "index.ts",
+      acceptingModule(`try { require("./broken"); } catch (error) { console.log(String(error)); }`),
+      { errors: [brokenFileError] },
+    );
+    await c.expectMessage("BuildErrorImport: Cannot load 'broken.ts' because it has a build error.");
+
+    await dev.write(
+      "index.ts",
+      acceptingModule(`import("./broken").catch(error => console.log("rejected: " + error.message));`),
+      { errors: [brokenFileError] },
+    );
+    await c.expectMessage("rejected: Cannot load 'broken.ts' because it has a build error.");
+
+    // An update that fails for another reason is reported and reloads the tab at once, as before.
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        acceptingModule(`throw Object.assign(new Error("index v4 throws"), { id: "broken.ts" });`),
+        { errors: null },
+      );
+    });
+  },
+});
+// No build error is listed for lib/value.ts, which the tab does not have: both old reports stay for it.
+// import() of a module that the dev server did not bundle still goes to the browser.
+devTest("a tab reports a module that it lacks when only files with a similar name have a build error", {
+  files: { ...pageWithScript, "value.ts": brokenFile, "nested/lib/value.ts": brokenFile },
+  async test(dev) {
+    const errors = ["nested/lib/value.ts:1:23: error: Unexpected ;", "value.ts:1:23: error: Unexpected ;"];
+    await using c = await dev.client("/", { errors: [] });
+    await c.expectMessage("index v1");
+    // A hot update made by hand: its module mid.ts imports lib/value.ts, which the dev server never sent.
+    await c.js`
+      const id = "0123456789abcdef";
+      const script = document.createElement("script");
+      globalThis[Symbol.for("bun:hmr:pendingScripts")].set(id, [{ script, size: 0, url: "blob:mid" }]);
+      globalThis[Symbol.for("bun:hmr")]({ "mid.ts": [["lib/value.ts", 0], [], [], () => {}, false] }, id);
+    `;
+    const requires = (lastRequire: string) =>
+      acceptingModule(`
+        try { require("./value"); } catch (error) { console.log(error.message); }
+        try { require("./nested/lib/value"); } catch (error) { console.log(error.message); }
+        try { require(["mid", "ts"].join(".")); } catch (error) { console.log(error.message); }
+        ${lastRequire}
+      `);
+    const messages = [
+      "Cannot load 'value.ts' because it has a build error.",
+      "Cannot load 'nested/lib/value.ts' because it has a build error.",
+      "Failed to load bundled module 'lib/value.ts'. This is not a dynamic import, and therefore is a bug in Bun's bundler.",
+    ];
+    const computedRequire = `require(["lib", "value.ts"].join("/"));`;
+    await dev.write(
+      "index.ts",
+      requires(`
+        try { ${computedRequire} } catch (error) { console.log(error.message); }
+        import(["data:text/javascript,", "export default 7"].join("")).then(module => console.log("import() " + module.default));
+      `),
+      { errors },
+    );
+    await c.expectMessage(
+      ...messages,
+      "Failed to resolve dynamic import 'lib/value.ts'. With Bun's bundler, all imports must be statically known at build time so that the bundler can trace everything.",
+      "import() 7",
+    );
+    // Not caught, the same miss fails the update: the tab reloads at once.
+    await c.expectReload(async () => {
+      await dev.write("index.ts", requires(computedRequire), { errors });
+    });
+    await c.expectMessage(...messages);
+  },
+});
+// lazy.ts keeps the error of its first run. The tab must not wait for a build error that is fixed,
+// whatever else is listed.
+devTest("a tab reloads when a module throws again the import of a file whose build error is fixed", {
+  files: {
+    ...pageWithScript,
+    "broken.ts": brokenFile,
+    "second.ts": brokenFile,
+    "lazy.ts": `const { broken } = require("./broken"); export const lazy = "lazy " + broken;`,
+  },
+  async test(dev) {
+    const secondError = "second.ts:1:23: error: Unexpected ;";
+    await using c = await dev.client("/", { errors: [] });
+    await c.expectMessage("index v1");
+    await dev.write(
+      "index.ts",
+      acceptingModule(`
+        try { require("./second"); } catch {}
+        try { require("./lazy"); } catch (error) { console.log("caught: " + error.message); }
+      `),
+      { errors: [brokenFileError, secondError] },
+    );
+    await c.expectMessage("caught: Cannot load 'broken.ts' because it has a build error.");
+    await dev.write("broken.ts", `export const broken = 1;`, { errors: [secondError] });
+    await c.expectReload(async () => {
+      await dev.write("index.ts", acceptingModule(`import { lazy } from "./lazy"; console.log("index v3 " + lazy);`), {
+        errors: null,
+      });
+    });
+    await c.expectMessage("index v3 lazy 1");
+  },
+});
 // Without a separate SSR graph, the server bundle keeps a "use client" module
 // and the parser wraps its exported values in `registerClientReference(value,
 // file, name)`. The parser chose `file` by the JSX development flag. A

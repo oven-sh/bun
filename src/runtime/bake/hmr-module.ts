@@ -161,6 +161,7 @@ export class HMRModule {
       if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
       return (found as Promise<HMRModule>).then(getEsmExports);
     }
+    if (side === "client" && hasBuildError?.(id)) return Promise.reject(new BuildErrorImport(id));
     return opts
       ? (lazyDynamicImportWithOptions ??= new Function("specifier, opts", "import(specifier, opts)"))(id, opts)
       : import(id);
@@ -847,6 +848,7 @@ export function onEvent(event: HMREvent, cb) {
 }
 
 function throwNotFound(id: Id, isUserDynamic: boolean) {
+  if (side === "client" && hasBuildError?.(id)) throw new BuildErrorImport(id);
   if (isUserDynamic) {
     throw new Error(
       `Failed to resolve dynamic import '${id}'. With Bun's bundler, all imports must be statically known at build time so that the bundler can trace everything.`,
@@ -865,6 +867,23 @@ export function fullReload() {
     emitEvent("bun:beforeFullReload", null);
   } catch {}
   location.reload();
+}
+
+/** Set by the tab's entry: whether the dev server reported a build error in the file with this module id. */
+let hasBuildError: ((id: Id) => boolean) | null = null;
+export function setBuildErrorLookup(lookup: (id: Id) => boolean) {
+  hasBuildError = lookup;
+}
+
+/** An import of a file with a build error, in a tab that has no earlier code for it. */
+export class BuildErrorImport extends Error {
+  // Chrome prints the class name of an error that has no name of its own, and a release build minifies that name.
+  name = "BuildErrorImport";
+  id: Id;
+  constructor(id: Id) {
+    super(`Cannot load '${id}' because it has a build error.`);
+    this.id = id;
+  }
 }
 
 class AsyncImportError extends Error {

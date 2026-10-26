@@ -215,7 +215,7 @@ When a file is replaced, Bun automatically removes all of its event listeners.
 | Event                  | Emitted when                                                                                    |
 | ---------------------- | ----------------------------------------------------------------------------------------------- |
 | `bun:beforeUpdate`     | before a hot update is applied.                                                                 |
-| `bun:afterUpdate`      | after a hot update is applied.                                                                  |
+| `bun:afterUpdate`      | after a hot update is applied, or when it waits for the fix of a build error.                   |
 | `bun:beforeFullReload` | before a full page reload happens.                                                              |
 | `bun:beforePrune`      | before prune callbacks are called.                                                              |
 | `bun:invalidate`       | when a module is invalidated with `import.meta.hot.invalidate()`.                               |

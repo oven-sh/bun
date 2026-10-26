@@ -214,6 +214,30 @@ function setModalVisible(visible: boolean) {
   domShadowRoot.style.display = visible ? "block" : "none";
 }
 
+/** The file whose build error a hot update of this tab waits for. */
+let awaitedFile: string | null = null;
+
+/** Whether a build error is listed for the file with this module id. */
+export function hasBuildErrorIn(file: string): boolean {
+  for (const failure of buildErrors.values()) {
+    if (failure.file === file) return true;
+  }
+  return false;
+}
+
+/** A hot update failed on an import of `file`. The tab waits if the overlay is on the page and lists that file. */
+export function waitForBuildErrorIn(file: string): boolean {
+  if (!hasBuildErrorIn(file) || !domShadowRoot.isConnected) return false;
+  awaitedFile = file;
+  hasFatalError = true;
+  return true;
+}
+
+/** Whether the build error that a hot update waits for left the list. */
+export function awaitedBuildErrorIsGone(): boolean {
+  return awaitedFile !== null && !hasBuildErrorIn(awaitedFile);
+}
+
 /** Handler for `MessageId.errors` websocket packet */
 export function onServerErrorPayload(view: DataView<ArrayBuffer>) {
   const reader = new DataViewReader(view, 1);
@@ -234,6 +258,8 @@ export function onServerErrorPayload(view: DataView<ArrayBuffer>) {
 
 export async function onRuntimeError(err: any, fatal = false, async = false) {
   try {
+    // The hot update that waits left the page half updated: an error from that state is not reported.
+    if (awaitedFile !== null) return;
     if (fatal) {
       hasFatalError = true;
     }

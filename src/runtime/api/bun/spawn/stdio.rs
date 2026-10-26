@@ -1,9 +1,11 @@
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::VecExt;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_sys::FdExt as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
 // say `webcore::ReadableStream` / `webcore::body::Value`.
@@ -32,7 +34,7 @@ bun_output::define_scoped_log!(log, SYS, visible);
 
 /// Payload of `Stdio::Capture`.
 #[derive(Clone, Copy)]
-pub struct Capture {
+pub(crate) struct Capture {
     // BACKREF: raw pointer to a capture buffer owned by the shell interpreter.
     // The shell keeps the buffer alive for the lifetime
     // of the spawned process; this struct never frees it.
@@ -42,7 +44,7 @@ pub struct Capture {
 
 /// Payload of `Stdio::Dup2`.
 #[derive(Clone, Copy)]
-pub struct Dup2 {
+pub(crate) struct Dup2 {
     pub out: StdioKind,
     pub(crate) to: StdioKind,
 }
@@ -50,7 +52,7 @@ pub struct Dup2 {
 // Constructed/matched in many other files (subprocess, shell); boxing `Blob`
 // would ripple through all of them.
 #[allow(clippy::large_enum_variant)]
-pub enum Stdio {
+pub(crate) enum Stdio {
     Inherit,
     Capture(Capture),
     Ignore,
@@ -58,6 +60,7 @@ pub enum Stdio {
     Dup2(Dup2),
     Path(PathLike<'static>),
     Blob(webcore::blob::Any),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd(Fd),
     Pipe,
     /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
@@ -113,13 +116,8 @@ impl Stdio {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn can_use_memfd(&self) -> bool {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            return false;
-        }
-
-        #[cfg(any(target_os = "linux", target_os = "android"))]
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
             Self::Memfd(_) => true,
@@ -129,75 +127,63 @@ impl Stdio {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn use_memfd(&mut self, index: u32) -> bool {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            let _ = index;
+        use crate::api::bun_process::spawn_sys;
+        if !spawn_sys::can_use_memfd() {
             return false;
         }
+        let label: &core::ffi::CStr = match index {
+            0 => c"spawn_stdio_stdin",
+            1 => c"spawn_stdio_stdout",
+            2 => c"spawn_stdio_stderr",
+            _ => c"spawn_stdio_memory_file",
+        };
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            use crate::api::bun_process::spawn_sys;
-            if !spawn_sys::can_use_memfd() {
-                return false;
-            }
-            let label: &core::ffi::CStr = match index {
-                0 => c"spawn_stdio_stdin",
-                1 => c"spawn_stdio_stdout",
-                2 => c"spawn_stdio_stderr",
-                _ => c"spawn_stdio_memory_file",
-            };
+        let fd = match spawn_sys::memfd_create(label, spawn_sys::MemfdFlag::CrossProcess) {
+            Ok(fd) => fd,
+            Err(_) => return false,
+        };
 
-            let fd = match spawn_sys::memfd_create(label, spawn_sys::MemfdFlag::CrossProcess) {
-                Ok(fd) => fd,
-                Err(_) => return false,
-            };
+        let mut remain = self.byte_slice();
 
-            let mut remain = self.byte_slice();
+        if !remain.is_empty() {
+            // Hint at the size of the file
+            let _ = sys::ftruncate(fd, i64::try_from(remain.len()).expect("int cast"));
+        }
 
-            if !remain.is_empty() {
-                // Hint at the size of the file
-                let _ = sys::ftruncate(fd, i64::try_from(remain.len()).expect("int cast"));
-            }
+        // Dump all the bytes in there
+        let mut written: i64 = 0;
+        while !remain.is_empty() {
+            match sys::pwrite(fd, remain, written) {
+                Err(err) => {
+                    if err.get_errno() == sys::E::EAGAIN {
+                        continue;
+                    }
 
-            // Dump all the bytes in there
-            let mut written: i64 = 0;
-            while !remain.is_empty() {
-                match sys::pwrite(fd, remain, written) {
-                    Err(err) => {
-                        if err.get_errno() == sys::E::EAGAIN {
-                            continue;
-                        }
-
-                        bun_core::debug_warn!(
-                            "Failed to write to memfd: {}",
-                            bstr::BStr::new(err.name()),
-                        );
+                    bun_core::debug_warn!(
+                        "Failed to write to memfd: {}",
+                        bstr::BStr::new(err.name()),
+                    );
+                    fd.close();
+                    return false;
+                }
+                Ok(result) => {
+                    if result == 0 {
+                        bun_core::debug_warn!("Failed to write to memfd: EOF");
                         fd.close();
                         return false;
                     }
-                    Ok(result) => {
-                        if result == 0 {
-                            bun_core::debug_warn!("Failed to write to memfd: EOF");
-                            fd.close();
-                            return false;
-                        }
-                        written += i64::try_from(result).expect("int cast");
-                        remain = &remain[result..];
-                    }
+                    written += i64::try_from(result).expect("int cast");
+                    remain = &remain[result..];
                 }
             }
-
-            // Note: reshaped for borrowck — `remain` borrows `*self`, so we
-            // must drop it before mutating `self`. Shadowing ends the borrow here.
-            let _ = remain;
-
-            // Assigning to `*self` drops the previous variant via `Drop`
-            // (and closes a prior `.memfd`).
-            *self = Stdio::Memfd(fd);
-            true
         }
+
+        // Assigning to `*self` drops the previous variant via `Drop`
+        // (and closes a prior `.memfd`).
+        *self = Stdio::Memfd(fd);
+        true
     }
 
     pub(crate) fn to_sync(&mut self, i: u32) {
@@ -293,10 +279,8 @@ impl Stdio {
             Self::SocketFd => buffer(),
             Self::Ipc => ipc(),
             Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
-            #[cfg(not(windows))]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Self::Memfd(fd) => SpawnOptionsStdio::Pipe(*fd),
-            #[cfg(windows)]
-            Self::Memfd(_) => panic!("This should never happen"),
             Self::Path(pathlike) => {
                 SpawnOptionsStdio::Path(pathlike.slice().to_vec().into_boxed_slice())
             }
@@ -314,7 +298,8 @@ impl Stdio {
         }
     }
 
-    pub fn borrows_caller_fd(&self) -> bool {
+    #[cfg(not(windows))]
+    pub(crate) fn borrows_caller_fd(&self) -> bool {
         matches!(self, Self::Fd(_))
     }
 
@@ -656,9 +641,10 @@ impl Stdio {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 impl Stdio {
     /// Move the memfd out (ownership passes to the caller); `self` becomes `Ignore`.
-    pub fn take_memfd(&mut self) -> Option<Fd> {
+    pub(crate) fn take_memfd(&mut self) -> Option<Fd> {
         let Stdio::Memfd(fd) = *self else { return None };
         // Don't run Drop on the old value: it would close `fd`.
         let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Stdio::Ignore));
@@ -672,6 +658,7 @@ impl Drop for Stdio {
             Self::Blob(blob) => {
                 blob.detach();
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Self::Memfd(fd) => {
                 fd.close();
             }

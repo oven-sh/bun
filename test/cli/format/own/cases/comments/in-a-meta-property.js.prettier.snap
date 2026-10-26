@@ -1,0 +1,27 @@
+------------------
+{ printWidth: 80 }
+------------------
+function f() {
+  x = new /* c */.target;
+  x = new./* c */ target;
+  x = new.target; // c
+  x = new./* c */
+  target;
+}
+x = import./* c */ meta;
+x = import.meta; // c
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function f() {
+  x = new /* c */.target;
+  x = new./* c */ target;
+  x = new.target; // c
+  x = new./* c */
+  target;
+}
+x = import./* c */ meta;
+x = import.meta; // c
+
+===================== End =====================

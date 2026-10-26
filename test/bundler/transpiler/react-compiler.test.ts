@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { SourceMapConsumer } from "source-map";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
 
 // The React Compiler emits `import { c as _c } from "react/compiler-runtime"` and
@@ -518,6 +519,82 @@ describe("bundler", () => {
     },
   });
 
+  // They were taken for React's by their names, and the calls were dropped.
+  itBundled("react-compiler/ModulesOwnUseCallbackAndUseMemoAreCalled", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Component(props) {
+          const f = useCallback(() => [props.a], [props.a]);
+          const m = useMemo(() => [props.a], [props.a]);
+          return <div onClick={f}>{m}</div>;
+        }
+        function useCallback(callback, dependencies) {
+          return () => "mine";
+        }
+        const useMemo = (callback, dependencies) => "mine";
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("react/compiler-runtime");
+      // The declaration and the call.
+      expect(out.match(/\buseCallback\(/g)).toHaveLength(2);
+      expect(out.match(/\buseMemo\(/g)).toHaveLength(1);
+    },
+  });
+
+  // A member of a namespace import was a global of its name to the compiler, and the module's own hooks were React's.
+  // For a server also `useState(x)` was `x`, and `useEffect` was not called.
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`react-compiler/HooksThatAreNotReactsAreCalled-${target}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import * as hooks from "./hooks.js";
+          import * as React from "./hooks.js";
+          function OfANamespace(props) {
+            const f = hooks.useCallback(() => [props.a], [props.a]);
+            const m = hooks.useMemo(() => [props.a], [props.a]);
+            const [s] = hooks.useState("init");
+            const e = hooks.useEffect(() => {}, []);
+            return [f(), m, s, e].join(" ");
+          }
+          function OfANamespaceCalledReact(props) {
+            const [s] = React.useState("init");
+            const e = React.useEffect(() => {}, []);
+            return [s, e].join(" ");
+          }
+          function Own(props) {
+            const f = useCallback(() => [props.a], [props.a]);
+            const m = useMemo(() => [props.a], [props.a]);
+            return [f(), m].join(" ");
+          }
+          function useCallback() {
+            return () => "mine";
+          }
+          const useMemo = () => "mine";
+          console.log([OfANamespace({ a: 1 }), OfANamespaceCalledReact({ a: 1 }), Own({ a: 1 })].join(", "));
+        `,
+        "/hooks.js": `
+          export const useCallback = () => () => "theirs";
+          export const useMemo = () => "theirs";
+          export const useState = () => ["theirs"];
+          export const useEffect = () => "theirs";
+        `,
+        "/node_modules/react/compiler-runtime.js": `
+          export const c = n => Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
+        `,
+        "/node_modules/react/package.json": `{"name":"react","type":"module"}`,
+      },
+      reactCompiler: true,
+      target,
+      backend: "cli",
+      run: { stdout: "theirs theirs theirs theirs, theirs theirs, mine mine" },
+    });
+  }
+
   itBundled("react-compiler/SelfRefConstArrow", {
     files: {
       "/entry.tsx": /* tsx */ `
@@ -741,6 +818,487 @@ describe("bundler", () => {
       // Reference — must not appear for either the dot or index form.
       expect(out).not.toMatch(/delete\s*\(\s*0\s*,/);
     },
+  });
+
+  // DeadCodeElimination took a read that nothing uses out of a `try`. Its block was then empty and could not throw, so the
+  // handler went too: another result for the first two, a panic for the third, and the fourth was not compiled.
+  itBundled("react-compiler/CaughtThrowIsNotDeadCode", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Returns(props) { try { props.a.b; } catch (e) { return <b />; } return <div>{props.c}</div>; }
+        function Global(props) { try { notDefined; } catch (e) { return <b />; } return <div>{props.c}</div>; }
+        function Assigns(props) { let a = props.a; try { props.d.m; } catch (e) { a = props.x; } return <div>{a}</div>; }
+        function Joins(props) { let a; try { notDefined; a = props.o; } catch (e) {} return <div>{a}</div>; }
+        const rendered = [
+          Returns({ c: 1 }),
+          Returns({ c: 1, a: {} }),
+          Global({ c: 1 }),
+          Assigns({ a: 1, x: 2 }),
+          Assigns({ a: 1, x: 2, d: {} }),
+          Joins({ o: 1 }),
+        ];
+        console.log(rendered.map(it => it.t + " " + it.p.children).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "b undefined, div 1, b undefined, div 2, div 1, div undefined" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // A `try` body that can't throw loses its handler and `try` terminal, but the code after the `try` must be kept.
+  itBundled("react-compiler/DeadTryBodyKeepsTheCodeAfterIt", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const report = () => {};
+        function Branches(props) { try { const unused = 1; } catch (e) { if (props.debug) report(e); } return <div>{props.a}</div>; }
+        function Guard(props) {
+          try {
+            const isProduction = process.env.NODE_ENV === "production";
+            if (isProduction) report(props);
+          } catch (e) {
+            props.onError?.(e);
+          }
+          return <div>{props.a}</div>;
+        }
+        function Inner(props) {
+          let a;
+          try {
+            try { const unused = 1; } catch (e) { report(e); }
+            a = props.f();
+          } catch {
+            a = "caught";
+          }
+          return <div>{a}</div>;
+        }
+        const rendered = [Branches({ a: 1 }), Guard({ a: 2 }), Inner({ f: () => 3 })];
+        console.log(rendered.map(it => it?.p.children).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    define: { "process.env.NODE_ENV": '"development"' },
+    run: { stdout: "1, 2, 3" },
+  });
+
+  // `c` is assigned in a scope that lies in the scope of `d`. Only the inner one had it as an output, so a render in which
+  // the outer one is not run again gave `undefined`. babel-plugin-react-compiler 1.0.0 does the same.
+  itBundled("react-compiler/ReassignedInAScopeInAScope", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const f = x => x;
+        function Component(props) {
+          let c = null, d = [], e = {};
+          c = { k: c || "x" };
+          { const s = \`\${props.x}-\${e}\`; f(s); { const s = c; f(() => s); } }
+          { const s = props.y; f(() => s); }
+          { const s = d; f(() => s); }
+          return <div>{c}{d}{e}</div>;
+        }
+        const rendered = [Component({ x: 1 }), Component({ x: 1 }), Component({ x: 2 })];
+        console.log(rendered.map(it => JSON.stringify(it.p.children[0])).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: `{"k":"x"}, {"k":"x"}, {"k":"x"}` },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // What is caught is declared before the `try`, so it is a candidate for a dependency of a scope around the `try` or in it.
+  // There its name is not bound. It is only left out because it is not reactive.
+  itBundled("react-compiler/WhatIsCaughtIsNoDependencyOutsideTheHandler", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const check = text => {
+          if (text.startsWith("!")) throw new Error(text);
+          return text;
+        };
+        const mutate = it => { it.k = it.k + "!"; };
+        function Around(props) {
+          let r;
+          try { r = { k: check(props.text) }; } catch (e) { return null; }
+          mutate(r);
+          return <div>{r.k}</div>;
+        }
+        function AroundAndRead(props) {
+          let r;
+          try { r = { k: check(props.text) }; } catch (e) { r = { k: e.message }; }
+          mutate(r);
+          return <div>{r.k}</div>;
+        }
+        function Within(props) {
+          const text = props.text + "";
+          let s = null;
+          try {
+            const r = { k: check(text) };
+            if (r.k) s = mutate(r) ?? r.k;
+            else console.warn(r.k);
+          } catch (error) {
+            mutate(error);
+          }
+          if (s === null) return <p>none</p>;
+          return <div>{s}</div>;
+        }
+        for (const component of [Around, AroundAndRead, Within]) {
+          globalThis.rendering = component;
+          console.log(["a", "!b", "!c", "a", "a"].map(text => component({ text })?.p.children ?? "nothing").join(", "));
+        }
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "a!, nothing, nothing, a!, a!\na!, !b!, !c!, a!, a!\na!, none, none, a!, a!" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // Whether `JSON.parse(props.text)` throws depends on a prop, but what is assigned in the `try` or in the handler, and
+  // what is caught, do not count as reactive: the first render's element is kept for ever. Upstream 1.0.0 does the same.
+  itBundled("react-compiler/WhatDependsOnAThrowIsReactive", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const check = text => {
+          if (text.startsWith("!")) throw new Error(text);
+          return text;
+        };
+        function Valid(props) {
+          let valid = true;
+          try { JSON.parse(props.text); } catch { valid = false; }
+          return <div>{valid ? "yes" : "no"}</div>;
+        }
+        function Caught(props) {
+          let v;
+          try { v = check(props.text); } catch (e) { return <div>{e.message}</div>; }
+          return <b>{v}</b>;
+        }
+        function Where(props) {
+          let a = 1;
+          try { check(props.text); a = 2; check(props.more); } catch { return <div>{a}</div>; }
+          return <b>{a}</b>;
+        }
+        const render = (component, props) => {
+          globalThis.rendering = component;
+          const it = component(props);
+          return it.t + " " + it.p.children;
+        };
+        console.log(["1", "{", "2"].map(text => render(Valid, { text })).join(", "));
+        console.log(["!a", "!b", "c"].map(text => render(Caught, { text })).join(", "));
+        console.log([["!a", "b"], ["a", "!b"], ["a", "b"]].map(([text, more]) => render(Where, { text, more })).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "div yes, div no, div yes\ndiv !a, div !b, b c\ndiv 1, div 2, b 2" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // The scope depends on `a` and assigns it. What it remembered to compare with was `a` after the assignment, so `null`
+  // in the second render looked like no change. babel-plugin-react-compiler 1.0.0 does the same.
+  itBundled("react-compiler/DependencyThatTheScopeAssigns", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Component(props) {
+          let a = props.a;
+          const c = (a = a ? null : 3) || { k: 1 };
+          return <div>{a}{c}</div>;
+        }
+        const rendered = [Component({ a: 1 }), Component({ a: null }), Component({ a: 1 }), Component({ a: 1 })];
+        console.log(rendered.map(it => JSON.stringify(it.p.children)).join(", "));
+        console.log(rendered[2] === rendered[3]);
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: `[null,{"k":1}], [3,3], [null,{"k":1}], [null,{"k":1}]\ntrue` },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // `a++` in a scope was not an output of it: a render that reused the scope did not count. Upstream 1.0.0 does the same.
+  itBundled("react-compiler/UpdateInAScope", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Component(props) {
+          let a = props.x;
+          const c = a++ || { k: 1 };
+          return <div>{a}{c}</div>;
+        }
+        const rendered = [Component({ x: 0 }), Component({ x: 1 }), Component({ x: 0 }), Component({ x: 0 })];
+        console.log(rendered.map(it => JSON.stringify(it.p.children)).join(", "));
+        console.log(rendered[2] === rendered[3]);
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: `[1,{"k":1}], [2,1], [1,{"k":1}], [1,{"k":1}]\ntrue` },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // The scope around each loop has the variable as an output and as a dependency. Upstream gives the variable to a scope
+  // in the loop alone, and prunes the one around it.
+  itBundled("react-compiler/LoopThatAssignsWhatItReads", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Max(props) {
+          let max = 0;
+          for (const line of props.lines) {
+            for (const d of props.data) {
+              const value = [d, line].reduce((a, b) => a + b, 0);
+              if (value > max) max = value;
+            }
+          }
+          return <div>{max}</div>;
+        }
+        function Sum(props) {
+          let exact = true;
+          let sum = props.start;
+          for (const id of [...props.lines].filter(it => it > 1)) {
+            const found = props.data.find(it => it > id);
+            if (!found) exact = false;
+            else sum = sum + found;
+          }
+          return <div>{sum + " " + exact}</div>;
+        }
+        function Freshest(props) {
+          let freshest = null;
+          for (const a of props.lines) {
+            for (const b of props.data) {
+              const at = { t: a * b };
+              if (!freshest || at.t > freshest.t) freshest = at;
+            }
+          }
+          return <div>{freshest ? freshest.t : "none"}</div>;
+        }
+        const lines = [1, 2, 3], data = [3, 4], more = [5, 1], none = [];
+        const renders = [
+          { lines, data, start: 0 },
+          { lines, data, start: 0 },
+          { lines, data: more, start: 0 },
+          { lines, data, start: 0 },
+          { lines, data, start: 7 },
+          { lines: none, data, start: 7 },
+          { lines, data, start: 0 },
+        ];
+        for (const component of [Max, Sum, Freshest]) {
+          globalThis.rendering = component;
+          const rendered = renders.map(props => component(props));
+          console.log(rendered.map(it => it.p.children).join(", "), rendered[0] === rendered[1]);
+        }
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: [
+        "7, 7, 8, 7, 7, 0, 7 true",
+        "7 true, 7 true, 10 true, 7 true, 14 true, 7 true, 7 true true",
+        "12, 12, 15, 12, 12, none, 12 true",
+      ].join("\n"),
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // The pattern was what is left when all slashes are taken off both ends: `/^https?:\/\//` lost the one that closes it.
+  itBundled("react-compiler/RegExpThatEndsInASlash", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Link(props) {
+          const href = /^https?:\\/\\//.test(props.to) ? props.to : "https://" + props.to;
+          const parts = [
+            props.to.replace(/\\//g, "|"),
+            /a\\/\\//i.test(props.to),
+            props.to.split(/[/]/).length,
+            /\\/$/u.test(props.to),
+          ];
+          return <a href={href}>{parts}</a>;
+        }
+        for (const to of ["a.b", "http://a.b", "A//", "a.b"]) {
+          const it = Link({ to });
+          console.log(it.p.href, it.p.children.join(" "));
+        }
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: [
+        "https://a.b a.b false 1 false",
+        "http://a.b http:||a.b false 3 false",
+        "https://A// A|| true 3 true",
+        "https://a.b a.b false 1 false",
+      ].join("\n"),
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // The name of a function expression is taken for a local that nobody declares. Upstream stops at that with an invariant,
+  // and leaves the function alone. Where the name is read from a callback the port went on, and printed a symbol of its own
+  // for it, `Callback3`, which is not bound.
+  itBundled("react-compiler/FunctionExpressionThatNamesItself", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { forwardRef, memo } from "react";
+        const Callback = memo(function Callback({ depth, items }) {
+          if (depth === 0) return <b />;
+          return <div>{items.map(i => <Callback key={i} depth={depth - 1} items={items} />)}</div>;
+        });
+        const Direct = memo(function Direct({ depth, items }) {
+          if (depth === 0) return <b />;
+          return <div title={[items]}><Direct depth={depth - 1} items={items} /></div>;
+        });
+        const Outer = forwardRef(function Inner({ depth, items }, ref) {
+          if (depth === 0) return <b ref={ref} />;
+          return <div>{items.map(i => <Inner key={i} depth={depth - 1} items={items} />)}</div>;
+        });
+        const Shadowed = memo(function Shadowed({ Shadowed: Other, items }) {
+          return <div>{items.map(i => <Other key={i} />)}</div>;
+        });
+        const useItself = function useItself(items) {
+          return items.map(() => typeof useItself);
+        };
+        const render = (component, props) => {
+          globalThis.rendering = component;
+          return component(props);
+        };
+        const props = { depth: 1, items: [1] };
+        console.log(
+          render(Callback, props).p.children[0].t === Callback,
+          render(Direct, props).p.children.t === Direct,
+          render(Outer, props).p.children[0].t === Outer,
+          render(Shadowed, { Shadowed: "p", items: [1] }).p.children[0].t,
+          render(useItself, [1])[0],
+        );
+      `,
+      "/node_modules/react/index.js": `exports.memo = it => it; exports.forwardRef = it => it;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "true true true p function" },
+    onAfterBundle(api) {
+      // Not compiled: a compiled function takes `t0` and destructures it in its body.
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/function Callback\d*\(\{ depth, items \}\)/);
+      expect(out).toMatch(/function Direct\d*\(\{ depth, items \}\)/);
+      expect(out).toMatch(/function Inner\d*\(\{ depth, items \}, ref\)/);
+    },
+  });
+
+  // The lexer keeps the place of the flags in 16 bits. From 65,536 on the flags were taken from the wrong place, and the
+  // literal came out as a comment.
+  itBundled("react-compiler/RegExpWhoseFlagsBeginBehind64KB", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Long(props) {
+          "use memo";
+          const last = /${Buffer.alloc(65533, "a").toString()}/gi;
+          const first = /${Buffer.alloc(65534, "a").toString()}/gi;
+          const more = /${Buffer.alloc(70000, "a").toString()}/gi;
+          const none = /${Buffer.alloc(70000, "a").toString()}/;
+          return [last, first, more, none].map(it => it.source.length + it.flags).concat(props.a);
+        }
+        console.log(Long({ a: 1 }).join(" "));
+      `,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "65533gi 65534gi 70000gi 70000 1" },
   });
 
   // Sibling of the above: `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` was also dropped,
@@ -2791,6 +3349,416 @@ describe("bundler", () => {
     });
   }
 
+  // A memo block saves each `let` that it assigns and gives it back when its cache hits. Each component renders several
+  // times on one memo cache and has to render what the plain build renders. `*` marks a render that got the `list` of
+  // the render before it, so each line also shows that the block still hits its cache.
+  const reassignedLocalOutput = `
+    DefaultThenProp [1,[1]] [1,[1]]* [2,[2]]
+    EitherArmThenProp [3,[3]] [3,[3]]* [1,[1]]
+    NullableEntryThenProp ["anon",["anon"]] ["anon",["anon"]]* ["ann",["ann"]] ["ann",["ann"]]*
+    BothArmsThenProp ["b",["b"]] ["b",["b"]]* ["c",["c"]]
+    DependencyPath ["b",["a","b"]] ["b",["b","b"]] ["b",["b","b"]]*
+    ConditionalReassign [1,["x"]] [2,["x"]] [2,["x"]]* ["flagged",[]]
+    LoopReassign ["i",[1,2]] ["j",[1,2]] ["j",[1,2]]* [3,[3]]
+    PrunedNestedScope [true,[{"v":3,"w":1}]] [true,[{"v":3,"w":1}]] [true,[{"v":3,"w":1}]]* ["k",[{"v":1,"w":1},{"v":2,"w":1}]]
+    NestedScope ["a",[3]] ["b",[3]] ["b",[3]]* ["off",[3]] ["off",[3]]*
+    LoopInsideScopeOfSibling ["a",{}] ["b",{}] ["b",{}]* ["off",{}] ["off",{}]*
+    JoinBeforeScope ["a1",["x"]] ["a2",["x"]] ["base",["x"]] ["base",["x"]]*
+    ChainedScopes ["1two",[[0],[]]] ["2two",[[0],[]]] ["2two",[[0],[]]]* ["onetwo",[[],[]]]
+    ForOfOnly ["5,1,2",[5,1,2]] ["6,1,2",[6,1,2]] ["6,1,2",[6,1,2]]* ["none",null]
+    ForWithContinue ["5,1,2",[5,1,2]] ["6,1,2",[6,1,2]] ["6,1,2",[6,1,2]]*
+    useFormErrors [false,[[],[]]] [true,[["That name is already taken"],[]]] [true,[["That name is already taken"],[]]]* [true,[[],["Pick an X variable"]]] [true,[["That name is already taken"],["Pick an X variable"]]]
+    useBareParam [1,["b"]] [2,["b"]] [2,["b"]]* ["X",[]]
+    UpdateInFrontOfInnerBlock ["c1:2",[{"b":1},{"b":1}]] ["c2:2",[{"b":1},{"b":1}]] ["c2:2",[{"b":1},{"b":1}]]*
+    UpdateInFrontOfInnerBlockNoJoin [1,["c1",{"b":1}]] [1,["c2",{"b":1}]] [1,["c2",{"b":1}]]*
+    ReadThenReassign [2,["x"]] [3,["x"]] [3,["x"]]*
+    CounterInLoop [1,[3]] [1,[3]]* [0,[1,2]]
+    AssignedBeforeLoop ["i:b",[1,2]] ["j:b",[1,2]]* ["j:3",[3]]
+  `;
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { render } from "react";
+
+          // The first four read a property after the join. Before the block the variable has the value that it came
+          // in with, which can be null, so nothing may read that property there.
+          const defaults = new Set([1]);
+          function DefaultThenProp(p) {
+            let v = p.v;
+            const list = [];
+            if (v == null) v = defaults;
+            list.push(v.size);
+            return <div label={v.size} list={list} />;
+          }
+
+          function EitherArmThenProp({ items, filter }) {
+            let shown;
+            const list = [];
+            if (filter) {
+              shown = items.filter(filter);
+            } else {
+              shown = items;
+            }
+            list.push(shown.length);
+            return <div label={shown.length} list={list} />;
+          }
+
+          function NullableEntryThenProp({ user, fallbackUser }) {
+            let u = user;
+            const list = [];
+            if (!u) u = fallbackUser;
+            list.push(u.profile.name);
+            return <div label={u.profile.name} list={list} />;
+          }
+
+          function BothArmsThenProp(p) {
+            let object = p.a;
+            const list = [];
+            if (p.kind) object = p.b;
+            else object = p.c;
+            list.push(object.v.w);
+            return <div label={object.v.w} list={list} />;
+          }
+
+          // The first read is of the value that object came in with, so it stays an input of the block.
+          function DependencyPath(p) {
+            let object = p.o;
+            const list = [];
+            list.push(object.x);
+            if (p.flag) object = p.o2;
+            list.push(object.x);
+            return <div label={object.x} list={list} />;
+          }
+
+          // In the next eleven a path through the block leaves the variable as it came in, so that value is an input
+          // of the block.
+          function ConditionalReassign(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) {
+              label = "flagged";
+            } else {
+              list.push(p.b);
+            }
+            return <div label={label} list={list} />;
+          }
+
+          function LoopReassign(p) {
+            let found = p.initial;
+            const list = [];
+            for (const item of p.items) {
+              if (item.ok) found = item.v;
+              list.push(item.v);
+            }
+            return <div label={found} list={list} />;
+          }
+
+          // The block of copy is in a loop, so the compiler prunes it.
+          function PrunedNestedScope(p) {
+            let hasOk = p.initial;
+            const list = [];
+            for (const item of p.items) {
+              const copy = { v: item.v };
+              if (item.ok) hasOk = true;
+              copy.w = p.w;
+              list.push(copy);
+            }
+            return <div label={hasOk} list={list} />;
+          }
+
+          // The assignment is in the block of inner, which is in the block of outer.
+          function NestedScope(p) {
+            let v = p.v;
+            const outer = [];
+            const inner = [];
+            if (p.off) v = "off";
+            inner.push(p.b);
+            outer.push(p.c);
+            return <div label={v} list={outer} inner={inner} />;
+          }
+
+          function LoopInsideScopeOfSibling(p) {
+            let v = p.v;
+            let w = "w";
+            for (const it of p.items) { if (p.off) v = "off"; }
+            for (const it of p.items) { w = {}; }
+            return <div label={v} list={w} />;
+          }
+
+          // The value that label comes in with is the join of two paths, and nothing reads it before the block.
+          function JoinBeforeScope(p) {
+            let label = "base";
+            if (p.primary) label = p.a;
+            const list = [];
+            if (p.flag) label = "flagged";
+            else list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
+          function ChainedScopes(p) {
+            let label = p.count;
+            const first = [];
+            if (p.f1) label = "one";
+            else first.push(p.x);
+            const second = [];
+            if (p.f2) label = label + "two";
+            else second.push(p.y);
+            return <div label={label} list={[first, second]} />;
+          }
+
+          // The memo block belongs to the loop, not to another value.
+          function ForOfOnly(p) {
+            let derived = [p.value, ...p.items];
+            for (const item of p.items) {
+              if (item < 0) derived = null;
+            }
+            return <div label={derived ? derived.join(",") : "none"} list={derived} />;
+          }
+
+          const check = () => false;
+          function ForWithContinue(p) {
+            let derived = [p.value, ...p.items];
+            for (let i = 0; i < 2; i++) {
+              if (i === 0) continue;
+              if (check()) derived = null;
+            }
+            return <div label={derived ? derived.join(",") : "none"} list={derived} />;
+          }
+
+          // facebook/react#37224: the second block gets hasErrors from the first. "use memo" because the compiler only
+          // infers a hook from a call to another hook.
+          function useFormErrors(name, existingNames, settings) {
+            "use memo";
+            let hasErrors = false;
+
+            const nameErrors = [];
+            if (existingNames.includes(name)) {
+              hasErrors = true;
+              nameErrors.push("That name is already taken");
+            }
+
+            const settingsErrors = [];
+            if (settings.chartView === "histogram" && !settings.xVariableId) {
+              hasErrors = true;
+              settingsErrors.push("Pick an X variable");
+            }
+
+            return { label: hasErrors, list: [nameErrors, settingsErrors] };
+          }
+
+          // label is a parameter that nothing but the join reads.
+          function useBareParam(p, label) {
+            "use memo";
+            const list = [];
+            if (p.flag) label = p.x;
+            else list.push(p.b);
+            return { label, list };
+          }
+
+          // In the next two the block of each <i> is in the block of rows and depends on b alone, so it does not run
+          // again for a new c. The index++ in front of it has to run all the same.
+          const start = globalThis.start ?? 0;
+          function UpdateInFrontOfInnerBlock({ b, c, k }) {
+            let label = c;
+            let index = start;
+            const rows = [];
+            if (b === 2) label = "two";
+            rows.push(<i key={index++} b={b} />);
+            rows.push(<i key={index++} b={b} />);
+            if (k === 1) index = -1;
+            return <div label={label + ":" + index} list={rows} />;
+          }
+
+          function UpdateInFrontOfInnerBlockNoJoin({ b, c, k }) {
+            let index = start;
+            const rows = [];
+            rows.push(c);
+            rows.push(<i key={index++} b={b} />);
+            if (k === 1) index = -1;
+            return <div label={index} list={rows} />;
+          }
+
+          // The block reads label, so it is an input. Its slot has to keep the value that label came in with.
+          function ReadThenReassign(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) label = label + 1;
+            list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
+          // In the last two the value that the variable came in with is not an input. Here it is a constant.
+          function CounterInLoop(p) {
+            let count = 0;
+            const list = [];
+            for (const item of p.items) {
+              if (item.ok) count++;
+              list.push(item.v);
+            }
+            return <div label={count} list={list} />;
+          }
+
+          // The block assigns found on each path to the loop.
+          function AssignedBeforeLoop(p) {
+            let found = p.initial;
+            const initial = found;
+            const list = [];
+            found = p.b;
+            for (const item of p.items) {
+              if (item.ok) found = item.v;
+              list.push(item.v);
+            }
+            return <div label={initial + ":" + found} list={list} />;
+          }
+
+          function run(Component, ...renders) {
+            let previous;
+            const results = renders.map(args => {
+              try {
+                const { label, list } = render(Component, ...(Array.isArray(args) ? args : [args]));
+                const hit = list === previous ? "*" : "";
+                previous = list;
+                return JSON.stringify([label, list]) + hit;
+              } catch (error) {
+                return "THROW(" + error.message + ")";
+              }
+            });
+            console.log(Component.name + " " + results.join(" "));
+          }
+
+          run(DefaultThenProp, {}, {}, { v: new Set([1, 2]) });
+          const three = [1, 2, 3];
+          run(EitherArmThenProp, { items: three }, { items: three }, { items: three, filter: item => item > 2 });
+          const ann = { profile: { name: "ann" } };
+          const anon = { user: null, fallbackUser: { profile: { name: "anon" } } };
+          run(
+            NullableEntryThenProp,
+            anon,
+            anon,
+            { user: ann, fallbackUser: null },
+            { user: ann, fallbackUser: null },
+          );
+          const w = value => ({ v: { w: value } });
+          const b1 = w("b"), c1 = w("c");
+          run(
+            BothArmsThenProp,
+            { a: null, kind: 1, b: b1, c: null },
+            { a: null, kind: 1, b: b1, c: null },
+            { a: null, kind: 0, b: null, c: c1 },
+          );
+          const o1 = { x: "a" }, o2 = { x: "b" }, o3 = { x: "b" };
+          run(DependencyPath, { o: o1, o2, flag: true }, { o: o3, o2, flag: true }, { o: o3, o2, flag: true });
+          run(
+            ConditionalReassign,
+            { count: 1, flag: false, b: "x" },
+            { count: 2, flag: false, b: "x" },
+            { count: 2, flag: false, b: "x" },
+            { count: 3, flag: true, b: "x" },
+          );
+          const none = [{ ok: false, v: 1 }, { ok: false, v: 2 }];
+          const some = [{ ok: true, v: 3 }];
+          run(
+            LoopReassign,
+            { initial: "i", items: none },
+            { initial: "j", items: none },
+            { initial: "j", items: none },
+            { initial: "k", items: some },
+          );
+          run(
+            PrunedNestedScope,
+            { initial: "i", items: some, w: 1 },
+            { initial: "j", items: some, w: 1 },
+            { initial: "j", items: some, w: 1 },
+            { initial: "k", items: none, w: 1 },
+          );
+          const entryA = { v: "a", off: false, b: 2, c: 3, items: [1] };
+          const entryB = { ...entryA, v: "b" };
+          const entryOff = { ...entryB, off: true };
+          run(NestedScope, entryA, entryB, entryB, entryOff, entryOff);
+          run(LoopInsideScopeOfSibling, entryA, entryB, entryB, entryOff, entryOff);
+          run(
+            JoinBeforeScope,
+            { primary: true, a: "a1", flag: false, b: "x" },
+            { primary: true, a: "a2", flag: false, b: "x" },
+            { primary: false, a: "a2", flag: false, b: "x" },
+            { primary: false, a: "a3", flag: false, b: "x" },
+          );
+          run(
+            ChainedScopes,
+            { count: 1, f1: false, f2: true, x: 0, y: 0 },
+            { count: 2, f1: false, f2: true, x: 0, y: 0 },
+            { count: 2, f1: false, f2: true, x: 0, y: 0 },
+            { count: 3, f1: true, f2: true, x: 0, y: 0 },
+          );
+          const positive = [1, 2];
+          run(
+            ForOfOnly,
+            { value: 5, items: positive },
+            { value: 6, items: positive },
+            { value: 6, items: positive },
+            { value: 7, items: [1, -2] },
+          );
+          run(
+            ForWithContinue,
+            { value: 5, items: positive },
+            { value: 6, items: positive },
+            { value: 6, items: positive },
+          );
+          const names = ["taken"];
+          const bar = { chartView: "bar" };
+          const histogram = { chartView: "histogram" };
+          run(
+            useFormErrors,
+            ["free", names, bar],
+            ["taken", names, bar],
+            ["taken", names, bar],
+            ["free", names, histogram],
+            ["taken", names, histogram],
+          );
+          const flagOff = { flag: false, x: "X", b: "b" };
+          run(useBareParam, [flagOff, 1], [flagOff, 2], [flagOff, 2], [{ flag: true, x: "X", b: "b" }, 3]);
+          const updates = [{ b: 1, k: 0, c: "c1" }, { b: 1, k: 0, c: "c2" }, { b: 1, k: 0, c: "c2" }];
+          run(UpdateInFrontOfInnerBlock, ...updates);
+          run(UpdateInFrontOfInnerBlockNoJoin, ...updates);
+          run(
+            ReadThenReassign,
+            { count: 1, flag: true, b: "x" },
+            { count: 2, flag: true, b: "x" },
+            { count: 2, flag: true, b: "x" },
+          );
+          run(CounterInLoop, { items: some }, { items: some }, { items: none });
+          run(
+            AssignedBeforeLoop,
+            { initial: "i", b: "b", items: none },
+            { initial: "j", b: "b", items: none },
+            { initial: "j", b: "b", items: some },
+          );
+        `,
+        // One memo cache per component, kept between renders, as a fiber keeps it.
+        "/node_modules/react/index.js": /* js */ `
+          const fibers = new Map();
+          let current;
+          exports.render = (Component, ...args) => {
+            current = fibers.get(Component);
+            if (!current) fibers.set(Component, (current = { cache: null }));
+            return Component(...args);
+          };
+          exports.memoCache = size =>
+            (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+        `,
+        "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: { stdout: reactCompiler ? reassignedLocalOutput : reassignedLocalOutput.replaceAll("*", "") },
+    });
+  }
+
   // Codegen prints an instruction with an unnamed result inside the statement
   // that uses it, and every other instruction as a statement where it stands.
   // So a statement in the middle of an expression (the body of an inlined
@@ -2964,6 +3932,57 @@ describe("bundler", () => {
     });
   }
 
+  itBundled("react-compiler/SourceMapOfCatch", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ a }) {
+          let y;
+          try {
+            y = [a()];
+          } catch {
+            y = null;
+          }
+          let z;
+          try {
+            z = [a()];
+          } catch (e) {
+            z = [e];
+          }
+          return <div>{y}{z}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    outdir: "/out",
+    sourceMap: "external",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    async onAfterBundle(api) {
+      const source = api.readFile("/entry.jsx").split("\n");
+      expect(api.readFile("/out/entry.js")).toMatch(/\b_c\(\d+\)/);
+      await SourceMapConsumer.with(JSON.parse(api.readFile("/out/entry.js.map")), null, map => {
+        const original = (line: number, column: number) => {
+          const position = map.originalPositionFor({ line: line + 1, column });
+          const text = source[position.line! - 1];
+          return text.slice(0, position.column!).trimStart() + "|" + text.slice(position.column!);
+        };
+        const words = api
+          .readFile("/out/entry.js")
+          .split("\n")
+          .flatMap((text, line) =>
+            Array.from(text.matchAll(/\bcatch(?: \([\w$]+\))? \{/g), ({ 0: clause, index }) => [
+              original(line, index),
+              original(line, index + clause.length - 1),
+            ]),
+          );
+        expect(words).toEqual([
+          ["} |catch {", "} catch |{"],
+          ["} |catch (e) {", "} catch (e) |{"],
+        ]);
+      });
+    },
+  });
+
   // The fbt transform rejects a variable in place of a nested fbt.param()
   // call, so the call stays inside the fbt() call. The value given to
   // fbt.param() can be a variable, and it keeps its place ahead of a statement.
@@ -3055,6 +4074,48 @@ describe("bundler", () => {
         ParameterValueAheadOfAStatement=["a",["n",2],["m",20]]
         LetCapturedInsideTheMacroCall=[[2,5],5]
       `,
+    },
+  });
+
+  itBundled("react-compiler/SourceMapOfSwitchClauses", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ kind, a }) {
+          let y;
+          switch (kind) {
+            case "a":
+              y = [a];
+              break;
+            default:
+              y = null;
+          }
+          return <div>{y}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    outdir: "/out",
+    sourceMap: "external",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    async onAfterBundle(api) {
+      const source = api.readFile("/entry.jsx").split("\n");
+      expect(api.readFile("/out/entry.js")).toMatch(/\b_c\(\d+\)/);
+      await SourceMapConsumer.with(JSON.parse(api.readFile("/out/entry.js.map")), null, map => {
+        const words = api
+          .readFile("/out/entry.js")
+          .split("\n")
+          .flatMap((text, line) =>
+            Array.from(text.matchAll(/\b(?:case|default)\b/g), ({ 0: word, index: column }) => {
+              const original = map.originalPositionFor({ line: line + 1, column });
+              return [word, source[original.line! - 1].slice(original.column!, original.column! + word.length)];
+            }),
+          );
+        expect(words).toEqual([
+          ["case", "case"],
+          ["default", "default"],
+        ]);
+      });
     },
   });
 });
@@ -3192,10 +4253,11 @@ describe.skipIf(!isDebug && !isASAN)(
 // rebuilt a hash index for each block it took out of a map. A chain of 400
 // terms took 979 MB, and an array pattern of 300 elements with defaults 1 GB.
 test("react-compiler memory does not grow with the square of the size of a component", async () => {
-  // A debug build is 20 times slower, and its larger frames overflow the stack
-  // on a longer chain.
+  // A debug build is 20 times slower, and its larger frames leave the stack for
+  // a chain of 94: a longer one is not compiled.
   const small = isDebug || isASAN;
-  const terms = small ? 100 : 400;
+  // A chain is nested as deeply as it is long, and one that the stack does not hold is not compiled.
+  const terms = small ? 90 : 250;
   const elements = small ? 120 : 300;
   using dir = tempDir("react-compiler-memory", {
     "empty.jsx": `export default function App() { return null; }`,
@@ -3218,33 +4280,196 @@ test("react-compiler memory does not grow with the square of the size of a compo
   });
 
   const peakMB = async (entry: string) => {
-    await using proc = Bun.spawn({
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
       cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-      env: {
-        ...bunEnv,
-        // ASAN's quarantine keeps freed blocks resident, which hides the difference.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-          .filter(Boolean)
-          .join(":"),
-      },
+      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+      env: withoutAsanQuarantine(bunEnv),
+      cwd: String(dir),
+    });
+    expect(stderr).toBe("");
+    // The component compiled, or there is no component.
+    expect(stdout.includes("react/compiler-runtime")).toBe(entry !== "empty.jsx");
+    expect(exitCode).toBe(0);
+    return maxRSS / 1024 / 1024;
+  };
+
+  const [empty, chain, pattern] = await Promise.all([peakMB("empty.jsx"), peakMB("chain.jsx"), peakMB("pattern.jsx")]);
+  // Above the empty build, without the fixes: 110 MB and 125 MB for the small
+  // inputs, 1050 MB for the large pattern, and 940 MB for a chain of 400 terms,
+  // which is 370 MB for 250.
+  expect(chain - empty).toBeLessThan(small ? 70 : 120);
+  expect(pattern - empty).toBeLessThan(small ? 70 : 300);
+});
+
+// Each default in a pattern is a join. EnterSSA made a phi at each join for each variable that is read after it, and
+// EliminateRedundantPhi took them out again: 1,000 defaults, half a million phis, 484 MB. Now 150 MB.
+// Not where the empty build takes 330 MB, which is more than either pattern does.
+test.skipIf(isDebug || isASAN)(
+  "react-compiler memory does not grow with the square of the defaults in a pattern",
+  async () => {
+    const pattern = (elements: number) => `
+    import { useState } from "react";
+    export default function App(p) {
+      const [s] = useState(0);
+      const [${Array.from({ length: elements }, (_, i) => `e${i} = ${i}`).join(", ")}] = p.items;
+      return <div>{e0 + e${elements - 1}}{s}</div>;
+    }
+  `;
+    using dir = tempDir("react-compiler-defaults", {
+      "empty.jsx": `export default function App() { return null; }`,
+      "whole.jsx": pattern(1000),
+      // The peak of a process is never below that of the one that spawned it, and this one is small.
+      "measure.js": `
+      const peak = entry =>
+        Bun.spawnSync({
+          cmd: [process.execPath, "build", "--react-compiler", "--target=browser", "--external=*", entry],
+          stdout: "ignore",
+          stderr: "inherit",
+        }).resourceUsage.maxRSS;
+      console.log(JSON.stringify(["empty.jsx", "whole.jsx"].map(peak)));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "measure.js"],
+      env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    // The component compiled, or there is no component.
-    expect(stdout.includes("react/compiler-runtime")).toBe(entry !== "empty.jsx");
+    const [empty, whole] = JSON.parse(stdout);
+    // 9 times. Else what is measured is not the pattern.
+    expect(whole).toBeGreaterThan(empty * 2);
+    // 131 MB, and 499 MB without the fix. The ratio of two sizes tells the two apart by 1.4 times only.
+    expect(whole - empty).toBeLessThan(300 * 1024 * 1024);
     expect(exitCode).toBe(0);
-    return proc.resourceUsage()!.maxRSS / 1024 / 1024;
+  },
+);
+
+// InferTypes puts the type of a phi into each phi that it is an operand of, and it copied it. Variables that are assigned
+// from each other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.
+// Where the fix is missing, this test takes all the memory that the machine gives it until its time is over.
+test("react-compiler ends on a component whose types are made of each other", async () => {
+  using dir = tempDir("react-compiler-types", {
+    "entry.jsx": `
+      export default function Component(props) {
+        let a, b, c, d, e;
+        while (props.x) {
+          switch (c?.p) {
+            case 0: {
+              while (props.y) {
+                switch (f0) {
+                  default: {
+                    try {} catch (err) {}
+                    for (const x3 of 0) {
+                      e = (props.x && (props.x ?? d)) || {};
+                    }
+                    ({ p: a = e, q: c } = props.o);
+                  }
+                  case 0: {
+                    if (fprops.x) {
+                      d = props.y && (fprops.x ? a : f0);
+                    }
+                  }
+                  case 1: {}
+                }
+                while (f(props.x ? null : a) < props.x) {
+                  if (0 === 0) {
+                    ({ p: e = b, q: a } = props.o);
+                    d = d;
+                  }
+                }
+              }
+            }
+            case 1: {}
+            default: {}
+          }
+        }
+        a = {};
+        return <div>{a}{b}{c}{d}{e}</div>;
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("function Component");
+  expect(exitCode).toBe(0);
+});
+
+// ValidateNoRefAccessInRender gives a function the type of what it returns. The port
+// copied all that is nested in a type at each level of each join, so n functions that
+// return each other took the cube of n: 400 of them 10 seconds, 1,000 more than a minute.
+test("react-compiler does not end the process on a try in which nothing but a read that nobody uses can throw", async () => {
+  using dir = tempDir("react-compiler-try", {
+    "entry.jsx": `
+      export default function Component(props) {
+        let a = props.a;
+        try {
+          props.d.m;
+        } catch (err) {
+          a = props.x;
+        }
+        return <div>{a}</div>;
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("function Component(props)");
+  expect(exitCode).toBe(0);
+});
+
+test("react-compiler time does not grow with the cube of a chain of functions", async () => {
+  // The CPU time of a process on Windows (GetProcessTimes) is a count of 1/64 s ticks, whatever the resolution of
+  // timers is. In a release build one component of n functions takes a tick or two.
+  const components = isWindows && !isDebug ? 8 : 1;
+  const component = (name: string, n: number) => `
+    export function ${name}() {
+      const [s] = useState(0);
+      const f0 = () => s;
+      ${Array.from({ length: n }, (_, i) => `const f${i + 1} = () => f${i};`).join("\n")}
+      return <div onClick={f${n}} />;
+    }
+  `;
+  const source = (n: number) => `
+    import { useState } from "react";
+    ${Array.from({ length: components }, (_, i) => component("App" + i, n)).join("\n")}
+  `;
+  const n = isDebug || isASAN ? 80 : 200;
+  using dir = tempDir("react-compiler-chain-of-functions", { "n.jsx": source(n), "2n.jsx": source(2 * n) });
+
+  const cpuTime = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+    return Number(proc.resourceUsage()!.cpuTime.total);
   };
 
-  const [empty, chain, pattern] = await Promise.all([peakMB("empty.jsx"), peakMB("chain.jsx"), peakMB("pattern.jsx")]);
-  // Above the empty build, without the fixes: 110 MB and 125 MB for the small
-  // inputs, 940 MB and 1050 MB for the large ones.
-  const bound = small ? 70 : 300;
-  expect(chain - empty).toBeLessThan(bound);
-  expect(pattern - empty).toBeLessThan(bound);
+  // A debug build: 2 to 2.6, and 5.5 without the fix. A release build: 2.9 to 4.2, which is a square's, and 14.5 to 16.6.
+  expect((await cpuTime("2n.jsx")) / (await cpuTime("n.jsx"))).toBeLessThan(isDebug || isASAN ? 4 : 8);
 });
 
 // ValidateExhaustiveDependencies gives each phi the dependencies of its
@@ -3267,17 +4492,13 @@ test("react-compiler keeps one copy of each dependency of a phi", async () => {
   });
 
   const build = async (entry: string) => {
-    await using proc = Bun.spawn({
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
       cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-      env: bunEnv,
       cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: proc.resourceUsage()!.maxRSS / 1024 / 1024 };
+    return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: maxRSS / 1024 / 1024 };
   };
 
   const [empty, ladder] = await Promise.all([build("empty.jsx"), build("ladder.jsx")]);
@@ -3417,4 +4638,217 @@ test("react-compiler compile time is not exponential in the function nesting dep
   expect(stdout).toContain("p.a + s");
   expect(stdout).toMatch(/\b_c\(\d+\)/);
   expect(exitCode).toBe(0);
+});
+
+// Upstream sorts them with `<` of JavaScript, by UTF-16 code units: U+20000 begins with 0xD840, which is
+// before U+FF21. In UTF-8 it begins with 0xF0, which is after 0xEF.
+test("react-compiler sorts the dependencies and the declarations of a scope as JavaScript compares strings", async () => {
+  const [outside, inside] = ["\u{20000}", "\uFF21"];
+  expect(outside < inside).toBe(true);
+  using dir = tempDir("react-compiler-utf16-order", {
+    "entry.jsx": `
+      export function Component(props) {
+        const ${inside} = [];
+        const ${outside} = [];
+        ${inside}.push(${outside});
+        ${outside}.push(props.x);
+        // Keeps the scope of the two arrays and that of the element apart.
+        useThing();
+        return <div a={${inside}} b={${outside}} />;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // However the printer writes the names.
+  const out = stdout.replace(/\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})/g, (_, long, short) =>
+    String.fromCodePoint(parseInt(long ?? short, 16)),
+  );
+  const name = `(${outside}|${inside})`;
+  expect({
+    dependencies: out.match(new RegExp(String.raw`\$\[\d+\] !== ${name} \|\| \$\[\d+\] !== ${name}`, "u"))?.slice(1),
+    declarations: out.match(new RegExp(String.raw`\$\[\d+\] = ${name}[;,]\s*\$\[\d+\] = ${name};`, "u"))?.slice(1),
+  }).toEqual({
+    dependencies: [outside, inside],
+    declarations: [outside, inside],
+  });
+  expect(exitCode).toBe(0);
+});
+
+// EnterSSA counts down the predecessors of a block that are not visited yet, once for each
+// successor that a terminal names, from the size of a set. Branches that have nothing in them
+// still have a block each, so no terminal names a block twice.
+test("react-compiler compiles branches that have nothing in them", async () => {
+  const bodies = [
+    "if (p.a) {} else {}",
+    "if (p.a);",
+    "switch (p.a) {}",
+    "switch (p.a) { case 1: case 2: default: }",
+    "switch (p.a) { case 1: case 2: }",
+    "for (const x of p.l);",
+    "try {} catch (e) {}",
+    "l: if (p.a) break l; else break l;",
+  ];
+  using dir = tempDir("react-compiler-empty-branches", {
+    "entry.jsx": bodies.map((body, i) => `export function C${i}(p) { ${body} return <div>{p.b}</div>; }`).join("\n"),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.match(/\b_c\(\d+\)/g)).toHaveLength(bodies.length);
+  expect(exitCode).toBe(0);
+});
+
+// The parser has a stack check. The lowering, which takes more of the stack for a
+// level of the source than the parser does, had none: `bun build --react-compiler`
+// died by SIGSEGV on 250 effects in each other, on 500 arrow functions, on 800
+// `if` statements or elements of JSX, and on a sum of 16,000 operands. With a check
+// in the lowering alone, 800 `switch` statements still overflowed in a later pass.
+// So every pass that calls itself along the nesting asks the stack.
+describe("react-compiler does not overflow the stack on a component that is nested deeply", () => {
+  const nest = (n: number, open: (i: number) => string, inner: string, close: string) =>
+    Array.from({ length: n }, (_, i) => open(i)).join("") + inner + close.repeat(n);
+  const component = (body: string, result = "<div>{s}</div>") => `
+    import { useEffect, useMemo, useState } from "react";
+    export default function App(props) {
+      const [s, setS] = useState(0);
+      ${body}
+      return ${result};
+    }
+  `;
+  // How large a frame is depends on the build. Each depth is less than the parser and
+  // the printer have the stack for in that build. A debug build has the stack for fewer
+  // than 256 levels, so there each is more than the lowering has the stack for.
+  const depthOf = (debug: number, releaseWithASAN: number, release: number) =>
+    isDebug ? debug : isASAN ? releaseWithASAN : release;
+  const flat = ["scopes that statements in a row nest", "variables that are each the one before"];
+  const within = ["if statements with blocks, not deep", "JSX, not deep", "methods, not deep"];
+  const shapes: [name: string, depth: number, source: (n: number) => string][] = [
+    [within[0], depthOf(10, 10, 200), n => component(nest(n, () => "if (props.a) {", "props.f(s);", "}"))],
+    [
+      within[1],
+      depthOf(10, 10, 200),
+      n =>
+        component(
+          "",
+          nest(n, () => "<div><a />", "{s}", "</div>"),
+        ),
+    ],
+    [within[2], depthOf(10, 10, 200), n => component(`const x = props.a${".m(s)".repeat(n)};`, "<div>{x}</div>")],
+    ["effects", depthOf(60, 250, 500), n => component(nest(n, () => "useEffect(() => {", "setS(1);", "}, []);"))],
+    [
+      "called arrow functions",
+      depthOf(120, 400, 600),
+      n => component(`const x = ${nest(n, () => "(() => ", "s", ")()")};`),
+    ],
+    ["useMemo", depthOf(120, 400, 600), n => component(`const x = ${nest(n, () => "useMemo(() => ", "s", ", [s])")};`)],
+    ["arrow functions", depthOf(180, 600, 1000), n => component(`const f = ${nest(n, i => `(a${i}) => `, "s", "")};`)],
+    ["function declarations", depthOf(100, 500, 1000), n => component(nest(n, i => `function f${i}() {`, "s;", "}"))],
+    ["if", depthOf(70, 600, 1600), n => component(nest(n, () => "if (props.a) {", "s;", "}"))],
+    ["try", depthOf(90, 600, 1600), n => component(nest(n, () => "try {", "s;", "} catch (e) {}"))],
+    ["switch", depthOf(90, 600, 1600), n => component(nest(n, () => "switch (props.a) { case 1: ", "s;", "}"))],
+    ["labels", depthOf(90, 600, 1600), n => component(nest(n, i => `l${i}: `, "{ s; }", ""))],
+    ["try, half as deep", depthOf(45, 300, 800), n => component(nest(n, () => "try {", "s;", "} catch (e) {}"))],
+    [
+      "switch, half as deep",
+      depthOf(45, 300, 800),
+      n => component(nest(n, () => "switch (props.a) { case 1: ", "s;", "}")),
+    ],
+    ["labels, half as deep", depthOf(45, 300, 800), n => component(nest(n, i => `l${i}: `, "{ s; }", ""))],
+    ["calls", depthOf(280, 600, 1600), n => component(`const x = ${nest(n, () => "f(", "s", ")")};`)],
+    [
+      "conditional expressions",
+      depthOf(220, 600, 1600),
+      n => component(`const x = ${nest(n, () => "props.a ? s : ", "s", "")};`),
+    ],
+    [
+      "JSX",
+      depthOf(120, 600, 1600),
+      n =>
+        component(
+          "",
+          nest(n, () => "<a>", "{s}", "</a>"),
+        ),
+    ],
+    ["a sum", depthOf(2000, 32000, 32000), n => component(`const x = ${Array(n).fill("s").join(" + ")};`)],
+    ["a chain of ||", depthOf(2000, 32000, 32000), n => component(`const x = ${Array(n).fill("s").join(" || ")};`)],
+    ["an optional chain", depthOf(200, 400, 1000), n => component(`const x = props${Array(n).fill("?.b").join("")};`)],
+    // Each array is changed after all that were made after it, so its scope has theirs in it.
+    [
+      flat[0],
+      depthOf(60, 300, 1000),
+      n =>
+        component(
+          Array.from({ length: n }, (_, i) => `const a${i} = [];`).join("") +
+            Array.from({ length: n }, (_, i) => `a${n - 1 - i}.push(s);`).join(""),
+          "<div>{a0}</div>",
+        ),
+    ],
+    // Blocks in a row, which three walks of the control flow graph and the renaming for SSA
+    // followed one call deep each. A variable named `fbt` ends the compilation after the lowering, and
+    // one that is read before its declaration ends it in SSA, so what a case costs does not depend on the stack.
+    [
+      "assignments in a try",
+      depthOf(4000, 8000, 16000),
+      n => component(`const fbt = s; let x; try { ${Array(n).fill("x = <a />;").join("")} } catch (e) {}`),
+    ],
+    [
+      "if statements in a row",
+      depthOf(5000, 10000, 30000),
+      n => component(`const fbt = s; ${Array(n).fill("if (s) {}").join("")}`),
+    ],
+    [
+      "a read after if statements in a row",
+      depthOf(2000, 5000, 10000),
+      n => component(`${Array(n).fill("if (props.a) {}").join("")} props.f(x); let x = 0;`),
+    ],
+    // Values in a row, each the one before, which PruneNonEscapingScopes followed one call deep each. That pass
+    // is a late one. One declaration for all: the lowering looks through a block once for each of its declarations.
+    // Not in a release build, which overflowed from 16,000: so many take 11 G instructions.
+    [
+      flat[1],
+      depthOf(2600, 5000, 0),
+      n =>
+        component(
+          `let [${Array.from({ length: n + 1 }, (_, i) => `v${i}`).join(",")}] = props.l;` +
+            Array.from({ length: n }, (_, i) => `v${i + 1} = v${i};`).join(""),
+          `<div>{v${n}}</div>`,
+        ),
+    ],
+  ];
+
+  test.concurrent.each(shapes.filter(([, depth]) => depth > 0))("%s", async (name, depth, source) => {
+    using dir = tempDir("react-compiler-depth", { "entry.jsx": source(depth) });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "--outfile=out.js", "entry.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = await Bun.file(join(String(dir), "out.js")).text();
+    expect(out).toContain("useState(0)");
+    // Whether the others are compiled depends on how much of the stack is left.
+    if (within.includes(name)) expect(out).toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -724,21 +724,6 @@ impl Translate {
 // Split out of the parse/to_css `impl Translate` above — these don't depend
 // on Parser/Printer surface and are needed by `TransformHandler`.
 impl Translate {
-    fn to_transform(&self, _bump: &Bump) -> Transform {
-        match self {
-            Translate::None => Transform::Translate3d {
-                x: LengthPercentage::zero(),
-                y: LengthPercentage::zero(),
-                z: Length::zero(),
-            },
-            Translate::Xyz { x, y, z } => Transform::Translate3d {
-                x: x.clone(),
-                y: y.clone(),
-                z: *z,
-            },
-        }
-    }
-
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // `LengthPercentage` is `Clone`-via-derive; a plain clone suffices.
         self.clone()
@@ -844,16 +829,6 @@ impl Rotate {
 // Split out of the parse/to_css `impl Rotate` above — needed by
 // `TransformHandler`.
 impl Rotate {
-    /// Converts the rotation to a transform function.
-    fn to_transform(&self, _bump: &Bump) -> Transform {
-        Transform::Rotate3d {
-            x: self.x,
-            y: self.y,
-            z: self.z,
-            angle: self.angle,
-        }
-    }
-
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         *self
     }
@@ -928,21 +903,6 @@ impl Scale {
 // Split out of the parse/to_css `impl Scale` above — needed by
 // `TransformHandler`.
 impl Scale {
-    fn to_transform(&self, _bump: &Bump) -> Transform {
-        match self {
-            Scale::None => Transform::Scale3d {
-                x: NumberOrPercentage::Number(1.0),
-                y: NumberOrPercentage::Number(1.0),
-                z: NumberOrPercentage::Number(1.0),
-            },
-            Scale::Xyz { x, y, z } => Transform::Scale3d {
-                x: x.clone(),
-                y: y.clone(),
-                z: z.clone(),
-            },
-        }
-    }
-
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         self.clone()
     }
@@ -983,12 +943,10 @@ impl TransformHandler {
         // Rust cannot index struct fields by string at runtime; use a macro to paste the ident.
         macro_rules! individual_property {
             ($field:ident, $val:expr) => {{
-                if let Some(transform) = &mut self.transform {
-                    transform.0.v.push($val.to_transform(bump));
-                } else {
-                    self.$field = Some($val.deep_clone(bump));
-                    self.has_any = true;
-                }
+                // Individual transforms cascade independently of `transform`. Keep them
+                // separate so declaration order cannot change their composition or resets.
+                self.$field = Some($val.deep_clone(bump));
+                self.has_any = true;
             }};
         }
 
@@ -1017,10 +975,6 @@ impl TransformHandler {
                     self.transform = Some((transform_val.deep_clone(bump), vp));
                     self.has_any = true;
                 }
-
-                self.translate = None;
-                self.rotate = None;
-                self.scale = None;
             }
             Property::Translate(val) => individual_property!(translate, val),
             Property::Rotate(val) => individual_property!(rotate, val),

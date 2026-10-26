@@ -850,14 +850,14 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
 
-    size_t stackTraceLimit = lexicalGlobalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
-    if (stackTraceLimit == 0) {
-        stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
-    }
+    // An Error.stackTraceLimit of 0, or one that is not a number, records no frames, as in V8.
+    size_t stackTraceLimit = lexicalGlobalObject->stackTraceLimit().value_or(0);
 
     WTF::Vector<JSC::StackFrame> stackTrace;
-    JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (stackTraceLimit) {
+        JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
         if (instance->hasMaterializedErrorInfo()) {

@@ -967,6 +967,32 @@ test("Error.captureStackTrace inside a node:vm takes an Error target and a calle
   ]);
 });
 
+function captureUnderLimitsThatRecordNoFrames() {
+  const saved = Error.stackTraceLimit;
+  const stacks = {};
+  try {
+    for (const limit of [0, -1, "foo"]) {
+      Error.stackTraceLimit = limit;
+      const target = {};
+      Error.captureStackTrace(target);
+      const error = new RangeError("boom");
+      Error.captureStackTrace(error);
+      stacks[limit] = [target.stack, error.stack];
+    }
+  } finally {
+    Error.stackTraceLimit = saved;
+  }
+  return JSON.stringify(stacks);
+}
+
+test.each([
+  ["the main context", () => captureUnderLimitsThatRecordNoFrames()],
+  ["a node:vm context", () => runInNewContext(`(${captureUnderLimitsThatRecordNoFrames})()`)],
+])("Error.captureStackTrace in %s records no frames when Error.stackTraceLimit is 0 or is not a number", (_, run) => {
+  const headerOnly = ["Error", "RangeError: boom"];
+  expect(JSON.parse(run())).toEqual({ "0": headerOnly, "-1": headerOnly, "foo": headerOnly });
+});
+
 test("Error.captureStackTrace inside error constructor works", () => {
   class ExtendedError extends Error {
     constructor() {

@@ -523,6 +523,19 @@ test.concurrent.each([
   expect(await runDialog(call, stdin)).toEqual({ stdout, stderr: JSON.stringify(result) + "\n", exitCode: 0 });
 });
 
+// `undefined` is the default message of prompt() and confirm(). alert() and alert(message) are overloads.
+test.concurrent.each([
+  ["prompt(undefined) shows its own message", `prompt(undefined)`, "hi\n", "Prompt ", "hi"],
+  ["prompt(undefined, default) shows its own message", `prompt(undefined, "dflt")`, "\n", "Prompt [dflt] ", "dflt"],
+  ["prompt(null) shows null", `prompt(null)`, "hi\n", "null ", "hi"],
+  ["confirm(undefined) shows its own message", `confirm(undefined)`, "y\n", "Confirm [y/N] ", true],
+  ["confirm(null) shows null", `confirm(null)`, "y\n", "null [y/N] ", true],
+  ["alert() shows its own message", `alert()`, "\n", "Alert [Enter] ", undefined],
+  ["alert(undefined) shows undefined", `alert(undefined)`, "\n", "undefined [Enter] ", undefined],
+])("%s", async (_, call, stdin, stdout, result) => {
+  expect(await runDialog(call, stdin)).toEqual({ stdout, stderr: JSON.stringify(result) + "\n", exitCode: 0 });
+});
+
 test("globalThis.self = 123 works", () => {
   expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
     configurable: true,

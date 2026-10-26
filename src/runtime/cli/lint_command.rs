@@ -138,10 +138,12 @@ fn read_bunfig_text(
 }
 
 /// As [`read_bunfigs`] with `directory` as the working directory, for the editor's server: it touches nothing of
-/// the process and doesn't end it. `Err` says why a file that's needed, or that `--config` names, can't be used.
+/// the process and doesn't end it. `config_path` is bun's own `--config=<path>`, resolved once by the caller against
+/// the command the process was started as. `Err` says why a file that's needed, or that `config_path` names, can't
+/// be used.
 pub(crate) fn read_bunfigs_in(
     directory: &[u8],
-    command: &[u8],
+    config_path: Option<&[u8]>,
     read: &mut dyn FnMut(&bun_ast::Expr, &[u8], bool) -> Result<Above, bunfig::BunfigError>,
 ) -> Result<(), Vec<u8>> {
     use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
@@ -151,7 +153,7 @@ pub(crate) fn read_bunfigs_in(
             .map(<[u8]>::to_vec)
     };
     let read_file = |path: &[u8]| File::read_from(bun_core::Fd::cwd(), path);
-    if let Some(config_path) = bunfig_before(command) {
+    if let Some(config_path) = config_path {
         let Some(path) = join(config_path) else {
             return Err(cannot_use(config_path, &[b"the path is too long"]));
         };
@@ -234,13 +236,18 @@ impl LintDefaults {
     }
 }
 
-/// The options of `bun lint <args>` run in `directory`, with its bunfigs, for the editor's server. `Err` is what
-/// the command would print before exiting with 2.
-pub(crate) fn lint_options_in(directory: &[u8], args: &[&[u8]]) -> Result<Options, Vec<u8>> {
+/// The options of `bun lint <args>` run in `directory`, with its bunfigs, for the editor's server. `config_path`
+/// is bun's own `--config=<path>`, as [`read_bunfigs_in`] takes it. `Err` is what the command would print before
+/// exiting with 2.
+pub(crate) fn lint_options_in(
+    directory: &[u8],
+    args: &[&[u8]],
+    config_path: Option<&[u8]>,
+) -> Result<Options, Vec<u8>> {
     let options = Options::parse(args).map_err(|UsageError(message)| message)?;
     let cwd = bun_lint_driver::from_native_path(directory);
     let mut defaults = LintDefaults::default();
-    read_bunfigs_in(directory, b"lint", &mut |file, path, is_named| {
+    read_bunfigs_in(directory, config_path, &mut |file, path, is_named| {
         defaults.read(&options, &cwd, file, path, is_named)
     })?;
     match defaults.options(args) {
@@ -264,16 +271,18 @@ pub(crate) fn read_format_defaults(
     })
 }
 
-/// The options of `bun fmt <args>` run in `directory`, with its bunfigs, for the editor's server. `Err` is what
-/// the command would print before exiting with 2.
+/// The options of `bun fmt <args>` run in `directory`, with its bunfigs, for the editor's server. `config_path`
+/// is bun's own `--config=<path>`, as [`read_bunfigs_in`] takes it. `Err` is what the command would print before
+/// exiting with 2.
 pub(crate) fn format_options_in(
     directory: &[u8],
     args: &[&[u8]],
+    config_path: Option<&[u8]>,
 ) -> Result<bun_lint_driver::fmt::cli::Options, Vec<u8>> {
     use bun_lint_driver::fmt::cli::{Options as FormatOptions, UsageError as FormatUsageError};
     let options = FormatOptions::parse(args).map_err(|FormatUsageError(message)| message)?;
     let mut defaults = None;
-    read_bunfigs_in(directory, b"fmt", &mut |file, path, is_named| {
+    read_bunfigs_in(directory, config_path, &mut |file, path, is_named| {
         read_format_defaults(&mut defaults, file, path, is_named)
     })?;
     match defaults.map(|defaults| FormatOptions::parse_with_defaults(defaults, args)) {
@@ -601,6 +610,8 @@ pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
         ),
     };
     let from_client = File::stdin();
+    // Bun's own `--config=` precedes `command`; neither half scans the other tool's flags for it.
+    let config_path = bunfig_before(command);
     run_and_exit(command, None, |environment| {
         // Only the messages go to the client: `run_and_exit` has made fd 1 stderr for the rest.
         let to_client = File::borrow(&environment.to_stdout);
@@ -617,8 +628,8 @@ pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
                 },
                 exit: &|code| Global::exit(u32::from(code)),
                 features,
-                lint_options: &lint_options_in,
-                format_options: &format_options_in,
+                lint_options: &|directory, args| lint_options_in(directory, args, config_path),
+                format_options: &|directory, args| format_options_in(directory, args, config_path),
             },
         )
     })

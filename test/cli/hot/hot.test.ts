@@ -1196,11 +1196,12 @@ it.skipIf(!isLinux).each([1, 2, 3, 4, 5, 6, 7, 8])(
       import { a } from "./packages/lib/a";
       import { c } from "./packages/lib/c";
       console.log("loaded", a, c);
-      // A timer outlives a reload, so one chain of them keeps resolving.
-      globalThis.resolving ??= (function resolve() {
+      // A timer outlives a reload, so one chain of them keeps resolving. A timer starts every burst but the first.
+      globalThis.resolving ??= (function resolve(burst = 0) {
         const end = performance.now() + 15;
         while (performance.now() < end) Bun.resolveSync("./packages/lib/a", import.meta.dir);
-        return setTimeout(resolve, 0);
+        if (burst === 1) console.log("resolving");
+        return setTimeout(resolve, 0, burst + 1);
       })();
     `;
     const exportsItsName = `export const c = import.meta.file;`;
@@ -1224,6 +1225,8 @@ it.skipIf(!isLinux).each([1, 2, 3, 4, 5, 6, 7, 8])(
     const failed = failedReload(runner.stderr);
     const loaded = (output: string) => Promise.race([stdout(output), failed]);
     expect(await loaded("loaded a.ts c.ts\n")).toBe(true);
+    // The first load is over, and the importer resolves from its timers.
+    expect(await loaded("resolving\n")).toBe(true);
 
     unlinkSync(join(root, "packages", "lib", "c.ts"));
     expect(await loaded("loaded a.ts c.js\n")).toBe(true);

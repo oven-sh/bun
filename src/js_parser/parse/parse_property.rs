@@ -87,6 +87,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // `super(...)` in a struct constructor is rewritten by the prefix parser, and refers to a symbol that holds the struct;
+        // a constructor of any other class (also one nested in a struct constructor) keeps the plain meaning.
+        let struct_self = if is_constructor && opts.is_struct {
+            Some(
+                p.declare_symbol(symbol::Kind::Hoisted, loc, b"__bunStructSelf")
+                    .expect("unreachable"),
+            )
+        } else {
+            None
+        };
+        let old_struct_ctor_self = if is_constructor {
+            Some(core::mem::replace(&mut p.struct_ctor_self, struct_self))
+        } else {
+            None
+        };
+        let private_name_uses_before = p.private_name_uses;
         let func = p.parse_fn(
             None,
             FnOrArrowDataParse {
@@ -112,7 +128,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_missing_body_for_type_script: Self::IS_TYPESCRIPT_ENABLED && opts.is_class,
                 ..Default::default()
             },
-        )?;
+        );
+        if let Some(old) = old_struct_ctor_self {
+            p.struct_ctor_self = old;
+        }
+        let mut func = func?;
+
+        if is_constructor
+            && opts.is_shared_struct
+            && p.private_name_uses != private_name_uses_before
+        {
+            p.log().add_error(
+                Some(p.source),
+                key.loc,
+                b"The constructor of a shared struct cannot use private names",
+            );
+        }
+        if let Some(struct_self) = struct_self {
+            let prologue = p.struct_self_prologue(func.body.loc, struct_self);
+            let mut stmts =
+                bun_alloc::ArenaVec::<Stmt>::with_capacity_in(func.body.stmts.len() + 1, p.arena);
+            stmts.push(prologue);
+            stmts.extend_from_slice(func.body.stmts.slice());
+            func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
+        }
 
         opts.has_argument_decorators =
             opts.has_argument_decorators || p.fn_or_arrow_data_parse.has_argument_decorators;
@@ -127,7 +166,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.pop_scope();
         // G::Fn is not Copy (FnBody/TS-metadata aren't), so mutate `func` in place.
-        let mut func = func;
         func.flags.insert(flags::Function::IsUniqueFormalParameters);
         let args = func.args.slice();
         let value = p.new_expr(E::Function { func }, loc);
@@ -250,6 +288,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut kind = kind_;
         let mut errors = errors_;
+        let private_name_uses_before = p.private_name_uses;
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
         'restart: loop {
             // Every match arm below assigns `key` (or `continue 'restart` /
@@ -648,6 +687,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 let mut initializer: Option<Expr> = None;
                 let mut ts_metadata = TsMetadata::default();
+                // An instance field of a `struct` is not defined by a class field initializer. Its
+                // initializer becomes the body of a method that takes no parameters, run once the
+                // instance is sealed (see `lower_struct_class`): `struct_initializer` is the
+                // expression, `struct_thunk_loc` where that method's scopes are.
+                let is_struct_instance_field =
+                    opts.is_struct && !opts.is_static && kind == PropertyKind::Normal;
+                let mut struct_initializer: Option<Expr> = None;
+                let mut struct_thunk_loc = p.lexer.loc();
 
                 // Forbid the names "constructor" and "prototype" in some cases
                 if !is_computed {
@@ -696,16 +743,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     p.lexer.next()?;
 
-                    // "this" and "super" property access is allowed in field initializers
-                    let old_is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
-                    let old_allow_super_property = p.fn_or_arrow_data_parse.allow_super_property;
-                    p.fn_or_arrow_data_parse.is_this_disallowed = false;
-                    p.fn_or_arrow_data_parse.allow_super_property = true;
+                    if is_struct_instance_field {
+                        let (expr, thunk_loc) = p.parse_struct_field_initializer()?;
+                        struct_initializer = Some(expr);
+                        struct_thunk_loc = thunk_loc;
+                    } else {
+                        // "this" and "super" property access is allowed in field initializers
+                        let old_is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
+                        let old_allow_super_property =
+                            p.fn_or_arrow_data_parse.allow_super_property;
+                        p.fn_or_arrow_data_parse.is_this_disallowed = false;
+                        p.fn_or_arrow_data_parse.allow_super_property = true;
 
-                    initializer = Some(p.parse_expr(Level::Comma)?);
+                        initializer = Some(p.parse_expr(Level::Comma)?);
 
-                    p.fn_or_arrow_data_parse.is_this_disallowed = old_is_this_disallowed;
-                    p.fn_or_arrow_data_parse.allow_super_property = old_allow_super_property;
+                        p.fn_or_arrow_data_parse.is_this_disallowed = old_is_this_disallowed;
+                        p.fn_or_arrow_data_parse.allow_super_property = old_allow_super_property;
+                    }
+                } else if is_struct_instance_field
+                    && !matches!(key.data, js_ast::ExprData::EPrivateIdentifier(_))
+                {
+                    // No initializer: the method still records the field for `lower_struct_class`.
+                    p.push_empty_struct_initializer_scopes(struct_thunk_loc);
                 }
 
                 // Special-case private identifiers
@@ -734,6 +793,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 p.lexer.expect_or_insert_semicolon()?;
+
+                if is_struct_instance_field {
+                    if opts.is_shared_struct && p.private_name_uses != private_name_uses_before {
+                        p.log().add_error(
+                            Some(p.source),
+                            key.loc,
+                            b"Shared structs cannot use private names in instance fields",
+                        );
+                    }
+                    initializer = p.struct_field_initializer_method(
+                        key,
+                        struct_initializer,
+                        struct_thunk_loc,
+                    );
+                }
 
                 let mut prop_flags = flags::PropertySet::empty();
                 if is_computed {

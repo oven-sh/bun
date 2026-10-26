@@ -1370,6 +1370,8 @@ pub struct PropertyOpts {
     pub(crate) is_static: bool,
     pub(crate) is_class: bool,
     pub(crate) class_has_extends: bool,
+    pub(crate) is_struct: bool,
+    pub(crate) is_shared_struct: bool,
     pub(crate) allow_ts_decorators: bool,
     pub(crate) is_ts_abstract: bool,
     pub(crate) ts_decorators: ExprNodeList,
@@ -1386,6 +1388,8 @@ impl Default for PropertyOpts {
             is_static: false,
             is_class: false,
             class_has_extends: false,
+            is_struct: false,
+            is_shared_struct: false,
             allow_ts_decorators: false,
             is_ts_abstract: false,
             ts_decorators: bun_alloc::AstAlloc::vec(),
@@ -1466,8 +1470,19 @@ pub enum LexicalDecl {
     AllowFnInsideLabel = 3,
 }
 
+/// `struct` / `shared struct` declarations (https://github.com/tc39/proposal-structs)
+/// are parsed as classes and lowered to `class X extends __structBase(...)`.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum StructKind {
+    #[default]
+    None,
+    Struct,
+    Shared,
+}
+
 #[derive(Default)]
 pub struct ParseClassOptions<'a> {
+    pub(crate) struct_kind: StructKind,
     pub(crate) ts_decorators: &'a [Expr],
     pub(crate) allow_ts_decorators: bool,
     pub(crate) is_type_script_declare: bool,

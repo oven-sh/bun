@@ -42,3 +42,21 @@ src/js/internal/repl/completion.js
 src/js/internal/repl/await.js
 src/js/internal/repl/acorn.js
 src/js/internal/repl/acorn-walk.js
+
+# These use the `struct` / `shared struct` syntax, which prettier's parser does not
+# accept (bun fmt: "Unexpected keyword or identifier")
+test/js/bun/structs/condition.test.ts
+test/js/bun/structs/shared-array.test.ts
+test/js/bun/structs/shared-conformance.test.ts
+test/js/bun/structs/shared-struct.test.ts
+test/js/bun/structs/struct-typescript.test.ts
+test/js/bun/structs/struct-conformance.test.ts
+test/js/bun/structs/struct-export.test.ts
+test/js/bun/structs/struct.test.ts
+test/js/bun/structs/sync.test.ts
+test/js/bun/structs/vm.test.ts
+test/js/bun/structs/fixtures/exported-struct.ts
+test/js/bun/structs/fixtures/default-struct.ts
+test/js/bun/structs/fixtures/default-shared-struct.ts
+test/js/bun/structs/fixtures/default-named-struct.ts
+test/js/bun/structs/fixtures/default-extends-struct.ts

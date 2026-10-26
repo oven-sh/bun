@@ -44,6 +44,8 @@ members = [
   "src/sourcemap",
   "src/sql",
   "src/sys",
+  "src/shared_struct",
+  "src/shared_struct_jsc",
   "src/threading",
   "src/valkey",
   "src/watcher",
@@ -411,6 +413,8 @@ bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }
+bun_shared_struct = { path = "src/shared_struct" }
+bun_shared_struct_jsc = { path = "src/shared_struct_jsc" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }

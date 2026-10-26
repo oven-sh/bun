@@ -360,3 +360,263 @@ export var __exportCjs = /* @__PURE__ */ (target, getters, setters) => {
       configurable: true,
     });
 };
+
+// TC39 structs (https://github.com/tc39/proposal-structs), unshared and shared.
+//
+// The parser lowers `struct S extends P { ... }` to a class that is only a shell around the calls below
+// (`lower_struct_class` in src/js_parser/parse/mod.rs):
+//
+//   h(P, shared)         the `extends` clause: checks that `P` is a struct of the same kind and returns it
+//   t(kind, key, init)   the key of a method that stands for a field initializer or the constructor
+//   d(S, shared, noProto)  the first static element: collects those methods and sets `S` up
+//   z(S)                 the last static element: seals `S.prototype` once the static elements ran
+//   b(newTarget, entry)  the start of the class constructor, e(...) its end
+//   r()                  the struct whose constructor is running: the first statement of that constructor keeps it
+//   s(this, struct)      the target of `super(...)` inside a struct constructor
+//
+// `new S(...)` therefore runs the class constructors of the whole chain, which only allocate the instance and
+// add its private names, and `e` then does what the proposal's [[Construct]] does: defines every declared field
+// as `undefined`, seals the instance, runs the field initializers of the chain (parent first), then the
+// constructor of `S` itself with `this` bound. A parent's constructor runs only when that one calls `super()`.
+export var __structBase = /* @__PURE__ */ (() => {
+  // struct constructor -> { shared, records, initializer, parent, brands, chain }
+  var infos = new WeakMap();
+  // unshared instance -> the brands of its struct and of every struct it extends, which struct methods check
+  var brandsOf = new WeakMap();
+  // every shared struct instance, native or emulated
+  var sharedObjects = new WeakSet();
+  var emulatedObjects = new WeakSet();
+  // key of a method standing for a field initializer or a constructor -> what it stands for
+  var tags = new WeakMap();
+  // the struct whose chain of class constructors is running, so a parent's constructor can tell it was
+  // reached through `super()` of the `new` that started it
+  var active;
+  // the struct whose constructor is running (the target of `super(...)` is its parent's)
+  var running;
+  // `{ create(names) }` from src/js/internal/structs.ts: the native shared structs
+  var native;
+
+  // The parent of a struct whose `extends` expression is null but is not the literal `null`.
+  var NullBase = function () {};
+  NullBase.prototype = null;
+
+  var keyOf = key => Reflect.ownKeys({ [key]: 0 })[0];
+
+  var isShareable = value =>
+    value !== null && typeof value === "object" ? sharedObjects.has(value) : typeof value !== "function";
+
+  var brandedMethod = (target, brand) => {
+    // A struct method exotic object: callable, not a constructor, without an own `length`.
+    var wrapper = {
+      method(...args) {
+        var brands = brandsOf.get(this);
+        if (brands === undefined || !brands.has(brand))
+          throw new TypeError("Method called on an incompatible receiver; struct methods are not generic");
+        return Reflect.apply(target, this, args);
+      },
+    }.method;
+    delete wrapper.length;
+    Reflect.defineProperty(wrapper, "name", { value: target.name });
+    return wrapper;
+  };
+
+  // Only plain methods are non-generic; accessors, generators and async methods are not wrapped.
+  // A plain method has the Function.prototype of its realm as its prototype and no `prototype` property of its own; a generator,
+  // an async function and an async generator have another prototype (and a generator has `prototype`).
+  var brandMethods = (proto, brand, functionPrototype) => {
+    for (var key of Reflect.ownKeys(proto)) {
+      var desc = Reflect.getOwnPropertyDescriptor(proto, key);
+      var method = desc.value;
+      if (
+        typeof method !== "function" ||
+        Reflect.getPrototypeOf(method) !== functionPrototype ||
+        Reflect.getOwnPropertyDescriptor(method, "prototype") !== undefined
+      )
+        continue;
+      desc.value = brandedMethod(method, brand);
+      Reflect.defineProperty(proto, key, desc);
+    }
+  };
+
+  var heritage = (parent, shared) => {
+    if (parent === null) return NullBase;
+    var info = typeof parent === "function" ? infos.get(parent) : undefined;
+    if (info === undefined || info.shared !== shared)
+      throw new TypeError(
+        shared
+          ? "A shared struct can only extend a shared struct or null"
+          : "A struct can only extend a struct or null",
+      );
+    return parent;
+  };
+
+  var tag = (kind, key, hasInitializer) => {
+    var symbol = Symbol();
+    tags.set(symbol, { kind, key: kind === 0 ? keyOf(key) : undefined, hasInitializer });
+    return symbol;
+  };
+
+  var setup = (struct, shared, nullPrototype) => {
+    var proto = struct.prototype;
+    var parent = infos.get(Reflect.getPrototypeOf(struct));
+    var records = [];
+    var initializer;
+    for (var symbol of Object.getOwnPropertySymbols(proto)) {
+      var stands = tags.get(symbol);
+      if (stands === undefined) continue;
+      tags.delete(symbol);
+      var method = proto[symbol];
+      delete proto[symbol];
+      if (stands.kind === 2) initializer = method;
+      else if (stands.kind === 0)
+        records.push({ field: true, key: stands.key, init: stands.hasInitializer ? method : undefined });
+      else records.push({ field: false, key: undefined, init: method });
+    }
+    if (nullPrototype) Reflect.setPrototypeOf(proto, null);
+    // The prototype of a struct has no `constructor` property (a method that a script gave that name by a computed key stays).
+    var own = Reflect.getOwnPropertyDescriptor(proto, "constructor");
+    if (own !== undefined && own.value === struct) Reflect.deleteProperty(proto, "constructor");
+    var root = parent === undefined ? struct : parent.root;
+    var brand = {};
+    var brands = new Set(parent === undefined ? [] : parent.brands);
+    brands.add(brand);
+    if (!shared) {
+      var functionPrototype = Reflect.getPrototypeOf(root);
+      if (functionPrototype === NullBase) functionPrototype = Reflect.getPrototypeOf(NullBase);
+      brandMethods(proto, brand, functionPrototype);
+    }
+    var info = {
+      shared,
+      records,
+      initializer,
+      parent,
+      root,
+      brands,
+      chain: parent === undefined ? [] : parent.chain.slice(),
+      names: undefined,
+    };
+    info.chain.push(info);
+    infos.set(struct, info);
+  };
+
+  var seal = struct => {
+    Object.seal(struct.prototype);
+    if (infos.get(struct).shared) Object.seal(struct);
+  };
+
+  var begin = (newTarget, isEntry) => {
+    if (isEntry) active = newTarget;
+    else if (active !== newTarget)
+      throw new TypeError("A struct cannot be subclassed or constructed through another constructor");
+  };
+
+  var defineEmulatedField = (self, name) => {
+    var value;
+    Reflect.defineProperty(self, name, {
+      get: () => value,
+      set: v => {
+        if (!isShareable(v)) throw new TypeError("Shared struct fields can only hold primitives or shared structs");
+        value = v;
+      },
+      enumerable: true,
+      configurable: false,
+    });
+  };
+
+  // No native shared structs (this code runs somewhere else than Bun): an object of this agent only, with the
+  // same layout and null prototype.
+  var emulatedShared = names => {
+    var self = Object.create(null);
+    sharedObjects.add(self);
+    emulatedObjects.add(self);
+    for (var name of names) defineEmulatedField(self, name);
+    Reflect.preventExtensions(self);
+    return self;
+  };
+
+  var createShared = info => {
+    var names = info.names;
+    if (names === undefined) {
+      names = info.names = [];
+      for (var level of info.chain)
+        for (var record of level.records) if (record.field && !names.includes(record.key)) names.push(record.key);
+    }
+    // Reading `Reflect.canBeShared` installs the native structs, whose module hands the hook over through `n`.
+    if (native === undefined && typeof Reflect.canBeShared === "function" && native === undefined) {
+      // nothing else to do
+    }
+    if (native === undefined) return emulatedShared(names);
+    var created = native.create(names);
+    sharedObjects.add(created);
+    return created;
+  };
+
+  var defineField = (self, key, value) => {
+    if (emulatedObjects.has(self)) self[key] = value;
+    else Object.defineProperty(self, key, { value, writable: true, enumerable: true, configurable: false });
+  };
+
+  var runInitializer = (info, self, args) => {
+    var previous = running;
+    running = info;
+    try {
+      return Reflect.apply(info.initializer, self, args);
+    } finally {
+      running = previous;
+    }
+  };
+
+  var end = (self, newTarget, args, isEntry) => {
+    var info = infos.get(newTarget);
+    if (isEntry) active = undefined;
+    // The class constructors allocate an ordinary object; a shared struct is made once, by the first of them.
+    if (info.shared && !sharedObjects.has(self)) {
+      try {
+        self = createShared(info);
+      } catch (error) {
+        active = undefined;
+        throw error;
+      }
+    }
+    if (!isEntry) return self;
+    if (!info.shared) {
+      for (var level of info.chain)
+        for (var record of level.records) if (record.field) defineField(self, record.key, undefined);
+      Reflect.preventExtensions(self);
+      brandsOf.set(self, info.brands);
+    }
+    for (var level of info.chain) {
+      for (var record of level.records) {
+        if (record.init === undefined) continue;
+        if (record.field) defineField(self, record.key, Reflect.apply(record.init, self, []));
+        else Reflect.apply(record.init, self, []);
+      }
+    }
+    if (info.initializer !== undefined) runInitializer(info, self, args);
+    return self;
+  };
+
+  // `super(...)` in the constructor of the struct that `info` describes (see `r`): it calls the constructor of the parent of that
+  // struct, whenever it runs, with the `this` the constructor was running on.
+  var superCall =
+    (self, info) =>
+    (...args) => {
+      var parent = info === undefined ? undefined : info.parent;
+      if (parent === undefined) throw new TypeError("Super constructor is not a constructor");
+      return parent.initializer === undefined ? undefined : runInitializer(parent, self, args);
+    };
+
+  return {
+    h: heritage,
+    t: tag,
+    d: setup,
+    z: seal,
+    b: begin,
+    e: end,
+    s: superCall,
+    r: () => running,
+    n: hooks => {
+      if (native === undefined) native = hooks;
+    },
+  };
+})();

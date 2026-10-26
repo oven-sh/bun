@@ -261,6 +261,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) has_top_level_return: bool,
     pub(crate) latest_return_had_semicolon: bool,
+    /// While the constructor of a `struct` is being parsed, the symbol that holds the struct whose
+    /// constructor it is: `super(...)` there calls that struct's parent constructor on the existing
+    /// `this` (see `lower_struct_class`).
+    pub(crate) struct_ctor_self: Option<Ref>,
+    /// How many private names (`#x`) the parser has stored so far. A shared struct instance field
+    /// may not contain one, so the field parser compares this before and after the field.
+    pub(crate) private_name_uses: u32,
     pub(crate) has_import_meta: bool,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
@@ -5165,6 +5172,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn store_name_in_ref(&mut self, name: &'a [u8]) -> Ref {
+        if name.first() == Some(&b'#') {
+            self.private_name_uses += 1;
+        }
         if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
             if let Some(uses) = &mut self.parse_pass_symbol_uses {
                 if let Some(res) = uses.get_mut(name) {
@@ -9706,6 +9716,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_private_identifiers: false,
             has_top_level_return: false,
             latest_return_had_semicolon: false,
+            struct_ctor_self: None,
+            private_name_uses: 0,
             has_import_meta: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,

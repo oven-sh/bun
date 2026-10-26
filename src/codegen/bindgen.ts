@@ -2,6 +2,7 @@
 // Usage: bindgen.ts --sources=<crate>=<a.bind.ts>,.. --types-only=<b.bind.ts>,.. --codegen-path=<dir> --types-path=<dir> (emitBindgen in scripts/build/codegen.ts)
 
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -85,7 +86,10 @@ function sortTypes(file: SchemaFile): void {
 
 const args = argParse(["sources", "types-only", "codegen-path", "types-path"]);
 const codegenPath: string = args["codegen-path"];
-const sources = (args.sources as string)
+// `--sources=@<file>` reads the list from a file: with every schema listed, the command
+// line outgrows the 8191 characters cmd.exe accepts on Windows.
+const sourcesArg: string = args.sources as string;
+const sources = (sourcesArg.startsWith("@") ? readFileSync(sourcesArg.slice(1), "utf8").trim() : sourcesArg)
   .split(",")
   .filter(source => source.length > 0)
   .sort();

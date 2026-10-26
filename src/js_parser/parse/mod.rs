@@ -25,7 +25,7 @@ use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
     FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
-    StmtList, TypeParameterFlag,
+    StmtList, StructKind, TypeParameterFlag,
 };
 use bun_ast as js_ast;
 use bun_ast::expr::EFlags;
@@ -204,7 +204,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut opts = PropertyOpts {
                 is_class: true,
                 allow_ts_decorators: class_opts.allow_ts_decorators,
-                class_has_extends: extends.is_some(),
+                class_has_extends: extends.is_some() || class_opts.struct_kind != StructKind::None,
+                is_struct: class_opts.struct_kind != StructKind::None,
+                is_shared_struct: class_opts.struct_kind == StructKind::Shared,
                 has_argument_decorators: false,
                 ..Default::default()
             };
@@ -265,6 +267,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // The lowering declares private names and pushes scopes in the class body.
+        if class_opts.struct_kind != StructKind::None {
+            extends = p.lower_struct_class(
+                class_keyword.loc,
+                class_opts.struct_kind,
+                extends,
+                &mut properties,
+            );
+        }
+
         if class_opts.is_type_script_declare {
             p.pop_and_discard_scope(scope_index);
         } else {
@@ -292,6 +304,477 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (has_any_decorators || has_auto_accessor),
             inner_class_ref: js_ast::Ref::NONE,
         })
+    }
+
+    /// `__structBase.<name>`.
+    fn struct_helper(&mut self, loc: bun_ast::Loc, name: &'static [u8]) -> Expr {
+        let target = self.runtime_identifier(loc, b"__structBase");
+        self.new_expr(
+            E::Dot {
+                target,
+                name: name.into(),
+                name_loc: loc,
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// `__structBase.<name>(...args)`.
+    fn call_struct_helper(
+        &mut self,
+        loc: bun_ast::Loc,
+        name: &'static [u8],
+        args: &[Expr],
+    ) -> Expr {
+        let target = self.struct_helper(loc, name);
+        self.new_expr(
+            E::Call {
+                target,
+                args: ExprNodeList::from_slice(args),
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// The target of `super(...)` inside a struct constructor: `__structBase.s(this, self)`, a function that runs the
+    /// parent of the struct `self` holds on that `this`. `self` is the symbol that `struct_self_prologue` sets, so the parent is
+    /// the one of the struct whose constructor the call is written in, wherever and whenever the call runs.
+    pub(crate) fn struct_super_target(
+        &mut self,
+        loc: bun_ast::Loc,
+        struct_self: js_ast::Ref,
+    ) -> Expr {
+        let this = self.new_expr(E::This {}, loc);
+        let struct_self = self.new_expr(E::Identifier::init(struct_self), loc);
+        self.call_struct_helper(loc, b"s", &[this, struct_self])
+    }
+
+    /// `var self = __structBase.r();`, the first statement of a struct constructor: `self` is the struct whose constructor is running.
+    pub(crate) fn struct_self_prologue(
+        &mut self,
+        loc: bun_ast::Loc,
+        struct_self: js_ast::Ref,
+    ) -> Stmt {
+        let running = self.call_struct_helper(loc, b"r", &[]);
+        let binding = self.b(B::Identifier { r#ref: struct_self }, loc);
+        let decls = G::DeclList::from_slice(&[G::Decl {
+            binding,
+            value: Some(running),
+        }]);
+        self.s(
+            S::Local {
+                decls,
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    fn struct_number(&mut self, loc: bun_ast::Loc, value: f64) -> Expr {
+        self.new_expr(E::Number::new(value), loc)
+    }
+
+    fn struct_boolean(&mut self, loc: bun_ast::Loc, value: bool) -> Expr {
+        self.new_expr(E::Boolean { value }, loc)
+    }
+
+    /// Parses the initializer of a struct instance field, with the `=` already consumed. The
+    /// expression is parsed in the scopes of a method that takes no parameters (it becomes that
+    /// method's body in `struct_field_initializer_method`), so `this` is the instance and an arrow
+    /// function or class inside it sees the same scopes as in any method. Also returns where those
+    /// scopes are, which the method has to be created at.
+    pub(crate) fn parse_struct_field_initializer(&mut self) -> Result<(Expr, bun_ast::Loc), Error> {
+        let p = self;
+        let loc = p.lexer.loc();
+        let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionArgs, loc)?;
+        let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, loc)?;
+        let old = core::mem::replace(
+            &mut p.fn_or_arrow_data_parse,
+            FnOrArrowDataParse {
+                allow_super_property: true,
+                ..Default::default()
+            },
+        );
+        let expr = p.parse_expr(Level::Comma);
+        p.fn_or_arrow_data_parse = old;
+        p.pop_scope();
+        p.pop_scope();
+        Ok((expr?, loc))
+    }
+
+    /// The scopes of a method with no parameters and an empty body, for a struct field that has no
+    /// initializer.
+    pub(crate) fn push_empty_struct_initializer_scopes(&mut self, loc: bun_ast::Loc) {
+        let p = self;
+        let _ = p
+            .push_scope_for_parse_pass(js_ast::scope::Kind::FunctionArgs, loc)
+            .expect("unreachable");
+        let _ = p
+            .push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, loc)
+            .expect("unreachable");
+        p.pop_scope();
+        p.pop_scope();
+    }
+
+    /// The method that evaluates the initializer of a struct instance field once the instance is
+    /// sealed. A public field's method returns the value, `return init`, and the runtime defines the
+    /// field with it; for a private field the method assigns, `this.#p = init`. A public field
+    /// without an initializer gets a method with an empty body, which only marks the field. A
+    /// private field without an initializer has no method. The scopes of the method were pushed at
+    /// `loc` while the initializer was parsed.
+    pub(crate) fn struct_field_initializer_method(
+        &mut self,
+        key: Expr,
+        initializer: Option<Expr>,
+        loc: bun_ast::Loc,
+    ) -> Option<Expr> {
+        let p = self;
+        let stmts: bun_ast::StoreSlice<Stmt> = match (key.data, initializer) {
+            (js_ast::ExprData::EPrivateIdentifier(private), Some(init)) => {
+                let this = p.new_expr(E::This {}, init.loc);
+                let index = p.new_expr(E::PrivateIdentifier { ref_: private.ref_ }, key.loc);
+                let target = p.new_expr(
+                    E::Index {
+                        target: this,
+                        index,
+                        optional_chain: None,
+                        is_import_property_use: false,
+                    },
+                    key.loc,
+                );
+                let assign = p.new_expr(
+                    E::Binary {
+                        op: js_ast::op::Code::BinAssign,
+                        left: target,
+                        right: init,
+                    },
+                    init.loc,
+                );
+                let stmt = p.s(
+                    S::SExpr {
+                        value: assign,
+                        ..Default::default()
+                    },
+                    init.loc,
+                );
+                let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[stmt]);
+                bun_ast::StoreSlice::new_mut(stmts)
+            }
+            (js_ast::ExprData::EPrivateIdentifier(_), None) => return None,
+            (_, Some(init)) => {
+                let stmt = p.s(S::Return { value: Some(init) }, init.loc);
+                let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[stmt]);
+                bun_ast::StoreSlice::new_mut(stmts)
+            }
+            (_, None) => bun_ast::StoreSlice::<Stmt>::EMPTY,
+        };
+        let mut func = G::Fn {
+            open_parens_loc: loc,
+            body: G::FnBody { loc, stmts },
+            ..Default::default()
+        };
+        func.flags.insert(Flags::Function::IsUniqueFormalParameters);
+        Some(p.new_expr(E::Function { func }, loc))
+    }
+
+    /// `#__bunStruct in new.target`
+    fn struct_brand_check(&mut self, loc: bun_ast::Loc) -> Expr {
+        let ref_ = self.store_name_in_ref(b"#__bunStruct");
+        let left = self.new_expr(E::PrivateIdentifier { ref_ }, loc);
+        let right = self.new_expr(
+            E::NewTarget {
+                range: bun_ast::Range::NONE,
+            },
+            loc,
+        );
+        self.new_expr(
+            E::Binary {
+                op: js_ast::op::Code::BinIn,
+                left,
+                right,
+            },
+            loc,
+        )
+    }
+
+    /// `static #name = init;`
+    fn struct_static_private_field(
+        &mut self,
+        loc: bun_ast::Loc,
+        name: &'static [u8],
+        init: Expr,
+    ) -> G::Property {
+        let ref_ = self
+            .declare_symbol(js_ast::symbol::Kind::PrivateStaticField, loc, name)
+            .expect("unreachable");
+        let key = self.new_expr(E::PrivateIdentifier { ref_ }, loc);
+        let mut prop_flags = Flags::PropertySet::empty();
+        prop_flags.insert(Flags::Property::IsStatic);
+        G::Property {
+            kind: js_ast::g::PropertyKind::Normal,
+            flags: prop_flags,
+            key: Some(key),
+            initializer: Some(init),
+            ..Default::default()
+        }
+    }
+
+    /// The constructor of a lowered struct. It is the only code the engine runs for `new S(...)`;
+    /// the struct's own constructor and field initializers run from `__structBase.e`:
+    ///
+    /// ```js
+    /// constructor() {
+    ///   __structBase.b(new.target, #__bunStruct in new.target);
+    ///   super();                                        // a struct with a parent
+    ///   return __structBase.e(this, new.target, arguments, #__bunStruct in new.target);
+    /// }
+    /// ```
+    fn struct_constructor(&mut self, loc: bun_ast::Loc, derived: bool) -> G::Property {
+        let p = self;
+        let _ = p
+            .push_scope_for_parse_pass(js_ast::scope::Kind::FunctionArgs, loc)
+            .expect("unreachable");
+        let arguments_ref = p
+            .declare_symbol(
+                js_ast::symbol::Kind::Arguments,
+                loc,
+                crate::parser::ARGUMENTS_STR,
+            )
+            .expect("unreachable");
+        p.symbols[arguments_ref.inner_index() as usize].set_must_not_be_renamed(true);
+        let _ = p
+            .push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, loc)
+            .expect("unreachable");
+
+        let mut stmts = BumpVec::<Stmt>::with_capacity_in(3, p.arena);
+
+        let new_target = p.new_expr(
+            E::NewTarget {
+                range: bun_ast::Range::NONE,
+            },
+            loc,
+        );
+        let is_entry = p.struct_brand_check(loc);
+        let begin = p.call_struct_helper(loc, b"b", &[new_target, is_entry]);
+        stmts.push(p.s(
+            S::SExpr {
+                value: begin,
+                ..Default::default()
+            },
+            loc,
+        ));
+
+        if derived {
+            let target = p.new_expr(E::Super {}, loc);
+            let call = p.new_expr(
+                E::Call {
+                    target,
+                    ..Default::default()
+                },
+                loc,
+            );
+            stmts.push(p.s(
+                S::SExpr {
+                    value: call,
+                    ..Default::default()
+                },
+                loc,
+            ));
+        }
+
+        let this = p.new_expr(E::This {}, loc);
+        let new_target = p.new_expr(
+            E::NewTarget {
+                range: bun_ast::Range::NONE,
+            },
+            loc,
+        );
+        let arguments = p.new_expr(E::Identifier::init(arguments_ref), loc);
+        let is_entry = p.struct_brand_check(loc);
+        let end = p.call_struct_helper(loc, b"e", &[this, new_target, arguments, is_entry]);
+        stmts.push(p.s(S::Return { value: Some(end) }, loc));
+
+        p.pop_scope();
+        p.pop_scope();
+
+        let mut func = G::Fn {
+            open_parens_loc: loc,
+            arguments_ref,
+            body: G::FnBody {
+                loc,
+                stmts: bun_ast::StoreSlice::from_bump(stmts),
+            },
+            ..Default::default()
+        };
+        func.flags.insert(Flags::Function::IsUniqueFormalParameters);
+        let key = p.new_expr(E::EString::from_static(b"constructor"), loc);
+        let value = p.new_expr(E::Function { func }, loc);
+        let mut prop_flags = Flags::PropertySet::empty();
+        prop_flags.insert(Flags::Property::IsMethod);
+        G::Property {
+            kind: js_ast::g::PropertyKind::Normal,
+            flags: prop_flags,
+            key: Some(key),
+            value: Some(value),
+            ..Default::default()
+        }
+    }
+
+    /// Lowers the body of a `struct` / `shared struct` declaration to a class whose only real
+    /// constructor code is `struct_constructor`. Every part of the proposal's construction that a
+    /// class cannot express runs from `__structBase` (src/runtime.js):
+    ///
+    /// - `extends P` becomes `extends __structBase.h(P, shared)`, which checks that `P` is a struct
+    ///   (of the same kind); `extends null` is dropped and the prototype's parent is cleared by `d`.
+    /// - An instance field `a = init` becomes a method `[__structBase.t(0, "a", true)]() { return init }`,
+    ///   and `#p = init` keeps the declaration `#p;` and gets `[__structBase.t(1)]() { this.#p = init }`.
+    ///   The runtime defines the public fields on the new instance itself, seals it, then runs these.
+    /// - The constructor becomes `[__structBase.t(2)](...) { ... }`, called with `this` already bound;
+    ///   `super(...)` in it calls the parent's (`struct_super_target`).
+    /// - A static private field first in the class body, `static #__bunStruct = __structBase.d(this, ...)`,
+    ///   collects those methods and sets the struct up; it is also the brand `#__bunStruct in new.target`
+    ///   tests. One last in the body seals the prototype once the static elements have run.
+    fn lower_struct_class(
+        &mut self,
+        loc: bun_ast::Loc,
+        kind: StructKind,
+        extends: Option<Expr>,
+        properties: &mut BumpVec<'a, G::Property>,
+    ) -> Option<Expr> {
+        let p = self;
+        let shared = kind == StructKind::Shared;
+
+        let mut null_prototype = false;
+        let extends = match extends {
+            Some(parent) if matches!(parent.data, js_ast::ExprData::ENull(_)) => {
+                null_prototype = true;
+                None
+            }
+            Some(parent) => {
+                let shared_flag = p.struct_boolean(parent.loc, shared);
+                Some(p.call_struct_helper(parent.loc, b"h", &[parent, shared_flag]))
+            }
+            None => None,
+        };
+
+        let mut lowered = BumpVec::<G::Property>::with_capacity_in(properties.len() + 3, p.arena);
+        let mut has_constructor = false;
+        for mut prop in properties.drain(..) {
+            if prop.kind == js_ast::g::PropertyKind::ClassStaticBlock {
+                lowered.push(prop);
+                continue;
+            }
+            let key = prop.key.expect("class element has a key");
+            let is_static = prop.flags.contains(Flags::Property::IsStatic);
+            let is_private = matches!(key.data, js_ast::ExprData::EPrivateIdentifier(_));
+
+            if prop.flags.contains(Flags::Property::IsMethod) {
+                let is_constructor = !is_static
+                    && !prop.flags.contains(Flags::Property::IsComputed)
+                    && matches!(key.data, js_ast::ExprData::EString(name) if name.eql_comptime(b"constructor"));
+                if is_constructor {
+                    if has_constructor {
+                        p.log().add_error(
+                            Some(p.source),
+                            key.loc,
+                            b"A struct can have only one constructor",
+                        );
+                    }
+                    has_constructor = true;
+                    let tag_kind = p.struct_number(key.loc, 2.0);
+                    prop.key = Some(p.call_struct_helper(key.loc, b"t", &[tag_kind]));
+                    prop.flags.insert(Flags::Property::IsComputed);
+                } else if shared && !is_static {
+                    p.log().add_error(
+                        Some(p.source),
+                        key.loc,
+                        b"Shared structs cannot have instance methods",
+                    );
+                }
+                lowered.push(prop);
+                continue;
+            }
+
+            if is_static {
+                lowered.push(prop);
+                continue;
+            }
+
+            if prop.kind != js_ast::g::PropertyKind::Normal {
+                p.log().add_error(
+                    Some(p.source),
+                    key.loc,
+                    b"Struct fields cannot be auto-accessors",
+                );
+                lowered.push(prop);
+                continue;
+            }
+
+            if is_private {
+                if shared {
+                    p.log().add_error(
+                        Some(p.source),
+                        key.loc,
+                        b"Shared structs cannot have instance private names",
+                    );
+                }
+                // `#p;` stays and the engine adds it to the new instance; the initializer runs later.
+                let thunk = prop.initializer.take();
+                lowered.push(prop);
+                if let Some(thunk) = thunk {
+                    let tag_kind = p.struct_number(key.loc, 1.0);
+                    let tag = p.call_struct_helper(key.loc, b"t", &[tag_kind]);
+                    let mut prop_flags = Flags::PropertySet::empty();
+                    prop_flags.insert(Flags::Property::IsMethod);
+                    prop_flags.insert(Flags::Property::IsComputed);
+                    lowered.push(G::Property {
+                        kind: js_ast::g::PropertyKind::Normal,
+                        flags: prop_flags,
+                        key: Some(tag),
+                        value: Some(thunk),
+                        ..Default::default()
+                    });
+                }
+                continue;
+            }
+
+            // A public field: the runtime defines it on the instance, in declaration order.
+            let thunk = prop
+                .initializer
+                .take()
+                .expect("a struct field has an initializer method");
+            let has_initializer = match thunk.data {
+                js_ast::ExprData::EFunction(function) => function.func.body.stmts.len() > 0,
+                _ => false,
+            };
+            let tag_kind = p.struct_number(key.loc, 0.0);
+            let has_initializer = p.struct_boolean(key.loc, has_initializer);
+            prop.key = Some(p.call_struct_helper(key.loc, b"t", &[tag_kind, key, has_initializer]));
+            prop.value = Some(thunk);
+            prop.flags.insert(Flags::Property::IsMethod);
+            prop.flags.insert(Flags::Property::IsComputed);
+            lowered.push(prop);
+        }
+
+        let this = p.new_expr(E::This {}, loc);
+        let shared_flag = p.struct_boolean(loc, shared);
+        let null_prototype_flag = p.struct_boolean(loc, null_prototype);
+        let setup = p.call_struct_helper(loc, b"d", &[this, shared_flag, null_prototype_flag]);
+        let setup = p.struct_static_private_field(loc, b"#__bunStruct", setup);
+        lowered.insert(0, setup);
+
+        let this = p.new_expr(E::This {}, loc);
+        let seal = p.call_struct_helper(loc, b"z", &[this]);
+        let seal = p.struct_static_private_field(loc, b"#__bunStructSealed", seal);
+        lowered.push(seal);
+
+        let constructor = p.struct_constructor(loc, extends.is_some());
+        lowered.push(constructor);
+
+        *properties = lowered;
+        extends
     }
 
     pub(crate) fn parse_template_parts(
@@ -681,15 +1164,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions<'a>,
     ) -> Result<Stmt, Error> {
+        let class_keyword = self.lexer.range();
+        if self.lexer.token == T::TClass {
+            //marksyntaxfeature
+            self.lexer.next()?;
+        } else {
+            self.lexer.expected(T::TClass)?;
+        }
+        self.parse_class_stmt_after_keyword(loc, opts, class_keyword, StructKind::None)
+    }
+
+    /// Parses the rest of a class statement once the `class` (or, for structs,
+    /// the `struct`) keyword has been consumed.
+    pub(crate) fn parse_class_stmt_after_keyword(
+        &mut self,
+        loc: bun_ast::Loc,
+        opts: &mut ParseStatementOptions<'a>,
+        class_keyword: bun_ast::Range,
+        struct_kind: StructKind,
+    ) -> Result<Stmt, Error> {
         let p = self;
         let mut name: Option<js_ast::LocRef> = None;
-        let class_keyword = p.lexer.range();
-        if p.lexer.token == T::TClass {
-            //marksyntaxfeature
-            p.lexer.next()?;
-        } else {
-            p.lexer.expected(T::TClass)?;
-        }
 
         let is_identifier = p.lexer.token == T::TIdentifier;
 
@@ -738,6 +1233,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )?;
         }
         let mut class_opts = ParseClassOptions {
+            struct_kind,
             allow_ts_decorators: true,
             is_type_script_declare: opts.is_typescript_declare,
             ..Default::default()

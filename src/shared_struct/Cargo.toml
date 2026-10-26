@@ -1,0 +1,14 @@
+[package]
+name = "bun_shared_struct"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_collections.workspace = true
+bun_threading.workspace = true

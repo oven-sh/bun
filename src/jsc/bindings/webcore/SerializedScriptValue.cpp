@@ -198,6 +198,11 @@ enum SerializationTag {
     Bun__KeyObjectTag = 252,
     Bun__nodenet_BlockList = 251,
     Bun__NodePerformanceHooksHistogramTag = 250,
+    // SharedStruct, SharedArray, Mutex and Condition pass by reference: the payload is a nonce that names the shared object.
+    Bun__SharedStructTag = 249,
+    Bun__SharedArrayTag = 248,
+    Bun__MutexTag = 247,
+    Bun__ConditionTag = 246,
 
     ErrorTag = 255
 };
@@ -212,6 +217,21 @@ extern "C" JSC::EncodedJSValue BlockList__onStructuredCloneDeserialize(JSC::JSGl
 // shared backing is freed once the SerializedScriptValue holding the raw
 // pointer is gone.
 extern "C" void BlockList__onStructuredCloneDestroy(void*);
+
+// SharedStruct, SharedArray, Mutex and Condition (src/shared_struct_jsc/structured_clone.rs). All four share one payload, a nonce.
+// What Bun__SharedRef__kind returns; keep in step with the KIND_ constants in that file.
+enum SharedRefKind : uint8_t {
+    SharedRefKindNone = 0,
+    SharedRefKindStruct = 1,
+    SharedRefKindArray = 2,
+    SharedRefKindMutex = 3,
+    SharedRefKindCondition = 4,
+};
+extern "C" uint8_t Bun__SharedRef__kind(JSC::EncodedJSValue);
+// Registers the object and writes its nonce, which it returns. Release it with Bun__SharedRef__onStructuredCloneDestroy.
+extern "C" uint64_t Bun__SharedRef__onStructuredCloneSerialize(JSC::EncodedJSValue, CloneSerializer*);
+extern "C" JSC::EncodedJSValue Bun__SharedRef__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end);
+extern "C" void Bun__SharedRef__onStructuredCloneDestroy(uint64_t nonce);
 
 enum ArrayBufferViewSubtag {
     DataViewTag = 0,
@@ -730,6 +750,7 @@ public:
 #endif
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
         Vector<void*>& serializedBlockListRefs,
+        Vector<uint64_t>& serializedSharedRefs,
         SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
@@ -740,6 +761,7 @@ public:
             out, context, sharedBuffers, forStorage, forTransfer);
         auto code = serializer.serialize(value);
         serializedBlockListRefs = WTF::move(serializer.m_serializedBlockListRefs);
+        serializedSharedRefs = WTF::move(serializer.m_serializedSharedRefs);
         return code;
     }
 
@@ -1407,6 +1429,38 @@ private:
                 return true;
             }
 
+            // SharedStruct, SharedArray, Mutex and Condition: Rust tells which one it is (the generated classes are not visible here).
+            if (auto sharedKind = static_cast<SharedRefKind>(Bun__SharedRef__kind(JSValue::encode(obj))); sharedKind != SharedRefKindNone) {
+                if (!startObjectInternal(obj)) // handle duplicates
+                    return true;
+                // A reference to memory in this process means nothing to another process or to disk.
+                if (m_forTransfer == SerializationForCrossProcessTransfer::Yes || m_forStorage == SerializationForStorage::Yes) {
+                    write(ObjectTag);
+                    write(TerminatorTag);
+                    return true;
+                }
+                SerializationTag sharedTag = Bun__SharedStructTag;
+                switch (sharedKind) {
+                case SharedRefKindStruct:
+                    sharedTag = Bun__SharedStructTag;
+                    break;
+                case SharedRefKindArray:
+                    sharedTag = Bun__SharedArrayTag;
+                    break;
+                case SharedRefKindMutex:
+                    sharedTag = Bun__MutexTag;
+                    break;
+                case SharedRefKindCondition:
+                    sharedTag = Bun__ConditionTag;
+                    break;
+                case SharedRefKindNone:
+                    RELEASE_ASSERT_NOT_REACHED();
+                }
+                write(sharedTag);
+                m_serializedSharedRefs.append(Bun__SharedRef__onStructuredCloneSerialize(JSValue::encode(obj), this));
+                return true;
+            }
+
             if (auto* x509 = dynamicDowncast<Bun::JSX509Certificate>(obj)) {
                 if (checkForDuplicate(x509))
                     return true;
@@ -1978,6 +2032,7 @@ private:
     SerializationContext m_context;
     ArrayBufferContentsArray& m_sharedBuffers;
     Vector<void*> m_serializedBlockListRefs;
+    Vector<uint64_t> m_serializedSharedRefs;
 #if ENABLE(WEBASSEMBLY)
     WasmModuleArray& m_wasmModules;
     WasmMemoryHandleArray& m_wasmMemoryHandles;
@@ -3894,6 +3949,13 @@ private:
         case Bun__nodenet_BlockList:
             return readBunType(BlockList__onStructuredCloneDeserialize);
 
+        case Bun__SharedStructTag:
+        case Bun__SharedArrayTag:
+        case Bun__MutexTag:
+        case Bun__ConditionTag:
+            // A view over the same shared object, in this realm.
+            return readBunType(Bun__SharedRef__onStructuredCloneDeserialize);
+
         case Bun__X509CertificateTag:
             return readX509Certificate();
 
@@ -4163,6 +4225,8 @@ SerializedScriptValue::~SerializedScriptValue()
 {
     for (auto* ptr : m_serializedBlockListRefs)
         BlockList__onStructuredCloneDestroy(ptr);
+    for (uint64_t nonce : m_serializedSharedRefs)
+        Bun__SharedRef__onStructuredCloneDestroy(nonce);
 }
 
 SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, std::unique_ptr<ArrayBufferContentsArray>&& arrayBufferContentsArray)
@@ -4758,17 +4822,21 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
     std::unique_ptr<ArrayBufferContentsArray> sharedBuffers = makeUnique<ArrayBufferContentsArray>();
     Vector<void*> serializedBlockListRefs;
+    Vector<uint64_t> serializedSharedRefs;
     auto code = CloneSerializer::serialize(&lexicalGlobalObject, value, messagePorts, arrayBuffers,
 #if ENABLE(WEBASSEMBLY)
         wasmModules,
         wasmMemoryHandles,
 #endif
-        buffer, context, *sharedBuffers, serializedBlockListRefs, forStorage, forTransfer);
+        buffer, context, *sharedBuffers, serializedBlockListRefs, serializedSharedRefs, forStorage, forTransfer);
 
     auto releaseSerializedBlockListRefs = [&] {
         for (auto* ptr : serializedBlockListRefs)
             BlockList__onStructuredCloneDestroy(ptr);
         serializedBlockListRefs.clear();
+        for (uint64_t nonce : serializedSharedRefs)
+            Bun__SharedRef__onStructuredCloneDestroy(nonce);
+        serializedSharedRefs.clear();
     };
 
     // Serialize may throw an exception. This code looks weird, but we'll rethrow it
@@ -4808,6 +4876,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
         ));
     result->m_serializedBlockListRefs = WTF::move(serializedBlockListRefs);
+    result->m_serializedSharedRefs = WTF::move(serializedSharedRefs);
     return result;
 }
 

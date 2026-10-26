@@ -1,0 +1,90 @@
+name: Structs
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "feat/structs-*"
+  pull_request:
+    paths:
+      - "src/shared_struct/**"
+      - "src/shared_struct_jsc/**"
+      - "src/js_parser/**"
+      - "src/runtime.js"
+      - "test/js/bun/structs/**"
+      - ".github/workflows/structs.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: "1.4.4"
+  LLVM_VERSION_MAJOR: "23"
+  RUSTUP_TOOLCHAIN: nightly-2026-09-15
+
+jobs:
+  shared-struct-crate:
+    name: shared_struct unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+          ninja-targets: codegen clone-lolhtml clone-rust-argon2
+
+      - name: Test
+        run: cargo test -p bun_shared_struct
+
+  bun-structs:
+    name: Build Bun and run the struct tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Setup system deps
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${LLVM_VERSION_MAJOR} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cmake ninja-build nasm clang-${LLVM_VERSION_MAJOR} lld-${LLVM_VERSION_MAJOR} llvm-${LLVM_VERSION_MAJOR} libc++-${LLVM_VERSION_MAJOR}-dev libc++abi-${LLVM_VERSION_MAJOR}-dev
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup override set "$RUSTUP_TOOLCHAIN"
+
+      - name: Build
+        run: |
+          bun install --frozen-lockfile
+          bun scripts/build.ts --profile=release
+
+      - name: Test
+        run: |
+          bun_bin="$(ls build/release/bun-profile build/release/bun 2>/dev/null | head -1)"
+          "$bun_bin" test test/js/bun/structs

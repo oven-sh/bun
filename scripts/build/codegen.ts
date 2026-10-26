@@ -936,10 +936,16 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   );
   const types = resolve(cfg.typesDir, "Bindgen.d.ts");
 
+  // The list of every schema outgrows cmd.exe's command-line limit, so pass it in a file.
+  const sourcesList = `${sources.bindgen.map(src => `${crates.get(src)}=${src}`).join(",")}`;
+  const sourcesFile = resolve(cfg.codegenDir, "bindgen-sources.txt");
+  mkdirSync(cfg.codegenDir, { recursive: true });
+  writeIfChanged(sourcesFile, sourcesList);
+
   n.build({
     outputs: [...cpp, ...headers, ...rust, types],
     rule: "codegen",
-    inputs: [...sources.bindgen, ...sources.bindgenCodegen],
+    inputs: [...sources.bindgen, ...sources.bindgenCodegen, sourcesFile],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -947,7 +953,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
       args: shJoin(cfg, [
         script,
         // Every schema: build/types is shared by every profile, so Bindgen.d.ts describes them all.
-        `--sources=${sources.bindgen.map(src => `${crates.get(src)}=${src}`).join(",")}`,
+        `--sources=@${sourcesFile}`,
         typesOnlyFlag(cfg, sources),
         `--codegen-path=${cfg.codegenDir}`,
         `--types-path=${cfg.typesDir}`,

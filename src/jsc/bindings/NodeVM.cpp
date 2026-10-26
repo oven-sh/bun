@@ -496,6 +496,70 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
     return program;
 }
 
+// `struct` / `shared struct` declarations: JavaScriptCore does not parse them and vm sources do not pass through Bun's
+// transpiler, so a source that might declare one is lowered to plain classes by internal/structs.ts first. The lowered
+// text starts with a marker and calls `__structBase`, which `installStructBase` puts in the realm that runs it.
+static JSObject* loadStructsModule(JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* realm = defaultGlobalObject(globalObject);
+    JSValue moduleValue = realm->internalModuleRegistry()->requireId(realm, vm, Bun::InternalModuleRegistry::Field::InternalStructs);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSObject* surface = moduleValue.getObject();
+    RELEASE_ASSERT(surface);
+    return surface;
+}
+
+// `kind`: 0 a script, 1 the body of a function, 2 a module. Returns `source` itself unless it was lowered; check for an
+// exception, a declaration that is not valid throws a SyntaxError.
+WTF::String lowerStructSyntax(JSGlobalObject* globalObject, const WTF::String& source, int kind)
+{
+    // The cheap pre-scan: every source without the word is left alone and loads nothing.
+    if (!source.contains("struct"_s))
+        return source;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* surface = loadStructsModule(globalObject);
+    RETURN_IF_EXCEPTION(scope, source);
+    auto* realm = defaultGlobalObject(globalObject);
+    JSValue lower = surface->get(realm, Identifier::fromString(vm, "lowerStructSyntax"_s));
+    RETURN_IF_EXCEPTION(scope, source);
+    MarkedArgumentBuffer args;
+    args.append(jsString(vm, source));
+    args.append(jsNumber(kind));
+    JSValue result = JSC::profiledCall(realm, ProfilingReason::API, lower, JSC::getCallData(lower), jsUndefined(), args);
+    RETURN_IF_EXCEPTION(scope, source);
+    WTF::String lowered = result.toWTFString(realm);
+    RETURN_IF_EXCEPTION(scope, source);
+    return lowered;
+}
+
+bool hasLoweredStructs(WTF::StringView source)
+{
+    return source.startsWith(StringView("/*bun:structs*/"_s));
+}
+
+// Gives `target`, the realm that is going to run a lowered source, the `__structBase` it calls. A property the realm
+// has already is left as it is.
+void installStructBase(JSGlobalObject* globalObject, JSGlobalObject* target)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Identifier name = Identifier::fromString(vm, "__structBase"_s);
+    if (target->getDirect(vm, name))
+        return;
+    JSObject* surface = loadStructsModule(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    auto* realm = defaultGlobalObject(globalObject);
+    JSValue structBase = surface->get(realm, Identifier::fromString(vm, "structBase"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    MarkedArgumentBuffer args;
+    JSValue helper = JSC::profiledCall(realm, ProfilingReason::API, structBase, JSC::getCallData(structBase), jsUndefined(), args);
+    RETURN_IF_EXCEPTION(scope, );
+    target->putDirect(vm, name, helper, static_cast<unsigned>(PropertyAttribute::DontEnum));
+}
+
 // cachedData is a function of the source alone: every nested function is generated now (not whichever ones this
 // process happens to have run), with the default code-generation mode (no debugger/profiler opcodes), independently of
 // what the VM's CodeCache holds.
@@ -1041,6 +1105,11 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     addressOfGlobalThis()->set(vm, this, NodeVMGlobalProxy::create(vm, this));
     setPrototypeDirect(vm, jsNull());
 
+    // `Atomics.Mutex`, `Atomics.Condition`, `Reflect.canBeShared` and `SharedArray` are lazy here too, as in the default
+    // realm. The sandbox is not set yet, so the context's own builtins are the ones that get them.
+    Zig::defineStructsSurfaceLazily(this);
+    RETURN_IF_EXCEPTION(scope, );
+
     // microtaskMode: "afterEvaluate" — give this context its own microtask
     // queue, like Node's contextify own_microtask_queue. Microtasks enqueued
     // for this global no longer land on the VM's default queue (which the
@@ -1511,6 +1580,14 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     // Prepare the function code by combining the parameters and body
     String sourceString = codeArg.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // A body that declares structs is lowered, and the context that compiles it gets the helper the lowering calls.
+    sourceString = lowerStructSyntax(globalObject, sourceString, 1);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (hasLoweredStructs(sourceString)) {
+        installStructBase(globalObject, options.parsingContext ? options.parsingContext : globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     // Create an ArgList with the parameters and function body for constructFunction
     MarkedArgumentBuffer constructFunctionArgs;

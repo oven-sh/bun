@@ -881,6 +881,12 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM&);
 // The Structure a LazyClassStructure constructor allocates with for this newTarget. nullptr on exception.
 JSC::Structure* structureForNewTarget(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue newTarget, JSC::LazyClassStructure Zig::GlobalObject::* classStructure);
 
+// Makes `Atomics.Mutex`, `Atomics.Condition`, `Reflect.canBeShared` and `SharedArray` lazy in `realm`, which is a Zig global
+// or a node:vm context's global. Call once the realm's builtins exist.
+namespace Zig {
+void defineStructsSurfaceLazily(JSC::JSGlobalObject* realm);
+}
+
 inline void* bunVM(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject)) {

@@ -1073,7 +1073,12 @@ impl<'d> Desk<'d, '_, '_> {
         if let Some(settings) = params.get(b"initializationOptions") {
             server.settings.lock().read(settings, server.features());
         }
-        let Settings { lints, formats, .. } = *server.settings.lock();
+        // What the build has, not what the settings turn on now: a setting that comes on later can't add a capability.
+        // While a half is off, its requests are answered with nothing.
+        let Features {
+            lint: lints,
+            format: formats,
+        } = server.features();
         let formats = Json::Bool(formats);
         let kinds = [QUICK_FIX, FIX_ALL].map(rpc::text).to_vec();
         let actions = match lints {

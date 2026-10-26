@@ -294,7 +294,7 @@ vim.api.nvim_create_autocmd("FileType", {
 })
 vim.api.nvim_create_autocmd("BufWritePre", {
   callback = function(args)
-    vim.lsp.buf.format({ bufnr = args.buf, name = "bun" })
+    vim.lsp.buf.format({ bufnr = args.buf, name = "bun", async = false })
   end,
 })
 ```

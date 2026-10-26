@@ -278,8 +278,18 @@ vim.api.nvim_create_autocmd("FileType", {
 })
 vim.api.nvim_create_autocmd("BufWritePre", {
   callback = function(args)
-    vim.lsp.buf.code_action({ context = { only = { "source.fixAll" } }, apply = true })
-    vim.lsp.buf.format({ bufnr = args.buf, name = "bun" })
+    -- The fixes first, and the write waits for them: vim.lsp.buf.code_action() would not.
+    local client = vim.lsp.get_clients({ bufnr = args.buf, name = "bun" })[1]
+    if client then
+      local params = vim.lsp.util.make_range_params(0, client.offset_encoding)
+      params.context = { diagnostics = {}, only = { "source.fixAll.bun" } }
+      local answer = client:request_sync("textDocument/codeAction", params, 1000, args.buf)
+      local action = answer and answer.result and answer.result[1]
+      if action and action.edit then
+        vim.lsp.util.apply_workspace_edit(action.edit, client.offset_encoding)
+      end
+    end
+    vim.lsp.buf.format({ bufnr = args.buf, name = "bun", async = false })
   end,
 })
 ```

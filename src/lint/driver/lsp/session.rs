@@ -170,11 +170,14 @@ impl Session<'_> {
         };
         let run = Run::new(options, environment);
         let linted = (|| -> Result<Linted, Fatal> {
+            let editor_text = text.clone();
             let mut linted = run.lint_text(loader, &context, text, how.with_types)?;
-            // Rules that look at several files now revisit the text, as `Run::execute` does with the files.
+            // Rules that look at several files now revisit the text, as `Run::execute` does with the files. It is the
+            // editor's text, not the file's: a result without one would be read from the file.
             let again = modules.complete(&|count, work| pool.for_each(count, 1, work));
             for result in &mut linted.results {
                 if again.contains(&paths::from_native(&result.path)) {
+                    result.text.get_or_insert_with(|| editor_text.clone());
                     context.lint_again(result)?;
                 }
             }

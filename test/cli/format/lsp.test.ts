@@ -75,8 +75,9 @@ describe.concurrent("bun fmt --lsp", () => {
         initializationOptions: { format: { enable: false } },
       });
       expect(result.capabilities.positionEncoding).toBe("utf-16");
-      expect(result.capabilities.documentFormattingProvider).toBe(false);
-      expect(result.capabilities.documentRangeFormattingProvider).toBe(false);
+      // The capability stays, so that the setting can come back on: the answers are empty while it is off.
+      expect(result.capabilities.documentFormattingProvider).toBe(true);
+      expect(result.capabilities.documentRangeFormattingProvider).toBe(true);
       client.notify("initialized");
       open(client, join(String(dir), "a.js"), "a  ;\n");
       expect((await format(client, join(String(dir), "a.js"))).result).toBeNull();
@@ -134,7 +135,9 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
       const { result } = await initialize(client, [String(dir)], {
         initializationOptions: { lint: { enable: false } },
       });
-      expect(result.capabilities.codeActionProvider).toBe(false);
+      expect(result.capabilities.codeActionProvider).toEqual(
+        lints ? { codeActionKinds: ["quickfix", "source.fixAll.bun"] } : false,
+      );
       client.notify("initialized");
       const path = join(String(dir), "a.js");
       open(client, path, "debugger;\n");
@@ -191,7 +194,9 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
       const { result } = await initialize(client, [String(dir)], {
         initializationOptions: { lint: { enable: false } },
       });
-      expect(result.capabilities.codeActionProvider).toBe(false);
+      expect(result.capabilities.codeActionProvider).toEqual(
+        lints ? { codeActionKinds: ["quickfix", "source.fixAll.bun"] } : false,
+      );
       expect(result.capabilities.documentFormattingProvider).toBe(true);
       client.notify("initialized");
       const path = join(String(dir), "a.js");

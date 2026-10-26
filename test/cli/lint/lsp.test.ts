@@ -212,6 +212,37 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  // import/no-cycle follows the imports of every file before it reports, and then lints the document a second time.
+  test(
+    "lints the editor's text, not the file's, when a rule looks at the other files first",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        ".oxlintrc.json": `{ "plugins": ["import"], "rules": { "import/no-cycle": "error" } }`,
+        "src/a.js": `import "./b.js";\n`,
+        "src/b.js": `export const b = 1;\n`,
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "src", "b.js");
+      // In the editor b.js imports a.js, which closes a cycle. On disk it does not.
+      open(client, path, `// not saved\nimport "./a.js";\n`);
+      const published = await client.diagnostics(path);
+      expect(published.params.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "import/no-cycle",
+          range: { start: { line: 1, character: 7 }, end: { line: 1, character: 15 } },
+        }),
+      ]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test(
     "cancels the requests of a workspace folder that is removed, and formats its files with the defaults afterwards",
     async () => {

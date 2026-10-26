@@ -1979,6 +1979,46 @@ describe("bundler", () => {
     },
     run: { file: "/dist/js/app.js", stdout: "lib" },
   });
+  // `require()`, `require.resolve()` and `import()` print the path the same way.
+  itBundled("edgecase/ExternalFileRelativeToOutputFileCJS", {
+    files: {
+      "/src/entry.js": /* js */ `
+        const lib = require("../vendor/lib.cjs");
+        const resolved = require.resolve("../vendor/lib.cjs");
+        import("../vendor/lib.cjs").then(ns => console.log(lib.id, ns.default.id, resolved === require.resolve(resolved)));
+      `,
+      "/vendor/lib.cjs": `module.exports = { id: "lib" };`,
+    },
+    format: "cjs",
+    target: "node",
+    external: ["./vendor/lib.cjs"],
+    outdir: "/out/nested",
+    onAfterBundle(api) {
+      const entry = api.readFile("/out/nested/entry.js");
+      expect(entry).toContain(`require("../../vendor/lib.cjs")`);
+      expect(entry).toContain(`require.resolve("../../vendor/lib.cjs")`);
+      expect(entry).toContain(`import("../../vendor/lib.cjs")`);
+    },
+    run: { file: "/out/nested/entry.js", stdout: "lib lib true" },
+  });
+  // The directory of an output file is known before its hash is.
+  itBundled("edgecase/ExternalFileRelativeToOutputFileHashedDirectory", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import lib from "./lib.js";
+        console.log(lib.id);
+      `,
+      "/src/lib.js": `export default { id: "lib" };`,
+    },
+    external: ["./src/lib.js"],
+    outdir: "/out",
+    entryNaming: "[hash]/[name].[ext]",
+    onAfterBundle(api) {
+      const [hashed] = readdirSync(join(api.root, "out"));
+      const imports = new Bun.Transpiler().scanImports(api.readFile(`/out/${hashed}/entry.js`)).map(i => i.path);
+      expect(imports).toEqual(["../../src/lib.js"]);
+    },
+  });
   // Same, when an onResolve plugin declines and the native resolver runs second.
   itBundled("edgecase/ExternalFileRelativeToOutputFileAfterPlugin", {
     files: {

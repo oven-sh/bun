@@ -328,6 +328,41 @@ describe("bundler metafile", () => {
     expect(foundExternal).toBe(true);
   });
 
+  test("an external file matched by path is listed like an input, and printed relative to the output", async () => {
+    using dir = tempDir("metafile-external-file", {
+      "src/entry.js": `import lib from "../lib.js"; console.log(lib);`,
+      "lib.js": `export default 1;`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const build = await Bun.build({ entrypoints: ["./src/entry.js"], external: ["./lib.js"], metafile: true });
+          console.log(JSON.stringify({
+            imports: build.metafile.inputs["src/entry.js"].imports,
+            // No outdir: the output is relative to the working directory.
+            printed: new Bun.Transpiler().scanImports(await build.outputs[0].text()).map(i => i.path),
+          }));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      imports: [{ path: "lib.js", kind: "import-statement", original: "../lib.js", external: true }],
+      printed: ["./lib.js"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("metafile with code splitting", async () => {
     using dir = tempDir("metafile-splitting-test", {
       "a.js": `import { shared } from "./shared.js"; console.log("a", shared);`,

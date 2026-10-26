@@ -6554,11 +6554,11 @@ pub(crate) mod __gated_printer {
             {
                 return text;
             }
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let rel = bun_paths::resolve_path::relative_platform_buf::<
+            // `relative_platform` has no length limit, unlike the `_buf` variant.
+            let rel = bun_paths::resolve_path::relative_platform::<
                 bun_paths::resolve_path::platform::Loose,
                 false,
-            >(&mut buf[..], self.options.output_dir, text);
+            >(self.options.output_dir, text);
             if rel.starts_with(b"./")
                 || rel.starts_with(b"../")
                 || rel == b".."

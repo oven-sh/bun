@@ -2604,8 +2604,8 @@ test.skipIf(isWindows)(
 describe.concurrent("Bun.build with a path longer than the path buffer", () => {
   const components = Math.ceil((MAX_PATH_BYTES * 1.25) / 201);
 
-  async function run(script: string) {
-    using dir = tempDir("bun-build-long-path", {});
+  async function run(script: string, files: Record<string, string> = {}) {
+    using dir = tempDir("bun-build-long-path", files);
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -2657,6 +2657,28 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
         console.log(build.success, build.outputs.map(output => output.path.length > long.length));
       `),
     ).toEqual({ stdout: "true [ true, true ]\n", stderr: "", exitCode: 0 });
+  });
+
+  test("prints an external file relative to an output directory that is too long to open", async () => {
+    // `../lib.js` matches the external by its resolved path, so it is printed relative to the chunk's directory.
+    expect(
+      await run(
+        `
+        const build = await Bun.build({
+          entrypoints: ["./src/entry.js"],
+          external: ["./lib.js"],
+          naming: long + "/[name].[ext]",
+          throw: false,
+        });
+        const text = build.success ? await build.outputs[0].text() : "";
+        console.log(build.success, text.includes('from "' + Buffer.alloc(${components * 3}, "../").toString() + 'lib.js"'));
+      `,
+        {
+          "src/entry.js": `import lib from "../lib.js"; console.log(lib);`,
+          "lib.js": `export default 1;`,
+        },
+      ),
+    ).toEqual({ stdout: "true true\n", stderr: "", exitCode: 0 });
   });
 
   test("fails the build when a naming template expands to a path that is too long to write", async () => {

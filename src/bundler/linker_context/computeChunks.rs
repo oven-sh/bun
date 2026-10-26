@@ -766,7 +766,7 @@ pub(crate) fn compute_chunks(
         }
     }
 
-    {
+    if bv2.graph.has_output_relative_import_paths {
         let opts = &bv2.transpiler().options;
         let output_base: &[u8] = if !opts.output_dir.is_empty() {
             &opts.output_dir
@@ -776,16 +776,16 @@ pub(crate) fn compute_chunks(
         };
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
         let sanitize_parent_dirs = !this.options.compile_mode.is_executable();
-        let mut join_buf = bun_paths::path_buffer_pool::get();
+        // A naming template can expand to more than a path buffer holds.
+        let mut spill: Vec<u8> = Vec::new();
         for chunk in chunks.iter_mut() {
             let chunk_dir = chunk.template.rel_dir(sanitize_parent_dirs);
-            chunk.output_dir_abs = Box::from(resolve_path::join_abs_string_buf::<
-                bun_paths::platform::Auto,
-            >(
-                top_level_dir,
-                &mut join_buf[..],
-                &[output_base, &chunk_dir],
-            ));
+            chunk.output_dir_abs =
+                Box::from(resolve_path::join_abs_string_spill::<
+                    bun_paths::platform::Auto,
+                >(
+                    top_level_dir, &mut spill, &[output_base, &chunk_dir]
+                ));
         }
     }
 

@@ -6504,7 +6504,7 @@ pub mod bv2_impl {
         /// For a relative JS specifier that matched an `external` file by path: the absolute
         /// path to store on the record (`PRINT_PATH_RELATIVE_TO_OUTPUT`). `None` otherwise.
         fn external_file_path(
-            &self,
+            &mut self,
             specifier: &[u8],
             kind: ImportKind,
             resolved: &Fs::Path<'static>,
@@ -6517,6 +6517,7 @@ pub mod bv2_impl {
             {
                 return None;
             }
+            self.graph.has_output_relative_import_paths = true;
             Some(path_as_static(
                 &self
                     .path_with_pretty_initialized(resolved, target)

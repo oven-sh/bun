@@ -698,9 +698,6 @@ impl<'a> Parser<'a> {
             p.should_fold_typescript_constant_expressions = true;
         }
 
-        // A lazy export (JSON, text, a file path) is not CommonJS that the unwrap list converts.
-        p.unwrap_all_requires = false;
-
         // If we added to `p.symbols` it's going to fuck up all the indices
         // in the `symbols` array.
         debug_assert!(p.symbols.len() == 0);
@@ -1040,6 +1037,11 @@ impl<'a> Parser<'a> {
             // The bundler requires a part for generated module wrappers. This
             // part must be at the start as it is referred to by index.
             before.push(js_ast::Part::default());
+
+            // Only a CommonJS file: an ES module is not one, and a lazy export never gets here.
+            p.unwrap_all_requires = !p.has_es_module_syntax
+                && p.options.module_type != options::ModuleType::Esm
+                && crate::p::is_in_unwrapped_package(&p.options, source.path.text);
         }
 
         // --inspect-brk

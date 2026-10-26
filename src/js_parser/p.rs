@@ -348,7 +348,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// beside the real count rather than decremented from it so the minifier's
     /// single-use substitution still sees every use.
     pub(crate) namespace_tracked_uses: HashMap<Ref, u32>,
-    /// The file is CommonJS in a package of `unwrap_commonjs_packages`.
+    /// The file is CommonJS in a package of `unwrap_commonjs_packages`. `Parser::_parse` is the only writer.
     pub(crate) unwrap_all_requires: bool,
 
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
@@ -3249,10 +3249,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || self.esm_import_keyword.len > 0
             || self.esm_export_keyword.len > 0
             || self.top_level_await_keyword.len > 0;
-        // The unwrap list converts CommonJS files. An ES module, by syntax or by type, is not one.
-        self.unwrap_all_requires = self.unwrap_all_requires
-            && !self.has_es_module_syntax
-            && self.options.module_type != options::ModuleType::Esm;
 
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
@@ -7231,6 +7227,31 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     Some(pkgname)
 }
 
+/// Is `path` a file of a package in `unwrap_commonjs_packages`? React and react-dom below 18 are not.
+pub(crate) fn is_in_unwrapped_package(opts: &ParserOptions<'_>, path: &[u8]) -> bool {
+    if opts.output_format == options::Format::Cjs {
+        return false;
+    }
+    let path = fs::Path {
+        text: path,
+        pretty: path,
+        ..Default::default()
+    };
+    let Some(pkg) = path_package_name(&path) else {
+        return false;
+    };
+    if !opts.features.should_unwrap_require(pkg) {
+        return false;
+    }
+    if pkg == b"react" || pkg == b"react-dom" {
+        let version = opts.package_version;
+        if version.len() > 2 && (version[0] == b'0' || (version[0] == b'1' && version[1] < b'8')) {
+            return false;
+        }
+    }
+    true
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
@@ -9255,6 +9276,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
         }
 
+        debug_assert!(
+            !self.unwrap_all_requires
+                || (!self.has_es_module_syntax
+                    && self.options.module_type != options::ModuleType::Esm
+                    && exports_kind != js_ast::ExportsKind::None),
+            "unwrap_all_requires is only for a CommonJS file that `_parse` classified"
+        );
         let force_cjs_to_esm = self.unwrap_all_requires
             || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
 
@@ -9620,38 +9648,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             opts.features.emit_decorator_metadata = false;
         }
 
-        let unwrap_all_requires = 'brk: {
-            if opts.bundle && opts.output_format != options::Format::Cjs {
-                // `bun_paths::fs::Path<'static>` is the
-                // crate-local minimal stub (no `pretty`, no `package_name()`),
-                // so reuse the free `path_package_name` body via a borrowed
-                // `bun_paths::fs::Path` view over the same `text`. `pretty`
-                // is irrelevant once `node_modules/` is found in `text`; when
-                // it isn't, the result won't match any `unwrap_commonjs_packages`
-                // entry anyway. (Goes away if `bun_paths::fs::Path<'static>` is
-                // ever unified with the resolver `bun_paths::fs::Path`.)
-                let path_view = fs::Path {
-                    text: source.path.text,
-                    pretty: source.path.text,
-                    ..Default::default()
-                };
-                if let Some(pkg) = path_package_name(&path_view) {
-                    if opts.features.should_unwrap_require(pkg) {
-                        if pkg == b"react" || pkg == b"react-dom" {
-                            let version = opts.package_version;
-                            if version.len() > 2
-                                && (version[0] == b'0' || (version[0] == b'1' && version[1] < b'8'))
-                            {
-                                break 'brk false;
-                            }
-                        }
-                        break 'brk true;
-                    }
-                }
-            }
-            false
-        };
-
         let mut fn_or_arrow_data_parse = FnOrArrowDataParse::default();
         if opts.features.top_level_await || SCAN_ONLY {
             fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;
@@ -9754,7 +9750,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dynamic_import_copied_locals: Default::default(),
             dynamic_import_destructured_locals: Default::default(),
             namespace_tracked_uses: Default::default(),
-            unwrap_all_requires,
+            unwrap_all_requires: false,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,
             module_exports_rewrite_count: 0,

@@ -16,6 +16,11 @@ The workflow runs on a bare checkout (no `bun install`), so tests here may
 only import built-ins, relative paths, and `harness` (resolved via
 `test/tsconfig.json` paths).
 
+`cargo` in the workflow is the runner's stable toolchain (the step sets
+`RUSTUP_TOOLCHAIN`), not the nightly that `rust-toolchain.toml` pins, and
+there is no `vendor/`. A test can ask cargo about a crate outside the
+workspace, as `workspace-lints.test.ts` does. It cannot build the workspace.
+
 The workflow only triggers for the `paths:` listed in it. A lint that reads
 files outside those paths (for example `packages/bun-types/bun.d.ts` or the
 docs) needs them added there, or a change to those files is only checked by

@@ -3,6 +3,10 @@ name = "server"
 version = "0.1.0"
 edition = "2021"
 
+# Standalone crate: opt out of the repo-root [workspace], so that this builds
+# in place with its own Cargo.lock.
+[workspace]
+
 [dependencies]
 tonic = { version = "0.13.1", features = ["transport", "prost"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

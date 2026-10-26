@@ -377,10 +377,13 @@ fn message_with_type_and_level_(
     len: usize,
 ) -> JsResult<()> {
     let console: *mut ConsoleObject = vm_console(global);
-    // `defer console.default_indent +|= (message_type == StartGroup) as u16;`
+    // `defer console.default_indent +|= is_start_group as u16;`
     // Capture the raw pointer (Copy) by `move` so no borrow of the local is
     // held across the body; dereference only at scope-exit.
-    let is_start_group = message_type == MessageType::StartGroup;
+    let is_start_group = matches!(
+        message_type,
+        MessageType::StartGroup | MessageType::StartGroupCollapsed
+    );
     let _indent_guard = scopeguard::guard(console, move |console| {
         // SAFETY: see `vm_console` — points at the live boxed
         // `ConsoleObject` for this VM; JS-thread-only.
@@ -391,8 +394,9 @@ fn message_with_type_and_level_(
         }
     });
 
-    if message_type == MessageType::StartGroup && len == 0 {
-        // undefined is printed if passed explicitly.
+    if is_start_group && len == 0 {
+        // No label prints nothing, so return before the before-print hook of
+        // `bun test` runs. An explicit `undefined` is a label and is printed.
         return Ok(());
     }
 
@@ -550,8 +554,6 @@ fn message_with_type_and_level_(
         let w = unsafe { (*console).writer() };
         let _ = w.write_all(b"\n");
         let _ = w.flush();
-    } else if message_type != MessageType::Trace {
-        let _ = writer.write_all(b"undefined\n");
     }
 
     if message_type == MessageType::Trace {
@@ -1266,42 +1268,8 @@ impl ErrorDisplayLevel {
 }
 
 impl FormatOptions {
-    pub fn from_js(&mut self, global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<()> {
-        let arg1 = arguments[0];
-
-        if arg1.is_object() {
-            if let Some(opt) = arg1.get_truthy(global_this, "depth")? {
-                self.set_depth(global_this, opt)?;
-            }
-            if let Some(opt) = arg1.get_boolean_loose(global_this, "colors")? {
-                self.enable_colors = opt;
-            }
-            if let Some(opt) = arg1.get_boolean_loose(global_this, "sorted")? {
-                self.ordered_properties = opt;
-            }
-            if let Some(opt) = arg1.get_boolean_loose(global_this, "compact")? {
-                self.single_line = opt;
-            }
-        } else {
-            // formatOptions.show_hidden = arg1.toBoolean();
-            if !arguments.is_empty() {
-                self.set_depth(global_this, arg1)?;
-                if arguments.len() > 1 && !arguments[1].is_empty_or_undefined_or_null() {
-                    self.enable_colors = arguments[1].to_boolean();
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// `depth`: a non-negative integer (clamped to `u16::MAX`) or `Infinity`; non-numbers are
-    /// ignored. Decided on the number's value, so an integer JSC boxed as a double (a
-    /// `Float64Array` element, `-0`) is accepted like its int32 twin.
-    fn set_depth(&mut self, global_this: &JSGlobalObject, depth: JSValue) -> JsResult<()> {
-        if !depth.is_number() {
-            return Ok(());
-        }
-        let depth = depth.as_number();
+    /// `depth`: a non-negative integer (clamped to `u16::MAX`) or `Infinity`.
+    pub fn set_depth(&mut self, global_this: &JSGlobalObject, depth: f64) -> JsResult<()> {
         if depth.is_infinite() {
             self.max_depth = u16::MAX;
         } else if depth.trunc() != depth {
@@ -4526,7 +4494,7 @@ pub mod formatter {
                 }
             }
 
-            // `DOMFormData` is a C++-backed WebCore type — no `JsClass` derive,
+            // `DOMFormData` is a C++-backed WebCore type — no `JsClass` impl,
             // so use its dedicated `from_js` FFI downcast instead of `value.as_`.
             if crate::DOMFormData::from_js(value).is_some() {
                 if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
@@ -5911,8 +5879,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
 ///
 /// Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`)
 /// and `paste` is not a `bun_jsc` dep, so the full `Bun__ConsoleObject__<name>`
-/// export symbol is passed verbatim — same pattern as `export_callbacks!` in
-/// `runtime/api/BunObject.rs`.
+/// export symbol is passed verbatim.
 macro_rules! console_noop_hooks {
     (str: $($name:ident),+ $(,)?) => {$(
         #[unsafe(no_mangle)]

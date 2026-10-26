@@ -248,7 +248,7 @@ impl Graph<'_> {
     /// The page of a server-side HTML import, looked up by the path of its stand-in source.
     pub(crate) fn html_import_page(&self, stand_in: IndexInt) -> Option<IndexInt> {
         let path = &self.input_files.items_source()[stand_in as usize].path;
-        self.build_graphs[options::Target::Browser].get_path(path)
+        self.build_graphs[options::Target::Browser].get(path.text)
     }
 
     /// `(stand-in, page)` for each server-side HTML import whose page is in the graph.

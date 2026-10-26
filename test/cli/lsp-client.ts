@@ -63,7 +63,11 @@ export class Client {
   private readonly waiting = new Map<number, { resolve: (message: Message) => void; reject: (why: Error) => void }>();
   /** Notifications and requests of the server that nothing has awaited yet. */
   private readonly unclaimed: Message[] = [];
-  private readonly watchers: { test: (message: Message) => boolean; resolve: (message: Message) => void }[] = [];
+  private readonly watchers: {
+    test: (message: Message) => boolean;
+    resolve: (message: Message) => void;
+    reject: (why: Error) => void;
+  }[] = [];
   /** Everything the server has sent, in order. */
   readonly received: Message[] = [];
   private readonly stderr: Promise<string>;
@@ -80,8 +84,11 @@ export class Client {
 
   private async read() {
     for await (const chunk of this.proc.stdout) this.framer.push(chunk);
-    for (const { reject } of this.waiting.values()) reject(new Error("The server ended before it answered"));
+    const why = new Error("The server ended before it answered");
+    for (const { reject } of this.waiting.values()) reject(why);
     this.waiting.clear();
+    for (const { reject } of this.watchers) reject(why);
+    this.watchers.length = 0;
   }
 
   private take(message: Message) {
@@ -140,7 +147,7 @@ export class Client {
   notification(test: (message: Message) => boolean): Promise<Message> {
     const at = this.unclaimed.findIndex(test);
     if (at >= 0) return Promise.resolve(this.unclaimed.splice(at, 1)[0]);
-    return new Promise(resolve => this.watchers.push({ test, resolve }));
+    return new Promise((resolve, reject) => this.watchers.push({ test, resolve, reject }));
   }
 
   /** The next `textDocument/publishDiagnostics` about `path`. */

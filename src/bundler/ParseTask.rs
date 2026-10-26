@@ -89,6 +89,8 @@ pub struct ParseTask {
     // lifetime-erased `'static` — paths borrow from `DirnameStore`
     // (process-lifetime BSS string pool); see `bun_resolver::fs::Path<'a>`.
     pub(crate) path: Fs::Path<'static>,
+    /// See `InputFile::ignored_suffix`.
+    pub(crate) ignored_suffix: &'static [u8],
     pub(crate) secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
     pub(crate) contents_or_fd: ContentsOrFd,
     /// True if this task opened `contents_or_fd`'s file. False if the resolver's entry cache owns it.
@@ -299,6 +301,7 @@ impl ParseTask {
             package_name,
             known_target,
             // defaults:
+            ignored_suffix: b"",
             secondary_path_for_commonjs_interop: None,
             opened_own_fd: false,
             external_free_function: ExternalFreeFunction::NONE,
@@ -329,6 +332,7 @@ impl Default for ParseTask {
         ParseTask {
             ctx: None,
             path: Fs::Path::init(b""),
+            ignored_suffix: b"",
             secondary_path_for_commonjs_interop: None,
             contents_or_fd: ContentsOrFd::Contents(b""),
             opened_own_fd: false,
@@ -621,6 +625,7 @@ pub mod parse_worker {
             loader: Some(Loader::Js),
             known_target: target,
             // defaults:
+            ignored_suffix: b"",
             secondary_path_for_commonjs_interop: None,
             opened_own_fd: false,
             external_free_function: ExternalFreeFunction::NONE,

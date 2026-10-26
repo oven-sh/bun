@@ -6114,10 +6114,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         dir: &[u8],
     ) -> crate::CrateResult<bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>> {
-        if !self.dir_info_is_not_found(dir)
-            && self.read_dir_info_ignore_error(dir).is_none()
-            && self.parent_lists(dir)
-        {
+        if !self.dir_info_is_not_found(dir) && self.read_dir_info_ignore_error(dir).is_none() {
             self.forget_not_found(dir);
         }
         // SAFETY: `rfs_ptr()` is the process-global RealFS singleton.
@@ -6130,21 +6127,6 @@ impl<'a> Resolver<'a> {
         Ok(bun_ptr::BackRef::new(&*entries))
     }
 
-    /// Whether the cached listing of the parent of `dir` has its name.
-    fn parent_lists(&mut self, dir: &[u8]) -> bool {
-        let parent = Dirname::dirname(dir);
-        if parent.len() >= dir.len() {
-            return false;
-        }
-        let parent_info = {
-            let _resolver_lock = self.mutex.lock_guard();
-            self.dir_cache_mut().get(parent).map(DirInfoRef::from_slot)
-        };
-        parent_info
-            .and_then(|info| info.get_entry(self.generation, bun_paths::basename(dir)))
-            .is_some()
-    }
-
     fn dir_info_is_not_found(&mut self, dir: &[u8]) -> bool {
         let _resolver_lock = self.mutex.lock_guard();
         self.dir_cache_mut()
@@ -6153,8 +6135,9 @@ impl<'a> Resolver<'a> {
     }
 
     /// Unmaps `dir` where the walk that could not open it left it as not found, in
-    /// `dir_cache` and in `rfs.entries`. The walk records every error that way, and the
-    /// `dir_cache` key would outlive a bust of the parent directory. Without them the
+    /// `dir_cache` and in `rfs.entries`. The walk records every error that way. With the
+    /// `dir_cache` key, a walk to a path under `dir` would start below it and leave that
+    /// path as not found too, which a bust of `dir` does not undo. Without the two, the
     /// next read of `dir` opens it and keeps the error it gets.
     fn forget_not_found(&mut self, dir: &[u8]) {
         if self.dir_info_is_not_found(dir) {

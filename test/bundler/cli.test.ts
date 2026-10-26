@@ -267,6 +267,42 @@ console.log(utils());`,
       expect(await stderr.text()).toBe("");
       expect(await exited).toBe(0);
     });
+
+    test("an external file resolves from where the output is written without --outdir", async () => {
+      using dir = tempDir("bun-build-external-no-outdir", {
+        "src/entry.ts": `import lib from "../lib.js"; import { viaSub } from "./sub/mod.ts"; console.log(lib, viaSub);`,
+        "src/sub/mod.ts": `import lib from "../../lib.js"; export const viaSub = "sub:" + lib;`,
+        "lib.js": `export default "lib";`,
+      });
+
+      // A linked source map makes it two files, so they are written to disk instead of stdout.
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "src/entry.ts", "--external", "./lib.js", "--sourcemap=linked"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExitCode] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      expect(buildStderr).toBe("");
+      expect(buildExitCode).toBe(0);
+
+      const [written] = [...new Bun.Glob("**/entry.js").scanSync(String(dir))];
+      await using run = Bun.spawn({
+        cmd: [bunExe(), written],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "lib sub:lib\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
   },
   10_000,
 );
@@ -349,38 +385,6 @@ test("you can use --outfile=... and --sourcemap", async () => {
 
     "
   `);
-});
-
-test("an external file resolves from where the output is written without --outdir", async () => {
-  using dir = tempDir("bun-build-external-no-outdir", {
-    "src/entry.ts": `import lib from "../lib.js"; import { viaSub } from "./sub/mod.ts"; console.log(lib, viaSub);`,
-    "src/sub/mod.ts": `import lib from "../../lib.js"; export const viaSub = "sub:" + lib;`,
-    "lib.js": `export default "lib";`,
-  });
-
-  // A linked source map makes it two files, so they are written to disk instead of stdout.
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "src/entry.ts", "--external", "./lib.js", "--sourcemap=linked"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
-  expect(buildStderr).toBe("");
-  expect(buildExitCode).toBe(0);
-
-  const [written] = [...new Bun.Glob("**/entry.js").scanSync(String(dir))];
-  await using run = Bun.spawn({
-    cmd: [bunExe(), written],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-  expect({ stdout, stderr }).toEqual({ stdout: "lib sub:lib\n", stderr: "" });
-  expect(exitCode).toBe(0);
 });
 
 test("some log cases", async () => {

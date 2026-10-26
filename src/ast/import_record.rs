@@ -110,7 +110,7 @@ bitflags::bitflags! {
 
         /// An external matched by resolved path: `path.text` is the file's
         /// absolute path and prints relative to the output file's directory.
-        const PRINT_PATH_RELATIVE_TO_OUTPUT = 1 << 19;
+        const PRINT_PATH_RELATIVE_TO_OUTPUT = 1 << 28;
     }
 }
 

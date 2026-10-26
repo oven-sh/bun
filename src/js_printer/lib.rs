@@ -6570,7 +6570,7 @@ pub(crate) mod __gated_printer {
                     b"./"
                 };
             // The resolver keeps the trailing separator of a specifier that names a directory.
-            let suffix: &[u8] = if text.last().is_some_and(|&c| c == b'/' || c == b'\\') {
+            let suffix: &[u8] = if text.last() == Some(&bun_paths::SEP) {
                 b"/"
             } else {
                 b""

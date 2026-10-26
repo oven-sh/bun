@@ -2512,9 +2512,9 @@ impl PathTemplate {
         )
     }
 
-    /// Directory part of the expanded template, `/`-separated. A `[hash]` not yet
-    /// known takes a stand-in; hashes have no separators, so the depth is right.
-    pub(crate) fn rel_dir(&self, sanitize_parent_dirs: bool) -> Box<[u8]> {
+    /// Directory part of the template as written to disk, `/`-separated. A `[hash]` not
+    /// yet known takes a stand-in; hashes have no separators, so the depth is right.
+    pub(crate) fn rel_dir(&self) -> Box<[u8]> {
         let mut rel = Vec::<u8>::new();
         path_template_print(
             &mut rel,
@@ -2528,7 +2528,7 @@ impl PathTemplate {
                     .unwrap_or_else(|| bun_core::fmt::ContentHash::new(0, self.hash_len())),
             ),
             &self.placeholder.target,
-            sanitize_parent_dirs,
+            true,
         )
         .expect("write to Vec<u8>");
         bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);

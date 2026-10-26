@@ -154,20 +154,20 @@ enum VersionBlockerKind {
 impl core::fmt::Display for VersionBlocker<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let buf = self.buf;
-        let name = bstr::BStr::new(self.name.slice(buf));
+        let name = bun_core::fmt::escape_control_chars(self.name.slice(buf));
         match &self.kind {
             VersionBlockerKind::MissingIntegrity { version, url } => write!(
                 f,
                 "Missing integrity hash for npm package resolved to a tarball URL outside the configured registry: \"{}@{}\" resolves to {}",
                 name,
                 version.fmt(buf),
-                bstr::BStr::new(url.slice(buf)),
+                bun_core::fmt::escape_control_chars(url.slice(buf)),
             ),
             VersionBlockerKind::UnsafeGitTag { tag } => write!(
                 f,
                 "Invalid git dependency tag: \"{}\" has \"bun-tag\": \"{}\"",
                 name,
-                bstr::BStr::new(tag.slice(buf)),
+                bun_core::fmt::escape_control_chars(tag.slice(buf)),
             ),
         }
     }

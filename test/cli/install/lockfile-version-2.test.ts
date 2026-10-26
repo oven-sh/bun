@@ -695,7 +695,7 @@ async function runPm(cwd: string, ...args: string[]) {
   return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 }
 
-it("bun pm migrate rewrites a v1 lockfile at version 2 with identical rows", async () => {
+it.concurrent("bun pm migrate rewrites a v1 lockfile at version 2 with identical rows", async () => {
   using dir = tempDir("lockfile-v1-pm-migrate", {
     "package.json": JSON.stringify({ name: "root", dependencies: { dep: "file:./dep" } }),
     "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
@@ -732,7 +732,7 @@ it("bun pm migrate rewrites a v1 lockfile at version 2 with identical rows", asy
   expect(againExit).toBe(0);
 });
 
-it("bun pm migrate stamps version 3 when scoped override rules exist", async () => {
+it.concurrent("bun pm migrate stamps version 3 when scoped override rules exist", async () => {
   using dir = tempDir("lockfile-v1-pm-migrate-scoped", {
     "package.json": JSON.stringify({
       name: "root",
@@ -761,7 +761,7 @@ it("bun pm migrate stamps version 3 when scoped override rules exist", async () 
   expect(exitCode).toBe(0);
 });
 
-it("bun pm migrate names the off-registry package with no integrity and keeps version 1", async () => {
+it.concurrent("bun pm migrate names the off-registry package with no integrity and keeps version 1", async () => {
   await using offRegistry = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -794,7 +794,7 @@ it("bun pm migrate names the off-registry package with no integrity and keeps ve
   expect(exitCode).toBe(1);
 });
 
-it("bun pm migrate names the git package with an unsafe bun-tag and keeps version 1", async () => {
+it.concurrent("bun pm migrate names the git package with an unsafe bun-tag and keeps version 1", async () => {
   // `bun pm migrate` does no git work, so the host never has to answer.
   const gitUrl = "git+ssh://git@127.0.0.1:1/example/repo.git#main";
   const v1Lockfile = JSON.stringify({

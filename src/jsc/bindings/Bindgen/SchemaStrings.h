@@ -19,6 +19,7 @@ public:
     {
         if (m_memberNames[first].isNull()) [[unlikely]]
             initializeMemberNames(first, count);
+        ASSERT(!count || !m_memberNames[first + count - 1].isNull());
         return &m_memberNames[first];
     }
 

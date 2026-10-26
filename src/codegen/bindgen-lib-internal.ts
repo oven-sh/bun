@@ -264,7 +264,7 @@ export abstract class Type {
   abstract readonly idlType: string;
   /** TypeScript spelling of the values it takes: `any` where the conversion coerces. */
   abstract readonly tsType: string;
-  /** TypeScript spelling of the values it gives. `Object.create` also takes `object` and gives `any`. */
+  /** TypeScript spelling of the values it gives. */
   get tsResultType(): string {
     return this.tsType;
   }
@@ -1352,6 +1352,7 @@ export class LocalType extends Type {
     return `bindgen::to_js::any(heap, ${value})`;
   }
 }
+/** A result is `any`, as lib.d.ts types that of `Object.create`. */
 export const objectType = new LocalType(
   "Bun::Bindgen::IDLRawObject",
   "object",
@@ -1470,12 +1471,12 @@ export class Conversion {
   /** Of the Rust function that calls it, in the file's module. Set by the generator. */
   rustName?: string;
   /**
-   * The conversions of the file that differ from it only in what an error says and in the member read, itself among
-   * them, if there are others. They share the two functions, which take the index of one in this list: `which`.
+   * The conversions of the file that share its two functions, itself among them. Unset if it shares with none.
    * Set by the generator.
    */
-  alike?: readonly Conversion[];
-  which?: number;
+  sharedWith?: readonly Conversion[];
+  /** Its index in `sharedWith`, which the two functions take. */
+  sharedIndex?: number;
   /** Hand-written Rust calls it: `b.conversion`. */
   exported = false;
   /** It is given the object, and reads the value from this member of it. */
@@ -1487,9 +1488,9 @@ export class Conversion {
     this.name = name;
     this.expected = expected;
   }
-  /** A `ConvertFn`. */
-  get rustFunction(): string {
-    return this.alike ? `|cx, value| ${this.rustName}(cx, value, ${this.which})` : this.rustName!;
+  /** Rust expression of type `ConvertFn`. */
+  get rustConvertFn(): string {
+    return this.sharedWith ? `|cx, value| ${this.rustName}(cx, value, ${this.sharedIndex})` : this.rustName!;
   }
 }
 
@@ -1518,9 +1519,9 @@ export abstract class ConvertedByBodyType extends Type {
   get dependencies(): readonly Type[] {
     return [this.inner];
   }
-  protected get rustConversion(): string {
+  protected get rustConvertFn(): string {
     assert(this.conversion?.rustName, `${this.tsType}: only for an argument`);
-    return this.conversion.rustFunction;
+    return this.conversion.rustConvertFn;
   }
 }
 
@@ -1561,7 +1562,7 @@ export class DeferredType extends ConvertedByBodyType {
     return `bindgen::Deferred<'a, ${this.inner.rustType(scope)}>`;
   }
   rustFromExtern(expr: string): string {
-    return `bindgen::Deferred::from_extern(${expr}, heap, ${this.rustConversion})`;
+    return `bindgen::Deferred::from_extern(${expr}, heap, ${this.rustConvertFn})`;
   }
 }
 
@@ -1600,7 +1601,7 @@ export class RestType extends ConvertedByBodyType {
   }
   rustFromExtern(expr: string): string {
     if (this.inner instanceof OpaqueType) return `${expr}.get(heap)`;
-    return `bindgen::Rest::from_extern(${expr}.get(heap), ${this.rustConversion})`;
+    return `bindgen::Rest::from_extern(${expr}.get(heap), ${this.rustConvertFn})`;
   }
 }
 

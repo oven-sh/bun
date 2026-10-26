@@ -548,11 +548,13 @@ fn create_watch_event(
         op |= Op::WRITE;
     }
     // Every watched directory above the path gets the event; a new name is an entry of the nearest one only.
-    if event.action == Action::Added && is_path_or_its_dir {
-        op |= Op::CREATE;
-    }
-    if event.action == Action::RenamedNew && is_path_or_its_dir {
-        op |= Op::MOVE_TO;
+    if is_path_or_its_dir {
+        if event.action == Action::Added {
+            op |= Op::CREATE;
+        }
+        if event.action == Action::RenamedNew {
+            op |= Op::MOVE_TO;
+        }
     }
     WatchEvent {
         op,

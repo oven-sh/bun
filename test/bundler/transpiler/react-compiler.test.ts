@@ -4356,8 +4356,8 @@ test("react-compiler time does not grow with the cube of a chain of functions", 
 test.skipIf(!isDebug && !isASAN)(
   "react-compiler Codegen time does not grow with the square of the number of blocks",
   async () => {
-    const branches = 2400;
-    const perComponent = 20;
+    const branches = 3600;
+    const perComponent = 100;
     const source = (components: number, branchesEach: number) =>
       `import { useState } from "react";\n` +
       Array.from(
@@ -4378,7 +4378,8 @@ test.skipIf(!isDebug && !isASAN)(
     const codegenTime = async (entry: string, components: number) => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-        env: { ...bunEnv, BUN_REACT_COMPILER_TIMING: "1" },
+        // ASAN's quarantine keeps every freed copy resident: 1.1 GB with it, 360 MB without.
+        env: { ...withoutAsanQuarantine(bunEnv), BUN_REACT_COMPILER_TIMING: "1" },
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
@@ -4395,9 +4396,10 @@ test.skipIf(!isDebug && !isASAN)(
     };
 
     // Both builds hold the same blocks, so Codegen takes about as long in one as
-    // in the other. The times are wall time. The two builds of a round run at
-    // the same time, under the same load, and the test takes the best of up to
-    // three rounds.
+    // in the other: the ratio is 0.6 to 1.3 with the fix. Without it the large
+    // component takes 4 to 9 times as long on a debug build. The times are wall
+    // time. The two builds of a round run at the same time, under the same
+    // load, and the test takes the best of up to three rounds.
     let control = Infinity;
     let large = Infinity;
     for (let round = 0; round < 3; round++) {
@@ -4407,10 +4409,12 @@ test.skipIf(!isDebug && !isASAN)(
       ]);
       control = Math.min(control, controlTime);
       large = Math.min(large, largeTime);
-      if (large / control < 3) break;
+      if (large / control < 2) break;
     }
-    expect(large / control).toBeLessThan(3);
+    expect(large / control).toBeLessThan(2);
   },
+  // A round takes 5 seconds on a debug build, and the test takes three rounds
+  // when it fails.
   60_000,
 );
 

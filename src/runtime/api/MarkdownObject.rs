@@ -5,7 +5,7 @@ use crate::generated_bindgen::markdown_object::{
     MarkdownOptions, ReactOptions, RenderCallbacks,
 };
 use bun_core::StackCheck;
-use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
+use bun_jsc::bindgen::{JsBytes, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer, RangeErrorOptions,
@@ -289,10 +289,10 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-fn render_ast<'a>(
+fn render_ast(
     global_this: &JSGlobalObject,
-    input: MarkdownInput<'a>,
-    components: Option<&ComponentOverrides<'a>>,
+    input: MarkdownInput<'_>,
+    components: Option<&ComponentOverrides<'_>>,
     options: md::Options,
     marked_args: &mut MarkedArgumentBuffer,
     react_version: Option<u8>,
@@ -338,7 +338,7 @@ fn render_ast<'a>(
 ///
 /// Uses HTML tag names (h1-h6, p, blockquote, a, em, strong, etc.).
 /// Text content is plain JS strings in children arrays.
-struct ParseRenderer<'a, 'call> {
+struct ParseRenderer<'a> {
     global_object: &'a JSGlobalObject,
     marked_args: &'a mut MarkedArgumentBuffer,
     // Note: JSValue in Vec is safe here — every entry.children is also appended to self.marked_args (GC root).
@@ -346,44 +346,54 @@ struct ParseRenderer<'a, 'call> {
     stack_check: StackCheck,
     src_text: &'a [u8],
     heading_tracker: md::helpers::HeadingIdTracker,
-    components: Components<'call>,
+    components: Components,
     react_version: Option<u8>,
+}
+
+unsafe extern "C" {
+    safe fn JSReactElement__create(
+        global_object: &JSGlobalObject,
+        react_version: u8,
+        element_type: JSValue,
+        props: JSValue,
+    ) -> JSValue;
 }
 
 /// Component overrides keyed by HTML tag name.
 /// When set, the value replaces the string tag name in the `type` field.
 #[derive(Default)]
-struct Components<'a> {
-    h1: Option<JsLocal<'a>>,
-    h2: Option<JsLocal<'a>>,
-    h3: Option<JsLocal<'a>>,
-    h4: Option<JsLocal<'a>>,
-    h5: Option<JsLocal<'a>>,
-    h6: Option<JsLocal<'a>>,
-    p: Option<JsLocal<'a>>,
-    blockquote: Option<JsLocal<'a>>,
-    ul: Option<JsLocal<'a>>,
-    ol: Option<JsLocal<'a>>,
-    li: Option<JsLocal<'a>>,
-    pre: Option<JsLocal<'a>>,
-    hr: Option<JsLocal<'a>>,
-    html: Option<JsLocal<'a>>,
-    table: Option<JsLocal<'a>>,
-    thead: Option<JsLocal<'a>>,
-    tbody: Option<JsLocal<'a>>,
-    tr: Option<JsLocal<'a>>,
-    th: Option<JsLocal<'a>>,
-    td: Option<JsLocal<'a>>,
-    em: Option<JsLocal<'a>>,
-    strong: Option<JsLocal<'a>>,
-    a: Option<JsLocal<'a>>,
-    img: Option<JsLocal<'a>>,
-    code: Option<JsLocal<'a>>,
-    del: Option<JsLocal<'a>>,
-    math: Option<JsLocal<'a>>,
-    u: Option<JsLocal<'a>>,
-    br: Option<JsLocal<'a>>,
+struct Components {
+    h1: JSValue,
+    h2: JSValue,
+    h3: JSValue,
+    h4: JSValue,
+    h5: JSValue,
+    h6: JSValue,
+    p: JSValue,
+    blockquote: JSValue,
+    ul: JSValue,
+    ol: JSValue,
+    li: JSValue,
+    pre: JSValue,
+    hr: JSValue,
+    html: JSValue,
+    table: JSValue,
+    thead: JSValue,
+    tbody: JSValue,
+    tr: JSValue,
+    th: JSValue,
+    td: JSValue,
+    em: JSValue,
+    strong: JSValue,
+    a: JSValue,
+    img: JSValue,
+    code: JSValue,
+    del: JSValue,
+    math: JSValue,
+    u: JSValue,
+    br: JSValue,
 }
+// Note: `Default` for JSValue must be `JSValue::ZERO` (encoded 0).
 
 struct ParseStackEntry {
     children: JSValue,
@@ -410,7 +420,7 @@ impl Default for ParseStackEntry {
 // Note: the `bun_md` `Renderer` is `&mut dyn RendererImpl`, so the trait
 // already gives us `&mut self` — the `*_impl` bodies below are plain methods,
 // no pointer round-trip needed.
-impl<'a, 'call> md::types::RendererImpl for ParseRenderer<'a, 'call> {
+impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
     fn enter_block(
         &mut self,
         block_type: md::BlockType,
@@ -440,14 +450,14 @@ impl<'a, 'call> md::types::RendererImpl for ParseRenderer<'a, 'call> {
     }
 }
 
-impl<'a, 'call> ParseRenderer<'a, 'call> {
+impl<'a> ParseRenderer<'a> {
     fn init(
         global_object: &'a JSGlobalObject,
         src_text: &'a [u8],
         marked_args: &'a mut MarkedArgumentBuffer,
         heading_ids: bool,
         react_version: Option<u8>,
-    ) -> Result<ParseRenderer<'a, 'call>, bun_alloc::AllocError> {
+    ) -> Result<ParseRenderer<'a>, bun_alloc::AllocError> {
         let mut self_ = ParseRenderer {
             global_object,
             marked_args,
@@ -473,19 +483,17 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
 
     /// Any non-boolean value (function, class, string, etc.) keyed by an HTML tag name is stored
     /// and used as the `type` field instead of the default string tag name.
-    fn extract_components(&mut self, components: &ComponentOverrides<'call>) {
+    fn extract_components(&mut self, components: &ComponentOverrides<'_>) {
         macro_rules! extract {
             ($($name:ident),* $(,)?) => {$(
                 let val = match components.$name {
                     ComponentOverride::Missing | ComponentOverride::Flag(_) => None,
-                    ComponentOverride::Text(val) => {
-                        val.to_js().to_boolean().then_some(val.as_value())
-                    }
-                    ComponentOverride::Other(val) => Some(val),
+                    ComponentOverride::Text(val) => val.to_js().to_boolean().then_some(val.to_js()),
+                    ComponentOverride::Other(val) => Some(val.to_js()),
                 };
                 if let Some(val) = val {
-                    self.components.$name = Some(val);
-                    self.marked_args.append(val.to_js());
+                    self.components.$name = val;
+                    self.marked_args.append(val);
                 }
             )*};
         }
@@ -495,7 +503,7 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
         );
     }
 
-    fn get_block_component(&self, block_type: md::BlockType, data: u32) -> Option<JsLocal<'call>> {
+    fn get_block_component(&self, block_type: md::BlockType, data: u32) -> JSValue {
         match block_type {
             md::BlockType::H => match data {
                 1 => self.components.h1,
@@ -519,11 +527,11 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
             md::BlockType::Tr => self.components.tr,
             md::BlockType::Th => self.components.th,
             md::BlockType::Td => self.components.td,
-            md::BlockType::Doc => None,
+            md::BlockType::Doc => JSValue::ZERO,
         }
     }
 
-    fn get_span_component(&self, span_type: md::SpanType) -> Option<JsLocal<'call>> {
+    fn get_span_component(&self, span_type: md::SpanType) -> JSValue {
         match span_type {
             md::SpanType::Em => self.components.em,
             md::SpanType::Strong => self.components.strong,
@@ -553,8 +561,7 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
     /// simple `{ type, props }` object.
     fn create_element(&mut self, type_val: JSValue, props: JSValue) -> JSValue {
         if let Some(version) = self.react_version {
-            let obj =
-                bun_jsc::cpp::JSReactElement__create(self.global_object, version, type_val, props);
+            let obj = JSReactElement__create(self.global_object, version, type_val, props);
             self.marked_args.append(obj);
             obj
         } else {
@@ -662,6 +669,11 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
 
         // Build React element — use component override as type if set
         let component = self.get_block_component(block_type, entry.data);
+        let type_val: JSValue = if !component.is_empty() {
+            component
+        } else {
+            get_cached_tag_string(g, tag_index)
+        };
 
         let props = JSValue::create_empty_object(g, props_count);
         self.marked_args.append(props);
@@ -708,10 +720,7 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
             props.put(g, b"children", entry.children);
         }
 
-        let obj = match component {
-            Some(component) => self.create_element(component.to_js(), props),
-            None => self.create_element(get_cached_tag_string(g, tag_index), props),
-        };
+        let obj = self.create_element(type_val, props);
 
         // Push to parent's children array
         if let Some(parent) = self.stack.last() {
@@ -779,6 +788,11 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
 
         // Build React element: { $$typeof, type, key, ref, props }
         let component = self.get_span_component(span_type);
+        let type_val: JSValue = if !component.is_empty() {
+            component
+        } else {
+            get_cached_tag_string(g, tag_index)
+        };
 
         let props = JSValue::create_empty_object(g, props_count);
         self.marked_args.append(props);
@@ -852,10 +866,7 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
             props.put(g, b"children", entry.children);
         }
 
-        let obj = match component {
-            Some(component) => self.create_element(component.to_js(), props),
-            None => self.create_element(get_cached_tag_string(g, tag_index), props),
-        };
+        let obj = self.create_element(type_val, props);
 
         // Push to parent's children array
         if let Some(parent) = self.stack.last() {
@@ -886,14 +897,15 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
 
         match text_type {
             md::TextType::Br => {
+                let br_component = self.components.br;
+                let br_type: JSValue = if !br_component.is_empty() {
+                    br_component
+                } else {
+                    get_cached_tag_string(g, TagIndex::Br)
+                };
                 let empty_props = JSValue::create_empty_object(g, 0);
                 self.marked_args.append(empty_props);
-                let obj = match self.components.br {
-                    Some(br_component) => self.create_element(br_component.to_js(), empty_props),
-                    None => {
-                        self.create_element(get_cached_tag_string(g, TagIndex::Br), empty_props)
-                    }
-                };
+                let obj = self.create_element(br_type, empty_props);
                 js_array_push(parent_children, g, obj)?;
             }
             md::TextType::Softbr => {

@@ -23,7 +23,9 @@ describe.concurrent("native-plugins", async () => {
         "module": "index.ts",
         "type": "module",
         "scripts": {
-          "build:napi": "node-gyp configure && node-gyp build",
+          // -j max: compile the two addons in parallel, as the implicit
+          // `node-gyp rebuild` did that --ignore-scripts turns off below.
+          "build:napi": "node-gyp configure && node-gyp build -j max",
         },
         "dependencies": {
           "node-gyp": "10.2.0",

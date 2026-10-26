@@ -5697,6 +5697,34 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `widenTypeForVariableLikeDeclaration` for the type of the property `member`, which has no
+    /// type annotation: the type of its initializer, the type that `getFlowTypeInConstructor` or
+    /// `getFlowTypeInStaticBlocks` gives it, or the type it inherits. Widening also drops the
+    /// freshness of an object literal, so a later use doesn't check its excess properties.
+    fn widen_type_of_property_declaration(
+        &mut self,
+        file: FileId,
+        member: MemberId,
+        ty: TypeId,
+        reports_errors: bool,
+    ) -> TypeId {
+        // A `unique symbol` that isn't the property's own is a `symbol`. The caller returns the
+        // property's own first. `addOptionalityEx` comes before this, so the type of an optional
+        // property with `strictNullChecks` is a union with `undefined`, and it stays as it is.
+        let may_be_undefined = self.hir(file)[member].flags.contains(Flags::OPTIONAL)
+            && self.p.files.options.strict_null_checks;
+        let ty = if !may_be_undefined && matches!(self.data(ty), TypeData::UniqueSymbol { .. }) {
+            TypeId::SYMBOL
+        } else {
+            ty
+        };
+        let widened = self.get_widened_type(ty);
+        if reports_errors && self.report_errors_from_widening(ty) {
+            self.report_implicit_any(file, UntypedProperty::Member(member), widened);
+        }
+        widened
+    }
+
     /// `reportImplicitAny` for a property whose type resolves to `ty`.
     fn report_implicit_any(&mut self, file: FileId, declaration: UntypedProperty, ty: TypeId) {
         let no_implicit_any = self.p.files.options.no_implicit_any;
@@ -6506,13 +6534,6 @@ impl<'p, 's> Checker<'p, 's> {
                         return self.intern(TypeData::UniqueSymbol { symbol, name });
                     }
                     let ty = self.type_of_declaration_initializer(file, member.init);
-                    // `widenTypeForVariableLikeDeclaration`: a `unique symbol` belongs to the
-                    // declaration it was created for. For any other it is a `symbol`.
-                    let ty = if matches!(self.data(ty), TypeData::UniqueSymbol { .. }) {
-                        TypeId::SYMBOL
-                    } else {
-                        ty
-                    };
                     let ty = if member.flags.contains(Flags::READONLY) {
                         ty
                     } else {
@@ -6525,12 +6546,12 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                         return any;
                     }
-                    let widened = self.get_widened_type(ty);
-                    // `widenTypeForVariableLikeDeclaration`
-                    if reports_errors && self.report_errors_from_widening(ty) {
-                        self.report_implicit_any(file, UntypedProperty::Member(first), widened);
-                    }
-                    return widened;
+                    return self.widen_type_of_property_declaration(
+                        file,
+                        first,
+                        ty,
+                        reports_errors,
+                    );
                 }
                 // `getTypeForVariableLikeDeclaration`: when an implicit `any` is an error, the
                 // assignments to it are inspected first.
@@ -6566,7 +6587,12 @@ impl<'p, 's> Checker<'p, 's> {
                                 initial,
                                 value_declaration,
                             ) {
-                                return ty;
+                                return self.widen_type_of_property_declaration(
+                                    file,
+                                    first,
+                                    ty,
+                                    reports_errors,
+                                );
                             }
                         }
                     } else {
@@ -6583,13 +6609,23 @@ impl<'p, 's> Checker<'p, 's> {
                                 initial,
                                 value_declaration,
                             ) {
-                                return ty;
+                                return self.widen_type_of_property_declaration(
+                                    file,
+                                    first,
+                                    ty,
+                                    reports_errors,
+                                );
                             }
                         }
                     }
                     // The inherited type is the type of the property only in a class without a constructor or static blocks.
                     if !has_flow_container && let Some(inherited) = inherited {
-                        return inherited;
+                        return self.widen_type_of_property_declaration(
+                            file,
+                            first,
+                            inherited,
+                            reports_errors,
+                        );
                     }
                 }
                 // `widenTypeForVariableLikeDeclaration`,

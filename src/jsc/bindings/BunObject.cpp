@@ -450,6 +450,16 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParseChunk);
 
+// A copy for the parser, because another thread can write to the bytes of a shared buffer. Null when it cannot be allocated.
+static RefPtr<StringImpl> tryCopyASCII(std::span<const uint8_t> bytes)
+{
+    std::span<Latin1Character> characters;
+    auto copy = StringImpl::tryCreateUninitialized(bytes.size(), characters);
+    if (copy) [[likely]]
+        StringImpl::copyCharacters(characters, byteCast<Latin1Character>(bytes));
+    return copy;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -480,8 +490,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
         }
 
         if (length <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(data), length)) {
-            auto chars = std::span { reinterpret_cast<const char8_t*>(data), length };
-            result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
+            auto copy = tryCopyASCII({ data, length });
+            if (!copy) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            result = JSC::streamingJSONParse(globalObject, StringView(*copy), values);
         } else {
             size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(data), length);
             if (u16Length > String::MaxLength) {
@@ -577,8 +591,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
         }
 
         if (sliceLen <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(sliceData), sliceLen)) {
-            auto chars = std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen };
-            result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
+            auto copy = tryCopyASCII({ sliceData, sliceLen });
+            if (!copy) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            result = JSC::streamingJSONParse(globalObject, StringView(*copy), values);
             // For ASCII, byte offset = character offset
             readBytes = start + bomOffset + result.charactersConsumed;
         } else {

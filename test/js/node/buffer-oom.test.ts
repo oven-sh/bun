@@ -274,8 +274,9 @@ describe.skipIf(!isDebug)("a WTF string whose allocation fails is reported as a 
         await run("Response.text of a stream, " + kind, () => new Response(streamOf(value)).text());
         await run("Bun.readableStreamToText, " + kind, () => Bun.readableStreamToText(streamOf(value)));
       }
-      for (const kind of ["not ASCII", "ill-formed"]) {
-        const line = join('"', inputs[kind], '"\\n');
+      // Bun.JSONL makes its own copy of ASCII bytes, and sends other bytes to the converter.
+      for (const [kind, value] of Object.entries(inputs)) {
+        const line = join('"', value, '"\\n');
         await run("Bun.JSONL.parse, " + kind, () => Bun.JSONL.parse(line));
         await run("Bun.JSONL.parseChunk, " + kind, () => Bun.JSONL.parseChunk(line));
       }
@@ -312,6 +313,8 @@ describe.skipIf(!isDebug)("a WTF string whose allocation fails is reported as a 
       "Bun.readableStreamToText, not ASCII": outOfMemory,
       "Response.text of a stream, ill-formed": outOfMemory,
       "Bun.readableStreamToText, ill-formed": outOfMemory,
+      "Bun.JSONL.parse, ASCII": outOfMemory,
+      "Bun.JSONL.parseChunk, ASCII": outOfMemory,
       "Bun.JSONL.parse, not ASCII": outOfMemory,
       "Bun.JSONL.parseChunk, not ASCII": outOfMemory,
       "Bun.JSONL.parse, ill-formed": outOfMemory,
@@ -609,15 +612,16 @@ test.skipIf(isASAN || !isLinux)(
       for (const kind of ["ASCII", "not ASCII"]) {
         await run("FormData.from, " + kind, () => FormData.from(input, "x").get("a"));
         await run("Bun.readableStreamToText, " + kind, () => Bun.readableStreamToText(streamOf(value)));
+        await run("Bun.JSONL.parse, " + kind, () => Bun.JSONL.parse(value));
         value.set(${JSON.stringify(notASCII)});
       }
-      await run("Bun.JSONL.parse, not ASCII", () => Bun.JSONL.parse(value));
       // Fits in what is left, so the string is created.
       results["1 MiB"] = (await Bun.readableStreamToText(streamOf(value.subarray(0, ${MiB})))).length;
     `);
     expect(results).toEqual({
       "FormData.from, ASCII": allocationFailed,
       "Bun.readableStreamToText, ASCII": outOfMemory,
+      "Bun.JSONL.parse, ASCII": outOfMemory,
       "FormData.from, not ASCII": allocationFailed,
       "Bun.readableStreamToText, not ASCII": outOfMemory,
       "Bun.JSONL.parse, not ASCII": outOfMemory,

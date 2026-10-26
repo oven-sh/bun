@@ -85,6 +85,54 @@ impl Image {
         !prefix.is_empty() && prefix != VendorPrefix::NONE
     }
 
+    /// [`Self::is_compatible`] for the image as it is written. The compat data
+    /// has the gradient functions under their standard names, and a prefixed
+    /// gradient function is another, older function. So only its arguments are
+    /// checked here, and [`Self::is_read_by_all`] answers for the function.
+    /// `-webkit-image-set()` is `image-set()` under another name.
+    pub(crate) fn is_compatible_as_written(&self, browsers: &css::targets::Browsers) -> bool {
+        let Image::Gradient(gradient) = self else {
+            return self.is_compatible(browsers);
+        };
+        match &**gradient {
+            Gradient::Linear(linear) | Gradient::RepeatingLinear(linear)
+                if linear.vendor_prefix != VendorPrefix::NONE =>
+            {
+                linear.is_compatible(browsers)
+            }
+            Gradient::Radial(radial) | Gradient::RepeatingRadial(radial)
+                if radial.vendor_prefix != VendorPrefix::NONE =>
+            {
+                radial.is_compatible(browsers)
+            }
+            Gradient::WebkitGradient(_) => true,
+            _ => self.is_compatible(browsers),
+        }
+    }
+
+    /// Whether every target reads the image with the vendor prefix it has.
+    /// See [`css::targets::Targets::all_read`].
+    pub(crate) fn is_read_by_all(&self, targets: &css::targets::Targets) -> bool {
+        use css::targets::PrefixedValue;
+        match self {
+            Image::Gradient(gradient) => targets.all_read(
+                match &**gradient {
+                    Gradient::WebkitGradient(_) => PrefixedValue::WebkitGradient,
+                    _ => PrefixedValue::Gradient,
+                },
+                gradient.get_vendor_prefix(),
+            ),
+            Image::ImageSet(image_set) => {
+                targets.all_read(PrefixedValue::ImageSet, image_set.vendor_prefix)
+                    && image_set
+                        .options
+                        .iter()
+                        .all(|option| option.image.is_read_by_all(targets))
+            }
+            Image::Url(_) | Image::None => true,
+        }
+    }
+
     /// Returns the vendor prefix used in the image value.
     pub(crate) fn get_vendor_prefix(&self) -> VendorPrefix {
         match self {

@@ -2315,4 +2315,31 @@ c {
       "/across-files-url.css",
     ],
   });
+
+  // A browser that cannot read a prefixed value drops the declaration and
+  // uses the one before it. `test/js/bun/css/css.test.ts` has the cases.
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`css/FallbackBeforePrefixedValue/${target}`, {
+      target,
+      files: {
+        "/entry.css": /* css */ `
+          .btn { background: #2a6; background: -moz-linear-gradient(#3b7, #195) }
+          .fit { width: 10px; width: -moz-fit-content }
+        `,
+      },
+      outfile: "/out.css",
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+  /* entry.css */
+  .btn {
+    background: #2a6;
+    background: -moz-linear-gradient(#3b7, #195);
+  }
+  .fit {
+    width: 10px;
+    width: -moz-fit-content;
+  }`);
+      },
+    });
+  }
 });

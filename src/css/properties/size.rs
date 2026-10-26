@@ -181,6 +181,18 @@ impl Size {
         }
     }
 
+    /// Whether every target reads the value with the vendor prefix it has.
+    /// See [`css::targets::Targets::all_read`].
+    fn is_read_by_all(&self, targets: &css::targets::Targets) -> bool {
+        match self {
+            Size::MinContent(vp)
+            | Size::MaxContent(vp)
+            | Size::FitContent(vp)
+            | Size::Stretch(vp) => targets.all_read(css::targets::PrefixedValue::SizeKeyword, *vp),
+            _ => true,
+        }
+    }
+
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // `Size` carries only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
         self.clone()
@@ -317,6 +329,20 @@ impl MaxSize {
         }
     }
 
+    /// Whether every target reads the value with the vendor prefix it has.
+    /// See [`css::targets::Targets::all_read`].
+    fn is_read_by_all(&self, targets: &css::targets::Targets) -> bool {
+        match self {
+            MaxSize::MinContent(vp)
+            | MaxSize::MaxContent(vp)
+            | MaxSize::FitContent(vp)
+            | MaxSize::Stretch(vp) => {
+                targets.all_read(css::targets::PrefixedValue::SizeKeyword, *vp)
+            }
+            _ => true,
+        }
+    }
+
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // `MaxSize` carries only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
         self.clone()
@@ -437,6 +463,10 @@ pub struct SizeHandler {
     pub(crate) min_inline_size: Option<Size>,
     pub(crate) max_block_size: Option<MaxSize>,
     pub(crate) max_inline_size: Option<MaxSize>,
+    /// The values that a later value of the same property did not replace,
+    /// because some target does not read the later one. They are written
+    /// ahead of the values above.
+    earlier: Vec<Property>,
     pub(crate) has_any: bool,
     pub(crate) flushed_properties: SizeProperty,
     pub(crate) category: PropertyCategory,
@@ -449,7 +479,7 @@ use css::compat::Feature;
 // ─── helper macros ───
 
 macro_rules! property_helper {
-    ($this:expr, $field:ident, $ty:ty, $value:expr, $category:expr, $dest:expr, $context:expr) => {{
+    ($this:expr, $field:ident, $variant:ident, $value:expr, $category:expr, $dest:expr, $context:expr) => {{
         // If the category changes betweet logical and physical,
         // or if the value contains syntax that isn't supported across all targets,
         // preserve the previous value as a fallback.
@@ -461,14 +491,65 @@ macro_rules! property_helper {
             $this.flush($dest, $context);
         }
 
-        $this.$field = Some($value.deep_clone($dest.bump()));
+        let value = $value.deep_clone($dest.bump());
+        let read_by_all = value.is_read_by_all(&$context.targets);
+        if !read_by_all || !$this.earlier.is_empty() {
+            keep_earlier(
+                &mut $this.earlier,
+                &mut $this.$field,
+                &value,
+                read_by_all,
+                Property::$variant,
+                |property| match property {
+                    Property::$variant(value) => Some(value),
+                    _ => None,
+                },
+            );
+        }
+        $this.$field = Some(value);
         $this.category = $category;
         $this.has_any = true;
     }};
 }
 
+/// `value` follows `pending` for one size property. `earlier` has the values
+/// of every size property that a later value did not replace.
+///
+/// A target that does not read `value` drops the declaration and uses the one
+/// before it (CSS 2.1 section 4.2), so `pending` is kept. lightningcss
+/// overwrites it. A value that every target reads removes the kept values of
+/// its property.
+#[inline(never)]
+fn keep_earlier<T: PartialEq>(
+    earlier: &mut Vec<Property>,
+    pending: &mut Option<T>,
+    value: &T,
+    read_by_all: bool,
+    property: fn(T) -> Property,
+    of_property: fn(&Property) -> Option<&T>,
+) {
+    if read_by_all {
+        earlier.retain(|earlier| of_property(earlier).is_none());
+        return;
+    }
+    // An equal value has the same readers, so it replaces the one before it.
+    // The list is then never longer than the set of prefixed values.
+    earlier.retain(|earlier| of_property(earlier) != Some(value));
+    if let Some(pending) = pending.take() {
+        if pending != *value {
+            earlier.push(property(pending));
+        }
+    }
+}
+
 macro_rules! logical_unparsed_helper {
     ($this:expr, $unparsed:expr, $physical_id:expr, $physical_flag:expr, $logical_supported:expr, $dest:expr, $context:expr) => {{
+        $this.flush_before_unparsed(
+            $unparsed.property_id.tag(),
+            PropertyCategory::Logical,
+            $dest,
+            $context,
+        );
         let bump = $dest.bump();
         if $logical_supported {
             $this.flushed_properties.insert(
@@ -562,7 +643,7 @@ impl SizeHandler {
                 property_helper!(
                     self,
                     width,
-                    Size,
+                    Width,
                     v,
                     PropertyCategory::Physical,
                     dest,
@@ -573,7 +654,7 @@ impl SizeHandler {
                 property_helper!(
                     self,
                     height,
-                    Size,
+                    Height,
                     v,
                     PropertyCategory::Physical,
                     dest,
@@ -584,7 +665,7 @@ impl SizeHandler {
                 property_helper!(
                     self,
                     min_width,
-                    Size,
+                    MinWidth,
                     v,
                     PropertyCategory::Physical,
                     dest,
@@ -595,7 +676,7 @@ impl SizeHandler {
                 property_helper!(
                     self,
                     min_height,
-                    Size,
+                    MinHeight,
                     v,
                     PropertyCategory::Physical,
                     dest,
@@ -606,7 +687,7 @@ impl SizeHandler {
                 property_helper!(
                     self,
                     max_width,
-                    MaxSize,
+                    MaxWidth,
                     v,
                     PropertyCategory::Physical,
                     dest,
@@ -617,7 +698,7 @@ impl SizeHandler {
                 property_helper!(
                     self,
                     max_height,
-                    MaxSize,
+                    MaxHeight,
                     v,
                     PropertyCategory::Physical,
                     dest,
@@ -628,7 +709,7 @@ impl SizeHandler {
                 property_helper!(
                     self,
                     block_size,
-                    Size,
+                    BlockSize,
                     v,
                     PropertyCategory::Logical,
                     dest,
@@ -639,7 +720,7 @@ impl SizeHandler {
                 property_helper!(
                     self,
                     min_block_size,
-                    Size,
+                    MinBlockSize,
                     v,
                     PropertyCategory::Logical,
                     dest,
@@ -650,7 +731,7 @@ impl SizeHandler {
                 property_helper!(
                     self,
                     max_block_size,
-                    MaxSize,
+                    MaxBlockSize,
                     v,
                     PropertyCategory::Logical,
                     dest,
@@ -661,7 +742,7 @@ impl SizeHandler {
                 property_helper!(
                     self,
                     inline_size,
-                    Size,
+                    InlineSize,
                     v,
                     PropertyCategory::Logical,
                     dest,
@@ -672,7 +753,7 @@ impl SizeHandler {
                 property_helper!(
                     self,
                     min_inline_size,
-                    Size,
+                    MinInlineSize,
                     v,
                     PropertyCategory::Logical,
                     dest,
@@ -683,7 +764,7 @@ impl SizeHandler {
                 property_helper!(
                     self,
                     max_inline_size,
-                    MaxSize,
+                    MaxInlineSize,
                     v,
                     PropertyCategory::Logical,
                     dest,
@@ -697,6 +778,12 @@ impl SizeHandler {
                 | PropertyIdTag::MaxWidth
                 | PropertyIdTag::MinHeight
                 | PropertyIdTag::MaxHeight => {
+                    self.flush_before_unparsed(
+                        unparsed.property_id.tag(),
+                        PropertyCategory::Physical,
+                        dest,
+                        context,
+                    );
                     self.flushed_properties.insert(
                         SizeProperty::try_from_property_id_tag(unparsed.property_id.tag()).unwrap(),
                     );
@@ -765,6 +852,43 @@ impl SizeHandler {
         true
     }
 
+    /// An unparsed value of the property `tag` follows. The pending values that
+    /// it replaces are written before it: a value of that property, the values
+    /// of the other category (a logical and a physical property can be the
+    /// same size), and the kept values. A kept value behind it would replace it.
+    #[inline(never)]
+    fn flush_before_unparsed(
+        &mut self,
+        tag: PropertyIdTag,
+        category: PropertyCategory,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        if self.has_any
+            && (self.category != category || !self.earlier.is_empty() || self.is_pending(tag))
+        {
+            self.flush(dest, context);
+        }
+    }
+
+    fn is_pending(&self, tag: PropertyIdTag) -> bool {
+        match tag {
+            PropertyIdTag::Width => self.width.is_some(),
+            PropertyIdTag::Height => self.height.is_some(),
+            PropertyIdTag::MinWidth => self.min_width.is_some(),
+            PropertyIdTag::MinHeight => self.min_height.is_some(),
+            PropertyIdTag::MaxWidth => self.max_width.is_some(),
+            PropertyIdTag::MaxHeight => self.max_height.is_some(),
+            PropertyIdTag::BlockSize => self.block_size.is_some(),
+            PropertyIdTag::InlineSize => self.inline_size.is_some(),
+            PropertyIdTag::MinBlockSize => self.min_block_size.is_some(),
+            PropertyIdTag::MinInlineSize => self.min_inline_size.is_some(),
+            PropertyIdTag::MaxBlockSize => self.max_block_size.is_some(),
+            PropertyIdTag::MaxInlineSize => self.max_inline_size.is_some(),
+            _ => false,
+        }
+    }
+
     fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
             return;
@@ -775,10 +899,10 @@ impl SizeHandler {
         let flushed = &mut self.flushed_properties;
 
         macro_rules! physical {
-            ($flag:ident, $variant:ident, $field:ident) => {
+            ($flag:ident, $variant:ident, $val:expr) => {
                 flush_size_property(
                     flushed,
-                    self.$field.take(),
+                    $val,
                     SizeProperty::$flag,
                     Property::$variant,
                     dest,
@@ -787,48 +911,86 @@ impl SizeHandler {
             };
         }
         macro_rules! logical {
-            ($flag:ident, $variant:ident, $field:ident, $phys_flag:ident, $phys_variant:ident) => {
+            ($flag:ident, $variant:ident, $val:expr, $phys_flag:ident, $phys_variant:ident) => {
                 if logical_supported {
-                    physical!($flag, $variant, $field)
+                    physical!($flag, $variant, $val)
                 } else {
-                    physical!($phys_flag, $phys_variant, $field)
+                    physical!($phys_flag, $phys_variant, $val)
                 }
             };
         }
 
-        physical!(WIDTH, Width, width);
-        physical!(MIN_WIDTH, MinWidth, min_width);
-        physical!(MAX_WIDTH, MaxWidth, max_width);
-        physical!(HEIGHT, Height, height);
-        physical!(MIN_HEIGHT, MinHeight, min_height);
-        physical!(MAX_HEIGHT, MaxHeight, max_height);
-        logical!(BLOCK_SIZE, BlockSize, block_size, HEIGHT, Height);
+        for earlier in self.earlier.drain(..) {
+            match earlier {
+                Property::Width(v) => physical!(WIDTH, Width, Some(v)),
+                Property::MinWidth(v) => physical!(MIN_WIDTH, MinWidth, Some(v)),
+                Property::MaxWidth(v) => physical!(MAX_WIDTH, MaxWidth, Some(v)),
+                Property::Height(v) => physical!(HEIGHT, Height, Some(v)),
+                Property::MinHeight(v) => physical!(MIN_HEIGHT, MinHeight, Some(v)),
+                Property::MaxHeight(v) => physical!(MAX_HEIGHT, MaxHeight, Some(v)),
+                Property::BlockSize(v) => logical!(BLOCK_SIZE, BlockSize, Some(v), HEIGHT, Height),
+                Property::MinBlockSize(v) => {
+                    logical!(MIN_BLOCK_SIZE, MinBlockSize, Some(v), MIN_HEIGHT, MinHeight)
+                }
+                Property::MaxBlockSize(v) => {
+                    logical!(MAX_BLOCK_SIZE, MaxBlockSize, Some(v), MAX_HEIGHT, MaxHeight)
+                }
+                Property::InlineSize(v) => logical!(INLINE_SIZE, InlineSize, Some(v), WIDTH, Width),
+                Property::MinInlineSize(v) => {
+                    logical!(MIN_INLINE_SIZE, MinInlineSize, Some(v), MIN_WIDTH, MinWidth)
+                }
+                Property::MaxInlineSize(v) => {
+                    logical!(MAX_INLINE_SIZE, MaxInlineSize, Some(v), MAX_WIDTH, MaxWidth)
+                }
+                _ => unreachable!("only size properties are kept"),
+            }
+        }
+
+        physical!(WIDTH, Width, self.width.take());
+        physical!(MIN_WIDTH, MinWidth, self.min_width.take());
+        physical!(MAX_WIDTH, MaxWidth, self.max_width.take());
+        physical!(HEIGHT, Height, self.height.take());
+        physical!(MIN_HEIGHT, MinHeight, self.min_height.take());
+        physical!(MAX_HEIGHT, MaxHeight, self.max_height.take());
+        logical!(
+            BLOCK_SIZE,
+            BlockSize,
+            self.block_size.take(),
+            HEIGHT,
+            Height
+        );
         logical!(
             MIN_BLOCK_SIZE,
             MinBlockSize,
-            min_block_size,
+            self.min_block_size.take(),
             MIN_HEIGHT,
             MinHeight
         );
         logical!(
             MAX_BLOCK_SIZE,
             MaxBlockSize,
-            max_block_size,
+            self.max_block_size.take(),
             MAX_HEIGHT,
             MaxHeight
         );
-        logical!(INLINE_SIZE, InlineSize, inline_size, WIDTH, Width);
+        logical!(
+            INLINE_SIZE,
+            InlineSize,
+            self.inline_size.take(),
+            WIDTH,
+            Width
+        );
         logical!(
             MIN_INLINE_SIZE,
             MinInlineSize,
-            min_inline_size,
+            self.min_inline_size.take(),
             MIN_WIDTH,
             MinWidth
         );
         logical!(
             MAX_INLINE_SIZE,
             MaxInlineSize,
-            max_inline_size,
+            self.max_inline_size.take(),
             MAX_WIDTH,
             MaxWidth
         );

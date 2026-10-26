@@ -579,23 +579,51 @@ impl BackgroundProperty {
     }
 }
 
+/// The values of the `background` longhands that are not written yet.
+///
+/// Declarations that the same targets read set them, so they can be written
+/// as one declaration.
+#[derive(Default)]
+struct BackgroundState {
+    color: Option<CssColor>,
+    images: Option<SmallList<Image, 1>>,
+    x_positions: Option<SmallList<HorizontalPosition, 1>>,
+    y_positions: Option<SmallList<VerticalPosition, 1>>,
+    repeats: Option<SmallList<BackgroundRepeat, 1>>,
+    sizes: Option<SmallList<BackgroundSize, 1>>,
+    attachments: Option<SmallList<BackgroundAttachment, 1>>,
+    origins: Option<SmallList<BackgroundOrigin, 1>>,
+    clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
+}
+
+/// Merges the `background` declarations of a rule.
+///
+/// A browser that cannot read a declaration drops it and uses the declaration
+/// before it (CSS 2.1 section 4.2). So a declaration that some target does not
+/// read, which is one with a prefixed image, does not replace the values
+/// before it and does not share a declaration with other values. The values
+/// before it stay pending instead, and a later value that every target reads
+/// removes them. lightningcss overwrites them.
+///
+/// The pending values are written in this order: `earlier`, `cur`, `later`.
 #[derive(Default)]
 pub struct BackgroundHandler {
-    pub(crate) color: Option<CssColor>,
-    pub(crate) images: Option<SmallList<Image, 1>>,
-    pub(crate) has_prefix: bool,
-    pub(crate) x_positions: Option<SmallList<HorizontalPosition, 1>>,
-    pub(crate) y_positions: Option<SmallList<VerticalPosition, 1>>,
-    pub(crate) repeats: Option<SmallList<BackgroundRepeat, 1>>,
-    pub(crate) sizes: Option<SmallList<BackgroundSize, 1>>,
-    pub(crate) attachments: Option<SmallList<BackgroundAttachment, 1>>,
-    pub(crate) origins: Option<SmallList<BackgroundOrigin, 1>>,
-    pub(crate) clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
-    // TODO(perf): should be `bun_alloc::ArenaVec<'bump, Property>`; threading
-    // `'bump` through BackgroundHandler would avoid the heap alloc.
-    pub(crate) decls: Vec<Property>,
-    pub(crate) flushed_properties: BackgroundProperty,
-    pub(crate) has_any: bool,
+    /// The open state. Every target reads each of its parts.
+    cur: BackgroundState,
+    /// The states before `cur`, in source order.
+    ///
+    /// `earlier[..replaced]`: values with a prefixed image that a later value
+    /// replaced for every target. See `drop_replaced`.
+    ///
+    /// `earlier[replaced..]`: the values before a `background` that some target
+    /// does not read, and that declaration. The open state is behind it.
+    earlier: Vec<BackgroundState>,
+    replaced: usize,
+    /// The `background-image` values after the image of `cur` that some target
+    /// does not read.
+    later: Vec<SmallList<Image, 1>>,
+    flushed_properties: BackgroundProperty,
+    has_any: bool,
 }
 
 // Struct fields cannot be indexed by string at runtime; the `flushHelper` /
@@ -618,7 +646,7 @@ macro_rules! init_small_list_helper {
 
 macro_rules! flush_helper {
     ($this:expr, $field:ident, $val:expr, $dest:expr, $context:expr) => {{
-        if let Some(existing) = &$this.$field {
+        if let Some(existing) = &$this.cur.$field {
             if !crate::generic::eql(existing, $val)
                 && $context.targets.browsers.is_some()
                 && !crate::generic::is_compatible($val, &$context.targets.browsers.unwrap())
@@ -636,6 +664,104 @@ macro_rules! push_property {
     }};
 }
 
+fn has_vendor_prefix(images: &SmallList<Image, 1>) -> bool {
+    images.any(|image: &Image| image.has_vendor_prefix())
+}
+
+/// Whether some target drops a declaration with these images.
+fn some_target_skips(images: &SmallList<Image, 1>, targets: &css::targets::Targets) -> bool {
+    images.any(|image: &Image| !image.is_read_by_all(targets))
+}
+
+impl BackgroundState {
+    fn image(images: SmallList<Image, 1>) -> Self {
+        Self {
+            images: Some(images),
+            ..Self::default()
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.color.is_none()
+            && self.images.is_none()
+            && self.x_positions.is_none()
+            && self.y_positions.is_none()
+            && self.repeats.is_none()
+            && self.sizes.is_none()
+            && self.attachments.is_none()
+            && self.origins.is_none()
+            && self.clips.is_none()
+    }
+
+    /// Whether every longhand is set, as after a `background` shorthand.
+    fn is_complete(&self) -> bool {
+        self.color.is_some()
+            && self.images.is_some()
+            && self.x_positions.is_some()
+            && self.y_positions.is_some()
+            && self.repeats.is_some()
+            && self.sizes.is_some()
+            && self.attachments.is_some()
+            && self.origins.is_some()
+            && self.clips.is_some()
+    }
+
+    fn has_prefixed_image(&self) -> bool {
+        self.images.as_ref().is_some_and(has_vendor_prefix)
+    }
+
+    /// Sets every longhand from a `background` shorthand.
+    fn set_shorthand(
+        &mut self,
+        val: &SmallList<Background, 1>,
+        color: CssColor,
+        images: SmallList<Image, 1>,
+        clips: (SmallList<BackgroundClip, 1>, VendorPrefix),
+        arena: &Bump,
+    ) {
+        self.color = Some(color);
+        self.images = Some(images);
+        let len = val.len();
+        {
+            let x_positions = init_small_list_helper!(self, x_positions, len);
+            for b in val.slice() {
+                x_positions.append_assume_capacity(b.position.x.clone());
+            }
+        }
+        {
+            let y_positions = init_small_list_helper!(self, y_positions, len);
+            for b in val.slice() {
+                y_positions.append_assume_capacity(b.position.y.clone());
+            }
+        }
+        {
+            let repeats = init_small_list_helper!(self, repeats, len);
+            for b in val.slice() {
+                repeats.append_assume_capacity(b.repeat);
+            }
+        }
+        {
+            let sizes = init_small_list_helper!(self, sizes, len);
+            for b in val.slice() {
+                sizes.append_assume_capacity(b.size.deep_clone(arena));
+            }
+        }
+        {
+            let attachments = init_small_list_helper!(self, attachments, len);
+            for b in val.slice() {
+                attachments.append_assume_capacity(b.attachment);
+            }
+        }
+        {
+            let origins = init_small_list_helper!(self, origins, len);
+            for b in val.slice() {
+                origins.append_assume_capacity(b.origin);
+            }
+        }
+        self.clips = Some(clips);
+    }
+}
+
 impl BackgroundHandler {
     pub(crate) fn handle_property(
         &mut self,
@@ -647,22 +773,19 @@ impl BackgroundHandler {
         match property {
             Property::BackgroundColor(val) => {
                 flush_helper!(self, color, val, dest, context);
-                self.color = Some(val.deep_clone(arena));
+                self.cur.color = Some(val.deep_clone(arena));
             }
-            Property::BackgroundImage(val) => {
-                self.background_helper(val, property, dest, context);
-                self.images = Some(val.deep_clone(arena));
-            }
+            Property::BackgroundImage(val) => self.handle_image(val, dest, context),
             Property::BackgroundPosition(val) => {
                 let len = val.len();
                 {
-                    let x_positions = init_small_list_helper!(self, x_positions, len);
+                    let x_positions = init_small_list_helper!(self.cur, x_positions, len);
                     for position in val.slice() {
                         x_positions.append_assume_capacity(position.x.clone());
                     }
                 }
                 {
-                    let y_positions = init_small_list_helper!(self, y_positions, len);
+                    let y_positions = init_small_list_helper!(self.cur, y_positions, len);
                     for position in val.slice() {
                         y_positions.append_assume_capacity(position.y.clone());
                     }
@@ -670,118 +793,50 @@ impl BackgroundHandler {
             }
             Property::BackgroundPositionX(val) => {
                 // Drop replaces deinit; just overwrite.
-                self.x_positions = Some(val.deep_clone(arena));
+                self.cur.x_positions = Some(val.deep_clone(arena));
             }
             Property::BackgroundPositionY(val) => {
-                self.y_positions = Some(val.deep_clone(arena));
+                self.cur.y_positions = Some(val.deep_clone(arena));
             }
             Property::BackgroundRepeat(val) => {
-                self.repeats = Some(val.deep_clone(arena));
+                self.cur.repeats = Some(val.deep_clone(arena));
             }
             Property::BackgroundSize(val) => {
-                self.sizes = Some(val.deep_clone(arena));
+                self.cur.sizes = Some(val.deep_clone(arena));
             }
             Property::BackgroundAttachment(val) => {
-                self.attachments = Some(val.deep_clone(arena));
+                self.cur.attachments = Some(val.deep_clone(arena));
             }
             Property::BackgroundOrigin(val) => {
-                self.origins = Some(val.deep_clone(arena));
+                self.cur.origins = Some(val.deep_clone(arena));
             }
             Property::BackgroundClip(x) => {
                 let val: &SmallList<BackgroundClip, 1> = &x.0;
                 let vendor_prefix: VendorPrefix = x.1;
                 // Compute the predicate first, then dispatch (avoids holding
-                // &mut self.clips across self.flush()).
-                let needs_flush = if let Some((clips, vp)) = &self.clips {
+                // &mut self.cur.clips across self.flush()).
+                let needs_flush = if let Some((clips, vp)) = &self.cur.clips {
                     vendor_prefix != *vp && !SmallList::eql(val, clips)
                 } else {
                     false
                 };
                 if needs_flush {
-                    // `flush()` takes ownership of `self.clips` via `take()` and
-                    // frees it, so any borrow into `self.clips` would be stale
-                    // once `flush()` returns. Do not touch it.
+                    // `flush()` takes the open state, so any borrow into
+                    // `self.cur.clips` would be stale once `flush()` returns.
+                    // Do not touch it.
                     self.flush(dest, context);
                     let arena = dest.bump();
-                    self.clips = Some((val.deep_clone(arena), vendor_prefix));
-                } else if let Some((clips, vp)) = &mut self.clips {
+                    self.cur.clips = Some((val.deep_clone(arena), vendor_prefix));
+                } else if let Some((clips, vp)) = &mut self.cur.clips {
                     if !SmallList::eql(val, clips) {
                         *clips = val.deep_clone(arena);
                     }
                     vp.insert(vendor_prefix);
                 } else {
-                    self.clips = Some((val.deep_clone(arena), vendor_prefix));
+                    self.cur.clips = Some((val.deep_clone(arena), vendor_prefix));
                 }
             }
-            Property::Background(val) => {
-                let mut images: SmallList<Image, 1> = SmallList::init_capacity(val.len());
-                for b in val.slice() {
-                    images.append_assume_capacity(b.image.deep_clone(arena));
-                }
-                self.background_helper(&images, property, dest, context);
-                let arena = dest.bump();
-                let color = val.last().unwrap().color.deep_clone(arena);
-                flush_helper!(self, color, &color, dest, context);
-                let arena = dest.bump();
-                let mut clips: SmallList<BackgroundClip, 1> = SmallList::init_capacity(val.len());
-                for b in val.slice() {
-                    clips.append_assume_capacity(b.clip);
-                }
-                let mut clips_vp = VendorPrefix::NONE;
-                // Drop the `self.clips` borrow before calling flush().
-                let needs_flush = if let Some((existing_clips, existing_vp)) = &self.clips {
-                    clips_vp != *existing_vp && !SmallList::eql(&clips, existing_clips)
-                } else {
-                    false
-                };
-                if needs_flush {
-                    self.flush(dest, context);
-                } else if let Some((_, existing_vp)) = &self.clips {
-                    clips_vp.insert(*existing_vp);
-                }
-
-                self.color = Some(color);
-                self.images = Some(images);
-                let len = val.len();
-                {
-                    let x_positions = init_small_list_helper!(self, x_positions, len);
-                    for b in val.slice() {
-                        x_positions.append_assume_capacity(b.position.x.clone());
-                    }
-                }
-                {
-                    let y_positions = init_small_list_helper!(self, y_positions, len);
-                    for b in val.slice() {
-                        y_positions.append_assume_capacity(b.position.y.clone());
-                    }
-                }
-                {
-                    let repeats = init_small_list_helper!(self, repeats, len);
-                    for b in val.slice() {
-                        repeats.append_assume_capacity(b.repeat);
-                    }
-                }
-                {
-                    let sizes = init_small_list_helper!(self, sizes, len);
-                    for b in val.slice() {
-                        sizes.append_assume_capacity(b.size.deep_clone(arena));
-                    }
-                }
-                {
-                    let attachments = init_small_list_helper!(self, attachments, len);
-                    for b in val.slice() {
-                        attachments.append_assume_capacity(b.attachment);
-                    }
-                }
-                {
-                    let origins = init_small_list_helper!(self, origins, len);
-                    for b in val.slice() {
-                        origins.append_assume_capacity(b.origin);
-                    }
-                }
-
-                self.clips = Some((clips, clips_vp));
-            }
+            Property::Background(val) => self.handle_shorthand(val, dest, context),
             Property::Unparsed(val) => {
                 if is_background_property(val.property_id) {
                     self.flush(dest, context);
@@ -804,45 +859,252 @@ impl BackgroundHandler {
         true
     }
 
-    fn background_helper(
+    // The two arms with an image are functions of their own:
+    // `handle_property` is on the path of every declaration of every rule.
+
+    #[inline(never)]
+    fn handle_image(
         &mut self,
         val: &SmallList<Image, 1>,
-        property: &Property,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        flush_helper!(self, images, val, dest, context);
+        self.flush_before_unsupported_images(val, dest, context);
+        self.set_images(val.deep_clone(dest.bump()), context);
+    }
 
-        // Store prefixed properties. Clear if we hit an unprefixed property and we have
-        // targets. In this case, the necessary prefixes will be generated.
-        self.has_prefix = val.any(|item: &Image| item.has_vendor_prefix());
-        if self.has_prefix {
-            let arena = dest.bump();
-            self.decls.push(property.deep_clone(arena));
-        } else if context.targets.browsers.is_some() {
-            self.decls.clear();
+    #[inline(never)]
+    fn handle_shorthand(
+        &mut self,
+        val: &SmallList<Background, 1>,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        let arena = dest.bump();
+        let mut images: SmallList<Image, 1> = SmallList::init_capacity(val.len());
+        for b in val.slice() {
+            images.append_assume_capacity(b.image.deep_clone(arena));
+        }
+        let color = val.last().unwrap().color.deep_clone(arena);
+        let mut clips: SmallList<BackgroundClip, 1> = SmallList::init_capacity(val.len());
+        for b in val.slice() {
+            clips.append_assume_capacity(b.clip);
+        }
+
+        // Every flush decision comes before the new value is recorded.
+        self.flush_before_unsupported_images(&images, dest, context);
+        flush_helper!(self, color, &color, dest, context);
+        let mut clips_vp = VendorPrefix::NONE;
+        // Drop the `self.cur.clips` borrow before calling flush().
+        let needs_flush = if let Some((existing_clips, existing_vp)) = &self.cur.clips {
+            clips_vp != *existing_vp && !SmallList::eql(&clips, existing_clips)
+        } else {
+            false
+        };
+        if needs_flush {
+            self.flush(dest, context);
+        }
+        let arena = dest.bump();
+
+        if some_target_skips(&images, &context.targets) {
+            // The targets that do not read this declaration use the
+            // values before it. Longhands after it go to a new state
+            // behind it.
+            if self.repeats_last_shorthand(&images) {
+                self.earlier.pop();
+            } else {
+                self.close();
+            }
+            let mut state = BackgroundState::default();
+            state.set_shorthand(val, color, images, (clips, clips_vp), arena);
+            self.earlier.push(state);
+        } else {
+            if let Some((_, existing_vp)) = &self.cur.clips {
+                clips_vp.insert(*existing_vp);
+            }
+            self.drop_replaced(has_vendor_prefix(&images), context);
+            self.cur
+                .set_shorthand(val, color, images, (clips, clips_vp), arena);
         }
     }
 
+    /// The newest pending image value.
+    fn latest_images(&self) -> Option<&SmallList<Image, 1>> {
+        self.later
+            .last()
+            .or(self.cur.images.as_ref())
+            .or_else(|| self.earlier.last()?.images.as_ref())
+    }
+
+    /// The compat data says that some target lacks `images`: the pending
+    /// values are written, so that they stay as the fallback.
+    fn flush_before_unsupported_images(
+        &mut self,
+        images: &SmallList<Image, 1>,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        let Some(browsers) = context.targets.browsers else {
+            return;
+        };
+        let unsupported = self.latest_images().is_some_and(|existing| {
+            !crate::generic::eql(existing, images)
+                && images.any(|image: &Image| !image.is_compatible_as_written(&browsers))
+        });
+        if unsupported {
+            self.flush(dest, context);
+        }
+    }
+
+    /// Records the value of a `background-image` declaration.
+    fn set_images(&mut self, images: SmallList<Image, 1>, context: &PropertyHandlerContext) {
+        if some_target_skips(&images, &context.targets) {
+            // An equal value has the same readers and replaces the one before it.
+            if !(self.later.last()).is_some_and(|last| crate::generic::eql(last, &images)) {
+                self.later.push(images);
+            }
+            return;
+        }
+
+        // Every target reads this image, so no target uses the images before it.
+        let has_targets = context.targets.browsers.is_some();
+        let closed = self.replaced != self.earlier.len();
+        if has_targets && (closed || !has_vendor_prefix(&images)) {
+            self.later.clear();
+            if !closed {
+                self.earlier.clear();
+                self.replaced = 0;
+            }
+        } else {
+            // The prefixed ones stay, as in `drop_replaced`.
+            if let Some(replaced) = self.cur.images.take_if(|images| has_vendor_prefix(images)) {
+                self.earlier.push(BackgroundState::image(replaced));
+            }
+            for later in self.later.drain(..) {
+                self.earlier.push(BackgroundState::image(later));
+            }
+            if !closed {
+                self.replaced = self.earlier.len();
+            }
+        }
+        self.cur.images = Some(images);
+    }
+
+    /// Whether the newest pending value is a `background` with these images
+    /// and nothing after it. It has the readers of a new `background` with the
+    /// same images, which replaces it for them.
+    fn repeats_last_shorthand(&self, images: &SmallList<Image, 1>) -> bool {
+        self.cur.is_empty()
+            && self.later.is_empty()
+            && self.earlier.len() > self.replaced
+            && (self.earlier.last())
+                .and_then(|last| last.images.as_ref())
+                .is_some_and(|last| crate::generic::eql(last, images))
+    }
+
+    /// A `background` that some target does not read follows. The pending
+    /// values stay for that target, and nothing is added to them.
+    fn close(&mut self) {
+        if !self.cur.is_empty() {
+            self.earlier.push(core::mem::take(&mut self.cur));
+        }
+        for later in self.later.drain(..) {
+            self.earlier.push(BackgroundState::image(later));
+        }
+    }
+
+    /// A `background` that every target reads follows, so no target uses the
+    /// pending values. The caller sets `cur`.
+    ///
+    /// An unprefixed value with targets drops them all: the prefixes that the
+    /// targets need are generated from it. Otherwise the values with a prefix
+    /// stay, as lightningcss keeps them.
+    fn drop_replaced(&mut self, prefixed: bool, context: &PropertyHandlerContext) {
+        let has_targets = context.targets.browsers.is_some();
+        if has_targets && !prefixed {
+            self.earlier.clear();
+            self.later.clear();
+            self.replaced = 0;
+            return;
+        }
+
+        let mut kept = self.replaced;
+        for i in self.replaced..self.earlier.len() {
+            if self.earlier[i].has_prefixed_image() {
+                self.earlier.swap(kept, i);
+                kept += 1;
+            }
+        }
+        self.earlier.truncate(kept);
+        // Without targets a prefixed image is never in `cur`.
+        if has_targets && self.cur.has_prefixed_image() {
+            // The longhands of an incomplete state are no part of the
+            // declaration that had the prefix.
+            self.earlier.push(if self.cur.is_complete() {
+                core::mem::take(&mut self.cur)
+            } else {
+                BackgroundState::image(self.cur.images.take().unwrap())
+            });
+        }
+        for later in self.later.drain(..) {
+            self.earlier.push(BackgroundState::image(later));
+        }
+        self.replaced = self.earlier.len();
+    }
+
+    /// Writes the pending values inside a rule, before a value that cannot
+    /// join them.
     fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+        // No target uses the replaced values. Only the end of the rule writes
+        // them: here lightningcss leaves them pending, and the unprefixed
+        // value that usually follows drops them.
+        if self.replaced != 0 && context.targets.browsers.is_some() {
+            self.earlier.drain(..self.replaced);
+            self.replaced = 0;
+        }
+        self.write_pending(dest, context);
+    }
+
+    fn write_pending(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
             return;
         }
         self.has_any = false;
+
+        if !self.earlier.is_empty() {
+            for state in core::mem::take(&mut self.earlier) {
+                self.write_state(state, dest, context);
+            }
+            self.replaced = 0;
+        }
+        let cur = core::mem::take(&mut self.cur);
+        self.write_state(cur, dest, context);
+        if !self.later.is_empty() {
+            for images in core::mem::take(&mut self.later) {
+                self.write_state(BackgroundState::image(images), dest, context);
+            }
+        }
+    }
+
+    fn write_state(
+        &mut self,
+        state: BackgroundState,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         let arena = dest.bump();
 
-        let mut maybe_color: Option<CssColor> = self.color.take();
-        let mut maybe_images: Option<SmallList<Image, 1>> = self.images.take();
-        let mut maybe_x_positions: Option<SmallList<HorizontalPosition, 1>> =
-            self.x_positions.take();
-        let mut maybe_y_positions: Option<SmallList<VerticalPosition, 1>> = self.y_positions.take();
-        let mut maybe_repeats: Option<SmallList<BackgroundRepeat, 1>> = self.repeats.take();
-        let mut maybe_sizes: Option<SmallList<BackgroundSize, 1>> = self.sizes.take();
-        let mut maybe_attachments: Option<SmallList<BackgroundAttachment, 1>> =
-            self.attachments.take();
-        let mut maybe_origins: Option<SmallList<BackgroundOrigin, 1>> = self.origins.take();
-        let mut maybe_clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)> =
-            self.clips.take();
+        let BackgroundState {
+            color: mut maybe_color,
+            images: mut maybe_images,
+            x_positions: mut maybe_x_positions,
+            y_positions: mut maybe_y_positions,
+            repeats: mut maybe_repeats,
+            sizes: mut maybe_sizes,
+            attachments: mut maybe_attachments,
+            origins: mut maybe_origins,
+            clips: mut maybe_clips,
+        } = state;
 
         if let (
             Some(color),
@@ -959,7 +1221,6 @@ impl BackgroundHandler {
                     self.flushed_properties.insert(BackgroundProperty::CLIP);
                 }
 
-                self.reset();
                 return;
             }
         }
@@ -1114,21 +1375,6 @@ impl BackgroundHandler {
             )));
             self.flushed_properties.insert(BackgroundProperty::CLIP);
         }
-
-        self.reset();
-    }
-
-    fn reset(&mut self) {
-        // Drop on assignment frees each field's old value.
-        self.color = None;
-        self.images = None;
-        self.x_positions = None;
-        self.y_positions = None;
-        self.repeats = None;
-        self.sizes = None;
-        self.attachments = None;
-        self.origins = None;
-        self.clips = None;
     }
 
     pub(crate) fn finalize(
@@ -1136,21 +1382,7 @@ impl BackgroundHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        // If the last declaration is prefixed, pop the last value
-        // so it isn't duplicated when we flush.
-        if self.has_prefix {
-            let _ = self.decls.pop();
-            // Drop handles deinit.
-        }
-
-        let arena = dest.bump();
-        for decl in self.decls.drain(..) {
-            // `Property` is not `Clone` here, so move out via drain.
-            let _ = arena;
-            dest.push(decl);
-        }
-
-        self.flush(dest, context);
+        self.write_pending(dest, context);
         self.flushed_properties = BackgroundProperty::empty();
     }
 }

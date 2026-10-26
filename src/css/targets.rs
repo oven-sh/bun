@@ -156,6 +156,139 @@ impl Targets {
         }
         true
     }
+
+    /// Whether every target reads `value` when it is spelled with `prefix`.
+    ///
+    /// A browser that cannot read a value drops the whole declaration and uses
+    /// the declaration before it (CSS 2.1 section 4.2). So a later declaration
+    /// replaces an earlier one only when this is true. Without targets the
+    /// readers are not known, so no prefixed spelling is read by all of them.
+    pub(crate) fn all_read(&self, value: PrefixedValue, prefix: VendorPrefix) -> bool {
+        if prefix.is_empty() || prefix == VendorPrefix::NONE {
+            return true;
+        }
+        let Some(browsers) = &self.browsers else {
+            return false;
+        };
+        let Some(readers) = value.readers(prefix) else {
+            return false;
+        };
+        let targets = [
+            browsers.android,
+            browsers.chrome,
+            browsers.edge,
+            browsers.firefox,
+            browsers.ie,
+            browsers.ios_saf,
+            browsers.opera,
+            browsers.safari,
+            browsers.samsung,
+        ];
+        targets
+            .iter()
+            .zip(&readers)
+            .all(|(target, &(from, until))| target.is_none_or(|v| from <= v && v < until))
+    }
+}
+
+/// A value that bun also parses when it is spelled with a vendor prefix.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PrefixedValue {
+    /// `-webkit-linear-gradient()`, `-moz-repeating-radial-gradient()` and the
+    /// like.
+    Gradient,
+    /// The legacy `-webkit-gradient()`.
+    WebkitGradient,
+    /// `-webkit-image-set()`.
+    ImageSet,
+    /// `-webkit-fit-content`, `-moz-available` and the other sizing keywords.
+    SizeKeyword,
+}
+
+impl PrefixedValue {
+    /// The versions of each browser that read the value with `prefix`, as
+    /// `from..until`, in the order android, chrome, edge, firefox, ie, ios_saf,
+    /// opera, safari, samsung. `None`: no browser reads it.
+    ///
+    /// From MDN browser-compat-data 8.1.7 (`css.types.gradient.*`,
+    /// `css.types.image.image-set`, `css.properties.width` and its siblings).
+    /// One row serves every function or keyword of a kind, so each bound is the
+    /// latest one of the kind. The data has `-webkit-gradient()` only as a note
+    /// on Safari 4, "still supported for compatibility", which the engines
+    /// that come from WebKit share. Where the data has no entry the browser
+    /// does not read the value: an unread value only keeps the declaration
+    /// before it.
+    fn readers(self, prefix: VendorPrefix) -> Option<[(u32, u32); 9]> {
+        const fn from(major: u32, minor: u32) -> (u32, u32) {
+            ((major << 16) | (minor << 8), u32::MAX)
+        }
+        const NEVER: (u32, u32) = (0, 0);
+        const FIREFOX: usize = 3;
+        const OPERA: usize = 6;
+
+        let mut only = [NEVER; 9];
+        if prefix == VendorPrefix::WEBKIT {
+            return Some(match self {
+                PrefixedValue::Gradient => [
+                    from(4, 4),  // android
+                    from(13, 0), // chrome
+                    from(79, 0), // edge
+                    from(49, 0), // firefox
+                    NEVER,       // ie
+                    from(5, 0),  // ios_saf
+                    from(15, 0), // opera
+                    from(5, 1),  // safari
+                    from(1, 0),  // samsung
+                ],
+                PrefixedValue::WebkitGradient => [
+                    from(2, 1),  // android
+                    from(4, 0),  // chrome
+                    from(79, 0), // edge
+                    NEVER,       // firefox
+                    NEVER,       // ie
+                    from(3, 2),  // ios_saf
+                    from(15, 0), // opera
+                    from(4, 0),  // safari
+                    from(1, 0),  // samsung
+                ],
+                PrefixedValue::ImageSet => [
+                    from(4, 4),  // android
+                    from(20, 0), // chrome
+                    from(79, 0), // edge
+                    from(90, 0), // firefox
+                    NEVER,       // ie
+                    from(6, 0),  // ios_saf
+                    from(15, 0), // opera
+                    from(6, 0),  // safari
+                    from(1, 5),  // samsung
+                ],
+                PrefixedValue::SizeKeyword => [
+                    from(4, 4),  // android
+                    from(28, 0), // chrome
+                    from(79, 0), // edge
+                    NEVER,       // firefox
+                    NEVER,       // ie
+                    from(9, 0),  // ios_saf
+                    from(15, 0), // opera
+                    from(9, 0),  // safari
+                    from(5, 0),  // samsung
+                ],
+            });
+        }
+        if prefix == VendorPrefix::MOZ {
+            only[FIREFOX] = match self {
+                PrefixedValue::Gradient => from(3, 6),
+                PrefixedValue::SizeKeyword => from(41, 0),
+                PrefixedValue::WebkitGradient | PrefixedValue::ImageSet => return None,
+            };
+            return Some(only);
+        }
+        if prefix == VendorPrefix::O && self == PrefixedValue::Gradient {
+            only[OPERA] = (12 << 16, 15 << 16);
+            return Some(only);
+        }
+        None
+    }
 }
 
 /// Browser versions to compile CSS for.

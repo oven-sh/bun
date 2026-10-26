@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
+  type Browsers,
   cssTest,
   cssTestTodo,
   indoc,
@@ -24,6 +25,24 @@ function Some(n: number): number {
 function error_test(css: string, error: unknown) {
   // going to ignore this test for now
   test.skip(`ERROR: ${css}`, () => {});
+}
+
+// `Targets::browser_default()`: the targets of `bun build` for a browser.
+const defaultTargets: Browsers = {
+  chrome: 80 << 16,
+  edge: 80 << 16,
+  firefox: 78 << 16,
+  safari: 14 << 16,
+  opera: 67 << 16,
+};
+
+const version = (major: number, minor = 0) => (major << 16) | (minor << 8);
+
+/** One rule `.a`: `declarations` in, `expected` out. No `targets`: as `bun build --target=bun`. */
+function declarations_test(declarations: string, expected: string, targets?: Browsers) {
+  const [source, output] = [`.a { ${declarations} }`, `.a { ${expected}; }`];
+  if (targets) prefix_test(source, output, targets);
+  else cssTest(source, output);
 }
 
 describe("css tests", () => {
@@ -2747,6 +2766,90 @@ describe("css tests", () => {
       );
     }
 
+    // A prefixed keyword that some target does not read keeps the value before
+    // it: a browser drops a declaration that it cannot read.
+    describe("a prefixed keyword that some target does not read", () => {
+      // [declarations, output with the default targets, output with no targets].
+      // No output: the declarations as they are.
+      const rows: [string, string?, string?][] = [
+        ["width: 10px; width: -moz-fit-content"],
+        ["width: 10px; width: -webkit-fit-content"],
+        ["max-height: 10px; max-height: -moz-max-content"],
+        ["inline-size: 10px; inline-size: -moz-fit-content"],
+        ["width: 10px; width: -moz-fit-content; inline-size: 5px"],
+        [
+          "max-width: 10px; max-width: -moz-fit-content; height: 5px; height: -webkit-min-content",
+          "max-width: 10px; height: 5px; max-width: -moz-fit-content; height: -webkit-min-content",
+          "max-width: 10px; height: 5px; max-width: -moz-fit-content; height: -webkit-min-content",
+        ],
+        // The same value again replaces the first one.
+        [
+          "width: -moz-fit-content; width: -webkit-fit-content; width: -moz-fit-content",
+          "width: -webkit-fit-content; width: -moz-fit-content",
+          "width: -webkit-fit-content; width: -moz-fit-content",
+        ],
+        // A value kept as tokens comes after the values that it replaces.
+        ["width: 10px; width: -moz-fit-content; width: var(--w)"],
+        ["width: 10px; width: var(--w); width: -moz-fit-content"],
+        ["width: 10px; width: var(--w)"],
+        ["width: 10px; inline-size: var(--i); width: -moz-fit-content"],
+        // A later value that every target reads removes the values before it.
+        // The `-moz-fit-content` in the output is generated for Firefox 78.
+        [
+          "width: 10px; width: -moz-fit-content; width: fit-content",
+          "width: -moz-fit-content; width: fit-content",
+          "width: fit-content",
+        ],
+        [
+          "width: -webkit-max-content; width: -moz-max-content; width: max-content",
+          "width: max-content",
+          "width: max-content",
+        ],
+        [
+          "width: 100%; width: -moz-available; width: -webkit-fill-available; width: stretch",
+          undefined,
+          "width: stretch",
+        ],
+      ];
+      describe("default targets", () => {
+        for (const [declarations, expected = declarations] of rows) {
+          declarations_test(declarations, expected, defaultTargets);
+        }
+        prefix_test(
+          ".a { width: 10px; width: -moz-fit-content } .a { width: 10px; width: -moz-fit-content }",
+          ".a { width: 10px; width: -moz-fit-content; }",
+          defaultTargets,
+        );
+      });
+      describe("no targets", () => {
+        for (const [declarations, , expected = declarations] of rows) {
+          declarations_test(declarations, expected);
+        }
+      });
+
+      // Which browsers read a prefix: MDN browser-compat-data. The keyword
+      // replaces the length when every target reads it.
+      describe("readers", () => {
+        const readers: [string, Browsers, boolean][] = [
+          ["-webkit-fit-content", { chrome: version(28) }, true],
+          ["-webkit-fit-content", { chrome: version(27) }, false],
+          ["-webkit-fit-content", { safari: version(9) }, true],
+          ["-webkit-fit-content", { safari: version(8) }, false],
+          ["-webkit-fit-content", { edge: version(79) }, true],
+          ["-webkit-fit-content", { chrome: version(80), firefox: version(78) }, false],
+          ["-moz-fit-content", { firefox: version(41) }, true],
+          ["-moz-fit-content", { firefox: version(40) }, false],
+          ["-moz-fit-content", { chrome: version(80) }, false],
+          ["-webkit-fill-available", { chrome: version(80) }, true],
+          ["-moz-available", { firefox: version(78) }, true],
+        ];
+        for (const [value, targets, all] of readers) {
+          const declarations = `width: 10px; width: ${value}`;
+          declarations_test(declarations, all ? `width: ${value}` : declarations, targets);
+        }
+      });
+    });
+
     minify_test(".foo { aspect-ratio: auto }", ".foo{aspect-ratio:auto}");
     minify_test(".foo { aspect-ratio: 2 / 3 }", ".foo{aspect-ratio:2/3}");
     minify_test(".foo { aspect-ratio: auto 2 / 3 }", ".foo{aspect-ratio:auto 2/3}");
@@ -3419,6 +3522,239 @@ describe("css tests", () => {
         chrome: 99 << 16,
       },
     );
+
+    // A browser drops a declaration that it cannot read and uses the
+    // declaration before it (CSS 2.1 section 4.2). So a value with a vendor
+    // prefix that some target does not read does not replace the values
+    // before it, and does not share a declaration with other values.
+    // lightningcss replaces them.
+    describe("a prefixed value that some target does not read", () => {
+      const moz = "-moz-linear-gradient(red, #00f)";
+      const o = "-o-linear-gradient(red, #00f)";
+      const webkit = "-webkit-linear-gradient(red, #00f)";
+      const standard = "linear-gradient(red, #00f)";
+      const legacy = "-webkit-gradient(linear, 0 0, 0 100%, from(red), to(#00f))";
+      const imageSet = `-webkit-image-set(url("a.png") 1x, url("b.png") 2x)`;
+
+      // [declarations, output with the default targets, output with no targets].
+      // No output: the declarations as they are.
+      const rows: [string, string?, string?][] = [
+        // Of the default targets only Firefox reads `-moz-`, and none reads `-o-`.
+        [`background: #2a6; background: ${moz}`],
+        [`background: #2a6; background: ${o}`],
+        [`background: ${standard}; background: ${moz}`],
+        [`background-image: url("a.png"); background-image: ${moz}`],
+        [`background: #2a6; background: ${legacy}`],
+        [`background-image: url("a.png"); background-image: ${imageSet}`],
+
+        // The values before and after it are not in its declaration.
+        [`background: #2a6; background-image: ${moz}`],
+        [`background: #2a6 url("a.png") no-repeat; background-image: ${moz}`],
+        [`background: ${moz}; background-color: #2a6`],
+        [`background: #2a6; background: ${moz}; background-repeat: no-repeat`],
+        [`background: ${webkit}; background: ${moz}; background-repeat: no-repeat`],
+        [`background: #2a6; background: ${moz} no-repeat; background-image: ${standard}`],
+        [
+          `background-color: #2a6; background-position: 0 0; background-repeat: repeat; background-size: auto; background-attachment: scroll; background-origin: padding-box; background-clip: border-box; background-image: ${moz}`,
+        ],
+
+        // Every default target reads `-webkit-` gradients: such a value replaces the values before it.
+        [`background: #2a6; background: ${webkit}`, `background: ${webkit}`],
+        [`background: #2a6; background: ${webkit}; background: ${moz}`, `background: ${webkit}; background: ${moz}`],
+        [
+          `background: #2a6; background-image: ${webkit}; background-image: ${moz}`,
+          `background: #2a6 ${webkit}; background-image: ${moz}`,
+        ],
+        [`background: ${webkit}; background: ${moz}`],
+
+        // A later value that every target reads removes the values before it.
+        [
+          `background: #2a6; background: ${moz}; background: ${webkit}; background: ${standard}`,
+          `background: ${standard}`,
+          `background: ${moz}; background: ${webkit}; background: ${standard}`,
+        ],
+        [`background: ${moz}; background: #2a6`, `background: #2a6`],
+        [
+          `background: #2a6 url("a.png") no-repeat; background-image: ${moz}; background-image: ${standard}`,
+          `background: #2a6 ${standard} no-repeat`,
+          `background-image: ${moz}; background: #2a6 ${standard} no-repeat`,
+        ],
+        [
+          `background-color: #2a6; background-image: ${webkit}; background-image: ${moz}; background-image: ${o}; background-image: ${standard}; background-repeat: repeat-x`,
+          `background-color: #2a6; background-image: ${standard}; background-repeat: repeat-x`,
+          `background-image: ${webkit}; background-image: ${moz}; background-image: ${o}; background-color: #2a6; background-image: ${standard}; background-repeat: repeat-x`,
+        ],
+        [`background: ${moz}; background: ${moz}`, `background: ${moz}`, `background: ${moz}`],
+
+        // A value kept as tokens: the values before it are written before it.
+        [`background: #2a6; background: ${moz}; background: -ms-linear-gradient(red, blue); background: ${standard}`],
+        [`background: #2a6; background-image: ${moz}; background-position: var(--p)`],
+
+        // A prefixed value that a later one replaced for every target: the end
+        // of the rule writes it, a flush inside the rule does not.
+        [`background: ${moz}; background: ${webkit}`],
+        [
+          `background: ${moz}; background: ${webkit}; background: -ms-linear-gradient(red, blue)`,
+          `background: ${webkit}; background: -ms-linear-gradient(red, blue)`,
+        ],
+      ];
+      describe("default targets", () => {
+        for (const [declarations, expected = declarations] of rows) {
+          declarations_test(declarations, expected, defaultTargets);
+        }
+        prefix_test(
+          `.a { background: #2a6 !important; background: ${moz} !important }`,
+          `.a { background: #2a6 !important; background: ${moz} !important; }`,
+          defaultTargets,
+        );
+        // Two rules that merge give the same as one.
+        prefix_test(
+          `.a { background: #2a6; background: ${moz} } .a { background: #2a6; background: ${moz} }`,
+          `.a { background: #2a6; background: ${moz}; }`,
+          defaultTargets,
+        );
+      });
+      describe("no targets", () => {
+        for (const [declarations, , expected = declarations] of rows) {
+          declarations_test(declarations, expected);
+        }
+      });
+
+      // Which browsers read a prefix: MDN browser-compat-data. The value
+      // replaces the colour when every target reads it.
+      describe("readers", () => {
+        const readers: [string, Browsers, boolean][] = [
+          [webkit, { chrome: version(13) }, true],
+          [webkit, { chrome: version(12) }, false],
+          [webkit, { firefox: version(49) }, true],
+          [webkit, { firefox: version(48) }, false],
+          [webkit, { opera: version(15) }, true],
+          [webkit, { opera: version(12, 1) }, false],
+          [webkit, { edge: version(79) }, true],
+          [webkit, { edge: version(18) }, false],
+          [webkit, { android: version(4, 4) }, true],
+          [webkit, { android: version(4) }, false],
+          [webkit, { samsung: version(4) }, true],
+          [webkit, { ie: version(11) }, false],
+          [moz, { firefox: version(3, 6) }, true],
+          [moz, { firefox: version(3, 5) }, false],
+          [moz, { firefox: version(78), chrome: version(80) }, false],
+          [moz, { safari: version(14) }, false],
+          [o, { opera: version(12) }, true],
+          [o, { opera: version(14) }, true],
+          [o, { opera: version(15) }, false],
+          [o, { opera: version(11, 6) }, false],
+          [o, { opera: version(12), chrome: version(80) }, false],
+          [legacy, { chrome: version(80), safari: version(14), edge: version(80), opera: version(67) }, true],
+          [legacy, { safari: version(4) }, true],
+          [legacy, { safari: version(3, 2) }, false],
+          [legacy, { firefox: version(78) }, false],
+          [legacy, { edge: version(18) }, false],
+        ];
+        for (const [value, targets, all] of readers) {
+          const declarations = `background: #2a6; background: ${value}`;
+          declarations_test(declarations, all ? `background: ${value}` : declarations, targets);
+        }
+        const imageSetReaders: [Browsers, boolean][] = [
+          [{ chrome: version(25) }, true],
+          [{ chrome: version(24) }, false],
+          [{ firefox: version(90) }, true],
+          [{ firefox: version(89) }, false],
+          [{ edge: version(79) }, true],
+          [{ edge: version(18) }, false],
+        ];
+        for (const [targets, all] of imageSetReaders) {
+          const declarations = `background-image: url("a.png"); background-image: ${imageSet}`;
+          declarations_test(declarations, all ? `background-image: ${imageSet}` : declarations, targets);
+        }
+      });
+    });
+
+    // #46872: every flush inside a rule writes the pending prefixed values
+    // first, so the cascade keeps the source order.
+    describe("prefixed values keep source order", () => {
+      const chrome = { chrome: 95 << 16 };
+
+      // A value that is kept as tokens flushes the typed values before it.
+      for (const targets of [undefined, chrome]) {
+        cssTest(
+          ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-radial-gradient(center, circle cover, yellow, green) }",
+          ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-radial-gradient(center, circle cover, yellow, green); }",
+          targets,
+        );
+        cssTest(
+          ".r { background-image: -webkit-linear-gradient(red, blue); background-image: -moz-linear-gradient(red, blue); background-image: -webkit-radial-gradient(center, circle cover, yellow, green) }",
+          ".r { background-image: -webkit-linear-gradient(red, #00f); background-image: -moz-linear-gradient(red, #00f); background-image: -webkit-radial-gradient(center, circle cover, yellow, green); }",
+          targets,
+        );
+        cssTest(
+          ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-radial-gradient(circle, yellow, green) }",
+          ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-radial-gradient(circle, #ff0, green); }",
+          targets,
+        );
+      }
+
+      // An image the targets do not support flushes the earlier values once.
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-gradient(linear, left top, left bottom, from(red), to(blue)) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-gradient(linear, left top, left bottom, from(red), to(#00f)); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background-image: -webkit-linear-gradient(red, blue); background-image: -moz-linear-gradient(red, blue); background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(blue)) }",
+        ".r { background-image: -webkit-linear-gradient(red, #00f); background-image: -moz-linear-gradient(red, #00f); background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(#00f)); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background-image: -webkit-linear-gradient(red, blue); background-image: -moz-linear-gradient(red, blue); background-image: -o-linear-gradient(lab(50% 0 0), blue); background-image: linear-gradient(red, blue) }",
+        ".r { background-image: -webkit-linear-gradient(red, #00f); background-image: -moz-linear-gradient(red, #00f); background-image: linear-gradient(red, #00f); }",
+        chrome,
+      );
+
+      // Without targets nothing is dropped, and nothing is written twice.
+      cssTest(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -ms-linear-gradient(red, blue); background: linear-gradient(red, blue) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -ms-linear-gradient(red, blue); background: linear-gradient(red, #00f); }",
+      );
+      // The image after the two shorthands stays a longhand: a browser that
+      // reads neither of them has no `background` in this rule.
+      cssTest(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background-image: url(a.png); background-position: var(--p) }",
+        '.r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background-image: url("a.png"); background-position: var(--p); }',
+      );
+
+      // A color the targets do not support flushes the earlier value once.
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue) lab(50% 0 0) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: lab(50% 0 0) -moz-linear-gradient(red, #00f); }",
+        chrome,
+      );
+
+      // A background-clip with another prefix flushes the earlier values first.
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background-clip: text; -webkit-background-clip: border-box }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); -webkit-background-clip: text; background-clip: text; -webkit-background-clip: border-box; }",
+        chrome,
+      );
+
+      // A pending value before a value kept as tokens is written, even when an
+      // unprefixed value follows. Only the values pending at that point are dropped.
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -ms-linear-gradient(red, blue); background: linear-gradient(red, blue) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -ms-linear-gradient(red, blue); background: linear-gradient(red, #00f); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: linear-gradient(red, blue) }",
+        ".r { background: linear-gradient(red, #00f); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); }",
+        chrome,
+      );
+    });
   });
 
   describe("flex", () => {

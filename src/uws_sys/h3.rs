@@ -51,7 +51,7 @@ impl Request {
     pub fn set_yield(&mut self, y: bool) {
         c::uws_h3_req_set_yield(self, y)
     }
-    pub fn url(&mut self) -> &[u8] {
+    pub fn url(&self) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         let n = c::uws_h3_req_get_url(self, &mut p);
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
@@ -63,7 +63,7 @@ impl Request {
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
     }
-    pub fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
+    pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
         let n = unsafe { c::uws_h3_req_get_header(self, name.as_ptr(), name.len(), &raw mut p) };
@@ -771,10 +771,10 @@ mod c {
         // Out-param `out` is `&mut *const u8` (non-null, valid for write); the C
         // shim only stores a pointer into request-owned storage and returns its
         // length — no read-through precondition, so `safe fn`.
-        pub(super) safe fn uws_h3_req_get_url(req: &mut Request, out: &mut *const u8) -> usize;
+        pub(super) safe fn uws_h3_req_get_url(req: &Request, out: &mut *const u8) -> usize;
         pub(super) safe fn uws_h3_req_get_method(req: &mut Request, out: &mut *const u8) -> usize;
         pub(super) fn uws_h3_req_get_header(
-            req: *mut Request,
+            req: *const Request,
             name: *const u8,
             len: usize,
             out: *mut *const u8,
